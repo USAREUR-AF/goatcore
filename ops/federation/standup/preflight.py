@@ -29,6 +29,11 @@ sets them by hand. An explicitly set variable always wins.
   --only ID[,ID...]      run only these checks (ids from --list); the phase-10
                          restart step runs `--only slot-anchors` just before the
                          core router restarts
+  --side edge|core       run only one side's checks, for a peering run from two
+                         drivers (docs/design/federation-two-drivers.md): edge on
+                         the machine that reaches the edge, core on the one that
+                         reaches the core and holds the CA key. Each side probes
+                         only its own hosts and asks only for its own inputs.
   FED_PREFLIGHT_NO_LIVE=1  skip the live reads (each reported SKIP)
   FED_PREFLIGHT_STRICT=1   a SKIP refuses too
 
@@ -248,6 +253,7 @@ def main(argv=None):
     ap.add_argument("--core-group", default=os.environ.get("FED_CORE_GROUP", ""))
     ap.add_argument("--repo", default=str(Path(__file__).resolve().parents[3]))
     ap.add_argument("--only", default="")
+    ap.add_argument("--side", choices=["edge", "core"], default="")
     ap.add_argument("--list", action="store_true")
     # Where the results go; the restart recheck writes its own file so it never
     # reads, or overwrites, the full phase-1 result.
@@ -263,14 +269,26 @@ def main(argv=None):
         print(f"preflight: unknown check id(s) {', '.join(sorted(unknown))}; --list names them", file=sys.stderr)
         return 2
 
+    def on(side):
+        """Whether a check of `side` (edge, core or both) runs on this side."""
+        return not a.side or side in ("both", a.side)
+
+    other = sorted(c for c in only if not on(live.SIDES[c]))
+    if other:
+        print(f"preflight: --side {a.side} does not run {', '.join(other)}: "
+              + ", ".join(f"{c} is a {live.SIDES[c]} check" for c in other)
+              + "; run it with that side", file=sys.stderr)
+        return 2
+
     def want(cid):
-        return not only or cid in only
+        return (not only or cid in only) and on(live.SIDES[cid])
 
     static = not only
     no_live = env.get("FED_PREFLIGHT_NO_LIVE", "") == "1"
     profile_dir = a.profile_dir or ("/root/.goat" if os.geteuid() == 0
                                     else str(Path.home() / ".goat"))
-    print(f"preflight — peering {a.peering}" + (f" (only {', '.join(sorted(only))})" if only else ""))
+    print(f"preflight — peering {a.peering}" + (f" (only {', '.join(sorted(only))})" if only else "")
+          + (f" ({a.side} side)" if a.side else ""))
     ctx = Path(profile_dir) / "contexts" / a.context
     group = a.edge_group or f"{a.peering}_edge"
     core = a.core_group or f"{a.peering}_core"
@@ -325,6 +343,9 @@ def main(argv=None):
                         "A capability typed by an operator is a claim, and a wrong claim stays\n"
                         "wrong until the link fails in front of a partner.", "GB-144")
 
+    # 2, 3, 3b — what the controller holds: init derives identity and signs
+    # there, and phase 5 exchanges through the directory there.
+    if static and on("core"):
         # 2 — profile identity. init derives trust_domain and ca_fingerprint from
         #     these two files; without them phase 3 cannot start.
         cert, roots = ctx / "mtls.cert.pem", ctx / "ca-roots.pem"
@@ -379,6 +400,7 @@ def main(argv=None):
             else:
                 ok("peering directory", f"{url}, counterparty {env['FED_COUNTERPARTY_ID']}")
 
+    if static:
         # 4 — somewhere to work.
         work = Path(a.work)
         try:
@@ -388,6 +410,8 @@ def main(argv=None):
         except OSError as e:
             bad("working directory", f"{work} is not writable: {e}", code="GB-148")
 
+    # 5 — the edge's deployment surface: the edge driver runs its plays.
+    if static and on("edge"):
         # 5 — the deployment surface phases 11-13 need. Checked NOW because it is
         #     free to check and expensive to discover at phase 11.
         if not inv.is_file():
@@ -415,10 +439,11 @@ def main(argv=None):
                     "`--limit` on an empty group runs against nothing and reports SUCCESS,\n"
                     "so phase 12 would 'pass' having deployed no edge at all.", "GB-143")
 
+    if static:
         # 5b — where the outbound republisher runs, when the declaration offers a
         #      release set: our core host, --limit <peering>_core, under
         #      [peering_cores:children].
-        if offers and inv.is_file():
+        if offers and inv.is_file() and on("core"):
             hosts = group_hosts(inv_text, core)
             if not hosts:
                 bad("republisher inventory", f"{inv} has no [{core}] group with a host in it",
@@ -512,7 +537,7 @@ def main(argv=None):
     # The core certificate must carry a SAN for every address the edge will dial.
     endpoints = edge_core_endpoints(a.repo, group)
     san = env.get("FED_CORE_SAN", "")
-    if static and not san:
+    if static and on("core") and not san:
         dials = f"the addresses the edge dials ({', '.join(endpoints)}); " if endpoints else ""
         missing.append(("FED_CORE_SAN", f"{dials}the names phase 8 puts on the core certificate, which it does not "
                         f"mint without them. goatbuilder reads them from goat_zenoh_edge_core_endpoints in "
@@ -551,7 +576,8 @@ def main(argv=None):
             out_dir.mkdir(parents=True, exist_ok=True)
             for old in out_dir.glob("*.json"):
                 old.unlink()  # a previous run's answer is not this run's evidence
-            groups = [group] + ([core] if "core-ports" in port_checks else [])
+            # The edge group is probed unless only the core side runs.
+            groups = ([group] if a.side != "core" else []) + ([core] if "core-ports" in port_checks else [])
             argv = live.probe_command(a.repo, f"inventory/{inv.name}", ":".join(groups), out_dir,
                                       env.get("GOAT_AWS_PROFILE", "") or "default")
             print(f"     probing {', '.join(groups)} read-only: ansible-playbook ... peering-preflight.yml")
@@ -586,7 +612,8 @@ def main(argv=None):
 
     router = None
     docker_host = live.effective_docker_host(env.get("FED_ROUTER_DOCKER_HOST", ""), env)
-    call = live.docker_caller(docker_host)
+    # The core's container runtime, made only when a core check reads it.
+    call = live.docker_caller(docker_host) if want("core-router") or want("ingress-stores") else None
     if want("core-router") or want("ingress-stores"):
         if no_live:
             if want("core-router"):
@@ -610,7 +637,7 @@ def main(argv=None):
         record(live.check_signing_ca(ca_cert, ca_key, ca_key_age, age_id))
 
     if static:
-        if endpoints and san:
+        if endpoints and san and on("core"):
             not_covered = [e for e in endpoints if e not in san.split(",")]
             if not_covered:
                 bad("core certificate SANs (phase 8)", f"FED_CORE_SAN does not cover: {', '.join(not_covered)}",
@@ -629,7 +656,8 @@ def main(argv=None):
     try:
         result_path.parent.mkdir(parents=True, exist_ok=True)
         result_path.write_text(json.dumps({
-            "schema": live.SCHEMA, "peering": a.peering, "only": sorted(only), "ready": ready,
+            "schema": live.SCHEMA, "peering": a.peering, "only": sorted(only), "side": a.side or "both",
+            "ready": ready,
             "results": [r.as_dict() for r in results]}, indent=2) + "\n")
     except OSError as e:
         print(f"[✗] result file — {result_path} could not be written: {e}")

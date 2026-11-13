@@ -26,7 +26,7 @@ either and fails on any difference.
 | `teardown` | `ops/scripts/goat-teardown.sh` | `parity-teardown.sh` |
 | `assay` | `ops/validation/generate-values.py <site>`, then `ops/validation/run-acceptance.py --env <site> --all-eligible --by-layer` | standup parity gate (phase 13) |
 | `endstate` | `ops/scripts/goatnet-endstate.sh <site>` (both run `ops/goatbuilder/endstate/endstate.py`) | `parity-endstate.sh` |
-| `join-node` | none; node-addition.md is the procedure | none |
+| `join-node` | none; [02-first-federated-node.md](../../tutorials/02-first-federated-node.md) walks through the node-addition sequence it runs | none |
 | `federate` | `ops/scripts/peering-standup.sh` | `parity-federate.sh` |
 | `update` | none; the install sequence on `get.<site>.<zone>/goatbuilder/` (curl, `cosign verify-blob`, `sha256sum -c`, `install`) is the by-hand path | none |
 | `secrets` | `ops/secrets/posture.py`, `ops/scripts/with-secrets` | the same module |

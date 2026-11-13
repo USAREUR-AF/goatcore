@@ -64,6 +64,21 @@ CHECKS = [
     ("signing-ca", "our CA certificate and its signing key resolve", "GB-140"),
 ]
 
+# The side of each check, for a peering run from two drivers
+# (docs/design/federation-two-drivers.md): `edge` reads the edge host, `core`
+# reads the core host, its registry or the CA key, `both` runs on each side
+# (each asks for the inputs of its own side's checks). `preflight.py --side`
+# runs one side's checks; without it, every check runs.
+SIDES = {
+    "inputs": "both",
+    "edge-ports": "edge",
+    "core-ports": "core",
+    "slot-anchors": "core",
+    "core-router": "core",
+    "ingress-stores": "core",
+    "signing-ca": "core",
+}
+
 
 def run(argv, env=None, input_bytes=None, timeout=60):
     """The default runner: argv, no shell, captured. Returns (rc, stdout, stderr)."""

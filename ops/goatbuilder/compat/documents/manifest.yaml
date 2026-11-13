@@ -1,0 +1,180 @@
+# The kept documents (A4): each invocation is run from the repository root with
+# `-o <format>` in front, against the fixtures kept beside this file, and its
+# output must stay a superset of the release's document of the same name. The
+# exit codes, and the documents, are written by `compat.py refresh` from the
+# released binary. A change that moves a kept exit code edits it here in the
+# same pull request, with its reason in `exit_changed`, so every change to a
+# promised exit code is a reviewed baseline change. To keep another document,
+# add its invocation here and rerun the refresh against the last release's
+# binary.
+documents:
+- name: validate-basic
+  format: json
+  args:
+  - validate
+  - -C
+  - .
+  - ops/goatbuilder/compat/documents/fixtures/basic/goatbuilder.yaml
+  exit: 0
+- name: validate-basic
+  format: yaml
+  args:
+  - validate
+  - -C
+  - .
+  - ops/goatbuilder/compat/documents/fixtures/basic/goatbuilder.yaml
+  exit: 0
+- name: validate-refused
+  format: json
+  args:
+  - validate
+  - -C
+  - .
+  - ops/goatbuilder/compat/documents/fixtures/refused/unknown-field.yaml
+  exit: 1
+- name: validate-not-yaml
+  format: json
+  args:
+  - validate
+  - -C
+  - .
+  - ops/goatbuilder/compat/documents/fixtures/refused/not-yaml.yaml
+  exit: 2
+- name: status-dev
+  format: json
+  args:
+  - status
+  - -C
+  - .
+  - --mock
+  - ops/goatbuilder/compat/documents/fixtures/basic
+  - --env
+  - dev
+  exit: 3
+- name: status-preprod
+  format: json
+  args:
+  - status
+  - -C
+  - .
+  - --mock
+  - ops/goatbuilder/compat/documents/fixtures/basic
+  - --env
+  - preprod
+  exit: 0
+- name: diff-dev-all
+  format: json
+  args:
+  - diff
+  - -C
+  - .
+  - --mock
+  - ops/goatbuilder/compat/documents/fixtures/basic
+  - --env
+  - dev
+  - --all
+  exit: 3
+- name: history-dev-portal
+  format: json
+  args:
+  - history
+  - -C
+  - .
+  - --mock
+  - ops/goatbuilder/compat/documents/fixtures/basic
+  - --env
+  - dev
+  - portal
+  exit: 0
+- name: verify-dev-portal
+  format: json
+  args:
+  - verify
+  - -C
+  - .
+  - --mock
+  - ops/goatbuilder/compat/documents/fixtures/basic
+  - --env
+  - dev
+  - portal
+  exit: 3
+- name: adopt-dev
+  format: json
+  args:
+  - adopt
+  - -C
+  - .
+  - --mock
+  - ops/goatbuilder/compat/documents/fixtures/basic
+  - --env
+  - dev
+  exit: 0
+- name: preflight-netvis
+  format: json
+  args:
+  - preflight
+  - -C
+  - .
+  - --mock
+  - ops/goatbuilder/compat/documents/fixtures/preflight
+  - netvis
+  - --env
+  - zagros-dev
+  exit: 0
+- name: preflight-undeclared
+  format: json
+  args:
+  - preflight
+  - -C
+  - .
+  - --mock
+  - ops/goatbuilder/compat/documents/fixtures/preflight
+  - mystery
+  - --env
+  - zagros-dev
+  exit: 3
+- name: survey
+  format: json
+  args:
+  - survey
+  - -C
+  - .
+  - --mock
+  - ops/goatbuilder/compat/documents/fixtures/survey
+  exit: 3
+- name: explain-code
+  format: json
+  args:
+  - explain
+  - GB-008
+  exit: 0
+- name: explain-ssh-text
+  format: json
+  args:
+  - explain
+  - Permission denied (publickey).
+  exit: 0
+- name: explain-unrecognised
+  format: json
+  args:
+  - explain
+  - zxqv frobnicated the flux capacitor
+  exit: 1
+- name: error-update-unknown-site
+  format: json
+  args:
+  - update
+  - -C
+  - .
+  - --site
+  - nowhere
+  exit: 1
+- name: error-federate-undeclared
+  format: json
+  args:
+  - federate
+  - -C
+  - .
+  - no-such-peer
+  - --dry-run
+  exit: 2

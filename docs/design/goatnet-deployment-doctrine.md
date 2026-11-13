@@ -69,7 +69,8 @@ A **topology** rule is a coupled fact too, and the same sentence applies: a
 constraint stated in an ADR and echoed in a rollback ledger is stated in two
 places and enforced in neither. ADR 1084 §D3 single-homes every admin-mutation
 surface (portal, id-admin-console, netbird-dashboard, the onboarding engine) on
-one node per goatnet. `tasks/assert-admin-write-host.yml` is now the first
+one node per goatnet, until ADR 1165 lifts its write class (P13).
+`tasks/assert-admin-write-host.yml` is now the first
 pre-task of all five plays: it skips any host whose `router_role` is not the
 declared writer, and refuses outright when a multi-host play declares none.
 Promotion to the second node stays the operator action §D3 says it is —

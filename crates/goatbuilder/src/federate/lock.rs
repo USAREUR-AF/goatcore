@@ -3,6 +3,8 @@
 //! The per-peering lock, `<work>/.lock`, is held for the whole of a real run,
 //! so two runs of one peering never interleave phases or overwrite each
 //! other's journal. A second run is refused (GB-180) and changes nothing.
+//! Every journal write happens under it, so the run that takes it removes
+//! any `.state.json.<pid>.tmp` a killed run left (`state::sweep_stale_temp`).
 //!
 //! The host-level allocation check: before a run takes a resource on a shared
 //! host (a tunnel interface, a port, a link subnet, a certificate folder), it
@@ -30,7 +32,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::state::State;
+use super::state::{self, State};
 
 /// A working folder or lock that cannot be made or taken (GB-184).
 pub fn io_error(what: impl std::fmt::Display, e: impl std::fmt::Display) -> anyhow::Error {
@@ -44,6 +46,9 @@ pub const HOST_LOCK: &str = ".allocation.lock";
 /// The per-peering lock, released when dropped.
 pub struct PeeringLock {
     _file: File,
+    /// The journal writes an interrupted run left, removed once the lock was
+    /// taken; the run reports each one.
+    pub removed: Vec<String>,
 }
 
 impl PeeringLock {
@@ -80,7 +85,13 @@ impl PeeringLock {
             Ok(()) => {
                 let _ = file.set_len(0);
                 let _ = (&file).write_all(format!("pid {}\n", std::process::id()).as_bytes());
-                Ok(PeeringLock { _file: file })
+                // Under the lock no other run can be writing the journal, so
+                // a temporary journal file here is what a killed run left.
+                let removed = state::sweep_stale_temp(work)?;
+                Ok(PeeringLock {
+                    _file: file,
+                    removed,
+                })
             }
             Err(std::fs::TryLockError::WouldBlock) => {
                 let holder = std::fs::read_to_string(&p).unwrap_or_default();
@@ -292,6 +303,56 @@ mod tests {
         assert_eq!(code(&e), "GB-180", "{e}");
         drop(held);
         PeeringLock::take(d.path(), "xab").expect("free again once the first run ends");
+    }
+
+    /// A process id that is not running: a child that has exited and been reaped.
+    fn a_pid_not_running() -> u32 {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
+    #[test]
+    fn a_journal_write_an_interrupted_run_left_is_removed_when_the_lock_is_taken() {
+        // A run killed between writing `.state.json.<pid>.tmp` and renaming
+        // it leaves the temporary file; the next run that takes the lock
+        // removes it and leaves the journal as it is.
+        let d = tempfile::tempdir().unwrap();
+        let mut s = State::new("xab");
+        let run = s.open_run("federate", 1, 99, false, "");
+        s.close_run(&run, "passed");
+        s.save(d.path()).unwrap();
+        let journal = std::fs::read(d.path().join("state.json")).unwrap();
+        let stale = format!(".state.json.{}.tmp", a_pid_not_running());
+        std::fs::write(
+            d.path().join(&stale),
+            "{\"schema\":\"goatbuilder.federate.st",
+        )
+        .unwrap();
+        // Names that are not a journal write's temporary file are not touched.
+        for other in [
+            ".state.json.notes.tmp",
+            ".state.json..tmp",
+            "state.json.bak",
+        ] {
+            std::fs::write(d.path().join(other), "kept").unwrap();
+        }
+        let held = PeeringLock::take(d.path(), "xab").unwrap();
+        assert!(!d.path().join(&stale).exists(), "{stale} is still there");
+        assert_eq!(held.removed, vec![stale.clone()]);
+        assert_eq!(std::fs::read(d.path().join("state.json")).unwrap(), journal);
+        for other in [
+            ".state.json.notes.tmp",
+            ".state.json..tmp",
+            "state.json.bak",
+        ] {
+            assert_eq!(
+                std::fs::read_to_string(d.path().join(other)).unwrap(),
+                "kept"
+            );
+        }
+        drop(held);
     }
 
     #[test]

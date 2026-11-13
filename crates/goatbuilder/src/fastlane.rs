@@ -19,8 +19,9 @@
 //! records are typed (`pins`, `promote`); a re-run whose pin is already on main
 //! lands nothing (the tree differs from main in signatures alone, or not at all).
 
+use crate::runner::Cmd;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::{anyhow, Context, Result};
 
@@ -61,7 +62,7 @@ pub fn not_a_pin_revert(comp: &serde_json::Value) -> Option<String> {
 }
 
 fn sh(cmd: &str, args: &[&str]) -> Result<String> {
-    let out = Command::new(cmd).args(args).output().with_context(|| cmd.to_string())?;
+    let out = Cmd::new(cmd).args(args).output().with_context(|| cmd.to_string())?;
     if !out.status.success() {
         return Err(anyhow!("{}", String::from_utf8_lossy(&out.stderr).trim()));
     }
@@ -200,7 +201,7 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     let api = format!("/orgs/{org}/packages/container/{image_name}/versions?per_page=100");
     // An unreadable registry is not a missing image: say which it was, or a
     // reader without access to this project's packages is sent to look at CI.
-    if Command::new("gh").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
+    if Cmd::new("gh").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
         return Err(refuse("the GitHub CLI (gh) is not on PATH, and fastlane reads the image digest through it. Without it the digest cannot be resolved, so nothing moved.".into()));
     }
     // A tag reaches jq as part of the program text, so it has to be a tag: the
@@ -328,7 +329,7 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     let _ = sh("git", &["-C", &repo_s, "checkout", "-q", "-B", &br]);
     let body = std::env::temp_dir().join(format!("goatbuilder-fastlane-body-{}", std::process::id()));
     std::fs::write(&body, format!("chore(pins): fastlane {} to {tag} (ADR 1127)\n\nFASTLANE, ack {}. {}\nRollback: pin revert to {current_fleet}. Backfill owed until this ref graduates normally.\n", o.component, o.ack, o.reason))?;
-    let landed = Command::new(repo.join("ops/scripts/pr-land.sh"))
+    let landed = Cmd::new(repo.join("ops/scripts/pr-land.sh"))
         .args(["--worktree", &repo_s, "--branch", &br, "--title", &format!("chore(pins): fastlane {} to {tag} (ADR 1127)", o.component), "--body-file", body.to_str().unwrap_or(""), "--paths", "ops/pins/fleet-pins.yaml", "ops/ansible/group_vars", "ops/consistency/intent", "ops/release/records"])
         .stdout(Stdio::null())
         .status()
@@ -344,7 +345,7 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     // next driver run refuse and the next fastlane branch from the wrong base.
     let _ = sh("git", &["-C", &repo_s, "fetch", "-q", "origin", "main"]);
     let back = sh("git", &["-C", &repo_s, "checkout", "-q", "main"]).is_ok()
-        && Command::new("git")
+        && Cmd::new("git")
             .args(["-C", &repo_s, "merge", "-q", "--ff-only", "origin/main"])
             .env("GOAT_ALLOW_MASTER_GIT_MUTATE", "1")
             .status()

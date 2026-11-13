@@ -23,6 +23,9 @@
 
 #[path = "common/test_home.rs"]
 mod test_home;
+#[path = "../src/test_support.rs"]
+mod test_support;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -869,6 +872,63 @@ fn assay_plan_writes_nothing_in_the_checkout() {
     }
 }
 
+/// `assay --plan` is a dry run: its derivations start through the runner, but it
+/// begins no run, so it prints no `run record:` line and writes no record. This is
+/// the goatlite tutorial's rehearsal, whose checkpoint has no such line
+/// (ops/tutorials/check.sh).
+#[test]
+fn assay_plan_leaves_no_run_record() {
+    if !python_deps() {
+        return;
+    }
+    let r = repo();
+    let values = r.join("ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite/assay-values.yaml");
+    let o = run(&["-C", r.to_str().unwrap(), "assay", "pasture", "--values", values.to_str().unwrap(), "--plan"]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    assert!(!text(&o).contains("run record:"), "assay --plan printed a run record:\n{}", text(&o));
+    let runs = test_home::path().join(".goat/state/runs");
+    assert!(!runs.exists(), "assay --plan wrote {}", runs.display());
+}
+
+/// `rollback --list` and `--status` only report, so they write no run record: they
+/// print no `run record:` line and no runner frame, and read as rollback.sh reads
+/// (ops/goatbuilder/parity-rollback.sh compares the two byte for byte). The
+/// component has a host, so both modes start their ssh reads; this ssh refuses
+/// at once, as an unreachable host does.
+#[test]
+fn rollback_list_and_status_leave_no_run_record() {
+    let dir = scratch("rollback-no-record");
+    let repo = dir.path().join("repo");
+    let role = repo.join("ops/ansible/roles/demo");
+    std::fs::create_dir_all(&role).unwrap();
+    std::fs::write(
+        role.join("deploy-history.yml"),
+        "hosts:\n  - host: 192.0.2.10\n    ssh_user: goat\n    site: zagros-dev\nhistory:\n  - image: ghcr.io/example/demo\n    sha: sha-aaaaaaa\n    merged_at: \"2026-01-01\"\n    pr: 1\n    summary: first\n",
+    )
+    .unwrap();
+    assert!(Command::new("git").args(["init", "-q"]).current_dir(&repo).status().unwrap().success());
+    let bin_dir = dir.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let ssh = bin_dir.join("ssh");
+    test_support::executable(&ssh, "#!/bin/sh\nexit 255\n");
+    let path = format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default());
+    for mode in ["--list", "--status"] {
+        let o = test_home::isolate(&mut Command::new(bin()))
+            .args(["-C", repo.to_str().unwrap(), "rollback", "demo", mode])
+            .env("PATH", &path)
+            .env("GOAT_MESH_PROBE", "0")
+            .output()
+            .expect("run goatbuilder");
+        let t = text(&o);
+        assert_eq!(code(&o), 0, "rollback {mode}: {t}");
+        assert!(t.contains("192.0.2.10") || t.contains("sha-aaaaaaa"), "rollback {mode} read nothing: {t}");
+        assert!(!t.contains("run record:"), "rollback {mode} printed a run record:\n{t}");
+        assert!(!t.contains("· FAILED: ssh"), "rollback {mode} printed a runner frame:\n{t}");
+    }
+    let runs = test_home::path().join(".goat/state/runs");
+    assert!(!runs.exists(), "rollback --list/--status wrote {}", runs.display());
+}
+
 /// A throwaway repo and a `gh` that logs its arguments and knows one tag.
 struct FastlaneRepo {
     dir: PathBuf,
@@ -888,9 +948,7 @@ fn fastlane_repo(name: &str, component: &str) -> FastlaneRepo {
     std::fs::write(dir.join("ops/ansible/odd-name.yml"), "- hosts: all\n").unwrap();
     let gh_log = dir.join("gh.log");
     let gh = dir.join("bin/gh");
-    std::fs::write(&gh, format!("#!/bin/sh\necho \"$*\" >> '{}'\necho sha256:{}\n", gh_log.display(), "a".repeat(64))).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    test_support::executable(&gh, &format!("#!/bin/sh\necho \"$*\" >> '{}'\necho sha256:{}\n", gh_log.display(), "a".repeat(64)));
     let path = format!("{}:{}", dir.join("bin").display(), std::env::var("PATH").unwrap_or_default());
     FastlaneRepo { dir, gh_log, path, _held: held }
 }

@@ -1,0 +1,4 @@
+# One machine, converging at once (the vocabulary is in ../basic/converger.yaml).
+machines:
+  zagros-dev:
+    core-a: converge-now

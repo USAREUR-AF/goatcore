@@ -6,6 +6,9 @@
 
 #![allow(dead_code)]
 
+#[path = "../../src/test_support.rs"]
+pub mod test_support;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -26,9 +29,9 @@ pub fn write(p: &Path, text: &str) {
 }
 
 pub fn exe(p: &Path, text: &str) {
-    write(p, text);
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Written in a child process, so no fork of another test thread inherits
+    // a descriptor open for writing (ETXTBSY when the script is run).
+    test_support::executable(p, text);
 }
 
 pub fn sha256_hex(b: &[u8]) -> String {
@@ -264,6 +267,11 @@ impl World {
             .env("FED_MEASURE", "here")
             .env("GOAT_PROFILE_DIR", &self.profile)
             .env("GOAT_NO_FUN", "1")
+            // On macOS a long-running verb starts `caffeinate -i -w <pid>` (src/awake.rs),
+            // one per goatbuilder process, so each segment of a run would start its own.
+            // It is no command of the plan, and it starts on macOS only; the C11 tests
+            // read every process a run starts, so every OS must start the same ones.
+            .env("GOAT_NO_CAFFEINATE", "1")
             .env("FED_WORK", &self.work)
             .env("FED_NO_DIRECTORY", "1")
             .env("FED_COUNTERPARTY_ID", "xab")

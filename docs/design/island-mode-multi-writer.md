@@ -1,6 +1,6 @@
 # Island mode, every site writes: portal, console, NetBird and Kratos on Spock
 
-**Status:** Designed, not built. Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md) (Proposed 2026-10-29). Execution and resume point: `island-mode-program.md`. Builds on ADR 1193 (revocations are absorbing; Proposed, PR #1538 open). Measured against `USAREUR-AF/goatcore` main `2aa281381`, 2026-10-28.
+**Status:** Step A (§5) built: the portal and console run on Postgres, in no Spock replication set. The partition harness (§6) is built for NetBird, Kratos and Hydra; its portal and console scenarios are listed in `scenarios/pending.tsv`. Step B (§5), the per-class turn-on (gate G3) and the drills (gate G4) are designed, not built. Until a write class passes gate G3, the admin surfaces run at one site per goatnet ([ADR 1084](../adr/1084-block-64r-mgmt-repset-and-two-node-federation.md) D3); the intended placement is every site. Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md) (Proposed 2026-10-29). Execution and resume point: `island-mode-program.md`. Builds on ADR 1193 (revocations are absorbing; Proposed). §2 is the measurement before step A, against `USAREUR-AF/goatcore` main `2aa281381`, 2026-10-28.
 
 Any site of a goatnet that is cut off from the others must keep working fully —
 admitting people, enrolling machines, changing and revoking access — and merge cleanly
@@ -213,6 +213,8 @@ twice.
 
 ## 8. Gates
 
+Gates G2 to G4 are rows of the goatbuilder 1.0 gate, group I ([goatbuilder-v1-gate.md](goatbuilder-v1-gate.md)): 1.0 is not tagged until the partition drill has passed on two standing two-site goatnets.
+
 | Gate | Evidence |
 |---|---|
 | G0 preconditions | ADR 1193 / PR #1538 merged and rolled out; F-581 guards live on all goatnets; prod standby replicating (#1953); harness green on main |
@@ -223,6 +225,7 @@ twice.
 
 ## Related
 
+- [`island-mode-preminted-certificates.md`](island-mode-preminted-certificates.md) — a pre-minted certificate batch for a site that holds no signing key, such as a phone (designed, not built)
 - [`island-mode-write-inventory.md`](island-mode-write-inventory.md) — every write path of the four stores with its class and harness scenario, and the corrections to this doc (program step 5)
 - [`portal-console-multisite-readiness.md`](portal-console-multisite-readiness.md) — the 2026-09-06 review §2.1 replaces
 - [`hub-spoke-admit-split.md`](hub-spoke-admit-split.md) §2 — the write taxonomy class 3 adopts

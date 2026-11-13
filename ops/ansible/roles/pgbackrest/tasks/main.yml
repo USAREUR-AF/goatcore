@@ -555,6 +555,12 @@
 # /etc/cron.d where operators expect to find it, and sidecar restarts
 # don't lose the schedule.
 
+- name: cron is installed (the schedules below are crontab entries; a minimal image has no cron)
+  ansible.builtin.apt:
+    name: cron
+    state: present
+    cache_valid_time: 3600
+
 - name: Cron job — weekly full backup
   ansible.builtin.cron:
     name: "pgbackrest {{ pgbackrest_stanza }} full"

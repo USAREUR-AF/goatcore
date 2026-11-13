@@ -1,0 +1,245 @@
+{
+  "schema": "goatbuilder.survey/v1",
+  "generated_at": "2026-11-12T18:03:54Z",
+  "budget_secs": 90,
+  "elapsed_secs": 0.0,
+  "order": [
+    "dev",
+    "prod"
+  ],
+  "summary": {
+    "goatnets": 2,
+    "components": 2,
+    "drift": 5,
+    "unknown": 1,
+    "declared_in_flight": 1,
+    "prod_differs_from_dev": 2,
+    "prod_running_off_declared": 1
+  },
+  "findings": [
+    {
+      "scope": "intra",
+      "kind": "undeclared-drift",
+      "severity": "drift",
+      "goatnet": "dev",
+      "component": "router",
+      "detail": "dev-b runs router:v3.0.0@sha256:444444444444; main declares router:v3.1.0@sha256:333333333333",
+      "fix": "goatbuilder deploy --component router --env dev   (or declare what runs: goatbuilder adopt --env dev)"
+    },
+    {
+      "scope": "intra",
+      "kind": "hosts-disagree",
+      "severity": "drift",
+      "goatnet": "dev",
+      "component": "router",
+      "detail": "hosts disagree: router:v3.1.0@sha256:333333333333 on dev-a; router:v3.0.0@sha256:444444444444 on dev-b",
+      "fix": "goatbuilder deploy --component router --env dev"
+    },
+    {
+      "scope": "intra",
+      "kind": "undeclared-drift",
+      "severity": "drift",
+      "goatnet": "prod",
+      "component": "portal",
+      "detail": "prod-b runs portal:v1.8.0@sha256:000000000000; main declares portal:v1.9.0@sha256:111111111111",
+      "fix": "goatbuilder deploy --component portal --env prod   (or declare what runs: goatbuilder adopt --env prod)"
+    },
+    {
+      "scope": "intra",
+      "kind": "unknown",
+      "severity": "unknown",
+      "goatnet": "prod",
+      "detail": "prod-c could not be read: 2 component(s) unverified (portal, router)",
+      "fix": "goatbuilder doctor --env prod   (the transport reached no such host)"
+    },
+    {
+      "scope": "intra",
+      "kind": "hosts-disagree",
+      "severity": "drift",
+      "goatnet": "prod",
+      "component": "portal",
+      "detail": "hosts disagree: portal:v1.8.0@sha256:000000000000 on prod-b; portal:v1.9.0@sha256:111111111111 on prod-a",
+      "fix": "goatbuilder deploy --component portal --env prod"
+    },
+    {
+      "scope": "inter",
+      "kind": "prod-differs",
+      "severity": "declared",
+      "component": "portal",
+      "detail": "prod declares portal:v1.9.0@sha256:111111111111, dev declares portal:v2.0.0@sha256:222222222222 — release in progress",
+      "fix": "goatbuilder promote review   (portal moves when its record graduates)"
+    },
+    {
+      "scope": "inter",
+      "kind": "undeclared-skew",
+      "severity": "drift",
+      "component": "router",
+      "detail": "dev declares router:v3.1.0@sha256:333333333333, prod declares router:v3.0.0@sha256:444444444444; no open ladder record covers the difference",
+      "fix": "goatbuilder promote status   (open a candidate for router, or fold the value)"
+    }
+  ],
+  "matrix": [
+    {
+      "component": "portal",
+      "ladder_grade": "candidate",
+      "cells": {
+        "dev": {
+          "declared": "portal:v2.0.0@sha256:222222222222",
+          "state": "same",
+          "hosts": 2,
+          "read": 2
+        },
+        "prod": {
+          "declared": "portal:v1.9.0@sha256:111111111111",
+          "state": "mixed",
+          "hosts": 3,
+          "read": 2
+        }
+      }
+    },
+    {
+      "component": "router",
+      "ladder_grade": "UNDECLARED-SKEW",
+      "cells": {
+        "dev": {
+          "declared": "router:v3.1.0@sha256:333333333333",
+          "state": "mixed",
+          "hosts": 2,
+          "read": 2
+        },
+        "prod": {
+          "declared": "router:v3.0.0@sha256:444444444444",
+          "state": "partial",
+          "hosts": 3,
+          "read": 2
+        }
+      }
+    }
+  ],
+  "goatnets": [
+    {
+      "goatnet": "dev",
+      "rung": "dev",
+      "transport": "fixture",
+      "error": null,
+      "rows": [
+        {
+          "component": "portal",
+          "group": "dev",
+          "host": "dev-a",
+          "declared": "ghcr.io/example-org/portal:v2.0.0@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "running": "ghcr.io/example-org/portal:v2.0.0@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "state": "same",
+          "row_ts": "2026-10-28T10:00:00Z",
+          "action": "deploy"
+        },
+        {
+          "component": "portal",
+          "group": "dev",
+          "host": "dev-b",
+          "declared": "ghcr.io/example-org/portal:v2.0.0@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "running": "ghcr.io/example-org/portal:v2.0.0@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "state": "same",
+          "row_ts": "2026-10-28T10:00:00Z",
+          "action": "deploy"
+        },
+        {
+          "component": "router",
+          "group": "dev",
+          "host": "dev-a",
+          "declared": "ghcr.io/example-org/router:v3.1.0@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "running": "ghcr.io/example-org/router:v3.1.0@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "state": "same",
+          "row_ts": "2026-10-28T10:00:00Z",
+          "action": "deploy"
+        },
+        {
+          "component": "router",
+          "group": "dev",
+          "host": "dev-b",
+          "declared": "ghcr.io/example-org/router:v3.1.0@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "running": "ghcr.io/example-org/router:v3.0.0@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "state": "drift",
+          "row_ts": "2026-10-28T10:00:00Z",
+          "action": "deploy"
+        }
+      ],
+      "hosts": {},
+      "declared_served": {},
+      "no_play": [],
+      "elapsed_secs": 0.0
+    },
+    {
+      "goatnet": "prod",
+      "rung": "prod",
+      "transport": "fixture",
+      "error": null,
+      "rows": [
+        {
+          "component": "portal",
+          "group": "prod",
+          "host": "prod-a",
+          "declared": "ghcr.io/example-org/portal:v1.9.0@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "running": "ghcr.io/example-org/portal:v1.9.0@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "state": "same",
+          "row_ts": "2026-10-28T10:00:00Z",
+          "action": "deploy"
+        },
+        {
+          "component": "portal",
+          "group": "prod",
+          "host": "prod-b",
+          "declared": "ghcr.io/example-org/portal:v1.9.0@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "running": "ghcr.io/example-org/portal:v1.8.0@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "state": "drift",
+          "row_ts": "2026-10-28T10:00:00Z",
+          "action": "deploy"
+        },
+        {
+          "component": "portal",
+          "group": "prod",
+          "host": "prod-c",
+          "declared": "ghcr.io/example-org/portal:v1.9.0@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "running": "",
+          "state": "unreachable",
+          "row_ts": "",
+          "action": ""
+        },
+        {
+          "component": "router",
+          "group": "prod",
+          "host": "prod-a",
+          "declared": "ghcr.io/example-org/router:v3.0.0@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "running": "ghcr.io/example-org/router:v3.0.0@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "state": "same",
+          "row_ts": "2026-10-28T10:00:00Z",
+          "action": "deploy"
+        },
+        {
+          "component": "router",
+          "group": "prod",
+          "host": "prod-b",
+          "declared": "ghcr.io/example-org/router:v3.0.0@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "running": "ghcr.io/example-org/router:v3.0.0@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "state": "same",
+          "row_ts": "2026-10-28T10:00:00Z",
+          "action": "deploy"
+        },
+        {
+          "component": "router",
+          "group": "prod",
+          "host": "prod-c",
+          "declared": "ghcr.io/example-org/router:v3.0.0@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "running": "",
+          "state": "unreachable",
+          "row_ts": "",
+          "action": ""
+        }
+      ],
+      "hosts": {},
+      "declared_served": {},
+      "no_play": [],
+      "elapsed_secs": 0.0
+    }
+  ]
+}

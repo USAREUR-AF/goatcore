@@ -67,6 +67,7 @@ mod admit_leaf;
 mod admit_role;
 mod confirm;
 pub mod deploy;
+pub mod handoff;
 pub mod site_values;
 pub mod switches;
 pub mod site_hosts;
@@ -182,7 +183,23 @@ fn directory_step() -> Option<(String, Option<String>, Option<String>)> {
     Some((url, Some(pkg).filter(|v| !v.is_empty()), Some(id).filter(|v| !v.is_empty())))
 }
 
-/// Phase 5's label and body, word for word the script's.
+/// Whether phase 5 asks the directory step for one package per counterparty
+/// (`--per-counterparty`; gate row B6, ADR 1225 decision 6). On unless the
+/// operator sets FED_DIRECTORY_PER_COUNTERPARTY: then the command adds no flag
+/// and directory.py reads the variable itself (1, true or yes on; 0, false,
+/// no or empty off; any other word refused, the step doing nothing). Off is
+/// the single slot and pointer, for a directory or partner that has no
+/// per-counterparty slots.
+fn per_counterparty(switch: Option<std::ffi::OsString>) -> bool {
+    switch.is_none()
+}
+
+fn per_counterparty_by_default() -> bool {
+    per_counterparty(std::env::var_os("FED_DIRECTORY_PER_COUNTERPARTY"))
+}
+
+/// Phase 5's label and body: the script's words, and the switch the script
+/// leaves off.
 fn exchange(r: &str, ours: &str, work: &str, counterparty: &str, keyring: &str) -> (&'static str, String) {
     let directory_label = "exchange through the directory; read the key and CA fingerprint aloud";
     let (label, head) = if env_or("FED_NO_DIRECTORY", String::new()) == "1" {
@@ -195,9 +212,15 @@ fn exchange(r: &str, ours: &str, work: &str, counterparty: &str, keyring: &str) 
             Some((url, pkg, id)) => (
                 directory_label,
                 format!(
-                    "Directory step, run before this stop (it grants nothing):\n       python3 '{r}/ops/federation/standup/directory.py' --url '{url}' --ours '{ours}'{} --their-id '{}'\n     It uploads our package (unless FED_PACKAGE_URL names our own host), CA and\n     SPIFFE bundle (when phase 2 wrote one), publishes our pointer, fetches\n     theirs to {counterparty}, {work}/theirs-ca.pem and\n     {work}/theirs.spiffe-bundle, checks digest, signatures and CA\n     fingerprint, and prints both verifying keys and CA fingerprints in groups\n     of four and a compatibility report. Their entry not there yet: run phase 5\n     again after they run theirs.",
+                    "Directory step, run before this stop (it grants nothing):\n       python3 '{r}/ops/federation/standup/directory.py' --url '{url}' --ours '{ours}'{} --their-id '{}'{}\n     It uploads our package (unless FED_PACKAGE_URL names our own host), CA and\n     SPIFFE bundle (when phase 2 wrote one), publishes our pointer, fetches\n     theirs to {counterparty}, {work}/theirs-ca.pem and\n     {work}/theirs.spiffe-bundle, checks digest, signatures and CA\n     fingerprint, and prints both verifying keys and CA fingerprints in groups\n     of four and a compatibility report. Their entry not there yet: run phase 5\n     again after they run theirs.{}",
                     pkg.map(|p| format!(" --package-url '{p}'")).unwrap_or_default(),
-                    id.unwrap_or_else(|| "<unset>".to_string())
+                    id.unwrap_or_else(|| "<unset>".to_string()),
+                    if per_counterparty_by_default() { " --per-counterparty" } else { "" },
+                    if per_counterparty_by_default() {
+                        "\n     One package per counterparty: ours also goes to our slot for them, and\n     theirs is looked up first in their slot for us, so each of our peerings\n     keeps its own package. Until their key is in the keyring, their CA and\n     SPIFFE bundle wait beside it as <file>.unconfirmed: once both keys are\n     recorded, run phase 5 again to place them. A package that reached us only\n     through their pointer is held until it is confirmed on the call.\n     FED_DIRECTORY_PER_COUNTERPARTY=0 is the single slot and pointer alone."
+                    } else {
+                        ""
+                    }
                 ),
             ),
             None if !env_or("FED_DIRECTORY_URL", String::new()).is_empty() => (
@@ -237,6 +260,9 @@ fn directory_args(repo: &Path, work: &str) -> Option<Vec<String>> {
         a.extend(["--their-id".into(), i]);
     }
     a.extend(["--keyring".into(), env_or("FED_KEYRING", format!("{work}/keys.txt")), "--work".into(), work.to_string()]);
+    if per_counterparty_by_default() {
+        a.push("--per-counterparty".into());
+    }
     Some(a)
 }
 
@@ -388,9 +414,32 @@ pub(crate) fn our_id(work: &str) -> Option<String> {
     })
 }
 
+/// What federate's phase `n` is for, in a person's words: the plan page's step
+/// column and the runner's frame read it.
+fn purpose(n: u32) -> &'static str {
+    match n {
+        1 => "Check this site is ready to peer",
+        2 => "Make the link interface and export our trust bundle",
+        3 => "Build our half of the agreement from the running system",
+        4 => "Check our half is valid",
+        5 => "Swap halves through the directory, and read their key back",
+        6 => "Combine both halves into one agreement",
+        7 => "Check the agreement from our side",
+        8 => "Create the certificates for this peering",
+        9 => "Write the access rules and settings",
+        10 => "Review what was written, and let the router onto our core",
+        11 => "Open the connection the agreement chooses",
+        12 => "Deploy the edge router, and the republisher on our core",
+        13 => "Trust the other party's identity service",
+        14 => "Test that allowed traffic passes and the rest is refused",
+        _ => "",
+    }
+}
+
 /// How a dry run reads to a person, the way kubeadm prints its phases: a
-/// header, one aligned table of phases, then each phase's command wrapped to
-/// the page, with this checkout's path and the home folder shortened.
+/// header, one aligned table of phases with this checkout's path and the home
+/// folder shortened, then each phase's command verbatim and unwrapped, so a
+/// line pastes as the command it runs.
 fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[Phase]) -> String {
     let home = runenv::var("HOME").unwrap_or_default();
     // The resolved path: with `-C ../..` the literal "../../" must not be
@@ -427,23 +476,7 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             let chose = ph.label.split("no play for '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("?");
             return format!("Open the connection: refused, the agreement chose '{chose}'");
         }
-        let plain = match ph.n {
-            1 => "Check this site is ready to peer",
-            2 => "Make the link interface and export our trust bundle",
-            3 => "Build our half of the agreement from the running system",
-            4 => "Check our half is valid",
-            5 => "Swap halves through the directory, and read their key back",
-            6 => "Combine both halves into one agreement",
-            7 => "Check the agreement from our side",
-            8 => "Create the certificates for this peering",
-            9 => "Write the access rules and settings",
-            10 => "Review what was written, and let the router onto our core",
-            11 => "Open the connection the agreement chooses",
-            12 => "Deploy the edge router, and the republisher on our core",
-            13 => "Trust the other party's identity service",
-            14 => "Test that allowed traffic passes and the rest is refused",
-            _ => "",
-        };
+        let plain = purpose(ph.n);
         if !plain.is_empty() {
             return plain.to_string();
         }
@@ -460,6 +493,16 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
     s.push_str("PHASE  TYPE     STEP\n");
     for ph in &shown {
         s.push_str(&format!("{:<6} {:<8} {}\n", ph.n, kind(ph.kind), step(ph)));
+    }
+    // Each phase's command as the run executes it, verbatim and unwrapped, so a
+    // line can be pasted to run that phase by hand (docs/design/goatbuilder-legibility.md,
+    // step 3). A manual phase is spelled out below instead.
+    let runs: Vec<&&Phase> = shown.iter().filter(|p| p.kind != "MANUAL").collect();
+    if !runs.is_empty() {
+        s.push_str(&format!("\n{}\n", bold("What each phase runs:")));
+        for ph in runs {
+            s.push_str(&format!("\n{}  {}\n    {}\n", ph.n, step(ph), ph.cmd));
+        }
     }
     if let Some(ph) = shown.iter().find(|p| p.kind == "MANUAL") {
         let found = |re: &str| regex::Regex::new(re).ok().and_then(|r| r.captures(&ph.cmd).map(|m| short(&m[1])));
@@ -503,7 +546,7 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             s.push_str(&format!("  {id:<15} {what}\n"));
         }
     }
-    s.push_str(&format!("\n{} add -o json to see every phase's command, or read\ndocs/operations/sovereign-federation-runbook.md.\n", bold("To see more:")));
+    s.push_str(&format!("\n{} -o json lists every row of the plan, and\ndocs/operations/sovereign-federation-runbook.md says what each phase proves.\n", bold("To see more:")));
     match shown.iter().find(|p| p.n == 11) {
         Some(_) if !agreement_known => {
             s.push_str("Phase 11 depends on what phase 6 agrees: wireguard and ipsec-fips each have\na play. Any other choice stops the run there.\n");
@@ -546,6 +589,36 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
     federate_with(repo, o, &mut Surface::default())
 }
 
+/// The configuration file a run reads: `--mock <dir>`'s flat
+/// `<dir>/goatbuilder.yaml`, else the repository's own.
+fn config_path(repo: &Path, o: &Options) -> std::path::PathBuf {
+    match o.mock {
+        Some(m) => m.join("goatbuilder.yaml"),
+        None => repo.join("ops/goatbuilder/goatbuilder.yaml"),
+    }
+}
+
+/// GB-267 for a two-driver peering whose run (`runs(n)`) would reach a phase
+/// after 2 that needs the edge (federate/handoff.rs). A peering that is not
+/// declared is left to C1.
+fn refuse_two_drivers(cfg: &config::Config, o: &Options, runs: impl Fn(u32) -> bool) -> Result<()> {
+    let two = cfg
+        .peerings
+        .iter()
+        .find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true))
+        .is_some_and(|p| handoff::two(p.drivers.as_deref()));
+    match two.then(|| handoff::refused_before_running(runs)).flatten() {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// The same refusal for a stage that acts before its run starts (deploy
+/// approves its plan first), over the phases it will run.
+pub(crate) fn refuse_two_drivers_before(repo: &Path, o: &Options, runs: impl Fn(u32) -> bool) -> Result<()> {
+    refuse_two_drivers(&config::load(&config_path(repo, o))?, o, runs)
+}
+
 /// A run with what the caller asked for beyond the phases (run.rs). A real
 /// run holds the peering's lock and is recorded in `<work>/state.json`.
 pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report> {
@@ -561,10 +634,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     }
     // `--mock <dir>` reads the flat `<dir>/goatbuilder.yaml`, the same fixture
     // shape standup opens; without it, the repository's own config.
-    let cfg_path = match o.mock {
-        Some(m) => m.join("goatbuilder.yaml"),
-        None => repo.join("ops/goatbuilder/goatbuilder.yaml"),
-    };
+    let cfg_path = config_path(repo, o);
     let cfg = config::load(&cfg_path)?;
     measure::check_driver_measure()?;
     if let Some(env) = o.env {
@@ -579,6 +649,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         let declared = cfg.peerings.iter().map(|p| format!("{} on {}", p.with, p.environment)).collect::<Vec<_>>().join(", ");
         return Err(anyhow!("peering '{}' is not declared in {} peerings: (declared: {}) — declare it first (C1)", o.with, cfg_path.display(), if declared.is_empty() { "none" } else { &declared }));
     }
+    // Two drivers: a run that would reach a phase after 2 needing the edge is
+    // refused here, before a deploy's lock, live recheck or admission acts.
+    refuse_two_drivers(&cfg, o, |n| s.runs(n, o.from, o.to))?;
     // THE PROFILE DIRECTORY, resolved once for this run, so preflight and every
     // `goat` call below agree (a run under sudo reads the invoking user's HOME).
     // Kept in the run's environment (runenv), never the process's.
@@ -624,6 +697,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     let peering = cfg.peerings.iter().find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true)).expect("C1 found it");
     // With what goatbuilder.yaml itself declares for the run merged in (federate/declared.rs).
     let inputs = preflight::derive_inputs(repo, &cfg, peering, &work, &edge_group, None);
+    // `drivers: two`: an edge driver and a controller (federate/handoff.rs).
+    let two_drivers = handoff::two(peering.drivers.as_deref());
+    let mut handed: Option<serde_json::Value> = None;
     if executes {
         preflight::export(&inputs);
         // Phase 14 reads our core and edge declarations by group
@@ -675,6 +751,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         if o.dry_run {
             continue;
         }
+        // The commands that follow are this phase's: the runner frames and
+        // records them under it (crates/goatbuilder/src/runner.rs).
+        crate::runner::phase(&ph.n.to_string(), &ph.label, purpose(ph.n));
         // A mock has no hosts. Recording the phase is the whole of what it does.
         if !executes {
             checks.push(row("mock", format!("phase {} recorded against the fixture; not executed", ph.n)));
@@ -689,6 +768,40 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 exit = EXIT_REFUSED;
                 break;
             }
+        }
+        // Two drivers: a phase that needs the edge stops here, before acting,
+        // and hands it to the edge driver (docs/design/federation-two-drivers.md).
+        if two_drivers && matches!(handoff::side_of(ph.n), handoff::Side::Edge | handoff::Side::Both) {
+            if !handoff::hands_off(ph.n) {
+                let refusal = handoff::later_phase_not_built(ph.n);
+                let d = refusal.detail.clone();
+                checks.push(refusal);
+                if let Some(r) = run.as_mut() {
+                    r.end(ph, state::Outcome::Failed, &d);
+                }
+                exit = EXIT_REFUSED;
+                break;
+            }
+            match handoff::clean_commit(repo) {
+                Ok(commit) => {
+                    let stop = handoff::stop(o.with, ph.n, &commit);
+                    checks.extend(stop.rows);
+                    handed = Some(stop.object);
+                    if let Some(r) = run.as_mut() {
+                        r.end(ph, state::Outcome::Stopped, &format!("{}: waiting on the edge driver", handoff::WAITING));
+                    }
+                    stopped = true;
+                }
+                Err(refusal) => {
+                    let d = refusal.detail.clone();
+                    checks.push(refusal);
+                    if let Some(r) = run.as_mut() {
+                        r.end(ph, state::Outcome::Failed, &d);
+                    }
+                    exit = EXIT_REFUSED;
+                }
+            }
+            break;
         }
         if ph.kind == "MANUAL" {
             // The directory step, inside phase 5 before the stop. It is
@@ -816,6 +929,18 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 Some(again) => format!("fix the cause, then run the stage again (its checks and plays all run again): {again}"),
                 None => format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n),
             }) });
+            // F5: the failed phase's output, matched against the error catalog
+            // (explain_phase::failed_phase); the runner kept it in a log.
+            let phase_id = ph.n.to_string();
+            let log = crate::runner::commands()
+                .into_iter()
+                .rev()
+                .find(|c| c.phase.as_deref() == Some(phase_id.as_str()) && c.log.is_some())
+                .and_then(|c| c.log);
+            let output = log.as_deref().and_then(|l| std::fs::read_to_string(l).ok()).unwrap_or_default();
+            if let Some(f) = crate::explain_phase::failed_phase("federate", ph.n, &output, log.as_deref()) {
+                checks.push(Check { name: "interpreted".into(), ok: false, detail: f.detail(), fix: Some(f.fix.clone()) });
+            }
             if let Some(r) = run.as_mut() {
                 r.end(ph, state::Outcome::Failed, &format!("GB-183: phase {} failed with exit {rc}", ph.n));
             }
@@ -856,12 +981,13 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     }
     if o.dry_run {
         checks.extend(preflight::plan_rows(&inputs));
-        checks.push(row("footer", "PLAN ONLY — nothing above executed. Phases 5 and 10 are MANUAL and stop the run; resume with --from 6 and --from 11. Acceptance criteria for every phase: docs/operations/sovereign-federation-runbook.md. The shape and why: docs/design/staged-delivery-pattern.md".into()));
+        checks.push(row("footer", "PLAN ONLY — nothing above executed. Phases 5 and 10 are MANUAL and stop the run; resume with --from 6 and --from 11. Acceptance criteria for every phase: docs/operations/sovereign-federation-runbook.md. The shape and why: https://github.com/usareur-af/goatdocs/blob/main/docs/design/staged-delivery-pattern.md".into()));
     }
     let mut r = Report::new("federate", checks, EXIT_REFUSED);
     r.exit = exit;
     r.ok = exit == EXIT_OK;
     r.printed = printed;
+    r.handoff = handed;
     Ok(r)
 }
 
@@ -871,22 +997,46 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
 /// 0, a verb's own 20 to 24, 2 for a refused command line, a coded refusal's
 /// catalog code (GB-100: 2), 101 for a panic, or 1 for any other fault, which
 /// is printed.
+/// The names the federation library reads from the process environment itself
+/// (goat-federation's derive.rs, during an in-process `init`); every other value
+/// an in-process verb reads, it reads through [`runenv`].
+const READ_FROM_THE_PROCESS_BY_THE_LIBRARY: [&str; 2] = ["DOCKER_HOST", "FED_ROUTER_CONTAINER"];
+
+/// Of a verb's values, the ones that go into the process environment for its
+/// duration: only those the library reads from the process itself.
+fn for_the_process(all: &[(String, String)]) -> Vec<&(String, String)> {
+    all.iter().filter(|(k, _)| READ_FROM_THE_PROCESS_BY_THE_LIBRARY.contains(&k.as_str())).collect()
+}
+
 fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -> i32 {
-    // The verb runs in this process and reads the process environment, so the
-    // run's own values (runenv) and the verb's are put there for its duration
-    // and restored after. set_var and set_current_dir change process-global
-    // state: this is the one place federate does, for a real run's in-process
-    // verb, one at a time. A driver that runs verbs concurrently must pass the
-    // environment and directory to the verb instead.
-    let env: Vec<(String, String)> = runenv::pairs().into_iter().chain(env.iter().cloned()).collect();
-    let saved: Vec<(String, Option<std::ffi::OsString>)> = env.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
-    for (k, v) in &env {
+    // The verb runs in this process. goatbuilder's verbs read their values
+    // through runenv, which is this thread's, so the verb's own values go there
+    // for its duration and are put back after. Only the few names the library
+    // reads from the process environment itself are put there, and restored:
+    // set_var changes process-global state, so this stays the one place it
+    // happens, for a real run's in-process verb, one at a time. So does
+    // set_current_dir. A driver that runs verbs concurrently must pass both to
+    // the verb instead.
+    let all: Vec<(String, String)> = runenv::pairs().into_iter().chain(env.iter().cloned()).collect();
+    let to_process = for_the_process(&all);
+    let saved: Vec<(String, Option<std::ffi::OsString>)> = to_process.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
+    for (k, v) in &to_process {
         std::env::set_var(k, v);
+    }
+    let saved_run: Vec<(String, Option<String>)> = env.iter().map(|(k, _)| (k.clone(), runenv::recorded(k))).collect();
+    for (k, v) in env {
+        runenv::set(k, v.clone());
     }
     let here = std::env::current_dir().ok();
     let rc = guarded(|| std::env::set_current_dir(dir).map_err(anyhow::Error::from).and_then(|_| verbs::run_argv(words)));
     if let Some(h) = here {
         let _ = std::env::set_current_dir(h);
+    }
+    for (k, v) in saved_run {
+        match v {
+            Some(v) => runenv::set(&k, v),
+            None => runenv::unset(&k),
+        }
     }
     for (k, v) in saved {
         match v {
@@ -926,6 +1076,14 @@ fn is_root() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_package_per_counterparty_is_the_default_and_a_set_variable_is_the_directory_steps() {
+        assert!(per_counterparty(None));
+        for v in ["0", "", "no", "1", "yes", "on"] {
+            assert!(!per_counterparty(Some(v.into())), "{v:?}");
+        }
+    }
 
     fn repo() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -1012,6 +1170,90 @@ mod tests {
         assert!(s4.again.is_none() && !s4.rotate_leaves);
     }
 
+    /// Conformance check (d), for federate: every phase the plan can hold, for
+    /// each transport an agreement may select (or none), has its entry in the
+    /// phase catalog (ops/phases/catalog.yaml), with every field `explain`
+    /// answers from.
+    #[test]
+    fn every_federate_phase_has_a_phase_catalog_entry() {
+        for transport in [None, Some("wireguard"), Some("ipsec-fips"), Some("quic")] {
+            let work = tempfile::tempdir().unwrap();
+            if let Some(t) = transport {
+                std::fs::write(work.path().join("agreement.json"), format!(r#"{{"transport":{{"kind":"{t}"}}}}"#)).unwrap();
+            }
+            let work_s = work.path().display().to_string();
+            let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+            let phases = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
+            assert_eq!(phases.len(), 14, "{transport:?}");
+            for ph in &phases {
+                let e = goat_errors::phases::explain_phase("federate", &ph.n.to_string())
+                    .unwrap_or_else(|| panic!("federate phase {} ({}) has no phase-catalog entry", ph.n, ph.label));
+                assert!(!e.what.is_empty() && !e.why.is_empty() && !e.by_hand.is_empty(), "federate phase {}", ph.n);
+            }
+        }
+    }
+
+    /// The catalog's `by_hand` is the command the plan runs: for every phase
+    /// the plan runs a command for (not the MANUAL stops, whose `by_hand` is
+    /// what the person does), the entry's `by_hand` with its placeholders
+    /// filled from the plan's own values, `[...]` an optional part, equals the
+    /// phase's command once the repository prefix and the quoting are taken
+    /// out. Someone who copies it reaches the hosts and credentials the tool
+    /// would.
+    #[test]
+    fn the_catalog_by_hand_is_the_command_the_plan_runs() {
+        let work = tempfile::tempdir().unwrap();
+        std::fs::write(work.path().join("agreement.json"), r#"{"transport":{"kind":"wireguard"}}"#).unwrap();
+        std::fs::write(work.path().join("keys.txt"), "xaa=QUJD\nvelmara=QUJE\n").unwrap();
+        let work_s = work.path().display().to_string();
+        let o = Options { with: "velmara", env: None, r#as: Some("xaa"), edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        // The checkout as it is, and one whose peering has its own inventory
+        // file (allocate renders inventory/peering-<edge-group>.ini), which the
+        // plays then read beside the hand-written one.
+        let own = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(own.path().join("ops/ansible/inventory")).unwrap();
+        std::fs::write(own.path().join("ops/ansible/inventory/peering-velmara_edge.ini"), "").unwrap();
+        for r in [repo(), own.path().to_path_buf()] {
+        let phases = plan(&r, &o, &work_s, "velmara_edge", "resume");
+        let root = format!("{}/", r.display());
+        let norm = |s: &str| -> String {
+            s.replace(&root, "").replace('\'', "").split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        let fill = |s: &str| -> String {
+            s.replace("<work>", &work_s)
+                .replace("<peering>", "velmara")
+                .replace("<edge-group>", "velmara_edge")
+                .replace("<core-group>", "velmara_core")
+                .replace("<counterparty-file>", &format!("{work_s}/theirs.canonical.json"))
+                .replace("<us>", "xaa")
+                .replace("<profile>", &crate::settings::aws_profile(&r))
+                .replace("<repository>", &r.display().to_string())
+                .replace("<keys>", "--key xaa=QUJD --key velmara=QUJE")
+                .replace("<declaration>", "")
+                .replace("<router>", "")
+        };
+        // `[...]` is optional: every combination of each part kept or left out.
+        fn readings(s: &str) -> Vec<String> {
+            let Some(i) = s.find('[') else { return vec![s.to_string()] };
+            let Some(j) = s[i..].find(']').map(|j| i + j) else { return vec![s.to_string()] };
+            let (head, part, tail) = (&s[..i], &s[i + 1..j], &s[j + 1..]);
+            readings(tail)
+                .into_iter()
+                .flat_map(|t| [format!("{head}{part}{t}"), format!("{head}{t}")])
+                .collect()
+        }
+        let mut wrong = Vec::new();
+        for ph in phases.iter().filter(|p| p.kind != "MANUAL") {
+            let e = goat_errors::phases::explain_phase("federate", &ph.n.to_string()).unwrap();
+            let want = norm(&ph.cmd);
+            if !readings(&fill(&e.by_hand)).iter().any(|b| norm(b) == want) {
+                wrong.push(format!("phase {}:\n    by_hand: {}\n    the plan: {want}", ph.n, norm(&fill(&e.by_hand))));
+            }
+        }
+        assert!(wrong.is_empty(), "by_hand is not the command the plan runs ({}):\n  {}", r.display(), wrong.join("\n  "));
+        }
+    }
+
     /// A dry run reads as a plan: one aligned phase table, then the commands;
     /// no `=== Phase ===` banners, no em dashes, no `a/b/../../c` paths, and
     /// phase 11 says it waits on the agreement rather than "REFUSED".
@@ -1048,7 +1290,15 @@ mod tests {
         let work_s = work.path().display().to_string();
         let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: true };
         let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
-        let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases);
+        let full = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases);
+        // The commands, verbatim: each phase that runs one, by its number.
+        let (head, rest) = full.split_once("What each phase runs:\n").expect("the commands section");
+        let (cmds, tail) = rest.split_once("\nWhat a real run would leave").map(|(c, t)| (c, format!("\nWhat a real run would leave{t}"))).unwrap_or((rest, String::new()));
+        for ph in phases.iter().filter(|p| p.kind != "MANUAL") {
+            assert!(cmds.contains(&format!("\n    {}\n", ph.cmd)), "phase {}'s command, verbatim:\n{cmds}", ph.n);
+        }
+        // The prose around them reads as before.
+        let view = format!("{head}{tail}");
         assert!(view.contains("PHASE  TYPE     STEP"), "{view}");
         assert!(!view.contains("==="), "{view}");
         assert!(!view.contains('\u{2014}'), "{view}");
@@ -1168,6 +1418,28 @@ mod tests {
         assert_eq!(guarded(|| Err(anyhow!("a fault"))), 1);
     }
 
+    /// Each of federate's fourteen phases has a purpose, for the runner's frame.
+    #[test]
+    fn every_phase_has_a_purpose_for_the_frame() {
+        for n in 1..=14 {
+            assert!(!purpose(n).is_empty(), "phase {n}");
+        }
+        assert!(purpose(15).is_empty());
+    }
+
+    /// Of a verb's values, DOCKER_HOST and FED_ROUTER_CONTAINER reach the process
+    /// environment during an in-process verb, and nothing else does.
+    #[test]
+    fn only_the_two_names_the_library_reads_go_to_the_process() {
+        let all: Vec<(String, String)> = ["DOCKER_HOST", "FED_ROUTER_CONTAINER", "FED_WORK", "FED_KEYRING", "GOAT_PROFILE_DIR", "FED_ROUTER_DOCKER_HOST"]
+            .iter()
+            .map(|k| (k.to_string(), "v".to_string()))
+            .collect();
+        let names: Vec<&str> = for_the_process(&all).iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(names, ["DOCKER_HOST", "FED_ROUTER_CONTAINER"]);
+        assert!(for_the_process(&[("FED_WORK".into(), "v".into())]).is_empty());
+    }
+
     /// An in-process verb returns the verb's own exit code (21 for a malformed
     /// package), and the environment it set is put back afterwards.
     #[test]
@@ -1179,10 +1451,12 @@ mod tests {
         let good = v.join("compose-full/package-xaa.canonical.json").display().to_string();
         let bad = v.join("malformed/no-signature.json").display().to_string();
         assert_eq!(run_verb_in_process(&here, &[], &["lint".into(), good]), 0);
+        // The verb's own value is the run's, for the verb's duration: never the
+        // process environment's, and gone afterwards.
         let key = "GOATBUILDER_TEST_VERB_ENV";
-        std::env::remove_var(key);
         assert_eq!(run_verb_in_process(&here, &[(key.into(), "x".into())], &["lint".into(), bad]), 21);
         assert!(runenv::var_os(key).is_none(), "the verb's environment leaked");
+        assert!(std::env::var_os(key).is_none(), "the verb's environment reached the process");
         assert_eq!(run_verb_in_process(&here, &[], &["lint".into(), "/no/such/package".into()]), 1, "a fault exits 1, as in goat");
         // A relative path is relative to the directory the verb runs in (the
         // repository, in the driver), as it is for a shell phase.
@@ -1303,12 +1577,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let sentinel = root.join("ran");
         let stub = root.join("goat-stub");
-        std::fs::write(&stub, format!("#!/bin/sh\ntouch '{}'\n", sentinel.display())).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::test_support::executable(&stub, &format!("#!/bin/sh\ntouch '{}'\n", sentinel.display()));
         runenv::set("GOAT_BIN", stub.display().to_string());
         let work = root.join("work");
         let work_s = work.display().to_string();

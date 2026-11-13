@@ -11,7 +11,7 @@
 #
 # Same shape as ops/scripts/goat-standup.sh on purpose: numbered phases, a kind
 # per phase, --plan and --from/--to for controlled resumption. Someone who has run one
-# has effectively run the other. See docs/design/staged-delivery-pattern.md.
+# has effectively run the other. See https://github.com/usareur-af/goatdocs/blob/main/docs/design/staged-delivery-pattern.md.
 #
 # Usage:
 #   ops/scripts/peering-standup.sh <peering-name> [--plan] [--from N] [--to N]
@@ -483,6 +483,6 @@ if [ "$PLAN" = 1 ]; then
   PLAN ONLY — nothing above executed.
   Phases 5 and 10 are MANUAL and stop the run; resume with --from 6 and --from 11.
   Acceptance criteria for every phase: docs/operations/sovereign-federation-runbook.md
-  The shape and why: docs/design/staged-delivery-pattern.md
+  The shape and why: https://github.com/usareur-af/goatdocs/blob/main/docs/design/staged-delivery-pattern.md
 PLANEND
 fi

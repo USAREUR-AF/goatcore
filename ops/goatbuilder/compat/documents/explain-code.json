@@ -1,0 +1,18 @@
+{
+  "code": "GB-008",
+  "tool": "goatbuilder",
+  "title": "a mutation needs --yes when there is no terminal",
+  "what": "deploy, release, rollback and fastlane change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10).",
+  "causes": [
+    "run from a script, CI or a pipe"
+  ],
+  "fixes": [
+    "add --yes",
+    "add --dry-run to see the plan without changing anything"
+  ],
+  "read": "docs/design/goatbuilder.md",
+  "exit": 2,
+  "matches": [
+    "pass --yes without a terminal"
+  ]
+}

@@ -19,6 +19,7 @@ mod converger;
 mod docs;
 mod doctor;
 mod endstate;
+mod explain_phase;
 mod fastlane;
 mod federate;
 mod fresh;
@@ -40,6 +41,8 @@ mod secrets;
 mod settings;
 mod standup;
 mod survey;
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod testdir;
 mod trace;
@@ -458,6 +461,8 @@ pub enum Cmd {
         site: Box<federate::verbs::SiteArgs>,
         #[command(flatten)]
         measure: Box<federate::measure::MeasureArgs>,
+        #[command(flatten)]
+        edge_run: Box<federate::handoff::EdgeRunArgs>,
         /// The peering name (the counterparty, as declared), or a stage run
         /// alone: `status [<partner>]`, `deploy <partner>`, `test <partner>`,
         /// `allocate [<peering>]`.
@@ -894,6 +899,10 @@ pub struct Report {
     pub ok: bool,
     pub exit: i32,
     pub checks: Vec<Check>,
+    /// A federate run that stopped to hand a phase to the other driver: the
+    /// hand-off object (docs/design/federation-two-drivers.md).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<serde_json::Value>,
     /// The verb already printed its own human view (a federate dry run's plan
     /// table), so the rows are not printed again as a table. They still go to
     /// -o json and to the tutor's log.
@@ -910,6 +919,7 @@ impl Report {
             ok,
             exit: if ok { EXIT_OK } else { exit_when_refused },
             checks,
+            handoff: None,
             printed: false,
         }
     }
@@ -954,6 +964,11 @@ fn explanation_for_stdout(text: &str) -> String {
 }
 
 fn explain(input: &[String], report: bool, list: bool, format: OutputFormat) -> i32 {
+    if !list {
+        if let Some(exit) = explain_phase::dispatch(input, report, format) {
+            return exit;
+        }
+    }
     let cat = goat_errors::catalog();
     if list {
         match format {
@@ -1102,10 +1117,16 @@ fn verb_name(cmd: &Cmd) -> &'static str {
     }
 }
 
-/// Whether the verb runs as a dry run (it then begins no run and writes no record).
-fn dry_run(cmd: &Cmd) -> bool {
+/// Whether this run of a long-running verb writes no run record: it changes
+/// nothing, so it begins no run (docs/design/goatbuilder-legibility.md §"Run
+/// record"). That is every dry run, and every mode that only lists, reports or
+/// reads, from hosts or from files. A mode that changes anything, on a host or in
+/// the checkout, writes one.
+fn writes_no_record(cmd: &Cmd) -> bool {
+    use federate::plan::Stage;
     matches!(
         cmd,
+        // Dry runs: each prints the plan and starts none of its phases.
         Cmd::Deploy { dry_run: true, .. }
             | Cmd::Rollback { dry_run: true, .. }
             | Cmd::Release { dry_run: true, .. }
@@ -1114,6 +1135,19 @@ fn dry_run(cmd: &Cmd) -> bool {
             | Cmd::JoinNode { dry_run: true, .. }
             | Cmd::Federate { dry_run: true, .. }
             | Cmd::Teardown { dry_run: true, .. }
+            // Reads only. `deploy --verify-only` reads the ledgers back and runs no play.
+            | Cmd::Deploy { verify_only: true, .. }
+            // `rollback --list` and `--status` read the ledgers and the running refs
+            // and flip nothing, as rollback.sh's do (parity-rollback.sh).
+            | Cmd::Rollback { list: true, .. }
+            | Cmd::Rollback { status: true, .. }
+            // `assay` probes and grades; with --plan it probes nothing. Its rows
+            // go to stdout or to --rows-out.
+            | Cmd::Assay { .. }
+            // `federate plan` and the six federation verbs read packages, hosts or
+            // the plan and write only their own output files; `federate backout`
+            // and the whole peering change hosts and keep their record.
+            | Cmd::Federate { verb: Some(Stage::Plan { .. } | Stage::Verb(_)), .. }
     )
 }
 
@@ -1262,8 +1296,8 @@ fn main() {
     tutor::init(&repo);
     // A verb that drives hosts runs inside a run: every process it starts is framed,
     // logged and recorded under <state>/runs/<id>/ (runner.rs).
-    // A dry run starts none of its phases and leaves no record.
-    if cli.mock.is_none() && long_running(&cli.cmd) && !dry_run(&cli.cmd) {
+    // A run that changes nothing (a dry run, a listing, a read) leaves no record.
+    if cli.mock.is_none() && long_running(&cli.cmd) && !writes_no_record(&cli.cmd) {
         runner::begin(std::path::Path::new(&settings::state_dir_abs(&repo)), run_verb(&cli.cmd), std::env::args().skip(1).collect(), runs::tree_commit(&repo));
     }
     if let Some(owner) = config::owner(&repo) {
@@ -1281,9 +1315,14 @@ fn main() {
         let exit = explain(input, *report, *list, cli.output);
         // The tutor sees an explain run by the codes it named.
         let text = input.join(" ");
-        let codes: Vec<String> = match goat_errors::explain(text.trim()) {
-            Some(e) => vec![e.code.clone()],
-            None => goat_errors::interpret(&text).hits.iter().map(|h| h.code.clone()).collect(),
+        // A phase answer names no error: the tutor logs no codes for it.
+        let codes: Vec<String> = if explain_phase::is_phase_query(input) {
+            Vec::new()
+        } else {
+            match goat_errors::explain(text.trim()) {
+                Some(e) => vec![e.code.clone()],
+                None => goat_errors::interpret(&text).hits.iter().map(|h| h.code.clone()).collect(),
+            }
         };
         let rows = codes.into_iter().map(|c| Check { name: "explain".into(), ok: true, detail: c, fix: None }).collect();
         let mut r = Report::new("explain", rows, exit);
@@ -1510,10 +1549,23 @@ fn main() {
                 federate::plan::run(&repo, stage, cli.mock.as_deref())
             }
         }
-        Cmd::Federate { verb: None, site, measure, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
+        Cmd::Federate { verb: None, site, measure, edge_run, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
-            if with == "status" {
+            // `--side edge` alone on a peering run is the edge driver's run of
+            // a two-driver peering (federate/handoff.rs). `--side` is also init's
+            // phase-3 half (federate/measure.rs): beside another measure flag,
+            // after a verb's name, or on status or allocate, it is a misplaced
+            // init flag or ignored, and gets the message it always got below.
+            let side_edge_alone = measure.side.as_deref() == Some("edge")
+                && federate::measure::MeasureArgs { side: None, ..(**measure).clone() }.is_empty()
+                && !goat_federation::verbs::VERB_NAMES.contains(&with)
+                && !matches!(with, "status" | "allocate");
+            if side_edge_alone {
+                Err(federate::handoff::edge_side_not_built())
+            } else if edge_run.expect_commit.is_some() {
+                Err(goat_errors::coded("GB-189", "--expect-commit belongs to the edge driver's run, `goatbuilder federate <partner> --side edge`").into())
+            } else if with == "status" {
                 let format = match cli.output {
                     OutputFormat::Table => federate::status::Format::Table,
                     OutputFormat::Json => federate::status::Format::Json,

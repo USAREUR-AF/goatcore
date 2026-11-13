@@ -116,7 +116,8 @@ def derive_lite(config: dict, checkout: dict | None = None) -> dict:
 # list is RESERVED_PEERING_NAMES in crates/goatbuilder/src/config.rs; a test there
 # holds this copy equal to it.
 RESERVED_PEERING_NAMES = ("init", "lint", "compose", "diff", "verify", "apply", "help",
-                          "status", "plan", "deploy", "test", "allocate", "backout", "rotate")
+                          "status", "plan", "deploy", "test", "allocate", "backout", "rotate",
+                          "import")
 
 
 def errors_for(config: dict, schema: dict | None = None, checkout: dict | None = None) -> list[str]:

@@ -19,6 +19,9 @@
 #[path = "support/sigstore.rs"]
 mod sigstore;
 
+#[path = "../src/test_support.rs"]
+mod test_support;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -148,7 +151,7 @@ fn copy() -> Copy {
     let dir = tempfile::tempdir().unwrap();
     let exe = dir.path().join("bin/goatbuilder");
     std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_goatbuilder"), &exe).unwrap();
+    test_support::copied_executable(Path::new(env!("CARGO_BIN_EXE_goatbuilder")), &exe);
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(home.join("trusted_root.json"), sigstore().trusted_root()).unwrap();

@@ -8,6 +8,9 @@
 //! A count may only go down: a file over its count fails, a file under it fails until
 //! the line is lowered (or removed at zero), and an unlisted file fails.
 
+#[path = "common/test_home.rs"]
+mod test_home;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -299,4 +302,24 @@ fn the_count_sees_every_way_to_build_a_command() {
 fn the_count_skips_test_modules_and_comments() {
     let text = "fn a() { Command::new(\"x\"); }\n// Command::new(\"y\")\n#[cfg(test)]\nmod tests {\n    fn b() { Command::new(\"z\"); }\n}\nfn c() { std::process::Command::new(\"w\"); }\n";
     assert_eq!(spawns(text), 2);
+}
+
+/// `-v` logs every command, on any verb: the runner traces each one, so a verb
+/// that drives no host shows its commands too (doctor reads git and more).
+#[test]
+fn every_command_is_logged_under_v() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = test_home::isolate(&mut std::process::Command::new(env!(
+        "CARGO_BIN_EXE_goatbuilder"
+    )))
+    .args(["-v", "doctor", "-C"])
+    .arg(&repo)
+    .env("GOAT_MESH_PROBE", "0")
+    .output()
+    .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.lines().any(|l| l.contains("exec: ")),
+        "no command was logged under -v:\n{err}"
+    );
 }

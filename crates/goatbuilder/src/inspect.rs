@@ -9,9 +9,9 @@
 //! `/var/lib/goat/<ledger>/deploy-history.jsonl`. On a fixture (`--mock`) the
 //! scripted converger's records stand in for the hosts.
 
+use crate::runner::Cmd;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::json;
@@ -687,7 +687,7 @@ pub fn history_mock(f: &Fixture, component: &str, env: &str) -> Result<Report> {
 // ---------------------------------------------------------------------------
 
 fn git(repo: &Path, args: &[&str]) -> String {
-    Command::new("git").arg("-C").arg(repo).args(args).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    Cmd::new("git").arg("-C").arg(repo).args(args).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
 }
 
 /// The facts a plan pins: if any of these moves before `apply`, the plan is stale.
@@ -882,7 +882,7 @@ pub fn adopt(repo: &Path, env: &str, yes: bool) -> Result<Report> {
     let base = repo.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "goat".into());
     let wt: PathBuf = repo.join("..").join(format!("{base}-wt-adopt-{stamp}"));
     let branch = format!("chore/adopt-{}-{}", env.replace('_', "-"), stamp.to_lowercase());
-    let st = Command::new("git").arg("-C").arg(repo).args(["worktree", "add", "-q", "-b", &branch]).arg(&wt).arg("origin/main").status()?;
+    let st = Cmd::new("git").arg("-C").arg(repo).args(["worktree", "add", "-q", "-b", &branch]).arg(&wt).arg("origin/main").status()?;
     if !st.success() {
         return Err(goat_errors::coded("GB-054", format!("git worktree add {} failed", wt.display())).into());
     }
@@ -1119,6 +1119,7 @@ mgmt-b | UNREACHABLE! => {}\n";
 #[cfg(test)]
 mod status_agreement_tests {
     use super::*;
+    use std::process::Command;
     use std::collections::BTreeSet;
 
     const PORTAL: &str = "ghcr.io/zagros/portal:v1.3.2@sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01";
@@ -1189,7 +1190,6 @@ sys.exit(rc)
     /// One goatnet, one member group, two components, six machines: one in each
     /// state a reader has to tell apart.
     fn world() -> tempfile::TempDir {
-        use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
         let p = d.path();
         for dir in ["ops/pins", "ops/scripts", "ops/ansible/inventory", "ops/ansible/group_vars/zagros_hosts"] {
@@ -1205,10 +1205,9 @@ sys.exit(rc)
             std::fs::write(p.join(format!("ops/ansible/{c}-deploy.yml")), "- name: deploy\n  hosts: \"{{ target }}\"\n").unwrap();
         }
         std::fs::write(p.join("ops/ansible/inventory/mgmt-hosts.ini"), "[zagros_hosts]\n").unwrap();
-        std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts/served-payloads.py"), p.join("ops/scripts/served-payloads.py")).unwrap();
+        crate::test_support::copied_executable(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts/served-payloads.py"), &p.join("ops/scripts/served-payloads.py"));
         let stub = p.join("ops/scripts/with-aws");
-        std::fs::write(&stub, STUB).unwrap();
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::executable(&stub, STUB);
         let hosts = json!({
             // converged on both components
             "core-a": {"ledgers": {"portal": row(PORTAL, "deploy"), "herd": row(HERD, "deploy")}},

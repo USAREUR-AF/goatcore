@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed.** Nothing in this document is built; the phase-3 halves are in review. It is the product contract goatbuilder 1.0 gate row B10 is proven against |
+| Status | **Designed; the hand-off stop at phases 1 and 2 is built, and the phase-1 hand-off is measured.** The federation test environment's two-driver scenario on 90ecd3d3 (run `90ecd3d39829-20261113T083718-2510969`, harness 159b1674) measured it: both controllers stopped at phase 1 with an object whose commands parse, the follower's controller run passed with its clean-checkout, edge-commit and carry checks, and the edge step was refused with GB-267 as built; 15 checks passed and the 7 that need the edge run failed. The edge driver's run, `import` and the contract's end state are not built, so gate row B10 is not passed. A peering declares two drivers with `drivers: two` ("Which peerings have two drivers"). The controller's run stops at phase 1 or 2 with the hand-off object (GB-265), the two phases where the generic object is the contract's; a checkout with changes is refused (GB-266). A two-driver run that would reach a later phase that needs the edge (3, 11 to 14), whose object differs, is refused before the run acts (GB-267, not built yet); that includes every `federate deploy`, which runs phase 10 then 11. The edge driver's `--side edge` run is refused the same way. Phase 3's two halves are on main at the `init` level; the halves inside the one command, `import` and the rest are not built. It is the product contract goatbuilder 1.0 gate row B10 is proven against |
 | Design | [goatbuilder.md](goatbuilder.md) (the federate sections) · [federation-plan.md](federation-plan.md) · [federation-preflight.md](federation-preflight.md) · [ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) |
 | Audience | whoever builds the two-driver run, writes its scenario, or runs a peering where no one machine reaches both the edge host and the core host |
 
@@ -82,6 +82,40 @@ Two consequences shape the contract:
 - **`status`** reads the journal and the evidence in the working directory of each declared
   peering on the machine it runs on (`federate/status.rs`). It merges nothing from another machine.
 
+## Which peerings have two drivers
+
+A peering opts in on its own `peerings:` entry in the deployment's `goatbuilder.yaml`, read like
+every other peering value, so nothing about a deployment is in the binary:
+
+```yaml
+peerings:
+  - with: xab
+    environment: zagros
+    site: alpha
+    edge_class: edge
+    drivers: two
+```
+
+| Value | Meaning |
+|---|---|
+| `one`, or absent (the default) | one machine reaches both the edge host and the core host and runs every phase, as before |
+| `two` | an edge driver and a controller, as this document describes: the controller stops at each phase that needs the edge |
+
+The schema (`ops/goatbuilder/schema/goatbuilder-v1.schema.json`, `peering.drivers`) allows only
+those two values. `crates/goatbuilder/src/federate/handoff.rs` reads it (`two`) from the peering
+entry the run resolves, and it marks each phase's side (`side_of`) as the table above does. The
+choice is the deployment's, not the machine's: a reachability probe would hand off on a passing
+SSH failure, and an environment variable is easy to forget on one of the two machines.
+
+Status: built (`federate_two_drivers.rs`).
+
+**Phase 1 passes only when both sides' results are ready.** A phase 1 result that carries
+`side` `edge` or `core` (written by the phase-1 sides change, #558, not yet on main) is never
+ready on its own, however its own checks went: `crates/goatbuilder/src/federate/plan.rs` (`read_readiness`) reads it
+as not ready and adds a BLOCKED `sides` row that says why. Combining it with the other side's
+result is the import, which is not built. Status: built (the test
+`a_one_sided_phase_1_result_is_never_ready_on_its_own`).
+
 ## The contract
 
 **The controller is the run of record.** It holds the CA key, the plan, every approval and the
@@ -132,8 +166,37 @@ everything that command reads from the other machine, the file it writes, and
 the two commands the controller runs after it. The sentence a person reads
 names the same commands.
 
-Status: designed. Phase 3's two halves, which the phase 3 object wraps, are
-in review; this section says "built" for them once they are on main.
+Status: built at the stop, at phases 1 and 2 only: the controller's run with `-o json` carries
+`handoff`, its text names every argv on its own line, quoted for a POSIX shell, and a checkout with
+changes gives no object (GB-266), naming each file. At phases 3 and 11 to 14 the object differs
+(phase 3's result is the edge half, 11 to 13 carry files, 14 binds by id) and is not built. A
+two-driver run is refused with GB-267, and prints no object, when the first phase it would run
+that needs the edge is one of those; a run whose first such phase is 1 or 2 stops there instead.
+The refusal comes before the run acts: before the peering's lock and journal, and for
+`federate deploy` before its plan is read, approved or rechecked, so phase 10 never admits the
+edge on our core and leaves the admission half done when 11 is refused. The refusal says that
+nothing of the refused phase ran, and no phase before it in this run. A run from 4 to 10 needs no
+edge and is not refused (`crates/goatbuilder/src/federate/handoff.rs`, `refused_before_running`;
+tests `a_two_driver_run_after_phase_2_is_refused_with_no_object`,
+`a_two_driver_run_from_4_to_the_end_runs_nothing` and `a_two_driver_deploy_runs_nothing` in
+`federate_two_drivers.rs`). `--side` is one flag: on `init --over-ssh` it picks a phase 3 half
+(`federate/measure.rs`), and on a peering run `--side edge`, given with no other measure flag, is
+the edge driver's run, refused with GB-267 until it is built, for a peering with one driver or two.
+Beside another measure flag, after a verb's name (a misplaced `init` flag), or on `status`, it gets
+the message it got before (test `side_edge_is_gb_267_only_alone_on_a_peering_run`).
+
+Every command the phase 1 and phase 2 objects name parses today with the binary that printed it,
+and none is a usage error. The edge `command`, with its `--expect-commit`, refuses with GB-267
+until the edge driver's run is built; `--expect-commit` without `--side edge` is refused as a
+misplaced flag (GB-189). `import` (`goatbuilder federate import <partner> <phase> <result>
+--sha256 <code>`, a reserved peering name) parses and refuses with GB-267, reading and recording
+nothing, until the import is built. `then` is an ordinary run, which stops at the same hand-off
+again while nothing is imported (test
+`every_command_a_hand_off_names_parses_and_refuses_as_not_built`). Not built: the object in
+`status`, the edge's way-back object, the edge run and `import` themselves, and `then` running a
+core half against an imported result. Phase 3's two halves, which the phase 3 object wraps, are on main at
+the `init` level ([federation-router-discovery.md](federation-router-discovery.md), "Phase 3 in
+two halves"); the one command does not run them yet.
 
 ### Where it appears
 
@@ -174,7 +237,7 @@ Both reports are additions to existing documents (`goatbuilder.output/v1` and
 | Member | Meaning |
 |---|---|
 | `phase` | the phase the hand-off belongs to |
-| `code` | one new catalog code, "the run is waiting on the other driver", the same for every hand-off; its number is assigned when it is built |
+| `code` | `GB-265`, "the run is waiting on the other driver", the same for every hand-off |
 | `run_on` | `edge` or `controller`: the machine that acts next |
 | `command` | what to run on `run_on` now, as an argv. `null` in the edge's way-back object, where nothing more runs on the edge |
 | `commit` | the commit of the deployment's checkout on the controller. The edge's plays read the checkout: the inventory, the group_vars that `allocate` renders and that phase 10 places, and the roles. `command` carries `--expect-commit <commit>`, and the edge driver refuses to run unless its checkout's `HEAD` is that commit and its tree is clean. The controller emits a hand-off object only when its own tree is clean, so that `commit` holds every `in: checkout` file: phase 10 places rendered group_vars in the checkout and admission writes `peerings.yml`, and until they are committed the controller stops instead, naming each file to commit. A file the checkout ignores is never read from the checkout by an edge step; a file the edge reads is either committed or carried as `in: work` |
@@ -220,15 +283,14 @@ driver's own output, which is exactly what the binding rests on. It must not
 read the code from the controller, from the result file, or from anything
 copied with it.
 
-### Phase 3: the hand-off whose halves are in review
+### Phase 3: the hand-off around the two halves
 
-Phase 3's two halves are written at the `init` level and are in review:
+Phase 3's two halves are built at the `init` level:
 `goatbuilder federate init --over-ssh <peering> --side edge --half-out <file>`
 writes the edge half (schema `goatbuilder.phase3-edge-half/v1`) and prints its
 sha256, its confirm code and the line `goatbuilder federate init --over-ssh
 <peering> --side core --edge-half <file> --edge-half-sha256 <code>`
-([federation-router-discovery.md](federation-router-discovery.md), once that
-change is on main). The phase 3 object wraps those two halves as they are:
+([federation-router-discovery.md](federation-router-discovery.md)). The phase 3 object wraps those two halves as they are:
 
 - **`command`** (`--side edge --from 3 --to 3`) runs the edge half,
   `init --over-ssh xab --side edge --half-out <work>/handoff/3/edge-half.json`,
@@ -349,6 +411,9 @@ phase 14. The scenario passes when:
 - no private key is present on a machine other than the one that made it;
 - the controller's journal holds every phase, with each edge result's digest;
 - a run killed during an edge half and started again with `--from` on the same machine finishes;
+  the WireGuard peering role restarts its link when the interface does not hold the agreement,
+  not only when its files changed, so a kill between writing the files and restarting the link
+  does not leave a resume that changes nothing (designed; proved by the kill-resume stage);
 - `status` on each controller shows the peering at phase 14 with its evidence.
 - each side is driven only from the hand-off objects: the scenario runs `command` on `run_on`,
   carries `result`, reads the confirm code from the edge driver's own JSON, runs `import` and

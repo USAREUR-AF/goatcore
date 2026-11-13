@@ -27,9 +27,9 @@
 //! Exit codes: 0 ok, 1 drift/violation, 2 usage or schema error — the
 //! script's, which are also this binary's (C10).
 
+use crate::runner::Cmd;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Map, Value};
@@ -1278,7 +1278,7 @@ pub fn verify_file(p: &Paths, path: &Path, doc: &Map<String, Value>) -> Verifica
     let written = std::fs::write(&tp, pem).and(std::fs::write(&ts, &sig_der)).and(std::fs::write(&tb, &raw));
     let result = match written {
         Err(e) => Verification { state: "unavailable", detail: format!("cannot verify {}: openssl did not run ({e}). Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)) },
-        Ok(()) => match Command::new(&openssl).args(["dgst", "-sha256", "-verify"]).arg(&tp).arg("-signature").arg(&ts).arg(&tb).output() {
+        Ok(()) => match Cmd::new(&openssl).args(["dgst", "-sha256", "-verify"]).arg(&tp).arg("-signature").arg(&ts).arg(&tb).output() {
             Err(e) => Verification { state: "unavailable", detail: format!("cannot verify {}: openssl did not run ({e}). Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)) },
             Ok(o) if !o.status.success() => failed(format!("{} FAILED signature verification against {} — the file changed after signing, or the signature is not this artifact's. Refusing to grade against an intent nobody signed ({SIGNER_HINT})", p.rel(path), p.rel(&pubkey_path))),
             Ok(_) => Verification { state: "verified", detail: format!("signature valid (ca {ca_id}, {})", p.rel(&pubkey_path)) },
@@ -1797,7 +1797,7 @@ pub fn ca_key_for(intent: &Path, goatnet: &str) -> Result<(String, String, Strin
 pub fn sign_intent(repo: &Path, intent: &Path, key: &str) -> Result<Vec<String>> {
     let home = std::env::var("HOME").unwrap_or_default();
     let audit = crate::settings::ca_audit_log_abs_global();
-    let out = Command::new("go")
+    let out = Cmd::new("go")
         .current_dir(repo.join("ops/enrollment"))
         .args(["run", "./cmd/intent-sign", "--intent", intent.to_str().unwrap_or(""), "--root-key", key, "--age-identity", &format!("{home}/.config/age/keys.txt"), "--audit-log", &audit])
         .output()

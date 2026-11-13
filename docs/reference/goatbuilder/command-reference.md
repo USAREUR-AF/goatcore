@@ -273,6 +273,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 
 | Flag | Description | Default |
 |---|---|---|
+| `--expect-commit <EXPECT_COMMIT>` | With --side edge: the commit the edge driver's checkout must be at, as a hand-off object names it. The edge driver's run is not built yet: refused with GB-267 (docs/design/federation-two-drivers.md) |  |
 | `--plan <PLAN>` | deploy: the plan to execute (default <work>/plan.json) |  |
 | `--approve-plan <APPROVE_PLAN>` | deploy: approve exactly this plan hash, after reading the plan. --yes never approves a plan |  |
 | `--confirm` | Phases 5, 6 and 10: confirm the keys, the agreement digest and the admission here, at this terminal, instead of stopping for them by hand. The default when both stdin and stderr are a terminal |  |
@@ -303,6 +304,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 - [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
 - [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
 - [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
+- [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it. Not built yet: refuses with GB-267 (docs/design/federation-two-drivers.md)
 
 ## `goatbuilder federate init`
 
@@ -487,6 +489,24 @@ Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federa
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |
 | `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<partner>) |  |
 | `--dry-run` | Survey the peering's hosts read-only and print every resource the back-out would remove, per host; change nothing |  |
+
+## `goatbuilder federate import`
+
+A two-driver peering's import of an edge result, as a hand-off object names it. Not built yet: refuses with GB-267 (docs/design/federation-two-drivers.md)
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<WITH>` | The peering name (the counterparty, as declared) |
+| `<PHASE>` | The phase whose edge result this is |
+| `<RESULT>` | The result file the edge driver wrote |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--sha256 <SHA256>` | The confirm code the edge driver printed (the result's sha256, or its first digits) |  |
 
 ## `goatbuilder pins`
 

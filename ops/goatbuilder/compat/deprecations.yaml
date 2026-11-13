@@ -1,0 +1,10 @@
+# A command or flag that is to be removed is named here, with what replaces it,
+# before the release that stops offering it (docs/design/goatbuilder-v1-gate.md,
+# "Deprecation"). The A3 check lets a command or flag of the last release be
+# missing only when an entry names it. An entry:
+#
+#   - command: goatbuilder deploy        # the command, as `goatbuilder docs --markdown` heads it
+#     flag: --env                        # the flag; leave it out to deprecate the whole command
+#     replacement: --environment         # what to use instead; the warning names it
+#     deprecated_in: goatbuilder/v0.6.0  # the first release that warns
+deprecations: []

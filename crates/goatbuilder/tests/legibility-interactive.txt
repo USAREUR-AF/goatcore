@@ -1,0 +1,16 @@
+# Programs that keep the terminal when the runner starts them (src/runner.rs,
+# docs/design/goatbuilder-legibility.md §"Children that need a terminal").
+#
+# The runner pipes a child's output to write its log while streaming it. A child
+# that decides whether to prompt from whether its stdout or stderr is a terminal
+# would stop prompting, which changes what its phase does; such a program is
+# listed here, and a command whose line names it inherits the terminal and
+# records "log: not captured (interactive)". Check (a) of tests/legibility.rs
+# accepts a command with no log only when its line names a program listed here.
+#
+# One line per program: <program file name> <why it needs the terminal>.
+# Adding a line is a reviewed change, like the known-failing list.
+#
+# The survey of 2026-11-12 found no child of a run that needs it: every prompt a
+# child shows reads /dev/tty or the inherited stdin (the design document lists
+# each one examined). The list is empty until a measured run shows otherwise.

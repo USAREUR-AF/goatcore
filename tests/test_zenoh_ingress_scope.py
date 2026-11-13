@@ -31,6 +31,16 @@ def config(*scopes):
     }}}})
 
 
+def require_ansible_playbook(case):
+    """Skip without ansible-playbook, unless GOAT_TEST_REQUIRE_ANSIBLE=1 (CI sets
+    it), where its absence fails the test instead of skipping it quietly."""
+    if shutil.which('ansible-playbook'):
+        return
+    if os.environ.get('GOAT_TEST_REQUIRE_ANSIBLE') == '1':
+        case.fail('GOAT_TEST_REQUIRE_ANSIBLE=1 but ansible-playbook is not on PATH')
+    case.skipTest('ansible-playbook is required')
+
+
 class CoreConfigPath(unittest.TestCase):
     """Where a core router reads its configuration, from its start arguments."""
 
@@ -43,6 +53,24 @@ class CoreConfigPath(unittest.TestCase):
                      ['-c', '/x/c.json5', '--config', '/x/c.json5']):
             with self.subTest(args=args):
                 self.assertEqual(self.parse(args), {'path': '/x/c.json5', 'named': True, 'error': ''})
+
+    def test_another_options_value_is_never_read_as_a_configuration(self):
+        # -l/--listen, -e/--connect, -i/--id and --cfg take a value; that value is
+        # never an argument of its own, even when it begins with -c.
+        for args in (['--listen', '-cafe'], ['-l', '-cafe'], ['--connect', '-c/x'], ['-e', '-c/x'],
+                     ['--id', '-cab'], ['-i', '-c'], ['--cfg', '-c/x'], ['--listen', '-c', '-c', '/x/c.json5']):
+            with self.subTest(args=args):
+                want = '/x/c.json5' if args[-1] == '/x/c.json5' else '/etc/zenoh/config.json5'
+                self.assertEqual(self.parse(args)['path'], want, self.parse(args))
+                self.assertEqual(self.parse(args)['error'], '')
+
+    def test_an_attached_value_is_a_path_only_when_it_looks_like_one(self):
+        self.assertEqual(self.parse(['-c./c.json5'])['path'], './c.json5')
+        for args in (['-cafe'], ['-cx.json5']):
+            with self.subTest(args=args):
+                report = self.parse(args)
+                self.assertEqual(report['path'], '')
+                self.assertIn(args[0], report['error'])
 
     def test_arguments_naming_no_configuration_give_the_role_path(self):
         for args in ([], ['--no-multicast-scouting'], ['--cfg', 'x'], ['-l', 'tcp/0.0.0.0:7447']):
@@ -139,9 +167,9 @@ class ScopeInspection(unittest.TestCase):
             self.assertIn('from/**', report['observed'])
 
 
-@unittest.skipUnless(shutil.which('ansible-playbook'), 'ansible-playbook is required')
 class RolePreflight(unittest.TestCase):
     def setUp(self):
+        require_ansible_playbook(self)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -267,7 +295,6 @@ class RolePreflight(unittest.TestCase):
         self.assertIn('exec chosen-core cat', self.trace.read_text())
 
 
-@unittest.skipUnless(shutil.which('ansible-playbook'), 'ansible-playbook is required')
 class CoreOnAnotherHost(unittest.TestCase):
     """The deployed shape: the edge and the core router on separate hosts.
 
@@ -278,6 +305,7 @@ class CoreOnAnotherHost(unittest.TestCase):
     """
 
     def setUp(self):
+        require_ansible_playbook(self)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -453,6 +481,7 @@ class CoreOverSsh(unittest.TestCase):
     """
 
     def setUp(self):
+        require_ansible_playbook(self)
         if not _ssh_tools():
             # CI installs openssh-server and sets GOAT_TEST_REQUIRE_SSHD=1, so
             # there a missing sshd fails instead of skipping quietly.

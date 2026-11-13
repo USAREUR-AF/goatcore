@@ -40,7 +40,7 @@
 //! run of is the record it transcribes).
 
 use std::path::Path;
-use std::process::Command;
+use crate::runner::Cmd;
 
 use anyhow::{anyhow, Context, Result};
 
@@ -346,7 +346,8 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         checks.push(row("door", format!("=== Before phase 1: open the env door to {} — every play below goes through it (mgmt-hosts.ini + doors-groupvars.ini, never the mesh inventory too) ===", o.env)));
         checks.push(row("cmd", open.clone()));
         if !o.dry_run {
-            let status = Command::new("bash").args(["-euo", "pipefail", "-c", &open]).current_dir(repo).status().context("bash")?;
+            crate::runner::phase("door", &format!("open the env door to {}", o.env), "");
+            let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &open]).current_dir(repo).status().context("bash")?;
             if !status.success() {
                 checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! the env door to {} did not open — no phase has run", o.env), fix: Some(format!("{open} --status says why; then re-run: {resume} --from {}", o.from.max(1))) });
                 let mut r = Report::new("join-node", checks, EXIT_REFUSED);
@@ -369,7 +370,8 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
             checks.push(row("note", format!("^ OPERATOR STEP — do the above, then re-run with --from {}", ph.n + 1)));
             break;
         }
-        let status = Command::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
+        crate::runner::phase(&ph.n.to_string(), &ph.label, "");
+        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
         if !status.success() {
             let rc = status.code().unwrap_or(1);
             checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the node is left partway through phase {}. `--dry-run` prints this phase's command and the gate that proves it.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
@@ -389,6 +391,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn repo() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -439,7 +442,6 @@ mod tests {
     /// and the founder reaches the signal-federation gate as written.
     #[test]
     fn declared_values_reach_join_node_phases_without_shell_interpolation() {
-        use std::os::unix::fs::PermissionsExt;
         let t = tempfile::tempdir().unwrap();
         let root = t.path();
         let marker = root.join("pwned");
@@ -465,18 +467,13 @@ mod tests {
         let stub = format!("#!/bin/sh\nfor a; do printf '%s\\n' \"$a\"; done >> '{}'\nprintf -- '--\\n' >> '{}'\nexit 0\n", log.display(), log.display());
         let bin = root.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        let exe = |p: &Path| {
-            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-            std::fs::write(p, &stub).unwrap();
-            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
-        };
+        let exe = |p: &Path| crate::test_support::executable(p, &stub);
         for b in ["python3", "ansible-playbook", "ansible", "go", "netbird", "sudo"] {
             exe(&bin.join(b));
         }
         // ssh runs what it is piped (`... | ssh <node> 'bash -s'`) as the node would.
         let ssh = bin.join("ssh");
-        std::fs::write(&ssh, format!("#!/bin/sh\nfor a; do printf '%s\\n' \"$a\"; done >> '{}'\nfor a; do [ \"$a\" = 'bash -s' ] && exec bash -s; done\nexit 0\n", log.display())).unwrap();
-        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::executable(&ssh, &format!("#!/bin/sh\nfor a; do printf '%s\\n' \"$a\"; done >> '{}'\nfor a; do [ \"$a\" = 'bash -s' ] && exec bash -s; done\nexit 0\n", log.display()));
         for s in ["ops/scripts/with-aws", "ops/scripts/ansible-preflight.sh", "ops/scripts/seed-ssh-key.sh", "ops/scripts/door-open.sh"] {
             exe(&repo.join(s));
         }
@@ -752,9 +749,7 @@ mod tests {
         std::fs::create_dir_all(t.path().join("ops/scripts")).unwrap();
         // Stands in for with-aws + ansible: prints FAKE_LOG, exits FAKE_RC.
         let stub = t.path().join("ops/scripts/with-aws");
-        std::fs::write(&stub, "#!/bin/bash\nprintf '%s\\n' \"$FAKE_LOG\"\nexit \"$FAKE_RC\"\n").unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::executable(&stub, "#!/bin/bash\nprintf '%s\\n' \"$FAKE_LOG\"\nexit \"$FAKE_RC\"\n");
         let p6 = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().into_iter().find(|p| p.n == 6).unwrap();
         // A failing run keeps its log (mktemp); TMPDIR puts it in the fixture,
         // so the test leaves nothing in the system temp directory.

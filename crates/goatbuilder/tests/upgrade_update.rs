@@ -144,12 +144,9 @@ fn install_of(bin: &Path) -> Install {
     let dir = tempfile::tempdir().unwrap();
     let exe = dir.path().join("bin/goatbuilder");
     std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
-    std::fs::copy(bin, &exe).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    // Copied in a child process, so no fork of another test thread holds it open
+    // for writing when it runs (ETXTBSY).
+    federate_world::test_support::copied_executable(bin, &exe);
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     // The stand-in Sigstore's trusted root, beside the embedded public one,

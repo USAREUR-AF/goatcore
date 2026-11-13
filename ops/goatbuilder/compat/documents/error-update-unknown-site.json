@@ -1,0 +1,41 @@
+{
+  "schema": "goatbuilder.error/v1",
+  "error": "`nowhere` is not a goatnet site this checkout declares (no ops/ansible/group_vars/nowhere_hosts/ under .): run from a goat checkout (or -C <checkout>), or set GOATBUILDER_UPDATE_URL",
+  "code": "GB-072",
+  "interpretation": {
+    "schema": "goat-errors.interpretation/v1",
+    "summary": "`nowhere` is not a goatnet site this checkout declares (no ops/ansible/group_vars/nowhere_hosts/ under .): run from a goat checkout (or -C <checkout>), or set GOATBUILDER_UPDATE_URL",
+    "hits": [
+      {
+        "code": "GB-072",
+        "layer": "code",
+        "evidence": "`nowhere` is not a goatnet site this checkout declares (no ops/ansible/group_vars/nowhere_hosts/ under .): run from a goat checkout (or -C <checkout>), or set GOATBUILDER_UPDATE_URL",
+        "at": 0,
+        "entry": {
+          "code": "GB-072",
+          "tool": "goatbuilder",
+          "title": "goatbuilder cannot name the download surface to update from",
+          "what": "update (and the behind-version notice) reads the release a goatnet serves at get.<site_id>.<site_dns_zone>/goatbuilder/. It looks at GOATBUILDER_UPDATE_URL, then --site (named from the site's group_vars), then the surface the last successful update used. None of them named a surface that serves goatbuilder for this machine.",
+          "causes": [
+            "the first update on this machine was run without --site, and GOATBUILDER_UPDATE_URL is not set",
+            "the site named with --site has no ops/ansible/group_vars/<site>_hosts/ in the checkout goatbuilder was run in",
+            "the site does not serve goatbuilder (goat_get_goatbuilder_enabled is not true in its group_vars)",
+            "no goatbuilder release is built for this operating system and architecture"
+          ],
+          "fixes": [
+            "goatbuilder update --site <site>   (a goatnet that serves goatbuilder)",
+            "run it from a goat checkout, or pass -C <checkout>",
+            "GOATBUILDER_UPDATE_URL=https://get.<site>.<zone>/goatbuilder goatbuilder update"
+          ],
+          "read": "docs/design/goatbuilder-distribution.md",
+          "exit": 1,
+          "matches": [
+            "cannot resolve goatbuilder's download surface",
+            "does not serve goatbuilder: goat_get_goatbuilder_enabled"
+          ]
+        }
+      }
+    ],
+    "unrecognised": false
+  }
+}

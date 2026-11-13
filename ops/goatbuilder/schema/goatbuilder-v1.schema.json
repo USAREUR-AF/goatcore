@@ -432,6 +432,11 @@
           "description": "Who writes this peering's federation.toml. Absent: rendered, unless the peering already runs from hand-written files (hand group_vars of its edge group, or the hand inventory naming it) or a hand-written file sits at the generated path; allocate then leaves it on them and says so, and declaring rendered opts it in. hand: written by hand. rendered: goatbuilder federate allocate writes ops/federation/<environment>/peerings/<with>/federation.toml from the environment's own ops/federation/<environment>/federation.toml (sovereign_id, term_days, cut_contact, [data], measured_mtu; [data] release narrowed by offer:) and the allocated values ([transport]). The environment's file stays the one owner of those values; a missing one is refused (GB-233).",
           "enum": ["hand", "rendered"]
         },
+        "drivers": {
+          "description": "How many machines drive this peering: `one` (the default), a machine that reaches both the edge host and the core host; `two`, an edge driver that reaches only the edge host and holds no CA key, and a controller that reaches the core and holds the CA key, the plan, the approvals and the journal. With `two`, the controller stops at each phase that needs the edge and hands it to the edge driver (docs/design/federation-two-drivers.md).",
+          "enum": ["one", "two"],
+          "default": "one"
+        },
         "forwarder": {
           "description": "Present when a peering forwarder relays the partner to our edge (ADR 1218, docs/design/peering-forwarder.md). Allocation then gives the peering a public port on the forwarder and a carrier; the driver applies the forwarder from these values.",
           "type": "object",

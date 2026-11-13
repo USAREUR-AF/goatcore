@@ -22,8 +22,9 @@
 //!   ok in 12s
 //! ```
 //!
-//! A command outside a phase (a probe such as the fresh-source check) gets one line,
-//! `· <command> (log …)`, and a second only when it fails.
+//! A command outside a phase (a probe such as the fresh-source check or a `git`
+//! read) prints nothing when it succeeds: it is in the record, and logged under
+//! `-v`. When it fails it prints one line, `· FAILED: <command>: exit 2 in 0.1s; log …`.
 //!
 //! To write the log while streaming, the child's stdout and stderr are pipes the
 //! runner copies to the terminal and the log; stdin stays inherited, so a prompt still
@@ -87,6 +88,10 @@ pub struct PhaseEntry {
     /// command, or one that did not start.
     pub exit: Option<i32>,
     pub commands: usize,
+    /// What the verb concluded for a phase that started no command, such as a
+    /// step it skipped (`not checked: the deploy failed`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
 }
 
 /// A run as it ends: what the run record writes.
@@ -115,6 +120,11 @@ struct Run {
     /// The index in `commands` where the open phase began.
     phase_from: usize,
     inputs: serde_json::Value,
+    /// Unit tests share one process: a run belongs to the test thread that
+    /// began it, so another test's command never joins it. A real run is the
+    /// whole process, its worker threads included.
+    #[cfg(test)]
+    owner: std::thread::ThreadId,
 }
 
 fn now() -> String {
@@ -197,6 +207,8 @@ pub fn begin(
         phases: Vec::new(),
         phase_from: 0,
         inputs: serde_json::Value::Array(Vec::new()),
+        #[cfg(test)]
+        owner: std::thread::current().id(),
     });
     dir
 }
@@ -248,6 +260,7 @@ pub fn phase(id: &str, name: &str, purpose: &str) {
             ended: None,
             exit: None,
             commands: 0,
+            verdict: None,
         });
         r.phase = Some(Phase {
             id: id.to_string(),
@@ -255,6 +268,16 @@ pub fn phase(id: &str, name: &str, purpose: &str) {
             purpose: purpose.to_string(),
             shown: false,
         });
+    }
+}
+
+/// The verb's verdict on the phase now open, kept in its record entry: for a
+/// step it skips, which starts no command and so has no exit.
+pub fn verdict(text: &str) {
+    if let Some(r) = lock_run().as_mut() {
+        if let Some(p) = r.phases.last_mut().filter(|p| p.ended.is_none()) {
+            p.verdict = Some(text.to_string());
+        }
     }
 }
 
@@ -267,11 +290,14 @@ pub fn no_phase() {
 }
 
 /// A command, built as `std::process::Command` builds one, run through this door.
+#[derive(Debug)]
 pub struct Cmd {
     inner: Command,
     host: Option<String>,
     stdout_set: bool,
     stderr_set: bool,
+    /// The file the caller sends both streams to: then it is this command's log.
+    own_log: Option<PathBuf>,
 }
 
 impl Cmd {
@@ -279,6 +305,7 @@ impl Cmd {
         Cmd {
             inner: Command::new(program),
             host: None,
+            own_log: None,
             stdout_set: false,
             stderr_set: false,
         }
@@ -347,6 +374,14 @@ impl Cmd {
         self
     }
 
+    /// The caller sends stdout and stderr to the file at `path` itself (a
+    /// parallel step's own log): the record and the frame name that file as the
+    /// command's log, and the runner copies nothing.
+    pub fn logged_at<P: AsRef<Path>>(&mut self, path: P) -> &mut Cmd {
+        self.own_log = Some(path.as_ref().to_path_buf());
+        self
+    }
+
     /// Where the command acts, for the frame and the record (`alpha_hosts`, `operator@192.0.2.10`).
     pub fn host<S: Into<String>>(&mut self, h: S) -> &mut Cmd {
         self.host = Some(h.into());
@@ -359,6 +394,10 @@ impl Cmd {
 
     pub fn get_args(&self) -> std::process::CommandArgs<'_> {
         self.inner.get_args()
+    }
+
+    pub fn get_envs(&self) -> std::process::CommandEnvs<'_> {
+        self.inner.get_envs()
     }
 
     /// The argv, as strings.
@@ -375,20 +414,35 @@ impl Cmd {
         line_of(&self.argv())
     }
 
+    /// The line as it runs from `base`, the checkout a person pastes it in: a
+    /// command with a working directory is `(cd <dir> && <line>)`, its
+    /// directory relative to `base` when it is under it, and no `cd` when it is
+    /// `base` itself.
+    pub fn line_from(&self, base: &Path) -> String {
+        match self.inner.get_current_dir() {
+            Some(d) => {
+                let dir = d.strip_prefix(base).unwrap_or(d).display().to_string();
+                if dir.is_empty() {
+                    // It runs in the checkout itself: no cd to print.
+                    self.line()
+                } else {
+                    format!("(cd {} && {})", quote(&dir), self.line())
+                }
+            }
+            None => self.line(),
+        }
+    }
+
     /// Run it, streaming its output, and wait.
     pub fn status(&mut self) -> std::io::Result<ExitStatus> {
         crate::trace::cmd(&self.inner);
-        let Some(mut entry) = self.open() else {
+        let Some(mut entry) = self.open(true) else {
             return self.inner.status();
         };
-        let child_tty = std::env::var_os("GOATBUILDER_CHILD_TTY").is_some_and(|v| v == "1");
         let t0 = Instant::now();
-        let status = if child_tty {
-            entry.log_note = Some(
-                "GOATBUILDER_CHILD_TTY=1: the command had the terminal; nothing was captured"
-                    .into(),
-            );
-            entry.log = None;
+        // open() decided whether the command keeps the terminal; such an entry
+        // has no log, and says why.
+        let status = if keeps_terminal(&entry.command).is_some() {
             self.inner.status()
         } else {
             self.streamed(&entry)
@@ -400,10 +454,13 @@ impl Cmd {
     /// Run it, capturing its output, and wait.
     pub fn output(&mut self) -> std::io::Result<Output> {
         crate::trace::cmd(&self.inner);
-        let Some(mut entry) = self.open() else {
+        let Some(mut entry) = self.open(false) else {
             return self.inner.output();
         };
         let t0 = Instant::now();
+        // The log exists before the command starts, so a command that cannot
+        // start still names a file that is there.
+        let _ = entry.log.as_deref().and_then(log_file);
         let out = self.inner.output();
         if let (Ok(o), Some(log)) = (&out, &entry.log) {
             if let Some(mut f) = log_file(log) {
@@ -420,7 +477,7 @@ impl Cmd {
     /// not wait for it.
     pub fn spawn(&mut self) -> std::io::Result<Child> {
         crate::trace::cmd(&self.inner);
-        let Some(mut entry) = self.open() else {
+        let Some(mut entry) = self.open(false) else {
             return self.inner.spawn();
         };
         let log = entry
@@ -438,7 +495,7 @@ impl Cmd {
         match child {
             Ok(mut c) => {
                 if let Some(o) = c.stdout.take() {
-                    copy_in_background(o, log.clone(), false);
+                    copy_in_background(o, log.clone(), stdout_to_stderr());
                 }
                 if let Some(e) = c.stderr.take() {
                     copy_in_background(e, log, true);
@@ -457,9 +514,13 @@ impl Cmd {
     }
 
     /// The entry for this command, and its frame printed; `None` outside a run.
-    fn open(&self) -> Option<CommandEntry> {
+    fn open(&self, streamed: bool) -> Option<CommandEntry> {
         let mut guard = lock_run();
         let run = guard.as_mut()?;
+        #[cfg(test)]
+        if run.owner != std::thread::current().id() {
+            return None;
+        }
         run.seq += 1;
         let phase_id = run.phase.as_ref().map(|p| p.id.clone());
         let log_name = format!(
@@ -472,32 +533,67 @@ impl Cmd {
         );
         let log = run.dir.join("logs").join(log_name);
         let line = self.line();
-        let at = match &self.host {
-            Some(h) => format!("on {h}; log {}", shown(&log)),
-            None => format!("log {}", shown(&log)),
+        let terminal = if streamed {
+            keeps_terminal(&line)
+        } else {
+            None
         };
-        match run.phase.as_mut() {
-            Some(p) => {
-                if !p.shown {
-                    p.shown = true;
-                    let purpose = if p.purpose.is_empty() {
-                        String::new()
-                    } else {
-                        format!(": {}", p.purpose)
-                    };
-                    say(&format!("Phase {} \u{b7} {}{purpose}", p.id, p.name));
-                }
-                say(&format!("  $ {line}   ({at})"));
+        let where_ = if terminal.is_some() {
+            "no log: the command keeps the terminal".to_string()
+        } else if let Some(own) = &self.own_log {
+            format!("log {}", shown(own))
+        } else if self.stdout_set && self.stderr_set {
+            "no log: the caller's own streams".to_string()
+        } else {
+            format!("log {}", shown(&log))
+        };
+        let at = match &self.host {
+            Some(h) => format!("on {h}; {where_}"),
+            None => where_,
+        };
+        // A probe (a command outside any phase) is in the record and under -v
+        // only; it prints a line of its own when it fails (`close`).
+        if let Some(p) = run.phase.as_mut() {
+            if !p.shown {
+                p.shown = true;
+                let purpose = if p.purpose.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", p.purpose)
+                };
+                say(&format!("Phase {} \u{b7} {}{purpose}", p.id, p.name));
             }
-            None => say(&format!("\u{b7} {line}   ({at})")),
+            say(&format!("  $ {line}   ({at})"));
         }
+        // A stream the caller set is the caller's own: the runner neither copies
+        // nor logs it, and the record says so rather than naming an empty log.
+        let (log, log_note) = match (self.stdout_set, self.stderr_set) {
+            _ if terminal.is_some() => (None, terminal),
+            _ if self.own_log.is_some() => (
+                self.own_log.clone(),
+                Some("the caller writes this log".to_string()),
+            ),
+            (true, true) => (
+                None,
+                Some("not captured: stdout and stderr are the caller's own".to_string()),
+            ),
+            (true, false) => (
+                Some(log),
+                Some("stdout is the caller's own; the log holds stderr".to_string()),
+            ),
+            (false, true) => (
+                Some(log),
+                Some("stderr is the caller's own; the log holds stdout".to_string()),
+            ),
+            (false, false) => (Some(log), None),
+        };
         Some(CommandEntry {
             phase: phase_id,
             command: line,
             argv: self.argv(),
             host: self.host.clone(),
-            log: Some(log.display().to_string()),
-            log_note: None,
+            log: log.map(|l| l.display().to_string()),
+            log_note,
             started: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             ended: None,
             exit: None,
@@ -517,14 +613,23 @@ impl Cmd {
             .as_deref()
             .map(|l| format!("; log {}", shown(Path::new(l))))
             .unwrap_or_default();
+        // A probe has no frame above it, so its failure line names it.
+        let what = if in_phase {
+            "  FAILED".to_string()
+        } else {
+            format!("\u{b7} FAILED: {}", entry.command)
+        };
         match code {
             Some(Some(0)) if in_phase => say(&format!("  ok in {took}")),
             Some(Some(0)) => {}
-            Some(Some(n)) => say(&format!("  FAILED exit {n} in {took}{log}")),
-            Some(None) => say(&format!("  FAILED killed by a signal after {took}{log}")),
+            // Exit 3 is the contract's "not converged" (C10): a phase that is
+            // waiting or incomplete, not one that broke.
+            Some(Some(3)) if in_phase => say(&format!("  not converged (exit 3) in {took}{log}")),
+            Some(Some(n)) => say(&format!("{what}: exit {n} in {took}{log}")),
+            Some(None) => say(&format!("{what}: killed by a signal after {took}{log}")),
             None => {
                 entry.log_note = Some("did not start".into());
-                say(&format!("  FAILED: did not start{log}"));
+                say(&format!("{what}: did not start{log}"));
             }
         }
         self.record(entry.clone());
@@ -552,7 +657,7 @@ impl Cmd {
         let mut child = self.inner.spawn()?;
         let mut threads = Vec::new();
         if let Some(o) = child.stdout.take() {
-            threads.push(copy_in_background(o, log.clone(), false));
+            threads.push(copy_in_background(o, log.clone(), stdout_to_stderr()));
         }
         if let Some(e) = child.stderr.take() {
             threads.push(copy_in_background(e, log, true));
@@ -563,6 +668,70 @@ impl Cmd {
         }
         status
     }
+}
+
+/// `GOATBUILDER_CHILD_TTY=1`. A unit test sets its answer on its own thread
+/// (`CHILD_TTY_IN_TEST`) rather than in the process environment, which every
+/// test shares.
+fn child_tty() -> bool {
+    #[cfg(test)]
+    if let Some(v) = CHILD_TTY_IN_TEST.with(|c| c.get()) {
+        return v;
+    }
+    std::env::var_os("GOATBUILDER_CHILD_TTY").is_some_and(|v| v == "1")
+}
+
+#[cfg(test)]
+thread_local! {
+    static CHILD_TTY_IN_TEST: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Why a streamed command whose line is `line` keeps the terminal, when it does:
+/// a program on the interactive list, or `GOATBUILDER_CHILD_TTY=1`.
+fn keeps_terminal(line: &str) -> Option<String> {
+    if let Some(why) = interactive(line) {
+        return Some(format!("not captured (interactive): {why}"));
+    }
+    if child_tty() {
+        return Some(
+            "GOATBUILDER_CHILD_TTY=1: the command had the terminal; nothing was captured".into(),
+        );
+    }
+    None
+}
+
+/// The programs that keep the terminal (tests/legibility-interactive.txt): one
+/// `<program> <why>` per line.
+const INTERACTIVE: &str = include_str!("../tests/legibility-interactive.txt");
+
+/// Why the command whose line is `line` keeps the terminal, when it names a
+/// program on the interactive list.
+pub fn interactive(line: &str) -> Option<String> {
+    interactive_in(INTERACTIVE, line)
+}
+
+fn interactive_in(list: &str, line: &str) -> Option<String> {
+    let words: Vec<&str> = line
+        .split(|c: char| c.is_whitespace() || ";&|()'\"`".contains(c))
+        .filter(|w| !w.is_empty())
+        .map(|w| w.rsplit('/').next().unwrap_or(w))
+        .collect();
+    list.lines()
+        .map(|l| l.split('#').next().unwrap_or("").trim())
+        .filter(|l| !l.is_empty())
+        .find_map(|l| {
+            let (name, why) = l.split_once(char::is_whitespace).unwrap_or((l, ""));
+            words.contains(&name).then(|| why.trim().to_string())
+        })
+}
+
+/// Where a child's stdout goes as it streams inside a run. Under `-o json` or
+/// `-o yaml` stdout is the report a script parses, so a child's output goes to
+/// stderr (and to its log, as always); at a terminal or `-o table` it stays on
+/// stdout. Outside a run, and for a command that keeps the terminal, the child
+/// inherits stdout as `Command` gives it.
+fn stdout_to_stderr() -> bool {
+    crate::output::machine_output()
 }
 
 /// Copy a child's stream to our stdout (or stderr) and to the log, as it arrives.
@@ -749,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_names_its_exit_and_log_and_a_probe_is_one_line() {
+    fn a_failure_names_its_exit_and_log_and_a_probe_prints_only_when_it_fails() {
         let (_g, _sink) = capture();
         let t = tempfile::tempdir().unwrap();
         begin(t.path(), "deploy", vec![], None);
@@ -757,14 +926,24 @@ mod tests {
         phase("3", "playbook", "the play");
         let st = Cmd::new("sh").args(["-c", "exit 4"]).status().unwrap();
         assert_eq!(st.code(), Some(4));
+        no_phase();
+        Cmd::new("sh").args(["-c", "exit 2"]).output().unwrap();
         let f = frame();
         let lines: Vec<&str> = f.lines().collect();
-        assert!(lines[0].starts_with("\u{b7} true   (log "), "{f}");
-        assert_eq!(lines[1], "Phase 3 \u{b7} playbook: the play");
+        // The probe that passed prints nothing; the phase prints its frame and
+        // its failure; the probe that failed prints one line naming itself.
+        assert_eq!(lines[0], "Phase 3 \u{b7} playbook: the play", "{f}");
+        assert!(lines[1].starts_with("  $ exit 4   (log "), "{f}");
         assert!(
-            lines[3].starts_with("  FAILED exit 4 in ") && lines[3].contains("; log "),
+            lines[2].starts_with("  FAILED: exit 4 in ") && lines[2].contains("; log "),
             "{f}"
         );
+        assert!(
+            lines[3].starts_with("\u{b7} FAILED: exit 2: exit 2 in ")
+                && lines[3].contains("; log "),
+            "{f}"
+        );
+        assert_eq!(lines.len(), 4, "{f}");
         let fin = end().unwrap();
         let cmds = fin.commands;
         assert_eq!(cmds[0].phase, None);
@@ -777,6 +956,141 @@ mod tests {
         );
         assert_eq!(fin.phases[0].commands, 1);
         assert_eq!(cmds[1].exit, Some(4));
+        assert_eq!(
+            cmds.len(),
+            3,
+            "a probe is in the record whether it printed or not"
+        );
+    }
+
+    #[test]
+    fn a_stream_the_caller_owns_is_not_named_as_a_log() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "release", vec![], None);
+        phase("1", "tag", "");
+        Cmd::new("sh")
+            .args(["-c", "true"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        Cmd::new("sh")
+            .args(["-c", "echo e >&2"])
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        let f = frame();
+        assert!(f.contains("(no log: the caller's own streams)"), "{f}");
+        let cmds = end().unwrap().commands;
+        assert_eq!(
+            cmds[0].log, None,
+            "both streams the caller's own: no log is named"
+        );
+        assert_eq!(
+            cmds[0].log_note.as_deref(),
+            Some("not captured: stdout and stderr are the caller's own")
+        );
+        let log = cmds[1].log.as_deref().expect("stderr is still logged");
+        assert_eq!(std::fs::read_to_string(log).unwrap(), "e\n");
+        assert_eq!(
+            cmds[1].log_note.as_deref(),
+            Some("stdout is the caller's own; the log holds stderr")
+        );
+    }
+
+    #[test]
+    fn a_command_that_keeps_the_terminal_names_no_log_in_its_frame() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "standup", vec![], None);
+        phase("2", "baseline", "");
+        // GOATBUILDER_CHILD_TTY=1, on this test's thread only.
+        CHILD_TTY_IN_TEST.with(|c| c.set(Some(true)));
+        let st = Cmd::new("sh").args(["-c", "true"]).status();
+        CHILD_TTY_IN_TEST.with(|c| c.set(None));
+        assert!(st.unwrap().success());
+        let f = frame();
+        assert!(
+            !f.contains("log /"),
+            "a log is named that is never written: {f}"
+        );
+        assert!(
+            f.contains("(no log: the command keeps the terminal)"),
+            "{f}"
+        );
+        let cmds = end().unwrap().commands;
+        assert_eq!(cmds[0].log, None);
+    }
+
+    #[test]
+    fn a_captured_command_that_cannot_start_names_a_log_that_exists() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "deploy", vec![], None);
+        assert!(Cmd::new("/nonexistent/program").output().is_err());
+        let cmds = end().unwrap().commands;
+        let log = cmds[0].log.as_deref().expect("a log is named");
+        assert!(
+            Path::new(log).is_file(),
+            "the named log {log} does not exist"
+        );
+    }
+
+    #[test]
+    fn a_phase_that_exits_3_reads_not_converged() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "federate", vec![], None);
+        phase("14", "acceptance", "");
+        Cmd::new("sh").args(["-c", "exit 3"]).status().unwrap();
+        let f = frame();
+        assert!(
+            f.lines()
+                .nth(2)
+                .is_some_and(|l| l.starts_with("  not converged (exit 3) in ")),
+            "{f}"
+        );
+        assert_eq!(end().unwrap().phases[0].exit, Some(3));
+    }
+
+    #[test]
+    fn a_command_the_caller_logs_names_the_callers_file() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "standup", vec![], None);
+        phase("image-pull", "pull the images", "");
+        let own = t.path().join("pull.log");
+        let f = std::fs::File::create(&own).unwrap();
+        let mut child = Cmd::new("sh")
+            .args(["-c", "echo pulled"])
+            .stdout(Stdio::from(f.try_clone().unwrap()))
+            .stderr(Stdio::from(f))
+            .logged_at(&own)
+            .spawn()
+            .unwrap();
+        child.wait().unwrap();
+        assert!(frame().contains(&format!("(log {})", shown(&own))), "{}", frame());
+        let cmds = end().unwrap().commands;
+        assert_eq!(
+            cmds[0].log.as_deref(),
+            Some(own.display().to_string().as_str())
+        );
+        assert_eq!(std::fs::read_to_string(&own).unwrap(), "pulled\n");
+    }
+
+    #[test]
+    fn a_line_from_the_checkout_carries_its_working_directory() {
+        let base = Path::new("/srv/checkout");
+        let mut c = Cmd::new("../scripts/with-aws");
+        c.args(["dev", "--", "ansible", "all"]);
+        assert_eq!(c.line_from(base), "../scripts/with-aws dev -- ansible all");
+        c.current_dir(base.join("ops/ansible"));
+        assert_eq!(c.line_from(base), "(cd ops/ansible && ../scripts/with-aws dev -- ansible all)");
+        c.current_dir(base);
+        assert_eq!(c.line_from(base), "../scripts/with-aws dev -- ansible all", "the checkout itself needs no cd");
+        c.current_dir("/other place");
+        assert_eq!(c.line_from(base), "(cd '/other place' && ../scripts/with-aws dev -- ansible all)");
     }
 
     #[test]
@@ -789,7 +1103,23 @@ mod tests {
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].exit, None);
         assert_eq!(cmds[0].log_note.as_deref(), Some("did not start"));
-        assert!(frame().contains("FAILED: did not start"));
+        assert!(frame().contains("\u{b7} FAILED: /nonexistent/program: did not start"));
+    }
+
+    #[test]
+    fn a_listed_program_keeps_the_terminal_wherever_its_line_names_it() {
+        let list = "# comment\naws-vault prompts for a token by isatty(stderr)\n";
+        assert_eq!(
+            interactive_in(list, "cd x && ../scripts/aws-vault exec p -- y").as_deref(),
+            Some("prompts for a token by isatty(stderr)")
+        );
+        assert_eq!(
+            interactive_in(list, "aws-vault-helper exec"),
+            None,
+            "a whole program name, not a prefix"
+        );
+        assert_eq!(interactive_in(list, "echo 'no vault here'"), None);
+        assert_eq!(interactive(""), None, "the shipped list is empty");
     }
 
     #[test]

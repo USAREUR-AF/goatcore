@@ -419,6 +419,16 @@ impl HostProbe {
         v
     }
 
+    /// Where a probe acts, for the runner's frame and record: the host it
+    /// reaches over ssh, or this machine.
+    fn where_(&self) -> String {
+        if self.target.local {
+            "this machine".to_string()
+        } else {
+            format!("{} ({})", self.target.name, self.target.destination())
+        }
+    }
+
     /// The full argument vector run on this machine. Over SSH the host's
     /// command line is one quoted string, after `--` and the destination, so no
     /// part of it can be read as an `ssh` option.
@@ -466,9 +476,9 @@ impl HostProbe {
             ));
         }
         let argv = self.argv(bin, args);
-        crate::trace::cmd(crate::federate::runenv::command(&argv[0]).args(&argv[1..]));
         let out = crate::federate::runenv::command(&argv[0])
             .args(&argv[1..])
+            .host(self.where_())
             .output()
             .map_err(|e| format!("{}: {e}", argv[0]))?;
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -499,9 +509,9 @@ impl HostProbe {
     pub fn reach(&self) -> Result<()> {
         let argv = self.argv("true", &[]);
         let shown = argv.iter().map(|w| quote(w)).collect::<Vec<_>>().join(" ");
-        crate::trace::cmd(crate::federate::runenv::command(&argv[0]).args(&argv[1..]));
         let out = crate::federate::runenv::command(&argv[0])
             .args(&argv[1..])
+            .host(self.where_())
             .output()
             .map_err(|e| {
                 coded(
@@ -1046,7 +1056,10 @@ pub struct MeasureArgs {
     /// (docs/design/federation-router-discovery.md): `edge` measures only the edge
     /// and writes the result to --half-out; `core` measures only the core,
     /// joins the edge half read from --edge-half, and builds the package.
-    /// Without it, both hosts are measured here, as always.
+    /// Without it, both hosts are measured here, as always. On a peering run,
+    /// `--side edge` is the edge driver's run of a two-driver peering
+    /// (`drivers: two`): not built yet, and refused with GB-267
+    /// (docs/design/federation-two-drivers.md).
     #[arg(long, value_name = "SIDE", value_parser = ["edge", "core"], global = true)]
     pub side: Option<String>,
     /// init --over-ssh --side edge: the file the edge half is written to.
@@ -1613,14 +1626,11 @@ mod tests {
     /// A recorded ssh client: prints `stderr` and exits `code`, whatever it is
     /// asked. The tests then need no network, no sshd and no ssh config.
     fn recorded_ssh(dir: &Path, code: i32, stderr: &str) -> HostProbe {
-        use std::os::unix::fs::PermissionsExt;
         let path = dir.join(format!("ssh-{code}-{}", stderr.len()));
-        std::fs::write(
+        crate::test_support::executable(
             &path,
-            format!("#!/bin/sh\nprintf '%s\\n' '{stderr}' >&2\nexit {code}\n"),
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            &format!("#!/bin/sh\nprintf '%s\\n' '{stderr}' >&2\nexit {code}\n"),
+        );
         let mut p =
             HostProbe::new(target_in(&inventory(), "xab_core", None, "--core-host").unwrap());
         p.ssh = path.display().to_string();
@@ -1690,14 +1700,12 @@ mod tests {
     /// `ansible-inventory --list` would, so `run_init` reads hosts the way it
     /// does on a real checkout without ansible installed.
     fn checkout_with_inventory(inventory: &Value) -> tempfile::TempDir {
-        use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(d.path().join("ops/ansible/inventory")).unwrap();
         std::fs::create_dir_all(d.path().join("ops/scripts")).unwrap();
         std::fs::write(d.path().join("inventory.json"), inventory.to_string()).unwrap();
         let script = d.path().join("ops/scripts/with-aws");
-        std::fs::write(&script, "#!/bin/sh\ncat ../../inventory.json\n").unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::executable(&script, "#!/bin/sh\ncat ../../inventory.json\n");
         d
     }
 

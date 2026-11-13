@@ -21,6 +21,12 @@
 #   matches  regular expressions over the WHOLE text of an error, for errors that
 #            arrive as text (a tool's stderr carried inside a goat error). Any one
 #            matching is a hit. Case-sensitive; keep them literal and specific.
+#   retired  "<release tag>: <why>" for a code no binary raises any more: the tag of
+#            the release that stopped raising it, goatbuilder/vX.Y.Z or goat-cli-vX.Y.Z
+#            (ADR 1228's form), e.g. "goatbuilder/v0.6.0: <why>". A code a release
+#            printed is never deleted or given another meaning: logs keep it, and
+#            explain must still answer for it. A retired entry stays, and only it may
+#            change its title (ops/ci/check-error-codes-kept.py, gate row A5).
 #
 # Adding an entry is a YAML block here and nothing else, unless a binary should
 # emit the code itself (then cite it in the Rust and the gate checks it exists).
@@ -543,6 +549,49 @@ entries:
       - "no release signer is known"
     exit: 1
 
+  - code: GB-265
+    tool: goatbuilder
+    title: the run is waiting on the other driver
+    what: "The peering is declared with two drivers (`drivers: two`): an edge driver that reaches only the edge host and a controller that reaches the core. This phase needs the edge, so the controller stopped before acting and handed it to the edge driver. The stop prints the exact command to run there, the file it writes, and the two commands to run here after it; with -o json the report carries them as the member handoff. It stops as a by-hand stop does (exit 0)."
+    causes:
+      - "the peering's phase needs the edge host, and this machine is the controller"
+    fixes:
+      - "run the command the stop names on the edge driver, bring its result file here, then run the import and the command after it that the stop names"
+    read: docs/design/federation-two-drivers.md
+    matches:
+      - "^GB-265: "
+    exit: 0
+
+  - code: GB-266
+    tool: goatbuilder
+    title: the controller's checkout is not clean, so no hand-off is given
+    what: "A two-driver peering's hand-off pins the edge driver's checkout to the controller's commit, so the controller gives one only when its own checkout is a git checkout with nothing uncommitted. The run stopped at the phase that needs the edge, before acting, and names each file with changes."
+    causes:
+      - "phase 10 placed rendered files, or admission wrote peerings.yml, and they are not committed yet"
+      - "a file was edited by hand and not committed"
+      - "the deployment's directory is not a git checkout"
+    fixes:
+      - "commit each file the refusal names, then run the same command again"
+    read: docs/design/federation-two-drivers.md
+    matches:
+      - "^GB-266: "
+    exit: 1
+
+  - code: GB-267
+    tool: goatbuilder
+    title: this part of a two-driver peering is not built yet
+    what: "A peering declared with two drivers (`drivers: two`) is handed off between the edge driver and the controller only at phases 1 and 2, where the hand-off is built. Three cases are refused before anything runs: the edge driver's own run (`goatbuilder federate <partner> --side edge`, with or without the `--expect-commit` a hand-off object names), the controller's `goatbuilder federate import`, which is not built either, and a two-driver run that would reach a phase after 2 that needs the edge (3, 11, 12, 13 or 14), whose hand-off is designed and not built. That includes every `goatbuilder federate deploy`, which runs phase 10 then 11: it is refused before its plan is approved or rechecked, so phase 10 never admits the edge on our core."
+    causes:
+      - "goatbuilder federate <partner> --side edge was run on the edge driver, as a hand-off object's command names it"
+      - "goatbuilder federate import <partner> <phase> <result> --sha256 <code> was run, as a hand-off object's import names it"
+      - "a two-driver run that would reach phase 3, 11, 12, 13 or 14, such as --from 3, --from 4 with no --to, or goatbuilder federate deploy (a run from 4 to 10 is not refused)"
+    fixes:
+      - "run the peering with one driver for now: remove drivers: two from its peerings: entry, from a machine that reaches both the edge host and the core host"
+    read: docs/design/federation-two-drivers.md
+    matches:
+      - "^GB-267: "
+    exit: 1
+
   - code: GB-261
     tool: goatbuilder
     title: the release's signature does not verify, so the update refuses
@@ -561,6 +610,19 @@ entries:
       - "does not verify for the .* release workflow"
       - "the surface serves no signature for SHA256SUMS"
     exit: 1
+
+  - code: GB-262
+    tool: goatbuilder
+    title: the verb has no such phase
+    what: "`goatbuilder explain <verb> <phase>` answers from the phase catalog (ops/phases/catalog.yaml), by the phase's number or its id. The verb has no phase by that number or id. The message names the phases it has."
+    causes:
+      - a phase number outside the verb's range, or a mistyped id
+    fixes:
+      - "goatbuilder explain <verb>   (lists the verb's phases, by number and id)"
+    read: docs/design/goatbuilder-legibility.md
+    matches:
+      - "has no phase `"
+    exit: 2
 
   - code: GB-012
     tool: goatbuilder
@@ -1885,10 +1947,10 @@ entries:
   - code: GB-182
     tool: goatbuilder
     title: the run journal cannot be read
-    what: "<work>/state.json is the only account of what ran for this peering, so a journal that does not parse, was written by a newer goatbuilder, or names another peering is refused rather than overwritten."
+    what: "<work>/state.json is the only account of what ran for this peering, so a journal that does not parse, has a later schema than this goatbuilder reads, or names another peering is refused rather than overwritten. A journal of the same schema that a later goatbuilder wrote is read: a word or field this one does not know is shown as written and kept."
     causes:
       - the file was edited by hand or cut short
-      - a newer goatbuilder wrote it (its schema is newer than this one reads)
+      - a later goatbuilder wrote it with a later schema (the message names the schema and the goatbuilder that wrote it)
       - two peerings share one working folder
     fixes:
       - "use the goatbuilder that wrote it, or move the file aside and run again (the run then starts with no journal, and --resume skips nothing)"

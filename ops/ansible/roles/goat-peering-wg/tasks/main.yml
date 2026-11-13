@@ -156,6 +156,29 @@
 - name: peering-wg | converge the link
   ansible.builtin.meta: flush_handlers
 
+# A run killed after the templates above were written and before the handler
+# ran leaves the files current and the interface not: on the next run nothing
+# is changed, so nothing notifies. The interface itself decides whether the
+# unit is restarted, not the files.
+- name: peering-wg | read the interface before deciding on a restart
+  ansible.builtin.shell: >-
+    wg show {{ peering_wg_interface }} dump 2>/dev/null;
+    ip -o -4 addr show dev {{ peering_wg_interface }} 2>/dev/null;
+    true
+  register: _pw_pre
+  changed_when: false
+
+- name: peering-wg | restart the link when the interface does not hold the agreement
+  ansible.builtin.systemd:
+    name: "{{ peering_wg_service }}"
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  when: >-
+    _pw_peer_key not in _pw_pre.stdout
+    or (peering_wg_remote_link_ip ~ '/32') not in _pw_pre.stdout
+    or (peering_wg_local_link_ip ~ '/' ~ peering_wg_link_prefix_len) not in _pw_pre.stdout
+
 # TIER 1, read from the interface and not from this play's own report.
 - name: peering-wg | read the interface back
   ansible.builtin.command: "wg show {{ peering_wg_interface }} dump"

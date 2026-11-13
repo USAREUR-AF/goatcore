@@ -19,9 +19,9 @@
 //! `graduate`, `hotfix`, `abandon` and `open_set_for` here instead of
 //! shelling out to the script.
 
+use crate::runner::Cmd;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{anyhow, Result};
 use chrono::NaiveDate;
@@ -1244,7 +1244,7 @@ fn live_hop(ladder: &Value) -> Option<Value> {
 }
 
 fn git_out(repo: &Path, args: &[&str]) -> (bool, String) {
-    match Command::new("git").arg("-C").arg(repo).args(args).output() {
+    match Cmd::new("git").arg("-C").arg(repo).args(args).output() {
         Err(e) => (false, e.to_string()),
         Ok(o) if !o.status.success() => {
             let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
@@ -1933,7 +1933,7 @@ fn age(it: &Value, today: NaiveDate) -> String {
 fn terminal_width() -> usize {
     let cols = std::env::var("COLUMNS").ok().and_then(|c| c.parse::<usize>().ok()).or_else(|| {
         if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-            Command::new("tput").arg("cols").output().ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<usize>().ok())
+            Cmd::new("tput").arg("cols").output().ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<usize>().ok())
         } else {
             None
         }

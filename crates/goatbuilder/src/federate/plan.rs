@@ -197,6 +197,10 @@ pub struct Plan {
     pub verdict: String,
     /// sha256 over the plan without this field and without readiness details.
     pub hash: String,
+    /// The goatbuilder that made the plan (`goatbuilder <version>`), so a
+    /// build that cannot read it can say which one did.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub written_by: String,
 }
 
 /// The sections an input change can move, by name, for the recheck's report.
@@ -225,7 +229,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// field order is the struct's (serde_json keeps insertion order here), so the
 /// same plan always serializes to the same bytes.
 pub fn plan_hash(p: &Plan) -> String {
-    let mut v = serde_json::to_value(p).expect("a plan serializes");
+    hash_of_value(serde_json::to_value(p).expect("a plan serializes"))
+}
+
+/// The plan hash over a plan as a JSON value: the file as written, or a plan
+/// this build serialized.
+fn hash_of_value(mut v: serde_json::Value) -> String {
     if let Some(o) = v.as_object_mut() {
         o.remove("hash");
         o.remove("created_at");
@@ -906,7 +915,7 @@ fn run_phase1(
     let out = cmd
         .output()
         .with_context(|| format!("python3 {}", script.display()))?;
-    let (ready, rows) = read_readiness(result).with_context(|| {
+    let (written, _, _) = read_result(result).with_context(|| {
         format!(
             "phase 1 exited {}: {}",
             out.status,
@@ -914,10 +923,12 @@ fn run_phase1(
         )
     })?;
     anyhow::ensure!(
-        out.status.success() == ready,
-        "phase 1 exited {} but its result says ready={ready}; not trusting either",
+        out.status.success() == written,
+        "phase 1 exited {} but its result says ready={written}; not trusting either",
         out.status
     );
+    // Read again for the verdict: a one-sided result is not ready on its own.
+    let (_, rows) = read_readiness(result)?;
     anyhow::ensure!(
         !rows.is_empty(),
         "phase 1 wrote no results to {}",
@@ -931,14 +942,34 @@ fn blocks(outcome: &str) -> bool {
 }
 
 /// Whether a phase-1 result file (`goat-federation-preflight/v1`) says ready,
-/// and its outcomes.
+/// and its outcomes. Phase 1 passes only when both sides' results are ready:
+/// a result that carries `side` `edge` or `core` (written by the phase-1
+/// sides change, #558) is never ready on its own, and a `sides` row says why. Combining it with the other side's result
+/// is the two-driver import, which is not built.
 pub fn read_readiness(path: &Path) -> Result<(bool, Vec<Readiness>)> {
+    let (ready, side, mut rows) = read_result(path)?;
+    if let Some(side) = side.filter(|s| s != "both") {
+        rows.push(Readiness {
+            check: "sides".into(),
+            outcome: "BLOCKED".into(),
+            code: None,
+            detail: format!("this phase 1 result holds only the {side} side's checks; phase 1 passes only when both sides' results are ready, and a one-sided result is never ready on its own"),
+        });
+        return Ok((false, rows));
+    }
+    Ok((ready, rows))
+}
+
+/// A phase-1 result file as written: its own ready flag, its side (absent in
+/// a result written before sides), and its outcomes.
+fn read_result(path: &Path) -> Result<(bool, Option<String>, Vec<Readiness>)> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("no phase 1 result at {}", path.display()))?;
     let doc: serde_json::Value =
         serde_json::from_str(&text).with_context(|| format!("{} is not JSON", path.display()))?;
     let s = |v: &serde_json::Value| v.as_str().unwrap_or_default().to_string();
     let ready = doc["ready"].as_bool() == Some(true);
+    let side = doc["side"].as_str().map(String::from);
     let rows = doc["results"]
         .as_array()
         .map(|rs| {
@@ -955,7 +986,7 @@ pub fn read_readiness(path: &Path) -> Result<(bool, Vec<Readiness>)> {
                 .collect()
         })
         .unwrap_or_default();
-    Ok((ready, rows))
+    Ok((ready, side, rows))
 }
 
 /// The declared peering (C1), and every declared peering (for the host check),
@@ -1259,6 +1290,7 @@ fn inputs_part(
         readiness: Vec::new(),
         verdict: String::new(),
         hash: String::new(),
+        written_by: format!("goatbuilder {}", env!("CARGO_PKG_VERSION")),
     };
     Ok((plan, rows))
 }
@@ -1325,7 +1357,7 @@ pub fn read(path: &Path) -> Result<Plan> {
             ),
         )
     })?;
-    let p: Plan = serde_json::from_str(&text).map_err(|e| {
+    let not_a_plan = |e: serde_json::Error| {
         goat_errors::coded(
             "GB-201",
             format!(
@@ -1333,8 +1365,46 @@ pub fn read(path: &Path) -> Result<Plan> {
                 path.display()
             ),
         )
-    })?;
-    if p.schema != SCHEMA || plan_hash(&p) != p.hash {
+    };
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(not_a_plan)?;
+    let by = v["written_by"]
+        .as_str()
+        .filter(|w| !w.is_empty())
+        .map(|w| format!(", written by {w}"))
+        .unwrap_or_default();
+    let schema = v["schema"].as_str().unwrap_or_default().to_string();
+    if schema != SCHEMA {
+        return Err(goat_errors::coded(
+            "GB-201",
+            format!(
+                "{} is a {schema} plan{by}, and this goatbuilder reads {SCHEMA} (GB-201): deploy it with the goatbuilder that made it, or make a new plan with this one",
+                path.display()
+            ),
+        )
+        .into());
+    }
+    let written_hash = v["hash"].as_str().unwrap_or_default().to_string();
+    let as_written = hash_of_value(v.clone());
+    let p: Plan = serde_json::from_value(v.clone()).map_err(not_a_plan)?;
+    if plan_hash(&p) != p.hash && as_written == written_hash {
+        // Intact, but it holds what a later goatbuilder wrote and this one
+        // does not read: approving it here would approve what is not shown.
+        let ours = serde_json::to_value(&p).unwrap_or_default();
+        let unread: Vec<String> = v
+            .as_object()
+            .map(|o| o.keys().filter(|k| ours.get(k.as_str()).is_none()).cloned().collect())
+            .unwrap_or_default();
+        return Err(goat_errors::coded(
+            "GB-201",
+            format!(
+                "{} was made by a later goatbuilder{by} and holds what this one does not read ({}) (GB-201): make a new plan with this goatbuilder, or deploy it with the one that made it",
+                path.display(),
+                if unread.is_empty() { "fields inside its sections".to_string() } else { unread.join(", ") }
+            ),
+        )
+        .into());
+    }
+    if plan_hash(&p) != p.hash {
         return Err(goat_errors::coded(
             "GB-201",
             format!(
@@ -1845,6 +1915,10 @@ pub enum Stage {
     /// admission, and leave every other peering and the core as they were.
     #[command(name = super::backout::VERB)]
     Backout(super::backout::BackoutArgs),
+    /// A two-driver peering's import of an edge result, as a hand-off object
+    /// names it. Not built yet: refuses with GB-267
+    /// (docs/design/federation-two-drivers.md).
+    Import(super::handoff::ImportArgs),
 }
 
 /// Run one stage.
@@ -1854,6 +1928,7 @@ pub fn run(repo: &Path, stage: &Stage, mock: Option<&Path>) -> Result<Report> {
         Stage::Verb(_) | Stage::Backout(_) => {
             Err(anyhow!("the federation verbs and backout are run before this point"))
         }
+        Stage::Import(a) => Err(super::handoff::import_not_built(a)),
         Stage::Plan {
             with,
             env,
@@ -2075,6 +2150,33 @@ mod tests {
         assert!(e.contains("GB-201"), "{e}");
     }
 
+    /// A plan a later goatbuilder made, intact but holding a field this one
+    /// does not read, is refused by name, not as an edited plan; a later
+    /// schema names the writer.
+    #[test]
+    fn a_plan_from_a_later_goatbuilder_is_refused_by_name() {
+        let r = tempfile::tempdir().unwrap();
+        let w = work_with_agreement();
+        let p = planned(r.path(), &w.path().display().to_string());
+        let path = write(&p).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        v["written_by"] = "goatbuilder 0.9.0".into();
+        v["rotation"] = serde_json::json!({"key": "transport"});
+        let h = hash_of_value(v.clone());
+        v["hash"] = h.into();
+        std::fs::write(&path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        let e = read(&path).unwrap_err().to_string();
+        assert!(
+            e.contains("later goatbuilder, written by goatbuilder 0.9.0") && e.contains("rotation") && e.contains("GB-201"),
+            "{e}"
+        );
+        assert!(!e.contains("changed after it was written"), "{e}");
+        v["schema"] = "goat-federation-plan/v2".into();
+        std::fs::write(&path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        let e = read(&path).unwrap_err().to_string();
+        assert!(e.contains("goat-federation-plan/v2") && e.contains("goatbuilder 0.9.0"), "{e}");
+    }
+
     /// The recheck rebuilds the inputs and names what moved since the plan.
     /// A mock plan writes nothing, so the plan here is written by hand.
     #[test]
@@ -2283,6 +2385,30 @@ mod tests {
         assert_eq!(rows[0].code.as_deref(), Some("GB-131"));
         assert_eq!(rows[1].code, None);
         assert!(read_readiness(&d.path().join("none.json")).is_err());
+    }
+
+    /// Phase 1 passes only when both sides' results are ready: a result that
+    /// carries `side` `edge` or `core` (written by the phase-1 sides change,
+    /// #558) is never ready on its own, however its own checks went. A result for both, or with no side, reads as before.
+    #[test]
+    fn a_one_sided_phase_1_result_is_never_ready_on_its_own() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("r.json");
+        let doc = |side: &str| format!(r#"{{"schema":"goat-federation-preflight/v1","ready":true,{side}"results":[{{"check":"inputs","outcome":"PASS","code":"","detail":""}}]}}"#);
+        for side in ["edge", "core"] {
+            std::fs::write(&f, doc(&format!(r#""side":"{side}","#))).unwrap();
+            let (ready, rows) = read_readiness(&f).unwrap();
+            assert!(!ready, "a {side}-only result read as ready");
+            let row = rows.iter().find(|r| r.check == "sides").expect("a row saying why");
+            assert_eq!(row.outcome, "BLOCKED");
+            assert!(row.detail.contains(side) && row.detail.contains("both sides"), "{}", row.detail);
+        }
+        for side in [r#""side":"both","#, ""] {
+            std::fs::write(&f, doc(side)).unwrap();
+            let (ready, rows) = read_readiness(&f).unwrap();
+            assert!(ready, "{side}");
+            assert!(rows.iter().all(|r| r.check != "sides"));
+        }
     }
 
     /// A plan that was not ready cannot be approved later: a FAIL, a BLOCKED,

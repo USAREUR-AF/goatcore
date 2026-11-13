@@ -24,6 +24,8 @@ Sustained, high-quality contribution over several pull requests; demonstrated ju
 
 Releases are tagged from `main` by a maintainer after the release gates pass. Version numbers follow semantic versioning per component (`goat-cli-vX.Y.Z`, `goatbuilder/vX.Y.Z`). Pre-1.0, minor versions may change interfaces; the changelog says so.
 
+A release of the whole repository is the tag `goatcore/vX.Y.Z`. A maintainer cuts it, signed, at the commit of the goatbuilder release with the same version, after that commit has run in a standing environment: at each minor release, and at a patch release only when it carries a fix that people on the stable line need. The branch `stable` always points at the newest such tag. A workflow moves it; it takes no pull requests. Each whole-tree release page lists the versions that go together. All development happens on `main` ([ADR 1231](docs/adr/1231-one-development-branch-and-a-stable-line-that-follows-releases.md), [the design](docs/design/community-and-stable-line.md)).
+
 ## Code of conduct
 
 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies in every project space. Reports go to the maintainers through the private channel in [SECURITY.md](SECURITY.md).

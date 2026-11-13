@@ -33,7 +33,7 @@ explicit operator review.
 The edge role reads the core router's configuration from inside its container
 using an argument-vector command (`docker exec <core> cat <path>`). The path is
 the one the container was started with (`docker inspect`, `.Args`): `-c <path>`,
-`--config <path>`, `-c=<path>`, `-c<path>` or `--config=<path>`, so a core run by
+`--config <path>`, `-c=<path>`, `-c<path>` (only when the path begins with `/` or `.`) or `--config=<path>`, never the value of another option (`-l`/`--listen`, `-e`/`--connect`, `-i`/`--id`, `--cfg`), so a core run by
 hand with `-c /etc/goat-core/config.json5` is read where it reads
 (`tasks/core-config-path.yml`, filter `zenoh_core_config_path`). Only a router whose
 arguments name no configuration is read at `goat_zenoh_edge_core_config_path`, or at
@@ -43,7 +43,20 @@ path, two different paths, or an override that differs from the path the argumen
 name each refuse the check and say why (an override that differs prints both
 paths). Measured: the first separate-host
 version of this check assumed `/etc/zenoh/config.json5` and refused every such
-hand-run core on the federation test environment as unreadable. It looks for the core router on the edge host
+hand-run core on the federation test environment as unreadable. The rule lives in
+`tasks/core-config-path.yml`, and the core is found once for every check that
+reads it (`tasks/find-core.yml`: this host, then the one host of
+`goat_zenoh_edge_core_group`). The role's key-storage comparison
+(`tasks/key-storage-check.yml`, the key-bundle grant against the core's `keys/`
+stores) uses both, and fails closed as this check does: no core found, a path that
+cannot be told, or a configuration that cannot be read fails the play, naming the
+host, the path, the read's exit status and its error text.
+`goat_zenoh_edge_key_scope_check: false` skips it and reports that as a decision. Every storage that can hold a key under `keys/` (read with the same parser, so ACL strings and comments are not stores) must be included, by key-expression inclusion, in one of the key-bundle grants (`zenoh_key_storage_check`): `keys/**`, `keys/*/**` and a store for another set (`keys/other/**` against `keys/a/**`) are refused, an equal or narrower store passes. Before, only a literal `keys/**` was refused, so a `keys/*/**` store passed.
+Before, that comparison read `/etc/zenoh/config.json5` on the edge host alone and
+reported every other case as "could not run" while the play went on, so a separate
+core host's `keys/**` store was never refused. Status: built, measured by
+`tests/test_zenoh_edge_key_storage.py`, including the separate-host shape with a
+fake docker. It looks for the core router on the edge host
 first (`tasks/discover-core.yml`: `goat_zenoh_edge_core_container`, else the core
 role label or name). When none is there, it looks on the core host: the one host
 of inventory group `goat_zenoh_edge_core_group`, by default

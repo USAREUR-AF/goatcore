@@ -1,0 +1,3 @@
+{"ts":"2026-10-20T10:00:00Z","component":"netvis","ref":"ghcr.io/example-org/netvis:v0.3.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","action":"deploy","serial":1}
+{"ts":"2026-10-20T10:00:00Z","component":"console","ref":"ghcr.io/example-org/console:v0.8.0@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","action":"deploy","serial":1}
+{"ts":"2026-10-20T10:00:00Z","component":"health","ref":"ghcr.io/example-org/health:v0.8.0@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","action":"deploy","serial":1}

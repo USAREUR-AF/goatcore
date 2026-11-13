@@ -46,6 +46,7 @@
 //! test reads them, are in docs/design/goatbuilder-legibility.md §"Run record".
 
 mod federate_world;
+use federate_world::test_support;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -200,7 +201,9 @@ impl Proc {
 
 /// The recorder. It records the invocation, then, by `GB_REC_MODE`, exits 0
 /// (`stub`) or runs the real program of the same name from `GB_REC_PATH` (`pass`);
-/// a `pass` with no real program fails loudly. Its own tools come from
+/// a `pass` with no real program fails loudly. When the program and its first
+/// argument are `GB_REC_SAY_FOR`, or its arguments contain `GB_REC_SAY_WHEN`,
+/// it first prints `GB_REC_SAY` on stdout, as a child that talks would. Its own tools come from
 /// `GB_REC_PATH`, since the tool's PATH holds only recorders.
 const RECORDER: &str = r#"#!/bin/sh
 # goatbuilder C11 recorder (crates/goatbuilder/tests/legibility.rs)
@@ -220,6 +223,14 @@ f=$(mktemp "$d/p.XXXXXX") || exit 97
 } > "$f"
 printf '%s
 ' "${f##*/}" >> "$d/order"
+if [ -n "${GB_REC_SAY_FOR:-}" ] && [ "$name ${1:-}" = "$GB_REC_SAY_FOR" ]; then
+  printf '%s
+' "${GB_REC_SAY:?}"
+fi
+if [ -n "${GB_REC_SAY_WHEN:-}" ]; then
+  case " $* " in *"$GB_REC_SAY_WHEN"*) printf '%s
+' "${GB_REC_SAY:?}" ;; esac
+fi
 if [ "${GB_REC_MODE:-stub}" = pass ]; then
   ifs=$IFS; IFS=:
   for dir in $GB_REC_PATH; do
@@ -235,10 +246,7 @@ exit 0
 "#;
 
 fn exe(p: &Path, text: &str) {
-    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-    std::fs::write(p, text).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    test_support::executable(p, text);
 }
 
 /// This machine's PATH, as the recorder runs real programs from it.
@@ -486,6 +494,12 @@ impl Hollow {
         c.env("HOME", r.join("home"))
             .env("TMPDIR", r.join("tmp"))
             .env("GOAT_MESH_PROBE", "0")
+            // On macOS a long-running verb starts `caffeinate -i -w <pid>` to
+            // keep the operator's machine awake (src/awake.rs). The recorder
+            // shadows every name on this machine's PATH, so a macOS run would
+            // record that process too: it is no command of the plan, and it
+            // starts on macOS only, so every OS records the same processes.
+            .env("GOAT_NO_CAFFEINATE", "1")
             .env("GOAT_NO_FUN", "1")
             .env("GOAT_LANG", "en")
             .env("NO_COLOR", "1")
@@ -601,7 +615,19 @@ fn check_a(procs: &[Proc], records: &[serde_json::Value]) -> Result<(), String> 
             Some(c) => match c["log"].as_str() {
                 Some(l) if Path::new(l).is_file() => {}
                 Some(l) => missing.push(format!("its log {l} does not exist: {}", p.line())),
-                None => missing.push(format!("no log path: {}", p.line())),
+                // No log is allowed only for a program on the reviewed interactive
+                // list, and only when the entry says so; anything else must log.
+                None => {
+                    let note = c["log_note"].as_str().unwrap_or("");
+                    let listed = interactive_program(&p.line());
+                    if !(note.starts_with("not captured (interactive)") && listed.is_some()) {
+                        missing.push(format!(
+                            "no log path (note: {note:?}; on the interactive list: {}): {}",
+                            listed.as_deref().unwrap_or("no"),
+                            p.line()
+                        ));
+                    }
+                }
             },
         }
     }
@@ -615,6 +641,32 @@ fn check_a(procs: &[Proc], records: &[serde_json::Value]) -> Result<(), String> 
             missing.join("\n  ")
         ))
     }
+}
+
+/// The reviewed list of programs that keep the terminal (src/runner.rs reads the
+/// same file).
+const INTERACTIVE: &str = "tests/legibility-interactive.txt";
+
+/// The listed program `line` names, if any: its words, by file name, against
+/// the list.
+fn interactive_program(line: &str) -> Option<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(INTERACTIVE);
+    let list = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    interactive_in(&list, line)
+}
+
+fn interactive_in(list: &str, line: &str) -> Option<String> {
+    let words: Vec<&str> = line
+        .split(|c: char| c.is_whitespace() || ";&|()'\"`".contains(c))
+        .filter(|w| !w.is_empty())
+        .map(|w| w.rsplit('/').next().unwrap_or(w))
+        .collect();
+    list.lines()
+        .map(|l| l.split('#').next().unwrap_or("").trim())
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| l.split_whitespace().next())
+        .find(|name| words.contains(name))
+        .map(String::from)
 }
 
 /// Options whose next word is a value.
@@ -1158,6 +1210,121 @@ fn c11_deploy() {
     );
 }
 
+/// Every world a C11 test runs goatbuilder in opts out of the keep-awake
+/// assertion (src/awake.rs), so a macOS run starts no `caffeinate` the run record
+/// and the dry run do not hold and the processes are the same on every OS.
+#[test]
+fn every_c11_world_opts_out_of_keep_awake() {
+    let opted_out = |c: &Command| {
+        c.get_envs()
+            .any(|(k, v)| k == "GOAT_NO_CAFFEINATE" && v.is_some_and(|v| v == "1"))
+    };
+    assert!(opted_out(&hollow().command(&["status"])), "the hollow world");
+    let w = federate_world::world();
+    assert!(opted_out(&w.command(&["hello-ally"])), "the federate world");
+    assert!(opted_out(&w.command_with(&["-o", "table"], &["hello-ally"])), "the federate world, as a table");
+}
+
+/// Each group of a deploy is its own phase in the record, `deploy:<group>`
+/// and `verify:<group>`, so `runs diff` sees one group's outcome change while
+/// another's stays the same.
+#[test]
+fn a_two_group_deploy_records_a_phase_per_group() {
+    let h = hollow();
+    let r = h.repo();
+    exe(
+        &h.repo.join("ops/pins/fleet-pins.yaml"),
+        &format!("goatnets:\n  dev:\n    members: [dev_hosts, dev_edge]\ncomponents:\n  portal:\n    var: portal_image\n    fleet: \"{PORTAL_REF}\"\n"),
+    );
+    exe(
+        &h.repo.join("ops/ansible/inventory/mgmt-hosts.ini"),
+        "[dev_hosts]\ndev-core-a ansible_host=192.0.2.11\n\n[dev_edge]\ndev-edge-a ansible_host=192.0.2.12\n",
+    );
+    exe(
+        &h.repo.join("ops/ansible/group_vars/dev_edge/pins.yml"),
+        &format!("portal_image: \"{PORTAL_REF}\"\n"),
+    );
+    let args = ["deploy", "-C", r, "--env", "dev", "--component", "portal", "--ack", "A Person", "--yes"];
+    // dev_edge's play prints a clean recap, so its deploy succeeds and its
+    // verify runs; dev_hosts's prints none, so its deploy fails.
+    let mut cmd = h.command(&args);
+    cmd.env("GB_REC_SAY_WHEN", "target=dev_edge")
+        .env("GB_REC_SAY", "PLAY RECAP ***\ndev-edge-a : ok=1 changed=0 unreachable=0 failed=0");
+    let (out, procs) = run_recorded(cmd, &h.root.path().join("rec/two"));
+    ran("deploy, two groups", &out, &procs, &[0, 3]);
+    let records = run_records(h.root.path(), "deploy");
+    assert_eq!(records.len(), 1, "one run record: {records:?}");
+    let ids: Vec<String> = records[0]["phases"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p["id"].as_str().map(String::from))
+        .collect();
+    let phase = |id: &str| records[0]["phases"].as_array().unwrap().iter().find(|p| p["id"] == id).cloned();
+    for g in ["dev_hosts", "dev_edge"] {
+        assert!(ids.contains(&format!("deploy:{g}")), "no phase deploy:{g} in {ids:?}");
+        assert!(ids.contains(&format!("verify:{g}")), "no phase verify:{g} in {ids:?}");
+    }
+    // dev_edge's verify ran: it read the ledger, and gave no skip verdict.
+    let edge = phase("verify:dev_edge").unwrap();
+    assert!(edge["commands"].as_u64().unwrap_or(0) > 0 && edge["verdict"].is_null(), "verify:dev_edge did not run: {edge}");
+    // dev_hosts's deploy failed: its verify is a phase with its verdict.
+    let hosts = phase("verify:dev_hosts").unwrap();
+    assert_eq!(hosts["verdict"], "not checked: the deploy failed", "{hosts}");
+    let unique: BTreeSet<&String> = ids.iter().collect();
+    assert_eq!(unique.len(), ids.len(), "a phase id repeats: {ids:?}");
+}
+
+/// A deploy's dry run names its four probes under two headings: the two it
+/// ran itself (the secrets posture and the mesh status, whose answers shaped
+/// the plan) and the two only a real run starts (the fresh-source check and
+/// the ledger read). Each row is the line its builder makes, as `-o json`
+/// lists it.
+#[test]
+fn a_deploy_dry_run_names_its_probes_under_two_headings() {
+    let h = hollow();
+    let r = h.repo();
+    let dry = ["deploy", "-C", r, "--env", "dev", "--component", "portal", "--dry-run"];
+    let page = at_a_terminal(&h.command(&dry)).unwrap_or_else(|e| panic!("{e}"));
+    let mut plan = vec!["-o", "json"];
+    plan.extend(&dry);
+    let plan = json(&ok("deploy plan", h.command(&plan).output().unwrap()));
+    let rows = |name: &str| -> Vec<String> {
+        plan["checks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|c| c["name"] == name)
+            .filter_map(|c| c["detail"].as_str().map(|d| d.trim().to_string()))
+            .collect()
+    };
+    let (ran, real) = (rows("probe-ran"), rows("probe"));
+    assert_eq!(ran.len(), 2, "the dry run's own probes: {ran:?}");
+    assert!(ran[0].contains("available") && ran[1].contains("netbird status"), "{ran:?}");
+    assert_eq!(real.len(), 2, "the real run's probes: {real:?}");
+    assert!(real[0].contains("fresh-source.sh"), "{real:?}");
+    assert!(real[1].starts_with("(cd ops/ansible && ") && real[1].contains("deploy-history.jsonl"), "the ledger read, runnable from the checkout: {real:?}");
+    // On the page, each row sits under its own heading: after it, and before
+    // the next heading of the other kind.
+    let page = norm(&page);
+    let ran_h = "This dry run ran (its answers shaped the plan above):";
+    let real_h = "A real run also runs (each verdict is known only then):";
+    let under = |heading: &str, other: &str, row: &str| {
+        let row = norm(row);
+        page.match_indices(heading).any(|(at, _)| {
+            let section = &page[at..];
+            let end = section[heading.len()..].find(other).map_or(section.len(), |e| e + heading.len());
+            section[..end].contains(&row)
+        })
+    };
+    for row in &ran {
+        assert!(under(ran_h, real_h, row), "{row:?} is not under {ran_h:?}:\n{page}");
+    }
+    for row in &real {
+        assert!(under(real_h, ran_h, row), "{row:?} is not under {real_h:?}:\n{page}");
+    }
+}
+
 #[test]
 fn c11_federate() {
     let w = federate_world::world();
@@ -1372,6 +1539,39 @@ fn c11_each_check_can_pass_when_the_tool_does_what_it_asks() {
         "join-the-image-pull-before-phase-5"
     );
 
+    // A command with no log passes only when it is on the interactive list and
+    // its entry says so; the note alone, or the list alone, is not enough.
+    let ssh = Proc {
+        ppid: 1,
+        program: "ssh".into(),
+        args: vec!["operator@192.0.2.10".into(), "true".into()],
+    };
+    let entry = |note: &str| serde_json::json!({ "verb": "standup", "commands": [{ "command": "ssh operator@192.0.2.10 true", "log": null, "log_note": note }], "inputs": [] });
+    assert!(
+        check_a(
+            std::slice::from_ref(&ssh),
+            &[entry("not captured (interactive): x")]
+        )
+        .is_err(),
+        "ssh is not on the shipped list"
+    );
+    assert!(
+        check_a(
+            std::slice::from_ref(&ssh),
+            &[entry("GOATBUILDER_CHILD_TTY=1")]
+        )
+        .is_err(),
+        "an escape is not a way out of logging"
+    );
+    assert_eq!(
+        interactive_in(
+            "ssh needs the terminal for x\n",
+            "ssh operator@192.0.2.10 true"
+        )
+        .as_deref(),
+        Some("ssh")
+    );
+
     // A dry run that fails is a harness failure, never a known-failing check.
     assert!(
         at_a_terminal(Command::new(bin()).args(["join-node", "--no-such-flag"])).is_err(),
@@ -1456,4 +1656,28 @@ fn c11_each_check_can_pass_when_the_tool_does_what_it_asks() {
         .is_err(),
         "a printed path that does not exist"
     );
+}
+
+/// Under `-o json` stdout is the report alone: what a child prints goes to
+/// stderr and its log, never into the document a script parses.
+#[test]
+fn a_json_run_keeps_its_children_off_stdout() {
+    let w = federate_world::world();
+    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+    let root = w.root.path().to_path_buf();
+    let shims = install_shims(&root);
+    let mut c = w.command(&["hello-ally", "--to", "4"]);
+    behind_recorder(&mut c, &shims, "pass", &elsewhere(&root));
+    // Every phase's own command (`bash -euo pipefail -c ...`) talks on stdout.
+    const SAID: &str = "a phase's command printing on stdout";
+    c.env("GB_REC_SAY_FOR", "bash -euo").env("GB_REC_SAY", SAID);
+    let (out, procs) = run_recorded(c, &root.join("rec/json"));
+    ran("federate --to 4 -o json", &out, &procs, &[0]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let doc: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
+    assert!(doc.is_ok(), "stdout is not one JSON document: {:?}\nstdout:\n{stdout}", doc.err());
+    assert!(text(&out).contains(SAID), "the child's line is on neither stream: it was not run");
+    assert!(String::from_utf8_lossy(&out.stderr).contains(SAID), "the child's line is not on stderr");
+    let logged = run_records(&root, "federate").iter().flat_map(|r| r["commands"].as_array().cloned().unwrap_or_default()).filter_map(|c| c["log"].as_str().and_then(|l| std::fs::read_to_string(l).ok())).any(|l| l.contains(SAID));
+    assert!(logged, "the child's line is not in its log");
 }
