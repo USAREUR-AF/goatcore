@@ -611,13 +611,29 @@ impl Cmd {
     }
 }
 
+/// `GOATBUILDER_CHILD_TTY=1`. A unit test sets its answer on its own thread
+/// (`CHILD_TTY_IN_TEST`) rather than in the process environment, which every
+/// test shares.
+fn child_tty() -> bool {
+    #[cfg(test)]
+    if let Some(v) = CHILD_TTY_IN_TEST.with(|c| c.get()) {
+        return v;
+    }
+    std::env::var_os("GOATBUILDER_CHILD_TTY").is_some_and(|v| v == "1")
+}
+
+#[cfg(test)]
+thread_local! {
+    static CHILD_TTY_IN_TEST: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
 /// Why a streamed command whose line is `line` keeps the terminal, when it does:
 /// a program on the interactive list, or `GOATBUILDER_CHILD_TTY=1`.
 fn keeps_terminal(line: &str) -> Option<String> {
     if let Some(why) = interactive(line) {
         return Some(format!("not captured (interactive): {why}"));
     }
-    if std::env::var_os("GOATBUILDER_CHILD_TTY").is_some_and(|v| v == "1") {
+    if child_tty() {
         return Some(
             "GOATBUILDER_CHILD_TTY=1: the command had the terminal; nothing was captured".into(),
         );
@@ -921,10 +937,10 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         begin(t.path(), "standup", vec![], None);
         phase("2", "baseline", "");
-        // GOATBUILDER_CHILD_TTY is read per command; set for this test only.
-        std::env::set_var("GOATBUILDER_CHILD_TTY", "1");
+        // GOATBUILDER_CHILD_TTY=1, on this test's thread only.
+        CHILD_TTY_IN_TEST.with(|c| c.set(Some(true)));
         let st = Cmd::new("sh").args(["-c", "true"]).status();
-        std::env::remove_var("GOATBUILDER_CHILD_TTY");
+        CHILD_TTY_IN_TEST.with(|c| c.set(None));
         assert!(st.unwrap().success());
         let f = frame();
         assert!(
