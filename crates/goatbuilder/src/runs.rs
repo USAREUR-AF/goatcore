@@ -519,6 +519,36 @@ mod tests {
     }
     use crate::runner::{CommandEntry, PhaseEntry};
 
+    /// Each run `find` cannot name is refused with GB-264: `last` with no run
+    /// recorded, an id that matches none, and a prefix several runs share.
+    #[test]
+    fn a_run_find_cannot_name_is_gb_264() {
+        let code = |r: Result<(String, serde_json::Value)>| {
+            r.unwrap_err()
+                .downcast_ref::<goat_errors::Coded>()
+                .map(|c| c.code.to_string())
+        };
+        let state = tempfile::tempdir().unwrap();
+        assert_eq!(code(find(state.path(), "last")).as_deref(), Some("GB-264"));
+        for id in ["20261112T000000Z-aaa", "20261112T000000Z-aab"] {
+            let d = state.path().join("runs").join(id);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("run.json"), "{}").unwrap();
+        }
+        assert_eq!(
+            code(find(state.path(), "nosuch")).as_deref(),
+            Some("GB-264")
+        );
+        assert_eq!(
+            code(find(state.path(), "20261112")).as_deref(),
+            Some("GB-264")
+        );
+        assert_eq!(
+            find(state.path(), "20261112T000000Z-aab").unwrap().0,
+            "20261112T000000Z-aab"
+        );
+    }
+
     fn finished(dir: &Path, cmds: &[(&str, i32)], target: &str) -> Finished {
         Finished {
             dir: dir.to_path_buf(),

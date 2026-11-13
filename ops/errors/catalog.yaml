@@ -2711,11 +2711,12 @@ entries:
       - "no verb that drives hosts has run with this state directory (a --mock run writes no record)"
       - "a mistyped id, or a prefix too short to name one run"
     fixes:
-      - "goatbuilder runs   (the recorded runs, newest last)"
+      - "goatbuilder runs   (the recorded runs, newest first)"
       - "give more of the run's id"
     read: docs/design/goatbuilder-legibility.md
     matches:
       - "no run is recorded under "
+      - "no run \\S+ under .*/runs"
       - "runs start with .*; give more of the id"
     exit: 2
   - code: GB-246
