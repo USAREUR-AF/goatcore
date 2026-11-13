@@ -144,29 +144,56 @@ def self_test():
     caller = ("on:\n  push:\n    tags: ['tool/v*']\njobs:\n  r:\n    uses: ./.github/workflows/_sign.yml\n")
     signer = "on: workflow_call\njobs:\n  s:\n    runs-on: x\n    steps:\n      - run: cosign sign-blob --yes x\n"
     exact = r"'^https://github\.com/Org/Repo/\.github/workflows/_sign\.yml@refs/tags/tool/v'"
+    vendor = "\"^https://github.com/chainguard-images/.*\""
+    # (name, documented value, expected to pass, --release-repo, GITHUB_REPOSITORY)
     cases = [
-        ("the exact workflow identity, anchored", exact, True),
-        ("the repository prefix in its own case", "'^https://github.com/Org/Repo/'", True),
-        ("a lowercase owner", "'^https://github.com/org/repo/'", False),
-        ("the wrong workflow", r"'^https://github\.com/Org/Repo/\.github/workflows/other\.yml@'", False),
-        ("not anchored to the repository", "'Repo/'", False),
-        ("the full prefix without a leading ^", r"'https://github\.com/Org/Repo/'", False),
-        ("a placeholder is a template", "'^https://github.com/<owner>/<repo>/'", True),
-        ("an exact identity at a real version", "'https://github.com/Org/Repo/.github/workflows/_sign.yml@refs/tags/tool/v1.2.3'", True),
+        ("the exact workflow identity, anchored", exact, True, None, None),
+        ("the repository prefix in its own case", "'^https://github.com/Org/Repo/'", True, None, None),
+        ("a lowercase owner", "'^https://github.com/org/repo/'", False, None, None),
+        ("the wrong workflow", r"'^https://github\.com/Org/Repo/\.github/workflows/other\.yml@'", False, None, None),
+        ("not anchored to the repository", "'Repo/'", False, None, None),
+        ("the full prefix without a leading ^", r"'https://github\.com/Org/Repo/'", False, None, None),
+        ("a placeholder is a template", "'^https://github.com/<owner>/<repo>/'", True, None, None),
+        ("an exact identity at a real version", "'https://github.com/Org/Repo/.github/workflows/_sign.yml@refs/tags/tool/v1.2.3'", True, None, None),
+        ("the owner alone, which also matches its other repositories", "'^https://github.com/Org/'", False, None, None),
+        ("a third party's signer is not this repository's claim", vendor, True, None, None),
+        ("a third party's exact identity", "'https://github.com/chainguard-images/images/.github/workflows/release.yaml@refs/heads/main'", True, None, None),
+        ("--release-repo overrides GITHUB_REPOSITORY in a consumer's CI",
+         "'^https://github.com/USAREUR-AF/goatcore/'", True, "USAREUR-AF/goatcore", "example-org/consumer"),
+        ("a lowercase copy is refused under --release-repo",
+         "'^https://github.com/usareur-af/goatcore/'", False, "USAREUR-AF/goatcore", "example-org/consumer"),
     ]
-    for name, value, ok in cases:
+    failed = 0
+    saved = os.environ.get("GITHUB_REPOSITORY")
+    for name, value, ok, release_repo, env_repo in cases:
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, ".github", "workflows"))
             os.makedirs(os.path.join(d, "docs"))
             open(os.path.join(d, ".github/workflows/release.yml"), "w").write(caller)
             open(os.path.join(d, ".github/workflows/_sign.yml"), "w").write(signer)
-            flag = "--certificate-identity" if "@refs/tags/tool/v1" in value else "--certificate-identity-regexp"
+            flag = "--certificate-identity" if "@refs/" in value and not value.startswith("'^") else "--certificate-identity-regexp"
             open(os.path.join(d, "docs/install.md"), "w").write(f"cosign verify-blob \\\n  {flag} {value} \\\n")
-            got = problems(d, "Org/Repo")
+            try:
+                if env_repo is None:
+                    repo = "Org/Repo"
+                else:
+                    os.environ["GITHUB_REPOSITORY"] = env_repo
+                    repo = repository(d, release_repo)
+                got = problems(d, repo)
+            except Exception as e:  # a missing option is a failed case, not a crash
+                got = f"{type(e).__name__}: {e}"
+            finally:
+                if saved is None:
+                    os.environ.pop("GITHUB_REPOSITORY", None)
+                else:
+                    os.environ["GITHUB_REPOSITORY"] = saved
             if (got == []) != ok:
                 print(f"SELF-TEST FAILED: {name}: expected {'a pass' if ok else 'a refusal'}, got {got}")
-                return 1
-    print("check-doc-signer-identity: self-test ok")
+                failed += 1
+    if failed:
+        print(f"check-doc-signer-identity: self-test failed, {failed} of {len(cases)} cases")
+        return 1
+    print(f"check-doc-signer-identity: self-test ok, {len(cases)} cases")
     return 0
 
 
