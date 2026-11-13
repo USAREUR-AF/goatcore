@@ -49,12 +49,19 @@ pub(crate) fn test_lite_config() -> Option<String> {
     None
 }
 
-fn ask_with(repo: &Path, args: &[&str], probe: bool) -> Option<(i32, String)> {
+/// The posture command `args` runs: what a dry run prints for a probe, and what
+/// the probe starts (one builder, so the two cannot differ).
+pub fn posture_cmd(repo: &Path, args: &[&str]) -> Cmd {
     let mut cmd = Cmd::new("python3");
     cmd.arg(posture(repo)).args(args).current_dir(repo);
     if let Some(p) = test_lite_config() {
         cmd.env("GOAT_LITE_CONFIG", p);
     }
+    cmd
+}
+
+fn ask_with(repo: &Path, args: &[&str], probe: bool) -> Option<(i32, String)> {
+    let mut cmd = posture_cmd(repo, args);
     if !probe {
         cmd.env("GOAT_STORE_PROBE", "0");
     }

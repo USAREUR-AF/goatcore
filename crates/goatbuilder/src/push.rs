@@ -212,8 +212,15 @@ pub fn declared(repo: &Path, component: &str, goatnet: &str, only_group: Option<
     Ok(Declared { var, ledger, members, skipped })
 }
 
+/// The mesh probe a deploy starts: what a dry run prints, and what runs.
+fn netbird_status_cmd() -> Cmd {
+    let mut c = Cmd::new("netbird");
+    c.arg("status");
+    c
+}
+
 fn netbird_status() -> (String, String) {
-    let out = Cmd::new("netbird").arg("status").output();
+    let out = netbird_status_cmd().output();
     let text = out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
     let field = |key: &str| {
         text.lines()
@@ -521,6 +528,13 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
             return Ok(Report::new("deploy", checks, EXIT_REFUSED));
         }
     }
+    // A dry run names the probes a real run starts before its plays, built by
+    // the code that starts them; their verdicts are known only when they run.
+    if o.dry_run {
+        checks.push(ok("probe", crate::fresh::command(repo).line()));
+        checks.push(ok("probe", crate::secrets::posture_cmd(repo, &["available"]).line()));
+        checks.push(ok("probe", netbird_status_cmd().line()));
+    }
     crate::runner::phase("transport", "the secrets, and how the hosts are reached", "");
     let p = plan(repo, o)?;
     let r = &p.resolved;
@@ -567,7 +581,9 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         if !o.verify_only {
             let args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref());
             if o.dry_run {
-                checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("DRY: deploying {}: (cd ops/ansible && ../scripts/with-aws {} -- ../scripts/ansible-preflight.sh {}) > {log}", render_ref(w), crate::settings::aws_profile(repo), args.join(" "))));
+                checks.push(ok("probe", ledger_read_cmd(repo, &inv, g, &r.ledger).line()));
+                // The play's line, built from the argv a real run starts.
+                checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("DRY: deploying {}: (cd ops/ansible && {}) > {log}", render_ref(w), ansible_cmd(repo, "preflight", &args).line())));
             } else {
                 checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("deploying {}", render_ref(w))));
                 let mut cmd = ansible_cmd(repo, "preflight", &args);
@@ -771,19 +787,22 @@ pub(crate) fn ledger_read_args(inv: &[String], group: &str, ledger: &str) -> Vec
     args
 }
 
+/// The ledger read a deploy starts on `group`: what a dry run prints, and what runs.
+fn ledger_read_cmd(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Cmd {
+    ansible_cmd(repo, "ansible", &ledger_read_args(inv, group, ledger))
+}
+
 /// The newest ledger row per host of a group, one `host | … | (stdout) <row>` line each
 /// (ansible `-o`); `NO_LEDGER` where the file is absent.
 fn read_tails(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<String> {
-    let args = ledger_read_args(inv, group, ledger);
-    let out = ansible_cmd(repo, "ansible", &args).output().with_context(|| "ansible")?;
+    let out = ledger_read_cmd(repo, inv, group, ledger).output().with_context(|| "ansible")?;
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 /// [`read_tails`], plus the ledger read's failure: `Some(exit code)` when ansible did
 /// not exit 0 (an unreachable or failed host), `None` when it did.
 fn read_tails_status(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<(String, Option<String>)> {
-    let args = ledger_read_args(inv, group, ledger);
-    let out = ansible_cmd(repo, "ansible", &args).output().with_context(|| "ansible")?;
+    let out = ledger_read_cmd(repo, inv, group, ledger).output().with_context(|| "ansible")?;
     let failed = (!out.status.success()).then(|| out.status.code().map_or("by signal".into(), |c| c.to_string()));
     Ok((String::from_utf8_lossy(&out.stdout).to_string(), failed))
 }

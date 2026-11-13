@@ -1067,7 +1067,20 @@ fn narrative_body(report: &Report, color: bool) -> String {
             }
         }
     };
+    // Whether the previous row was a probe, so a run of probes has one header.
+    let mut in_probes = false;
     for c in &report.checks {
+        let after_probe = std::mem::replace(&mut in_probes, c.name == "probe");
+        // A probe a real run starts: the command verbatim, built by the code that
+        // starts it, under one header; its verdict is known only when it runs.
+        if c.name == "probe" {
+            flush(&mut dry, &mut out);
+            if !after_probe {
+                out.push_str("  A real run also runs (each verdict is known only then):\n");
+            }
+            out.push_str(&format!("    {}\n", c.detail.trim()));
+            continue;
+        }
         let flat = c.detail.split_whitespace().collect::<Vec<_>>().join(" ");
         // A ledger left unread by a dry run is no command of its own to show.
         if c.ok && flat.contains(": DRY: nothing was read") {
@@ -1261,7 +1274,10 @@ fn phased(report: &Report, color: bool) -> String {
         (false, _, false) => "\u{2717}",
     };
     let mut out = String::new();
+    // Whether the previous row was a probe, so a run of probes has one header.
+    let mut in_probes = false;
     for c in &report.checks {
+        let after_probe = std::mem::replace(&mut in_probes, c.name == "probe");
         if let Some(h) = heading(c) {
             if !out.is_empty() {
                 out.push('\n');
@@ -1283,6 +1299,14 @@ fn phased(report: &Report, color: bool) -> String {
             "note" => {
                 out.push_str(fill(&detail, "  ", "  ").trim_end());
                 out.push('\n');
+            }
+            // A probe a real run starts before its phases: printed verbatim, so
+            // the line is the command the run starts; its verdict is the run's.
+            "probe" => {
+                if !after_probe {
+                    out.push_str("Before phase 1, a real run runs (each verdict is known only then):\n");
+                }
+                out.push_str(&format!("  {}\n", c.detail.trim()));
             }
             "banner" => {
                 out.push_str(fill(&detail, "", "").trim_end());
