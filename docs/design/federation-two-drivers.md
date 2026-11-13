@@ -413,7 +413,9 @@ phase 14. The scenario passes when:
 - a run killed during an edge half and started again with `--from` on the same machine finishes;
   the WireGuard peering role restarts its link when the interface does not hold the agreement,
   not only when its files changed, so a kill between writing the files and restarting the link
-  does not leave a resume that changes nothing (designed; proved by the kill-resume stage);
+  does not leave a resume that changes nothing (built, #597; measured: the kill-resume scenario aims phase 11's
+  kill after both of the role's files are written and before the handler, which fails on goatbuilder 0.6.0 and
+  passes with the fix);
 - `status` on each controller shows the peering at phase 14 with its evidence.
 - each side is driven only from the hand-off objects: the scenario runs `command` on `run_on`,
   carries `result`, reads the confirm code from the edge driver's own JSON, runs `import` and

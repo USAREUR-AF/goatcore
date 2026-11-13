@@ -32,6 +32,16 @@ kr_first() { [ "$AVENUE" = goatbuilder ] && echo "$A" || echo "$B"; }
 # that the kill lands inside the phase. A phase shorter than its delay ends before the kill,
 # and kr-phase-<P>-killed-mid-phase says so.
 kr_delay() {
+  # An aimed kill: once the phase is at work, the watcher waits until a file matching the
+  # glob on the edge is written after the phase began, and kills at once. It lands a kill
+  # between a template's write and the handler that converges it, which a fixed delay hits
+  # only by chance. FE2E_KR_AIM=<phase>:<glob> aims another phase, or phase 11 elsewhere.
+  case "${FE2E_KR_AIM:-}" in "$1":?*) echo "after:${FE2E_KR_AIM#*:}"; return ;; esac
+  # Phase 11 by default: after the peering-wg role writes its last template (the firewall
+  # table, after the link environment) and before flush_handlers restarts the link. A resume
+  # then finds both files unchanged and nothing notified; only a role that reads the
+  # interface back converges the link (goatbuilder 0.6.0's known issue, fixed in 0.6.1).
+  [ "$1" = 11 ] && { echo "after:/etc/goat-peering-wg/*.nft"; return; }
   case "$1" in
     1) echo 0.05 ;; 2) echo 8 ;; 3) echo 0.4 ;; 4) echo 0.02 ;; 5) echo 0.05 ;;
     6) echo 0.02 ;; 7) echo 0.02 ;; 8) echo 0.2 ;; 9) echo 0.05 ;; 10) echo 0 ;;
@@ -75,7 +85,20 @@ while kill -0 "$root" 2>/dev/null; do
   sleep 0.02
 done
 echo "work ${seen:-never}"
-[ -z "$seen" ] || sleep "$delay"
+case "$delay" in
+  after:*)
+    glob="${delay#after:}"; hit=""
+    while [ -z "$hit" ] && [ -n "$seen" ] && kill -0 "$root" 2>/dev/null; do
+      for f in $glob; do
+        [ -f "$f" ] || continue
+        m="$(date -r "$f" +%s.%N 2>/dev/null)"
+        if awk -v m="$m" -v a="$t0" "BEGIN { exit !(m > a) }"; then hit="$f"; break; fi
+      done
+      [ -n "$hit" ] || sleep 0.01
+    done
+    echo "aimed: ${hit:-never} written at $(since)s" ;;
+  *) [ -z "$seen" ] || sleep "$delay" ;;
+esac
 if kill -0 "$root" 2>/dev/null; then echo "alive 1"; else echo "alive 0"; fi
 echo "kill at $(since)s"
 all="$(tree "$root")"
@@ -86,6 +109,15 @@ kill -9 $all 2>/dev/null || true
 pkill -9 -f "ansible-playboo[k]|goatbuilde[r] -C /opt/goat|peering-standu[p].sh|/usr/local/bin/goa[t] federate" 2>/dev/null || true
 sleep 0.5
 echo "left:"; pgrep -a -f "ansible-playboo[k]|goatbuilde[r] -C /opt/goat|peering-standu[p].sh|/usr/local/bin/goa[t] federate" || echo none
+case "$delay" in after:*)
+  echo "at the kill, the files and the interfaces:"
+  echo "phase began work at $(awk -v a="$t0" -v s="$seen" "BEGIN { printf \"%.6f\", a + s }") (epoch)"
+  for f in /etc/goat-peering-wg/*.env /etc/goat-peering-wg/*.nft; do
+    if [ -f "$f" ]; then echo "template $f written $(date -r "$f" +%s.%N)"; else echo "template $f absent"; fi
+  done
+  p="$(wg show all peers 2>&1)"; echo "wireguard peers: ${p:-none}"
+  a="$(ip -o -4 addr show type wireguard 2>&1)"; echo "wireguard addresses: ${a:-none}" ;;
+esac
 '
 
 # What a peering leaves on the hosts, with the two sovereign ids replaced by US and PEER,
@@ -122,12 +154,14 @@ kr_phase() { # $1 us, $2 them, $3 phase
   landed="$(sed -n 's/^kill at //p' "$kf" | head -1)"
   kr_shape "$s" "$them" > "$RECORD/kr-phase-$p-after-kill.txt" || true
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$p" "${tw:-never}" "$delay" "${landed:-none}" "${alive:-0}" "$rc" >> "$RECORD/kills.tsv"
+  local when="$delay s after phase $p began work at ${tw}s"
+  case "$delay" in after:*) when="once phase $p, at work from ${tw}s, wrote ${delay#after:}" ;; esac
   if [ "$alive" = 1 ] && [ -n "$tw" ] && [ "$tw" != never ]; then
-    why="killed at $landed after the start, $delay s after phase $p began work at ${tw}s"
+    why="killed at $landed after the start, $when"
   elif [ -z "$tw" ] || [ "$tw" = never ]; then
     why="the driver exited (code $rc) before phase $p showed any work; nothing was interrupted"
   else
-    why="phase $p ended (code $rc) within $delay s of starting work at ${tw}s, before the kill; nothing was interrupted"
+    why="phase $p ended (code $rc) before the kill ($when); nothing was interrupted"
   fi
   rec "kr-phase-$p-killed-mid-phase" --note "$why" -- bash -c "echo '$why'; cat '$kf'; tail -20 '$out'; [ '$alive' = 1 ] && [ '${tw:-never}' != never ]"
   local f0="$FAILS"
