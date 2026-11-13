@@ -314,11 +314,11 @@ mod tests {
                     missing.push(val);
                 }
             }
-            // `-e target=<group>` is one word in the play's arguments.
-            for w in c
-                .split_whitespace()
-                .filter_map(|w| w.strip_prefix("target="))
-            {
+            // `-e target=<group>` is one word in the play's arguments; the line
+            // is quoted as a shell reads it (runner::line_of), so it is read back
+            // as one.
+            let words = shlex::split(c).unwrap_or_else(|| c.split_whitespace().map(String::from).collect());
+            for w in words.iter().filter_map(|w| w.strip_prefix("-e target=").or_else(|| w.strip_prefix("target="))) {
                 assert!(
                     inputs.iter().any(|i| i.value() == Some(w) && i.sourced()),
                     "{w}"
