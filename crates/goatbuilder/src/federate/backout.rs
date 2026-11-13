@@ -372,8 +372,21 @@ enum Leaf {
     Shared(String),
     /// This peering's: put back to what was there before its first admission.
     Restore(Vec<u8>),
-    /// This peering's, and nothing was there before: removed.
+    /// This peering's, and admission recorded that nothing was there
+    /// before: removed.
     Remove,
+    /// This peering's, and what was there before cannot be read from the
+    /// admission records (none, a corrupt one, an unreadable backup): left
+    /// alone, and the back-out stops on it.
+    Unknown(String),
+}
+
+/// The earliest admission record of a path.
+enum Record {
+    /// What was there, kept as this backup.
+    Backup(PathBuf),
+    /// Nothing was there: this record says so.
+    Absent,
 }
 
 impl CoreLeaf {
@@ -403,18 +416,30 @@ impl CoreLeaf {
     }
 
     /// The earliest record of `target` in this peering's admission runs, in
-    /// order (admit.rs `publish`): `Some(Some(backup))` when something was
-    /// there, `Some(None)` when nothing was, `None` with no record. A backup
+    /// order (admit.rs `publish`). `Ok(None)` when no run recorded it; `Err`
+    /// naming the record when the earliest one cannot be read as a backup or
+    /// as an explicit [`super::admit::ABSENT`] of exactly this path. A backup
     /// with no record beside it (an older admission) is taken as of a file of
     /// its name.
-    fn first_record(&self, target: &Path) -> Option<Option<PathBuf>> {
-        let base = target.file_name()?.to_string_lossy().to_string();
+    fn first_record(&self, target: &Path) -> Result<Option<Record>, String> {
+        let Some(base) = target.file_name().map(|f| f.to_string_lossy().to_string()) else {
+            return Ok(None);
+        };
         let side = format!("{base}.target");
-        let first_line = |p: &Path| -> Option<(PathBuf, bool)> {
-            let t = std::fs::read_to_string(p).ok()?;
+        // (path it is of, its second line), or why it cannot be read.
+        let read = |p: &Path| -> Result<(PathBuf, Option<String>), String> {
+            let t = std::fs::read_to_string(p).map_err(|e| {
+                format!("the admission record {} cannot be read ({e})", p.display())
+            })?;
             let mut lines = t.lines().map(str::trim);
-            let path = PathBuf::from(lines.next()?);
-            Some((path, lines.next() == Some(super::admit::ABSENT)))
+            let of = lines
+                .next()
+                .filter(|l| !l.is_empty())
+                .ok_or_else(|| format!("the admission record {} names no path", p.display()))?;
+            Ok((
+                PathBuf::from(of),
+                lines.next().filter(|l| !l.is_empty()).map(String::from),
+            ))
         };
         let mut runs: Vec<PathBuf> = std::fs::read_dir(self.work.join("admission"))
             .into_iter()
@@ -425,7 +450,7 @@ impl CoreLeaf {
             .collect();
         runs.sort();
         for backup in runs {
-            let mut found: Vec<(u64, Option<PathBuf>)> = Vec::new();
+            let mut found: Vec<(u64, Result<Record, String>)> = Vec::new();
             for p in std::fs::read_dir(&backup).into_iter().flatten().flatten() {
                 let p = p.path();
                 let Some((n, rest)) = p
@@ -440,25 +465,52 @@ impl CoreLeaf {
                 }
                 let n: u64 = n.parse().unwrap_or(u64::MAX);
                 if rest == base {
+                    // A backup: of this path when its record says so, or
+                    // when it has none (an older admission).
                     let rec = p.with_file_name(format!("{n}-{side}"));
-                    match first_line(&rec) {
-                        Some((of, _)) if of != target => continue,
-                        _ => found.push((n, Some(p))),
+                    if !rec.exists() {
+                        found.push((n, Ok(Record::Backup(p))));
+                        continue;
+                    }
+                    match read(&rec) {
+                        Ok((of, _)) if of != target => {}
+                        Ok((_, None)) => found.push((n, Ok(Record::Backup(p)))),
+                        Ok((_, Some(w))) => found.push((
+                            n,
+                            Err(format!(
+                                "the admission record {} says '{w}' beside a backup",
+                                rec.display()
+                            )),
+                        )),
+                        Err(e) => found.push((n, Err(e))),
                     }
                 } else if rest == side {
-                    if let Some((of, true)) = first_line(&p) {
-                        if of == target {
-                            found.push((n, None));
+                    match read(&p) {
+                        Ok((of, _)) if of != target => {}
+                        Ok((_, Some(w))) if w == super::admit::ABSENT => {
+                            found.push((n, Ok(Record::Absent)))
                         }
+                        // A record with a backup is decided beside the backup.
+                        Ok((_, None)) if p.with_file_name(format!("{n}-{base}")).exists() => {}
+                        Ok((_, w)) => found.push((
+                            n,
+                            Err(format!(
+                                "the admission record {} is neither a backup's nor '{}' ({})",
+                                p.display(),
+                                super::admit::ABSENT,
+                                w.unwrap_or_else(|| "no second line".into())
+                            )),
+                        )),
+                        Err(e) => found.push((n, Err(e))),
                     }
                 }
             }
-            found.sort();
-            if let Some((_, b)) = found.into_iter().next() {
-                return Some(b);
+            found.sort_by_key(|(n, _)| *n);
+            if let Some((_, r)) = found.into_iter().next() {
+                return r.map(Some);
             }
         }
-        None
+        Ok(None)
     }
 
     fn plan(&self, target: &Path, ours: &Path) -> Leaf {
@@ -484,12 +536,21 @@ impl CoreLeaf {
         // What was there before the peering: what the earliest admission that
         // touched this path found there. A later run's backup is this
         // peering's own earlier leaf (phase 8 renews it), never what was there.
+        // Only an explicit record removes the leaf; anything else is a guess.
         match self.first_record(target) {
-            Some(Some(b)) => match std::fs::read(&b) {
+            Ok(Some(Record::Backup(b))) => match std::fs::read(&b) {
                 Ok(bytes) => Leaf::Restore(bytes),
-                Err(_) => Leaf::NotOurs,
+                Err(e) => Leaf::Unknown(format!(
+                    "the admission backup {} cannot be read ({e})",
+                    b.display()
+                )),
             },
-            Some(None) | None => Leaf::Remove,
+            Ok(Some(Record::Absent)) => Leaf::Remove,
+            Ok(None) => Leaf::Unknown(format!(
+                "holds this peering's leaf, and no admission run in {} recorded what was there before",
+                self.work.join("admission").display()
+            )),
+            Err(e) => Leaf::Unknown(e),
         }
     }
 
@@ -526,6 +587,11 @@ impl CoreLeaf {
                     "remove",
                     "nothing was there before the peering".into(),
                 ),
+                Leaf::Unknown(why) => row(
+                    "unknown",
+                    "kept",
+                    format!("{why}; nothing is changed: decide by hand"),
+                ),
             });
         }
         rows
@@ -544,7 +610,7 @@ impl CoreLeaf {
                 Leaf::Restore(bytes) => super::admit::publish(&bytes, target, backups, bdir),
                 Leaf::Remove => super::admit::publish(b"", target, backups, bdir)
                     .and_then(|_| std::fs::remove_file(target)),
-                Leaf::NotOurs | Leaf::Shared(_) => Ok(()),
+                Leaf::NotOurs | Leaf::Shared(_) | Leaf::Unknown(_) => Ok(()),
             };
             r.map_err(|e| format!("cannot take back {} ({e})", target.display()))?;
         }
@@ -2969,6 +3035,122 @@ mod tests {
         assert!(
             !Path::new(&c.vars["FED_CORE_KEY"]).exists(),
             "no private key is left behind"
+        );
+    }
+
+    /// The `core leaf` rows a survey of `c` gives, by path.
+    fn leaf_rows(c: &RouteCase) -> BTreeMap<String, Row> {
+        let var = |k: &str| c.vars.get(k).cloned();
+        let core = driver_core(&c.repo, "xab", "zagros", &c.work(), var)
+            .unwrap()
+            .expect("the deployment's own route");
+        let rec = driver_survey(&core, "xab", &c.dir.path().join("probe")).unwrap();
+        rec.rows
+            .into_iter()
+            .filter(|r| r.component == "core leaf")
+            .map(|r| (r.resource.clone(), r))
+            .collect()
+    }
+
+    #[test]
+    fn a_leaf_is_removed_only_on_an_explicit_absent_record_of_its_path() {
+        let route = [("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")];
+        let unknown = |c: &RouteCase, why: &str| {
+            let rows = leaf_rows(c);
+            for var in ["FED_CORE_CERT", "FED_CORE_KEY"] {
+                let r = &rows[&c.vars[var]];
+                assert_eq!(r.state, "unknown", "{why}: {rows:?}");
+                assert!(r.note.contains("admission"), "{why}: {}", r.note);
+                assert!(
+                    Path::new(&c.vars[var]).exists(),
+                    "{why}: nothing is deleted"
+                );
+            }
+            let recs: Vec<HostRecord> = vec![HostRecord {
+                host: "driver".into(),
+                peering: "xab".into(),
+                rows: rows.into_values().collect(),
+            }];
+            assert!(
+                !summarize(&recs, "xab").refused.is_empty(),
+                "{why}: the back-out stops"
+            );
+        };
+        // No record at all: admission's placing was not recorded.
+        let mut c = admitted(true, &route);
+        place_leaf(&mut c, None);
+        std::fs::remove_dir_all(c.work().join("admission")).unwrap();
+        unknown(&c, "no record");
+        // A corrupt record.
+        let mut c = admitted(true, &route);
+        place_leaf(&mut c, None);
+        let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+        for (n, var) in [(0, "FED_CORE_CERT"), (1, "FED_CORE_KEY")] {
+            let name = Path::new(&c.vars[var])
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            std::fs::write(
+                bdir.join(format!("{n}-{name}.target")),
+                format!("{}\nabsen\n", c.vars[var]),
+            )
+            .unwrap();
+        }
+        unknown(&c, "a corrupt record");
+        // A record of another path only.
+        let mut c = admitted(true, &route);
+        place_leaf(&mut c, None);
+        let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+        for (n, var) in [(0, "FED_CORE_CERT"), (1, "FED_CORE_KEY")] {
+            let name = Path::new(&c.vars[var])
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            std::fs::write(
+                bdir.join(format!("{n}-{name}.target")),
+                "/elsewhere/router.pem\nabsent\n",
+            )
+            .unwrap();
+        }
+        unknown(&c, "a record of another path");
+        // An unreadable backup.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut c = admitted(true, &route);
+            place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+            let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+            for n in [0, 1] {
+                let name = if n == 0 {
+                    "router-cert.pem"
+                } else {
+                    "router-key.pem"
+                };
+                let b = bdir.join(format!("{n}-{name}"));
+                std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o000)).unwrap();
+            }
+            // Not when this runs with rights to read it anyway.
+            if std::fs::read(bdir.join("0-router-cert.pem")).is_err() {
+                unknown(&c, "an unreadable backup");
+            }
+        }
+        // An older admission's backup without a record is still put back.
+        let mut c = admitted(true, &route);
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+        for f in ["0-router-cert.pem.target", "1-router-key.pem.target"] {
+            std::fs::remove_file(bdir.join(f)).unwrap();
+        }
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"THE-LEAF-BEFORE"
         );
     }
 
