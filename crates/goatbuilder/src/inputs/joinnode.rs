@@ -418,6 +418,16 @@ mod tests {
             "ops/goatbuilder/goatbuilder.yaml:3 deploy.ssh_user"
         );
         assert_eq!(super::super::dangling(&inputs), Vec::<String>::new());
+        // A value derived from two inputs follows both, each indented under it.
+        let line = |n: &str| inputs.iter().find(|i| i.name == n).unwrap().line();
+        assert_eq!(
+            super::super::why(&inputs, "operator@192.0.2.30"),
+            [
+                line("ssh_target"),
+                format!("  {}", line("ssh_user")),
+                format!("  {}", line("address")),
+            ]
+        );
         assert_eq!(render("node"), "argument --node");
         let pass = inputs
             .iter()

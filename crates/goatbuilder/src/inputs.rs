@@ -911,6 +911,19 @@ mod tests {
         assert_eq!(why(&c, "a").len(), 2);
     }
 
+    /// A source derived from several inputs (`a and b (above)`) names each;
+    /// one that is not listed is dangling, though another part is.
+    #[test]
+    fn a_source_from_two_inputs_names_each_and_each_must_be_listed() {
+        let v = vec![
+            Input::new("a", "1", Source::file("f", Some(1), "a")),
+            Input::new("t", "1@2", Source::derived("a and nosuch (above)", "r")),
+        ];
+        assert_eq!(dangling(&v), ["nosuch"]);
+        // The listed parent is still followed.
+        assert_eq!(why(&v, "t"), [v[1].line(), format!("  {}", v[0].line())]);
+    }
+
     #[test]
     fn a_secret_never_holds_its_value() {
         let s = Input::secret("ALPHA_PG_PASS", Source::env("ALPHA_PG_PASS"));
