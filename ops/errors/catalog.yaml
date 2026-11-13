@@ -2703,6 +2703,21 @@ entries:
     matches:
       - "is not a site id: phase 12 reads the token variable"
     exit: 2
+  - code: GB-264
+    tool: goatbuilder
+    title: no recorded run matches
+    what: "goatbuilder show and runs diff name a run by its id, a prefix of one, or last, from the run records under <state>/runs. None is recorded there, none starts with the prefix given, or several do."
+    causes:
+      - "no verb that drives hosts has run with this state directory (a --mock run writes no record)"
+      - "a mistyped id, or a prefix too short to name one run"
+    fixes:
+      - "goatbuilder runs   (the recorded runs, newest last)"
+      - "give more of the run's id"
+    read: docs/design/goatbuilder-legibility.md
+    matches:
+      - "no run is recorded under "
+      - "runs start with .*; give more of the id"
+    exit: 2
   - code: GB-246
     tool: goatbuilder
     title: a rollback depth outside the ledger

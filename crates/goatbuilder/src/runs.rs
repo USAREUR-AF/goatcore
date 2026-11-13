@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::runner::Finished;
@@ -171,10 +171,12 @@ fn all(state: &Path) -> Vec<(String, serde_json::Value)> {
 fn find(state: &Path, which: &str) -> Result<(String, serde_json::Value)> {
     let runs = all(state);
     if which == "last" {
-        return runs
-            .into_iter()
-            .last()
-            .ok_or_else(|| anyhow!("no run is recorded under {}/runs", state.display()));
+        return runs.into_iter().last().ok_or_else(|| {
+            anyhow::Error::from(goat_errors::coded(
+                "GB-264",
+                format!("no run is recorded under {}/runs", state.display()),
+            ))
+        });
     }
     let hits: Vec<_> = runs
         .into_iter()
@@ -182,17 +184,25 @@ fn find(state: &Path, which: &str) -> Result<(String, serde_json::Value)> {
         .collect();
     match hits.len() {
         1 => Ok(hits.into_iter().next().unwrap()),
-        0 => Err(anyhow!(
-            "no run {which} under {}/runs; `goatbuilder runs` lists them",
-            state.display()
-        )),
-        n => Err(anyhow!(
-            "{n} runs start with {which}: {}; give more of the id",
-            hits.iter()
-                .map(|h| h.0.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+        0 => Err(goat_errors::coded(
+            "GB-264",
+            format!(
+                "no run {which} under {}/runs; `goatbuilder runs` lists them",
+                state.display()
+            ),
+        )
+        .into()),
+        n => Err(goat_errors::coded(
+            "GB-264",
+            format!(
+                "{n} runs start with {which}: {}; give more of the id",
+                hits.iter()
+                    .map(|h| h.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )
+        .into()),
     }
 }
 
