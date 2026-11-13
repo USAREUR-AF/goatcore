@@ -114,8 +114,8 @@ Check (a) passes for all four verb families, from step 2b, check (c) for join-no
 
 | Check | standup | join-node | deploy | federate |
 |---|---|---|---|---|
-| (a) | no run record (20 processes) | no run record (6) | no run record (5) | passes |
-| (b) | no `inputs` | no `inputs` | no `inputs` | no `inputs` |
+| (a) | passes | passes | passes | passes |
+| (b) | the record's `inputs` is empty | the record's `inputs` is empty | the record's `inputs` is empty | the record's `inputs` is empty |
 | (c) | 2 of 20 not printed: the two probes (step 3 stopped the page rewriting two commands) | passes (step 3) | 4 of 5 not printed: the probes (step 3 lists the play) | passes: the plan page lists each phase's command |
 | (d) | no phase catalog | no phase catalog | no phase catalog | passes: the phase catalog has its 14 phases, and the dry-run footer names the staged-delivery pattern by its address in goatdocs |
 
