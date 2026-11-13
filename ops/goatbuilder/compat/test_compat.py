@@ -22,7 +22,6 @@ import copy
 import importlib.util
 import json
 import os
-import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -299,7 +298,7 @@ class RefreshRecordsOnlyThePublishedBinary(unittest.TestCase):
         self.bin = os.path.join(self.tmp, "goatbuilder-linux-amd64")
         with open(self.bin, "w") as f:
             f.write("#!/bin/sh\necho 'goatbuilder 0.5.1'\n")
-        os.chmod(self.bin, 0o755)
+        os.chmod(self.bin, 0o700)
         import hashlib
         with open(self.bin, "rb") as f:
             self.digest = hashlib.sha256(f.read()).hexdigest()
