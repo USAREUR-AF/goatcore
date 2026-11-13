@@ -100,7 +100,8 @@ else
   # Each declared class, changed alone, must give a new key.
   for f in .github/workflows/federation-e2e.yml ops/federation-e2e/run.sh ops/ci/check-federation-e2e-prepare.sh \
            ops/federation/standup/acceptance.sh crates/Cargo.lock ops/federation-e2e/host/Dockerfile \
-           ops/federation-e2e/requirements.lock; do
+           ops/federation-e2e/requirements.lock \
+           crates/goatbuilder/src/config.rs ops/ansible/roles/rollback-ledger/tasks/main.yml; do
     echo "# proof" >> "$T/tree/$f"
     k="$("$KEY" "$T/tree" scenario-2)"
     git -C "$T/tree" checkout -q -- "$f"

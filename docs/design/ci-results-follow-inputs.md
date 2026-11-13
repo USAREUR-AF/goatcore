@@ -124,7 +124,7 @@ earlier on another branch.
 |---|---|
 | 1 | The host image (`ops/federation-e2e/host/Dockerfile`) installs every package a scenario needs when it is built. The setup step's tools come from the same pinned image or a pinned action. No `apt-get` at run time |
 | 2 | One build job produces the two binaries and the host image as artifacts. Each scenario is a job that takes them |
-| 3 | The key is the content of the workflow's `paths:` list, the Cargo lock file, the toolchain version and the host image digest. A pass is recorded per scenario |
+| 3 | The key (`ops/ci/federation-e2e-key.sh <tree> <stage>`) is the content of whole directories: the Rust workspace, the harness, the federation tree, every Ansible role and playbook, the scripts and the error catalog, plus every path in the workflow's `paths:` list, the workflow, the pinned toolchain and the host image's base digest. The `paths:` list alone is narrower than what the job reads: it names two of goatbuilder's source paths and four roles, while the binaries are built from the whole workspace and a peering play calls other roles, such as `rollback-ledger`. **Built:** the key, checked by cases 3 and 4. **Not built:** the record and its lookup, which wait for the store decision below. A pass is recorded per scenario |
 
 ## Not decided here
 
