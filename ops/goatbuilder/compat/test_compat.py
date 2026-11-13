@@ -3,8 +3,6 @@
 Each test below is a gate row's "Proven by" made executable, against the kept
 baseline of the last release (baseline.yaml names it):
 
-  A2  every kept configuration file, from each release since the first, still
-      validates, or is still refused the way its release refused it
   A3  no command or flag of the last release is gone without a deprecation entry
   A4  every kept `-o json` / `-o yaml` document of the last release is still
       produced, as a superset: no field removed or retyped, the same version
@@ -258,38 +256,6 @@ class A5ErrorCodes(unittest.TestCase):
         self.assertTrue(compat.error_problems(self.BASE, self.catalog()[:1]))
 
 
-class A2Configurations(unittest.TestCase):
-    def test_a_file_whose_outcome_changed_is_refused(self):
-        kept = [
-            {"file": "v0.4.1/a.yaml", "release": "goatbuilder/v0.4.1", "expect": "valid"},
-            {"file": "v0.4.1/b.yaml", "release": "goatbuilder/v0.4.1", "expect": "refused", "code": None, "named": "GB-025"},
-        ]
-        outcomes = {"v0.4.1/a.yaml": ("refused", None), "v0.4.1/b.yaml": ("refused", None)}
-        p = compat.config_problems(kept, lambda f: outcomes[f])
-        self.assertEqual(len(p), 1, p)
-        self.assertIn("v0.4.1/a.yaml", p[0])
-
-    def test_a_refusal_that_now_prints_the_code_its_documents_named_passes(self):
-        kept = [
-            {"file": "a.yaml", "release": "goatbuilder/v0.4.1", "expect": "refused", "code": None, "named": "GB-025"},
-            {"file": "b.yaml", "release": "goatbuilder/v0.4.1", "expect": "error", "code": None, "named": "GB-025"},
-        ]
-        self.assertEqual(compat.config_problems(kept, lambda f: ("refused" if f == "a.yaml" else "error", "GB-025")), [])
-
-    def test_a_refusal_that_prints_a_code_its_documents_did_not_name_is_refused(self):
-        kept = [{"file": "a.yaml", "release": "goatbuilder/v0.4.1", "expect": "refused", "code": None, "named": "GB-025"}]
-        self.assertTrue(compat.config_problems(kept, lambda f: ("refused", "GB-026")))
-
-    def test_the_code_a_refusal_prints_is_read_from_its_rows(self):
-        doc = {"schema": "goatbuilder.output/v1", "ok": False, "checks": [{"ok": False, "detail": "GB-025: (root): x"}]}
-        self.assertEqual(compat.refusal_code(doc), "GB-025")
-        self.assertIsNone(compat.refusal_code({"checks": [{"ok": False, "detail": "(root): x"}]}))
-
-    def test_a_refusal_with_another_code_is_refused(self):
-        kept = [{"file": "x.yaml", "release": "goatbuilder/v0.4.1", "expect": "error", "code": "GB-024"}]
-        self.assertTrue(compat.config_problems(kept, lambda f: ("error", "GB-099")))
-
-
 class TheKeptBaseline(unittest.TestCase):
     """The baseline in this directory is whole and names one release."""
 
@@ -309,14 +275,6 @@ class TheKeptBaseline(unittest.TestCase):
         self.assertGreaterEqual(len(docs), 5)
         for d in docs:
             self.assertTrue(os.path.isfile(os.path.join(HERE, "documents", d["name"] + "." + d["format"])), d)
-
-    def test_every_kept_configuration_file_exists_with_an_outcome(self):
-        kept = self.b.configs()
-        releases = {k["release"] for k in kept}
-        self.assertIn("goatbuilder/v0.4.1", releases)
-        for k in kept:
-            self.assertTrue(os.path.isfile(os.path.join(HERE, "configs", k["file"])), k)
-            self.assertIn(k["expect"], ("valid", "refused", "error"), k)
 
     def test_the_error_codes_of_the_release_are_kept(self):
         self.assertGreaterEqual(len(self.b.errors()), 100)

@@ -2,11 +2,10 @@
 """goatbuilder keeps its promise to the last release (docs/design/goatbuilder-v1-gate.md, group A).
 
 Four surfaces are what other people build on. This script holds a build of
-goatbuilder to each, against the baseline kept beside it (baseline.yaml names
-the release it was recorded from):
+goatbuilder to three of them, against the baseline kept beside it
+(baseline.yaml names the release it was recorded from). The fourth, A2's
+configuration files, is crates/goatbuilder/tests/config_compat.rs:
 
-  configs    A2  every kept configuration file, from each release since the
-                 first, validates, or is refused the way its release refused it
   surface    A3  every command and flag of the last release is still there
                  (and still takes a value if it took one, and no optional
                  argument became required), unless deprecations.yaml names it
@@ -18,8 +17,8 @@ the release it was recorded from):
                  with the same title, unless the entry carries `retired:`
 
 usage:
-  compat.py check   --bin <goatbuilder> [--repo DIR] [--only configs,surface,documents,errors]
-  compat.py refresh --tag goatbuilder/vX.Y.Z --bin <that release's binary> --sums <its SHA256SUMS> [--repo DIR] [--only configs]
+  compat.py check   --bin <goatbuilder> [--repo DIR] [--only surface,documents,errors]
+  compat.py refresh --tag goatbuilder/vX.Y.Z --bin <that release's binary> --sums <its SHA256SUMS> [--repo DIR]
 
 `check` prints one row per kept item and exits 0 when every row holds, 1 when
 any does not (each failure names what to restore, or the file that would
@@ -27,9 +26,8 @@ excuse it), 2 when an input cannot be read.
 
 `refresh` is the release step (README.md, "When a release is published"): it
 records the named release as the new baseline. It reads the command tree and
-the documents from the released binary, the error codes from the catalog at
-the tag, and adds every configuration file of the tag's tree, and every
-example in its documents, that is not already kept. It refuses a binary whose
+the documents from the released binary and the error codes from the catalog at
+the tag. It refuses a binary whose
 SHA-256 is not the goatbuilder binary entry of the SHA256SUMS published with
 the tag (`--sums`), or that disagrees with releases.sha256 for a release
 already pinned there; `--version` alone proves nothing.
@@ -271,50 +269,6 @@ def error_problems(base: list, catalog: list) -> list:
     return out
 
 
-# ---------------------------------------------------------------- A2: the configuration files
-
-
-def config_problems(kept: list, outcome) -> list:
-    """`outcome(file)` -> (valid|refused|error, printed code or None) for a kept file."""
-    out = []
-    for k in kept:
-        got, code = outcome(k["file"])
-        want, want_code = k["expect"], k.get("code")
-        # A refusal may come to print the catalog code its release's documents
-        # named for it (`named:`); that is the promise kept, not broken.
-        if got != want or (want != "valid" and code not in (want_code, k.get("named"))):
-            def say(o, c):
-                return o + (f" ({c})" if c else "")
-            out.append(f"configs/{k['file']} (from {k['release']}): {say(want, want_code)} in its release, {say(got, code)} now")
-    return out
-
-
-REFUSAL_CODE = re.compile(r"^(GB-\d{3}): ")
-
-
-def refusal_code(doc: dict):
-    """The catalog code a refused checks document names: its first failing row's `GB-nnn: ` prefix."""
-    for c in doc.get("checks") or []:
-        if not c.get("ok"):
-            m = REFUSAL_CODE.match(str(c.get("detail", "")))
-            return m.group(1) if m else None
-    return None
-
-
-def validate_outcome(binary: str, repo: str, path: str):
-    """Run `validate` on one file: valid (exit 0), refused (exit 1, a checks document), or an error and its code."""
-    r = subprocess.run([binary, "-o", "json", "validate", "-C", repo, path], capture_output=True, text=True, env=_env(), cwd=repo)
-    try:
-        doc = json.loads(r.stdout)
-    except ValueError:
-        doc = {}
-    if r.returncode == 0:
-        return "valid", None
-    if r.returncode == 1 and doc.get("schema") == "goatbuilder.output/v1":
-        return "refused", refusal_code(doc)
-    return "error", doc.get("code")
-
-
 # ---------------------------------------------------------------- the baseline on disk
 
 
@@ -346,9 +300,6 @@ class Baseline:
         with open(os.path.join(self.root, "documents", d["name"] + "." + d["format"])) as f:
             return json.load(f) if d["format"] == "json" else yaml.safe_load(f)
 
-    def configs(self) -> list:
-        return _read_yaml(os.path.join(self.root, "configs", "manifest.yaml"))["configs"]
-
     def deprecations(self) -> list:
         return _read_yaml(os.path.join(self.root, "deprecations.yaml")).get("deprecations") or []
 
@@ -373,7 +324,7 @@ def run_document(binary: str, repo: str, d: dict):
 # ---------------------------------------------------------------- check
 
 
-def check_all(repo: str, root: str, binary: str, only=("configs", "surface", "documents", "errors")) -> list:
+def check_all(repo: str, root: str, binary: str, only=("surface", "documents", "errors")) -> list:
     """Rows of (ok, surface, item, detail)."""
     b = Baseline(root)
     rows = []
@@ -385,11 +336,6 @@ def check_all(repo: str, root: str, binary: str, only=("configs", "surface", "do
     deps = b.deprecations()
     for p in deprecation_problems(deps):
         rows.append((False, "surface", "deprecations.yaml", p))
-
-    if "configs" in only:
-        for k in b.configs():
-            p = config_problems([k], lambda f: validate_outcome(binary, repo, os.path.join(root, "configs", f)))
-            rows.append((not p, "configs", k["file"], p[0] if p else k["expect"]))
 
     if "surface" in only:
         r = subprocess.run([binary, "docs", "--markdown"], capture_output=True, text=True, env=_env(), cwd=repo)
@@ -426,34 +372,9 @@ def check_all(repo: str, root: str, binary: str, only=("configs", "surface", "do
 
 # ---------------------------------------------------------------- refresh (the release step)
 
-SCHEMA_LINE = re.compile(r'^schema:\s*"?goatbuilder/v1"?\s*$', re.M)
-CONFIG_TREES = ("ops/goatbuilder/fixtures/", "crates/goatbuilder/tests/fixtures/configs/")
-FENCE = re.compile(r"^```ya?ml\s*\n(.*?)^```", re.M | re.S)
-
 
 def _git(repo: str, *args: str) -> str:
     return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, check=True).stdout
-
-
-def tag_configs(repo: str, tag: str) -> list:
-    """(source, text) for every configuration file in the tag's tree and every whole example in its documents."""
-    out = []
-    for path in _git(repo, "ls-tree", "-r", "--name-only", tag).splitlines():
-        if path.endswith(".yaml") and path.startswith(CONFIG_TREES):
-            text = _git(repo, "show", f"{tag}:{path}")
-            if path.startswith(CONFIG_TREES[1]) or SCHEMA_LINE.search(text):
-                out.append((path, text))
-        elif path.endswith(".md") and path.startswith("docs/"):
-            text = _git(repo, "show", f"{tag}:{path}")
-            for i, m in enumerate(FENCE.finditer(text)):
-                if SCHEMA_LINE.search(m.group(1)):
-                    out.append((f"{path}#example-{i + 1}", m.group(1)))
-    return out
-
-
-def _slug(source: str) -> str:
-    s = source.replace("#", "-").replace("/", "__")
-    return s if s.endswith(".yaml") else s + ".yaml"
 
 
 PINS = "releases.sha256"
@@ -513,7 +434,7 @@ def release_binary_problem(binary: str, sums: str, tag: str, pins=None):
     return None
 
 
-def refresh(repo: str, root: str, tag: str, binary: str, only=("configs", "surface", "documents", "errors"), sums=None) -> int:
+def refresh(repo: str, root: str, tag: str, binary: str, sums=None) -> int:
     if not sums:
         print(f"compat: refresh needs --sums, the SHA256SUMS published with {tag}", file=sys.stderr)
         return 2
@@ -523,37 +444,10 @@ def refresh(repo: str, root: str, tag: str, binary: str, only=("configs", "surfa
         return 2
     name = [n for n, h in _sums_entries(sums).items() if h == _sha256(binary) and RELEASE_BINARY.match(n)][0]
     commit = _git(repo, "rev-parse", f"{tag}^{{commit}}").strip()
-    version = tag.split("/", 1)[1]
     _pin(root, tag, name, _sha256(binary))
 
     b = Baseline(root)
-    if only != ("configs",):
-        _refresh_last_release(repo, root, tag, binary, b)
-    else:
-        print(f"compat: keeping the configuration files of {tag} only; the baseline stays {b.release}")
-
-    # A2: every configuration file of the tag not already kept, with its outcome under the released binary.
-    kept = b.configs()
-    have = {hashlib.sha256(open(os.path.join(root, "configs", k["file"]), "rb").read()).hexdigest() for k in kept}
-    for source, text in tag_configs(repo, tag):
-        digest = hashlib.sha256(text.encode()).hexdigest()
-        if digest in have:
-            continue
-        have.add(digest)
-        rel = f"{version}/{_slug(source)}"
-        dest = os.path.join(root, "configs", rel)
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        with open(dest, "w") as f:
-            f.write(text)
-        got, code = validate_outcome(binary, repo, dest)
-        entry = {"file": rel, "release": tag, "source": source, "expect": got}
-        if got != "valid":
-            entry["code"] = code
-        kept.append(entry)
-        print(f"compat: kept configs/{rel}: {got}")
-    _write_manifest(os.path.join(root, "configs", "manifest.yaml"), "configs", kept)
-    if only == ("configs",):
-        return 0
+    _refresh_last_release(repo, root, tag, binary, b)
 
     meta = dict(b.meta)
     meta.update({
@@ -635,21 +529,19 @@ def main(argv=None) -> int:
     c = sub.add_parser("check")
     c.add_argument("--bin", required=True)
     c.add_argument("--repo", default=os.path.abspath(os.path.join(HERE, "..", "..", "..")))
-    c.add_argument("--only", default="configs,surface,documents,errors")
+    c.add_argument("--only", default="surface,documents,errors")
     r = sub.add_parser("refresh")
     r.add_argument("--tag", required=True)
     r.add_argument("--bin", required=True)
     r.add_argument("--repo", default=os.path.abspath(os.path.join(HERE, "..", "..", "..")))
     r.add_argument("--sums", required=True, help="the SHA256SUMS published with the tag; the binary's sha256 must be its entry")
-    r.add_argument("--only", default="configs,surface,documents,errors",
-                   help="`configs` keeps an older release's configuration files without moving the baseline")
     a = ap.parse_args(argv)
     binary = os.path.abspath(a.bin)
     if not os.access(binary, os.X_OK):
         print(f"compat: {a.bin} is not an executable goatbuilder", file=sys.stderr)
         return 2
     if a.cmd == "refresh":
-        return refresh(a.repo, HERE, a.tag, binary, tuple(a.only.split(",")), sums=a.sums)
+        return refresh(a.repo, HERE, a.tag, binary, sums=a.sums)
     try:
         rows = check_all(a.repo, HERE, binary, tuple(a.only.split(",")))
     except (OSError, KeyError, yaml.YAMLError) as e:

@@ -2,11 +2,11 @@
 # ops/ci/check-goatbuilder-compat.sh — goatbuilder keeps its promise to the last release.
 #
 # The four surfaces other people build on (docs/design/goatbuilder-v1-gate.md,
-# "What 1.0 promises", rows A2 to A5) are checked against the baseline kept in
-# ops/goatbuilder/compat/, which names the release it was recorded from:
+# "What 1.0 promises", rows A2 to A5): A3 to A5 are checked here against the
+# baseline kept in ops/goatbuilder/compat/, which names the release it was
+# recorded from. A2, the configuration files of every release, is the cargo
+# test crates/goatbuilder/tests/config_compat.rs.
 #
-#   A2  every kept configuration file, from each release since the first,
-#       validates, or is refused the way its release refused it
 #   A3  no command or flag of the last release is gone or renamed without an
 #       entry in ops/goatbuilder/compat/deprecations.yaml
 #   A4  every kept -o json / -o yaml document is still produced as a superset
