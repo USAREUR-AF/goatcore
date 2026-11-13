@@ -352,6 +352,21 @@ pub(crate) fn render_ref(r: &str) -> String {
 }
 
 /// Run `ansible-preflight.sh` (or `ansible`/`ansible-inventory`) from ops/ansible under ops/scripts/with-aws, as the script does.
+/// The deploy play's arguments for group `g`: the inventories, the play, the
+/// target (`target_flag` is the mode before `<group>`: `-e <var>=` or `-l `),
+/// and the accepted risk (ADR 1211) as an extra-var, so rollback-ledger
+/// records in its row what was knowingly accepted.
+fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>) -> Vec<String> {
+    let mut args = inv.to_vec();
+    args.push(play.file_name().unwrap_or_default().to_string_lossy().to_string());
+    args.push(format!("{target_flag}{g}"));
+    if let Some(accept) = accept {
+        args.push("-e".into());
+        args.push(format!("{{\"rollback_preflight_accept\": {accept}}}"));
+    }
+    args
+}
+
 pub(crate) fn ansible_cmd(repo: &Path, tool: &str, args: &[String]) -> Command {
     // AWS credentials through ops/scripts/with-aws (ADR 1204): aws-vault where the
     // team uses it, a plain AWS profile or none where it does not.
@@ -541,15 +556,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         // play's fact-gathering time, which a fact cache can make stale).
         let before = if o.dry_run || o.verify_only { String::new() } else { read_tails(repo, &inv, g, &r.ledger)? };
         if !o.verify_only {
-            let mut args = inv.clone();
-            args.push(r.play.file_name().unwrap_or_default().to_string_lossy().to_string());
-            args.push(format!("{}{g}", r.target_flag));
-            // The accepted risk (ADR 1211) rides into the play as an extra-var so
-            // rollback-ledger records it in the row — what was knowingly accepted.
-            if let Some(accept) = &accept_var {
-                args.push("-e".into());
-                args.push(format!("{{\"rollback_preflight_accept\": {accept}}}"));
-            }
+            let args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref());
             if o.dry_run {
                 checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("DRY: deploying {}: (cd ops/ansible && ../scripts/with-aws {} -- ../scripts/ansible-preflight.sh {}) > {log}", render_ref(w), crate::settings::aws_profile(repo), args.join(" "))));
             } else {
@@ -966,6 +973,37 @@ mod tests {
 
     fn repo() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    /// The target reaches ansible-playbook as two argv words, the flag and its
+    /// value, in both modes: `-e <var>=<group>` and `-l <group>`. As one word
+    /// (`"-e target=<group>"`) it parsed only because argparse took the rest of
+    /// the word as the value and ansible stripped its leading space.
+    #[test]
+    fn the_target_is_two_argv_words() {
+        let inv = vec!["-i".to_string(), "inventory/mgmt-hosts.ini".to_string()];
+        let play = Path::new("/r/ops/ansible/microscope-deploy.yml");
+        let argv = |flag: &str, accept: Option<&str>| -> Vec<String> {
+            let c = ansible_cmd(Path::new("/r"), "preflight", &deploy_args(&inv, play, flag, "zagros_dev_hosts", accept));
+            c.get_args().map(|a| a.to_string_lossy().to_string()).collect()
+        };
+        let head = |v: &[&str]| -> Vec<String> {
+            let mut out: Vec<String> = vec![crate::settings::aws_profile(Path::new("/r")), "--".into(), "../scripts/ansible-preflight.sh".into()];
+            out.extend(v.iter().map(|s| s.to_string()));
+            out
+        };
+        assert_eq!(
+            argv("-e target=", None),
+            head(&["-i", "inventory/mgmt-hosts.ini", "microscope-deploy.yml", "-e", "target=zagros_dev_hosts"])
+        );
+        assert_eq!(
+            argv("-l ", None),
+            head(&["-i", "inventory/mgmt-hosts.ini", "microscope-deploy.yml", "-l", "zagros_dev_hosts"])
+        );
+        assert_eq!(
+            argv("-e target=", Some("true")),
+            head(&["-i", "inventory/mgmt-hosts.ini", "microscope-deploy.yml", "-e", "target=zagros_dev_hosts", "-e", "{\"rollback_preflight_accept\": true}"])
+        );
     }
 
     /// The pins resolution agrees with the script on this repository's real components.
