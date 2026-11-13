@@ -134,8 +134,9 @@ fn gv_first(file: &Path, key: &str) -> String {
 /// surface: the token and proxy on the joiner and on the founder, the
 /// federation routers and certificates, the joiner's relay tunnel, the relay
 /// pins, and the delivery proof. A joiner that declares
-/// `signal_federation_absent_reason` (both sides off) gets the gate, which
-/// proves the two sides agree, and a SKIP line instead.
+/// `signal_federation_absent_reason` gets the gate and a SKIP line instead:
+/// the gate passes when the founder is off too, or when the founder federates
+/// with another joiner and does not name this one (a third site).
 fn signal_federation(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, founder: &str, pre: &str, inv: &str) {
     let r = repo.display().to_string();
     let site_group = format!("{}_hosts", site.replace('-', "_"));
@@ -145,7 +146,7 @@ fn signal_federation(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, fo
     let w = |v: String| sh_word(&v);
     ev.push(p("GATE", format!("[signal federation] the repo declares it on both sides: {site_group} and {founder_group} crossed and complete, {founder}'s relay inventory pins each federation hostname to its own node, the names resolve to the relays, the shared token is in the environment"), format!("python3 '{r}/ops/scripts/signal-federation-check.py' {site} --peer {} --resolve --require-env", w(founder.to_string()))));
     if !gv_first(gv, "signal_federation_absent_reason").is_empty() {
-        ev.push(p("SKIP", format!("[signal federation] declared off on both sides (signal_federation_absent_reason in group_vars/{site_group}); the gate above proved the two sides agree"), format!("echo '>> signal federation: declared off for {site} (signal_federation_absent_reason); nothing to converge'")));
+        ev.push(p("SKIP", format!("[signal federation] declared off at {site} (signal_federation_absent_reason in group_vars/{site_group}); the gate above proved no side expects it: {founder} is off too, or federates with another site"), format!("echo '>> signal federation: declared off for {site} (signal_federation_absent_reason); nothing to converge'")));
         return;
     }
     let rathole = crate::standup::site_play(repo, founder, "rathole-client.yml");

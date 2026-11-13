@@ -27,6 +27,9 @@ Per side (group `<site>_hosts`):
 Across the pair:
   - both sides on, or both off; off needs `signal_federation_absent_reason`
     declared on the joiner, so leaving it off is a decision someone wrote down
+  - a third site: the joiner off with its reason declared, while the founder
+    federates with another site, passes; it is refused only when the founder's
+    peer address or SNI names this joiner, because then the founder expects it
   - the founder's relay inventory `inventory/<founder>-goat-relay-alias.ini`
     runs ingress dispatch and pins each side's federation hostname to that
     side's backend only (the backend whose service is the side's
@@ -300,6 +303,19 @@ def env_defects(j, f, environ=os.environ):
     return out
 
 
+def third_site_defects(j, f):
+    """Defects of a joiner j that declares federation off while its founder f
+    federates: none unless f's federation names j, which would leave f
+    forwarding offers to a side that never answers."""
+    out = []
+    host = f.mesh_addr.rpartition(":")[0]
+    if host and j.mesh_ip and "{{" not in j.mesh_ip and host == j.mesh_ip:
+        out.append(f"{f.path}: federation_peer_mesh_addr {f.mesh_addr} names {j.path}'s mesh_ip_a, but {j.path} declares signal federation off — turn it on at both, or point {f.path} at the site it federates with")
+    if f.sni and j.fqdn and f.sni == j.fqdn:
+        out.append(f"{f.path}: federation_peer_public_sni names {j.path}'s signal_federation_ingress_fqdn \"{j.fqdn}\", but {j.path} declares signal federation off")
+    return out
+
+
 def check(repo, site, peer=None, resolve_dns=False, require_env=False, lookup=addrs, environ=os.environ):
     """(state, defects). state is 'on', 'off' or 'refused'."""
     gv_root = repo / "ops" / "ansible" / "group_vars"
@@ -318,6 +334,13 @@ def check(repo, site, peer=None, resolve_dns=False, require_env=False, lookup=ad
         reason = str(j.get("signal_federation_absent_reason")).strip()
         if not reason:
             defects.append(f"{j.path}: signal federation is off on both sides and no signal_federation_absent_reason is declared. Turn it on (both sides, docs/tutorials/02-first-federated-node.md) or write down why it stays off")
+        return ("off" if not defects else "refused"), defects
+    if not j.on and str(j.get("signal_federation_absent_reason")).strip():
+        # A third site at a goatnet whose founder already federates with
+        # another joiner: off here is a decision, and the founder's federation
+        # is the other pair's. Judged on this side and on whether the founder
+        # names it, never on the founder's other pair.
+        defects = side_defects(j) + third_site_defects(j, f)
         return ("off" if not defects else "refused"), defects
     defects += pair_defects(j, f)
     defects += relay_defects(repo, j, f)
@@ -344,7 +367,9 @@ def main(argv=None):
         print(f"signal federation {a.site} <-> {peer}: REFUSED ({len(defects)} defect(s))")
         return 1
     if state == "off":
-        print(f"signal federation {a.site} <-> {peer}: OFF on both sides, reason declared — nothing to converge")
+        print(f"signal federation {a.site} <-> {peer}: OFF at {a.site}, reason declared — nothing to converge"
+              + ("" if not Side(peer, Path(a.repo) / "ops" / "ansible" / "group_vars").on
+                 else f" ({peer} federates with another site, not this one)"))
     else:
         print(f"signal federation {a.site} <-> {peer}: ON, both sides consistent{' (DNS checked)' if a.resolve else ''}{' (token present)' if a.require_env else ''}")
     return 0
