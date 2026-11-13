@@ -90,3 +90,21 @@ def test_owner_with_private_membership_is_maintainer_by_permission():
         f = facts(association="CONTRIBUTOR", repo_permission=perm, changed=[".github/workflows/x.yml"])
         assert ct.tier_of(f)[0] == "maintainer" and ct.decide(f, PATTERNS).passed
     assert ct.tier_of(facts(association="CONTRIBUTOR", repo_permission="read"))[0] == "unknown"
+
+
+def test_community_label_goes_on_outside_authors_only():
+    assert ct.wants_community_label("known", [])
+    assert ct.wants_community_label("unknown", ["bug"])
+    assert not ct.wants_community_label("maintainer", [])
+    assert not ct.wants_community_label("automation", [])
+
+
+def test_community_label_is_not_applied_twice():
+    assert not ct.wants_community_label("known", ["community"])
+
+
+def test_a_failed_community_label_does_not_change_the_verdict(monkeypatch):
+    def refuse(*a, **k):
+        raise ct.ApiError("GET /repos/x/y/issues/1: HTTP 403")
+    monkeypatch.setattr(ct, "api", refuse)
+    assert ct.apply_community_label("x/y", 1, "unknown", "t").startswith("not applied")

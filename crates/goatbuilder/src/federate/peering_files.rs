@@ -2267,7 +2267,7 @@ mod tests {
         }
         let t = tempfile::tempdir().unwrap();
         let (ca, key) = (t.path().join("ca.pem"), t.path().join("ca-key.pem"));
-        let ok = |c: &mut std::process::Command| {
+        let ok = |c: &mut crate::runner::Cmd| {
             let o = c.output().unwrap();
             assert!(
                 o.status.success(),

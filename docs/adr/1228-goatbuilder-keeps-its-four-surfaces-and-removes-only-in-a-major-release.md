@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed — the deprecation period is open for the operator to decide (see "The decision left open") |
+| Status | Accepted — the operator chose the deprecation period on 2026-11-13 (see "The deprecation period") |
 | Date | 2026-11-12 |
 | Repo scope | goat core (`goatbuilder`) |
 | Supersedes | — |
@@ -18,8 +18,8 @@ releases: things are added, never taken away or changed in meaning. When
 something has to go, it first keeps working while it prints a warning that
 names what to use instead, and it is taken away only in version 2.0. A check
 on every change compares the tool with its last release, so a break is caught
-before it merges, not by a user. How long a warning must be shown before the
-removal is the one choice this record leaves to the operator.
+before it merges, not by a user. The warning is shown for at least two minor
+releases and at least 90 days before the removal.
 
 ## Context
 
@@ -119,31 +119,36 @@ The check runs from now, on 0.x. In 0.x a deprecation entry excuses a removal
 at once; the release notes say what was removed. From `goatbuilder/v1.0.0` the
 rules above hold in full, and removal waits for 2.0.
 
-### The decision left open: the deprecation period
+### The deprecation period
 
-How long must a deprecated command, flag or field keep working, with its
-warning, before a major release may remove it? The gate proposes "at least two
-minor releases". The options, with what each costs:
+A deprecated command, flag, positional argument or configuration field keeps
+working, with its warning, for at least two minor releases **and** at least
+90 days from the release that first warns. Only after both may a major release
+remove it. The operator chose this period on 2026-11-13.
 
-| Option | Rule | Who it protects | What it costs | How the check enforces it |
-|---|---|---|---|---|
-| A | At least two minor releases | A deployment that updates at least once every two minor releases | At the cadence above (a release every two to three days in November 2026), two minor releases can be under a week, so a deployment that updates monthly can meet the removal without having seen a warning | `deprecated_in` must be at least two minor versions below the major that removes it |
-| B | At least two minor releases **and** 90 days from the first warning release | A deployment that updates quarterly | A major release waits up to 90 days for anything deprecated late in the line | As A, plus the tag date of `deprecated_in`, read from the tag, at least 90 days before the major's release pull request |
-| C | One whole major line: deprecated in 1.x, removed no earlier than 3.0 | Every deployment that is on any 2.x release | Deprecated code stays in the binary for a whole major line; the binary and its tests carry both forms longer | `deprecated_in` must name a major below the one before the removal |
-| D | One minor release | Deployments whose callers are all in repositories the same team updates in step | A deployment outside that team can see the warning for one release only | `deprecated_in` must be a minor version below the major that removes it |
+A count of releases alone does not protect a deployment that updates less
+often than releases are cut: at the cadence above (a release every two to
+three days in November 2026), two minor releases can be under a week. The 90
+days protect a deployment that updates quarterly. The cost is that a major
+release waits up to 90 days for anything deprecated late in the line.
 
-The evidence that would decide between them is how often a deployment updates
-its pinned goatcore commit and its goatbuilder binary, and how many callers
-of goatbuilder live outside the repositories this team updates. Neither is
-measured. The release cadence above is measured; it is the cadence of 0.x,
-and a 1.x line may be slower.
-
-When the operator chooses, this record is amended with the chosen option, the
-check gains the rule in the last column, and the record becomes Accepted.
-
-Which of A to D sets the deprecation period?
+The check enforces the period (designed, not built): `deprecated_in` must be
+at least two minor versions below the major that removes it, and the tag date
+of `deprecated_in`, read from the tag, must be at least 90 days before the
+major's release pull request.
 
 ## Alternatives considered
+
+**A different deprecation period.** Three were considered. *At least two
+minor releases, with no time floor*: two minor releases can be under a week,
+so a deployment that updates monthly can meet the removal without having seen
+a warning. *One whole major line* (deprecated in 1.x, removed no earlier than
+3.0): it protects every deployment on any 2.x release, and the binary and its
+tests carry both forms for a whole major line. *One minor release*: enough
+only where every caller is in a repository the same team updates in step.
+Rejected for the period above. How often a deployment updates its pinned
+goatcore commit and its goatbuilder binary is not measured; the period is
+revisited when it is.
 
 **No written promise, additions by habit.** This is the state through 0.5.1,
 and it has held: nothing has been removed. It depends on every author knowing
@@ -197,8 +202,7 @@ that name each deprecation.
 
 ## Trigger conditions for revisit
 
-- The operator chooses the deprecation period (this record is then amended and
-  accepted).
+- The update interval of deployments outside this team is measured.
 - A document needs a field removed or retyped within 1.x.
 - A deployment reports a break that the check did not catch.
 - A pull converger is added to `converger:` (the open decision in the gate's
