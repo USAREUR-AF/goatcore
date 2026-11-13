@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed; the hand-off stop at phases 1 and 2 is built.** A peering declares two drivers with `drivers: two` ("Which peerings have two drivers"). The controller's run stops at phase 1 or 2 with the hand-off object (GB-265), the two phases where the generic object is the contract's; a checkout with changes is refused (GB-266). A two-driver run at a later phase that needs the edge (3, 11 to 14), whose object differs, and the edge driver's `--side edge` run are refused before acting (GB-267, not built yet). The halves, `import` and the rest are not built; the phase-3 halves are in review. It is the product contract goatbuilder 1.0 gate row B10 is proven against |
+| Status | **Designed; the hand-off stop at phases 1 and 2 is built.** A peering declares two drivers with `drivers: two` ("Which peerings have two drivers"). The controller's run stops at phase 1 or 2 with the hand-off object (GB-265), the two phases where the generic object is the contract's; a checkout with changes is refused (GB-266). A two-driver run that would reach a later phase that needs the edge (3, 11 to 14), whose object differs, is refused before the run acts (GB-267, not built yet); that includes every `federate deploy`, which runs phase 10 then 11. The edge driver's `--side edge` run is refused the same way. Phase 3's two halves are on main at the `init` level; the halves inside the one command, `import` and the rest are not built. It is the product contract goatbuilder 1.0 gate row B10 is proven against |
 | Design | [goatbuilder.md](goatbuilder.md) (the federate sections) · [federation-plan.md](federation-plan.md) · [federation-preflight.md](federation-preflight.md) · [ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) |
 | Audience | whoever builds the two-driver run, writes its scenario, or runs a peering where no one machine reaches both the edge host and the core host |
 
@@ -169,11 +169,22 @@ names the same commands.
 Status: built at the stop, at phases 1 and 2 only: the controller's run with `-o json` carries
 `handoff`, its text names every argv on its own line, quoted for a POSIX shell, and a checkout with
 changes gives no object (GB-266), naming each file. At phases 3 and 11 to 14 the object differs
-(phase 3's result is the edge half, 11 to 13 carry files, 14 binds by id); a two-driver run there
-is refused before acting (GB-267) and prints no object (`crates/goatbuilder/src/federate/handoff.rs`, test
-`federate_two_drivers.rs`). Not built: the object in `status`, the edge's way-back object, and
-the `import` and `then` it names. Phase 3's two halves, which the phase 3 object wraps, are
-in review; this section says "built" for them once they are on main.
+(phase 3's result is the edge half, 11 to 13 carry files, 14 binds by id) and is not built. A
+two-driver run is refused with GB-267, and prints no object, when the first phase it would run
+that needs the edge is one of those; a run whose first such phase is 1 or 2 stops there instead.
+The refusal comes before the run acts: before the peering's lock and journal, and for
+`federate deploy` before its plan is read, approved or rechecked, so phase 10 never admits the
+edge on our core and leaves the admission half done when 11 is refused. The refusal says that
+nothing of the refused phase ran, and no phase before it in this run. A run from 4 to 10 needs no
+edge and is not refused (`crates/goatbuilder/src/federate/handoff.rs`, `refused_before_running`;
+tests `a_two_driver_run_after_phase_2_is_refused_with_no_object`,
+`a_two_driver_run_from_4_to_the_end_runs_nothing` and `a_two_driver_deploy_runs_nothing` in
+`federate_two_drivers.rs`). `--side` is one flag: on `init --over-ssh` it picks a phase 3 half
+(`federate/measure.rs`), and on a peering run `--side edge` is the edge driver's run, refused with
+GB-267 until it is built. Not built: the object in `status`, the edge's way-back object, and the
+`import` and `then` it names. Phase 3's two halves, which the phase 3 object wraps, are on main at
+the `init` level ([federation-router-discovery.md](federation-router-discovery.md), "Phase 3 in
+two halves"); the one command does not run them yet.
 
 ### Where it appears
 
@@ -260,15 +271,14 @@ driver's own output, which is exactly what the binding rests on. It must not
 read the code from the controller, from the result file, or from anything
 copied with it.
 
-### Phase 3: the hand-off whose halves are in review
+### Phase 3: the hand-off around the two halves
 
-Phase 3's two halves are written at the `init` level and are in review:
+Phase 3's two halves are built at the `init` level:
 `goatbuilder federate init --over-ssh <peering> --side edge --half-out <file>`
 writes the edge half (schema `goatbuilder.phase3-edge-half/v1`) and prints its
 sha256, its confirm code and the line `goatbuilder federate init --over-ssh
 <peering> --side core --edge-half <file> --edge-half-sha256 <code>`
-([federation-router-discovery.md](federation-router-discovery.md), once that
-change is on main). The phase 3 object wraps those two halves as they are:
+([federation-router-discovery.md](federation-router-discovery.md)). The phase 3 object wraps those two halves as they are:
 
 - **`command`** (`--side edge --from 3 --to 3`) runs the edge half,
   `init --over-ssh xab --side edge --half-out <work>/handoff/3/edge-half.json`,
