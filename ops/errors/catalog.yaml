@@ -549,7 +549,7 @@ entries:
       - "no release signer is known"
     exit: 1
 
-  - code: GB-263
+  - code: GB-265
     tool: goatbuilder
     title: the run is waiting on the other driver
     what: "The peering is declared with two drivers (`drivers: two`): an edge driver that reaches only the edge host and a controller that reaches the core. This phase needs the edge, so the controller stopped before acting and handed it to the edge driver. The stop prints the exact command to run there, the file it writes, and the two commands to run here after it; with -o json the report carries them as the member handoff. It stops as a by-hand stop does (exit 0)."
@@ -559,10 +559,10 @@ entries:
       - "run the command the stop names on the edge driver, bring its result file here, then run the import and the command after it that the stop names"
     read: docs/design/federation-two-drivers.md
     matches:
-      - "^GB-263: "
+      - "^GB-265: "
     exit: 0
 
-  - code: GB-264
+  - code: GB-266
     tool: goatbuilder
     title: the controller's checkout is not clean, so no hand-off is given
     what: "A two-driver peering's hand-off pins the edge driver's checkout to the controller's commit, so the controller gives one only when its own checkout is a git checkout with nothing uncommitted. The run stopped at the phase that needs the edge, before acting, and names each file with changes."
@@ -574,7 +574,7 @@ entries:
       - "commit each file the refusal names, then run the same command again"
     read: docs/design/federation-two-drivers.md
     matches:
-      - "^GB-264: "
+      - "^GB-266: "
     exit: 1
 
   - code: GB-261

@@ -16,9 +16,9 @@ use crate::Check;
 use std::path::Path;
 
 /// The run is waiting on the other driver: one code for every hand-off.
-pub const WAITING: &str = "GB-263";
+pub const WAITING: &str = "GB-265";
 /// The controller's checkout has changes, so no hand-off can pin it.
-pub const DIRTY: &str = "GB-264";
+pub const DIRTY: &str = "GB-266";
 
 /// The side of the peering a phase needs (the contract's table, "Where each
 /// phase needs to run, today").

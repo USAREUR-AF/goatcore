@@ -64,7 +64,7 @@ fn phase_1_stops_with_the_contracts_hand_off_object() {
     assert_eq!(v["exit"], 0, "{}", says(&out));
     let h = &v["handoff"];
     assert_eq!(h["phase"], 1, "{}", says(&out));
-    assert_eq!(h["code"], "GB-263");
+    assert_eq!(h["code"], "GB-265");
     assert_eq!(h["run_on"], "edge");
     assert_eq!(
         h["command"],
@@ -135,7 +135,7 @@ fn the_text_names_every_argv_of_the_object() {
             "{member}: no line `{line}` in {text:?}"
         );
     }
-    assert!(text.iter().any(|t| t.contains("GB-263")), "{text:?}");
+    assert!(text.iter().any(|t| t.contains("GB-265")), "{text:?}");
 }
 
 /// The test's own POSIX quoting: a word made only of safe characters as it
@@ -180,7 +180,7 @@ fn a_dirty_checkout_names_each_file_and_hands_off_nothing() {
         says(&out)
     );
     let all = says(&out);
-    assert!(all.contains("GB-264"), "{all}");
+    assert!(all.contains("GB-266"), "{all}");
     assert!(
         all.contains("uncommitted.txt") && all.contains("ops/goatbuilder/goatbuilder.yaml"),
         "{all}"
