@@ -87,6 +87,16 @@ keeps one of them, or adds a gate that compares the two.
   the reason. `validate-not-yaml` keeps 0.5.1's exit 2 for this purpose.
 - **A kept document whose shape must change.** It cannot within one version:
   add the new field beside the old one, or publish a new document version.
+- **A field a format carries only on some entries** (conditional fields). The
+  A4 check merges the fields of every entry of a list, so a field that only some
+  entries carry looks gone when no kept entry carries it any more. List it in
+  `conditional.yaml`: the format (`schema:`), the list (`items: hits[]`), the
+  field, `present_when:` (the entries that carry it) and the reason. The check
+  then holds it per entry: it may be absent from an entry the condition does not
+  name, and stays, with the release's type, on every entry it does. Today's one
+  entry is the interpretation's `hits[].score`, carried by a lexical guess only;
+  a refusal that gains its own code turns its guesses into one code hit with no
+  score.
 
 ## What is not checked here
 

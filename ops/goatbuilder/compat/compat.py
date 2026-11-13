@@ -37,6 +37,7 @@ Needs PyYAML.
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime
 import hashlib
 import json
@@ -234,14 +235,78 @@ def _shape_problems(base, new, path: str) -> list:
     return out
 
 
-def document_problems(base, new) -> list:
-    """What the last release's document carries that this build's does not."""
+def conditional_problems(cond: list) -> list:
+    """What is wrong with conditional.yaml's entries: each names a format, an array
+    of entries, a field, the condition, and why the field is carried only then."""
+    out = []
+    for i, c in enumerate(cond):
+        where = f"conditional.yaml entry {i + 1}"
+        if not isinstance(c, dict):
+            out.append(f"{where}: not a mapping")
+            continue
+        for key in ("format", "items", "field", "reason"):
+            if not (isinstance(c.get(key), str) and c[key].strip()):
+                out.append(f"{where}: `{key}:` is missing or empty")
+        if isinstance(c.get("items"), str) and not c["items"].endswith("[]"):
+            out.append(f"{where}: `items:` names an array of entries, written `name[]`")
+        if not (isinstance(c.get("present_when"), dict) and c["present_when"]):
+            out.append(f"{where}: `present_when:` names the entries that carry the field, as field: value")
+    return out
+
+
+def _formatted(v, fmt: str, path: str = ""):
+    """(path, object) for every object in `v` whose `schema` is `fmt`, the root included."""
+    if isinstance(v, dict):
+        if v.get("schema") == fmt:
+            yield path, v
+        for key, val in v.items():
+            yield from _formatted(val, fmt, f"{path}.{key}" if path else key)
+    elif isinstance(v, list):
+        for i, val in enumerate(v):
+            yield from _formatted(val, fmt, f"{path}[{i}]")
+
+
+def _conditional(base, new, cond: list):
+    """Copies of both documents without each conditional field, and what the new one
+    breaks of the condition: an entry the condition names that lacks the field, or a
+    value whose type differs from the release's."""
+    base, new = copy.deepcopy(base), copy.deepcopy(new)
+    out = []
+    for c in cond:
+        arr, field, when = c["items"][:-2], c["field"], c["present_when"]
+        kinds = set()
+        for _, obj in _formatted(base, c["format"]):
+            for item in obj.get(arr) or []:
+                if isinstance(item, dict) and field in item:
+                    kinds.add(_kind(item.pop(field)))
+        for path, obj in _formatted(new, c["format"]):
+            for i, item in enumerate(obj.get(arr) or []):
+                if not isinstance(item, dict):
+                    continue
+                at = f"{path + '.' if path else ''}{arr}[{i}].{field}"
+                named = all(item.get(k) == v for k, v in when.items())
+                if field in item:
+                    k = _kind(item.pop(field))
+                    if kinds and k not in kinds and k != "null":
+                        out.append(f"{at}: was {'/'.join(sorted(kinds))}, is now {k} (retyped)")
+                elif named:
+                    cond_text = ", ".join(f"{k} is {v}" for k, v in when.items())
+                    out.append(f"{at}: the field is gone from an entry where {cond_text} (conditional.yaml: {c['format']} carries it there)")
+    return base, new, out
+
+
+def document_problems(base, new, conditional=()) -> list:
+    """What the last release's document carries that this build's does not.
+
+    A field `conditional` names (conditional.yaml) is held per entry instead of by
+    the merged shape: it may be absent from an entry its condition does not name."""
     out = []
     # A document that carried no version may gain one (an added field); one that
     # carried a version keeps exactly that version.
     if isinstance(base, dict) and isinstance(new, dict) and "schema" in base and base.get("schema") != new.get("schema"):
         out.append(f"schema: the document's version was {base.get('schema')!r}, is now {new.get('schema')!r}")
-    return out + _shape_problems(shape(base), shape(new), "")
+    base, new, held = _conditional(base, new, list(conditional))
+    return out + held + _shape_problems(shape(base), shape(new), "")
 
 
 # ---------------------------------------------------------------- A5: the error codes
@@ -303,6 +368,11 @@ class Baseline:
     def deprecations(self) -> list:
         return _read_yaml(os.path.join(self.root, "deprecations.yaml")).get("deprecations") or []
 
+    def conditional(self) -> list:
+        """The fields a document format carries only on some entries, each with its reason."""
+        path = os.path.join(self.root, "conditional.yaml")
+        return (_read_yaml(path).get("conditional") or []) if os.path.isfile(path) else []
+
 
 def _env() -> dict:
     env = dict(os.environ)
@@ -336,6 +406,9 @@ def check_all(repo: str, root: str, binary: str, only=("surface", "documents", "
     deps = b.deprecations()
     for p in deprecation_problems(deps):
         rows.append((False, "surface", "deprecations.yaml", p))
+    cond = b.conditional()
+    for p in conditional_problems(cond):
+        rows.append((False, "documents", "conditional.yaml", p))
 
     if "surface" in only:
         r = subprocess.run([binary, "docs", "--markdown"], capture_output=True, text=True, env=_env(), cwd=repo)
@@ -356,7 +429,7 @@ def check_all(repo: str, root: str, binary: str, only=("surface", "documents", "
             if err:
                 rows.append((False, "documents", item, err))
                 continue
-            p = document_problems(b.document(d), doc)
+            p = document_problems(b.document(d), doc, cond)
             if rc != d["exit"]:
                 p.append(f"exit {d['exit']} in {b.release}, {rc} now")
             rows.append((not p, "documents", item, "; ".join(p) if p else "a superset of the release's document"))
