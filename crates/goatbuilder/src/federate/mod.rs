@@ -413,9 +413,6 @@ pub(crate) fn our_id(work: &str) -> Option<String> {
     })
 }
 
-/// How a dry run reads to a person, the way kubeadm prints its phases: a
-/// header, one aligned table of phases, then each phase's command wrapped to
-/// the page, with this checkout's path and the home folder shortened.
 /// What federate's phase `n` is for, in a person's words: the plan page's step
 /// column and the runner's frame read it.
 fn purpose(n: u32) -> &'static str {
@@ -438,6 +435,10 @@ fn purpose(n: u32) -> &'static str {
     }
 }
 
+/// How a dry run reads to a person, the way kubeadm prints its phases: a
+/// header, one aligned table of phases with this checkout's path and the home
+/// folder shortened, then each phase's command verbatim and unwrapped, so a
+/// line pastes as the command it runs.
 fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[Phase]) -> String {
     let home = runenv::var("HOME").unwrap_or_default();
     // The resolved path: with `-C ../..` the literal "../../" must not be

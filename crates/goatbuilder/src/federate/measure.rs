@@ -419,9 +419,6 @@ impl HostProbe {
         v
     }
 
-    /// The full argument vector run on this machine. Over SSH the host's
-    /// command line is one quoted string, after `--` and the destination, so no
-    /// part of it can be read as an `ssh` option.
     /// Where a probe acts, for the runner's frame and record: the host it
     /// reaches over ssh, or this machine.
     fn where_(&self) -> String {
@@ -432,6 +429,9 @@ impl HostProbe {
         }
     }
 
+    /// The full argument vector run on this machine. Over SSH the host's
+    /// command line is one quoted string, after `--` and the destination, so no
+    /// part of it can be read as an `ssh` option.
     pub fn argv(&self, bin: &str, args: &[&str]) -> Vec<String> {
         let host = self.on_host(bin, args);
         if self.target.local {
