@@ -365,7 +365,7 @@ pub struct CoreLeaf {
 
 /// What a leaf path holds, and what the back-out does with it.
 enum Leaf {
-    /// Nothing at the path: left alone.
+    /// Nothing at the path, and no admission backup of it: left alone.
     Missing,
     /// Another's bytes at the path (or this peering's leaf cannot be read to
     /// compare): left alone.
@@ -544,6 +544,16 @@ impl CoreLeaf {
 
     fn plan(&self, target: &Path, ours: &Path) -> Leaf {
         let Ok(now) = std::fs::read(target) else {
+            // Gone since admission (deleted by hand): what was there before
+            // comes back when admission kept it; with no backup the half is
+            // left missing.
+            if target.symlink_metadata().is_err() {
+                if let Ok(Some(Record::Backup(b))) = self.first_record(target) {
+                    if let Ok(bytes) = std::fs::read(&b) {
+                        return Leaf::Restore(bytes, b);
+                    }
+                }
+            }
             return Leaf::Missing;
         };
         let Ok(mine) = std::fs::read(ours) else {
@@ -3504,7 +3514,12 @@ mod tests {
             std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
             b"SOMEONE-ELSES-KEY"
         );
-        // Missing is neutral: with the key gone, the certificate is put back.
+    }
+
+    #[test]
+    fn a_missing_half_comes_back_from_its_backup_and_is_neutral_without_one() {
+        // The key was deleted by hand after admission. Admission kept what was
+        // there before for both halves, so both come back to their backups.
         let mut c = admitted(
             true,
             &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
@@ -3516,6 +3531,22 @@ mod tests {
             std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
             b"THE-LEAF-BEFORE"
         );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"THE-LEAF-BEFORE",
+            "the missing key comes back from its backup"
+        );
+        // Nothing was there before: the missing key has no backup and stays
+        // missing, and the certificate is removed.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        std::fs::remove_file(&c.vars["FED_CORE_KEY"]).unwrap();
+        back_out(&c);
+        assert!(!Path::new(&c.vars["FED_CORE_CERT"]).exists());
+        assert!(!Path::new(&c.vars["FED_CORE_KEY"]).exists());
     }
 
     #[test]
