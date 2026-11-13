@@ -101,6 +101,9 @@ are proposed; an item moves only by a change to this table.
 | OpenBao injector | designed | Later | A store is a declared, pluggable dependency |
 | Semantic error matcher | designed | Later | It adds a matcher after the existing ones |
 | A `boundary` machine class | not built | Later | The boundary node is the router `goatbuilder federate` deploys; no tutorial needs the class |
+| A `phone` machine class and `--via usb` | not built | In (H3 to H5) | A phone is built by the command that builds a computer, or it is not a goatbuilder node |
+| What a phone node replicates | designed ([phone-node.md](phone-node.md)) | **Open decision** | A full joiner is a replication member; a phone that is off for days falls behind and must be seeded again. The alternative is a phone profile that is a mesh peer with its own router and is not a replication member. The class in H5 is declared either way; the decision is which one `--class phone` means by default |
+| A launcher on the phone that starts the VM at boot | not built | Later | It is an Android app with its own release. Until it exists, H8's "without a person" is met by a computer on the USB cable and a phone with no screen lock |
 
 ### E. Upgrading is tested
 
@@ -133,6 +136,21 @@ A goatlite stays quick to start: one file of four facts, no outside account, and
 | G1 | A lite configuration is valid input to the full preset: the tool rewrites it into a full configuration with the same values and shows the difference | designed (`docs/design/goatlite-growth.md`); the rewrite is in review | On the lite fixture, the rewritten configuration passes validation and a standup plan from it changes nothing that already exists |
 | G2 | The first run of a goatlite does not grow: the count of facts the learner supplies, of prompts and of phases is held by a test | built: `crates/goatbuilder/tests/goatlite_budget.rs` | The budget test on the lite fixture, and tutorial 00 gains no step before the goatnet works |
 
+### H. A node on a phone
+
+A site node can be built on an Android phone with the command that builds one on a computer ([phone-node.md](phone-node.md)). One phone has joined a standing goatnet as a `core` joiner with `join-node` 0.5.1; that run left the tool in the places H1 to H6 close. H1, H2 and H6 are not about phones: they are faults of `join-node` on any new node, found by that run.
+
+| # | Requirement | Status | Proven by |
+|---|---|---|---|
+| H1 | `join-node` runs phases 1 to 15 in order on a node that is not yet enrolled, at a goatnet that already has a joiner: the gates of phases 3 and 7 accept the mesh-address placeholder that phase 12 fills, pass 1 of phase 13 does not check a service that the next step starts, and a site that declares signal federation off passes the federation gate | not built; each of the three refused in the measured run | A `join-node` run on the fixture from phase 1 to 15 with no `--from`, for a third site that declares federation off |
+| H2 | `join-node` has no manual phase after "reach the node": it mints the setup key into the declared secret store, enrols the node from a key file, and resolves every secret reference it passes to a node | not built: phases 8 and 10 are manual, and phase 9 passed a reference unresolved | The same fixture run, with no operator step between phase 2 and phase 15 and no secret in any argument list |
+| H3 | `--via usb`: the tool reaches a node through the Android debug bridge, with no SSH configuration written by hand | not built; measured by hand (Ansible ran the host baseline through an `adb` proxy command) | A fixture run in which a stand-in `adb` carries the connection and no file outside the checkout is read |
+| H4 | For a phone, the first phase prepares the phone's Linux VM (kernel, container engine, deploy user) and refuses to continue unless the integrity checks pass | a script outside this repository does it, measured on one phone; not built in the tool | The phase on the fixture, and its refusal when a check is made to fail |
+| H5 | A machine class `phone` carries the declared differences once: no LAN address, no public ingress, no disk encryption inside the VM, memory limits for 4 GB, no observability host | not built: the first site states them in its own group_vars | A site declared with `--class phone` passes the config preflight with none of those values written by hand |
+| H6 | The plays a joiner runs work on Debian as on Ubuntu, and Postgres memory settings and every container memory limit are variables whose defaults are today's values | Docker's apt repository follows the distribution (built); `cron` is not installed by the role that needs it, and Postgres memory and several limits are fixed (not built) | The hermetic container-host job on a Debian image; a check that fails on a memory limit with no variable |
+| H7 | One phone is built from a reset VM to a verified node by one command, with the released binary, in one uninterrupted run, and the record is kept | not measured: the first run was resumed several times | A timed run on a phone, kept as a measurement, as C1 is for a computer |
+| H8 | A phone node stays a node: it runs for seven days with the checks of H4 still passing, and comes back after a phone reboot without a person | not measured: about two hours on power; after a reboot the VM stays down until a person unlocks the phone | The seven-day record, and a reboot during it |
+
 ## Order of work
 
 The requirements depend on one another in this order. No dates are set here.
@@ -140,8 +158,9 @@ The requirements depend on one another in this order. No dates are set here.
 1. **0.5.0.** B1 and B7.
 2. **Federation completed.** B2 to B6 and B10, each its own release in the 0.x line, each behind a switch until its scenario passes.
 3. **Federation on standing goatnets.** B9, then B8.
-4. **Real machines.** C3, then C1 and C2 on hardware.
+4. **Real machines.** C3, then C1 and C2 on hardware. H7 and H8 on a phone.
 5. **The tool shows its work.** F1 to F6, in 0.x releases, beside the steps above.
+   **A node on a phone.** H1, H2 and H6 first, because they are faults on every new node; then H3 to H5.
 6. **The promise.** A1 to A5 and the decision in D on the pull converger. From this point the surfaces are frozen.
 7. **Upgrade tests.** E1 to E3, against the release that froze the surfaces.
 8. **The cold-read drill.** C4 and C5, on a release candidate `goatbuilder/v1.0.0-rc.N`.
@@ -155,10 +174,10 @@ Three releases after 0.5.2 reach 1.0, or four if the release candidate needs a s
 |---|---|---|
 | 0.5.2 | Document corrections; CI no longer depends on a distribution archive. Released and deployed with no exception at any stage | none; it proves the pipeline |
 | 0.6.0 | The tool shows its work, and the federation rows that need no outside party | F1 to F6; B5, B6, B7, B10; C3; G2 |
-| 0.7.0 | Federation complete and proven outside the laboratory; the promise written and under test; upgrade tested | B2, B3, B4, B8, B9; A1 to A5; E1 to E3; G1 |
-| 1.0.0-rc.N, then 1.0.0 | Surfaces frozen; proof on hardware and by people who did not build it | C1, C2, C4, C5; D agreed |
+| 0.7.0 | Federation complete and proven outside the laboratory; the promise written and under test; upgrade tested | B2, B3, B4, B8, B9; A1 to A5; E1 to E3; G1; H1 to H6 |
+| 1.0.0-rc.N, then 1.0.0 | Surfaces frozen; proof on hardware and by people who did not build it | C1, C2, C4, C5; D agreed; H7, H8 |
 
-Rows that need a person or a machine outside the build: B9 (a real partner), C1 and C2 (hardware), C4 (a person outside the team), A1 and D (decisions). Each is prepared so that the act itself is short.
+Rows that need a person or a machine outside the build: B9 (a real partner), C1 and C2 (hardware), H7 and H8 (a phone), C4 (a person outside the team), A1 and D (decisions). Each is prepared so that the act itself is short.
 
 ## How the gate is kept
 
