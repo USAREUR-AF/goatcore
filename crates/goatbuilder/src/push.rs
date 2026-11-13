@@ -212,6 +212,18 @@ pub fn declared(repo: &Path, component: &str, goatnet: &str, only_group: Option<
     Ok(Declared { var, ledger, members, skipped })
 }
 
+/// Open group `g`'s verify step, one of deploy's five, as its own phase.
+fn verify_phase(g: &str) {
+    crate::runner::phase(&format!("verify:{g}"), &format!("every host of {g} names the declared ref"), "");
+}
+
+/// A verify step the deploy skips for group `g` is still a phase of the record,
+/// with `why` as its verdict, so `runs diff` sees it go from skipped to checked.
+fn skipped_verify(g: &str, why: &str) {
+    verify_phase(g);
+    crate::runner::verdict(why);
+}
+
 /// The mesh probe a deploy starts: what a dry run prints, and what runs.
 fn netbird_status_cmd() -> Cmd {
     let mut c = Cmd::new("netbird");
@@ -603,6 +615,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 let recap: Vec<&str> = text.lines().skip_while(|l| !l.contains("PLAY RECAP")).skip(1).take(8).filter(|l| l.contains("ok=")).collect();
                 if recap.is_empty() && text.contains("skipping: no hosts matched") {
                     checks.push(ok(&format!("{}/{g}/hosts", p.name), "no host of this group in the loaded inventories (declared, not built?) — nothing deployed, skipping".into()));
+                    skipped_verify(g, "not checked: no host of this group is in the inventories");
                     continue;
                 }
                 // A nonzero exit is a failed deploy even when a clean recap printed (#1545).
@@ -613,6 +626,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                     let fatal: Vec<String> = text.lines().filter(|l| l.contains("fatal:") || l.contains("REFUSE")).take(3).map(|l| l.chars().take(200).collect()).collect();
                     checks.push(not_done(&format!("{}/{g}/deploy", p.name), format!("deploy FAILED — log {log}; {}", fatal.join(" | "))));
                     rc_not_converged = true;
+                    skipped_verify(g, "not checked: the deploy failed");
                     continue;
                 }
                 for l in recap {
@@ -620,7 +634,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 }
             }
         }
-        crate::runner::phase(&format!("verify:{g}"), &format!("every host of {g} names the declared ref"), "");
+        verify_phase(g);
         // Served payloads (goat-get, goat-docs): what the surface serves is versioned by
         // role vars, not by its image; the same module as the script judges them.
         let served_note = match served_declared(repo, &r.ledger, g) {

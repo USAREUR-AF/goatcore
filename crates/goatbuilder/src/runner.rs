@@ -88,6 +88,10 @@ pub struct PhaseEntry {
     /// command, or one that did not start.
     pub exit: Option<i32>,
     pub commands: usize,
+    /// What the verb concluded for a phase that started no command, such as a
+    /// step it skipped (`not checked: the deploy failed`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
 }
 
 /// A run as it ends: what the run record writes.
@@ -256,6 +260,7 @@ pub fn phase(id: &str, name: &str, purpose: &str) {
             ended: None,
             exit: None,
             commands: 0,
+            verdict: None,
         });
         r.phase = Some(Phase {
             id: id.to_string(),
@@ -263,6 +268,16 @@ pub fn phase(id: &str, name: &str, purpose: &str) {
             purpose: purpose.to_string(),
             shown: false,
         });
+    }
+}
+
+/// The verb's verdict on the phase now open, kept in its record entry: for a
+/// step it skips, which starts no command and so has no exit.
+pub fn verdict(text: &str) {
+    if let Some(r) = lock_run().as_mut() {
+        if let Some(p) = r.phases.last_mut().filter(|p| p.ended.is_none()) {
+            p.verdict = Some(text.to_string());
+        }
     }
 }
 

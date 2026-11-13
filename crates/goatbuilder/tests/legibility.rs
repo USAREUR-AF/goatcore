@@ -1255,6 +1255,11 @@ fn a_two_group_deploy_records_a_phase_per_group() {
         .collect();
     for g in ["dev_hosts", "dev_edge"] {
         assert!(ids.contains(&format!("deploy:{g}")), "no phase deploy:{g} in {ids:?}");
+        // The recorder prints no play recap, so each group's deploy fails; its
+        // verify step is still a phase of the record, with its verdict.
+        assert!(ids.contains(&format!("verify:{g}")), "no phase verify:{g} in {ids:?}");
+        let verify = records[0]["phases"].as_array().unwrap().iter().find(|p| p["id"] == format!("verify:{g}").as_str()).unwrap();
+        assert_eq!(verify["verdict"], "not checked: the deploy failed", "{verify}");
     }
     let unique: BTreeSet<&String> = ids.iter().collect();
     assert_eq!(unique.len(), ids.len(), "a phase id repeats: {ids:?}");

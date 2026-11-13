@@ -210,9 +210,11 @@ fn s<'a>(v: &'a serde_json::Value, k: &str) -> &'a str {
 }
 
 fn exit_of(v: &serde_json::Value) -> String {
-    v["exit"]
-        .as_i64()
-        .map_or("-".to_string(), |e| e.to_string())
+    match (v["exit"].as_i64(), v["verdict"].as_str()) {
+        (Some(e), _) => e.to_string(),
+        (None, Some(why)) => format!("- ({why})"),
+        (None, None) => "-".to_string(),
+    }
 }
 
 /// `goatbuilder runs`: the recorded runs, newest first.
@@ -498,6 +500,13 @@ pub fn diff(state: &Path, a: &str, b: &str) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_phase_with_no_exit_reads_as_its_verdict() {
+        assert_eq!(exit_of(&serde_json::json!({ "exit": 3 })), "3");
+        assert_eq!(exit_of(&serde_json::json!({ "exit": null, "verdict": "not checked: the deploy failed" })), "- (not checked: the deploy failed)");
+        assert_eq!(exit_of(&serde_json::json!({ "exit": null })), "-");
+    }
     use crate::runner::{CommandEntry, PhaseEntry};
 
     fn finished(dir: &Path, cmds: &[(&str, i32)], target: &str) -> Finished {
@@ -515,6 +524,7 @@ mod tests {
                 ended: None,
                 exit: Some(0),
                 commands: cmds.len(),
+                verdict: None,
             }],
             commands: cmds
                 .iter()
