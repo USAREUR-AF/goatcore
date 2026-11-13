@@ -639,6 +639,24 @@ mod tests {
         }
     }
 
+    /// A peering goatbuilder.yaml does not declare is refused with federate's own
+    /// code for it, GB-149.
+    #[test]
+    fn an_undeclared_peering_is_gb_149() {
+        let w = world();
+        let mut o = opts(&w, true);
+        o.with = "nowhere";
+        let env = |_: &str| None;
+        let e = inputs(&w.repo, &o, &env).unwrap_err();
+        assert!(e.to_string().contains("'nowhere' is not declared"), "{e}");
+        assert_eq!(
+            e.downcast_ref::<goat_errors::Coded>()
+                .map(|c| c.code.as_str()),
+            Some("GB-149"),
+            "{e}"
+        );
+    }
+
     /// Check (b) of the legibility conformance test, for federate, on the
     /// library: every value in every command the plan prints has an entry in
     /// `inputs` with a source.

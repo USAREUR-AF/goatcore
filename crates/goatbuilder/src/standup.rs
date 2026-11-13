@@ -2259,7 +2259,10 @@ mod tests {
             let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
             match (read_site(&repo, &o), ok) {
                 (Ok(s), true) => assert_eq!(s.acl_site, jfs),
-                (Err(e), false) => assert!(e.to_string().contains("join_founder_site") && e.to_string().contains(jfs), "{e}"),
+                (Err(e), false) => {
+                    assert!(e.to_string().contains("join_founder_site") && e.to_string().contains(jfs), "{e}");
+                    assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-263"), "{jfs}: {e}");
+                }
                 (r, _) => panic!("{jfs}: {:?}", r.map(|s| s.acl_site)),
             }
         }
@@ -2275,6 +2278,7 @@ mod tests {
             match (read_site(&repo, &o), ok) {
                 (Ok(s), true) => assert_eq!(s.acl_site, site),
                 (Err(e), false) => {
+                    assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-263"), "{site}: {e}");
                     let e = e.to_string();
                     assert!(e.contains(&format!("the site {site:?}")) && !e.contains("join_founder_site"), "{e}");
                 }
