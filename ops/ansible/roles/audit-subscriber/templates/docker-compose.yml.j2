@@ -17,7 +17,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 28224M
+          memory: "{{ audit_subscriber_memory_limit }}"
     restart: unless-stopped
     networks:
       # `zenoh` reaches the router for the subscribe-side traffic;

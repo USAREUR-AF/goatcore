@@ -508,6 +508,18 @@
               {% if postgres_spock_image is defined and postgres_spock_image %}
               POSTGRES_SPOCK_IMAGE={{ postgres_spock_image }}
               {% endif %}
+              {# postgres-a's memory, as mgmt-host.yml renders it; unset -> the  #}
+              {# compose defaults (2G, 512M) and the image's config (768MB, 300).#}
+              {% if mgmt_postgres_memory | default('') | string | length > 0 %}
+              POSTGRES_A_MEMORY={{ mgmt_postgres_memory }}
+              {% endif %}
+              {% if mgmt_postgres_memory_reservation | default('') | string | length > 0 %}
+              POSTGRES_A_MEMORY_RESERVATION={{ mgmt_postgres_memory_reservation }}
+              {% endif %}
+              {% set _pg_args = ((['-c shared_buffers=' ~ mgmt_postgres_shared_buffers] if (mgmt_postgres_shared_buffers | default('') | string | length > 0) else []) + (['-c max_connections=' ~ mgmt_postgres_max_connections] if (mgmt_postgres_max_connections | default('') | string | length > 0) else [])) | join(' ') %}
+              {% if _pg_args | length > 0 %}
+              POSTGRES_A_MEMORY_ARGS={{ _pg_args }}
+              {% endif %}
 
         - name: pull postgres-spock image
           ansible.builtin.command:

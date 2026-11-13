@@ -99,3 +99,9 @@ zenoh_rocksdb_backend_arch_map:
 zenoh_rocksdb_backend_sha256_map:
   aarch64: "298734a4f50dfa12c27337cbafeb7d99949f4f3fda4c330ff6891d39fdd97112"
   x86_64:  "88b13af5ddaadff9ec55c61765db6344666ae38731257877023b07c59a0c4bd1"
+
+# Container memory ceilings. The defaults are the values these limits had
+# when they were written into the compose template; a small host lowers them
+# in group_vars. ops/ci/check-compose-memory-is-variable.sh refuses a literal.
+zenoh_memory_limit: 1G  # the zenoh-router container
+zenoh_memory_reservation: 256M  # its memory reservation

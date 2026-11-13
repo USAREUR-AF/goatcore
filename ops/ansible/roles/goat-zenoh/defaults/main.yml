@@ -658,3 +658,9 @@ zenoh_from_retention_days: 7
 # in place: a deploy then REFUSES while any undeclared directory remains.
 zenoh_orphan_stores_fail: false
 
+
+# Container memory ceilings. The defaults are the values these limits had
+# when they were written into the compose template; a small host lowers them
+# in group_vars. ops/ci/check-compose-memory-is-variable.sh refuses a literal.
+goat_zenoh_memory: 4G  # the router container (was the template's inline default)
+goat_zenoh_memory_reservation: 512M  # the router container's memory reservation

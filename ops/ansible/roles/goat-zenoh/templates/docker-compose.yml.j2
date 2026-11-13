@@ -40,9 +40,9 @@ services:
           # sitting at its cap during a wedge lacks headroom, so a large host can raise it.
           # A live raise uses `docker update --memory 8g` (no restart) and must be declared
           # here so a redeploy carries it.
-          memory: "{{ goat_zenoh_memory | default('4G') }}"
+          memory: "{{ goat_zenoh_memory }}"
         reservations:
-          memory: 512M
+          memory: "{{ goat_zenoh_memory_reservation }}"
     command:
       - --config
       - /etc/zenoh/config.json5

@@ -48,9 +48,9 @@ services:
       resources:
         limits:
           cpus: "1.0"
-          memory: 1G
+          memory: "${PROMETHEUS_MEMORY:-1G}"
         reservations:
-          memory: 256M
+          memory: "${PROMETHEUS_MEMORY_RESERVATION:-256M}"
     environment:
       SITE_NAME: ${SITE_NAME:?set SITE_NAME in .env}
       # Peer scrape targets — substituted into prometheus.yml at config
@@ -92,9 +92,9 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 256M
+          memory: "${ALERTMANAGER_MEMORY:-256M}"
         reservations:
-          memory: 64M
+          memory: "${ALERTMANAGER_MEMORY_RESERVATION:-64M}"
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
       - --storage.path=/alertmanager
@@ -116,9 +116,9 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 128M
+          memory: "${NODE_EXPORTER_MEMORY:-128M}"
         reservations:
-          memory: 32M
+          memory: "${NODE_EXPORTER_MEMORY_RESERVATION:-32M}"
     # Standard host-facts mounts so node-exporter can read the host's
     # /proc, /sys, and root filesystem (NOT the container's view).
     pid: host
@@ -148,9 +148,9 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 256M
+          memory: "${POSTGRES_EXPORTER_MEMORY:-256M}"
         reservations:
-          memory: 64M
+          memory: "${POSTGRES_EXPORTER_MEMORY_RESERVATION:-64M}"
     depends_on:
       postgres-a:
         condition: service_healthy

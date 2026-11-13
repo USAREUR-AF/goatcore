@@ -108,9 +108,9 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 256M
+          memory: "${KRATOS_MEMORY:-256M}"
         reservations:
-          memory: 64M
+          memory: "${KRATOS_MEMORY_RESERVATION:-64M}"
     ports:
       # Public flows (browser) — Traefik fronts these as auth.<site>.netbird.legacy.example
       - "127.0.0.1:${KRATOS_PUBLIC_HOST_PORT:-4433}:4433"
@@ -163,9 +163,9 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 256M
+          memory: "${HYDRA_MEMORY:-256M}"
         reservations:
-          memory: 64M
+          memory: "${HYDRA_MEMORY_RESERVATION:-64M}"
     ports:
       # Public OAuth2/OIDC endpoints — Traefik fronts as oauth2.<site>.netbird.legacy.example
       - "127.0.0.1:${HYDRA_PUBLIC_HOST_PORT:-4444}:4444"
@@ -221,9 +221,9 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 256M
+          memory: "${SELFSERVICE_UI_MEMORY:-256M}"
         reservations:
-          memory: 64M
+          memory: "${SELFSERVICE_UI_MEMORY_RESERVATION:-64M}"
     ports:
       # Loopback-only — only Traefik routes traffic to this container.
       - "127.0.0.1:${SELFSERVICE_UI_HOST_PORT:-3001}:3000"

@@ -14,7 +14,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "{{ fabric_health_memory_limit }}"
     restart: unless-stopped
     networks:
       # Reaches the router over the goat-zenoh compose network.
@@ -59,7 +59,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "{{ fabric_health_spiffe_helper_memory_limit }}"
     restart: unless-stopped
     # Run as the meter's nonroot UID so the SVID key it writes (0600) is owned
     # by — and readable by — the meter. (spiffe-helper 0.10.1 ignores

@@ -15,7 +15,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "{{ oauth2_proxy_surface_memory_limit }}"
     restart: unless-stopped
     networks:
       - "{{ oauth2_proxy_surface_traefik_network }}"

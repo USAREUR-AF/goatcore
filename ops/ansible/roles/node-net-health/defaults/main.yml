@@ -94,3 +94,9 @@ node_net_health_ca_root_src: "/etc/{{ zenoh_stack | default('goat-zenoh') }}/tls
 # same admin gate). Reveal-only; no central poller — nodes self-publish.
 node_net_health_rollup_enabled: false
 node_net_health_rollup_www_dir: /opt/relay-health/www
+
+# Container memory ceilings. The defaults are the values these limits had
+# when they were written into the compose template; a small host lowers them
+# in group_vars. ops/ci/check-compose-memory-is-variable.sh refuses a literal.
+node_net_health_memory_limit: 512M  # the node-net-health container
+node_net_health_rollup_memory_limit: 512M  # its rollup container

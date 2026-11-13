@@ -16,7 +16,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "{{ node_net_health_memory_limit }}"
     restart: unless-stopped
 {% if node_net_health_join_zenoh_network | bool %}
     networks:
@@ -53,7 +53,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "{{ node_net_health_rollup_memory_limit }}"
     restart: unless-stopped
 {% if node_net_health_join_zenoh_network | bool %}
     networks:
