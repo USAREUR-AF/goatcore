@@ -255,6 +255,11 @@ def presence(root, svc, spec, v, group, pins):
                 d["why"] += " (a version, not a presence vote: the flag decides)"
     if spec.get("founder") and not decls:
         return True, False, [{"kind": "founder", "says": True, "why": "every founder runs it"}]
+    # ADR 1233 rule 1: the replication core runs at every site that replicates, a
+    # founder and a joiner alike; a pin or flag that answers still decides.
+    if spec.get("replication_core") and not any(d["says"] is not None for d in decls):
+        return True, False, decls + [{"kind": "replication_core", "says": True,
+                                      "why": "every site that runs the replication core runs it (ADR 1233)"}]
     answers = {d["says"] for d in decls if d["says"] is not None}
     if not answers:
         return None, False, decls
@@ -311,12 +316,11 @@ def deploy_play(root, name, spec, pins):
 
 
 # The admin mutation surfaces ADR 1084 §D3 single-homes at the site that holds the
-# writer: the NetBird dashboard, the portal, the id console and the onboarding engine.
-# ADR 1165 lifts that one write class at a time, by a change to group_vars, and the
-# lift reaches this model through the same flags and pins it already reads. This
-# list only words the reason a joiner's model marks one absent; it never decides
-# presence, so nothing here makes an admin surface impossible at any site.
-D3_ADMIN_SURFACES = ("netbird-dashboard", "portal", "id-admin-console", "onboard-runner")
+# writer carry `admin_surface: true` in the catalog (ADR 1233 rule 3). ADR 1165 lifts
+# that one write class at a time, by a change to group_vars, and the lift reaches this
+# model through the same flags and pins it already reads. The mark only words the
+# reason a joiner's model marks one absent; it never decides presence, so nothing
+# here makes an admin surface impossible at any site.
 D3_REASON = "single-homed at the founder (ADR 1084 §D3); every site once ADR 1165 lifts it for this class"
 
 
@@ -332,13 +336,13 @@ def declaration_reason(d):
     return d["why"]
 
 
-def absent_reason(svc, decls, founder):
+def absent_reason(svc, decls, founder, admin_surface=False):
     """Why the model marks `svc` absent at this site: the declarations that say so,
-    and for an admin surface at a joiner, the single-homing they carry out. The
-    plan of `goatbuilder join-node` prints this, and the grade's N/A row reads it,
-    so the two cannot disagree."""
+    and for an admin surface (the catalog's `admin_surface` mark) at a joiner, the
+    single-homing they carry out. The plan of `goatbuilder join-node` prints this,
+    and the grade's N/A row reads it, so the two cannot disagree."""
     said = "; ".join(declaration_reason(d) for d in decls if d.get("says") is False) or "no declaration says present"
-    if svc in D3_ADMIN_SURFACES and not founder:
+    if admin_surface and not founder:
         return f"{D3_REASON} (declared by: {said})"
     return said
 
@@ -387,7 +391,8 @@ def model(site, root=REPO):
             "contradiction": contradiction,
             "declarations": decls,
             # why it is absent here, in the words the join-node plan prints; None unless absent
-            "reason": absent_reason(name, decls, truthy(v.get("goatnet_founder", True)) is not False) if present is False else None,
+            "reason": absent_reason(name, decls, truthy(v.get("goatnet_founder", True)) is not False,
+                                   bool(spec.get("admin_surface"))) if present is False else None,
             "class": cls,
             "hosts": hosts["obs" if cls == "obs" else "mgmt"],
             "containers": [render(c, v) for c in (spec.get("containers") or [])],
@@ -1097,8 +1102,10 @@ def check(root=REPO):
             tokens |= set(t.get("requires") or [])
     for name, spec in (cat.get("services") or {}).items():
         p = spec.get("present") or {}
-        if not ({"founder", "pin", "var"} & set(p)):
-            errs.append(f"catalog: {name} has no presence declaration (founder/pin/var)")
+        if not ({"founder", "replication_core", "pin", "var"} & set(p)):
+            errs.append(f"catalog: {name} has no presence declaration (founder/replication_core/pin/var)")
+        if p.get("founder") and p.get("replication_core"):
+            errs.append(f"catalog: {name} is both founder-only and replication core; ADR 1233 makes them exclusive")
         if p.get("pin") and p["pin"] not in comps:
             errs.append(f"catalog: {name} names pin `{p['pin']}`, which is not a component in ops/pins/fleet-pins.yaml")
         if spec.get("class", "mgmt") not in ("mgmt", "obs"):
