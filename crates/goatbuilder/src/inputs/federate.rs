@@ -13,7 +13,7 @@
 
 use std::path::Path;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
 use super::{push, rel, yaml_line, Input, Seg, Source};
 use crate::config;
@@ -93,11 +93,14 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Result<Vec<Input>> {
         .iter()
         .position(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true))
         .ok_or_else(|| {
-            anyhow!(
-                "peering '{}' is not declared in {} peerings: — declare it first (C1)",
-                o.with,
-                cfg_path.display()
-            )
+            anyhow::Error::from(goat_errors::coded(
+                "GB-149",
+                format!(
+                    "peering '{}' is not declared in {} peerings: — declare it first (C1)",
+                    o.with,
+                    cfg_path.display()
+                ),
+            ))
         })?;
     let peering = &cfg.peerings[index];
     let d = Decl {
