@@ -51,6 +51,19 @@ def entries(text, where):
 def problems(released, now, base):
     """Every way the tree's catalog drops or changes a code of the release."""
     found = []
+    for code, was in released.items():
+        is_ = now.get(code)
+        if is_ is None:
+            found.append(f"{code} ({was.get('title', '')!r} in {base}) is not in {CATALOG}; "
+                         f"keep its entry, marked retired if it is no longer raised")
+            continue
+        retired = str(is_.get("retired") or "").strip()
+        if retired:
+            continue
+        if str(is_.get("title", "")).strip() != str(was.get("title", "")).strip():
+            found.append(f"{code}: its title was {was.get('title', '')!r} in {base} and is now "
+                         f"{is_.get('title', '')!r}; a code keeps its meaning (give the new one a new code), "
+                         f"or is marked retired")
     return found
 
 
