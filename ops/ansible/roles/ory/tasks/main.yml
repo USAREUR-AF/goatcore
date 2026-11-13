@@ -404,19 +404,19 @@
   when: item.stdout | trim != "1"
   changed_when: true
 
-- name: docker compose pull (Ory overlay images)
-  ansible.builtin.command:
-    cmd: docker compose -f docker-compose.yml -f docker-compose.ory.yml pull
-    chdir: "{{ ory_compose_dir }}"
-  changed_when: true
-
-# Every compose command from here on carries --no-deps. Each Ory service depends
+# The compose commands below that start a service carry --no-deps. Each Ory service depends
 # on postgres-a, and without --no-deps `compose run` / `compose up` bring the
 # dependency in line with the compose file first: a postgres-a whose stored
 # configuration differs from the file is RECREATED, which restarts the goatnet's
 # database and drops anything added inside the old container. The play has
 # already checked postgres-a is up, and the migrations run as their own tasks
 # before the services start, so the dependency ordering is not needed here.
+- name: docker compose pull (Ory overlay images)
+  ansible.builtin.command:
+    cmd: docker compose -f docker-compose.yml -f docker-compose.ory.yml pull
+    chdir: "{{ ory_compose_dir }}"
+  changed_when: true
+
 - name: Run Kratos migrations (one-shot)
   ansible.builtin.command:
     cmd: docker compose -f docker-compose.yml -f docker-compose.ory.yml run --rm --no-deps kratos-migrate
