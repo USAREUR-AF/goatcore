@@ -59,6 +59,9 @@ another session or replayed from an earlier one. Those are the signing and repla
 - **A partner's result counts only when it is signed.** It must verify under the partner's key
   in `<work>/keys.txt`, for this session, as kind `result`. A result that does not verify is
   refused at import (exit 2) and never counts towards `passed`.
+- **Only the partner's latest result counts.** Of the partner's signed results for this
+  session, only the newest one counts, by the time of its run, which its signature covers. An earlier one, offered again after a newer one was
+  imported, is refused at import and never replaces it.
 - **Outside such a session** (a plain run, or a session run by hand with `FED_ACCEPTANCE_SESSION`
   and unsigned files), phase 14's outcome is the local verdict, as today, and a combined result
   stays a record for the operators.
