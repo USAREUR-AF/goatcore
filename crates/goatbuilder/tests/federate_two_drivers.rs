@@ -5,7 +5,7 @@
 
 mod federate_world;
 
-use federate_world::{phases_run, rows, says, world, World};
+use federate_world::{phases_run, public_b64, rows, says, sha256_hex, world, World};
 
 fn git(w: &World, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
@@ -235,6 +235,21 @@ fn phase_2_stops_with_the_contracts_hand_off_object() {
     let h = &v["handoff"];
     assert_eq!(h["phase"], 2, "{}", says(&out));
     assert_eq!(h["code"], "GB-265");
+    assert_eq!(h["run_on"], "edge");
+    assert_eq!(h["commit"], commit.as_str());
+    assert_eq!(
+        h["import"],
+        strings(&[
+            "goatbuilder",
+            "federate",
+            "import",
+            "hello-ally",
+            "2",
+            "{result}",
+            "--sha256",
+            "{code}"
+        ])
+    );
     assert_eq!(
         h["command"],
         strings(&[
@@ -289,11 +304,83 @@ fn a_two_driver_run_after_phase_2_is_refused_with_no_object() {
             all.contains("GB-267") && all.contains("not built"),
             "--from {from}: {all}"
         );
+        assert!(
+            all.contains(&format!("nothing of phase {from} ran")),
+            "--from {from}: {all}"
+        );
+        assert!(!all.contains("Nothing ran"), "--from {from}: {all}");
         assert!(!w.log().contains(acted), "--from {from} acted: {}", w.log());
         assert_eq!(
             w.state()["phases"][from]["outcome"],
             "failed",
             "--from {from}"
+        );
+    }
+}
+
+/// Phases 1 to 9 with one driver (confirmation 1 by flag), then the peering
+/// declared with two drivers, and a plan for what is declared now, so the plan
+/// holds. Returns its hash.
+fn planned_with_two_drivers(w: &World) -> String {
+    let fp = sha256_hex(b"fake-ca-der");
+    let key = public_b64("xab");
+    let digest = sha256_hex(&std::fs::read(w.root.path().join("fake/agreement.json")).unwrap());
+    let (out, _) = w.run(&[
+        "hello-ally",
+        "--to",
+        "9",
+        "--partner-key",
+        &key,
+        "--partner-ca-fingerprint",
+        &fp,
+        "--agreement-digest",
+        &digest,
+    ]);
+    assert!(out.status.success(), "{}", says(&out));
+    two_drivers(w);
+    let (out, _) = w.run(&["plan", "hello-ally"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let plan: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(w.work.join("plan.json")).unwrap()).unwrap();
+    assert_eq!(plan["verdict"], "READY", "{plan}");
+    plan["hash"].as_str().unwrap().to_string()
+}
+
+/// The approved-plan path (`deploy`) admits the edge on our core at phase 10
+/// and carries on into 11, which needs the edge. For a two-driver peering that
+/// would leave the admission half done. A two-driver deploy is refused before
+/// it acts, in either form: no live recheck, no claim, no admission, no play.
+#[test]
+fn a_two_driver_deploy_runs_nothing() {
+    let w = world();
+    let plan = planned_with_two_drivers(&w);
+    let journal = w.state();
+    for extra in [
+        &[][..],
+        &["--review-in-pr"][..],
+        &["--approve-admission", "sha256:00"][..],
+    ] {
+        w.clear_log();
+        let mut args = vec!["deploy", "hello-ally", "--approve-plan", &plan];
+        args.extend(extra);
+        let (out, v) = w.run(&args);
+        let all = says(&out);
+        assert!(!out.status.success(), "{extra:?}: {all}");
+        assert!(all.contains("GB-267"), "{extra:?}: {all}");
+        assert!(
+            !all.contains("GB-188"),
+            "{extra:?}: the plan should hold: {all}"
+        );
+        assert!(v["handoff"].is_null(), "{extra:?}: {all}");
+        assert_eq!(w.log(), "", "{extra:?}: the deploy acted");
+        assert_eq!(w.state(), journal, "{extra:?}: the journal changed");
+        assert!(
+            !w.root.path().join("core/config.json5").exists(),
+            "{extra:?}: our core admitted the edge"
+        );
+        assert!(
+            !w.work.join("admission").exists(),
+            "{extra:?}: an admission review was written"
         );
     }
 }
