@@ -693,6 +693,8 @@ exchange() { # $1 the side that ran phase 5 first, $2 the other side, $3 avenue,
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"; w="/var/lib/goat-federation/$them"
     rec "s$n-$s-$them-their-files-are-in-place" -- docker exec "$(drv_host "$s")" sh -c \
       "test -s $w/theirs.canonical.json && test -s $w/theirs-ca.pem && test -s $w/theirs.spiffe-bundle"
+    # The partner CA as placed here, for link_state to compare against later.
+    docker exec "$(drv_host "$s")" sha256sum "$w/theirs-ca.pem" 2>/dev/null | cut -d' ' -f1 > "$WORK/ca-sha-$s-$them" || true
   done
   nodir "$first" "$second" && return 0
   for s in "$first" "$second"; do
@@ -817,7 +819,7 @@ accept_as() { # $1 sovereign, $2 them, $3 avenue
 export_helpers() {
   export -f drive host_exec other party_pos octet core_ip edge_ip boundary_ip die partners pidx iface wgport \
     spire_out rp_metrics probe_port ctx_of pair_subnet nodir percp partner_list accept_as probe_zid td round_trip round_trip_eventually \
-    core_deploy core_ca drv_host ops_ip
+    core_deploy core_ca drv_host ops_ip link_state
   for _p in $PARTIES; do export "P_$_p"; done
   export NODIR PERCP WORK GB REPO HERE SRC RECORD DIRECTORY_IP FE2E_DRIVER
 }
@@ -932,17 +934,28 @@ accept_pair() { # $1 scenario, $2 a, $3 b, $4 avenue, $5 label suffix, [$6 b's a
 round_trip() { # $1 sender, $2 receiver, $3 seconds: one try
   BASE="http://$(core_ip "$1"):8000" "$SRC/ops/federation/roundtrip/fedcheck.sh" release/all "from/$2" "$3"
 }
+# The link between two sovereigns as it stands: each edge's WireGuard handshakes, its edge
+# router's connection lines, its republisher's last lines, and the partner CA against the one
+# placed at the exchange (and any .unconfirmed file). $1 first, $2 second.
+link_state() {
+  local s them w
+  for s in "$1" "$2"; do
+    them="$(other "$s")"; w="/var/lib/goat-federation/$them"
+    echo "--- $s edge: latest handshakes"; docker exec "$HP-$s-edge" wg show "$(iface "$s" "$them")" latest-handshakes 2>&1
+    echo "--- $s edge router toward $them: connection lines"
+    docker exec "$HP-$s-edge" docker logs --tail 400 "goat-zenoh-edge-$them" 2>&1 | grep -iE 'unable to connect|tls|handshake|new session|close session|closed|lease|reconnect|connected' | tail -15 | cut -c1-300
+    echo "--- $s republisher toward $them: last lines"; docker exec "$HP-$s-core" docker logs --tail 15 "goat-fed-republisher-$them" 2>&1 | cut -c1-300
+    echo "--- $s partner CA: placed $(cat "$WORK/ca-sha-$s-$them" 2>/dev/null || echo unknown), now $(docker exec "$(drv_host "$s")" sha256sum "$w/theirs-ca.pem" 2>/dev/null | cut -d' ' -f1); unconfirmed: $(docker exec "$(drv_host "$s")" sh -c "ls $w/*.unconfirmed 2>/dev/null" | tr '\n' ' ')"
+  done
+}
+
 round_trip_eventually() { # $1 sender, $2 receiver
   local out s
   for _ in 1 2 3 4 5 6; do out="$(round_trip "$1" "$2" 20)" && { echo "$out"; return 0; }; sleep 10; done
   echo "$out"
-  # Why it did not come back: each edge's tunnel and its router, as they are now.
-  for s in "$1" "$2"; do
-    echo "--- $s edge: wg show (peers, latest handshakes, transfer)"
-    docker exec "$HP-$s-edge" wg show all 2>&1 | head -40
-    echo "--- $s edge: the edge router toward $(other "$s"), last lines"
-    docker exec "$HP-$s-edge" docker logs --tail 30 "goat-zenoh-edge-$(other "$s")" 2>&1 | cut -c1-300
-  done
+  # Why it did not come back: the tunnels in full, then the link as it stands.
+  for s in "$1" "$2"; do echo "--- $s edge: wg show all"; docker exec "$HP-$s-edge" wg show all 2>&1 | head -40; done
+  link_state "$1" "$2"
   return 1
 }
 
@@ -969,6 +982,8 @@ failures() { # $1 scenario, $2 first, $3 second
   rec "s$n-cut-the-link" -- docker exec "$HP-$second-edge" systemctl stop "goat-peering-wg@$(iface "$second" "$first")"
   rec "s$n-round-trip-fails-when-cut" --expect-exit 1 --expect-in "FAIL" -- bash -c "round_trip '$first' '$second' 15"
   rec "s$n-restore-the-link" -- docker exec "$HP-$second-edge" systemctl start "goat-peering-wg@$(iface "$second" "$first")"
+  # Evidence, not a check: the link right after the restore.
+  link_state "$first" "$second" > "$RECORD/s$n-link-after-restore.txt" 2>&1 || true
   rec "s$n-round-trip-passes-again" --expect-in "PASS" -- bash -c "round_trip_eventually '$first' '$second'"
   # F-495: the role refuses without a recorded reason, and refuses any other transport.
   for s in "$first" "$second"; do
