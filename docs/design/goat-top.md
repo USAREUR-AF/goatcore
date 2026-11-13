@@ -5,7 +5,7 @@
 > host. It is a **pure consumer**: it subscribes the five environment-health + footprint topics that
 > already live on the bus ([`environment-health-surface.md`](environment-health-surface.md)), keeps a
 > latest-wins live model, and renders a multi-pane ratatui screen — a per-domain weather strip
-> (mesh/fabric/time/presence), a fabric class-load row, a sortable **producer table** (the "top"
+> (mesh/fabric/time/presence/peer), a fabric class-load row, a sortable **producer table** (the "top"
 > rows: who is using the net, msgs/s, B/s, class shares, near-limit, joined to their mesh path +
 > latency), and a totals footer. The producer table also carries a **SUBS** column — the
 > per-producer *consumer fan-out* (how many distinct subscribers each producer's output actually
@@ -64,6 +64,7 @@ Every input is already published on the bus by shipped work. `goat top` is a **n
 | Per-producer footprint (the "top" rows) | `ops/fabric/footprint/<peer>` | `ProducerFootprintV1` | [ADR 1034](../adr/1034-fabric-health-surface.md) |
 | Presence (alive / dropped, churn) | `ops/presence/health/<site>` | `EnvHealthV1{presence}` | [ADR 1040](../adr/1040-zenoh-advanced-pubsub-liveliness-adoption.md) gap 3 |
 | Time/clock health | `ops/time/health/<site>` | `EnvHealthV1{time}` | [ADR 1036](../adr/1036-environment-health-surface.md) time domain |
+| Peer faults (clock offsets our router measured on peers we do not own) | `ops/peer/health/<site>` | `EnvHealthV1{peer}` (arm 17) | ADR 1232 (in review); published by goat-peer-health in goatstuff |
 
 The wire types are the hand-written prost-derive structs `goat health` already decodes
 (`crates/goat-cli/src/cmd/health.rs`). To avoid a third hand-copy of those structs, the shared
@@ -102,7 +103,7 @@ Top → bottom, a vertical ratatui layout (mirrors the `goat ui` Tail lens struc
 
 ### 4.1 Header weather-strip — all domains at a glance
 
-One color chip per domain: **MESH · FABRIC · TIME · PRESENCE**. Each chip carries:
+One color chip per domain: **MESH · FABRIC · TIME · PRESENCE · PEER**. Each chip carries:
 
 - the **honesty color** (green/amber/red, or dim `idle`/`unmetered`),
 - the one-word state,
@@ -112,6 +113,10 @@ One color chip per domain: **MESH · FABRIC · TIME · PRESENCE**. Each chip car
 A domain with no beat ever seen reads `unmetered` (dim). A domain whose last beat is **stale** (older
 than ~2.5× its publish window) is rendered dim with its age — never as a live color. This is the
 weather-strip generalization of the `goat health` board glance, all domains side-by-side.
+
+The PEER chip is built (unit-tested; not yet run against a live goat-peer-health publisher). It
+shows the site grade of `ops/peer/health/<site>` only; the per-peer rows are `goat health --domain
+peer`.
 
 ### 4.2 Fabric class-load row
 

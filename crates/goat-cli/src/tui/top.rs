@@ -57,8 +57,9 @@ const STALE_FACTOR: u32 = 3;
 /// ~30s; fabric ~5s — this is only the floor for the footprint table.
 const DEFAULT_WINDOW_SECS: u64 = 5;
 
-/// The four env-health domains rendered in the header weather-strip, in order.
-const DOMAINS: [&str; 4] = ["mesh", "fabric", "time", "presence"];
+/// The env-health domains rendered in the header weather-strip, in order.
+/// `peer` is faults the router we own measured on peers we do not own (ADR 1232).
+const DOMAINS: [&str; 5] = ["mesh", "fabric", "time", "presence", "peer"];
 
 // --- messages from the producer task to the UI loop -------------------------
 
@@ -67,7 +68,7 @@ enum TopMsg {
     Fabric(Box<FabricHealthV1>),
     /// A per-producer footprint (`ops/fabric/footprint/<peer>`).
     Footprint(Box<ProducerFootprintV1>),
-    /// An EnvHealthV1 beat from mesh/time/presence (domain is in the envelope).
+    /// An EnvHealthV1 beat from mesh/time/presence/peer (domain is in the envelope).
     Env(Box<EnvHealthV1>),
     /// A refreshed pub/sub census (who-consumes-what), read from the router
     /// adminspace. Fail-soft: an EMPTY census means the grant is deploy-pending
@@ -97,7 +98,7 @@ async fn produce(session: zenoh::Session, router: String, tx: UnboundedSender<To
             return;
         }
     };
-    // The three EnvHealthV1 domains. One subscriber on ops/{mesh,time,presence}
+    // The EnvHealthV1 domains. One subscriber on ops/{mesh,time,presence,peer}
     // would need a brace key-expr; declare them separately for clarity.
     let mesh_sub = match session.declare_subscriber("ops/mesh/health/**").await {
         Ok(s) => s,
@@ -128,6 +129,17 @@ async fn produce(session: zenoh::Session, router: String, tx: UnboundedSender<To
                 e,
                 &router,
                 "declare a subscriber on ops/presence/health/**",
+            )));
+            return;
+        }
+    };
+    let peer_sub = match session.declare_subscriber("ops/peer/health/**").await {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = tx.send(TopMsg::Error(crate::classify::classify_zenoh_err_line(
+                e,
+                &router,
+                "declare a subscriber on ops/peer/health/**",
             )));
             return;
         }
@@ -192,6 +204,12 @@ async fn produce(session: zenoh::Session, router: String, tx: UnboundedSender<To
                 Ok(sample) => decode_env_sample(&sample, "presence"),
                 Err(e) => Some(TopMsg::Error(
                     crate::classify::classify_zenoh_err_line(e, &router, "receive a presence-health sample"),
+                )),
+            },
+            r = peer_sub.recv_async() => match r {
+                Ok(sample) => decode_env_sample(&sample, "peer"),
+                Err(e) => Some(TopMsg::Error(
+                    crate::classify::classify_zenoh_err_line(e, &router, "receive a peer-health sample"),
                 )),
             },
         };
@@ -1388,6 +1406,7 @@ fn draw_help_overlay(f: &mut ratatui::Frame) {
         row("FABRIC", "Zenoh class-load vs declared envelopes"),
         row("TIME", "internal-sync coherence + UTC confidence"),
         row("PRESENCE", "peers alive on the bus right now"),
+        row("PEER", "faults our router measured on peers we do not own"),
         blank(),
         sec("honesty colors — a color means exactly what it says"),
         crow("green", "green", "healthy"),
@@ -2272,6 +2291,8 @@ mod tests {
         assert!(out.contains("MESH UNMETERED n=0"), "absent mesh reads unmetered, never green:\n{out}");
         assert!(out.contains("TIME UNMETERED n=0"));
         assert!(out.contains("PRESENCE UNMETERED n=0"));
+        // No peer-health beat: the peer chip reads unmetered, never green.
+        assert!(out.contains("PEER UNMETERED n=0"));
         // Class-load row with the of-target form.
         assert!(out.contains("C2"));
         assert!(out.contains("40 /") && out.contains("100 msgs/s"), "class of-target shown:\n{out}");
@@ -2452,6 +2473,38 @@ mod tests {
             window_secs: 30,
             detail: Some(detail),
         }
+    }
+
+    #[test]
+    fn a_peer_beat_colors_the_peer_chip() {
+        use crate::health_wire::PeerFaultDetailV1;
+        let mut st = TopState::new(None, TopSort::Msgs, 2);
+        let now = Instant::now();
+        st.apply_env(
+            env_beat(
+                "peer",
+                "red",
+                1,
+                EnvDetail::Peer(PeerFaultDetailV1 {
+                    verdict: "peer_at_fault".to_string(),
+                    ..Default::default()
+                }),
+            ),
+            now,
+        );
+        let vm = st.view_model(&AliasRegistry::empty(), &EnvelopeRegistry::empty(), now);
+        let peer = vm
+            .chips
+            .iter()
+            .find(|c| c.domain == "peer")
+            .expect("peer chip");
+        assert_eq!((peer.state.as_str(), peer.sample_count), ("red", 1));
+        assert_eq!(
+            vm.chips.last().map(|c| c.domain.as_str()),
+            Some("peer"),
+            "last in the strip"
+        );
+        assert!(render_plain(&vm, TopSort::Msgs).contains("PEER RED n=1"));
     }
 
     #[test]

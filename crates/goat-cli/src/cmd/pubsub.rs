@@ -1349,6 +1349,15 @@ fn zid_pin_value(anchor: &str) -> &str {
     anchor.trim_start_matches('0')
 }
 
+/// The Zenoh ID a pinned session of this profile carries (`open_session_for`):
+/// the slot anchor, in the ZID's minimal hex. None when the profile's
+/// certificate is not anchor-shaped, so its sessions take a random ZID and the
+/// machine has no Zenoh identity of its own. The caller compares it with the
+/// open session's `zid()`, because the pin can be refused at open.
+pub(crate) fn pinned_zid(profile: &Profile) -> Option<String> {
+    slot_anchor_from_cert(profile).map(|a| zid_pin_value(&a).to_string())
+}
+
 /// Map a `--encoding` value to a Zenoh `Encoding`. Mirrors the
 /// `format_to_encoding` vocabulary the synth publishers use so an operator
 /// types the same shorthand the fleet declares: `json` / `cbor` / `text` /
