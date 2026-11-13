@@ -1320,6 +1320,19 @@ mod tests {
 
     /// cosign v2 verify-blob requires an embedded SCT from a trusted CT log
     /// (pkg/cosign/verify.go, VerifyEmbeddedSCT; RFC 6962 section 3.2).
+    /// A slow machine that crosses a second between the precertificate and
+    /// the certificate still gets a leaf whose SCT verifies: the stand-in reads
+    /// the clock once per bundle (it read it twice, and a debug build on a slow
+    /// runner could put a second between them).
+    #[test]
+    fn a_stand_in_leaf_made_across_a_second_still_verifies() {
+        let v = stand_in(stand_in::Leaf {
+            pause: std::time::Duration::from_millis(1100),
+            ..Default::default()
+        });
+        assert!(v.is_ok(), "{v:?}");
+    }
+
     #[test]
     fn a_leaf_without_an_sct_is_refused() {
         let r = stand_in(stand_in::Leaf {

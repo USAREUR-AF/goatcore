@@ -81,6 +81,10 @@ pub struct Leaf {
     pub ca: bool,
     /// Expire before the entry is integrated.
     pub expired: bool,
+    /// Let this long pass between the precertificate and the certificate,
+    /// as a slow machine does (a regression test for the two reading the
+    /// clock apart).
+    pub pause: std::time::Duration,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -171,7 +175,15 @@ impl Sigstore {
     }
 
     /// The leaf's parameters, without its SCT list.
-    fn leaf_params(&self, w: &Workflow, leaf: Leaf) -> rcgen::CertificateParams {
+    /// `now` is read once per bundle: the precertificate and the certificate
+    /// must carry the same validity, or the SCT over the one does not match
+    /// the other's TBS.
+    fn leaf_params(
+        &self,
+        w: &Workflow,
+        leaf: Leaf,
+        now: time::OffsetDateTime,
+    ) -> rcgen::CertificateParams {
         let mut p = rcgen::CertificateParams::new(vec![]).unwrap();
         let reusable = format!(
             "https://github.com/{}/.github/workflows/_release-binary.yml@refs/tags/{}",
@@ -182,9 +194,6 @@ impl Sigstore {
         )];
         p.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::CodeSigning];
         p.serial_number = Some(rcgen::SerialNumber::from(vec![0x42, 0x17]));
-        let now = time::OffsetDateTime::now_utc()
-            .replace_nanosecond(0)
-            .unwrap();
         if leaf.expired {
             p.not_before = now - time::Duration::minutes(30);
             p.not_after = now - time::Duration::minutes(20);
@@ -227,11 +236,15 @@ impl Sigstore {
         // RFC 6962 section 3.2: the log signs the precertificate's TBS, which
         // is the final certificate's TBS without the SCT list. The precert is
         // built from the same parameters, so the two TBS differ only by it.
+        let now = time::OffsetDateTime::now_utc()
+            .replace_nanosecond(0)
+            .unwrap();
         let pre = self
-            .leaf_params(w, leaf)
+            .leaf_params(w, leaf, now)
             .signed_by(&key, &self.inter, &self.inter_key)
             .unwrap();
-        let mut p = self.leaf_params(w, leaf);
+        std::thread::sleep(leaf.pause);
+        let mut p = self.leaf_params(w, leaf, now);
         if leaf.sct != Sct::None {
             let (_, parsed) = x509_parser::parse_x509_certificate(pre.der()).unwrap();
             let tbs = parsed.tbs_certificate.as_ref().to_vec();
