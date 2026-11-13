@@ -717,5 +717,76 @@ class RoleDefaults(unittest.TestCase):
         self.assertEqual(repeated, role["peering_forwarder_peering_defaults"])
 
 
+
+@unittest.skipUnless(shutil.which("ansible-playbook"), "ansible-playbook not on PATH")
+class DropPartnerStore(unittest.TestCase):
+    """ADR 1234: the goat-zenoh role deletes a backed-out partner's store directory,
+    sovereign_from_<partner>, and only after the router runs on a configuration
+    that no longer declares it (roles/goat-zenoh/tasks/drop-partner-store.yml)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="drop-partner-store-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store = f"{self.tmp}/rocksdb"
+        for name in ("sovereign_from_xab", "sovereign_from_xac"):
+            dump(f"{self.store}/{name}/CURRENT", "MANIFEST-000001\n")
+        self.cfg = f"{self.tmp}/config.json5"
+        dump(self.cfg, '{ "sovereign_from_xab": { dir: "' + self.store + '/sovereign_from_xab" } }\n')
+
+    def play(self, started, peerings=("xab",), check=False):
+        """Run the role's task file for partner xac; the router container reports
+        `started` as its start time (docker inspect), and is running."""
+        bindir = f"{self.tmp}/fake-bin"
+        os.makedirs(bindir, exist_ok=True)
+        with open(f"{bindir}/docker", "w", encoding="utf-8") as f:
+            f.write('#!/bin/sh\n[ "$1" = inspect ] || exit 2\n'
+                    f'echo "true {started}"\n')
+        os.chmod(f"{bindir}/docker", 0o755)
+        book = f"{self.tmp}/play.yml"
+        dump(book, [{
+            "hosts": "localhost", "connection": "local", "gather_facts": False,
+            "vars": {"ansible_python_interpreter": sys.executable,
+                     "goat_zenoh_storage_path": self.store, "goat_zenoh_config_path": self.cfg,
+                     "zenoh_stack": "zagros-zenoh",
+                     "zenoh_sovereign_peerings": [{"sovereign": p, "cn": f"fed.{p}.zagros.01"} for p in peerings],
+                     "goat_zenoh_drop_partner_store": "xac"},
+            "tasks": [{"name": "the role's task file",
+                       "ansible.builtin.include_tasks": str(ANSIBLE / "roles/goat-zenoh/tasks/drop-partner-store.yml")}],
+        }])
+        argv = ["ansible-playbook", "-i", "localhost,", "-e", "ansible_become=false", book]
+        if check:
+            argv.append("--check")
+        return run(argv, self.tmp, path_prefix=bindir)
+
+    def test_after_the_router_restarted_without_it_the_store_is_deleted(self):
+        r = self.play("2099-01-01T00:00:00.000000000Z")
+        self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
+        self.assertFalse(os.path.exists(f"{self.store}/sovereign_from_xac"))
+        self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xab/CURRENT"), "another partner's store stays")
+        # Again: nothing is there, nothing fails.
+        r = self.play("2099-01-01T00:00:00.000000000Z")
+        self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
+
+    def test_a_router_started_before_the_configuration_keeps_the_store(self):
+        r = self.play("2000-01-01T00:00:00.000000000Z")
+        self.assertNotEqual(r.returncode, 0, r.stdout[-4000:])
+        self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xac/CURRENT"))
+
+    def test_a_configuration_that_still_declares_the_store_keeps_it(self):
+        dump(self.cfg, '{ "sovereign_from_xac": { dir: "' + self.store + '/sovereign_from_xac" } }\n')
+        r = self.play("2099-01-01T00:00:00.000000000Z")
+        self.assertNotEqual(r.returncode, 0, r.stdout[-4000:])
+        self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xac/CURRENT"))
+
+    def test_a_partner_still_declared_keeps_its_store(self):
+        r = self.play("2099-01-01T00:00:00.000000000Z", peerings=("xab", "xac"))
+        self.assertNotEqual(r.returncode, 0, r.stdout[-4000:])
+        self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xac/CURRENT"))
+
+    def test_the_dry_run_deletes_nothing(self):
+        r = self.play("2099-01-01T00:00:00.000000000Z", check=True)
+        self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
+        self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xac/CURRENT"))
+
 if __name__ == "__main__":
     unittest.main()

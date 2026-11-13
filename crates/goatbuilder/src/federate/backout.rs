@@ -2559,6 +2559,15 @@ mod tests {
     fn role_leaf_back_out(
         prior: Option<&[u8]>,
     ) -> (Vec<String>, PathBuf, PathBuf, Report, tempfile::TempDir) {
+        role_back_out(prior, None)
+    }
+
+    /// As `role_leaf_back_out`, with the role group's `peerings.yml` holding
+    /// `peerings` when given (the file admission writes the partner into).
+    fn role_back_out(
+        prior: Option<&[u8]>,
+        peerings: Option<&str>,
+    ) -> (Vec<String>, PathBuf, PathBuf, Report, tempfile::TempDir) {
         let d = tempfile::tempdir().unwrap();
         let (repo, work) = stand_in(d.path());
         let role = role_core_checkout();
@@ -2572,6 +2581,13 @@ mod tests {
             let to = repo.join(rel);
             std::fs::create_dir_all(to.parent().unwrap()).unwrap();
             std::fs::copy(role.path().join(rel), &to).unwrap();
+        }
+        if let Some(text) = peerings {
+            std::fs::write(
+                repo.join("ops/ansible/group_vars/core_router/peerings.yml"),
+                text,
+            )
+            .unwrap();
         }
         let leaves = d.path().join("xaa-leaves");
         std::fs::create_dir_all(&leaves).unwrap();
@@ -2699,6 +2715,87 @@ mod tests {
                 "{c}"
             );
         }
+    }
+
+    #[test]
+    fn on_a_role_core_the_partner_leaves_the_roles_list_and_its_store_is_dropped() {
+        // ADR 1234: the back-out takes the partner's entry out of the file
+        // admission wrote it into, keeping every other line, then runs the
+        // role's play (dry run, then deploy), which restarts the router without
+        // the partner's store and only then deletes that store's directory.
+        let before = "# Each partner this core admits.\nzenoh_sovereign_peerings:\n- sovereign: hello-ally\n  cn: fed.hello-ally.zagros.01\n- sovereign: xab\n  cn: fed.xab.zagros.01\nzenoh_from_retention_days: 7 # kept as written\n";
+        let (ran, _cert, _key, r, d) = role_back_out(Some(b"THE-LEAF-BEFORE"), Some(before));
+        let file = d
+            .path()
+            .join("repo/ops/ansible/group_vars/core_router/peerings.yml");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "# Each partner this core admits.\nzenoh_sovereign_peerings:\n- sovereign: xab\n  cn: fed.xab.zagros.01\nzenoh_from_retention_days: 7 # kept as written\n",
+            "{:?}",
+            r.checks
+        );
+        let drops: Vec<&String> = ran
+            .iter()
+            .filter(|c| c.contains("goat_zenoh_drop_partner_store"))
+            .collect();
+        assert_eq!(drops.len(), 2, "the role's dry run and deploy: {ran:?}");
+        assert!(
+            drops[0].contains("--check") && !drops[1].contains("--check"),
+            "{drops:?}"
+        );
+        for c in &drops {
+            assert!(
+                c.contains("zenoh-deploy.yml")
+                    && c.contains("-e goat_zenoh_drop_partner_store='hello-ally'"),
+                "{c}"
+            );
+        }
+        let core = ran
+            .iter()
+            .position(|c| c.contains("peering_backout_apply"))
+            .expect("the removal play");
+        let first = ran
+            .iter()
+            .position(|c| c.contains("goat_zenoh_drop_partner_store"))
+            .unwrap();
+        assert!(core < first, "the edge goes first: {ran:?}");
+        assert!(
+            r.checks.iter().find(|c| c.name == "converged").unwrap().ok,
+            "{:?}",
+            r.checks
+        );
+        // The last partner: the list is left empty, not dropped.
+        let only =
+            "zenoh_sovereign_peerings:\n- sovereign: hello-ally\n  cn: fed.hello-ally.zagros.01\n";
+        let (_ran, _c, _k, r, d) = role_back_out(Some(b"THE-LEAF-BEFORE"), Some(only));
+        assert_eq!(
+            std::fs::read_to_string(
+                d.path()
+                    .join("repo/ops/ansible/group_vars/core_router/peerings.yml")
+            )
+            .unwrap(),
+            "zenoh_sovereign_peerings: []\n",
+            "{:?}",
+            r.checks
+        );
+    }
+
+    #[test]
+    fn a_role_core_that_does_not_list_the_partner_runs_no_store_drop() {
+        let (ran, _c, _k, r, _d) = role_back_out(
+            Some(b"THE-LEAF-BEFORE"),
+            Some("zenoh_sovereign_peerings:\n- sovereign: xab\n  cn: fed.xab.zagros.01\n"),
+        );
+        assert!(
+            ran.iter()
+                .all(|c| !c.contains("goat_zenoh_drop_partner_store")),
+            "{ran:?}"
+        );
+        assert!(
+            r.checks.iter().find(|c| c.name == "converged").unwrap().ok,
+            "{:?}",
+            r.checks
+        );
     }
 
     #[test]

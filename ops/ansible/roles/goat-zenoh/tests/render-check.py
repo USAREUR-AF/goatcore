@@ -387,8 +387,11 @@ for identity in ["per-vendor", "per-uuid-slot-pool"]:
     for count in [1, 2]:
         cfg = render(zenoh_identity_model=identity, zenoh_sovereign_peerings=peers[:count],
                      zenoh_from_retention_days=3, zenoh_slot_pool_size=2)
-        check('dir: "/var/lib/zagros-zenoh/rocksdb/sovereign_from",' in cfg,
-              f"{identity}/{count}: existing store path retained")
+        # ADR 1234: a partner's data lives in its own store only. No store
+        # on from/** holds every partner's samples a second time.
+        check("sovereign_from:" not in cfg and 'key_expr: "from/**"' not in cfg
+              and 'rocksdb/sovereign_from"' not in cfg,
+              f"{identity}/{count}: no shared from/** store")
         for peer in peers[:count]:
             name = "sovereign_from_" + peer["sovereign"]
             match = re.search(r'"' + name + r'": \{(.*?)\n        \},', cfg, re.S)
