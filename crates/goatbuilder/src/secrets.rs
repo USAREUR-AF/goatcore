@@ -191,6 +191,18 @@ mod tests {
         assert!(text.contains("EXAMPLE_SECRET") && text.contains("secrets init"), "{text}");
     }
 
+    /// The posture command a dry run prints and a probe starts carries the
+    /// test thread's GOAT_LITE_CONFIG, as ask_with's did before it was built
+    /// by posture_cmd; it never reaches the process environment.
+    #[test]
+    fn posture_cmd_carries_the_test_lite_config() {
+        set_test_lite_config("/nonexistent/goatlite.yaml");
+        let c = posture_cmd(&repo(), &["kind"]);
+        let lite: Vec<_> = c.get_envs().filter(|(k, _)| *k == "GOAT_LITE_CONFIG").map(|(_, v)| v.map(|v| v.to_string_lossy().to_string())).collect();
+        assert_eq!(lite, vec![Some("/nonexistent/goatlite.yaml".to_string())]);
+        assert_ne!(std::env::var("GOAT_LITE_CONFIG").ok().as_deref(), Some("/nonexistent/goatlite.yaml"));
+    }
+
     /// goat's declared store, not a learner's: a goatlite.yaml at the checkout root
     /// outranks goatbuilder.yaml for the posture (ADR 1213 D4), so the tests that ask
     /// for goat's own answer point the posture at a file that does not exist.

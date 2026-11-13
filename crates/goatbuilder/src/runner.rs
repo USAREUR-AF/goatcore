@@ -396,6 +396,10 @@ impl Cmd {
         self.inner.get_args()
     }
 
+    pub fn get_envs(&self) -> std::process::CommandEnvs<'_> {
+        self.inner.get_envs()
+    }
+
     /// The argv, as strings.
     pub fn argv(&self) -> Vec<String> {
         std::iter::once(self.inner.get_program())
