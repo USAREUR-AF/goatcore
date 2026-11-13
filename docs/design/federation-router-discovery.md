@@ -16,7 +16,10 @@ read over SSH, the declared, discovered, wrong-name and unreachable cases. **Bui
 `goatbuilder federate init --over-ssh <peering>` (with `--ssh-edge-group`, `--ssh-core-group`,
 `--edge-host`, `--core-host`, `--router-container`), and the driver's phase 3 using it when
 `FED_MEASURE` unset or `ssh`, on both avenues (`peering-standup.sh` takes the same switch);
-`FED_MEASURE=here` measures the machine the run is on, as before. **Not built:** automatic selection among several cores. Live deployment and
+`FED_MEASURE=here` measures the machine the run is on, as before. **Built:** phase 3 in two
+halves for a peering no one machine reaches both hosts of (§"Phase 3 in two halves"), with
+offline tests; unmeasured on real hosts, and not yet used by the one command's phases.
+**Not built:** automatic selection among several cores. Live deployment and
 bilateral federation acceptance are separate release gates.
 
 > The verb moves to `goatbuilder federate init` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed), which runs
@@ -132,6 +135,63 @@ package back. goatbuilder instead measures both hosts from the operator's machin
   discovered one. A router that cannot be found refuses with GB-113 and these three fixes; a
   router that is found but whose version cannot be read stays an underived value with init's
   exit 23.
+
+## Phase 3 in two halves
+
+Status: WIP — gate: goatbuilder 1.0 gate row B10, a scenario with two drivers per sovereign
+in which the edge driver has no route to the core (the contract is
+docs/design/federation-two-drivers.md, in review).
+
+Some sites have no machine that reaches both the edge host and the core host. Phase 3's
+measurement then runs in two halves, one on each machine:
+
+- **The edge half**, on a machine that reaches the edge:
+  `goatbuilder federate init --over-ssh <peering> --side edge --half-out <file>` with init's own
+  flags. It resolves and reaches only the edge (the core group need not be in its
+  inventory), measures the transports, the PQC unit, and the declared federation interface's
+  public key and MTU, and writes them to `<file>` (schema `goatbuilder.phase3-edge-half/v1`,
+  with the peering, the edge host, the interface it was measured for and `measured_at`). It
+  prints the file's sha256 and a confirm code (its first 32 hex digits, in groups of four), and
+  builds and signs nothing.
+- **The core half**, on a machine that reaches the core:
+  `goatbuilder federate init --over-ssh <peering> --side core --edge-half <file>
+  --edge-half-sha256 <code>` with the same init flags. The code is required: the operator reads
+  it from the edge driver, the way phase 5's keys are read. Before anything in the file is
+  used, the file's sha256 must begin with the code. The half is then refused (GB-114) when its
+  schema, peering or fields are not an edge half's; when this checkout's inventory names a
+  different host as the edge (when it names none, that is said, and the host is not checked);
+  when it was measured more than 24 hours ago, or more than five minutes in the future; or when
+  it was measured for another interface than the package asks for. It resolves and reaches only
+  the core, measures the router and the SPIRE trust domain exactly as the one-machine run does
+  (the same router choice, GB-113 when there is none), and joins the two. Each edge value's
+  `source` ends with the file and its confirmed sha256, so the package's provenance names them,
+  and init builds and signs the package there.
+- **Why the binding.** The edge half carries the edge's WireGuard public key, which the core side
+  signs into our package, and the partner dials it. A half changed on its way from the edge
+  driver would put another key into a package signed by us. The confirmed digest makes the
+  operator, who saw the edge driver's output, the check.
+  The confirm code must be read from the edge driver's own screen, or the output of its run,
+  never copied from anything that travelled with the file: a code carried beside a changed
+  file would confirm the change. That step is what the binding rests on.
+- **Why 24 hours.** The two halves of one phase 3 are measured and joined in one working
+  session. Past a day, the edge may have been rebuilt or re-keyed (a new WireGuard key, a
+  changed MTU), and a package signed with the old values would carry them.
+- **Why not a signature.** No key the core side already trusts is on the edge driver: the edge
+  driver holds no CA key, and the package signing key is used where the package is built, on
+  the controller. Signing the half needs a new key for the edge driver, with its public half
+  pinned on the controller (for example in goatbuilder.yaml). That is not built; until it is,
+  the confirmed digest is the binding.
+- **The one-machine run is unchanged.** `measure` is the two halves joined, from the same
+  reads in the same order as `derive::measure` (a test compares the two). `--side` without its
+  files, a file without its side, or either without `--over-ssh` is refused.
+
+Not built yet: the digest bound in the controller's journal (there is no journal around
+`init --over-ssh` on its own; the one command's hand-off records it), the one command's phase 3
+handing off between the drivers, the edge driver's signing key, and measurement on two real
+hosts. Follow-ups: goat_federation::derive exporting its field names as constants (the core side
+now takes them by asking derive's reads through a probe that answers nothing), and
+goat_federation::verbs exposing the rule for which interface init measures, so the edge side
+does not repeat it.
 
 ## Measurements and limits
 

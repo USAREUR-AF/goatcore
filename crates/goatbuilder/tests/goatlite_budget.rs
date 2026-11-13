@@ -23,6 +23,8 @@
 //! that rises is a decision about the first run, not a side effect: it changes
 //! the budget in goatlite-growth.md §8 and here together, with the reason.
 
+#[path = "common/test_home.rs"]
+mod test_home;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -87,7 +89,7 @@ fn four_fact_file() -> String {
 }
 
 fn goatbuilder(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_goatbuilder"))
+    test_home::isolate(&mut Command::new(env!("CARGO_BIN_EXE_goatbuilder")))
         .args(args)
         .env("GOAT_MESH_PROBE", "0")
         .output()

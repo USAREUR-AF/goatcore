@@ -23,6 +23,9 @@
 # client stands where the outbound republisher's publishing session stands: a
 # client of the partner's core (ops/federation/republisher/src/main.rs:399).
 #
+# The regression result is the default mode (tcp, access control on); the other
+# modes below widen the setup for investigation and are not part of it.
+#
 # Modes (environment):
 #   ZENOH_TLS=on   every link on mutual TLS, with two CAs minted for the run (ours
 #                  issues core-xab and our edge's inward fed.xaa.xab.01 and outward

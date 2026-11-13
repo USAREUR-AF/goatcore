@@ -91,6 +91,12 @@ Commands:
               newest ledger row, for one component or, without one, every component of the
               environment, read in one pass per member group. Reads only; exit 3 on any drift or
               unreadable host
+  runs        The runs this machine recorded, newest first: one row per run, with its id, verb, exit
+              code, number of commands and arguments. Each run of a verb that drives hosts leaves a
+              record at <state>/runs/<id>/run.json, kept until you remove it. Reads only
+  show        One recorded run, phase by phase and command by command, each with its exit code and
+              log, then its inputs with their sources. `-o json` prints the record itself. Reads
+              only
   history     The deploy ledger as a timeline, newest first, on every host of the environment (C8):
               one row per record, with the machine, the time, the action (deploy or rollback) and
               the version. Each record's prior version and the operator who ran it are in `-o json`.

@@ -27,7 +27,7 @@ Every CI check is a script you can run locally before you push. The ones that ap
 | Go (`ops/*/go.mod`) | `go vet ./... && go test ./...` in that module |
 | Ansible | `ops/ci/check-role-template-refs-resolve.sh` · `ansible-playbook --syntax-check` on the playbook you changed |
 | Shell | `shellcheck` · `ops/ci/check-bash-portability.sh` (scripts must run on bash 3.2) |
-| Docs | `ops/ci/check-doc-links.py` · `ops/ci/check-doc-code-citations.sh` — every `path:line` citation must point at an existing line |
+| Docs | `ops/ci/check-doc-links.py` · `ops/ci/check-doc-code-citations.sh` — every `path:line` citation must point at an existing line · `ops/ci/check-doc-signer-identity.py` — every documented cosign identity is a release signer's |
 | An ADR | add its row to `docs/adr/INDEX.md` in the same change; ADRs are never rewritten, they are superseded |
 
 The pull-request workflow runs the same scripts. A red gate names the script, so the fix is reproducible locally.

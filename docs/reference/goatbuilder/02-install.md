@@ -24,7 +24,7 @@ Hosting is described in [goatbuilder-distribution.md](../../design/goatbuilder-d
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 cosign verify-blob --bundle SHA256SUMS.cosign-bundle \
-  --certificate-identity-regexp '^https://github.com/usareur-af/goatcore/' \
+  --certificate-identity-regexp '^https://github\.com/USAREUR-AF/goatcore/\.github/workflows/_release-binary\.yml@refs/tags/goatbuilder/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS     # macOS: shasum -a 256 -c
 install -m 0755 "goatbuilder-$OS-$ARCH" ~/.local/bin/goatbuilder

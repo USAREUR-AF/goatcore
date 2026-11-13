@@ -9,14 +9,14 @@
 
 # (a) every process the tool started is in the run record, with its log path.
 #     Removed by step 2 (one runner, per-phase logs) with step 4 (run.json).
-a standup    no run record is written; output goes to the terminal, not a per-phase log
-a join-node  no run record is written; join-node leaves no record at all
-a deploy     no run record is written; a play's log goes to $TMPDIR, other processes have none
-a federate   no run record is written; state.json and evidence carry no command list
+a standup    no run record: no call site goes through the runner yet (step 2b), so the run starts no recorded command
+a join-node  no run record: no call site goes through the runner yet (step 2b)
+a deploy     no run record: no call site goes through the runner yet (step 2b); a play log still goes to $TMPDIR
+a federate   no run record: no call site goes through the runner yet (step 2b)
 
 # (b) every value in a command line has an entry in `inputs`, with a source.
 #     Removed by step 5, verb by verb (federate first).
-b standup    no `inputs`; the profile and site-derived values have no recorded source
+b standup    no run record, so no `inputs`; the profile and site-derived values have no recorded source
 b join-node  no `inputs`; no value has a recorded source
 b deploy     no `inputs`; no value has a recorded source
 b federate   no `inputs`; FED_* sources appear only as -o json dry-run rows

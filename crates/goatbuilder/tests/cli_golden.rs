@@ -10,9 +10,15 @@
 // Add a case: drop `tests/cmd/<name>.toml`. Regenerate after an intended
 // output change: `TRYCMD=overwrite cargo test -p goatbuilder --test cli_golden`.
 
+#[path = "common/test_home.rs"]
+mod test_home;
+
 #[test]
 fn cli_golden() {
     let t = trycmd::TestCases::new();
+    for (k, v) in test_home::vars() {
+        t.env(k, v);
+    }
     t.case("tests/cmd/*.toml");
     // Four cases run the binary against this checkout's own deployment
     // (`-C ../..`) and expect refusals that quote its declaration. A public

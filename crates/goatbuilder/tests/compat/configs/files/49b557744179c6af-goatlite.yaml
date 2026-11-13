@@ -1,0 +1,7 @@
+schema: goatbuilder/v1
+preset: lite
+lite:
+  name: pasture            # the goatnet's name; its zone is pasture.lan
+  host: 192.168.1.50       # LAN address or hostname of the one box
+  ssh_user: ubuntu
+  admin: me@example.org    # the first and only administrator
