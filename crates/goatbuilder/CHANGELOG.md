@@ -8,9 +8,10 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## 0.6.1 — 2026-11-13
 
-A patch release for one fix: a `goatbuilder federate` run killed in phase 11
-now resumes and brings the WireGuard link up, which 0.6.0 listed as a known
-issue. The roles below changed in the same tree.
+The fix for 0.6.0's known issue: a `goatbuilder federate` run killed in phase
+11 now resumes and brings the WireGuard link up. It also carries the first
+piece of the two-driver run (gate row B10), which changes `--side edge` on a
+peering run and reserves the peering name `import`; see below.
 
 ### For someone deploying
 
@@ -21,6 +22,31 @@ restarted the link, left the interface with no peer. Resuming with `--from 11`
 changed no file, so the link was never restarted and phase 11 refused, then
 phase 12. The `goat-peering-wg` role now reads the interface and restarts the
 link whenever the interface does not hold the agreed peer and address (#597).
+
+#### Added: a two-driver peering stops at the first phase that needs the edge
+
+A peering may declare `drivers: two` on its own `peerings:` entry (schema
+`peering.drivers`, `one` or `two`, default `one`), for a site where no one
+machine reaches both the edge host and the core host. Such a run stops before
+acting at phase 1 or 2 and hands the edge driver a printed object naming every
+command it runs (GB-265, exit 0; with `-o json`, the report's `handoff`
+member). A two-driver run that would reach phase 3 or 11 to 14, and a
+two-driver `federate deploy`, are refused before acting (GB-267). A controller
+whose checkout is not clean gives no object (GB-266). Nothing after the stop
+is built yet: the edge driver's run and `import` are refused with GB-267
+(#601).
+
+Behaviour changes for every peering:
+
+- `goatbuilder federate <partner> --side edge`, with no other measure flag, is
+  refused with GB-267 (exit 1) instead of the uncoded measure-flag message
+  (exit 2).
+- `import` is a reserved peering name, and a declared peering named `import`
+  is refused by the configuration check.
+- `goatbuilder federate` gains the subcommand `import` (refused, GB-267) and
+  the flag `--expect-commit`.
+
+A peering without `drivers: two` runs as before.
 
 #### Images and roles built from this repository
 
@@ -41,9 +67,14 @@ link whenever the interface does not hold the agreed peer and address (#597).
   directories (#603); reusing a stage's result by that key is not built.
 - CONTRIBUTING: a fix shows its failure on main before its pull request
   opens (#588).
+- Tests: deploy's success path is held to what it prints and records (#606);
+  the federation test environment records a link that does not re-form
+  (#600), declares `drivers: two` in its two-driver scenario (#608), and its
+  hermetic job bounds and retries its package installs (#548).
 - Designs: one path for faults on peers we do not own, ADR 1232 (#594);
   `join-node` builds the whole declared site, designed (#604); island mode's
-  pre-minted certificate batch (#605).
+  pre-minted certificate batch (#605); ADR 1233, a joiner runs the
+  replication core, proposed (#607).
 
 ### To be removed
 
