@@ -56,8 +56,40 @@ struct Kept {
     expect: String,
     #[serde(default)]
     code: Option<String>,
+    /// The code(s) the documents name for this refusal: one code, or a list
+    /// when a later catalog gives the case a more exact code of its own.
     #[serde(default)]
-    named: Option<String>,
+    named: Named,
+}
+
+#[derive(Deserialize, Clone, Default)]
+#[serde(untagged)]
+enum Named {
+    #[default]
+    None,
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Named {
+    fn has(&self, code: &str) -> bool {
+        match self {
+            Named::None => false,
+            Named::One(c) => c == code,
+            Named::Many(cs) => cs.iter().any(|c| c == code),
+        }
+    }
+}
+
+/// A file its release accepted is accepted. One it did not accept (refused,
+/// or an error) is still not accepted, with the code that release printed or
+/// one its documents name: a refusal may move from an error document to a
+/// checks row, never to an acceptance or another code.
+fn same_outcome(k: &Kept, got: &str, code: Option<&str>) -> bool {
+    if k.expect == "valid" {
+        return got == "valid";
+    }
+    got != "valid" && (code == k.code.as_deref() || code.is_some_and(|c| k.named.has(c)))
 }
 
 fn manifest() -> Manifest {
@@ -165,15 +197,7 @@ fn every_kept_file_gets_the_outcome_its_release_gave_it() {
     let mut broken = Vec::new();
     for k in manifest().configs {
         let (got, code) = outcome(&here().join(&k.file), home.path());
-        // A file its release accepted is accepted. One it did not accept (refused,
-        // or an error) is still not accepted, with the code that release printed
-        // or the one its documents name: a refusal may move from an error
-        // document to a checks row, never to an acceptance or another code.
-        let same = if k.expect == "valid" {
-            got == "valid"
-        } else {
-            got != "valid" && (code == k.code || (code.is_some() && code == k.named))
-        };
+        let same = same_outcome(&k, &got, code.as_deref());
         if !same {
             broken.push(format!(
                 "{} ({}, {}): {} with code {:?} in its release, {} with code {:?} now",
@@ -223,4 +247,23 @@ fn the_kept_files_hold_only_synthetic_values() {
             );
         }
     }
+}
+
+/// The not-YAML fixture: every release so far ended it with an error document
+/// and no code. A build that names the case, GB-245 "the config file is not
+/// YAML" at its source, or GB-025 as a refused row, keeps the promise; one that
+/// accepts the file, or names another code, does not.
+#[test]
+fn a_not_yaml_file_may_come_to_name_its_code_but_never_be_accepted() {
+    let k = manifest()
+        .configs
+        .into_iter()
+        .find(|k| k.source.ends_with("/not-yaml.yaml"))
+        .expect("the not-YAML fixture is kept");
+    assert_eq!(k.expect, "error");
+    assert!(same_outcome(&k, "error", None));
+    assert!(same_outcome(&k, "error", Some("GB-245")));
+    assert!(same_outcome(&k, "refused", Some("GB-025")));
+    assert!(!same_outcome(&k, "valid", None));
+    assert!(!same_outcome(&k, "error", Some("GB-099")));
 }
