@@ -465,8 +465,8 @@ mod tests {
         let r = d.path();
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         for rel in ["ops/scripts/with-secrets", "ops/scripts/standup-phase-run", "ops/secrets/posture.py"] {
-            std::fs::create_dir_all(r.join(rel).parent().unwrap()).unwrap();
-            std::fs::copy(src.join(rel), r.join(rel)).unwrap();
+            // Copied in a child process: these run by their path (ETXTBSY otherwise).
+            crate::test_support::copied_executable(&src.join(rel), &r.join(rel));
         }
         let write = |rel: &str, body: &str| {
             std::fs::create_dir_all(r.join(rel).parent().unwrap()).unwrap();
