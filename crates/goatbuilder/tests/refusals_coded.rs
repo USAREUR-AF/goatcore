@@ -58,6 +58,10 @@ const VERDICTS: &[(&str, &str)] = &[
         "explain_unrecognised_text",
         "exit 1 answers `explain` with \"not recognised\": an answer, not a refusal",
     ),
+    (
+        "explain_federate_error_text",
+        "exit 1 answers `explain federate <error text>` with the nearest entries: an answer, not a refusal",
+    ),
 ];
 
 /// The code each refusal case must print.
@@ -77,6 +81,8 @@ const EXPECTED: &[(&str, &str)] = &[
     ("deploy_needs_one_component", "GB-018"),
     ("deploy_unknown_component", "GB-001"),
     ("endstate_unknown_site", "GB-066"),
+    ("explain_federate_no_such_phase", "GB-262"),
+    ("explain_federate_phase_report", "GB-242"),
     ("federate_site_flag_before_verb", "GB-238"),
     ("federate_undeclared_is_refused", "GB-149"),
     ("federate_unknown_fed_verbs", "GB-240"),
