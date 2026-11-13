@@ -22,6 +22,12 @@ in sensitive-paths.txt beside this file). A review is recorded by an owner
 workflow removes the label whenever new commits are pushed, so the review
 always covers the code that merges.
 
+A pull request whose author is known or unknown, which is every author
+outside the maintainers and the automation, also gets the label `community`,
+so maintainers can list outside contributions and take them first
+(ADR 1231). The label is a convenience: failing to apply it never changes
+the verdict.
+
 Exit 0: no review needed, or the review is recorded. Exit 1: a review is
 needed and not recorded; the job summary says what to do. Exit 2: the check
 could not decide (an API failure); it fails closed.
@@ -39,6 +45,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 LABEL = "security-reviewed"
+COMMUNITY_LABEL = "community"
+COMMUNITY_TIERS = {"known", "unknown"}
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 AUTOMATION_LOGINS = {"dependabot[bot]"}
 ATTESTING_PERMISSIONS = {"admin", "maintain"}
@@ -133,6 +141,11 @@ def tier_of(f: Facts) -> tuple[str, list[str]]:
            else "registration could not be checked (roster not configured)",
            "no merged pull request in this organisation"]
     return "unknown", why
+
+
+def wants_community_label(tier: str, labels: list[str]) -> bool:
+    """True when the pull request is an outside contribution not yet labeled as one."""
+    return tier in COMMUNITY_TIERS and COMMUNITY_LABEL not in labels
 
 
 def decide(f: Facts, patterns: list[str]) -> Verdict:
@@ -243,6 +256,26 @@ def merged_pr_count(org: str, author: str, token: str) -> int:
     return 0 if status == 422 else int(body.get("total_count", 0))
 
 
+def apply_community_label(repo: str, pr: int, tier: str, token: str) -> str:
+    """Label an outside contribution. Returns what happened, for the log; never raises."""
+    try:
+        _, issue = api(f"/repos/{repo}/issues/{pr}", token)
+        labels = [lb["name"] for lb in (issue or {}).get("labels", [])]
+        if not wants_community_label(tier, labels):
+            return "not needed"
+        req = urllib.request.Request(
+            f"{API}/repos/{repo}/issues/{pr}/labels", method="POST",
+            data=json.dumps({"labels": [COMMUNITY_LABEL]}).encode())
+        req.add_header("Accept", "application/vnd.github+json")
+        req.add_header("X-GitHub-Api-Version", "2022-11-28")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req, timeout=30):
+            return "applied"
+    except (ApiError, urllib.error.URLError, KeyError, TypeError) as e:
+        return f"not applied ({e})"
+
+
 def label_state(repo: str, pr: int, token: str) -> tuple[bool, str | None, str | None]:
     _, issue = api(f"/repos/{repo}/issues/{pr}", token)
     if not any(lb["name"] == LABEL for lb in issue.get("labels", [])):
@@ -314,6 +347,7 @@ def main() -> int:
             Path(summary).write_text(msg)
         return 2
 
+    print(f"community label: {apply_community_label(repo, pr, verdict.tier, token)}")
     text = render(verdict, facts)
     print(text)
     if summary:
