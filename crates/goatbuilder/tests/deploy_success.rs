@@ -118,9 +118,18 @@ fn world(row: &str) -> World {
         &format!("ops/ansible/group_vars/{GROUP}/pins.yml"),
         &format!("portal_image: \"{PORTAL_REF}\"\n"),
     );
-    for d in ["home", "tmp", "stub"] {
+    for d in ["home", "tmp", "stub", "bin"] {
         std::fs::create_dir_all(r.join(d)).unwrap();
     }
+    // Deploy's transport phase runs `netbird status`. A stand-in answers it, so
+    // the test neither needs netbird on the machine nor reads a real mesh.
+    let netbird = r.join("bin/netbird");
+    std::fs::write(
+        &netbird,
+        "#!/bin/sh\necho \"netbird $*\" >> \"$GB_STUB_DIR/calls\"\nexit 0\n",
+    )
+    .unwrap();
+    exec(&netbird);
     World { root, repo }
 }
 
@@ -155,7 +164,12 @@ impl World {
                 "--yes",
             ])
             .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("PATH", {
+                let mut p = std::ffi::OsString::from(r.join("bin"));
+                p.push(":");
+                p.push(std::env::var_os("PATH").unwrap_or_default());
+                p
+            })
             .env("HOME", r.join("home"))
             .env("TMPDIR", r.join("tmp"))
             .env("GB_STUB_DIR", r.join("stub"))
@@ -208,6 +222,11 @@ fn a_deploy_that_converges_exits_0_and_names_what_it_deployed() {
     assert_eq!(out.status.code(), Some(0), "{t}");
     // It ran the play on the group, then read the host's ledger.
     let calls = w.calls();
+    // The transport phase reached the stand-in, not a netbird on this machine.
+    assert!(
+        calls.lines().any(|l| l == "netbird status"),
+        "netbird status was not answered by the stand-in:\n{calls}"
+    );
     assert!(
         calls.lines().any(|l| l.contains("ansible-preflight.sh")
             && l.contains("portal-deploy.yml")
