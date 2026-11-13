@@ -174,6 +174,13 @@ host answers, when this peering's `agreement.json` exists, is refused with
 GB-222. A survey row that cannot be read stops the back-out (GB-221) instead
 of being counted as absent.
 
+The back-out also takes out the two marker lines admission puts around a
+partner's lines in the core's org fragment (`// BEGIN peering <partner>` and
+`// END peering <partner>`), so a fragment admitted and then backed out is
+byte for byte what it was before. A block that holds anything other than
+that partner's lines, begins twice, or never ends is refused, and nothing is
+written. Another partner's blocks stay.
+
 #### Fixed: a killed federate run no longer leaves its journal's temporary file
 
 The run that takes a peering's lock removes every `.state.json.<pid>.tmp`
@@ -236,6 +243,13 @@ documents now give the release's own identity:
   Debian 13 host's baseline stopped at the apt refresh. It now takes the
   repository from the host's distribution (`docker_engine_apt_distro`).
   Ubuntu hosts render the same source line as before.
+- **The status page's list can be refreshed on its own.** A list-only play,
+  `ops/ansible/isitup-rows.yml`, renders the isitup status page's probe list
+  and recreates only its container when the list changed, reading no
+  sign-in secret. `data/meta.json` now records a stamp of the list it was
+  rendered from, and `ops/scripts/isitup-list.py check` (or the play with
+  `-e isitup_rows_verify_only=true`) fails when a host's list is behind its
+  declaration, writing nothing.
 - **The pgbackrest role installs `cron`** before writing its backup schedule,
   so a minimal Debian 13 host no longer stops at the schedule task.
 
