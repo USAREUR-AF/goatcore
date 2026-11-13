@@ -602,7 +602,7 @@ impl CoreLeaf {
     /// no longer holds this peering's leaf.
     fn take_back(
         &self,
-        backups: &mut Vec<(PathBuf, Option<PathBuf>)>,
+        backups: &mut Vec<super::admit::Placed>,
         bdir: &Path,
     ) -> Result<(), String> {
         for (target, ours) in &self.targets {
@@ -3152,6 +3152,49 @@ mod tests {
             std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
             b"THE-LEAF-BEFORE"
         );
+    }
+
+    #[test]
+    fn a_rolled_back_admission_leaves_no_record_that_decides_the_back_out() {
+        // A first admission placed the leaf where nothing was, then failed and
+        // put everything back. Someone else's leaf was placed there; a second
+        // admission kept it as its backup and placed ours. The rolled-back run
+        // never took effect, so the other leaf is what comes back.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        let pki = c.work().join("pki");
+        std::fs::create_dir_all(&pki).unwrap();
+        std::fs::write(pki.join("core.pem"), b"CERT-OF-XAB").unwrap();
+        std::fs::write(pki.join("core-key.pem"), b"KEY-OF-XAB").unwrap();
+        let leaves = c.dir.path().join("leaves");
+        std::fs::create_dir_all(&leaves).unwrap();
+        let (cert, key) = (
+            leaves.join("router-cert.pem"),
+            leaves.join("router-key.pem"),
+        );
+        let admit_run = |run: &str| {
+            let mut backups = Vec::new();
+            let bdir = c.work().join(format!("admission/{run}/backup"));
+            super::super::admit::publish(b"CERT-OF-XAB", &cert, &mut backups, &bdir).unwrap();
+            super::super::admit::publish(b"KEY-OF-XAB", &key, &mut backups, &bdir).unwrap();
+            backups
+        };
+        let first = admit_run("run-20261112T000000Z-1");
+        let said = super::super::admit::put_back(&first);
+        assert!(said.starts_with("every file placed is put back"), "{said}");
+        assert!(!cert.exists() && !key.exists());
+        std::fs::write(&cert, b"ANOTHER-CERT").unwrap();
+        std::fs::write(&key, b"ANOTHER-KEY").unwrap();
+        admit_run("run-20261112T000001Z-1");
+        c.vars
+            .insert("FED_CORE_CERT".into(), cert.display().to_string());
+        c.vars
+            .insert("FED_CORE_KEY".into(), key.display().to_string());
+        back_out(&c);
+        assert_eq!(std::fs::read(&cert).unwrap(), b"ANOTHER-CERT");
+        assert_eq!(std::fs::read(&key).unwrap(), b"ANOTHER-KEY");
     }
 
     #[test]

@@ -427,6 +427,10 @@ fn write_in_place(to: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, to)
 }
 
+/// One file [`publish`] placed: where, the backup of what was there (none
+/// when nothing was), and the record it left beside the backups.
+pub(super) type Placed = (PathBuf, Option<PathBuf>, PathBuf);
+
 /// The second line of a `<n>-<file name>.target` record when admission
 /// placed the file where nothing was (see [`publish`]).
 pub(super) const ABSENT: &str = "absent";
@@ -441,7 +445,7 @@ pub(super) const ABSENT: &str = "absent";
 pub(super) fn publish(
     bytes: &[u8],
     to: &Path,
-    backups: &mut Vec<(PathBuf, Option<PathBuf>)>,
+    backups: &mut Vec<Placed>,
     dir: &Path,
 ) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
@@ -462,14 +466,17 @@ pub(super) fn publish(
         std::fs::write(&record, format!("{}\n{ABSENT}\n", to.display()))?;
         None
     };
-    backups.push((to.to_path_buf(), kept));
+    backups.push((to.to_path_buf(), kept, record));
     write_in_place(to, bytes)
 }
 
-/// Put every backup back; the files that could not be, by name.
-fn restore(backups: &[(PathBuf, Option<PathBuf>)]) -> Vec<String> {
+/// Put every backup back; the files that could not be, by name. When every
+/// one is put back, the run never took effect: its records and backups are
+/// deleted, so a later back-out is not decided by them (backout.rs
+/// `CoreLeaf::first_record`). When one is not, they stay, to copy by hand.
+fn restore(backups: &[Placed]) -> Vec<String> {
     let mut failed = Vec::new();
-    for (to, kept) in backups.iter().rev() {
+    for (to, kept, _) in backups.iter().rev() {
         let r = match kept {
             Some(b) => std::fs::read(b).and_then(|bytes| write_in_place(to, &bytes)),
             None => std::fs::remove_file(to).or_else(|e| {
@@ -484,10 +491,25 @@ fn restore(backups: &[(PathBuf, Option<PathBuf>)]) -> Vec<String> {
             failed.push(format!("{} ({e})", to.display()));
         }
     }
+    if failed.is_empty() {
+        for (to, kept, record) in backups {
+            for f in kept.iter().chain(std::iter::once(record)) {
+                if let Err(e) = std::fs::remove_file(f) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        failed.push(format!(
+                            "the record of {} at {} ({e})",
+                            to.display(),
+                            f.display()
+                        ));
+                    }
+                }
+            }
+        }
+    }
     failed
 }
 
-pub(super) fn put_back(backups: &[(PathBuf, Option<PathBuf>)]) -> String {
+pub(super) fn put_back(backups: &[Placed]) -> String {
     match restore(backups).as_slice() {
         [] => "every file placed is put back".into(),
         f => format!(
@@ -996,7 +1018,7 @@ pub fn admit(
         }
     }
     // Put back the local backups and, on a role core, the fetched fragment.
-    let back_all = |backups: &[(PathBuf, Option<PathBuf>)]| -> String {
+    let back_all = |backups: &[Placed]| -> String {
         let local = put_back(backups);
         match &remote {
             None => local,
@@ -1197,7 +1219,11 @@ mod tests {
             !fresh.exists(),
             "a file that was not there is removed again"
         );
-        let gone = vec![(target.clone(), Some(d.path().join("no-such-backup")))];
+        let gone = vec![(
+            target.clone(),
+            Some(d.path().join("no-such-backup")),
+            d.path().join("no-such-record"),
+        )];
         assert_eq!(restore(&gone).len(), 1);
     }
 }
