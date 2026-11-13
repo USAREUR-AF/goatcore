@@ -39,6 +39,11 @@ a version.
 5. The workflow fast-forwards `stable` to that commit and publishes the
    release page.
 
+Nothing else moves `stable`. `.github/workflows/stable-guard.yml` closes a
+pull request opened against it and fails when a person pushes a commit that
+is not a whole-tree release. A ruleset refuses deleting the branch and
+moving it backwards.
+
 A patch release moves the stable line only when a maintainer cuts
 `goatcore/vX.Y.Z` for it, which they do when the patch carries a fix that
 people on the stable line need.
@@ -93,7 +98,8 @@ cherry-picked to the branch.
 | `stable` workflow and `ops/release/stable.py`, with tests in `tests/test_stable_line.py` | built |
 | Release page with the versions that go together | built |
 | The branch `stable` | created by the first `goatcore/v` tag cut at a goatbuilder release |
-| Ruleset that refuses every other update to `stable` | designed |
+| Guard: a pull request against `stable` is closed, and a push by a person is checked (`.github/workflows/stable-guard.yml`) | built |
+| Ruleset `stable-follows-releases`: `stable` cannot be deleted or moved backwards | built |
 | `community` label applied by `contributor-trust` | in review |
 | First reply within one working day | in force, kept by the maintainers |
 | Release notes with the headings "for someone deploying", "for someone contributing", "to be removed" | designed |

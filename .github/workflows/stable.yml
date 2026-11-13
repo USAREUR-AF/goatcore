@@ -6,9 +6,10 @@
 # (ops/release/stable.py check), moves `stable` to the tagged commit, and
 # publishes the release page with the versions that go together.
 #
-# `stable` takes no pull requests and no other push: a ruleset on the branch
-# refuses every update except this workflow's. Cutting the tag is the
-# decision; nothing here decides when a release is ready.
+# `stable` takes no pull requests and no other push: stable-guard.yml closes a
+# pull request opened against it and checks any push by a person, and a
+# ruleset refuses deleting the branch or moving it backwards. Cutting the tag
+# is the decision; nothing here decides when a release is ready.
 name: stable
 
 on:

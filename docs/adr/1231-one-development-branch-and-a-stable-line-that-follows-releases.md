@@ -50,8 +50,11 @@ versions go together.
    only when that patch carries a fix that people on the stable line need.
 4. **`stable` is a pointer.** The branch `stable` is fast-forwarded to each
    whole-tree release by `.github/workflows/stable.yml`, which runs
-   `ops/release/stable.py check` first. A ruleset refuses every other
-   update. `stable` takes no pull requests.
+   `ops/release/stable.py check` first. `stable` takes no pull requests:
+   `.github/workflows/stable-guard.yml` closes one opened against it and
+   fails when a person moves the branch to a commit that is not a
+   whole-tree release. A ruleset refuses deleting `stable` and moving it
+   backwards.
 5. **Each whole-tree release says which versions go together.** Its release
    page lists the newest release of each component contained in that
    commit, and the versions of other projects it works with
@@ -101,7 +104,8 @@ tag is one more signed act per minor release.
 Configuration management (NIST SP 800-53 CM-2, CM-3): the baseline a
 deployment builds on is a signed tag, and the branch that names it moves
 only by a workflow that checks the tag against `main` and against the
-goatbuilder release. No person pushes to `stable`.
+goatbuilder release. A push to `stable` by a person is checked against
+the release tags, and the branch cannot be deleted or moved backwards.
 
 ## Trigger conditions for revisit
 
