@@ -904,6 +904,12 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
 /// an in-process verb reads, it reads through [`runenv`].
 const READ_FROM_THE_PROCESS_BY_THE_LIBRARY: [&str; 2] = ["DOCKER_HOST", "FED_ROUTER_CONTAINER"];
 
+/// Of a verb's values, the ones that go into the process environment for its
+/// duration: only those the library reads from the process itself.
+fn for_the_process(all: &[(String, String)]) -> Vec<&(String, String)> {
+    all.iter().filter(|(k, _)| READ_FROM_THE_PROCESS_BY_THE_LIBRARY.contains(&k.as_str())).collect()
+}
+
 fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -> i32 {
     // The verb runs in this process. goatbuilder's verbs read their values
     // through runenv, which is this thread's, so the verb's own values go there
@@ -914,7 +920,7 @@ fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -
     // set_current_dir. A driver that runs verbs concurrently must pass both to
     // the verb instead.
     let all: Vec<(String, String)> = runenv::pairs().into_iter().chain(env.iter().cloned()).collect();
-    let to_process: Vec<&(String, String)> = all.iter().filter(|(k, _)| READ_FROM_THE_PROCESS_BY_THE_LIBRARY.contains(&k.as_str())).collect();
+    let to_process = for_the_process(&all);
     let saved: Vec<(String, Option<std::ffi::OsString>)> = to_process.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
     for (k, v) in &to_process {
         std::env::set_var(k, v);
@@ -1304,6 +1310,19 @@ mod tests {
         assert_eq!(guarded(|| Ok(23)), 23);
         assert_eq!(guarded(|| verbs::run_argv(&["lint".into(), "--no-such-flag".into()])), 2);
         assert_eq!(guarded(|| Err(anyhow!("a fault"))), 1);
+    }
+
+    /// Of a verb's values, DOCKER_HOST and FED_ROUTER_CONTAINER reach the process
+    /// environment during an in-process verb, and nothing else does.
+    #[test]
+    fn only_the_two_names_the_library_reads_go_to_the_process() {
+        let all: Vec<(String, String)> = ["DOCKER_HOST", "FED_ROUTER_CONTAINER", "FED_WORK", "FED_KEYRING", "GOAT_PROFILE_DIR", "FED_ROUTER_DOCKER_HOST"]
+            .iter()
+            .map(|k| (k.to_string(), "v".to_string()))
+            .collect();
+        let names: Vec<&str> = for_the_process(&all).iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(names, ["DOCKER_HOST", "FED_ROUTER_CONTAINER"]);
+        assert!(for_the_process(&[("FED_WORK".into(), "v".into())]).is_empty());
     }
 
     /// An in-process verb returns the verb's own exit code (21 for a malformed
