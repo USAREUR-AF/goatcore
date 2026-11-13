@@ -122,6 +122,49 @@ pub struct Record {
     pub schema: String,
     #[serde(default)]
     pub peerings: BTreeMap<String, PeeringPins>,
+    /// Keys a later goatbuilder wrote that this one does not know, at the top
+    /// of the record and in each entry: read by [`read_record`], written back
+    /// unchanged by [`record_text`]. A pin in goatbuilder.yaml has no such
+    /// room: a misspelt key there is still refused.
+    #[serde(skip)]
+    pub later: Later,
+}
+
+/// What a later goatbuilder wrote into the record that this one does not read.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Later {
+    pub top: serde_yaml::Mapping,
+    pub entries: BTreeMap<String, serde_yaml::Mapping>,
+}
+
+impl Later {
+    /// Why a fresh value may not be chosen beside these keys: their names and
+    /// the goatbuilder that wrote them (its `written_by`, when it says).
+    /// `None` when there are none.
+    pub fn refuses_fresh(&self) -> Option<String> {
+        let mut keys: Vec<String> = self
+            .top
+            .keys()
+            .filter_map(|k| k.as_str().map(String::from))
+            .filter(|k| k != "written_by")
+            .collect();
+        for (entry, m) in &self.entries {
+            keys.extend(m.keys().filter_map(|k| k.as_str().map(|k| format!("{entry}.{k}"))));
+        }
+        if keys.is_empty() {
+            return None;
+        }
+        let by = self
+            .top
+            .get("written_by")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| "a later goatbuilder".into());
+        Some(format!(
+            "this goatbuilder does not read ({}), written by {by}",
+            keys.join(", ")
+        ))
+    }
 }
 
 /// What allocation reads besides the config.
@@ -145,6 +188,7 @@ impl Default for AllocContext {
             record: Record {
                 schema: RECORD_SCHEMA.into(),
                 peerings: BTreeMap::new(),
+                later: Later::default(),
             },
             work_root: DEFAULT_WORK_ROOT.into(),
             reserved_edge_udp: DEFAULT_RESERVED_EDGE_UDP.to_vec(),
@@ -180,14 +224,45 @@ pub fn read_record(path: &Path) -> Result<Record> {
         )
     };
     let text = std::fs::read_to_string(path).map_err(|e| bad(e.to_string()))?;
-    let rec: Record = serde_yaml::from_str(&text).map_err(|e| bad(e.to_string()))?;
-    if rec.schema != RECORD_SCHEMA {
-        return Err(bad(format!(
-            "schema is '{}', expected '{RECORD_SCHEMA}'",
-            rec.schema
-        ))
-        .into());
+    let mut doc: serde_yaml::Value =
+        serde_yaml::from_str(&text).map_err(|e| bad(e.to_string()))?;
+    let schema = doc.get("schema").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    if schema != RECORD_SCHEMA {
+        return Err(bad(format!("schema is '{schema}', expected '{RECORD_SCHEMA}'")).into());
     }
+    // Within this schema, keys a later goatbuilder added are set aside to be
+    // written back; every key this build knows is read as before.
+    let known: std::collections::BTreeSet<&str> = FIELDS.iter().map(|f| f.name()).collect();
+    let mut later = Later::default();
+    if let Some(top) = doc.as_mapping_mut() {
+        let names: Vec<serde_yaml::Value> = top.keys().cloned().collect();
+        for k in names {
+            if !matches!(k.as_str(), Some("schema" | "peerings")) {
+                let v = top.remove(&k).unwrap_or_default();
+                later.top.insert(k, v);
+            }
+        }
+        if let Some(entries) = top.get_mut("peerings").and_then(|p| p.as_mapping_mut()) {
+            for (name, entry) in entries.iter_mut() {
+                let Some(e) = entry.as_mapping_mut() else { continue };
+                let unknown: Vec<serde_yaml::Value> = e
+                    .keys()
+                    .filter(|k| k.as_str().is_none_or(|k| !known.contains(k)))
+                    .cloned()
+                    .collect();
+                let mut kept = serde_yaml::Mapping::new();
+                for k in unknown {
+                    let v = e.remove(&k).unwrap_or_default();
+                    kept.insert(k, v);
+                }
+                if !kept.is_empty() {
+                    later.entries.insert(name.as_str().unwrap_or_default().to_string(), kept);
+                }
+            }
+        }
+    }
+    let mut rec: Record = serde_yaml::from_value(doc).map_err(|e| bad(e.to_string()))?;
+    rec.later = later;
     Ok(rec)
 }
 
@@ -872,6 +947,16 @@ fn run(cfg: &Config, ctx: &AllocContext) -> (Vec<PeeringValues>, Vec<Problem>) {
             if pins_get(&fixed[i], f).is_some() {
                 continue;
             }
+            // A key a later goatbuilder recorded may hold a port, an interface
+            // or a subnet this build cannot see: reading the record is safe,
+            // choosing a new value beside it is not.
+            if let Some(why) = ctx.record.later.refuses_fresh() {
+                problems.push(Problem::new("GB-124", format!(
+                    "{}: {} would be allocated afresh, but {RECORD_FILE} holds keys {why} (GB-124). Run `goatbuilder federate allocate` with that goatbuilder or a later one",
+                    at(i), f.name()
+                )));
+                return (Vec::new(), problems);
+            }
             let mut got = None;
             let mut idx = 0;
             while let Some(c) = candidate(f, idx, p, ctx) {
@@ -1001,15 +1086,37 @@ pub fn record_of(values: &[PeeringValues], previous: &Record) -> Record {
         }
         peerings.insert(format!("{}/{}", v.environment, v.peering), e);
     }
+    // What a later goatbuilder wrote stays, for every entry still recorded.
+    let mut later = previous.later.clone();
+    later.entries.retain(|k, _| peerings.contains_key(k));
     Record {
         schema: RECORD_SCHEMA.into(),
         peerings,
+        later,
     }
 }
 
 /// The record as committed text.
 pub fn record_text(rec: &Record) -> String {
-    let body = serde_yaml::to_string(rec).unwrap_or_default();
+    let mut doc = serde_yaml::to_value(rec).unwrap_or_default();
+    if let Some(top) = doc.as_mapping_mut() {
+        for (k, v) in &rec.later.top {
+            top.insert(k.clone(), v.clone());
+        }
+        if let Some(entries) = top.get_mut("peerings").and_then(|p| p.as_mapping_mut()) {
+            for (name, kept) in &rec.later.entries {
+                if let Some(e) = entries
+                    .get_mut(name.as_str())
+                    .and_then(|e| e.as_mapping_mut())
+                {
+                    for (k, v) in kept {
+                        e.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+    }
+    let body = serde_yaml::to_string(&doc).unwrap_or_default();
     format!(
         "# GENERATED by `goatbuilder federate allocate`: the per-peering values it allocated,\n\
          # one entry per peering (<environment>/<with>). Review it like any change to this\n\
@@ -1281,6 +1388,42 @@ mod tests {
         let text = record_text(&record_of(&second, &Record::default()));
         let back: Record = serde_yaml::from_str(&text).unwrap();
         assert_eq!(back, record_of(&second, &Record::default()));
+    }
+
+    /// A record a later goatbuilder wrote, with a field at the top and one in
+    /// an entry that this build does not know, is read, and a rewrite keeps
+    /// both as written.
+    #[test]
+    fn a_record_from_a_later_goatbuilder_is_read_and_its_unknown_fields_kept() {
+        let first = allocate_all(&cfg(json!([p("xab")])), &AllocContext::default()).unwrap();
+        let text = record_text(&record_of(&first, &Record::default()));
+        let later = text
+            .replacen("schema: goatbuilder-peering-values/v1\n", "schema: goatbuilder-peering-values/v1\nreviewed_by: a later goatbuilder\n", 1)
+            .replacen("    wg_interface:", "    rotation_nonce: n-1\n    wg_interface:", 1);
+        assert!(later.contains("reviewed_by") && later.contains("rotation_nonce"), "{later}");
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join(RECORD_FILE);
+        std::fs::write(&path, &later).unwrap();
+        let rec = read_record(&path).expect("a later record is read");
+        // Allocation sees the same values.
+        let ctx = AllocContext { record: rec.clone(), ..AllocContext::default() };
+        let again = allocate_all(&cfg(json!([p("xab")])), &ctx).unwrap();
+        assert_eq!(by(&again, "xab"), by(&first, "xab"));
+        // The rewrite keeps both unknown fields.
+        let out = record_text(&record_of(&again, &rec));
+        assert!(out.contains("reviewed_by: a later goatbuilder"), "{out}");
+        assert!(out.contains("rotation_nonce: n-1"), "{out}");
+        // Allocating something new beside those keys is refused, naming them:
+        // a key this build does not read may hold the value it would choose.
+        let two = cfg(json!([p("xab"), p("xac")]));
+        let e = allocate_all(&two, &ctx).unwrap_err().to_string();
+        assert!(
+            e.contains("GB-124") && e.contains("rotation_nonce") && e.contains("a later goatbuilder"),
+            "{e}"
+        );
+        // A pin key misspelt in goatbuilder.yaml is still refused: only the
+        // generated record is read this way.
+        assert!(serde_yaml::from_str::<PeeringPins>("wg_interfce: wg-fed0\n").is_err());
     }
 
     /// Removing a peering's declaration keeps its record entry, so a peering

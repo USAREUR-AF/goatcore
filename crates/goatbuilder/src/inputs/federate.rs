@@ -796,6 +796,7 @@ promotion:
             &alloc::Record {
                 schema: alloc::RECORD_SCHEMA.into(),
                 peerings: Default::default(),
+                later: Default::default(),
             },
         );
         w(

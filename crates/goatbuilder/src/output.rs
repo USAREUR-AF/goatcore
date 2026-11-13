@@ -679,6 +679,8 @@ fn plan_page(report: &Report, color: bool) -> Option<String> {
     let mut manual: Vec<(String, String)> = Vec::new();
     let mut needs: Vec<(String, String)> = Vec::new();
     let mut how: Vec<String> = Vec::new();
+    // Each phase's command, as the run executes it (step 3 of the legibility work).
+    let mut runs: Vec<(String, String, String)> = Vec::new();
     for c in &report.checks {
         if !c.ok {
             return None;
@@ -724,6 +726,8 @@ fn plan_page(report: &Report, color: bool) -> Option<String> {
                 let row = rows.last()?;
                 if row[1] == "manual" {
                     manual.push((row[0].clone(), flat.clone()));
+                } else {
+                    runs.push((row[0].clone(), row[2].clone(), c.detail.trim().to_string()));
                 }
             }
             _ => return None,
@@ -746,6 +750,13 @@ fn plan_page(report: &Report, color: bool) -> Option<String> {
         let first = if wh > 0 { format!("{:<wp$}  {:<wk$}  {:<wh$}  ", r[0], r[1], h) } else { format!("{:<wp$}  {:<wk$}  ", r[0], r[1]) };
         out.push_str(fill(&r[2], &first, &hang).trim_end());
         out.push('\n');
+    }
+    if !runs.is_empty() {
+        // Verbatim and unwrapped, so a line can be pasted to run one phase by hand.
+        out.push_str(&format!("\n{}\n", bold("What each phase runs:")));
+        for (n, step, cmd) in &runs {
+            out.push_str(&format!("\n{n}  {step}\n    {cmd}\n"));
+        }
     }
     if !needs.is_empty() {
         out.push_str(&format!("\n{}\n", bold("What each phase needs:")));
@@ -771,7 +782,7 @@ fn plan_page(report: &Report, color: bool) -> Option<String> {
             out.push_str(&hand_step(num, title, command.as_deref(), &note, color));
         }
     }
-    out.push_str(&format!("\n{} add -o json to see every phase's command.\n", bold("To see more:")));
+    out.push_str(&format!("\n{} -o json lists every row of the plan.\n", bold("To see more:")));
     if !footer.is_empty() {
         let footer = footer.replace("PLAN complete. ", "").replace("Remove --dry-run to execute (needs --address).", "Remove --dry-run and add --address.").replace("Manual steps (", "The run pauses at the steps you do yourself (").replace(") pause the run; resume with --from <next>.", "). After each one, continue with --from and the next phase number.");
         out.push_str(fill(&format!("{} {footer}", "To run it for real:"), "", "").trim_end().replacen("To run it for real:", &bold("To run it for real:"), 1).as_str());
@@ -1038,23 +1049,32 @@ fn narrative_body(report: &Report, color: bool) -> String {
     let bold = |t: &str| if color { format!("\x1b[1m{t}\x1b[0m") } else { t.to_string() };
     let mut out = String::new();
     let image = regex::Regex::new(r"\S*/[\w.-]+:([\w.-]+)@sha256:[0-9a-f\u{2026}]+").unwrap();
-    // A dry run's internal commands are a count here; -o json lists every one.
-    let mut dry = 0;
+    // A dry run's commands, listed under the step that runs them, as they run.
+    let mut dry: Vec<String> = Vec::new();
     // A release repeats each deploy's checks for every rung: say each thing once.
     let mut said = std::collections::HashSet::new();
-    let flush = |dry: &mut usize, out: &mut String| {
-        if *dry > 0 {
+    let flush = |dry: &mut Vec<String>, out: &mut String| {
+        if !dry.is_empty() {
             // Right under a heading it is the first thing the step does.
             let under_heading = out.lines().last().is_some_and(|l| !l.starts_with(' ') && !l.starts_with('\u{2713}') && !l.starts_with('!'));
             let then = if under_heading { "A real run runs" } else { "Then a real run runs" };
-            out.push_str(&format!("  {then} {dry} command{}. -o json lists them.\n", if *dry == 1 { "" } else { "s" }));
-            *dry = 0;
+            // These lines are the plan's own words for each command, not the
+            // argv that runs: they are labelled so, until each verb builds them
+            // from the command it runs (docs/design/goatbuilder-legibility.md, step 3).
+            out.push_str(&format!("  {then}, as the plan describes it:\n"));
+            for d in dry.drain(..) {
+                out.push_str(&format!("    {d}\n"));
+            }
         }
     };
     for c in &report.checks {
         let flat = c.detail.split_whitespace().collect::<Vec<_>>().join(" ");
-        if c.ok && ((flat.starts_with("DRY:") && !flat.starts_with("DRY: would")) || flat.contains(": DRY: nothing was read")) {
-            dry += 1;
+        // A ledger left unread by a dry run is no command of its own to show.
+        if c.ok && flat.contains(": DRY: nothing was read") {
+            continue;
+        }
+        if c.ok && flat.starts_with("DRY:") && !flat.starts_with("DRY: would") {
+            dry.push(c.detail.trim().trim_start_matches("DRY:").trim().to_string());
             continue;
         }
         // `Prep` already says these three, and `goatbuilder doctor` names this fix.
@@ -1228,7 +1248,7 @@ fn plain_lines(report: &Report, color: bool) -> String {
 /// Rows under phase headings: each marked, named by its machine or step, with a
 /// version in place of a full image reference. -o json keeps the full rows.
 fn phased(report: &Report, color: bool) -> String {
-    use crate::tutor::{fill, shell_wrap};
+    use crate::tutor::fill;
     let image = regex::Regex::new(r"\S*/[\w.-]+:([\w.-]+)@sha256:[0-9a-f\u{2026}]+").unwrap();
     let bold = |t: &str| if color { format!("\x1b[1m{t}\x1b[0m") } else { t.to_string() };
     // A tick is a thing that happened; a dry run's row says what a real run
@@ -1251,12 +1271,16 @@ fn phased(report: &Report, color: bool) -> String {
             continue;
         }
         let detail = plain(&image.replace_all(c.detail.trim(), "$1"));
+        // A command prints as it runs: no word of it rewritten and no image
+        // shortened, only wrapped (docs/design/goatbuilder-legibility.md, step 3).
+        let cmd = c.detail.trim();
         match c.name.as_str() {
-            "cmd" if detail.contains(" --") && !detail.contains('<') && !detail.contains('\u{2014}') => {
-                out.push_str(shell_wrap(&detail, "  ").trim_end());
-                out.push('\n');
+            // Verbatim and on one line: a wrap that splits inside quotes, or
+            // collapses spaces, changes what a pasted line runs.
+            "cmd" => {
+                out.push_str(&format!("  {cmd}\n"));
             }
-            "cmd" | "note" => {
+            "note" => {
                 out.push_str(fill(&detail, "  ", "  ").trim_end());
                 out.push('\n');
             }
@@ -1707,7 +1731,8 @@ mod tests {
         assert!(page.contains("Nothing has run. This only shows the steps"), "{page}");
         assert!(page.contains("What a real run would leave to you:\n\n  1. reach the box on the SITE LAN:\n\n     ssh goat@<address>\n"), "{page}");
         assert!(!page.contains('\u{2717}'), "a plan owes nothing, so it marks nothing: {page}");
-        assert!(!page.contains("seed-ssh-key") && !page.contains("ansible-playbook"), "{page}");
+        // Each phase's command, verbatim, under the table; the manual one is spelled out above.
+        assert!(page.contains("What each phase runs:\n\n2  seed the SSH key\n    '/long/path/seed-ssh-key.sh' goat@<address>\n\n5  host baseline\n    cd x && ansible-playbook y\n"), "{page}");
         rows[0] = row("banner", "join-node: real run");
         assert!(plan_page(&Report::new("join-node", rows, EXIT_OK), false).is_none());
     }
@@ -1758,7 +1783,7 @@ mod tests {
         let page = table(&dep, false, true);
         assert!(page.contains("\u{2713} Change type: stateful"), "{page}");
         assert!(page.contains("\u{2713} Reach: h over the mesh"), "{page}");
-        assert!(page.contains("a real run runs 1 command"), "{page}");
+        assert!(page.contains("real run runs, as the plan describes it:\n    deploying x\n"), "{page}");
         // Not a tick: nothing was published. A statement about a run that has
         // not happened reads as a statement.
         assert!(page.contains("\u{b7} Plan: A real run will publish v1"), "{page}");
@@ -1852,12 +1877,24 @@ mod tests {
         assert!(page.contains("\u{2717} edge-a/portal: unknown: record unreadable"), "a failure must name its machine:\n{page}");
     }
 
+    /// A long command with quotes, a dash and runs of spaces, as standup's
+    /// phase 4 prints one, comes out byte for byte on one line, so the line
+    /// pastes as the command the phase runs.
     #[test]
-    fn a_dry_runs_commands_are_a_count() {
+    fn a_phase_command_prints_verbatim_on_one_line() {
+        let row = |n: &str, d: &str| Check { name: n.into(), ok: true, detail: d.into(), fix: None };
+        let cmd = "if grep -qE 'name_snapshot_enabled:[[:space:]]*true' '/srv/repo/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then      python3 '/srv/repo/ops/dns/generate-mesh-hosts.py';      else echo 'name_snapshot_enabled not true for alpha_hosts \u{2014} skipping (ADR 1082)'; fi";
+        let r = Report::new("standup", vec![row("phase", "=== Phase 4 [T] name-fallback snapshot (generate + sign) ==="), row("cmd", cmd)], EXIT_OK);
+        let page = phased(&r, false);
+        assert!(page.contains(&format!("\n  {cmd}\n")), "{page}");
+    }
+
+    #[test]
+    fn a_dry_runs_commands_are_listed_as_they_run() {
         let row = |n: &str, d: &str| Check { name: n.into(), ok: true, detail: d.into(), fix: None };
         let r = Report::new("release", vec![row("step", "==> dev rung"), row("note", "DRY: git worktree add"), row("note", "DRY: go run")], EXIT_OK);
         let page = table(&r, false, true);
-        assert!(page.contains("A real run runs 2 commands.") && !page.contains("git worktree"), "{page}");
+        assert!(page.contains("A real run runs, as the plan describes it:\n    git worktree add\n    go run\n"), "{page}");
     }
 
     #[test]

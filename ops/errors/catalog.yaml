@@ -21,6 +21,12 @@
 #   matches  regular expressions over the WHOLE text of an error, for errors that
 #            arrive as text (a tool's stderr carried inside a goat error). Any one
 #            matching is a hit. Case-sensitive; keep them literal and specific.
+#   retired  "<release tag>: <why>" for a code no binary raises any more: the tag of
+#            the release that stopped raising it, goatbuilder/vX.Y.Z or goat-cli-vX.Y.Z
+#            (ADR 1228's form), e.g. "goatbuilder/v0.6.0: <why>". A code a release
+#            printed is never deleted or given another meaning: logs keep it, and
+#            explain must still answer for it. A retired entry stays, and only it may
+#            change its title (ops/ci/check-error-codes-kept.py, gate row A5).
 #
 # Adding an entry is a YAML block here and nothing else, unless a binary should
 # emit the code itself (then cite it in the Rust and the gate checks it exists).
@@ -1885,10 +1891,10 @@ entries:
   - code: GB-182
     tool: goatbuilder
     title: the run journal cannot be read
-    what: "<work>/state.json is the only account of what ran for this peering, so a journal that does not parse, was written by a newer goatbuilder, or names another peering is refused rather than overwritten."
+    what: "<work>/state.json is the only account of what ran for this peering, so a journal that does not parse, has a later schema than this goatbuilder reads, or names another peering is refused rather than overwritten. A journal of the same schema that a later goatbuilder wrote is read: a word or field this one does not know is shown as written and kept."
     causes:
       - the file was edited by hand or cut short
-      - a newer goatbuilder wrote it (its schema is newer than this one reads)
+      - a later goatbuilder wrote it with a later schema (the message names the schema and the goatbuilder that wrote it)
       - two peerings share one working folder
     fixes:
       - "use the goatbuilder that wrote it, or move the file aside and run again (the run then starts with no journal, and --resume skips nothing)"

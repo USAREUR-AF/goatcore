@@ -8,7 +8,8 @@
 //!
 //!   - [`asset_name`] — the platform asset the goat-get role publishes
 //!     (`<bin>-<os>-<arch>[.exe]`).
-//!   - [`is_outdated`] — numeric `MAJOR.MINOR.PATCH` compare, tolerant of a
+//!   - [`is_outdated`] — semver precedence (`MAJOR.MINOR.PATCH`, then
+//!     pre-releases such as `-rc.1` before their release), tolerant of a
 //!     release-tag prefix; garbage on either side is never "outdated".
 //!   - [`parse_checksum`] + [`verify`] — the surface's `<asset>.sha256`, checked
 //!     before anything on disk is touched.
@@ -42,29 +43,90 @@ pub fn asset_name(bin: &str) -> Option<String> {
     Some(if p.starts_with("windows") { format!("{bin}-{p}.exe") } else { format!("{bin}-{p}") })
 }
 
-/// True when `current` is strictly older than `latest`. If either side cannot
-/// be parsed it is NOT outdated: never nag or update on garbage.
+/// True when `current` is strictly older than `latest`, by semver precedence
+/// (semver.org, item 11): the numeric core first, then a pre-release
+/// (`1.0.0-rc.1`) is older than the same core without one, and pre-releases
+/// compare identifier by identifier. Build metadata (`+...`) is ignored. If
+/// either side cannot be parsed it is NOT outdated: never nag or update on
+/// garbage.
 pub fn is_outdated(current: &str, latest: &str) -> bool {
-    match (parse_semver(current), parse_semver(latest)) {
+    match (precedence(current), precedence(latest)) {
         (Some(c), Some(l)) => l > c,
         _ => false,
     }
+}
+
+/// One pre-release identifier. A numeric identifier is older than an
+/// alphanumeric one; numbers compare as numbers, words in ASCII order.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Ident {
+    Num(u64),
+    Word(String),
+}
+
+/// A version's place in semver precedence: its core, and whether it is a
+/// release (`None` sorts before `Some` in Rust, so the release is wrapped to
+/// sort after every pre-release of the same core).
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Precedence {
+    core: (u64, u64, u64),
+    release: ReleaseOrPre,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ReleaseOrPre {
+    /// A pre-release: older than the release. Its identifiers compare in
+    /// order, and a longer set is newer when every shared one is equal.
+    Pre(Vec<Ident>),
+    Release,
+}
+
+fn precedence(s: &str) -> Option<Precedence> {
+    let core = parse_semver(s)?;
+    let s = version_text(s);
+    let s = s.split('+').next().unwrap_or(s);
+    let Some((_, pre)) = s.split_once('-') else {
+        return Some(Precedence {
+            core,
+            release: ReleaseOrPre::Release,
+        });
+    };
+    let mut ids = Vec::new();
+    for id in pre.split('.') {
+        if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return None;
+        }
+        ids.push(match id.parse::<u64>() {
+            Ok(n) if id.bytes().all(|b| b.is_ascii_digit()) => Ident::Num(n),
+            _ => Ident::Word(id.to_string()),
+        });
+    }
+    Some(Precedence {
+        core,
+        release: ReleaseOrPre::Pre(ids),
+    })
 }
 
 /// `MAJOR.MINOR.PATCH` out of a version or a release tag (`0.4.8`, `v0.4.8`,
 /// `goat-cli-v0.4.8`, `goatbuilder/v0.2.0`); a pre-release/build suffix is
 /// dropped and the numeric core compared.
 pub fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
-    let s = s.trim();
-    let s = s.rsplit('/').next().unwrap_or(s);
-    let s = s.strip_prefix("goat-cli-v").unwrap_or(s);
-    let s = s.strip_prefix('v').unwrap_or(s);
+    let s = version_text(s);
     let core = s.split(['-', '+']).next().unwrap_or(s);
     let mut it = core.split('.');
     let major = it.next()?.parse::<u64>().ok()?;
     let minor = it.next().unwrap_or("0").parse::<u64>().ok()?;
     let patch = it.next().unwrap_or("0").parse::<u64>().ok()?;
     Some((major, minor, patch))
+}
+
+/// The version out of a version or a release tag: the tag's path and its
+/// `goat-cli-v` or `v` prefix dropped.
+fn version_text(s: &str) -> &str {
+    let s = s.trim();
+    let s = s.rsplit('/').next().unwrap_or(s);
+    let s = s.strip_prefix("goat-cli-v").unwrap_or(s);
+    s.strip_prefix('v').unwrap_or(s)
 }
 
 /// The digest out of a checksum file (`<hex>  <name>`, or the bare hex),
@@ -198,6 +260,29 @@ mod tests {
         assert!(!is_outdated("0.3.0", "0.2.0"));
         assert!(!is_outdated("0.2.0", "garbage"));
         assert!(!is_outdated("garbage", "0.2.0"));
+    }
+
+    /// Pre-releases order by semver precedence (semver.org, item 11): a
+    /// release candidate is older than its release and than the next
+    /// candidate, so `update` moves an rc install forward on its own.
+    #[test]
+    fn a_pre_release_is_older_than_its_release_and_the_next_candidate() {
+        assert!(is_outdated("1.0.0-rc.1", "1.0.0"));
+        assert!(is_outdated("1.0.0-rc.1", "1.0.0-rc.2"));
+        assert!(is_outdated("goatbuilder/v1.0.0-rc.1", "v1.0.0-rc.2"));
+        assert!(!is_outdated("goat-cli-v0.4.8", "0.4.8"), "a tag prefix is not a pre-release");
+        assert!(is_outdated("goat-cli-v0.4.8-rc.1", "goat-cli-v0.4.8"));
+        assert!(is_outdated("1.0.0-rc.2", "1.0.0-rc.10"), "numeric identifiers compare as numbers");
+        assert!(is_outdated("1.0.0-alpha", "1.0.0-alpha.1"), "a longer set of identifiers is newer");
+        assert!(is_outdated("1.0.0-alpha.1", "1.0.0-alpha.beta"), "a number is older than a word");
+        assert!(is_outdated("1.0.0-alpha.beta", "1.0.0-beta"));
+        assert!(is_outdated("1.0.0-beta.11", "1.0.0-rc.1"));
+        assert!(is_outdated("0.9.9", "1.0.0-rc.1"));
+        assert!(!is_outdated("1.0.0", "1.0.0-rc.1"), "a release is never behind its own candidate");
+        assert!(!is_outdated("1.0.0-rc.2", "1.0.0-rc.1"));
+        assert!(!is_outdated("1.0.0-rc.1", "1.0.0-rc.1"));
+        assert!(!is_outdated("1.0.0+build.5", "1.0.0+build.6"), "build metadata has no precedence");
+        assert!(!is_outdated("1.0.0-rc.1", "1.0.0-rc..1"), "an empty identifier is not a version");
     }
 
     #[test]

@@ -18,8 +18,13 @@ fn deploy_field(v: &serde_json::Value, key: &str) -> Option<String> {
 /// The AWS profile a run uses: `GOAT_AWS_PROFILE`, then `deploy.aws_profile`,
 /// then `default`, the name the AWS tools themselves fall back to.
 pub fn aws_profile(repo: &Path) -> String {
-    std::env::var("GOAT_AWS_PROFILE")
-        .ok()
+    aws_profile_with(repo, &|k| std::env::var(k).ok())
+}
+
+/// `aws_profile` with the environment read through `env`, so a test can pass its
+/// own instead of changing the process's, which other tests read in parallel.
+pub fn aws_profile_with(repo: &Path, env: &dyn Fn(&str) -> Option<String>) -> String {
+    env("GOAT_AWS_PROFILE")
         .filter(|s| !s.is_empty())
         .or_else(|| declared(repo).and_then(|v| deploy_field(&v, "aws_profile")))
         .unwrap_or_else(|| "default".to_string())
@@ -118,7 +123,12 @@ pub fn declared_aws_profile(repo: &Path) -> Option<String> {
 /// `repo.image_namespace`. `None` for another registry, whose references have
 /// no `{{ ghcr_org }}` form to write.
 pub fn ghcr_org(repo: &Path) -> Option<String> {
-    std::env::var("GHCR_ORG").ok().filter(|s| !s.is_empty()).or_else(|| {
+    ghcr_org_with(repo, &|k| std::env::var(k).ok())
+}
+
+/// `ghcr_org` with the environment read through `env` (see `aws_profile_with`).
+pub fn ghcr_org_with(repo: &Path, env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    env("GHCR_ORG").filter(|s| !s.is_empty()).or_else(|| {
         let v = declared(repo)?;
         v.get("repo")?.get("image_namespace")?.as_str()?.strip_prefix("ghcr.io/").map(String::from)
     })
@@ -159,22 +169,24 @@ mod tests {
         assert_eq!(beside_state("state"), "./ca-audit.jsonl");
     }
 
-    // The two environment overrides are read in one test: tests share a process.
+    // The environment is passed in, never set: other tests read the process's in parallel.
     #[test]
     fn the_environment_wins_then_the_declaration_then_a_neutral_name() {
         let t = checkout("repo: {image_namespace: ghcr.io/acme}\ndeploy: {aws_profile: acme-prod}\n");
         let other = checkout("repo: {image_namespace: registry.example.org/acme}\n");
-        std::env::remove_var("GOAT_AWS_PROFILE");
-        std::env::remove_var("GHCR_ORG");
-        assert_eq!(aws_profile(t.path()), "acme-prod");
-        assert_eq!(aws_profile(other.path()), "default");
-        assert_eq!(ghcr_org(t.path()).as_deref(), Some("acme"));
-        assert_eq!(ghcr_org(other.path()), None);
-        std::env::set_var("GOAT_AWS_PROFILE", "just-this-once");
-        std::env::set_var("GHCR_ORG", "elsewhere");
-        assert_eq!(aws_profile(t.path()), "just-this-once");
-        assert_eq!(ghcr_org(other.path()).as_deref(), Some("elsewhere"));
-        std::env::remove_var("GOAT_AWS_PROFILE");
-        std::env::remove_var("GHCR_ORG");
+        let none = |_: &str| None;
+        assert_eq!(aws_profile_with(t.path(), &none), "acme-prod");
+        assert_eq!(aws_profile_with(other.path(), &none), "default");
+        assert_eq!(ghcr_org_with(t.path(), &none).as_deref(), Some("acme"));
+        assert_eq!(ghcr_org_with(other.path(), &none), None);
+        let set = |k: &str| match k {
+            "GOAT_AWS_PROFILE" => Some("just-this-once".to_string()),
+            "GHCR_ORG" => Some("elsewhere".to_string()),
+            _ => None,
+        };
+        assert_eq!(aws_profile_with(t.path(), &set), "just-this-once");
+        assert_eq!(ghcr_org_with(other.path(), &set).as_deref(), Some("elsewhere"));
+        let empty = |_: &str| Some(String::new());
+        assert_eq!(aws_profile_with(t.path(), &empty), "acme-prod", "an empty variable is unset");
     }
 }

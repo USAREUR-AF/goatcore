@@ -1765,6 +1765,12 @@ fn crane_check() -> Check {
 /// to exist under ~/.goat/contexts with an onboard_endpoint, or the onboarding
 /// calls go to the portal (HTTP 405).
 fn goat_contexts_check(repo: &Path) -> Vec<Check> {
+    goat_contexts_check_in(repo, std::env::var_os("GOAT_PROFILE_DIR").map(PathBuf::from))
+}
+
+/// `goat_contexts_check` with the goat profile directory given (`GOAT_PROFILE_DIR`,
+/// else `~/.goat` when `None`), so a test passes its own instead of setting it.
+fn goat_contexts_check_in(repo: &Path, profile_dir: Option<PathBuf>) -> Vec<Check> {
     let path = repo.join("ops/validation/goatnet-runners.yaml");
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -1775,7 +1781,7 @@ fn goat_contexts_check(repo: &Path) -> Vec<Check> {
         Err(e) => return vec![refused("tool:goat-contexts", format!("{}: {e}", rel(repo, &path)), "fix the yaml")],
     };
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    let contexts = std::env::var_os("GOAT_PROFILE_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".goat")).join("contexts");
+    let contexts = profile_dir.unwrap_or_else(|| home.join(".goat")).join("contexts");
     let mut out = Vec::new();
     let Some(goatnets) = doc.get("goatnets").and_then(|g| g.as_mapping()) else {
         return vec![refused("tool:goat-contexts", format!("{} has no goatnets:", rel(repo, &path)), "fix the yaml")];
@@ -2470,9 +2476,7 @@ mod tests {
         let profiles = t.join("goat");
         std::fs::create_dir_all(profiles.join("contexts/acceptance")).unwrap();
         std::fs::write(profiles.join("contexts/acceptance/profile.toml"), "portal = \"x\"\n").unwrap();
-        std::env::set_var("GOAT_PROFILE_DIR", &profiles);
-        let rows = goat_contexts_check(&t);
-        std::env::remove_var("GOAT_PROFILE_DIR");
+        let rows = goat_contexts_check_in(&t, Some(profiles.clone()));
         let a = rows.iter().find(|r| r.name == "tool:goat-contexts:a").unwrap();
         assert!(!a.ok);
         assert!(a.detail.contains("context acceptance has no onboard_endpoint"), "{}", a.detail);

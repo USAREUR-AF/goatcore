@@ -37,6 +37,8 @@ FTL = "crates/goat-errors/i18n/en/errors.ftl"
 CODES_DOC = "docs/design/goat-cli-error-codes.md"
 GOAT_ERRORS_RS = "crates/goat-cli/src/errors.rs"
 RUST_DIRS = ("crates/goatbuilder/src", "crates/goat-cli/src", "crates/goat-errors/src")
+# A retired mark: the release tag that stopped raising the code (ADR 1228's form), then why.
+RETIRED = re.compile(r"^(goatbuilder/v|goat-cli-v)\d+\.\d+\.\d+: .+")
 CODE_SHAPE = re.compile(r"^(E_[A-Z][A-Z_]+|GB-\d{3}|X-[A-Z]+-\d{3})$")
 CITED = re.compile(r'"((?:GB-\d{3}|X-[A-Z]+-\d{3}))"')
 E_CODE_IN_RS = re.compile(r'#\[error\("(E_[A-Z_]+)"\)\]')
@@ -72,6 +74,9 @@ def check_entries(repo, data, problems):
             problems.append(f"{where}: read points at {e['read']}, which is not in the tree")
         if code.startswith(("E_", "GB-")) and not isinstance(e.get("exit"), int):
             problems.append(f"{where}: a goat/goatbuilder code needs its exit code")
+        if "retired" in e and not (isinstance(e["retired"], str) and RETIRED.match(e["retired"])):
+            problems.append(f"{where}: retired must say \"<release tag>: <why>\", the tag of the release "
+                            f"that stopped raising it (goatbuilder/vX.Y.Z or goat-cli-vX.Y.Z)")
         for m in e.get("matches") or []:
             try:
                 re.compile(m)
@@ -202,6 +207,13 @@ def self_test():
         os.makedirs(os.path.dirname(os.path.join(t, FTL)))
         write(os.path.join(t, FTL), render_ftl(good))
         assert run(t, write=False) == 0, "a complete catalog must pass"
+        for mark, ok in (("goatbuilder/v0.6.0: standup reads the site from the plan", True),
+                         ("goat-cli-v0.6.1: goat no longer reads profiles", True),
+                         ("0.6.0: no tag", False), ("goatbuilder/v0.6: not a version", False),
+                         ("goatbuilder/v0.6.0:", False), ("", False)):
+            problems = []
+            check_entries(t, {"schema": "goat-errors/v1", "entries": [{**good["entries"][0], "retired": mark}]}, problems)
+            assert (not problems) == ok, f"retired {mark!r}: {problems}"
         assert ftl_text("run `x { $y }`") == 'run `x {"{"} $y {"}"}`', "braces are escaped as Fluent literals"
         assert "gb-001-cause-1 = c" in render_ftl(good), "causes are numbered from 1"
         write(os.path.join(t, FTL), "stale\n")
