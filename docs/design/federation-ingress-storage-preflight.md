@@ -51,7 +51,7 @@ reads it (`tasks/find-core.yml`: this host, then the one host of
 stores) uses both, and fails closed as this check does: no core found, a path that
 cannot be told, or a configuration that cannot be read fails the play, naming the
 host, the path, the read's exit status and its error text.
-`goat_zenoh_edge_key_scope_check: false` skips it and reports that as a decision.
+`goat_zenoh_edge_key_scope_check: false` skips it and reports that as a decision. Every storage that can hold a key under `keys/` (read with the same parser, so ACL strings and comments are not stores) must be included, by key-expression inclusion, in one of the key-bundle grants (`zenoh_key_storage_check`): `keys/**`, `keys/*/**` and a store for another set (`keys/other/**` against `keys/a/**`) are refused, an equal or narrower store passes. Before, only a literal `keys/**` was refused, so a `keys/*/**` store passed.
 Before, that comparison read `/etc/zenoh/config.json5` on the edge host alone and
 reported every other case as "could not run" while the play went on, so a separate
 core host's `keys/**` store was never refused. Status: built, measured by

@@ -1,0 +1,68 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "history",
+  "ok": true,
+  "exit": 0,
+  "checks": [
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "deploy history for portal (newest first):"
+    },
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "  (ledger @ dev-core-a)"
+    },
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "  2026-10-20T10:00:00Z  [image]  ghcr.io/example-org/portal:v1.3.2@sha256:9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0"
+    },
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "      action=deploy"
+    },
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "  (ledger @ dev-core-b)"
+    },
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "  (no rows)"
+    },
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "  (ledger @ dev-edge-a)"
+    },
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "  (no rows)"
+    },
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "  (ledger @ dev-obs-a)"
+    },
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "  (no rows)"
+    },
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "  (ledger @ dev-obs-b)"
+    },
+    {
+      "name": "history",
+      "ok": true,
+      "detail": "  (no rows)"
+    }
+  ]
+}

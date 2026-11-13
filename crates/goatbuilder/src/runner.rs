@@ -275,6 +275,7 @@ pub fn no_phase() {
 }
 
 /// A command, built as `std::process::Command` builds one, run through this door.
+#[derive(Debug)]
 pub struct Cmd {
     inner: Command,
     host: Option<String>,
@@ -445,7 +446,7 @@ impl Cmd {
         match child {
             Ok(mut c) => {
                 if let Some(o) = c.stdout.take() {
-                    copy_in_background(o, log.clone(), false);
+                    copy_in_background(o, log.clone(), stdout_to_stderr());
                 }
                 if let Some(e) = c.stderr.take() {
                     copy_in_background(e, log, true);
@@ -566,6 +567,9 @@ impl Cmd {
         match code {
             Some(Some(0)) if in_phase => say(&format!("  ok in {took}")),
             Some(Some(0)) => {}
+            // Exit 3 is the contract's "not converged" (C10): a phase that is
+            // waiting or incomplete, not one that broke.
+            Some(Some(3)) if in_phase => say(&format!("  not converged (exit 3) in {took}{log}")),
             Some(Some(n)) => say(&format!("{what}: exit {n} in {took}{log}")),
             Some(None) => say(&format!("{what}: killed by a signal after {took}{log}")),
             None => {
@@ -598,7 +602,7 @@ impl Cmd {
         let mut child = self.inner.spawn()?;
         let mut threads = Vec::new();
         if let Some(o) = child.stdout.take() {
-            threads.push(copy_in_background(o, log.clone(), false));
+            threads.push(copy_in_background(o, log.clone(), stdout_to_stderr()));
         }
         if let Some(e) = child.stderr.take() {
             threads.push(copy_in_background(e, log, true));
@@ -664,6 +668,15 @@ fn interactive_in(list: &str, line: &str) -> Option<String> {
             let (name, why) = l.split_once(char::is_whitespace).unwrap_or((l, ""));
             words.contains(&name).then(|| why.trim().to_string())
         })
+}
+
+/// Where a child's stdout goes as it streams inside a run. Under `-o json` or
+/// `-o yaml` stdout is the report a script parses, so a child's output goes to
+/// stderr (and to its log, as always); at a terminal or `-o table` it stays on
+/// stdout. Outside a run, and for a command that keeps the terminal, the child
+/// inherits stdout as `Command` gives it.
+fn stdout_to_stderr() -> bool {
+    crate::output::machine_output()
 }
 
 /// Copy a child's stream to our stdout (or stderr) and to the log, as it arrives.
@@ -967,6 +980,23 @@ mod tests {
             Path::new(log).is_file(),
             "the named log {log} does not exist"
         );
+    }
+
+    #[test]
+    fn a_phase_that_exits_3_reads_not_converged() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "federate", vec![], None);
+        phase("14", "acceptance", "");
+        Cmd::new("sh").args(["-c", "exit 3"]).status().unwrap();
+        let f = frame();
+        assert!(
+            f.lines()
+                .nth(2)
+                .is_some_and(|l| l.starts_with("  not converged (exit 3) in ")),
+            "{f}"
+        );
+        assert_eq!(end().unwrap().phases[0].exit, Some(3));
     }
 
     #[test]

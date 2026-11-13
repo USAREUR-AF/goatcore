@@ -1,6 +1,6 @@
 # Portal registry: SQLite to Postgres cutover, and rollback
 
-**Status:** code ready (ADR 1165 step A, portal slice).
+**Status:** built (ADR 1165 step A, portal slice).
 **Each goatnet's cutover and any rollback is run with the operator present.**
 
 The portal (`goat-zenoh-portal`) keeps its registry (orgs, topics, slots, grants, schemas

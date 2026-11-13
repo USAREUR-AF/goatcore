@@ -1,0 +1,32 @@
+{
+  "schema": "goat-errors.interpretation/v1",
+  "summary": "Permission denied (publickey).",
+  "hits": [
+    {
+      "code": "X-SSH-001",
+      "layer": "pattern",
+      "evidence": "Permission denied (publickey).",
+      "at": 0,
+      "entry": {
+        "code": "X-SSH-001",
+        "tool": "ssh",
+        "title": "the host refused the key",
+        "what": "the connection reached the host and SSH rejected every key offered.",
+        "causes": [
+          "your public key is not on the host's operator user (ssh-key-self-service)",
+          "the wrong user (hosts take the deploy.ssh_user account)",
+          "the key is not loaded in the agent"
+        ],
+        "fixes": [
+          "ssh -v <ssh user>@<host> true 2>&1 | grep -i 'offering\\|denied'",
+          "goat admin ssh-key …   (register the key through the goatnet)"
+        ],
+        "read": "docs/design/ssh-key-self-service.md",
+        "matches": [
+          "Permission denied \\(publickey"
+        ]
+      }
+    }
+  ],
+  "unrecognised": false
+}

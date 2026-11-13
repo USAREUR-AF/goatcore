@@ -1,0 +1,316 @@
+# The GB codes of goatbuilder/v0.5.1 and their titles, read from ops/errors/catalog.yaml at the tag by compat.py refresh.
+codes:
+- code: GB-001
+  title: unknown component
+- code: GB-002
+  title: unknown goatnet
+- code: GB-003
+  title: the group is not one the component deploys to
+- code: GB-004
+  title: the component declares no image variable
+- code: GB-005
+  title: no deploy playbook resolves for the component
+- code: GB-006
+  title: the door to the goatnet did not open
+- code: GB-007
+  title: a secret the play needs is not in your environment
+- code: GB-008
+  title: a mutation needs --yes when there is no terminal
+- code: GB-009
+  title: not a current main checkout
+- code: GB-010
+  title: a Python dependency is missing
+- code: GB-011
+  title: only a repository admin may nominate a release candidate
+- code: GB-077
+  title: this checkout's origin is not where release candidates are cut
+- code: GB-078
+  title: no release signer is known, so the update refuses
+- code: GB-012
+  title: the candidate's image build did not succeed
+- code: GB-013
+  title: the image is not in the registry
+- code: GB-014
+  title: a live validation row failed
+- code: GB-015
+  title: the checkout could not fast-forward after the pin landed
+- code: GB-016
+  title: no runner settings for the goatnet
+- code: GB-017
+  title: not converged on every host
+- code: GB-018
+  title: a required flag is missing or wrong
+- code: GB-019
+  title: the goatnet's CA key is not on this machine
+- code: GB-020
+  title: graduate.py did not produce the expected record
+- code: GB-021
+  title: fastlane refused
+- code: GB-022
+  title: intent-sign failed
+- code: GB-023
+  title: rollback refused or guided by artifact type
+- code: GB-024
+  title: the fixture is not a shape the mock converger knows
+- code: GB-025
+  title: the config does not validate
+- code: GB-026
+  title: status reads real hosts only through a converger
+- code: GB-027
+  title: not inside a repository
+- code: GB-028
+  title: a command the verb runs failed
+- code: GB-029
+  title: the play failed on a group
+- code: GB-030
+  title: no host of the group is in the loaded inventories
+- code: GB-031
+  title: an op:// reference in your shell is incomplete
+- code: GB-032
+  title: the candidate record is open but the goatnet runs a different ref
+- code: GB-033
+  title: promote refused a graduation step
+- code: GB-034
+  title: the generated pins or intents differ from fleet-pins.yaml
+- code: GB-035
+  title: the goatnet's intent names no usable CA
+- code: GB-036
+  title: the component declares no image workflow
+- code: GB-037
+  title: the ladder is missing a live rung
+- code: GB-038
+  title: --from preprod-rows cannot resume this candidate
+- code: GB-039
+  title: a rollback on a fixture needs its environment
+- code: GB-040
+  title: that directory is not a tutor workspace
+- code: GB-041
+  title: there is no such lesson
+- code: GB-042
+  title: the live rows cannot run from this machine — the candidate is UNTESTED, not dead
+- code: GB-043
+  title: the door to the rung did not open for its live rows
+- code: GB-044
+  title: a release refuses before the tag because a secret is not set
+- code: GB-045
+  title: the published declarations are out of order or altered
+- code: GB-046
+  title: the local declaration is not the source of record's
+- code: GB-047
+  title: a declaration must name who made it
+- code: GB-048
+  title: the goatnet is not proven built
+- code: GB-049
+  title: the acceptance assay cannot run here
+- code: GB-050
+  title: nothing is declared on that goatnet
+- code: GB-051
+  title: the plan request is incomplete or not planned yet
+- code: GB-052
+  title: that file is not a goatbuilder plan
+- code: GB-053
+  title: the plan no longer matches the tree
+- code: GB-054
+  title: adopt could not create its worktree
+- code: GB-055
+  title: a rollback with no --site would flip every goatnet
+- code: GB-060
+  title: a standup input is required and not set
+- code: GB-061
+  title: a secret the standup templates is not in this environment
+- code: GB-062
+  title: a standup input may be required
+- code: GB-063
+  title: a standup step's host limit selects no host
+- code: GB-064
+  title: the checkout is behind the trunk in what a deploy reads
+- code: GB-065
+  title: the trunk could not be fetched, so the checkout cannot be shown current
+- code: GB-066
+  title: the site's declared end state cannot be derived or read
+- code: GB-067
+  title: a site's service presence is undeclared or contradicted
+- code: GB-068
+  title: the goatnet is not in its declared end state
+- code: GB-069
+  title: the rollout preflight cannot run
+- code: GB-070
+  title: survey could read no goatnet at all
+- code: GB-071
+  title: a site's leaf certificate is not on this controller
+- code: GB-072
+  title: goatbuilder cannot name the download surface to update from
+- code: GB-073
+  title: the goatbuilder download surface could not be read
+- code: GB-074
+  title: the downloaded goatbuilder is not vouched for by its release
+- code: GB-075
+  title: goatbuilder could not replace its own binary
+- code: GB-076
+  title: the rollout is not cleanly reversible or not ready
+- code: GB-100
+  title: the federation verbs cannot find this party's context directory
+- code: GB-110
+  title: the inventory does not name a federation host phase 3 can reach
+- code: GB-111
+  title: a federation host did not answer over SSH
+- code: GB-112
+  title: sudo on a federation host wants a password
+- code: GB-113
+  title: no core router to measure on the core host
+- code: GB-120
+  title: a peering names a partner with a reserved word
+- code: GB-121
+  title: two peerings would share a value
+- code: GB-122
+  title: a pinned port is one the edge host already holds
+- code: GB-123
+  title: a peering's pin is not usable
+- code: GB-124
+  title: the peering allocation record cannot be used
+- code: GB-125
+  title: a peering file exists that goatbuilder did not generate
+- code: GB-126
+  title: a peering's inventory group is defined twice
+- code: GB-127
+  title: no free per-peering value is left
+- code: GB-128
+  title: a federate run disagrees with the peering's allocated values
+- code: GB-129
+  title: a peering's offer would widen what federation.toml declares
+- code: GB-210
+  title: the host firewall baseline is missing a value it needs
+- code: GB-211
+  title: the host firewall override names a rule the baseline does not have, or is malformed
+- code: GB-212
+  title: the host firewall is loosened without a recorded reason
+- code: GB-213
+  title: the host firewall would cut the session managing the host
+- code: GB-214
+  title: the host firewall ruleset was not loaded or not confirmed
+- code: GB-215
+  title: the host firewall would close a port this host listens on
+- code: GB-180
+  title: another run of this peering is in progress
+- code: GB-181
+  title: a resource this peering needs is held by another peering on the same host
+- code: GB-182
+  title: the run journal cannot be read
+- code: GB-183
+  title: a federate phase failed
+- code: GB-184
+  title: the working folder or its lock cannot be made, taken or written
+- code: GB-130
+  title: a federation input is missing
+- code: GB-131
+  title: a port this peering needs is already held on the edge
+- code: GB-132
+  title: the republisher metrics port is already held on the core
+- code: GB-133
+  title: the edge or core host could not be probed for its ports
+- code: GB-134
+  title: the committed slot list differs from the slot registry
+- code: GB-135
+  title: the slot registry could not be read
+- code: GB-136
+  title: the core has no receive store matching what the edge grants
+- code: GB-137
+  title: the core router's configuration could not be read
+- code: GB-138
+  title: no core router container was found
+- code: GB-139
+  title: several core router containers were found
+- code: GB-140
+  title: our CA certificate is missing or is not a CA
+- code: GB-141
+  title: our CA signing key cannot be resolved
+- code: GB-142
+  title: our federation signing key cannot be read
+- code: GB-143
+  title: the peering inventory does not reach the edge or core
+- code: GB-144
+  title: the federation declaration or the profile is missing or wrong
+- code: GB-145
+  title: the core certificate would not name every address the edge dials
+- code: GB-146
+  title: docker compose is not available for phase 12
+- code: GB-147
+  title: a peering directory value is not usable
+- code: GB-148
+  title: the federation working directory is not writable
+- code: GB-149
+  title: the peering is not declared
+- code: GB-230
+  title: allocate would move a peering that already runs
+- code: GB-231
+  title: the hand-written peering inventory puts one name in two peering groups
+- code: GB-234
+  title: the site inventory does not name one edge and one core for a peering without hosts
+- code: GB-235
+  title: a named allocate would change another peering's inventory lines
+- code: GB-236
+  title: our core router's goat-zenoh role declarations do not resolve for admission
+- code: GB-237
+  title: admission cannot write the partner into the role core's zenoh_sovereign_peerings
+- code: GB-185
+  title: the partner named to `federate status` is not a declared peering
+- code: GB-186
+  title: the plan was not approved
+- code: GB-187
+  title: the plan is not the one approved
+- code: GB-188
+  title: the plan no longer holds
+- code: GB-189
+  title: a stage of `goatbuilder federate` was asked for the wrong way
+- code: GB-190
+  title: the admission on our core is not recorded as done for what is rendered now
+- code: GB-191
+  title: a value for confirmation 1 does not match
+- code: GB-192
+  title: confirmation 1 is waiting
+- code: GB-193
+  title: our verifying key cannot be read, or does not verify our half
+- code: GB-194
+  title: the edge cannot be admitted on our core
+- code: GB-195
+  title: the core's dry run or the slot check refused the admission
+- code: GB-196
+  title: the core restart failed after the admission was placed
+- code: GB-197
+  title: the admission is waiting for approval
+- code: GB-200
+  title: the federation plan's inputs changed
+- code: GB-201
+  title: the federation plan is missing or altered
+- code: GB-202
+  title: a live prerequisite of the federation plan no longer holds
+- code: GB-232
+  title: a rendered deployment half needs a site value no declaration yields
+- code: GB-233
+  title: a peering's federation.toml cannot be generated from the environment's
+- code: GB-160
+  title: two peerings on one forwarder would share a value
+- code: GB-161
+  title: a peering's partner id cannot name a forwarder entry
+- code: GB-162
+  title: one forwarder group names two forwarders
+- code: GB-163
+  title: a forwarded peering has no allocated values yet
+- code: GB-203
+  title: two peerings would bind the same value on one machine
+- code: GB-220
+  title: federate backout was not given a partner it can act on
+- code: GB-221
+  title: the back-out found a resource it cannot show is this peering's alone
+- code: GB-222
+  title: the back-out survey did not complete
+- code: GB-223
+  title: the slot recheck did not allow the core router restart
+- code: GB-224
+  title: the core router was not restarted on the reviewed candidate
+- code: GB-225
+  title: resources of the peering are still present after the back-out
+- code: GB-226
+  title: our package for the counterparty could not be withdrawn from the directory
+- code: GB-227
+  title: the core still admits the partner through its own configuration

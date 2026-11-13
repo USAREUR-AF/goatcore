@@ -413,9 +413,32 @@ pub(crate) fn our_id(work: &str) -> Option<String> {
     })
 }
 
+/// What federate's phase `n` is for, in a person's words: the plan page's step
+/// column and the runner's frame read it.
+fn purpose(n: u32) -> &'static str {
+    match n {
+        1 => "Check this site is ready to peer",
+        2 => "Make the link interface and export our trust bundle",
+        3 => "Build our half of the agreement from the running system",
+        4 => "Check our half is valid",
+        5 => "Swap halves through the directory, and read their key back",
+        6 => "Combine both halves into one agreement",
+        7 => "Check the agreement from our side",
+        8 => "Create the certificates for this peering",
+        9 => "Write the access rules and settings",
+        10 => "Review what was written, and let the router onto our core",
+        11 => "Open the connection the agreement chooses",
+        12 => "Deploy the edge router, and the republisher on our core",
+        13 => "Trust the other party's identity service",
+        14 => "Test that allowed traffic passes and the rest is refused",
+        _ => "",
+    }
+}
+
 /// How a dry run reads to a person, the way kubeadm prints its phases: a
-/// header, one aligned table of phases, then each phase's command wrapped to
-/// the page, with this checkout's path and the home folder shortened.
+/// header, one aligned table of phases with this checkout's path and the home
+/// folder shortened, then each phase's command verbatim and unwrapped, so a
+/// line pastes as the command it runs.
 fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[Phase]) -> String {
     let home = runenv::var("HOME").unwrap_or_default();
     // The resolved path: with `-C ../..` the literal "../../" must not be
@@ -452,23 +475,7 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             let chose = ph.label.split("no play for '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("?");
             return format!("Open the connection: refused, the agreement chose '{chose}'");
         }
-        let plain = match ph.n {
-            1 => "Check this site is ready to peer",
-            2 => "Make the link interface and export our trust bundle",
-            3 => "Build our half of the agreement from the running system",
-            4 => "Check our half is valid",
-            5 => "Swap halves through the directory, and read their key back",
-            6 => "Combine both halves into one agreement",
-            7 => "Check the agreement from our side",
-            8 => "Create the certificates for this peering",
-            9 => "Write the access rules and settings",
-            10 => "Review what was written, and let the router onto our core",
-            11 => "Open the connection the agreement chooses",
-            12 => "Deploy the edge router, and the republisher on our core",
-            13 => "Trust the other party's identity service",
-            14 => "Test that allowed traffic passes and the rest is refused",
-            _ => "",
-        };
+        let plain = purpose(ph.n);
         if !plain.is_empty() {
             return plain.to_string();
         }
@@ -485,6 +492,16 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
     s.push_str("PHASE  TYPE     STEP\n");
     for ph in &shown {
         s.push_str(&format!("{:<6} {:<8} {}\n", ph.n, kind(ph.kind), step(ph)));
+    }
+    // Each phase's command as the run executes it, verbatim and unwrapped, so a
+    // line can be pasted to run that phase by hand (docs/design/goatbuilder-legibility.md,
+    // step 3). A manual phase is spelled out below instead.
+    let runs: Vec<&&Phase> = shown.iter().filter(|p| p.kind != "MANUAL").collect();
+    if !runs.is_empty() {
+        s.push_str(&format!("\n{}\n", bold("What each phase runs:")));
+        for ph in runs {
+            s.push_str(&format!("\n{}  {}\n    {}\n", ph.n, step(ph), ph.cmd));
+        }
     }
     if let Some(ph) = shown.iter().find(|p| p.kind == "MANUAL") {
         let found = |re: &str| regex::Regex::new(re).ok().and_then(|r| r.captures(&ph.cmd).map(|m| short(&m[1])));
@@ -528,7 +545,7 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             s.push_str(&format!("  {id:<15} {what}\n"));
         }
     }
-    s.push_str(&format!("\n{} add -o json to see every phase's command, or read\ndocs/operations/sovereign-federation-runbook.md.\n", bold("To see more:")));
+    s.push_str(&format!("\n{} -o json lists every row of the plan, and\ndocs/operations/sovereign-federation-runbook.md says what each phase proves.\n", bold("To see more:")));
     match shown.iter().find(|p| p.n == 11) {
         Some(_) if !agreement_known => {
             s.push_str("Phase 11 depends on what phase 6 agrees: wireguard and ipsec-fips each have\na play. Any other choice stops the run there.\n");
@@ -700,6 +717,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         if o.dry_run {
             continue;
         }
+        // The commands that follow are this phase's: the runner frames and
+        // records them under it (crates/goatbuilder/src/runner.rs).
+        crate::runner::phase(&ph.n.to_string(), &ph.label, purpose(ph.n));
         // A mock has no hosts. Recording the phase is the whole of what it does.
         if !executes {
             checks.push(row("mock", format!("phase {} recorded against the fixture; not executed", ph.n)));
@@ -896,22 +916,46 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
 /// 0, a verb's own 20 to 24, 2 for a refused command line, a coded refusal's
 /// catalog code (GB-100: 2), 101 for a panic, or 1 for any other fault, which
 /// is printed.
+/// The names the federation library reads from the process environment itself
+/// (goat-federation's derive.rs, during an in-process `init`); every other value
+/// an in-process verb reads, it reads through [`runenv`].
+const READ_FROM_THE_PROCESS_BY_THE_LIBRARY: [&str; 2] = ["DOCKER_HOST", "FED_ROUTER_CONTAINER"];
+
+/// Of a verb's values, the ones that go into the process environment for its
+/// duration: only those the library reads from the process itself.
+fn for_the_process(all: &[(String, String)]) -> Vec<&(String, String)> {
+    all.iter().filter(|(k, _)| READ_FROM_THE_PROCESS_BY_THE_LIBRARY.contains(&k.as_str())).collect()
+}
+
 fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -> i32 {
-    // The verb runs in this process and reads the process environment, so the
-    // run's own values (runenv) and the verb's are put there for its duration
-    // and restored after. set_var and set_current_dir change process-global
-    // state: this is the one place federate does, for a real run's in-process
-    // verb, one at a time. A driver that runs verbs concurrently must pass the
-    // environment and directory to the verb instead.
-    let env: Vec<(String, String)> = runenv::pairs().into_iter().chain(env.iter().cloned()).collect();
-    let saved: Vec<(String, Option<std::ffi::OsString>)> = env.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
-    for (k, v) in &env {
+    // The verb runs in this process. goatbuilder's verbs read their values
+    // through runenv, which is this thread's, so the verb's own values go there
+    // for its duration and are put back after. Only the few names the library
+    // reads from the process environment itself are put there, and restored:
+    // set_var changes process-global state, so this stays the one place it
+    // happens, for a real run's in-process verb, one at a time. So does
+    // set_current_dir. A driver that runs verbs concurrently must pass both to
+    // the verb instead.
+    let all: Vec<(String, String)> = runenv::pairs().into_iter().chain(env.iter().cloned()).collect();
+    let to_process = for_the_process(&all);
+    let saved: Vec<(String, Option<std::ffi::OsString>)> = to_process.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
+    for (k, v) in &to_process {
         std::env::set_var(k, v);
+    }
+    let saved_run: Vec<(String, Option<String>)> = env.iter().map(|(k, _)| (k.clone(), runenv::recorded(k))).collect();
+    for (k, v) in env {
+        runenv::set(k, v.clone());
     }
     let here = std::env::current_dir().ok();
     let rc = guarded(|| std::env::set_current_dir(dir).map_err(anyhow::Error::from).and_then(|_| verbs::run_argv(words)));
     if let Some(h) = here {
         let _ = std::env::set_current_dir(h);
+    }
+    for (k, v) in saved_run {
+        match v {
+            Some(v) => runenv::set(&k, v),
+            None => runenv::unset(&k),
+        }
     }
     for (k, v) in saved {
         match v {
@@ -1165,7 +1209,15 @@ mod tests {
         let work_s = work.path().display().to_string();
         let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: true };
         let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
-        let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases);
+        let full = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases);
+        // The commands, verbatim: each phase that runs one, by its number.
+        let (head, rest) = full.split_once("What each phase runs:\n").expect("the commands section");
+        let (cmds, tail) = rest.split_once("\nWhat a real run would leave").map(|(c, t)| (c, format!("\nWhat a real run would leave{t}"))).unwrap_or((rest, String::new()));
+        for ph in phases.iter().filter(|p| p.kind != "MANUAL") {
+            assert!(cmds.contains(&format!("\n    {}\n", ph.cmd)), "phase {}'s command, verbatim:\n{cmds}", ph.n);
+        }
+        // The prose around them reads as before.
+        let view = format!("{head}{tail}");
         assert!(view.contains("PHASE  TYPE     STEP"), "{view}");
         assert!(!view.contains("==="), "{view}");
         assert!(!view.contains('\u{2014}'), "{view}");
@@ -1285,6 +1337,28 @@ mod tests {
         assert_eq!(guarded(|| Err(anyhow!("a fault"))), 1);
     }
 
+    /// Each of federate's fourteen phases has a purpose, for the runner's frame.
+    #[test]
+    fn every_phase_has_a_purpose_for_the_frame() {
+        for n in 1..=14 {
+            assert!(!purpose(n).is_empty(), "phase {n}");
+        }
+        assert!(purpose(15).is_empty());
+    }
+
+    /// Of a verb's values, DOCKER_HOST and FED_ROUTER_CONTAINER reach the process
+    /// environment during an in-process verb, and nothing else does.
+    #[test]
+    fn only_the_two_names_the_library_reads_go_to_the_process() {
+        let all: Vec<(String, String)> = ["DOCKER_HOST", "FED_ROUTER_CONTAINER", "FED_WORK", "FED_KEYRING", "GOAT_PROFILE_DIR", "FED_ROUTER_DOCKER_HOST"]
+            .iter()
+            .map(|k| (k.to_string(), "v".to_string()))
+            .collect();
+        let names: Vec<&str> = for_the_process(&all).iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(names, ["DOCKER_HOST", "FED_ROUTER_CONTAINER"]);
+        assert!(for_the_process(&[("FED_WORK".into(), "v".into())]).is_empty());
+    }
+
     /// An in-process verb returns the verb's own exit code (21 for a malformed
     /// package), and the environment it set is put back afterwards.
     #[test]
@@ -1296,10 +1370,12 @@ mod tests {
         let good = v.join("compose-full/package-xaa.canonical.json").display().to_string();
         let bad = v.join("malformed/no-signature.json").display().to_string();
         assert_eq!(run_verb_in_process(&here, &[], &["lint".into(), good]), 0);
+        // The verb's own value is the run's, for the verb's duration: never the
+        // process environment's, and gone afterwards.
         let key = "GOATBUILDER_TEST_VERB_ENV";
-        std::env::remove_var(key);
         assert_eq!(run_verb_in_process(&here, &[(key.into(), "x".into())], &["lint".into(), bad]), 21);
         assert!(runenv::var_os(key).is_none(), "the verb's environment leaked");
+        assert!(std::env::var_os(key).is_none(), "the verb's environment reached the process");
         assert_eq!(run_verb_in_process(&here, &[], &["lint".into(), "/no/such/package".into()]), 1, "a fault exits 1, as in goat");
         // A relative path is relative to the directory the verb runs in (the
         // repository, in the driver), as it is for a shell phase.

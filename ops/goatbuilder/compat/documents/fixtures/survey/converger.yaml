@@ -1,0 +1,10 @@
+# Machines per environment. prod-c's record cannot be read: survey reports it
+# unknown, never consistent (C7).
+machines:
+  dev:
+    dev-a: converge-now
+    dev-b: converge-now
+  prod:
+    prod-a: converge-now
+    prod-b: converge-now
+    prod-c: unreadable

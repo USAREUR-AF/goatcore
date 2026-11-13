@@ -1,0 +1,15 @@
+# How the scripted converger behaves, per environment and machine. Each word is
+# one shape the contract must survive (goatbuilder-conformance.md):
+#   converge-now   the record carries the declared ref after one observation
+#   after: N       pending until the Nth observation, then converged (C5: resumable)
+#   never          stays pending (C7: never reported done)
+#   unreadable     the record cannot be read (C7: unknown, never done)
+machines:
+  dev:
+    dev-core-a: converge-now
+    dev-core-b: converge-now
+    dev-obs-a: { after: 2 }
+    dev-obs-b: never
+    dev-edge-a: unreadable
+  preprod:
+    preprod-core-a: converge-now

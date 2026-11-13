@@ -1,0 +1,13 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "validate",
+  "ok": true,
+  "exit": 0,
+  "checks": [
+    {
+      "name": "config",
+      "ok": true,
+      "detail": "ops/goatbuilder/compat/documents/fixtures/basic/goatbuilder.yaml validates against goatbuilder/v1"
+    }
+  ]
+}

@@ -97,34 +97,36 @@
     - _edge_core_container | default('') | length > 0
     - (_edge_core_key_config.rc | default(-1) | int) != 0
 
-- name: edge | the key storages the core declares
+- name: edge | compare the core's key storages with the grant
   ansible.builtin.set_fact:
-    _edge_core_key_storages: >-
-      {{ _edge_core_key_config.stdout | regex_findall('"keys/[^"]*"') | unique | join(' ') }}
+    _edge_core_key_report: >-
+      {{ _edge_core_key_config.stdout |
+         zenoh_key_storage_check(goat_zenoh_edge_key_bundle_key_exprs) }}
+  no_log: true
   when:
     - goat_zenoh_edge_key_scope_check | default(true) | bool
     - (_edge_core_key_config.rc | default(-1) | int) == 0
 
-- name: edge | refuse a core whose key storage is wider than the grant
-  ansible.builtin.fail:
-    msg: >-
-      The core stores {{ _edge_core_key_storages }}, which is WIDER
-      than the {{ goat_zenoh_edge_key_bundle_key_exprs | join(', ') }} this edge
-      grants. A queryable declared wider than the granted lane is refused
-      silently, so the partner's fetch will return an empty result that reads as
-      "no bundle published". Narrow the core's key storage to the
-      released set(s), or set goat_zenoh_edge_key_scope_check=false if you have
-      deliberately accepted this.
-  when:
-    - goat_zenoh_edge_key_scope_check | default(true) | bool
-    - _edge_core_key_storages | default('') is search('"keys/\\*\\*"')
-
-- name: edge | report a key-storage comparison that passed
-  ansible.builtin.debug:
-    msg: >-
-      PASS: the core's key storages ({{ _edge_core_key_storages | default('') or 'none' }})
-      are no wider than the key-bundle grant
-      {{ goat_zenoh_edge_key_bundle_key_exprs | join(', ') }}.
+# Every storage that can hold a key under keys/ must be included in the grant, by
+# key-expression inclusion: a store wider than the grant (keys/**, keys/*/**) or for
+# another set (keys/other/**) declares a queryable the edge refuses SILENTLY.
+- name: edge | refuse a core whose key storage is not included in the grant
+  ansible.builtin.assert:
+    that:
+      - _edge_core_key_report.error | length == 0
+      - _edge_core_key_report.wider | length == 0
+    fail_msg: >-
+      {{ _edge_core_key_report.error or ('The core stores ' ~ (_edge_core_key_report.wider | join(', '))
+         ~ ', not included in the key-bundle grant ' ~ (goat_zenoh_edge_key_bundle_key_exprs | join(', '))
+         ~ '.') }} A queryable declared wider than the granted lane, or for
+      another lane, is refused silently, so the partner's fetch will return an
+      empty result that reads as "no bundle published". Narrow the core's key
+      storage to the released set(s), or set goat_zenoh_edge_key_scope_check=false
+      if you have deliberately accepted this.
+    success_msg: >-
+      PASS: every key storage on the core
+      ({{ (_edge_core_key_report.observed | join(', ')) or 'none' }}) is included in
+      the key-bundle grant {{ goat_zenoh_edge_key_bundle_key_exprs | join(', ') }}.
   when:
     - goat_zenoh_edge_key_scope_check | default(true) | bool
     - (_edge_core_key_config.rc | default(-1) | int) == 0

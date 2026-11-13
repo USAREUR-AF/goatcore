@@ -1,0 +1,13 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "adopt",
+  "ok": true,
+  "exit": 0,
+  "checks": [
+    {
+      "name": "dev/dev/portal",
+      "ok": true,
+      "detail": "would declare portal:v1.3.2@sha256:9f8e7d6c5b4a (declared portal:v1.4.0@sha256:0b2a6c1d3e4f)"
+    }
+  ]
+}

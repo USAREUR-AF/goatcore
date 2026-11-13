@@ -1,0 +1,6 @@
+# The published binaries the baseline was recorded from: <sha256>  <tag> <file>,
+# as each release's SHA256SUMS lists them. Written by compat.py refresh.
+a8c14272af10a93f60c99a800a78984eea07f301f8b4a57cee1612396a4505c8  goatbuilder/v0.4.1 goatbuilder-linux-amd64
+e194b492b1b5a86cb541c8d513545e752ea5bec5c5a32c7c519a40d241ed65c0  goatbuilder/v0.4.2 goatbuilder-linux-amd64
+d00961cfb7e392ecdd5aef29260cefbace8d433f69677c6fa59964fa505d7dd2  goatbuilder/v0.4.3 goatbuilder-linux-amd64
+cce77bed0e0237cb3d7e07f8ce3fc66297c2aa0d32cee0e8168bcbeb23ccdbd2  goatbuilder/v0.5.1 goatbuilder-linux-amd64

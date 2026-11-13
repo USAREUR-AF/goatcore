@@ -12,10 +12,10 @@
 //! for it first), and [`command`] starts a child with every recorded value in
 //! its environment. Nothing here touches the process environment.
 
+use crate::runner::Cmd;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::process::Command;
 
 thread_local! {
     static RUN: RefCell<BTreeMap<String, String>> = const { RefCell::new(BTreeMap::new()) };
@@ -26,10 +26,15 @@ pub fn set(name: &str, value: impl Into<String>) {
     RUN.with(|r| r.borrow_mut().insert(name.to_string(), value.into()));
 }
 
-/// Forget `name` for this run (a test that recorded one).
-#[cfg(test)]
+/// Forget `name` for this run.
 pub fn unset(name: &str) {
     RUN.with(|r| r.borrow_mut().remove(name));
+}
+
+/// The value this run recorded for `name`, without falling back to the process
+/// environment (so a caller can put it back as it was).
+pub fn recorded(name: &str) -> Option<String> {
+    RUN.with(|r| r.borrow().get(name).cloned())
 }
 
 /// `name` as this run sees it: the value it recorded, else the process
@@ -54,10 +59,11 @@ pub fn pairs() -> Vec<(String, String)> {
     RUN.with(|r| r.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect())
 }
 
-/// A child of this run: `Command::new(program)` with every recorded value in
-/// its environment.
-pub fn command(program: impl AsRef<OsStr>) -> Command {
-    let mut c = Command::new(program);
+/// A child of this run, started through the runner (one door for every child
+/// process, crates/goatbuilder/src/runner.rs), with every recorded value in its
+/// environment.
+pub fn command(program: impl AsRef<OsStr>) -> Cmd {
+    let mut c = Cmd::new(program);
     c.envs(pairs());
     c
 }
