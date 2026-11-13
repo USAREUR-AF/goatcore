@@ -191,6 +191,14 @@ The run that takes a peering's lock removes every `.state.json.<pid>.tmp`
 that a killed run left in the peering's working folder, before it reads the
 journal, and reports each one as a `journal` row.
 
+#### Fixed: a federate run killed in phase 11 resumes and brings the link up
+
+A run killed after phase 11 wrote the WireGuard link's files, and before it
+restarted the link, left the interface with no peer. Resuming with `--from 11`
+changed no file, so the link was never restarted and phase 11 refused, then
+phase 12. The `goat-peering-wg` role now reads the interface and restarts the
+link whenever the interface does not hold the agreed peer and address (#597).
+
 #### Fixed: values reach the phases as one word each
 
 Values standup reads from a site's group_vars and inventory, among them
