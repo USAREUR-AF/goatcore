@@ -93,6 +93,10 @@
   become: true
   no_log: true
 
+# HOME=/tmp on every exec: mc writes its config directory under $HOME before it
+# runs any command, and the MinIO container runs as minio_uid with HOME=/,
+# which that user cannot write. Without it mc stops with
+# "Unable to save new mc config. mkdir /.mc: permission denied".
 - name: audit-subscriber | lifecycle | apply the policy
   become: true
   block:
@@ -102,7 +106,7 @@
     - name: audit-subscriber | lifecycle | check the minio endpoint answers
       ansible.builtin.command:
         cmd: >-
-          docker exec --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
+          docker exec -e HOME=/tmp --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
           {{ audit_subscriber_minio_container | quote }}
           mc ls {{ audit_subscriber_minio_alias }}
       register: audit_subscriber_lifecycle_alias_check
@@ -128,7 +132,7 @@
     - name: audit-subscriber | lifecycle | check bucket exists
       ansible.builtin.command:
         cmd: >-
-          docker exec --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
+          docker exec -e HOME=/tmp --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
           {{ audit_subscriber_minio_container | quote }}
           mc ls {{ audit_subscriber_minio_alias }}/{{ audit_subscriber_s3_bucket }}
       register: audit_subscriber_lifecycle_bucket_check
@@ -154,7 +158,7 @@
     - name: audit-subscriber | lifecycle | export current rules (for drift detection)
       ansible.builtin.command:
         cmd: >-
-          docker exec --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
+          docker exec -e HOME=/tmp --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
           {{ audit_subscriber_minio_container | quote }}
           mc ilm rule export {{ audit_subscriber_minio_alias }}/{{ audit_subscriber_s3_bucket }}
       register: audit_subscriber_lifecycle_current
@@ -216,7 +220,7 @@
     - name: audit-subscriber | lifecycle | apply policy via mc ilm import (replaces existing)
       ansible.builtin.command:
         cmd: >-
-          docker exec --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
+          docker exec -e HOME=/tmp --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
           {{ audit_subscriber_minio_container | quote }} sh -c
           "mc ilm rule import {{ audit_subscriber_minio_alias }}/{{ audit_subscriber_s3_bucket }} < /tmp/audit-integrity-lifecycle.json"
       register: audit_subscriber_lifecycle_apply
@@ -244,7 +248,7 @@
     - name: audit-subscriber | lifecycle | re-export applied rules
       ansible.builtin.command:
         cmd: >-
-          docker exec --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
+          docker exec -e HOME=/tmp --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
           {{ audit_subscriber_minio_container | quote }}
           mc ilm rule export {{ audit_subscriber_minio_alias }}/{{ audit_subscriber_s3_bucket }}
       register: audit_subscriber_lifecycle_applied
@@ -344,7 +348,7 @@
     - name: audit-subscriber | lifecycle | read the writer's attached policies
       ansible.builtin.command:
         cmd: >-
-          docker exec --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
+          docker exec -e HOME=/tmp --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
           {{ audit_subscriber_minio_container | quote }}
           mc admin user info {{ audit_subscriber_minio_alias }} {{ audit_subscriber_s3_user | default('audit-subscriber') }}
       register: audit_subscriber_user_info
