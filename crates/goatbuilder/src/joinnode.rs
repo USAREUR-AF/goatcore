@@ -235,7 +235,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             // and the Spock roles' inventory walk then finds no peer.
             let bs = crate::standup::bootstrap_play(repo, site);
             let p1 = if intra_pair { format!("{ev_secrets} -e participates_in_spock=false") } else { format!("{ev_secrets} -e participates_in_spock=false -e has_durable_independent_state=true") };
-            ev.push(p(13, "A", "[core, joiner] pass 1 — bootstrap without Spock (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {p1}")));
+            // Pass 1 runs site-bootstrap's `stack` plays only, as standup's
+            // phase 5 does: the `after-ory` plays wait for the management
+            // service, which waits for Hydra, which the next step deploys.
+            // Pass 3 runs the whole file once Ory is up.
+            ev.push(p(13, "A", "[core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {p1} --skip-tags after-ory")));
             ev.push(p(13, "A", "[core, joiner] the service deploys the seed needs (kratos/hydra schemas): ory", format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {node} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}'")));
             ev.push(p(13, "A", &format!("[core, joiner] pass 2 — seed-from-peer: data-only copy from founder {founder_site} (fails loud if the account is populated)"), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {seed_play} -e site_id={site}")));
             // Ory (Phase 7D) subscribes each side only to a peer that already has
@@ -646,6 +650,20 @@ mod tests {
         let ph = plan(t.path(), &o).unwrap();
         let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
         assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e bootstrap_owner_email"), "{}", core[0].cmd);
+    }
+
+    /// Pass 1 runs site-bootstrap's `stack` plays only: the `after-ory` plays
+    /// end on the management service, which waits for Hydra, and Ory is the
+    /// next step. Pass 3, after Ory, runs the whole file, as standup's
+    /// joiner does.
+    #[test]
+    fn pass_1_runs_the_stack_plays_only_and_pass_3_the_whole_file() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        assert!(core[0].label.contains("pass 1") && core[0].cmd.ends_with(" --skip-tags after-ory"), "{}", core[0].cmd);
+        assert!(core[1].cmd.contains("ory-deploy.yml"), "Ory follows pass 1: {}", core[1].cmd);
+        assert!(core[3].label.contains("pass 3") && !core[3].cmd.contains("--skip-tags"), "{}", core[3].cmd);
     }
 
     /// After the Spock wiring, a joiner's core node runs signal federation:
