@@ -69,7 +69,7 @@ One entry per error. The fields:
 | `read` | a path in this repository to read more; the gate checks it exists. It never names a document that only a deployment's overlay or a sibling repository holds, because the catalog ships in one build for every deployment |
 | `exit` | the exit code the binary returns (goat and goatbuilder codes only) |
 | `matches` | regular expressions over the whole text of an error, for errors that arrive as text; any one matching is a hit |
-| `retired` | `"<release>: <why>"` for a code no binary raises any more. A code a release printed is never deleted and never given another meaning, because logs, run records and pasted output keep it and `explain` must still answer for it with the meaning it had. A retired entry stays in the catalog, and only a retired entry may change its title |
+| `retired` | `"<release tag>: <why>"` for a code no binary raises any more: the tag of the release that stopped raising it, `goatbuilder/vX.Y.Z` or `goat-cli-vX.Y.Z` (ADR 1228's form), such as `retired: "goatbuilder/v0.6.0: standup reads the site from the plan"`. A code a release printed is never deleted and never given another meaning, because logs, run records and pasted output keep it and `explain` must still answer for it with the meaning it had. A retired entry stays in the catalog, and only a retired entry may change its title |
 
 The catalog is the lexical data store the operator asked for: expandable by a YAML block, read by both binaries, no code to change for a new pattern. `ops/ci/check-error-catalog.py` holds it to the contract (§"The gate").
 
@@ -112,7 +112,7 @@ The goat `E_*` namespace, its exit codes and `docs/design/goat-cli-error-codes.m
 - every code a binary cites in Rust exists in the catalog; every `#[error("E_…")]` variant in `errors.rs` exists in the catalog
 - every row of `docs/design/goat-cli-error-codes.md` is in the catalog with the same exit code, and every `E_*` entry has a row there
 - `docs/reference/errors.md` equals what `--write` renders from the catalog
-- a `retired` mark, where there is one, is a non-empty string
+- a `retired` mark, where there is one, names a release tag and a reason: `^(goatbuilder/v|goat-cli-v)\d+\.\d+\.\d+: .+`
 
 `ops/ci/check-error-codes-kept.py` (same workflow; gate row A5) holds the catalog to the last release: it reads `ops/errors/catalog.yaml` at the last release of each binary that prints these codes, the newest `goatbuilder/v<x.y.z>` and `goat-cli-v<x.y.z>` tags reachable from HEAD (highest version, pre-releases excluded), with `git show`, never the network, and fails when a code of such a release is absent from the tree's catalog, or its title has changed and its entry carries no `retired` mark. A new code passes, a retired one passes whatever its title, and rewording `what`, `causes` or `fixes` passes: the title is the code's meaning. A pre-release tag (`-rc.N`) is not a release.
 

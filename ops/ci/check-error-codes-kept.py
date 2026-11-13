@@ -113,7 +113,7 @@ def self_test():
                              "GB-002": entry("GB-002", "the host did not answer")}, ["GB-002"]),
         ("a retired code", {"GB-001": released["GB-001"],
                             "GB-002": entry("GB-002", "retired: the site is not declared",
-                                            retired="0.6.0: standup reads the site from the plan")}, []),
+                                            retired="goatbuilder/v0.6.0: standup reads the site from the plan")}, []),
         ("a new code", {**released, "GB-003": entry("GB-003", "a new refusal")}, []),
         ("a reworded what", {**released, "GB-001": entry("GB-001", "the plan cannot be read",
                                                             what="said differently")}, []),
@@ -196,7 +196,7 @@ def main():
         for p in found:
             print(f"  {p}")
         print("A code a release printed is never removed or given another meaning. Keep its entry; if it is no "
-              "longer raised, mark it `retired: \"<release>: <why>\"` (docs/design/error-interpretation.md).")
+              "longer raised, mark it `retired: \"<release tag>: <why>\"`, such as goatbuilder/v0.6.0 (docs/design/error-interpretation.md).")
         return 1
     print(f"check-error-codes-kept: ok, every code of {base} is kept")
     return 0

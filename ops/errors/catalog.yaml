@@ -21,7 +21,9 @@
 #   matches  regular expressions over the WHOLE text of an error, for errors that
 #            arrive as text (a tool's stderr carried inside a goat error). Any one
 #            matching is a hit. Case-sensitive; keep them literal and specific.
-#   retired  "<release>: <why>" for a code no binary raises any more. A code a release
+#   retired  "<release tag>: <why>" for a code no binary raises any more: the tag of
+#            the release that stopped raising it, goatbuilder/vX.Y.Z or goat-cli-vX.Y.Z
+#            (ADR 1228's form), e.g. "goatbuilder/v0.6.0: <why>". A code a release
 #            printed is never deleted or given another meaning: logs keep it, and
 #            explain must still answer for it. A retired entry stays, and only it may
 #            change its title (ops/ci/check-error-codes-kept.py, gate row A5).
