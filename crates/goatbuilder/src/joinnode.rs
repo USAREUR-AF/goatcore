@@ -326,6 +326,70 @@ pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
     execute(repo, o)
 }
 
+/// The end-state model's script, relative to the checkout.
+const MODEL: &str = "ops/goatbuilder/endstate/endstate.py";
+
+/// One service the site does not run, as the plan prints it.
+fn not_run_line(service: &str, reason: &str) -> String {
+    format!("{service} \u{2014} {reason}")
+}
+
+/// What the site does not run (docs/design/goatbuilder.md, `join-node` (d)):
+/// every catalog service the end-state model marks absent here, each with the
+/// model's own reason, under one heading. The model is read, never re-derived,
+/// so this list and `goatbuilder endstate`'s N/A rows cannot disagree. A model
+/// that cannot be read is one `not read` line naming what is missing; the run
+/// does not stop for it, and no list is guessed.
+fn not_run(repo: &Path, site: &str) -> Vec<Check> {
+    let shown = format!("{MODEL} model {site}");
+    let mut rows = vec![row("not-run-heading", format!("What {site} does not run: every catalog service the end-state model marks absent here, with its reason ({shown})"))];
+    let not_read = |why: String| row("not-run", format!("not read: {why}; this list of what the site does not run is left out"));
+    let script = repo.join(MODEL);
+    if !script.is_file() {
+        rows.push(not_read(format!("{MODEL} is not in this checkout")));
+        return rows;
+    }
+    let python = crate::endstate::python();
+    let out = match Cmd::new(&python).arg(&script).args(["model", site, "--root"]).arg(repo).current_dir(repo).output() {
+        Ok(o) => o,
+        Err(e) => {
+            rows.push(not_read(format!("cannot run {python} for {shown}: {e}")));
+            return rows;
+        }
+    };
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+        let how = out.status.code().map_or("it was killed".to_string(), |c| format!("exit {c}"));
+        rows.push(not_read(format!("{shown} failed ({how}){}", if last.is_empty() { String::new() } else { format!(": {last}") })));
+        return rows;
+    }
+    let Ok(model) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
+        rows.push(not_read(format!("{shown} printed no model")));
+        return rows;
+    };
+    let Some(services) = model.get("services").and_then(|s| s.as_object()) else {
+        rows.push(not_read(format!("{shown} printed no services")));
+        return rows;
+    };
+    let before = rows.len();
+    for (name, s) in services {
+        if s.get("present") != Some(&serde_json::Value::Bool(false)) {
+            continue;
+        }
+        let reason = s.get("reason").and_then(|r| r.as_str()).map(str::to_string).unwrap_or_else(|| {
+            // A model from before the reason field: its declarations, verbatim.
+            let decls = s.get("declarations").and_then(|d| d.as_array()).cloned().unwrap_or_default();
+            decls.iter().filter_map(|d| d.get("why").and_then(|w| w.as_str())).collect::<Vec<_>>().join("; ")
+        });
+        rows.push(row("not-run", not_run_line(name, &reason)));
+    }
+    if rows.len() == before {
+        rows.push(row("not-run", "nothing: the model marks no catalog service absent here".into()));
+    }
+    rows
+}
+
 /// The plan and the run, once the environment, site and class are known.
 fn execute(repo: &Path, o: &Options) -> Result<Report> {
     if !VIAS.contains(&o.via) {
@@ -379,6 +443,8 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
             break;
         }
     }
+    // What the site does not run, in the plan and in a real run's summary alike.
+    checks.extend(not_run(repo, o.site));
     if o.dry_run {
         checks.push(row("footer", "PLAN complete. Remove --dry-run to execute (needs --address). Manual steps (1, 8, 10) pause the run; resume with --from <next>. docs/tutorials/02-first-federated-node.md walks through it.".into()));
     }
@@ -501,6 +567,25 @@ mod tests {
         assert!(ran > 20, "{ran} commands");
         let argv = std::fs::read_to_string(&log).unwrap_or_default();
         assert!(argv.lines().any(|l| l == founder), "the founder reaches the gate as written:\n{argv}");
+    }
+
+    /// One line per service the site does not run: its name, a dash, and the
+    /// model's reason verbatim. A checkout with no model gets one `not read`
+    /// line under the heading, naming the missing script, and no list.
+    #[test]
+    fn what_the_site_does_not_run_reads_as_the_models_reason() {
+        assert_eq!(
+            not_run_line("isitup", "`isitup_enabled` is false in group_vars"),
+            "isitup \u{2014} `isitup_enabled` is false in group_vars"
+        );
+        let t = tempfile::tempdir().unwrap();
+        let rows = not_run(t.path(), "zagros-b");
+        assert_eq!(rows.len(), 2, "{:?}", rows.iter().map(|r| &r.detail).collect::<Vec<_>>());
+        assert_eq!(rows[0].name, "not-run-heading");
+        assert!(rows[0].detail.starts_with("What zagros-b does not run:") && rows[0].detail.contains("ops/goatbuilder/endstate/endstate.py model zagros-b"), "{}", rows[0].detail);
+        assert_eq!(rows[1].name, "not-run");
+        assert_eq!(rows[1].detail, "not read: ops/goatbuilder/endstate/endstate.py is not in this checkout; this list of what the site does not run is left out");
+        assert!(rows.iter().all(|r| r.ok), "a missing list is a stated line, not a refusal");
     }
 
     /// A checkout with one founder and one joiner site, for the plan tests
