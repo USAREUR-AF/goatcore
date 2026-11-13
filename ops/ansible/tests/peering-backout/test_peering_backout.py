@@ -610,6 +610,22 @@ class ProbeState(unittest.TestCase):
             with self.subTest(out=out):
                 self.assertEqual(unit(0, out)["state"], "unknown", out)
 
+    def test_a_loaded_unit_that_is_not_a_template_instance_is_present(self):
+        # LoadState=loaded means a unit file is on disk. For a template instance
+        # (name@instance) that file is the shared template, not this peering's; for
+        # any other unit it is the file itself, which a back-out must remove: idle,
+        # disabled and still there is present, never absent.
+        idle = "LoadState=loaded\nActiveState=inactive\nUnitFileState=disabled\n"
+        for name in ("goat-peering-bundle-in-xac.socket", "goat-peering-bundle-out-xac.service"):
+            with self.subTest(name=name):
+                got = self.state("systemd", 0, stdout=idle, name=name)
+                self.assertEqual(got["state"], "present", got)
+                self.assertIn("unit file", got["note"])
+        self.assertEqual(self.state("systemd", 0, stdout=idle, name="goat-peering-link@xaa-xac.service")["state"],
+                         "absent")
+        self.assertEqual(self.state("systemd", 0, stdout="LoadState=not-found\nActiveState=inactive\n",
+                                    name="goat-peering-bundle-in-xac.socket")["state"], "absent")
+
     def test_a_probe_that_did_not_run_is_unknown(self):
         self.assertEqual(self.mod.backout_probe_state({"skipped": True}, "docker", "x")["state"], "unknown")
         self.assertEqual(self.mod.backout_probe_state(None, "docker", "x")["state"], "unknown")

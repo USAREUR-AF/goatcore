@@ -72,14 +72,16 @@ def _not_found(kind, rc, line, name, err=''):
 _RUNNING = ('active', 'activating', 'deactivating', 'reloading', 'refreshing')
 
 
-def _unit_state(result):
+def _unit_state(result, name):
     """A systemd unit, from `systemctl show -p LoadState -p ActiveState -p UnitFileState`.
 
     present  running in any form (ActiveState active, activating, deactivating,
              reloading), or enabled (UnitFileState enabled or enabled-runtime);
-    absent   neither, with LoadState not-found (no unit file) or loaded (a
-             template instance never started: the template exists, the
-             instance is not this peering's link);
+    absent   neither, with LoadState not-found (no unit file), or loaded for a
+             template instance (name@instance) never started: its file is the
+             shared template, and the instance is not this peering's link. A
+             loaded unit that is not a template instance has its own unit file
+             on disk, which the back-out removes, so it is present;
     unknown  a non-zero exit (the bus could not be reached, and so on), no
              LoadState in the answer, or any other LoadState (masked, error,
              bad-setting), which the probe cannot read as either.
@@ -103,6 +105,8 @@ def _unit_state(result):
         return {'state': 'unknown', 'note': 'rc 0: systemctl show gave no LoadState'}
     if active in _RUNNING or enabled in ('enabled', 'enabled-runtime'):
         return {'state': 'present', 'note': '%s, %s' % (active or '-', enabled or '-')}
+    if load == 'loaded' and '@' not in str(name):
+        return {'state': 'present', 'note': 'unit file on disk (%s, %s)' % (active or '-', enabled or '-')}
     if load in ('not-found', 'loaded'):
         return {'state': 'absent', 'note': ''}
     return {'state': 'unknown', 'note': 'rc 0: LoadState=%s' % load}
@@ -114,7 +118,7 @@ def backout_probe_state(result, kind, name):
     if not isinstance(result, dict) or result.get('skipped') or not isinstance(result.get('rc'), int):
         return {'state': 'unknown', 'note': 'the probe did not run'}
     if kind == 'systemd':
-        return _unit_state(result)
+        return _unit_state(result, name)
     rc = result['rc']
     out = result.get('stdout') or ''
     err = result.get('stderr') or ''
