@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Open decision.** The options are designed; none is built. Today's behavior is stated under "What happens today" |
+| Status | **Decided, 13 November 2026: option (a)**, under the rule in "The decision". To be reviewed later; no date is set. The back-out that carries it out is designed and not built. Today's behavior is stated under "What happens today"
 | Decides | What `goatbuilder federate backout <partner>` does with the core's receive stores for that partner, above all when it is the last peering |
 | Gate row | B7 of the goatbuilder 1.0 gate: "Backing a peering out removes everything the command created and nothing else", proven by the back-out scenario and a comparison of both hosts with their state before the peering |
 | Related | [sovereign-federation-runbook.md](../operations/sovereign-federation-runbook.md), Step 9 · [federation-package-spec.md](federation-package-spec.md), "Receiving storage interests" · [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md) |
@@ -10,8 +10,93 @@
 A partner's data is the one class of data on our core that we did not
 generate. Admission makes the core store it; a back-out today does not remove
 that store or the data in it. Gate row B7 says a back-out removes everything
-the command created and nothing else. This paper sets out three ways to make
-the back-out and that row agree, and what each costs.
+the command created and nothing else. This paper set out three ways to make
+the back-out and that row agree, and what each costs. Option (a) was chosen.
+
+## The decision
+
+**Plain:** a partner's data is kept in a store of its own. While the peering
+runs, the only thing that deletes it is the 7-day retention every store has.
+When the peering ends, the back-out drops that store whole. We never delete
+one partner's records one by one.
+
+The rule:
+
+  1. A partner's data lives in its own store, separated by structure.
+  2. While a peering is live, the only deletion is the 7-day retention, the same for everyone.
+  3. When a peering ends, the partner's store is dropped whole.
+  4. We never build deletion by record, by key or by person. Agreements state what the mechanism does; the mechanism does not bend to each agreement.
+
+The operator's words, recorded with it: "okay let's do this and note that it
+warrants a review and consideration at some point but we move out with this
+design to get somewhere working for now".
+
+- **To be reviewed.** The decision is to be reviewed and reconsidered later.
+  No date is set.
+- **Why.** Machinery that finds and cleanses one customer's data, once it is
+  started for one contractual case, grows until it is as large as the data
+  system itself. A store per partner, dropped whole, keeps deletion a property
+  of the structure instead.
+- **Option (c) is not built**, now or as a follow-up. Deleting a partner's
+  samples by key is rule 4's deletion by key.
+- **What the back-out will do** (designed, not built): remove the partner's
+  entry from `zenoh_sovereign_peerings`, run the core play, and delete
+  `sovereign_from_<partner>` only after the router has restarted without that
+  store, behind the back-out's existing typed confirmation. GB-227 ("a
+  back-out never edits configuration") and the F-447 rule that the role never
+  deletes a store directory change with it, in the same change.
+- **A store directory nothing declares** (an entry removed by hand, outside a
+  back-out) has no retention. The role reports it, as it does today
+  (`.undeclared-stores`); no automatic deletion is added for it.
+
+## Can the shared `sovereign_from` store go?
+
+**Plain:** yes. Every partner's samples in the shared store are also in that
+partner's own store, and nothing reads the shared one. Removing it from the
+role is what makes rule 1 hold: today each partner's samples are kept twice,
+once mixed with every other partner's.
+
+Checked against `main` at 2133f4d4 by reading the role and rendering its
+template; not measured on a running core.
+
+- **Every write under `from/` on a role core is one of two kinds.** Rendering
+  `config.json5.j2` with the role's own test helper
+  (`ops/ansible/roles/goat-zenoh/tests/render-check.py`, `render`) for two
+  partners, `xaa` with an outbound republisher and `xab` without, with and
+  without `goat_zenoh_legacy_system_namespace`, and scanning all 50 rules,
+  the only rules that allow an ingress `put` on a key under `from/` (or on
+  `**`) are `sovereign-<partner>-w` on `from/<partner>/**`, one per partner,
+  and `sovereign-<partner>-rp-w` on our own wire name (`from/<us>/<set>/**`,
+  the republisher, the only writer of that name). The access rules deny by
+  default.
+- **So the shared store holds nothing of a partner's that its own store does
+  not.** A sample from a partner is on `from/<partner>/**`, which
+  `sovereign_from_<partner>` covers. The role has rendered a store per
+  partner since 29c6ec8f (#235, 9 November 2026). A sample a core received
+  before it first ran that role is in the shared store alone, until the
+  deployment's retention (`zenoh_from_retention_days`, 7 days by default) has
+  passed since then. That retention is not measured here (see "Retention").
+- **The shared store also holds our own outbound wire name**, `from/<us>/**`,
+  because `from/**` covers it. Nothing in this repository reads that copy: the
+  federation test environment's checks read what the receiving core stored
+  under the sender's name (`stored_at` in `ops/federation-e2e/units/pair.sh`).
+  After the removal, a query that reaches our core for our own wire name is
+  answered by no store on our core. A record of what we sent, if one is
+  wanted, is a separate decision.
+- **Nothing else names the shared store.** Outside the template, only the
+  role's render test (`render-check.py`, "existing store path retained") and
+  the storage-restart test's copy of the stores
+  (`tests/zenoh-core-storage-restart.sh`) name `sovereign_from`; both change
+  with the removal. The preflight and the edge's ingress check already treat a
+  `from/**` store as insufficient on its own (GB-136).
+- **What the removal leaves on a core that has the store today.** The
+  directory `<storage path>/sovereign_from` stays on disk, with no retention.
+  The role lists it in `.undeclared-stores` and never deletes it; disposing of
+  it is a person's step, named in the runbook. A core built after the removal,
+  such as the federation test environment's, never has it, so a back-out there
+  leaves no residue.
+
+The removal from the role comes with the back-out's build.
 
 ## Where the store comes from
 
@@ -98,6 +183,10 @@ deletes `sovereign_from_<partner>`. On the last peering it also deletes
 `sovereign_from`. A directory is deleted only after the router has restarted
 without the store.
 
+As decided, the shared `sovereign_from` is removed from the role instead (see
+"Can the shared `sovereign_from` store go?"), so no back-out has a shared
+store to deal with, and the partner's samples are only in its own store.
+
 | | |
 |---|---|
 | Data obligations | Meets an obligation to delete on termination at once. Removes the audit copy of what the partner sent; anything needed later has to be exported first. On a back-out that leaves other peerings, the partner's samples in the shared `sovereign_from` remain until retention removes them, because that store holds every partner's data |
@@ -148,9 +237,11 @@ empty store, or is removed as in (a).
 | B7 comparison | exact | with a named exception | with a named exception while the shared store stays |
 | Changes to today's rules | back-out edits configuration; role deletes a directory | new declaration state; template change | a temporary delete grant or an on-host deletion; role deletes a directory |
 
-## The question
+## The question, as it was put
 
 When the last peering is backed out, should the back-out remove the partner
 store and its data (a), keep both under the retention policy as a named
 exception to B7 (b), or delete the partner's data by key and keep only what
 other peerings still need (c)?
+
+Answered: (a), under the rule in "The decision".

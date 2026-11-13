@@ -770,6 +770,10 @@ Then, in this order:
    store. Follow the agreed retention/deletion procedure for all copies, while
    preserving other partners' data. With `zenoh_orphan_stores_fail: true`, an
    approved disposition or migration is needed before the deploy can proceed.
+   What a back-out will do with these stores is decided: each partner's store is dropped
+   whole when the peering ends, and the shared `sovereign_from` store leaves the role
+   ([federation-backout-partner-data.md](../design/federation-backout-partner-data.md)).
+   Neither is built yet, so today this step is as written above.
 
 There is no certificate revocation list and no way to revoke a single certificate. Cutting the
 tunnel is the control that actually works; the rest is cleanup.
