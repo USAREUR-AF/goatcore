@@ -3,11 +3,15 @@
 Four surfaces of goatbuilder are what other people build on: the
 configuration, the commands and flags, the `-o json` and `-o yaml` documents,
 and the error codes. This directory holds what the last release did on the
-last three, and `compat.py` checks that a build still does it. The rules are
-the ones in "What 1.0 promises" in the goatbuilder 1.0 gate (rows A3 to A5).
+commands and flags and on the documents, and `compat.py` checks that a build
+still does it. The rules are the ones in "What 1.0 promises" in the goatbuilder
+1.0 gate (rows A3 and A4).
 The configuration files of every release (row A2) are kept with the crate's
 tests and checked by `cargo test -p goatbuilder --test config_compat`; see
 [crates/goatbuilder/tests/compat/README.md](../../../crates/goatbuilder/tests/compat/README.md).
+The error codes (row A5) are held to the last release by
+`ops/ci/check-error-codes-kept.py`, which reads the catalog at the release tags
+with `git show` and keeps no copy here.
 
 ```bash
 cd crates && cargo build -p goatbuilder && cd ..
@@ -33,7 +37,7 @@ build.
 |---|---|---|---|
 | A3 | No command or flag of the last release is gone or renamed, unless `deprecations.yaml` names it. A flag that took a value still takes one; a value a flag or argument accepted (`[possible values: …]` in its `--help`) is still accepted, unless `deprecations.yaml` names it with `value:`; an optional positional argument does not become required; no positional argument is dropped | `surface.json` | `goatbuilder docs --markdown` of the released binary, which equals the release's `docs/reference/goatbuilder/command-reference.md`, and each command's `--help` for its possible values |
 | A4 | Each kept document is still produced by the same invocation, with the same version (`schema`; a document that had none may gain one), the same exit code, and no field removed or retyped. A list that had entries must still have entries. Added fields pass | `documents/manifest.yaml`, `documents/<name>.<format>`, `documents/fixtures/` | the released binary, run on the fixtures kept beside the documents |
-| A5 | Every `GB-nnn` code of the last release is in `ops/errors/catalog.yaml` with the same title. A retitled entry passes only when it carries `retired:`. A code that is gone always fails: a retired code stays in the catalog | `errors.yaml` | `ops/errors/catalog.yaml` at the release tag |
+| A5 | Every code of the last goatbuilder and goat-cli release is still in `ops/errors/catalog.yaml` with the same title, unless its entry is marked `retired:` | nothing: `ops/ci/check-error-codes-kept.py` checks it | `ops/errors/catalog.yaml` at the release tags |
 
 ## When a release is published
 
@@ -55,7 +59,7 @@ release already pinned there, and one whose `--version` is not the tag's: a
 local build of main reports the same version as the last release, so the
 version alone proves nothing. It never writes the pin list, and `check` refuses
 a `baseline.yaml` whose binary that list does not pin (it names the file). It rewrites
-`surface.json`, `errors.yaml`, the documents and their exit codes, and
+`surface.json`, the documents and their exit codes, and
 `baseline.yaml`. Review the diff: a document or code that changed between the two
 releases is a change the release made, and its notes should say so.
 
@@ -82,8 +86,10 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
   release that first warns. The deprecation period itself is a decision that is
   not yet taken (row A1).
 - **An error code no longer printed, or whose fault is renamed.** Keep the
-  entry in the catalog and add `retired: goatbuilder/vX.Y.Z`. A different fault
-  gets a new code.
+  entry in the catalog and mark it `retired: "<tag>: <why>"`, such as
+  `retired: "goatbuilder/v0.6.0: standup reads the site from the plan"`
+  (docs/design/error-interpretation.md). A different fault gets a new code.
+  `ops/ci/check-error-codes-kept.py` checks it, not `compat.py`.
 - **A kept exit code that changes** (before 1.0 only; exit codes are a
   promised surface). Edit that invocation's `exit` in
   `documents/manifest.yaml` in the same pull request and give the reason in

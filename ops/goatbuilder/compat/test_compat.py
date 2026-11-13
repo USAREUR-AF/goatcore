@@ -6,8 +6,6 @@ baseline of the last release (baseline.yaml names it):
   A3  no command or flag of the last release is gone without a deprecation entry
   A4  every kept `-o json` / `-o yaml` document of the last release is still
       produced, as a superset: no field removed or retyped, the same version
-  A5  every GB-nnn code of the last release is still in the catalog with its
-      title, unless the entry is marked retired
 
 The unit tests build a violation of each rule and show the check refuses it.
 The whole check against a build runs when GOATBUILDER_BIN names one:
@@ -490,42 +488,6 @@ printf '{"schema":"t/v1","home":"%s","xdg":"%s","raw":"%s","real":"%s"}\\n' "$HO
         self.assertEqual(json.loads(out)["p"], "{scratch}/basic")
 
 
-class A5ErrorCodes(unittest.TestCase):
-    BASE = [{"code": "GB-001", "title": "unknown component"}, {"code": "GB-002", "title": "no plan"}]
-
-    def catalog(self):
-        return [
-            {"code": "GB-001", "tool": "goatbuilder", "title": "unknown component"},
-            {"code": "GB-002", "tool": "goatbuilder", "title": "no plan"},
-        ]
-
-    def test_the_same_codes_pass(self):
-        self.assertEqual(compat.error_problems(self.BASE, self.catalog()), [])
-
-    def test_a_new_code_passes(self):
-        c = self.catalog() + [{"code": "GB-003", "tool": "goatbuilder", "title": "new"}]
-        self.assertEqual(compat.error_problems(self.BASE, c), [])
-
-    def test_an_absent_code_is_refused(self):
-        p = compat.error_problems(self.BASE, self.catalog()[:1])
-        self.assertEqual(len(p), 1, p)
-        self.assertIn("GB-002", p[0])
-
-    def test_a_retitled_code_is_refused(self):
-        c = self.catalog()
-        c[1]["title"] = "the plan file is missing"
-        self.assertIn("GB-002", compat.error_problems(self.BASE, c)[0])
-
-    def test_a_retitled_code_marked_retired_passes(self):
-        c = self.catalog()
-        c[1]["title"] = "retired: no plan"
-        c[1]["retired"] = "goatbuilder/v0.6.0"
-        self.assertEqual(compat.error_problems(self.BASE, c), [])
-
-    def test_a_retired_code_is_still_refused_when_absent(self):
-        self.assertTrue(compat.error_problems(self.BASE, self.catalog()[:1]))
-
-
 class TheKeptBaseline(unittest.TestCase):
     """The baseline in this directory is whole and names one release."""
 
@@ -545,12 +507,6 @@ class TheKeptBaseline(unittest.TestCase):
         self.assertGreaterEqual(len(docs), 5)
         for d in docs:
             self.assertTrue(os.path.isfile(os.path.join(HERE, "documents", d["name"] + "." + d["format"])), d)
-
-    def test_the_error_codes_of_the_release_are_kept(self):
-        self.assertGreaterEqual(len(self.b.errors()), 100)
-
-    def test_the_current_catalog_keeps_every_code(self):
-        self.assertEqual(compat.error_problems(self.b.errors(), compat.load_catalog(REPO)), [])
 
     def test_the_deprecation_list_is_well_formed(self):
         self.assertEqual(compat.deprecation_problems(self.b.deprecations()), [])
