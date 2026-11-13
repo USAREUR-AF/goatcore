@@ -1208,6 +1208,21 @@ fn c11_deploy() {
     );
 }
 
+/// Every world a C11 test runs goatbuilder in opts out of the keep-awake
+/// assertion (src/awake.rs), so a macOS run starts no `caffeinate` the run record
+/// and the dry run do not hold and the processes are the same on every OS.
+#[test]
+fn every_c11_world_opts_out_of_keep_awake() {
+    let opted_out = |c: &Command| {
+        c.get_envs()
+            .any(|(k, v)| k == "GOAT_NO_CAFFEINATE" && v.is_some_and(|v| v == "1"))
+    };
+    assert!(opted_out(&hollow().command(&["status"])), "the hollow world");
+    let w = federate_world::world();
+    assert!(opted_out(&w.command(&["hello-ally"])), "the federate world");
+    assert!(opted_out(&w.command_with(&["-o", "table"], &["hello-ally"])), "the federate world, as a table");
+}
+
 #[test]
 fn c11_federate() {
     let w = federate_world::world();
