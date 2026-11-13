@@ -220,6 +220,54 @@ class A4Documents(unittest.TestCase):
         self.assertIn("schema", compat.document_problems(self.BASE, new)[0])
 
 
+class A4ConditionalFields(unittest.TestCase):
+    """A field a format carries only on some entries (conditional.yaml) may be absent
+    from the others, and must stay on every entry its condition names."""
+
+    def setUp(self):
+        with open(os.path.join(HERE, "documents", "error-federate-undeclared.json")) as f:
+            self.base = json.load(f)
+        self.cond = compat.Baseline(HERE).conditional()
+
+    def _coded(self, doc):
+        """The same refusal once it has its own code: one hit of layer `code`, no score."""
+        new = copy.deepcopy(doc)
+        hit = copy.deepcopy(new["interpretation"]["hits"][0])
+        hit.update({"code": "GB-999", "layer": "code", "evidence": "goatbuilder: GB-999 the peering is not declared", "at": 0})
+        hit.pop("score")
+        new["interpretation"]["hits"] = [hit]
+        new["interpretation"]["unrecognised"] = False
+        return new
+
+    def test_a_refusal_that_gains_its_own_code_keeps_the_promise(self):
+        self.assertEqual(compat.document_problems(self.base, self._coded(self.base), self.cond), [])
+
+    def test_a_lexical_hit_that_loses_its_score_is_refused(self):
+        new = copy.deepcopy(self.base)
+        new["interpretation"]["hits"][1].pop("score")
+        p = compat.document_problems(self.base, new, self.cond)
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("interpretation.hits[1].score", p[0])
+        self.assertIn("lexical", p[0])
+
+    def test_a_field_the_list_does_not_name_is_still_refused(self):
+        new = self._coded(self.base)
+        new["interpretation"]["hits"][0].pop("evidence")
+        p = compat.document_problems(self.base, new, self.cond)
+        self.assertEqual(p, ["interpretation.hits[].evidence: the field is gone"])
+
+    def test_a_score_that_changes_type_is_refused(self):
+        new = copy.deepcopy(self.base)
+        new["interpretation"]["hits"][0]["score"] = "high"
+        p = compat.document_problems(self.base, new, self.cond)
+        self.assertTrue(any("interpretation.hits[0].score" in x and "number" in x for x in p), p)
+
+    def test_the_list_is_well_formed_and_names_its_reason(self):
+        self.assertEqual(compat.conditional_problems(self.cond), [])
+        self.assertTrue(compat.conditional_problems([{"format": "x/v1", "items": "hits[]", "field": "score", "present_when": {"layer": "lexical"}}]))
+        self.assertTrue(compat.conditional_problems([{"format": "x/v1", "items": "hits", "field": "score", "present_when": {"layer": "lexical"}, "reason": "r"}]))
+
+
 class A5ErrorCodes(unittest.TestCase):
     BASE = [{"code": "GB-001", "title": "unknown component"}, {"code": "GB-002", "title": "no plan"}]
 
