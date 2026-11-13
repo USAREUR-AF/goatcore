@@ -6,6 +6,7 @@
 | Plan + open decisions | `../project/cross-sovereign-federation-plan.md` |
 | Conformance vectors | [`../../ops/federation/vectors/`](../../ops/federation/vectors/) — **normative** |
 | Reference implementation | [`../../ops/federation/reference/`](../../ops/federation/reference/) |
+| Version 2 companion | [`federation-package-v2-spec.md`](federation-package-v2-spec.md) — **Proposed; designed, not built** |
 | Transport design | `cross-sovereign-peering-transport.md` |
 | Our tool | `goat federate init\|lint\|compose\|diff\|verify\|apply` today; moving to `goatbuilder federate` on the `goat-federation` library, **designed** ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed) |
 
@@ -15,6 +16,18 @@ this from scratch, in any language, without running our software.** If any state
 is only true when both sides run the same binary, this specification is broken.
 
 Deliberately small: a competent implementer should finish in an afternoon.
+
+This document defines only `federation-package/v1` and `federation-agreement/v1`. Its rules,
+version-pinned refusal behavior, and normative vector bytes are unchanged by the Proposed v2
+companion. V1 conformance continues through an explicit frozen v1 entry point. A production
+dual-version dispatcher would first run the companion's whole-input routing-safety scan; malformed
+input rejected there may receive a different diagnostic without entering the v1 parser. Owners
+must approve that production-dispatch distinction separately from frozen v1 conformance. Once two
+inputs are routing-eligible and both hints are v1, their original bytes and bound keys enter the
+complete v1 structural, signature, and composition path.
+
+This proposal does not resolve the existing Rust/Go disagreement over a present but empty v1
+`endpoint`. Any acceptance change for that value belongs in a separate v1 erratum.
 
 ---
 
