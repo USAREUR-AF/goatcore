@@ -83,8 +83,15 @@ impl Site {
     fn unflag(&self, name: &str) {
         std::fs::remove_file(self.state.join(name)).unwrap();
     }
+    /// What the stand-ins recorded. Nothing of this machine's own was started
+    /// in place of a tool of the VM.
     fn log(&self) -> String {
-        std::fs::read_to_string(&self.log).unwrap_or_default()
+        let log = std::fs::read_to_string(&self.log).unwrap_or_default();
+        assert!(
+            !log.lines().any(|l| l.starts_with("host:")),
+            "a program of this machine ran in place of the VM's:\n{log}"
+        );
+        log
     }
 }
 
@@ -185,6 +192,31 @@ fn site(prepared: bool) -> Site {
     }
     std::fs::write(state.join("kernel"), "6.12.60-android16\n").unwrap();
 
+    // ---- the VM's command path ----
+    // What runs "in the VM" finds two directories and nothing of this
+    // machine's own path: the stand-ins below, and `vmhost`, which names the
+    // general tools the guest scripts use and passes each to this machine's.
+    // A program this machine happens to have (dockerd, sudo, apt-get, dpkg)
+    // is therefore never found in its place; a tool with no stand-in and no
+    // entry here is "command not found", which fails the run.
+    let vmhost = root.join("vmhost");
+    let host_path = std::env::var("PATH").unwrap();
+    for tool in [
+        "sh", "bash", "env", "cat", "cp", "mkdir", "chmod", "rm", "tee", "grep", "sed", "awk",
+        "find", "sort", "head", "tail", "seq", "sleep", "sync", "wc", "tr", "df", "cksum",
+        "python3", "test", "true",
+    ] {
+        let real = std::env::split_paths(&host_path)
+            .map(|d| d.join(tool))
+            .find(|p| p.is_file())
+            .unwrap_or_else(|| panic!("this machine has no {tool}"));
+        executable(
+            &vmhost.join(tool),
+            &format!("#!/bin/sh\nexec '{}' \"$@\"\n", real.display()),
+        );
+    }
+    let vh = vmhost.display();
+
     // ---- the VM's own tools ----
     let vmtool = |name: &str, body: &str| {
         executable(
@@ -194,7 +226,7 @@ fn site(prepared: bool) -> Site {
     };
     vmtool(
         "uname",
-        &format!("if [ \"$1\" = -r ]; then cat '{st}/kernel'; else /usr/bin/uname \"$@\"; fi"),
+        &format!("if [ \"$1\" = -r ]; then cat '{st}/kernel'; else echo Linux; fi"),
     );
     // sudo runs the command as it is: the stand-in VM has one user.
     vmtool(
@@ -260,6 +292,26 @@ fn site(prepared: bool) -> Site {
         );
     }
 
+    // ---- this machine's own copies of the VM's tools ----
+    // A machine that runs this test may have Docker, sudo, apt and dpkg of
+    // its own. These stand for them, first on the path the run is given: one
+    // that is ever started writes a `host:` line, and every run asserts none.
+    for own in [
+        "dockerd",
+        "docker",
+        "sudo",
+        "apt-get",
+        "dpkg",
+        "systemctl",
+        "useradd",
+        "modprobe",
+    ] {
+        executable(
+            &root.join("bin").join(own),
+            &format!("#!/bin/sh\nprintf 'host:{own} %s\\n' \"$*\" >> '{l}'\nexit 0\n"),
+        );
+    }
+
     // ---- adb: the phone ----
     // `am start` starts the VM on what the Terminal app's boot folder holds:
     // Debian's kernel when the guest script staged it there, with the
@@ -312,7 +364,7 @@ fn site(prepared: bool) -> Site {
                [ \"$user\" = droid ] || [ -f \"{v}/home/$user/.ssh/authorized_keys\" ] || exit 255\n\
              fi\n\
              case \"$cmd\" in\n\
-             *'bash -s'*) PATH='{vb}':$PATH HOME='{v}/home/droid' PHONE_NODE_GUEST_ROOT='{v}' PHONE_NODE_GATE_MIB=1 sh -c \"$cmd\" ;;\n\
+             *'bash -s'*) PATH='{vb}:{vh}' HOME='{v}/home/droid' PHONE_NODE_GUEST_ROOT='{v}' PHONE_NODE_GATE_MIB=1 /bin/sh -c \"$cmd\" ;;\n\
              *poweroff*) touch '{st}/vm-off' ;;\n\
              esac\n"
         ),
