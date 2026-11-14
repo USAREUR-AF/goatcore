@@ -67,6 +67,8 @@ SHARED_NID="$(python3 -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]
 PRESEED_TS="$(python3 -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["ory_shared_preseed_ts"])' "$REPO/ops/ansible/roles/ory/defaults/main.yml")"
 
 EXTRA=("$PFX-nb-a" "$PFX-nb-b" "$PFX-kratos-a" "$PFX-kratos-b" "$PFX-hydra-a")
+# shellcheck source=console.sh
+source "$HERE/console.sh"  # the id console and an onboard-runner at each site
 cleanup() {
   [[ "${KEEP:-0}" == 1 ]] && { echo "KEEP=1, leaving containers up"; return; }
   ts_down "${EXTRA[@]}"
@@ -82,6 +84,7 @@ echo "         $HYDRA_IMAGE"
 docker pull -q "$NB_IMAGE" >/dev/null &
 docker pull -q "$KRATOS_IMAGE" >/dev/null &
 docker pull -q "$HYDRA_IMAGE" >/dev/null &
+console_build &
 
 echo "== bring up two sites"
 ts_up
@@ -198,6 +201,7 @@ for s in a b; do
   done
 done
 echo "  migrated; shared nid $SHARED_NID pre-seeded"
+console_schema
 
 echo "== portal registry schema (the version-1 migration the portal applies, each site)"
 # internal/pgstore.Migrate runs this file as version 1, in one transaction.
@@ -233,6 +237,7 @@ wire netbird netbird_mgmt "$REPO/ops/postgres/spock/revocation-guard/netbird.sql
 wire kratos  ory_narrow   "$REPO/ops/postgres/spock/revocation-guard/kratos.sql"
 wire hydra   ory_narrow
 wire portal_registry portal_registry
+console_wire
 ts_wait_replicating "${DBS[@]}"
 echo "  replicating: ${DBS[*]}"
 

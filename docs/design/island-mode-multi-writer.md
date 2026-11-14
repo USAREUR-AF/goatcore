@@ -1,6 +1,6 @@
 # Island mode, every site writes: portal, console, NetBird and Kratos on Spock
 
-**Status:** Step A (§5) built: the portal and console run on Postgres, in no Spock replication set. The partition harness (§6) is built for NetBird, Kratos and Hydra, and carries the portal registry with its step A schema; its first portal scenario, `portal-c1-topic-create-both-sides`, fails as §3.1 predicts (the site that did not create the replicated topics refuses its next topic with a duplicate key on the integer `topics.id`) and is listed in `scenarios/expected-failing.tsv`; the other portal and console scenarios are listed in `scenarios/pending.tsv`. Step B (§5), the per-class turn-on (gate G3) and the drills (gate G4) are designed, not built. Until a write class passes gate G3, the admin surfaces run at one site per goatnet ([ADR 1084](../adr/1084-block-64r-mgmt-repset-and-two-node-federation.md) D3); the intended placement is every site. Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md) (Proposed 2026-10-29). Execution and resume point: `island-mode-program.md`. Builds on ADR 1193 (revocations are absorbing; Proposed). §2 is the measurement before step A, against `USAREUR-AF/goatcore` main `2aa281381`, 2026-10-28.
+**Status:** Step A (§5) built: the portal and console run on Postgres, in no Spock replication set. The partition harness (§6) is built for NetBird, Kratos and Hydra, and carries the portal registry with its step A schema; its first portal scenario, `portal-c1-topic-create-both-sides`, fails as §3.1 predicts (the site that did not create the replicated topics refuses its next topic with a duplicate key on the integer `topics.id`) and is listed in `scenarios/expected-failing.tsv`; the console's first scenario, `console-c2-claim-both-runners`, fails as C7 predicts (§6) and is listed there too; the other portal and console scenarios are listed in `scenarios/pending.tsv`. Step B (§5), the per-class turn-on (gate G3) and the drills (gate G4) are designed, not built. Until a write class passes gate G3, the admin surfaces run at one site per goatnet ([ADR 1084](../adr/1084-block-64r-mgmt-repset-and-two-node-federation.md) D3); the intended placement is every site. Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md) (Proposed 2026-10-29). Execution and resume point: `island-mode-program.md`. Builds on ADR 1193 (revocations are absorbing; Proposed). §2 is the measurement before step A, against `USAREUR-AF/goatcore` main `2aa281381`, 2026-10-28.
 
 Any site of a goatnet that is cut off from the others must keep working fully —
 admitting people, enrolling machines, changing and revoking access — and merge cleanly
@@ -190,6 +190,15 @@ twice.
   Base: `ops/postgres/spock/tests/partition-revoke/run.sh` and its CI job `partition-revoke`
   (PR #1538), which already proves class 3 for NetBird and Kratos with `GUARD=0`/`GUARD=1`.
 - Partition by disabling both subscriptions; heal by enabling.
+- Status: the console and an onboard-runner at each site are built
+  (`ops/postgres/spock/tests/partition-harness/console.sh`). The console's two
+  databases join a repset `id_console` in the harness only; no role does that yet.
+  The runner's NetBird and Kratos mint is a stand-in for `goat admin onboard
+  --native` (`goat-shim.sh`). Measured: `console-c2-claim-both-runners` fails as
+  C7 predicts, with both runners claiming the one proposal and two setup keys and two
+  identities minted for it. It is listed in `scenarios/expected-failing.tsv` until
+  the owner-filtered claim is built. The portal registry's harness status is in the
+  Status line at the top of this document.
 - One scenario per class per store, plus the cross-store cases: the same email onboarded
   at both sites; a revoke at A while B reissues the key; a slot claimed at both sites;
   the same org slug registered at both sites.

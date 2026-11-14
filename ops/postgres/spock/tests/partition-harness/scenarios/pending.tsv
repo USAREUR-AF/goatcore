@@ -32,7 +32,6 @@ console-c1-invite-mint-both-sides	console stores move to Postgres in PR #2076 (o
 console-c1-reactivation-request-both-sides	console stores move to Postgres in PR #2076 (open); runs once it merges
 console-c1-negative-pair-both-sides	console stores move to Postgres in PR #2076 (open); runs once it merges
 console-c2-decide-off-owner-refused	console stores move to Postgres in PR #2076 (open); runs once it merges
-console-c2-claim-both-runners	console stores move to Postgres in PR #2076 (open); runs once it merges
 console-c2-invite-edit-owner-only	console stores move to Postgres in PR #2076 (open); runs once it merges
 console-c2-operator-key-approve-owner-only	console stores move to Postgres in PR #2076 (open); runs once it merges
 console-c2-org-edit-owner-only	console stores move to Postgres in PR #2076 (open); runs once it merges
