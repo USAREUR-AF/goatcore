@@ -17,10 +17,6 @@ pub struct DocsArgs {
     pub markdown: bool,
 }
 
-/// The committed English snapshot of the reference the book shows, relative to
-/// the repository root. A test holds it to the live render.
-pub const BOOK_REFERENCE_PATH: &str = "docs/goat-cli-book/src/reference.md";
-
 /// The full command reference as Markdown, from the active-locale command tree:
 /// what `goat docs --markdown` prints.
 pub fn reference() -> String {
@@ -208,6 +204,10 @@ mod tests {
         // not repeated under every subcommand's Options table.
         assert_eq!(out.matches("`--lang <LANG>`").count(), 1, "global flag repeated");
     }
+
+    /// The committed English snapshot of the reference the book shows, relative
+    /// to the repository root.
+    const BOOK_REFERENCE_PATH: &str = "docs/goat-cli-book/src/reference.md";
 
     // The book's committed reference must be byte-identical to the live render,
     // so the page a reader browses in the repository is what `goat --help` says.
