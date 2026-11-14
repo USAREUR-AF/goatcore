@@ -162,6 +162,17 @@ command. A publisher the model marks present whose play is not in the
 checkout is refused when the plan is made (GB-288). When the model cannot be
 read, the plan says so on a SKIP line and deploys none.
 
+#### "Added: join-node sets up a joining site's front door when signal federation is off"
+
+`goatbuilder join-node` now sets up the front door of a joining site that
+declares signal federation off, in phase 13 after the data router, for the
+site's core group limited to the node. A site that declares
+`dashboard_cert_delivery_mode: acme` gets its public certificate and routes
+(`traefik-acme.yml`); any other site gets its LAN routes
+(`lan-traefik-routes.yml`, from the internal-CA leaf the phase mints before
+the router). Before, only signal federation set up the front door, so such a
+site had none. With federation on, nothing changes.
+
 #### "Added: join-node mints and stages a joining site's leaves"
 
 `goatbuilder join-node` now mints a joining site's router and service leaves
