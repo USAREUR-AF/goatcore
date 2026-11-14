@@ -612,27 +612,27 @@ phases:
   then: set the site's own ca_id, then resume with --from 7
 - verb: join-node
   phase: 8
-  id: setup-key
-  kind: MANUAL
-  title: mint a setup key carrying the site's mgmt group
-  what: 'A person''s step: in the NetBird dashboard of the site the node enrols at (a joiner''s founder), make a setup key whose auto_groups is the group a live mgmt host of the site holds, read off that peer, and keep it for phase 10.'
-  why: A key with the wrong group puts the node in a group the ACL does not admit, so it reaches nothing.
-  changes: A NetBird setup key, made by the person.
-  verify: the key's auto_groups match a live mgmt host's group
-  runs: 'nothing: a step for a person, with the instructions the run prints'
-  by_hand: 'in the NetBird dashboard (or goat admin) of the site the node enrols at: Setup Keys, new key, auto_groups = the group a live mgmt host holds; export it as <SITE>_NB_SETUP_KEY, then resume with --from 9'
+  id: enrol-url
+  kind: GATE
+  title: the site declares where its nodes enrol
+  what: Checks that the node's group_vars, or its site's, declare mesh_enrollment_url as an https URL. Phase 10 mints the setup key and enrols the node against it.
+  why: Without it phase 10 cannot enrol the node, and refusing here is before any setup key exists.
+  changes: Nothing.
+  verify: the check exits 0; otherwise it names the file and the value to set
+  runs: 'nothing outside the plan: a grep of the group_vars, shown in full by the dry run'
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 8 --to 8 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
-  failed_because: no key, or a key with a group no live host holds
-  then: read the group off a live mgmt peer, mint the key again, then resume with --from 9
+  failed_because: mesh_enrollment_url is not set, or not an https URL, in the node's or the site's group_vars
+  then: set mesh_enrollment_url in the site's group_vars/vars.yml to the enrolment name of the site the node enrols at, then resume with --from 8
 - verb: join-node
   phase: 9
   id: enrol-preflight
   kind: GATE
   title: enrollment preflight on the node
-  what: 'Runs the enrollment preflight on the node over ssh, with the setup key and the management URL passed on stdin: clock skew, a stale wt0, an unreachable apex. It prints the `netbird up` line for phase 10.'
+  what: 'Runs the enrollment preflight on the node over ssh, with the management URL passed on stdin: clock skew, a stale wt0, an unreachable apex. No setup key is sent: phase 10 mints it where it is used.'
   why: Each of these turns enrolment into a hang with no error.
   changes: Nothing on the node.
-  verify: the preflight passes and prints the `netbird up` line
+  verify: the preflight passes
   runs: ops/preflight-enrollment.sh
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 9 --to 9 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
@@ -641,17 +641,17 @@ phases:
 - verb: join-node
   phase: 10
   id: enrol
-  kind: MANUAL
-  title: enrol the node
-  what: 'A person''s step: on the node, run the `netbird up` line phase 9 printed. The gate is the kernel ACL plane, not "Connected": `netbird status` must show a kernel interface.'
-  why: A userspace interface reads as Connected but does not carry the ACL plane.
-  changes: The node's NetBird client, enrolled.
-  verify: '`netbird status` shows Interface type: Kernel and a mesh IP'
-  runs: 'nothing: a step for a person, with the instructions the run prints'
-  by_hand: 'on the node: sudo netbird up <the line phase 9 printed> --enable-rosenpass=false, then resume with --from 11'
+  kind: A + GATE + T
+  title: enrol the node, check the kernel ACL plane, record its mesh address
+  what: 'Mints a single-use, one-hour setup key on the first host of the group that holds the NetBird database (a joiner''s founder), with the groups that host''s peer holds, and hands it to `netbird up` on the node through a 0600 file that is then removed. Then checks the node is on the kernel ACL plane, not only "Connected", and records its mesh address in the checkout (group_vars, the mesh inventory) for phase 12.'
+  why: A key with the wrong groups puts the node where the ACL admits nothing, and a userspace interface reads as Connected without carrying the ACL plane. The key never reaches this machine.
+  changes: 'The node''s NetBird client, enrolled; a setup key on the NetBird host, used once; in the checkout, the node''s mesh address (ops/ansible/inventory/mgmt-hosts-mesh.ini, and for a core node the site''s group_vars and certificate manifest).'
+  verify: '`netbird status` on the node shows Interface type: Kernel, `table ip netbird` is loaded, and the mesh inventory names the node''s mesh IP'
+  runs: ops/scripts/ansible-preflight.sh, ops/ansible/mesh-enroll-host.yml, ops/scripts/standup-mesh-record.py
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 10 --to 10 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
-  failed_because: the interface is userspace, or enrolment hangs
-  then: re-run phase 6 and 9, then enrol again
+  failed_because: the setup key could not be minted on the NetBird host, enrolment hung, or the interface is userspace
+  then: fix what the play names (the NetBird host's reach, the node's wt0), then resume with --from 10; a re-run mints a new key
 - verb: join-node
   phase: 11
   id: wireguard-again

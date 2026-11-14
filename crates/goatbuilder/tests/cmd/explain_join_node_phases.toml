@@ -11,9 +11,9 @@ join-node: 15 phases. goatbuilder explain join-node <phase> answers for one, by 
   5  baseline           A                host baseline, narrowed to the node
   6  wireguard-first    A                WireGuard kernel modules, first pass
   7  ca                 GATE             the CA this site trusts is its own
-  8  setup-key          MANUAL           mint a setup key carrying the site's mgmt group
+  8  enrol-url          GATE             the site declares where its nodes enrol
   9  enrol-preflight    GATE             enrollment preflight on the node
- 10  enrol              MANUAL           enrol the node
+ 10  enrol              A + GATE + T     enrol the node, check the kernel ACL plane, record its mesh address
  11  wireguard-again    A                WireGuard kernel modules again
  12  mesh-ip            GATE             mesh_ip and the mesh inventory filled in one change
  13  converge           A + GATE + SKIP  converge the node's class
