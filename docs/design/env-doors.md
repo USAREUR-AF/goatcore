@@ -184,6 +184,42 @@ door whose inventories disagree — a mismatch otherwise surfaces as
 - AWS API is in the connect path. Island-mode or AWS-down means Tier 1 is
   down — same failure domain as enrollment, not worse.
 
+### Reading a goatnet's fabric through a door (proposed, ADR 1227)
+
+**Status: proposed, not accepted.** A platform-admin workaround only, never a
+person-facing path; the supported ways to read a goatnet's fabric are a `goat`
+profile on its mesh, or its panoscope. The complexity, fragility and security
+costs are in [ADR 1227](../adr/1227-platform-admin-may-read-a-goatnets-fabric-through-its-door.md).
+
+With it, a platform admin's laptop that is not a peer of a goatnet can run `goat health`, `goat sub`
+or any other fabric command against it, with the operator's own certificate,
+through that goatnet's door. Nothing is placed on the host and the laptop's mesh
+profile is not touched.
+
+```bash
+ops/scripts/env-door.sh zagros                              # the door, as above
+ops/scripts/env-door.sh zagros --forward 192.0.2.10:7447    # 127.0.0.1:17447 -> the router
+goat --context zagros-op --router tls/127.0.0.1:17447 health --domain mesh
+```
+
+- `env-door.sh <goatnet> --forward <ip>:<port>` needs the door open. It forwards
+  local port `<port> + 10000` (or `GOAT_FORWARD_PORT`) to `<ip>:<port>` on that
+  goatnet's mesh, through the management host, in the foreground. The hop to the
+  door port skips its host key check because that key churns; the outer ssh
+  checks the management host's own key, the `--host-target` shape.
+- `goat --router <endpoint>` (or `GOAT_ROUTER_ENDPOINT`) replaces the context's
+  `router_endpoint` for one command and prints that it did. The certificate,
+  key and CA roots still come from the context, so the router authenticates the
+  operator by mTLS exactly as it would over the mesh. Every reader of the router
+  endpoint (`open_zenoh_session_opts`, `goat status`, `goat heal`, `goat doctor`)
+  resolves it through `profile::resolve_router_endpoint`, so the override
+  reaches all of them.
+- The endpoint is an IP address, so `goat` skips router hostname verification,
+  as it does for any context whose `router_endpoint` is an IP. Both ends are
+  still authenticated against the goatnet's CA.
+- The forward dies with the door: an idle SSM session closes after about 20
+  minutes, and a closed local port means re-running both commands.
+
 ### A LAN jump as stopgap
 
 A goatnet with no door in either tier can be reached by one `ProxyJump` through

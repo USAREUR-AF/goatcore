@@ -118,7 +118,7 @@ fn verdict_neutral(summary: (String, String)) -> Verdict {
 /// `goat heal`'s recovery poll loop.
 pub(crate) fn router_endpoint(profile: &Profile) -> anyhow::Result<String> {
     let toml = std::fs::read_to_string(profile.profile_toml_path())?;
-    extract_toml_string(&toml, "router_endpoint")
+    crate::profile::resolve_router_endpoint(&toml)
         .ok_or_else(|| anyhow::anyhow!("profile.toml missing router_endpoint"))
 }
 

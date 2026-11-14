@@ -14,6 +14,7 @@ goat — operator-facing CLI composing panoscope-core into one tool: profile ini
 | `--timeout <TIMEOUT>` | Max seconds to wait establishing a fabric session before failing fast (default 5). Bounds the connect/handshake phase for network commands (health/sub/pub/presence) so an unreachable router errors cleanly instead of blocking. Does NOT cap steady-state streaming — `sub --watch` runs as long as you want. Also reads GOAT_TIMEOUT |  |
 | `--profile-dir <PROFILE_DIR>` | Override the profile directory (default: $GOAT_PROFILE_DIR or ~/.goat). |  |
 | `--context <CONTEXT>` | Override the active context (default: $GOAT_CONTEXT env, then current_context in config.toml, then "default"). |  |
+| `--router <ENDPOINT>` | Connect to this router endpoint (`tls/<ip>:<port>`) instead of the context's `router_endpoint`, for this command only. The context's certificate, key and CA roots are still used. For a local port forward: `env-door.sh <goatnet> --forward <router-ip>:7447`. Also reads GOAT_ROUTER_ENDPOINT |  |
 | `--narrate` | Show the substrate cascade a mutating command sets off. |  |
 | `--narrate-json` | Emit the substrate cascade as NDJSON (one object per consequence) for incident logs + scripting. Implies --narrate. |  |
 | `--verbose, -v` | Enable verbose debug output (or set RUST_LOG=goat=debug). |  |
