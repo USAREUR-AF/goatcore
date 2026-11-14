@@ -617,3 +617,31 @@ fn a_joiners_core_node_runs_the_health_publishers_the_site_declares() {
         "a publisher the site does not declare does not run: {plays:#?}"
     );
 }
+
+/// Gate row I3, the front door: gamma declares signal federation off and no
+/// ACME delivery, so it is a LAN site, and its core node gets the LAN routes
+/// (lan-traefik-routes.yml) for the site's core group, limited to the node,
+/// after the data router. No federation play sets up a door for it.
+#[test]
+fn a_joiners_core_node_gets_its_front_door_with_signal_federation_off() {
+    let s = site();
+    let (out, _) = join_node(&s, Some("2"));
+    assert!(out.status.success(), "{}", says(&out));
+    let log = std::fs::read_to_string(&s.log).unwrap();
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    let router = plays
+        .iter()
+        .position(|l| l.contains("zenoh-deploy.yml"))
+        .unwrap();
+    let door = plays
+        .iter()
+        .position(|l| {
+            l.contains("lan-traefik-routes.yml -e target=gamma_hosts -e site_id=gamma -l gamma-core-1")
+        })
+        .unwrap_or_else(|| panic!("gamma's front door did not run: {plays:#?}"));
+    assert!(router < door, "the door after the router: {plays:#?}");
+    assert!(
+        !plays.iter().any(|l| l.contains("traefik-acme.yml")),
+        "a LAN site gets no ACME door: {plays:#?}"
+    );
+}

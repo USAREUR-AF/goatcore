@@ -174,7 +174,10 @@ pub(crate) fn leaves(repo: &Path, site: &str) -> Result<Leaves> {
 /// `signal_federation_absent_reason` gets the gate and a SKIP line instead:
 /// the gate passes when the founder is off too, or when the founder federates
 /// with another joiner and does not name this one (a third site).
-fn signal_federation(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, founder: &str, pre: &str, inv: &str) {
+///
+/// Returns whether the federation steps run, and with them the joiner's
+/// front door (traefik-acme.yml); false when the site declares it off.
+fn signal_federation(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, founder: &str, pre: &str, inv: &str) -> bool {
     let r = repo.display().to_string();
     let site_group = format!("{}_hosts", site.replace('-', "_"));
     let founder_group = format!("{}_hosts", founder.replace('-', "_"));
@@ -184,7 +187,7 @@ fn signal_federation(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, fo
     ev.push(p("GATE", format!("[signal federation] the repo declares it on both sides: {site_group} and {founder_group} crossed and complete, {founder}'s relay inventory pins each federation hostname to its own node, the names resolve to the relays, the shared token is in the environment"), format!("python3 '{r}/ops/scripts/signal-federation-check.py' {site} --peer {} --resolve --require-env", w(founder.to_string()))));
     if !gv_first(gv, "signal_federation_absent_reason").is_empty() {
         ev.push(p("SKIP", format!("[signal federation] declared off at {site} (signal_federation_absent_reason in group_vars/{site_group}); the gate above proved no side expects it: {founder} is off too, or federates with another site"), format!("echo '>> signal federation: declared off for {site} (signal_federation_absent_reason); nothing to converge'")));
-        return;
+        return false;
     }
     let rathole = crate::standup::site_play(repo, founder, "rathole-client.yml");
     let relay_inv = w(format!("inventory/hosts-{founder}.ini"));
@@ -197,6 +200,7 @@ fn signal_federation(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, fo
     ev.push(p("A", format!("[signal federation] the joiner's tunnel to every {founder} relay ({rathole}, service rathole_client_service_name)"), format!("cd '{r}/ops/ansible' && {need_relay_inv} && {pre} -i {relay_inv} {inv} {rathole} -e rathole_client_target={site_group}")));
     ev.push(p("A", format!("[signal federation] {founder}'s relays: the {site} backend and its federation-hostname pin, re-rendered and post-checked (relay-ingress-add-site.yml)"), format!("cd '{r}/ops/ansible' && {need_relay_inv} && {pre} -i {relay_inv} -i {} {inv} relay-ingress-add-site.yml -e target=goat_relay_hosts -e {} -e join_site={site}", w(format!("inventory/{founder}-goat-relay-alias.ini")), w(format!("founder_site={founder}")))));
     ev.push(p("GATE", "[signal federation] proven from both nodes: transport up both ways, an offer forwarded and delivered".to_string(), format!("cd '{r}/ops/ansible' && {pre} {inv} signal-federation-verify.yml -e federation_site={site} -e {}", w(format!("federation_peer_site={founder}")))));
+    true
 }
 
 fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
@@ -306,7 +310,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             ev.push(p(13, "A", "[core, joiner] pass 3 — bootstrap with Spock: netbird subscriptions on both sides, polled to replicating; Ory node + repset only", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {ev_secrets} -e ory_spock_wire_subscriptions=false")));
             ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (the same change, not a follow-up): netbird + Ory node, repset, subscription"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {} -e '{{\"inter_site_spock_peers\":[\"{site}\"],\"ory_spock_reconcile_history\":false}}'", sh_word(&founder_group))));
             ev.push(p(13, "A", "[core, joiner] the joiner's Spock wiring again, now that the founder's half exists: Ory subscription + history reconcile", format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {node}")));
-            signal_federation(&mut ev, repo, &gv, site, &founder_site, &pre, inv);
+            let federated = signal_federation(&mut ev, repo, &gv, site, &founder_site, &pre, inv);
             // The site's router and service leaves (gate row I3), before the
             // router, whose play reads the router leaf.
             let l = leaves(repo, site)?;
@@ -319,6 +323,18 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             // depend on reaching the founder's. The play's pre-flight refuses
             // a node without its router leaf certificate.
             ev.push(p(13, "A", "[data router] the site's own Zenoh router (zenoh-deploy.yml), limited to the node: the site's fabric runs on its own router, not the founder's", format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={site_group} -l {node}")));
+            // The site's front door (gate row I3). Signal federation sets it up
+            // with the federation routers; a site that declares federation off
+            // gets it here, for its profile: an internet site (ACME delivery,
+            // as standup reads it) its public certificate and routes, a LAN
+            // site its internal-CA routes, whose leaf is minted above.
+            if !federated {
+                if gv_matches(&gv, "dashboard_cert_delivery_mode", "acme") {
+                    ev.push(p(13, "A", "[front door] the site's public certificate and routes (traefik-acme.yml, ACME DNS-01), limited to the node: an internet site (dashboard_cert_delivery_mode: acme) whose signal federation, which sets the door up otherwise, is declared off", format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={site_group} -l {node}")));
+                } else {
+                    ev.push(p(13, "A", "[front door] the site's LAN TLS routes (lan-traefik-routes.yml, the internal-CA mgmt-identity leaf), limited to the node: a LAN site (no dashboard_cert_delivery_mode: acme) whose signal federation is declared off", format!("cd '{r}/ops/ansible' && {pre} {inv} lan-traefik-routes.yml -e target={site_group} -e site_id={site} -l {node}")));
+                }
+            }
             // The health publishers the site declares (gate row I3), on the
             // router, with the service leaves staged above.
             match declared_publishers(repo, site)? {
@@ -1140,6 +1156,51 @@ mod tests {
         let step = ph.iter().find(|p| p.cmd.contains("relay-ingress-add-site.yml")).unwrap();
         let o = Command::new("bash").args(["-euo", "pipefail", "-c", &step.cmd]).output().unwrap();
         assert!(!o.status.success() && String::from_utf8_lossy(&o.stdout).contains("generate-relays.sh zagros terraform-zagros"));
+    }
+
+    /// Gate row I3, the front door: a joiner's core node that declares signal
+    /// federation off still gets its front door, after the data router, for
+    /// the site's core group limited to the node. Its profile is the site's
+    /// declaration: `dashboard_cert_delivery_mode: acme` is an internet site,
+    /// whose door is traefik-acme.yml; anything else is a LAN site, whose door
+    /// is lan-traefik-routes.yml. With federation on, the federation steps set
+    /// up the door (traefik-acme.yml), and no second door step runs.
+    #[test]
+    fn a_joiner_gets_its_front_door_with_signal_federation_off() {
+        let t = joiner_checkout();
+        let gv = t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml");
+        let base = std::fs::read_to_string(&gv).unwrap();
+        fn door(ph: &[Phase]) -> Vec<&Phase> {
+            ph.iter().filter(|p| p.label.starts_with("[front door]")).collect()
+        }
+        // Federation on: the federation steps own the door.
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        assert!(door(&ph).is_empty(), "{:?}", door(&ph).iter().map(|p| &p.label).collect::<Vec<_>>());
+        assert_eq!(ph.iter().filter(|p| p.cmd.contains("traefik-acme.yml")).count(), 1);
+        // Federation off, a LAN site: the LAN routes, after the router.
+        std::fs::write(&gv, format!("{base}signal_federation_absent_reason: one node holds every peer\n")).unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let d = door(&ph);
+        assert_eq!(d.len(), 1, "{:?}", d.iter().map(|p| &p.label).collect::<Vec<_>>());
+        assert_eq!((d[0].n, d[0].kind), (13, "A"));
+        assert!(d[0].cmd.ends_with("lan-traefik-routes.yml -e target=zagros_b_hosts -e site_id=zagros-b -l node-x"), "{}", d[0].cmd);
+        let at = |needle: &str| ph.iter().position(|p| p.cmd.contains(needle)).unwrap();
+        assert!(at("zenoh-deploy.yml") < at("lan-traefik-routes.yml"), "after the router");
+        // Federation off, an internet site: traefik-acme.yml, limited to the node.
+        std::fs::write(&gv, format!("{base}signal_federation_absent_reason: one node holds every peer\ndashboard_cert_delivery_mode: acme\n")).unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let d = door(&ph);
+        assert_eq!(d.len(), 1);
+        assert!(d[0].cmd.ends_with("traefik-acme.yml -e target=zagros_b_hosts -l node-x"), "{}", d[0].cmd);
+        assert!(ph.iter().all(|p| !p.cmd.contains("lan-traefik-routes.yml")));
+        // Other classes, and a founder's core node, get no door step here.
+        for class in ["obs", "breakglass", "network-jump"] {
+            assert!(door(&plan(t.path(), &opts("zagros-b", class, "zagros")).unwrap()).is_empty(), "{class}");
+        }
+        let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvf).unwrap();
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\n").unwrap();
+        assert!(door(&plan(t.path(), &opts("zagros", "core", "zagros")).unwrap()).is_empty());
     }
 
     /// A joiner that declares federation off with a reason gets the gate (the
