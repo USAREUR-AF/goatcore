@@ -29,6 +29,8 @@
 #      subjects, and an identifier resolves to the same identity at both sites.
 #
 # Usage (Linux Docker, CI):  IMAGE=postgres-spock:smoke ./run.sh [scenario ...]
+#   Needs a psql client on the host PATH: drift-watch runs it for the baseline and
+#   every scenario's check (CI's runner has one; a run without it stops at the baseline).
 #   KEEP=1 leaves the containers up.
 #   Two runs on one machine need their own names and ports (a run removes only
 #   containers under its own prefix): HARNESS_PFX (default ph), HARNESS_NET
