@@ -285,7 +285,7 @@ on them come up.
 **For the platform engineer:**
 
 - `step 12 T + GATE` — mint the NetBird service identities (creates only what is missing), then a **fail-closed gate** verifies all are present.
-- `step 12 A` — **netbird account baseline** (mesh-DNS group + policy) and **mesh CoreDNS** (internet), after which the laptop's `/etc/hosts` pin is dropped. Mesh CoreDNS runs only for a site with a mesh zone. A joiner with no zone skips it and resolves through the founder's DNS today; that is a gap, not the target: every site is to run its own resolver ([ADR 1233](../adr/1233-a-joiner-runs-the-replication-core.md), gate row I3).
+- `step 12 A` — **netbird account baseline** (mesh-DNS group + policy) and **mesh CoreDNS** (internet), after which the laptop's `/etc/hosts` pin is dropped. A founder runs mesh CoreDNS only when it has a mesh zone. A joining site runs a replica of the goatnet's zone as its own nameserver group, behind a gate on the founder's API token ([ADR 1235](../adr/1235-per-site-mesh-dns-nameserver-groups.md)).
 - `step 12 A` — **pubsub-state Repl mirror**, the **onboarding intake front desk** (public, ADR 1062 stage 1), and the **onboard-runner** (auto-mint on approval, stage 3).
 
 **Done when:** every required service identity is present, *every declared service

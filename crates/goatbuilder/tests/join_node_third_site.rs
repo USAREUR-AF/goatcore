@@ -96,6 +96,7 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         "ops/scripts/with-secrets",
         "ops/scripts/seed-ssh-key.sh",
         "ops/secrets/posture.py",
+        "ops/scripts/require-secret.sh",
         // Every health publisher's play: a play in the checkout is not a
         // reason to run it, the site's declaration is.
         "ops/ansible/fabric-health-deploy.yml",

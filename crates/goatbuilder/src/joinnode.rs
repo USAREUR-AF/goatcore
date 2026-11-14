@@ -222,20 +222,12 @@ fn zone_file(repo: &Path, zone: &str) -> Option<(String, String)> {
     })
 }
 
-/// Phase 13's mesh DNS step for a joiner's core node (gate row I3, ADR 1235).
-/// A site cut off from its founder still resolves the goatnet's names only if
-/// it runs a resolver of its own. goat-coredns.yml puts a CoreDNS replica of
-/// the goatnet's zone on the node, and registers the site's own nameserver
-/// group, `<site>-mesh-dns`, which lists this replica first and the founder's
-/// second. The group is written through the founder's management API, the
-/// one writer, as standup writes the founder's. A gate before it refuses an
-/// unset or unresolved founder API token (GB-281); a site with no zone file to
-/// serve is refused when the plan is made (GB-280).
 /// What a joining site's mesh DNS step runs with, derived from the
 /// checkout: the zone, its file's directory and a name it answers (the play's
 /// smoke test), the site's nameserver group, the founder's management API and
 /// the variable holding its token, and the founder's core group, whose first
 /// host is the second replica. `goatbuilder inputs join-node` lists the same.
+#[derive(Debug, Clone)]
 pub(crate) struct MeshDns {
     pub zone: String,
     pub dir: String,
@@ -269,6 +261,16 @@ pub(crate) fn mesh_dns_values(repo: &Path, gv: &Path, site: &str, founder: &str)
     })
 }
 
+/// What the founder's management API token is for, as the gate before the
+/// mesh DNS step says it (join-node and standup alike).
+pub(crate) const MESH_DNS_TOKEN_FOR: &str = "the mesh DNS step registers this site's nameserver group through the founder's management API with it";
+
+/// The gate before the mesh DNS step: the founder's API token resolves
+/// through the injector, else GB-281 names the variable (never its value).
+pub(crate) fn mesh_dns_token_gate(r: &str, token: &str) -> String {
+    format!("'{r}/ops/scripts/with-secrets' '{r}/ops/scripts/require-secret.sh' GB-281 {} {}", sh_word(token), sh_quote(MESH_DNS_TOKEN_FOR))
+}
+
 /// Phase 13's mesh DNS step for a joiner's core node (gate row I3, ADR 1235).
 /// A site cut off from its founder still resolves the goatnet's names only if
 /// it runs a resolver of its own. goat-coredns.yml puts a CoreDNS replica of
@@ -285,8 +287,7 @@ fn mesh_dns(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, founder: &s
     let p = |kind: &'static str, label: String, cmd: String| Phase { n: 13, kind, label, cmd, writes: Vec::new() };
     // The token is resolved through the injector, as the play reads it; its
     // value is never printed or put on a command line.
-    let check = "v=$(printenv \"$1\" || true); case \"$v\" in '') echo \"GB-281: $1 is not set: the mesh DNS step registers this site's nameserver group through the founder's management API with it. Store it under the declared secrets posture\" >&2; exit 1 ;; op://*|bao://*|bw://*) echo \"GB-281: $1 still holds a secret reference after the injector ran: sign in to the store's tool, then re-run\" >&2; exit 1 ;; esac; if [ -n \"${GOAT_SECRET_REF_PREFIX:-}\" ]; then case \"$v\" in \"$GOAT_SECRET_REF_PREFIX\"*) echo \"GB-281: $1 still holds a secret reference after the injector ran\" >&2; exit 1 ;; esac; fi";
-    ev.push(p("GATE", format!("[mesh DNS] the founder's management API token ({token}) resolves, before anything registers the site's nameserver group"), format!("'{r}/ops/scripts/with-secrets' bash -c {} _ {}", sh_quote(check), sh_word(&token))));
+    ev.push(p("GATE", format!("[mesh DNS] the founder's management API token ({token}) resolves, before anything registers the site's nameserver group"), mesh_dns_token_gate(&r, &token)));
     ev.push(p("A", format!("[mesh DNS] a replica of the goatnet's zone ({zone}, ops/dns/{dir}/mesh-hosts) on the node, and the site's own nameserver group {group_name}, this replica first and {founder}'s second, written through {founder}'s management: a site cut off from {founder} still resolves the goatnet's names"), format!("cd '{r}/ops/ansible' && {pre} {inv} goat-coredns.yml -l {node} -e mesh_dns_zone_dir_name={} -e mesh_coredns_smoke_test_name={} -e netbird_nameserver_group_name={} -e netbird_api={} -e netbird_api_token_envvar={} -e mesh_dns_peer_replica_group={}", sh_word(&dir), sh_word(&first_name), sh_word(&group_name), sh_word(&api), sh_word(&token), sh_word(&peer_group))));
     Ok(())
 }
