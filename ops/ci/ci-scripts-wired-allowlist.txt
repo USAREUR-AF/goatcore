@@ -38,5 +38,3 @@ check-netvis-client.js
 # the same change.
 check-netbird-user-sql.sh
 check-no-default-allow.sh
-check-warrant-registry.py
-test-warrant-registry.py

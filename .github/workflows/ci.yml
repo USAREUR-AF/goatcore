@@ -539,3 +539,10 @@ jobs:
             fi
           done
           [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }
+      # ADR 1129: the ACL matrix is generated from the warrant registry. The
+      # negative tests prove each of the gate's checks refuses something before
+      # its verdict on the real registry is trusted.
+      - name: warrant registry gate refuses what it must (negative tests)
+        run: python3 ops/ci/test-warrant-registry.py
+      - name: the matrix is the registry's expansion, and the registry is sound
+        run: python3 ops/ci/check-warrant-registry.py

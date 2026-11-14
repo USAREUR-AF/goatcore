@@ -52,7 +52,7 @@ Usage:  python3 ops/ci/check-warrant-registry.py [--policy-dir DIR]
 --policy-dir moves only the registry (port-sets.yaml + rule-intents/). The
 generator, extractor and loader always come from this repository's
 ops/warrant/, so a policy directory needs no copy of the code.
-Rollback: rm this file, ops/warrant/, .github/workflows/warrant-registry.yml
+Run by: the ops-ci-guards job in .github/workflows/ci.yml, after ops/ci/test-warrant-registry.py.
 """
 
 from __future__ import annotations
