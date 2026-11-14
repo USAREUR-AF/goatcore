@@ -155,17 +155,17 @@ depend on that presumption being wrong.
 **Reason.** Both are different decisions with different risks; folding them in would make this
 ADR carry data it was written to leave behind.
 
-### D7 — Gate scope: proposed, the operator's call
+### D7 — After 1.0: a fast follow, not in the 1.0 gate
 
-Proposed: only what the sever-and-restore drill needs gates 1.0. That is D1 to D5 for one
-joiner site, on the two-site goatnet of gate row I5: sever it, extract at the hub, burn it down,
-join it again, import with the comb, restore, and the sites agree. Environment rebuild, tactical
-pods, and the comb's full indicator list beyond what that drill exercises do not gate 1.0. Which
-parts gate 1.0 is the operator's decision, recorded in the gate document when made.
+This ADR is written now. Nothing of the pattern is in the 1.0 gate: it is a fast follow
+after 1.0 (operator, 2026-11-14). Its drill, which severs one joiner site of the two-site
+goatnet of gate row I5, takes its extract at the hub, burns it down, joins it again, imports with
+the comb, restores it and checks that the sites agree, is listed under the "Fast follow after 1.0"
+section of [`goatbuilder-v1-gate.md`](../design/goatbuilder-v1-gate.md).
 
-**Reason.** The drill is the one case where the pattern is required, not optional: ADR 1205
-already lets the hub sever a site, and without D5 its only way back is the in-place re-seed this
-ADR replaces.
+**Reason.** The operator placed the goatbuilder steps for hub authority and the phoenix mechanisms
+after 1.0. Writing the decision now fixes the pattern before the code that implements it is
+planned.
 
 ## Alternatives considered
 
