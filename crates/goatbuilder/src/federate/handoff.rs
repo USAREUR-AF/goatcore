@@ -4,13 +4,13 @@
 //! approvals and the journal. A peering opts in with `drivers: two` on its
 //! `peerings:` entry; absent, or `one`, one machine drives every phase.
 //!
-//! Built here: each phase's side, and the controller's stop at phases 1 and 2,
-//! the two where the generic hand-off object is the contract's, with that
-//! object in the run's `-o json` report (member `handoff`) and the same argvs
-//! in its text. A two-driver run at any later phase that needs the edge (3,
-//! 11 to 14) is refused before acting (GB-267), because its object differs
-//! (phase 3's result is the edge half, 11 to 13 carry files, 14 binds by id)
-//! and is not built.
+//! Built here: each phase's side, and the controller's stop at phases 1, 2
+//! and 3, with the hand-off object in the run's `-o json` report (member
+//! `handoff`) and the same argvs in its text. Phase 3's result is the edge
+//! half (`handoff/3/edge-half.json`, `init --over-ssh --side edge`). A
+//! two-driver run at any later phase that needs the edge (11 to 14) is
+//! refused before acting (GB-267), because its object differs (11 to 13 carry
+//! files, 14 binds by id) and is not built.
 //!
 //! Built for phase 1: `import` ([`import`]) checks the edge result against
 //! the confirm code the edge driver printed, places it under
@@ -22,8 +22,16 @@
 //! checkout at another commit or with changes, and a carried file
 //! (`--expect <file>=<sha256>`) that is missing or differs (GB-278); it runs
 //! preflight's edge checks into `<work>/handoff/1/edge.json` and prints the
-//! way back ([`way_back`]) with the confirm code. Not built: the edge
-//! driver's run, the import and core half of phase 2 and later, and `status`
+//! way back ([`way_back`]) with the confirm code.
+//!
+//! Built for phase 3: the edge driver's run measures the edge half alone
+//! (`init --over-ssh <peering> --side edge --half-out
+//! <work>/handoff/3/edge-half.json`) and prints the way back; `import` runs
+//! the core half's file checks on it (GB-114, [`import_edge_half`]), places
+//! it and journals its sha256; the controller's `--from 3` hashes it again
+//! and runs the core half against it (`--side core --edge-half <file>
+//! --edge-half-sha256 <journaled sha256>`). Not built: the edge driver's run,
+//! the import and core half of phase 2 and of 11 and later, and `status`
 //! showing the object.
 
 use crate::Check;
@@ -37,32 +45,32 @@ pub const DIRTY: &str = "GB-266";
 pub const NOT_BUILT: &str = "GB-267";
 
 /// Whether the controller's stop at phase `n` gives the contract's object:
-/// phases 1 and 2 only, where nothing is carried and the result is the edge's
-/// `handoff/<n>/edge.json`.
+/// phases 1, 2 and 3, where nothing is carried and the result is the edge's
+/// file ([`result_of`]).
 pub fn hands_off(n: u32) -> bool {
-    matches!(n, 1 | 2)
+    matches!(n, 1..=3)
 }
 
 const ONE_DRIVER: &str = "run the peering with one driver for now: remove drivers: two from its peerings: entry, from a machine that reaches both the edge host and the core host";
 
 /// The first phase of a run (`runs(n)` says whether the run holds phase n)
 /// that needs the edge.
-fn first_edge_phase(runs: impl Fn(u32) -> bool) -> Option<u32> {
+pub fn first_edge_phase(runs: impl Fn(u32) -> bool) -> Option<u32> {
     (1..=14).find(|&n| runs(n) && matches!(side_of(n), Side::Edge | Side::Both))
 }
 
-/// A two-driver run whose first phase that needs the edge is after 2 is
+/// A two-driver run whose first phase that needs the edge is after 3 is
 /// refused before it acts: before a deploy's live recheck, its approval or
 /// phase 10's admission on our core, which would otherwise run and leave the
 /// admission half done when the run reached 11. A run whose first such phase
-/// is 1 or 2 stops there with the hand-off object instead, so it never
+/// is 1, 2 or 3 stops there with the hand-off object instead, so it never
 /// reaches a later one.
 pub fn refused_before_running(runs: impl Fn(u32) -> bool) -> Option<anyhow::Error> {
     let n = first_edge_phase(runs).filter(|&n| !hands_off(n))?;
     Some(
         goat_errors::coded(
             NOT_BUILT,
-            format!("phase {n} needs the edge, and its hand-off is not built yet: a two-driver peering (drivers: two) hands off only at phases 1 and 2 (docs/design/federation-two-drivers.md). Refused before this run acted: nothing of phase {n} ran, and no phase before it in this run. {ONE_DRIVER}"),
+            format!("phase {n} needs the edge, and its hand-off is not built yet: a two-driver peering (drivers: two) hands off only at phases 1, 2 and 3 (docs/design/federation-two-drivers.md). Refused before this run acted: nothing of phase {n} ran, and no phase before it in this run. {ONE_DRIVER}"),
         )
         .into(),
     )
@@ -71,11 +79,27 @@ pub fn refused_before_running(runs: impl Fn(u32) -> bool) -> Option<anyhow::Erro
 /// The refusal of a later phase that needs the edge, met inside a run. Not
 /// reached while `refused_before_running` gates the run; if it is, the
 /// phases before it in this run did run, and its rows above say which.
+/// Phase 3 of a two-driver peering, met with FED_MEASURE=here: measured on
+/// one machine, it has no halves to hand off.
+pub const MEASURED_HERE: &str = "phase 3 of a two-driver peering (drivers: two) measures in two halves over SSH, the edge half on the edge driver and the core half on the controller, and FED_MEASURE=here measures this one machine, which has no halves: that is not built";
+pub const MEASURED_HERE_FIX: &str =
+    "unset FED_MEASURE (or set it to ssh), then run the same command again";
+
+/// The refusal of phase 3 measured here, met inside a run.
+pub fn measured_here() -> Check {
+    Check {
+        name: "handoff".into(),
+        ok: false,
+        detail: format!("{NOT_BUILT}: {MEASURED_HERE}. Nothing of phase 3 ran; the phases of this run before it did (the rows above)"),
+        fix: Some(MEASURED_HERE_FIX.into()),
+    }
+}
+
 pub fn later_phase_not_built(n: u32) -> Check {
     Check {
         name: "handoff".into(),
         ok: false,
-        detail: format!("{NOT_BUILT}: phase {n} needs the edge, and its hand-off is not built yet: a two-driver peering (drivers: two) hands off only at phases 1 and 2 (docs/design/federation-two-drivers.md). Nothing of phase {n} ran; the phases of this run before it did (the rows above)"),
+        detail: format!("{NOT_BUILT}: phase {n} needs the edge, and its hand-off is not built yet: a two-driver peering (drivers: two) hands off only at phases 1, 2 and 3 (docs/design/federation-two-drivers.md). Nothing of phase {n} ran; the phases of this run before it did (the rows above)"),
         fix: Some(ONE_DRIVER.into()),
     }
 }
@@ -130,7 +154,7 @@ pub const NOT_THE_CONTROLLERS: &str = "GB-278";
 
 /// The phases whose edge driver's run is built.
 pub fn edge_half_built(n: u32) -> bool {
-    n == 1
+    matches!(n, 1 | 3)
 }
 
 /// What the edge driver's run carries into the phase loop: the commit its
@@ -164,7 +188,7 @@ pub fn edge_run(
         return Err(goat_errors::coded("GB-189", format!("--side edge runs one phase, as a hand-off names it: --from N --to N (given --from {from} --to {to})")).into());
     }
     if !edge_half_built(from) {
-        return Err(goat_errors::coded(NOT_BUILT, format!("--side edge: the edge driver's run of phase {from} is not built yet; only phase 1's is (docs/design/federation-two-drivers.md); run the peering with one driver for now")).into());
+        return Err(goat_errors::coded(NOT_BUILT, format!("--side edge: the edge driver's run of phase {from} is not built yet; only phase 1's and phase 3's are (docs/design/federation-two-drivers.md); run the peering with one driver for now")).into());
     }
     let Some(expect) = a.expect_commit.as_deref() else {
         return Err(not_the_controllers("--side edge needs --expect-commit <commit>, the commit the controller's hand-off names: without it the edge driver cannot know its checkout is the controller's".into()));
@@ -282,8 +306,8 @@ pub fn way_back(with: &str, n: u32, e: &EdgeRun) -> anyhow::Result<Stop> {
 }
 
 /// `goatbuilder federate import <partner> <phase> <result> --sha256 <code>`:
-/// the hand-off object's `import`. Built for phase 1 ([`import`]); a later
-/// phase's import is refused as not built (GB-267).
+/// the hand-off object's `import`. Built for phases 1 and 3 ([`import`]);
+/// another phase's import is refused as not built (GB-267).
 #[derive(clap::Args, Debug, Clone)]
 pub struct ImportArgs {
     /// The peering name (the counterparty, as declared).
@@ -299,6 +323,10 @@ pub struct ImportArgs {
     /// The working directory (default `$FED_WORK`, else /var/lib/goat-federation/<peering>).
     #[arg(long)]
     pub work: Option<String>,
+    /// Phase 3: the edge's inventory group whose host the edge half must have
+    /// been measured on (default <peering>_edge).
+    #[arg(long, value_name = "GROUP")]
+    pub edge_group: Option<String>,
 }
 
 /// The edge result cannot be imported (gate row B10).
@@ -306,12 +334,18 @@ pub const UNIMPORTABLE: &str = "GB-277";
 
 /// The phases whose import and core half are built.
 pub fn core_half_built(n: u32) -> bool {
-    n == 1
+    matches!(n, 1 | 3)
 }
 
-/// The result a phase-`n` hand-off names, under the writer's `<work>`.
+/// The result a phase-`n` hand-off names, under the writer's `<work>`:
+/// phase 3's is the edge half (`goatbuilder.phase3-edge-half/v1`), every
+/// other phase's the edge's `edge.json`.
 pub fn result_of(n: u32) -> String {
-    format!("handoff/{n}/edge.json")
+    if n == 3 {
+        "handoff/3/edge-half.json".into()
+    } else {
+        format!("handoff/{n}/edge.json")
+    }
 }
 
 /// The fewest hex digits of the sha256 a confirm code must give: the edge
@@ -381,9 +415,12 @@ fn phase_1_edge_result(doc: &serde_json::Value, with: &str) -> Result<(), String
 /// journaled as an `operator-step` confirmation on the phase, which the
 /// phase's core half reads (`--from <phase>`). Anything else is GB-277, and
 /// nothing is placed or recorded.
-pub fn import(a: &ImportArgs, work: &Path) -> anyhow::Result<crate::Report> {
+pub fn import(a: &ImportArgs, work: &Path, repo: &Path) -> anyhow::Result<crate::Report> {
     if !core_half_built(a.phase) {
         return Err(import_not_built(a));
+    }
+    if a.phase == 3 {
+        return import_edge_half(a, work, repo);
     }
     let bytes = std::fs::read(&a.result).map_err(|e| {
         unimportable(format!(
@@ -414,6 +451,80 @@ pub fn import(a: &ImportArgs, work: &Path) -> anyhow::Result<crate::Report> {
             a.with
         ))
     })?;
+    place(a, work, &bytes, &sha, Vec::new())
+}
+
+/// Phase 3's import: the core half's file checks on the edge half, each
+/// failure GB-114 (measure.rs `read_edge_half`: the confirm code, the schema
+/// and peering, measured no more than 24 hours ago and no more than 5
+/// minutes ahead), and its edge host against the one this checkout's
+/// inventory names, checked only when the inventory names exactly one; then
+/// the journal check and the placing, as every import.
+fn import_edge_half(a: &ImportArgs, work: &Path, repo: &Path) -> anyhow::Result<crate::Report> {
+    let half = super::measure::read_edge_half(&a.result, &a.with, &a.sha256)?;
+    let group = a
+        .edge_group
+        .clone()
+        .unwrap_or_else(|| format!("{}_edge", a.with));
+    let host = match super::measure::peering_inventory(repo, &group)
+        .and_then(|inv| super::measure::target_in(&inv, &group, None, "--edge-group"))
+    {
+        Ok(t) if t.name != half.edge_host => {
+            return Err(goat_errors::coded(
+                "GB-114",
+                format!(
+                    "the edge half {} cannot be used for peering {} (GB-114): it was measured on {}, and this checkout's inventory names {} as the edge of {group}; nothing was placed or recorded",
+                    a.result.display(),
+                    a.with,
+                    half.edge_host,
+                    t.name
+                ),
+            )
+            .into());
+        }
+        Ok(t) => format!("measured on {}, the edge of {group} in this checkout's inventory", t.name),
+        Err(e) => format!(
+            "measured on {}; not checked against the inventory, which does not name one edge host of {group} here ({e:#})",
+            half.edge_host
+        ),
+    };
+    let bytes = std::fs::read(&a.result).map_err(|e| {
+        unimportable(format!(
+            "import: {} cannot be read ({e})",
+            a.result.display()
+        ))
+    })?;
+    let sha = hex_sha256(&bytes);
+    anyhow::ensure!(
+        sha == half.sha256,
+        "import: {} changed while it was read",
+        a.result.display()
+    );
+    let checked = vec![Check {
+        name: "edge-half".into(),
+        ok: true,
+        detail: format!(
+            "phase 3's edge half for {}: measured at {} for interface {}, {host}",
+            a.with,
+            half.measured_at,
+            half.interface.as_deref().unwrap_or("(none)")
+        ),
+        fix: None,
+    }];
+    place(a, work, &bytes, &sha, checked)
+}
+
+/// The import's last part, for every phase: this peering's journal must be
+/// waiting on the edge driver at the phase; then the file is placed under
+/// `<work>` ([`result_of`]) and its whole sha256 journaled as an
+/// `operator-step` on the phase.
+fn place(
+    a: &ImportArgs,
+    work: &Path,
+    bytes: &[u8],
+    sha: &str,
+    checked: Vec<Check>,
+) -> anyhow::Result<crate::Report> {
     let _lock = super::lock::PeeringLock::take(work, &a.with)?;
     let Some(mut state) = super::state::State::read(work)? else {
         return Err(unimportable(format!("import: no run of {} is waiting on the edge driver here ({} has no run journal): run goatbuilder federate {} --from {} first", a.with, work.display(), a.with, a.phase)));
@@ -437,8 +548,8 @@ pub fn import(a: &ImportArgs, work: &Path) -> anyhow::Result<crate::Report> {
     let dir = dest.parent().expect("a hand-off result has a folder");
     std::fs::create_dir_all(dir)
         .map_err(|e| super::lock::io_error(format!("cannot create {}", dir.display()), e))?;
-    let tmp = dir.join(format!(".edge.json.{}", std::process::id()));
-    std::fs::write(&tmp, &bytes)
+    let tmp = dir.join(format!(".import.{}", std::process::id()));
+    std::fs::write(&tmp, bytes)
         .map_err(|e| super::lock::io_error(format!("cannot write {}", tmp.display()), e))?;
     std::fs::rename(&tmp, &dest)
         .map_err(|e| super::lock::io_error(format!("cannot place {}", dest.display()), e))?;
@@ -449,10 +560,11 @@ pub fn import(a: &ImportArgs, work: &Path) -> anyhow::Result<crate::Report> {
     state.confirm(&run, a.phase, "operator-step", "flag", &bound, values);
     state.close_run(&run, "passed");
     state.save(work)?;
-    let rows = vec![
+    let mut rows = checked;
+    rows.extend([
         Check { name: "import".into(), ok: true, detail: format!("phase {}'s edge result for {} is the file the edge driver confirmed ({bound}); placed at {}", a.phase, a.with, dest.display()), fix: None },
         Check { name: "next".into(), ok: true, detail: format!("carry on here: goatbuilder federate {} --from {}", a.with, a.phase), fix: None },
-    ];
+    ]);
     Ok(crate::Report::new(
         "federate-import",
         rows,
@@ -673,7 +785,7 @@ pub fn stop(with: &str, n: u32, commit: &str) -> Stop {
         "--expect-commit",
         commit,
     ]);
-    let result = format!("handoff/{n}/edge.json");
+    let result = result_of(n);
     let import = words(&[
         "goatbuilder",
         "federate",
@@ -714,7 +826,7 @@ pub fn stop(with: &str, n: u32, commit: &str) -> Stop {
         Check {
             name: "note".into(),
             ok: true,
-            detail: "phase 1's edge driver's run, import and core half are built; phase 2's and later are not (docs/design/federation-two-drivers.md, What has to be built)".into(),
+            detail: "phase 1's and phase 3's edge driver's run, import and core half are built; phase 2's and those of 11 and later are not (docs/design/federation-two-drivers.md, What has to be built)".into(),
             fix: None,
         },
     ];
@@ -795,12 +907,7 @@ mod tests {
         // 4 to 10 needs no edge (8 and 10 are core): nothing to refuse.
         assert!(refused_before_running(range(4, 10)).is_none());
         // Deploy (10 to 13) and its --from 11 reach 11 on the edge.
-        for (from, to, n) in [
-            (10, 13, 11),
-            (11, 13, 11),
-            (4, 11, 11),
-            (14, 14, 14),
-        ] {
+        for (from, to, n) in [(10, 13, 11), (11, 13, 11), (4, 11, 11), (14, 14, 14)] {
             let e = refused_before_running(range(from, to))
                 .expect("refused")
                 .to_string();
