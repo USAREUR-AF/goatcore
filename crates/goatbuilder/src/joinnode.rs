@@ -129,7 +129,7 @@ fn gv_first(file: &Path, key: &str) -> String {
 
 /// The services stage-service-leaves.yml stages a leaf for (its
 /// `service_leaf_map`). A test holds this list in step with the play.
-const STAGED_SERVICES: [&str; 8] = ["fabric-health", "mesh-health", "presence-health", "time-health", "peer-health", "consistency-health", "fabric-crawler", "goat-topology"];
+const STAGED_SERVICES: [&str; 9] = ["fabric-health", "mesh-health", "presence-health", "time-health", "peer-health", "consistency-health", "fabric-crawler", "goat-topology", "audit-subscriber"];
 
 /// A joining site's leaves, from its manifest
 /// (`ops/enrollment/manifests/<site>-certs.yaml`): where mint-site-certs.sh
@@ -1087,6 +1087,20 @@ mod tests {
         let e = plan(t.path(), &opts("zagros-b", "core", "zagros")).err().expect("refused");
         assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-286"), "{e}");
         assert!(e.to_string().contains("ops/enrollment/manifests/zagros-b-certs.yaml"), "{e}");
+    }
+
+    /// A site that declares its own audit-subscriber mints its leaf from the
+    /// manifest like any other service leaf, so the staging step stages it
+    /// too, into the directory the audit-subscriber role reads.
+    #[test]
+    fn a_manifests_audit_subscriber_leaf_is_staged() {
+        let t = joiner_checkout();
+        let m = t.path().join("ops/enrollment/manifests/zagros-b-certs.yaml");
+        std::fs::write(&m, "site_id: zagros-b\nout_dir: /s/zagros-b-leaves\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n  - name: audit-subscriber\n    cn: audit-subscriber\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let stage = ph.iter().find(|p| p.cmd.contains("stage-service-leaves.yml")).expect("a staging step");
+        assert!(stage.cmd.ends_with(r#"-e '{"leaf_only": ["fabric-health", "audit-subscriber"]}'"#), "{}", stage.cmd);
+        assert!(stage.label.contains("audit-subscriber"), "{}", stage.label);
     }
 
     /// Gate row I3, the data router: a joiner's core node runs zenoh-deploy.yml

@@ -63,11 +63,12 @@ audit_subscriber_exclude_keys: "volatile/**"
 
 # Host-side cert directory. Leaf cert + key minted via offline-CA
 # cert-sign (same workflow as panoscope + synth-vendor leaves, but
-# under an infra-peer URI-SAN rather than a vendor-prefix one).
-# Operator pre-stages files at:
+# under an infra-peer URI-SAN rather than a vendor-prefix one), or
+# from the site's manifest with mint-site-certs.sh. stage-service-leaves.yml
+# stages them at:
 #   {cert_dir}/audit-subscriber-cert.pem
 #   {cert_dir}/audit-subscriber-key.pem
-#   {cert_dir}/ca-root.pem
+# The CA root is not read from here: see audit_subscriber_ca_root_src.
 audit_subscriber_cert_dir: "/opt/audit-subscriber/certs"
 
 # Source path on the host for the fabric's CA root certificate. Read-only

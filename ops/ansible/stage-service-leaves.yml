@@ -1,5 +1,10 @@
 ---
-# Stage minted leaf cert+key pairs onto a host for the Zenoh publisher services.
+# Stage minted leaf cert+key pairs onto a host for the Zenoh publisher services
+# and the audit subscriber.
+#
+# Only the leaf and its key are staged. Each of these roles reads the goatnet's
+# CA root from the router's TLS directory (<service>_ca_root_src), which
+# zenoh-deploy.yml fills, never from its own cert directory.
 #
 # WHY THIS EXISTS: every publisher role — fabric-health, mesh-health,
 # presence-health, time-health, consistency-health, fabric-crawler — FAILS CLOSED
@@ -49,6 +54,7 @@
       consistency-health: /opt/consistency-health/certs
       fabric-crawler: /opt/fabric-health/certs
       goat-topology: /opt/goat-topology/certs
+      audit-subscriber: /opt/audit-subscriber/certs
 
     # Stage only these services (e.g. -e '{"leaf_only": ["goat-topology"]}'); empty = all.
     leaf_only: []
