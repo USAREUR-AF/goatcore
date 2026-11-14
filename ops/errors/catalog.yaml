@@ -347,6 +347,22 @@ entries:
     read: docs/design/goat-cli-error-codes.md
     exit: 1
 
+  - code: E_RECIPIENT_KEY_UNPUBLISHED
+    tool: goat
+    title: this anchor's recipient key is not in the recipient-cert store
+    what: "`goat access key` asked the portal's recipient-cert store for the anchor's public leaf cert and the portal answered 404, so the key service cannot wrap sealed data to that anchor. The text after the dash is the portal's own reason."
+    causes:
+      - the anchor's leaf was minted before the recipient-cert store existed, so its public cert was never stored
+      - the anchor is not the one meant (a typo, or an anchor from another goatnet)
+    fixes:
+      - "goat access key --anchor <anchor>   (check the anchor; with no --anchor it checks your own profile's)"
+      - "goat admin rotate <anchor>   (an operator re-issues the leaf in place, ADR 1044, which stores its public cert; install the new bundle's cert and key on the peer)"
+      - "goat access key --anchor <anchor>   (run again: it reports PUBLISHED)"
+    read: docs/design/goat-cli-error-codes.md
+    exit: 1
+    matches:
+      - "recipient key for \\S+ is NOT published"
+
   # --------------------------------------------------------------- goatbuilder
 
   - code: GB-001
