@@ -33,6 +33,10 @@ struct Record<'a> {
     exit: i32,
     /// The error that ended the run, as the tool printed it.
     error: Option<&'a str>,
+    /// The rows that stopped a run that ended without an error: each row of
+    /// the verb's report that did not pass (its verdict, code and reason).
+    #[serde(skip_serializing_if = "<[Check]>::is_empty")]
+    stop: &'a [Check],
     phases: &'a [crate::runner::PhaseEntry],
     commands: &'a [crate::runner::CommandEntry],
     inputs: &'a serde_json::Value,
@@ -41,9 +45,19 @@ struct Record<'a> {
     wrote: &'a [String],
 }
 
+/// The rows that stopped a run: every row of its report that did not pass,
+/// when the run ended with a non-zero exit. A run that passed has none.
+pub fn stop_rows(report: &Report) -> Vec<Check> {
+    if report.exit == EXIT_OK {
+        return Vec::new();
+    }
+    report.checks.iter().filter(|c| !c.ok).cloned().collect()
+}
+
 /// Write the record of a run that ended with `exit` (and `error`, if it failed
-/// with one). Returns where it was written.
-pub fn write(run: &Finished, exit: i32, error: Option<&str>) -> Result<PathBuf> {
+/// with one, or the rows in `stop` that stopped it). Returns where it was
+/// written.
+pub fn write(run: &Finished, exit: i32, error: Option<&str>, stop: &[Check]) -> Result<PathBuf> {
     let id = run
         .dir
         .file_name()
@@ -62,6 +76,7 @@ pub fn write(run: &Finished, exit: i32, error: Option<&str>) -> Result<PathBuf> 
         ended: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         exit,
         error,
+        stop,
         phases: &run.phases,
         commands: &run.commands,
         inputs: &inputs,
@@ -319,6 +334,14 @@ pub fn show(state: &Path, which: &str, json: bool) -> Result<Report> {
             ok: false,
             detail: e.to_string(),
             fix: None,
+        });
+    }
+    for c in v["stop"].as_array().into_iter().flatten() {
+        rows.push(Check {
+            name: s(c, "name").to_string(),
+            ok: false,
+            detail: s(c, "detail").to_string(),
+            fix: c["fix"].as_str().map(String::from),
         });
     }
     let commands = v["commands"].as_array().cloned().unwrap_or_default();
@@ -599,11 +622,11 @@ mod tests {
     fn a_record_names_the_checkout_files_the_run_wrote() {
         let t = tempfile::tempdir().unwrap();
         let mut a = finished(&t.path().join("runs/a"), &[("true", 0)], "zagros_hosts");
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(write(&a, 0, None).unwrap()).unwrap()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(write(&a, 0, None, &[]).unwrap()).unwrap()).unwrap();
         assert!(v.get("wrote").is_none(), "{v}");
         a.dir = t.path().join("runs/b");
         a.wrote = vec!["ops/ansible/group_vars/gamma_hosts/vars.yml".into(), "ops/ansible/inventory/mgmt-hosts-mesh.ini".into()];
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(write(&a, 0, None).unwrap()).unwrap()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(write(&a, 0, None, &[]).unwrap()).unwrap()).unwrap();
         assert_eq!(v["wrote"], serde_json::json!(["ops/ansible/group_vars/gamma_hosts/vars.yml", "ops/ansible/inventory/mgmt-hosts-mesh.ini"]));
     }
 
@@ -621,8 +644,8 @@ mod tests {
             &[("one", 0), ("three", 2)],
             "xaa_hosts",
         );
-        let pa = write(&a, 0, None).unwrap();
-        write(&b, 1, Some("phase 5 failed")).unwrap();
+        let pa = write(&a, 0, None, &[]).unwrap();
+        write(&b, 1, Some("phase 5 failed"), &[]).unwrap();
         let v: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&pa).unwrap()).unwrap();
         assert_eq!(v["schema"], SCHEMA);
@@ -698,7 +721,7 @@ mod tests {
             { "name": "ZAGROS_PG_PASS", "value": "hunter2", "secret": true, "source": "environment" },
             { "name": "target", "value": "zagros_hosts", "secret": false, "source": "derived" }
         ]);
-        let p = write(&run, 0, None).unwrap();
+        let p = write(&run, 0, None, &[]).unwrap();
         let text = std::fs::read_to_string(&p).unwrap();
         assert!(!text.contains("hunter2"), "{text}");
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -707,6 +730,56 @@ mod tests {
             v["inputs"][1]["value"], "zagros_hosts",
             "a value not marked secret is kept"
         );
+    }
+
+    /// A run that stopped on a refused row, with no error, keeps that row:
+    /// its verdict, code and reason are why it stopped, and `show` prints it.
+    #[test]
+    fn a_run_stopped_by_a_refused_row_keeps_that_row() {
+        let t = tempfile::tempdir().unwrap();
+        let run = finished(
+            &t.path().join("runs/20261112T000000Z-federate-backout-1"),
+            &[("survey", 0)],
+            "zagros_hosts",
+        );
+        let mut report = Report::new(
+            "federate-backout",
+            vec![
+                row("survey", "edge-x: 1 row".into()),
+                Check {
+                    name: "survey".into(),
+                    ok: false,
+                    detail: "refused (GB-221): edge-x tunnel interface wg-fed0 (other:xab)".into(),
+                    fix: Some("nothing was changed; fix what each line names".into()),
+                },
+            ],
+            EXIT_REFUSED,
+        );
+        let stop = stop_rows(&report);
+        assert_eq!(stop.len(), 1, "only the row that did not pass: {stop:?}");
+        let p = write(&run, report.exit, None, &stop).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(v["stop"][0]["name"], "survey");
+        assert!(
+            v["stop"][0]["detail"].as_str().unwrap().contains("GB-221"),
+            "{v}"
+        );
+        assert_eq!(
+            v["stop"][0]["fix"],
+            "nothing was changed; fix what each line names"
+        );
+        let sh = show(t.path(), "last", false).unwrap();
+        assert!(
+            sh.checks
+                .iter()
+                .any(|c| c.name == "survey" && c.detail.contains("GB-221")),
+            "{:?}",
+            sh.checks
+        );
+        // A run that passed keeps no stop, whatever its rows say.
+        report.exit = EXIT_OK;
+        assert!(stop_rows(&report).is_empty());
     }
 
     #[test]

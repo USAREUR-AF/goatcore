@@ -911,6 +911,12 @@ pub struct Report {
     /// -o json and to the tutor's log.
     #[serde(skip)]
     pub printed: bool,
+    /// With `printed`: how many leading rows the printed view stands for.
+    /// A row after them that did not pass (a stop's verdict, code and reason,
+    /// which the view does not show) is printed after the view in table mode
+    /// (`output::after_view`). `None`: the view stands for every row.
+    #[serde(skip)]
+    pub view_rows: Option<usize>,
 }
 
 impl Report {
@@ -924,6 +930,7 @@ impl Report {
             checks,
             handoff: None,
             printed: false,
+            view_rows: None,
         }
     }
 
@@ -1674,14 +1681,14 @@ fn main() {
     // refusal of the arguments before any phase leaves nothing; its reason is
     // already printed.
     if let Some(run) = runner::end().filter(|r| !r.phases.is_empty() || !r.commands.is_empty()) {
-        let (exit, error) = match &report {
-            Ok(r) => (r.exit, None),
+        let (exit, error, stop) = match &report {
+            Ok(r) => (r.exit, None, runs::stop_rows(r)),
             Err(e) => {
                 let code = e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone());
-                (code.as_deref().and_then(goat_errors::explain).and_then(|x| x.exit).unwrap_or(EXIT_USAGE), Some(format!("{e:#}")))
+                (code.as_deref().and_then(goat_errors::explain).and_then(|x| x.exit).unwrap_or(EXIT_USAGE), Some(format!("{e:#}")), Vec::new())
             }
         };
-        match runs::write(&run, exit, error.as_deref()) {
+        match runs::write(&run, exit, error.as_deref(), &stop) {
             Ok(path) => eprintln!("run record: {}", path.display()),
             Err(e) => eprintln!("goatbuilder: the run record was not written: {e:#}"),
         }
@@ -1700,6 +1707,13 @@ fn main() {
             let already_shown = report.printed && matches!(cli.output, OutputFormat::Table);
             if !report.checks.is_empty() && !already_shown {
                 println!("{}", output::render(&report, cli.output, cli.color));
+            }
+            // A stop after the verb's own view (its verdict, code and reason)
+            // still reaches the terminal: the view does not say why it stopped.
+            if already_shown {
+                if let Some(rows) = output::after_view(&report, cli.color) {
+                    println!("{rows}");
+                }
             }
             if let Some(done) = &tutor_done {
                 eprintln!("{done}");

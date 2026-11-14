@@ -196,6 +196,7 @@ The tests never write into the real state directory. Every test that runs a verb
 | `tool_version`, `tree_commit` | the binary's version and the checkout's commit | |
 | `verb`, `args` | the verb and its arguments as typed (no verb that drives hosts takes a secret on its command line; secrets come from the environment) | the test finds a verb's records by `verb` |
 | `started`, `ended`, `exit`, `error` | the run's times, its exit code, and the error that ended it, as printed | |
+| `stop[]` | present when the run ended with a non-zero exit and no error: each row of the verb's report that did not pass (`name`, `ok`, `detail`, `fix`), so its verdict, code and reason are kept, as printed; `goatbuilder show` prints them | `goatbuilder show` |
 | `phases[]` | each phase: `id`, `name`, `purpose`, `started`, `ended`, `exit` (the first non-zero exit of its commands, else 0; null when it ran none, or one did not start), `commands` (how many), and `verdict` when the verb gave one for a phase that started no command (deploy's `verify:<group>` for a group whose deploy failed reads `not checked: the deploy failed`); `runs diff` compares a phase's exit, or its verdict when it has no exit | |
 | `commands[]` | each process: `phase`, `command` (the line as a shell reads it), `argv`, `host`, `log` (its log file) or `log_note` (why there is none), `started`, `ended`, `exit`, `secs` | check (a) |
 | `inputs[]` | each value: `name`, `value`, `secret`, `source`, `origin` (below) | check (b) |

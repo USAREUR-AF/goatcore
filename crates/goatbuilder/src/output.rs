@@ -78,6 +78,32 @@ pub fn render(report: &Report, format: OutputFormat, color: ColorChoice) -> Stri
     }
 }
 
+/// What table mode prints after a view the verb printed itself: the rows
+/// after the ones the view stands for (`Report::view_rows`) that did not pass.
+/// `None` when the verb printed no view, or nothing is left to print.
+pub fn after_view(report: &Report, color: ColorChoice) -> Option<String> {
+    if !report.printed {
+        return None;
+    }
+    let from = report.view_rows?;
+    let rest: Vec<crate::Check> = report
+        .checks
+        .iter()
+        .skip(from)
+        .filter(|c| !c.ok)
+        .cloned()
+        .collect();
+    if rest.is_empty() {
+        return None;
+    }
+    let terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    Some(table(
+        &Report::new(report.verb, rest, report.exit),
+        want_color(color),
+        terminal,
+    ))
+}
+
 /// A `phase` row whose detail is a `=== … ===` banner prints as a section
 /// heading ("Phase 5 · core · netbird-mgmt"), not as a check row: it is a
 /// title, and the banner's `===` and `[class]` read as noise to a person. The
@@ -1511,6 +1537,48 @@ mod tests {
 
     fn c(name: &str, ok: bool, fix: Option<&str>) -> Check {
         Check { name: name.into(), ok, detail: format!("{name} detail"), fix: fix.map(String::from) }
+    }
+
+    /// After a view the verb printed itself, table mode prints the rows the
+    /// view does not stand for that did not pass, and nothing else: no row
+    /// the view stands for, and no row that passed.
+    #[test]
+    fn after_a_printed_view_only_the_stop_rows_are_printed() {
+        let mut stop = c("survey", false, Some("fix what each line names"));
+        stop.detail = "refused (GB-221): edge-x tunnel (other:xab)".into();
+        let mut r = Report::new(
+            "federate-backout",
+            vec![c("before", false, None), c("plan", true, None), stop],
+            EXIT_REFUSED,
+        );
+        assert_eq!(
+            after_view(&r, ColorChoice::Never),
+            None,
+            "no view printed: the whole table prints as before"
+        );
+        r.printed = true;
+        assert_eq!(
+            after_view(&r, ColorChoice::Never),
+            None,
+            "the view stands for every row"
+        );
+        r.view_rows = Some(1);
+        let shown = after_view(&r, ColorChoice::Never).expect("the stop's row is printed");
+        assert!(
+            shown.contains("refused (GB-221): edge-x tunnel (other:xab)"),
+            "{shown}"
+        );
+        assert!(shown.contains("fix what each line names"), "{shown}");
+        assert!(
+            !shown.contains("before detail") && !shown.contains("plan detail"),
+            "{shown}"
+        );
+        r.view_rows = Some(3);
+        assert_eq!(
+            after_view(&r, ColorChoice::Never),
+            None,
+            "nothing after the view"
+        );
     }
 
     /// A probe the dry run ran and one only a real run starts each get their
