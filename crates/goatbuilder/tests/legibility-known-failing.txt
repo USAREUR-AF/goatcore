@@ -20,4 +20,3 @@
 #     Removed by step 6 (ops/phases/catalog.yaml; the missing document).
 d standup    no phase catalog (ops/phases/catalog.yaml)
 d join-node  no phase catalog (ops/phases/catalog.yaml)
-d deploy     no phase catalog (ops/phases/catalog.yaml)
