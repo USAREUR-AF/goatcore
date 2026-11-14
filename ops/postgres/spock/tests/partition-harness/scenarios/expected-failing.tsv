@@ -2,3 +2,4 @@
 # Each still runs and is reported FAILING; the job fails if one passes while listed here,
 # or if a scenario fails that is not listed.
 netbird-c5-policy-regenerate-no-duplicates	F-591: netbird-acl-cutover.yml has no cut-off mode
+portal-c1-topic-create-both-sides	design §3.1 class 1 not built (island-mode step B): topics.id is a per-site identity sequence, so B refuses its first topic while cut off with a duplicate key on an id A already used

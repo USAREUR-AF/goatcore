@@ -3,15 +3,18 @@
 
 Every input is read from the file that owns it, never copied:
   - repset table lists: ops/ansible/roles/spock-mesh-peering/defaults/main.yml
-    (spock_mesh_netbird_mgmt_tables) and ops/ansible/roles/ory-narrow-repset/
-    defaults/main.yml (ory_spock_inclusion_tables)
+    (spock_mesh_netbird_mgmt_tables), ops/ansible/roles/ory-narrow-repset/
+    defaults/main.yml (ory_spock_inclusion_tables), and for the portal
+    registry, which no role puts in a repset yet, every table of its schema
+    (ops/goat-zenoh-portal/internal/registry/registry.go, `Tables`)
   - image pins: ops/pins/fleet-pins.yaml (netbird-mgmt) and the Ory role
     default version, digest from the goatnet that digest-pins it
   - scenario names: docs/design/island-mode-write-inventory.md §10
 
 Subcommands:
   pins                       shell assignments NB_IMAGE, KRATOS_IMAGE, HYDRA_IMAGE
-  tables <db>                replicated tables of netbird | kratos | hydra
+  tables <db>                replicated tables of netbird | kratos | hydra | portal_registry
+  repset <db>                the replication set that database's tables are in
   drift-env <out> <portA> <portB> <pwvar>
                              env file for ops/ansible/roles/spock-drift-watch
   account <expect> <dump>    match spock.exception_log / spock.resolutions rows
@@ -35,15 +38,34 @@ SCENARIOS = HERE / "scenarios"
 
 # Mirrors the spock-drift-watch defaults: compare all replicated tables of
 # these three databases.
-DATABASES = ("netbird", "kratos", "hydra")
-REPSET = {"netbird": "netbird_mgmt", "kratos": "ory_narrow", "hydra": "ory_narrow"}
+DATABASES = ("netbird", "kratos", "hydra", "portal_registry")
+REPSET = {"netbird": "netbird_mgmt", "kratos": "ory_narrow", "hydra": "ory_narrow",
+          "portal_registry": "portal_registry"}
+PORTAL_REGISTRY_GO = REPO / "ops/goat-zenoh-portal/internal/registry/registry.go"
 
 
 def load(path):
     return yaml.safe_load(path.read_text())
 
 
+def portal_tables():
+    """The registry's tables, from its `Tables` list (registry.go).
+
+    No role declares a portal repset yet (program step 6). Until one does, the
+    harness replicates the whole step A schema, which is what the registry
+    would be in a repset as it stands; design §3.2 moves the per-site tables
+    out in step B.
+    """
+    body = PORTAL_REGISTRY_GO.read_text().split("var Tables = []string{", 1)[1].split("}", 1)[0]
+    names = re.findall(r'"([a-z_]+)"', body)
+    if not names:
+        raise SystemExit(f"no Tables list in {PORTAL_REGISTRY_GO}")
+    return names
+
+
 def tables(db):
+    if db == "portal_registry":
+        return portal_tables()
     if db == "netbird":
         return list(load(ROLES / "spock-mesh-peering/defaults/main.yml")["spock_mesh_netbird_mgmt_tables"])
     inc = load(ROLES / "ory-narrow-repset/defaults/main.yml")["ory_spock_inclusion_tables"][db]
@@ -228,6 +250,8 @@ def main(argv):
         pins()
     elif cmd == "tables":
         print("\n".join(tables(args[0])))
+    elif cmd == "repset":
+        print(REPSET[args[0]])
     elif cmd == "drift-env":
         drift_env(*args)
     elif cmd == "account":

@@ -8,7 +8,11 @@
 # management, Kratos and Hydra schemas at the fleet's pinned versions, joined
 # by Spock subscriptions both ways over the repsets the roles declare
 # (spock-mesh-peering: netbird_mgmt; ory-narrow-repset: ory_narrow), with the
-# ADR 1193 revocation guard installed as those roles install it.
+# ADR 1193 revocation guard installed as those roles install it. The portal
+# registry (database portal_registry) carries the schema the portal applies
+# (ops/goat-zenoh-portal/internal/registry/schema.sql) and replicates every
+# table of it over repset portal_registry; no role declares that repset yet
+# (island-mode program step 6), so its table list is the registry's own.
 #
 # Each scenario in scenarios/<name>.sh (named exactly as inventory §10):
 #   seed        optional, at A before the cut, replicated to B
@@ -51,7 +55,7 @@ TS_PORT_b="${HARNESS_PORT_PG_B:-55433}"
 source ../lib/two-site.sh
 
 PY=(python3 "$HERE/harness.py")
-DBS=(netbird kratos hydra)
+DBS=(netbird kratos hydra portal_registry)
 ACCT="harnessacct000000000"
 RUN="$(date +%s)"
 WORK="$(mktemp -d)"
@@ -82,7 +86,7 @@ docker pull -q "$HYDRA_IMAGE" >/dev/null &
 echo "== bring up two sites"
 ts_up
 for s in a b; do
-  for db in kratos hydra; do q "$s" "$db" "CREATE EXTENSION IF NOT EXISTS spock;"; done
+  for db in kratos hydra portal_registry; do q "$s" "$db" "CREATE EXTENSION IF NOT EXISTS spock;"; done
 done
 wait
 
@@ -195,6 +199,14 @@ for s in a b; do
 done
 echo "  migrated; shared nid $SHARED_NID pre-seeded"
 
+echo "== portal registry schema (the version-1 migration the portal applies, each site)"
+# internal/pgstore.Migrate runs this file as version 1, in one transaction.
+for s in a b; do
+  docker exec -i "$PFX-$s" psql -U postgres -d portal_registry -v ON_ERROR_STOP=1 -q -1 \
+    -c "SET client_min_messages = warning;" -f - < "$REPO/ops/goat-zenoh-portal/internal/registry/schema.sql"
+done
+echo "  $("${PY[@]}" tables portal_registry | wc -l | tr -d ' ') registry tables at both sites"
+
 # ---------------------------------------------------------------- spock
 echo "== Spock: nodes, repsets from the role defaults, revocation guard, subscriptions"
 wire() { # wire <db> <repset> [sql file ...]   (the files the roles install before curating the repset)
@@ -220,6 +232,7 @@ wire netbird netbird_mgmt "$REPO/ops/postgres/spock/revocation-guard/netbird.sql
                           "$REPO/ops/postgres/spock/hub-authority/netbird.sql"
 wire kratos  ory_narrow   "$REPO/ops/postgres/spock/revocation-guard/kratos.sql"
 wire hydra   ory_narrow
+wire portal_registry portal_registry
 ts_wait_replicating "${DBS[@]}"
 echo "  replicating: ${DBS[*]}"
 
@@ -271,6 +284,23 @@ kratos_create() { # kratos_create <site> <email> <name>  -> prints the identity 
       credentials:{password:{config:{password:"harness-Passw0rd-not-secret"}}}}')" | jq -r .id
 }
 kname() { kr "$1" "SELECT traits->>'name' FROM identities WHERE id='$2';"; }
+pr() { q "$1" portal_registry "$2"; }
+portal_vendor() { # portal_vendor <site> <prefix>   an approved org (CreateVendor, then ApproveVendor)
+  pr "$1" "INSERT INTO vendors (prefix, api_key_hash, display_name, approved_at, approver, created_at)
+           VALUES ('$2', 'harness-not-a-hash', '$2', extract(epoch from now())::bigint, 'harness',
+                   extract(epoch from now())::bigint);"
+}
+portal_topic() { # portal_topic <site> <vendor> <key_pattern>  -> the new id, or "refused: <error>"
+  # CreateTopic (registry.go): the id comes from the table's own sequence, and
+  # a unique violation is reported to the caller as "topic exists".
+  local out
+  if out=$(pr "$1" "INSERT INTO topics (vendor_prefix, key_pattern, format, created_at)
+                    VALUES ('$2', '$3', 'json', extract(epoch from now())::bigint) RETURNING id;" 2>&1); then
+    echo "$out"
+  else
+    echo "refused: $(grep -E 'ERROR|DETAIL' <<<"$out" | sed -E 's/^psql:[^:]*:[0-9]*: //' | tr '\n' ' ' | sed 's/ $//')"
+  fi
+}
 
 # Hub directives (ADR 1205). Site A is the hub. The applier is the script the
 # spock-hub-directives role installs, run here against one site.

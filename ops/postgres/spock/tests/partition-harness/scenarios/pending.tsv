@@ -1,6 +1,5 @@
 # Inventory §10 scenarios registered but not run yet: <name>TAB<why>.
 # A name moves out of this file when its scenario file lands in this directory.
-portal-c1-topic-create-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
 portal-c1-schema-upload-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
 portal-c1-access-request-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
 portal-c1-grant-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
