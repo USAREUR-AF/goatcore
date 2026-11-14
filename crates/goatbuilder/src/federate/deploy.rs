@@ -496,7 +496,6 @@ pub fn whole(
     Ok(r)
 }
 
-/// `goatbuilder federate test <partner>`: acceptance alone.
 /// `federate test <partner> --bilateral [<attempt>]`: phase 14 on a session both
 /// sides derive (docs/design/federation-acceptance.md §6.3), with this binary as
 /// its signer and verifier. Opt-in: without it, phase 14 is as it always was.
@@ -508,6 +507,7 @@ pub fn test_bilateral(repo: &Path, o: &Options, attempt: Option<u32>) -> Result<
     test(repo, o)
 }
 
+/// `goatbuilder federate test <partner>`: acceptance alone.
 pub fn test(repo: &Path, o: &Options) -> Result<Report> {
     let again = Some(format!("goatbuilder federate test {}", o.with));
     let mut s = Surface {

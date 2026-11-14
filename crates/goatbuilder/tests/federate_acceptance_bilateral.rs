@@ -1,4 +1,4 @@
-//! Gate row B2, fourth slice: `goatbuilder federate test <partner> --bilateral`
+//! Gate row B2, fourth part: `goatbuilder federate test <partner> --bilateral`
 //! runs phase 14 on a session both sides derive, with goatbuilder's own signer
 //! and verifier (`goatbuilder acceptance-result sign|verify`, hidden) and the
 //! peering's keyring. Without the flag, phase 14 is as it was.
