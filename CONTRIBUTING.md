@@ -6,7 +6,7 @@ Thank you for working on goat. This page is the whole process; nothing else is r
 
 1. Fork, or branch from `main` if you have write access. Branch names: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`.
 2. Make the change. Run the gates that apply (below). Add or update the design document in the same change when behaviour or topology changes.
-3. Commit with a [Conventional Commits](https://www.conventionalcommits.org/) subject and a DCO sign-off: `git commit -s -m "fix(zenoh): …"`.
+3. Commit with a [Conventional Commits](https://www.conventionalcommits.org/) subject, a DCO sign-off (`-s`) and a verified signature (`-S`): `git commit -S -s -m "fix(zenoh): …"`. Set up commit signing once before your first commit; [Commits](#commits) says how. A pull request with an unsigned commit cannot merge.
 4. Open a pull request against `main`. Fill the template. One approving review from a code owner merges it, by squash.
 
 ## Commits
