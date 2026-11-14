@@ -73,7 +73,7 @@ follow() {
   while :; do
     docker logs --since 1m -f "$ROUTER" 2>&1 \
       | grep --line-buffered -F -e 'uhlc: incoming timestamp' \
-          -e 'zenoh_link_tls::unicast: received fatal alert' >> "$LOG"
+          -e 'received fatal alert: ' >> "$LOG"
     sleep 5
   done
 }
