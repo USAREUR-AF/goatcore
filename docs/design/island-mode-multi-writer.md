@@ -129,6 +129,12 @@ admin; a divergence between sites raises an alert.
 - `spock-drift-watch` (role `spock-drift-watch`, ADR 1084 D5) gains every replicated table of
   `portal`, `console`, `orgs` in `spock_drift_watch_tables`, and every site gets its peers in
   `spock_drift_watch_peers`.
+- drift-watch also reports, per peer and watched table, the rows `spock.resolutions` shows
+  last-write-wins replaced with different content (`spock_ace_lww_lost_rows`): a heal can
+  leave both sites equal with one site's row gone, which the row compare alone passes.
+  Built and proven in the partition harness (`portal-c1-two-topics-both-sides-loss-reported`);
+  `SpockHealReplacedRow` (`ops/compose/mgmt-host/monitoring/rules/spock.yml`) alerts on an
+  increase.
 - Alert on: subscription not `replicating`, empty repset, any unresolved exception
   older than 1 h, any drift-watch mismatch.
 

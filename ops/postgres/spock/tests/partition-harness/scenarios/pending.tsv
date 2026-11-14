@@ -1,6 +1,5 @@
 # Inventory §10 scenarios registered but not run yet: <name>TAB<why>.
 # A name moves out of this file when its scenario file lands in this directory.
-portal-c1-two-topics-both-sides-loss-reported	drift-watch compares rows only and reads no spock.resolutions, so a row last-write-wins replaced on heal passes as equal; seen with two topics given one integer id while cut off
 portal-c1-schema-upload-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
 portal-c1-access-request-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
 portal-c1-grant-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
