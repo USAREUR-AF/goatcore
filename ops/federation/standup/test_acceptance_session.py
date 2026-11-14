@@ -388,6 +388,85 @@ class Publish(Fixture):
         self.assertEqual(ses.freshness(self.partner, self.ag, now=now)[0], "none")
 
 
+class DerivedSession(unittest.TestCase):
+    """Gate row B2, second slice: both sides work out the same session from the
+    agreement they hold, so no manifest file passes between them. Each side's
+    challenge stays its own and random; it is not part of the derived session."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="acceptance-derived-")
+        self.addCleanup(shutil.rmtree, self.d, True)
+        # Each side's own copy of the one agreement, written by its own compose.
+        self.ag = {}
+        for us in ("xaa", "xab"):
+            path = os.path.join(self.d, "agreement-%s.json" % us)
+            with open(path, "w") as f:
+                json.dump(fakefabric.agreement(), f)
+            self.ag[us] = path
+
+    def derived(self, us, attempt=1, agreement=None):
+        return ses.derive_session(agreement or self.ag[us], us, attempt)
+
+    def test_two_sides_derive_one_manifest(self):
+        a, b = self.derived("xaa"), self.derived("xab")
+        self.assertEqual(ses.canonical_bytes(a), ses.canonical_bytes(b))
+        self.assertEqual(a["digest"], b["digest"])
+        self.assertTrue(ses.SESSION_ID.fullmatch(a["session_id"]))
+        self.assertEqual([p["sovereign_id"] for p in a["participants"]], ["xaa", "xab"])
+        # Nothing in it is random or read from a clock: deriving again gives it again.
+        self.assertEqual(ses.canonical_bytes(self.derived("xaa")), ses.canonical_bytes(a))
+        self.assertNotIn("challenges", a)
+        self.assertEqual(a["expires_at"], "2026-12-01T23:59:59Z")
+
+    def test_a_different_attempt_is_another_session(self):
+        one, two = self.derived("xaa", 1), self.derived("xaa", 2)
+        self.assertNotEqual(one["session_id"], two["session_id"])
+        self.assertNotEqual(one["digest"], two["digest"])
+        self.assertEqual(two["attempt"], 2)
+        for bad in (0, -1, "1", 1.5, True):
+            with self.assertRaises(ses.Refused):
+                self.derived("xaa", bad)
+
+    def test_another_agreement_is_another_session(self):
+        other = os.path.join(self.d, "other.json")
+        ag = fakefabric.agreement()
+        ag["expires"] = "2026-12-02"
+        with open(other, "w") as f:
+            json.dump(ag, f)
+        self.assertNotEqual(self.derived("xaa")["session_id"],
+                            self.derived("xaa", agreement=other)["session_id"])
+
+    def test_two_sessions_that_differ_are_refused_naming_what_differs(self):
+        a = self.derived("xaa")
+        ses.compare_sessions(a, self.derived("xab"))  # the same: no refusal
+        b = self.derived("xab", attempt=2)
+        with self.assertRaises(ses.Refused) as e:
+            ses.compare_sessions(a, b)
+        msg = str(e.exception)
+        self.assertIn("(GB-274)", msg)
+        self.assertIn("attempt", msg)
+        self.assertIn("session_id", msg)
+        tampered = dict(a, digest="sha256:" + "0" * 64)
+        with self.assertRaises(ses.Refused) as e:
+            ses.compare_sessions(a, tampered)
+        self.assertIn("(GB-274)", str(e.exception))
+
+    def test_a_side_not_in_the_agreement_derives_nothing(self):
+        with self.assertRaises(ses.Refused):
+            ses.derive_session(self.ag["xaa"], "xac", 1)
+
+    def test_the_cli_derives_and_prints_the_digest(self):
+        out = os.path.join(self.d, "derived.json")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = ses.main(["derive", "--agreement", self.ag["xaa"], "--us", "xaa", "--attempt", "1", "--out", out])
+        self.assertEqual(rc, 0)
+        with open(out) as f:
+            written = json.load(f)
+        self.assertEqual(written, self.derived("xaa"))
+        self.assertIn(written["digest"], buf.getvalue())
+
+
 def utc_now_inside(m):
     """`combine` reads real time nowhere; imports in these tests need a time inside the window."""
     return ses.parse_ts(m["not_before"]) + datetime.timedelta(minutes=10)

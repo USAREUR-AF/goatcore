@@ -661,6 +661,21 @@ entries:
       - "^GB-273: "
     exit: 2
 
+  - code: GB-274
+    tool: goatbuilder
+    title: the two sides derived different acceptance sessions
+    what: "Both sides of a peering work out the same acceptance session from the agreement each holds and an attempt number, with no file between them (docs/design/federation-acceptance.md §6.2). The partner's session is not the same as ours: the refusal names the members that differ. Nothing is combined with a partner on another session."
+    causes:
+      - "the two sides hold different agreements: the digests read aloud at phase 6 differ, or one side composed again since"
+      - "the two sides are on different attempts"
+      - "a session file was edited, so its digest no longer covers its members"
+    fixes:
+      - "compare the agreement digest and the attempt number with the partner on the call"
+      - "run phase 14 again on both sides with the same attempt"
+    read: docs/design/federation-acceptance.md
+    matches:
+      - "\\(GB-274\\)"
+    exit: 2
   - code: GB-275
     tool: goatbuilder
     title: phase 12 would deploy an edge that has none of the files it mounts

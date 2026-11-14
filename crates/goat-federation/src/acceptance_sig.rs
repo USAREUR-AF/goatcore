@@ -548,6 +548,34 @@ mod tests {
         );
     }
 
+    // 6b — a derived session (§6.2) has no time window, so freshness rests
+    // on the challenge alone: a result from the same session and attempt that
+    // echoes the challenge of an EARLIER run of ours is refused.
+    #[test]
+    fn a_result_echoing_an_earlier_runs_challenge_in_the_same_session_is_refused() {
+        let first_run = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
+        let mut stale = fields();
+        stale.echoes = first_run.into();
+        let sig = signed(&stale, XAB_SEED, RESULT);
+        // Our second run in the same session drew a new challenge.
+        let second_run = expect();
+        assert_eq!(second_run.session_id, stale.session_id);
+        assert_eq!(second_run.attempt, stale.attempt);
+        assert_ne!(second_run.our_challenge, first_run);
+        let e = verify_result(RESULT, &sig, &ring(), &second_run).unwrap_err();
+        assert_eq!(e.code, NOT_THIS_SESSION);
+        assert!(
+            e.detail.contains("does not echo the challenge"),
+            "{}",
+            e.detail
+        );
+        // Under the run it was made for, it verifies: it is refused for being
+        // old, not for being malformed.
+        let mut first = expect();
+        first.our_challenge = first_run.into();
+        verify_result(RESULT, &sig, &ring(), &first).unwrap();
+    }
+
     // 7
     #[test]
     fn a_result_by_us_or_for_another_partner_is_refused() {
