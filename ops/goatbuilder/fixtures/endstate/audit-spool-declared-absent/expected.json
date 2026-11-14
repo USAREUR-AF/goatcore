@@ -1,0 +1,10 @@
+{
+ "site": "delta",
+ "expect": {
+  "shape": "single-host",
+  "exit": 0,
+  "absent": ["audit-spool"],
+  "orphans": [],
+  "fail": []
+ }
+}

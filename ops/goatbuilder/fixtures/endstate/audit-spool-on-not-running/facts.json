@@ -1,0 +1,278 @@
+{
+ "site": "epsilon",
+ "hosts": {
+  "h1": {
+   "containers": {
+    "core": {
+     "status": "running",
+     "exit": 0,
+     "health": "",
+     "ips": [
+      "172.18.0.2"
+     ]
+    },
+    "oauth2-proxy-core": {
+     "status": "running",
+     "exit": 0,
+     "health": "",
+     "ips": [
+      "172.18.0.2"
+     ]
+    },
+    "app": {
+     "status": "running",
+     "exit": 0,
+     "health": "",
+     "ips": [
+      "172.18.0.2"
+     ]
+    },
+    "sandbox": {
+     "status": "running",
+     "exit": 0,
+     "health": "",
+     "ips": [
+      "172.18.0.2"
+     ]
+    },
+    "epsilon-obs-grafana": {
+     "status": "running",
+     "exit": 0,
+     "health": "",
+     "ips": [
+      "172.18.0.2"
+     ]
+    },
+    "epsilon-obs-prometheus": {
+     "status": "running",
+     "exit": 0,
+     "health": "",
+     "ips": [
+      "172.18.0.2"
+     ]
+    },
+    "pub": {
+     "status": "running",
+     "exit": 0,
+     "health": "",
+     "ips": [
+      "172.18.0.9"
+     ]
+    }
+   },
+   "ledgers": {
+    "core": {
+     "action": "deploy",
+     "ref": "ghcr.io/x/core:v1@sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    },
+    "app": {
+     "action": "deploy",
+     "ref": "ghcr.io/x/app:v1@sha256:abababababababababababababababababababababababababababababababab"
+    },
+    "sandbox": {
+     "action": "deploy",
+     "ref": "ghcr.io/x/sandbox:v1@sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+    }
+   },
+   "hydra": [
+    {
+     "id": "core",
+     "redirects": [
+      "https://core.epsilon.z.test/oauth2/callback"
+     ]
+    }
+   ],
+   "spire": [
+    "/agent/h1",
+    "/core"
+   ],
+   "routes": {
+    "core.epsilon.z.test": {
+     "dns": [
+      "100.127.0.1"
+     ],
+     "tls": "Verify return code: 0 (ok)",
+     "http": "302"
+    }
+   },
+   "health": {
+    "core:80/healthz": "200"
+   },
+   "zenoh": {
+    "acl": {
+     "enabled": true,
+     "default_permission": "deny",
+     "subjects": [
+      {
+       "id": "anyone-tls",
+       "link_protocols": [
+        "tls"
+       ]
+      },
+      {
+       "id": "infra-pub",
+       "cert_common_names": [
+        "pub-peer"
+       ]
+      }
+     ],
+     "policies": [
+      {
+       "rules": [
+        "peer-claim",
+        "audit-deny"
+       ],
+       "subjects": [
+        "anyone-tls"
+       ]
+      },
+      {
+       "rules": [
+        "deliver-all",
+        "pub-w"
+       ],
+       "subjects": [
+        "infra-pub"
+       ]
+      }
+     ],
+     "rules": [
+      {
+       "id": "peer-claim",
+       "messages": [
+        "put"
+       ],
+       "flows": [
+        "ingress"
+       ],
+       "permission": "allow",
+       "key_exprs": [
+        "ops/names/claim/**"
+       ]
+      },
+      {
+       "id": "audit-deny",
+       "messages": [
+        "put",
+        "declare_subscriber"
+       ],
+       "flows": [
+        "ingress",
+        "egress"
+       ],
+       "permission": "deny",
+       "key_exprs": [
+        "ops/audit/operator/**"
+       ]
+      },
+      {
+       "id": "deliver-all",
+       "messages": [
+        "put"
+       ],
+       "flows": [
+        "egress"
+       ],
+       "permission": "allow",
+       "key_exprs": [
+        "**"
+       ]
+      },
+      {
+       "id": "pub-w",
+       "messages": [
+        "put",
+        "delete"
+       ],
+       "flows": [
+        "ingress"
+       ],
+       "permission": "allow",
+       "key_exprs": [
+        "ops/pub/health/**"
+       ]
+      }
+     ]
+    },
+    "acl_err": null,
+    "clients": {
+     "pub": {
+      "err": null,
+      "cn": "pub-peer",
+      "not_after": "Oct 29 00:00:00 2027 GMT",
+      "expired": false,
+      "verify": "OK"
+     }
+    }
+   }
+  }
+ },
+ "netbird": {
+  "rules": [
+   {
+    "name": "all \u2192 infra (web)",
+    "sources": [
+     "PLATFORM-ADMIN",
+     "OBSERVER"
+    ],
+    "destinations": [
+     "INFRA"
+    ],
+    "protocol": "tcp",
+    "ports": [
+     "443",
+     "7447"
+    ],
+    "action": "accept",
+    "bidirectional": false
+   },
+   {
+    "name": "platform-admin \u2192 infra (any port)",
+    "sources": [
+     "PLATFORM-ADMIN"
+    ],
+    "destinations": [
+     "INFRA"
+    ],
+    "protocol": "all",
+    "action": "accept",
+    "bidirectional": false
+   }
+  ],
+  "why": null,
+  "live": {
+   "all \u2192 infra (web)": true,
+   "platform-admin \u2192 infra (any port)": true
+  },
+  "live_why": null,
+  "undeclared": [],
+  "all_group": []
+ },
+ "secrets": {
+  "core": {
+   "play": "ops/ansible/core-deploy.yml",
+   "needed": {
+    "core_token": "ALPHA_CORE_TOKEN"
+   },
+   "have": [
+    "ALPHA_CORE_TOKEN"
+   ],
+   "store": "env-file"
+  },
+  "app": {
+   "play": null
+  },
+  "pub": {
+   "play": null
+  },
+  "grafana": {
+   "play": null
+  },
+  "prometheus": {
+   "play": null
+  },
+  "sandbox": {
+   "play": null
+  }
+ }
+}

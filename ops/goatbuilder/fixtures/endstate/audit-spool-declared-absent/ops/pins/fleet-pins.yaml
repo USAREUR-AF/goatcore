@@ -1,0 +1,7 @@
+goatnets:
+  delta:
+    members: [delta_hosts]
+components:
+  app:
+    var: app_image
+    fleet: ghcr.io/x/app:v1@sha256:abababababababababababababababababababababababababababababababab

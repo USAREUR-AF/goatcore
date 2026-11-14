@@ -342,6 +342,14 @@ services:
     ledger: audit-subscriber
     zenoh: {sub: ["ops/**"]}
     assay: [audit-subscriber]
+  # The fabric audit of a phone site, spooled and delivered to the hub
+  # (docs/design/island-mode-audit-spool.md §8). Declared absent until built.
+  audit-spool:
+    class: mgmt
+    present: {var: audit_subscriber_spool_enabled}
+    containers: [audit-subscriber]
+    ledger: audit-subscriber
+    zenoh: {sub: ["**"]}
   admit-audit:
     class: mgmt
     present: {var: admit_audit_enabled}

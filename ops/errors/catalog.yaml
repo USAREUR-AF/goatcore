@@ -3372,6 +3372,19 @@ entries:
     matches:
       - "^GB-288: "
 
+  - code: GB-296
+    tool: goatbuilder
+    title: a site turned on the audit spool, which is not built
+    what: "A site set audit_subscriber_spool_enabled: true. The spooling audit subscriber a phone site needs (docs/design/island-mode-audit-spool.md) is designed but not built, so there is nothing to deploy for it. The audit-subscriber role stopped before it changed anything."
+    causes:
+      - "a phone site's group_vars set audit_subscriber_spool_enabled: true before the spool exists"
+    fixes:
+      - "set audit_subscriber_spool_enabled: false in that site's group_vars: the end state then reports the site's own statement that its fabric has no audit"
+    read: docs/design/island-mode-audit-spool.md
+    exit: 2
+    matches:
+      - "the audit spool is not built"
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable
