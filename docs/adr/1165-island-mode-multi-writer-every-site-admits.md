@@ -1,11 +1,11 @@
 # ADR 1165 — Every site writes: portal and console move to Spock-Postgres, and island mode is built by making concurrent writes disjoint
 
-- **Status:** **Proposed.** Nothing in a live goatnet changes on merge. The decision sets the design that the island-mode program builds to; each step ships separately behind the gates in [`island-mode-multi-writer.md`](../design/island-mode-multi-writer.md) §8.
-- **Date:** 2026-10-29
+- **Status:** **Accepted** (2026-11-14, operator), together with [ADR 1205](1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md) as one design. Nothing in a live goatnet changes on merge. The decision sets the design that the island-mode program builds to; each step ships separately behind the gates in [`island-mode-multi-writer.md`](../design/island-mode-multi-writer.md) §8. ADR 1205's "Acceptance" section gives each part's scope and state.
+- **Date:** 2026-10-29; accepted 2026-11-14
 - **Deciders:** operator
 - **Evidence:** the portal and id console keep all admin state in three per-host SQLite files (`/opt/goat-zenoh-portal/registry.db`, `/var/lib/goat-id-console/onboard.db`, `/var/lib/goat-id-console/orgs.db`) plus an in-memory invite store, so [ADR 1084](1084-block-64r-mgmt-repset-and-two-node-federation.md) D3 pins every admin write to one site. Onboarding a person also writes a NetBird setup key and user, through the onboard-runner running `goat admin onboard --native`, and a Kratos identity; D3 pins those as well. A cut-off site can therefore not admit anyone.
 - **Amends:** [ADR 1084](1084-block-64r-mgmt-repset-and-two-node-federation.md) D3 — single-homed admin surfaces are lifted one write class at a time, as each class passes the partition harness.
-- **Amended by:** [ADR 1205](1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md) (Proposed) — D3 class 2 (an identity is edited only at its owner site) and class 5 (the hub is the goatnet's highest-echelon site).
+- **Amended by:** [ADR 1205](1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md) (Accepted with this ADR) — D3 class 2 (an identity is edited only at its owner site) and class 5 (the hub is the goatnet's highest-echelon site); and, from 2026-11-14, the hub's authority over joins and over who becomes a platform admin, which every class's writes are checked against.
 - **Builds on:** ADR 1193, revocations are absorbing on replicated mesh and identity tables (Proposed; PR #1538, not yet merged) — its revocation ledger is class 3 for NetBird and Kratos, its partition test is the harness base, and its Spock apply settings are D4's.
 - **Related:** [ADR 0801](0801-postgresql-spock-multi-master.md) · [ADR 1010](1010-ory-on-spock-mindful-operation.md) · [ADR 0206](0206-island-mode-by-construction.md) · [ADR 1164](1164-per-site-spire-trust-domains.md) · [ADR 1025](1025-zenoh-dynamic-tenant-authz-slot-pool.md) · `ha-multi-site.md` · [`hub-spoke-admit-split.md`](../design/hub-spoke-admit-split.md) §2 · program `island-mode-program.md`
 
@@ -19,6 +19,14 @@ replicates, and then makes it safe for every site to write at once. Safety comes
 designing the writes so two sites almost never touch the same record. The rare case
 that cannot be designed away, such as the same person enrolled at two sites at once, is
 caught and shown to an admin, never silently dropped.
+
+## Acceptance
+
+On 2026-11-13 the operator chose island mode as part of 1.0, with "yeah c": the program
+starts now, 1.0 requires it, and the cut-apart drill on standing goatnets proves it. On
+2026-11-14: "I thought we agreedthat all sites would be island mode fully capable." Every
+site of a goatnet is to be fully capable on its own; no service is kept at one site as a
+matter of design. Accepted the same day, with ADR 1205.
 
 ## Decision
 

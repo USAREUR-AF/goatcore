@@ -160,7 +160,7 @@ A site added with `join-node` is a whole site: it runs every service it declares
 | I1 | The portal and id console stores are at the multi-writer schema of the design's section 3 | not built: both stores run on Postgres with their earlier tables, in no replication set | The design's gate G2 |
 | I2 | The partition harness passes for all five write classes, with the portal and the id console among its stores | built for NetBird, Kratos and Hydra; the portal and console scenarios are not built | Every scenario of the harness passes, with none listed as expected to fail |
 | I3 | `join-node` alone builds every service a joining site declares: the data router, its certificates and health publishers, the front door, and, once I4 allows them, the portal, the id console and the onboarding engine. It states which founder-only services it leaves out and why | not built: the router, certificates and publishers are hand steps after `join-node`; the front door is set up only inside signal federation; no verb deploys the id console | A two-site join on the fixture with no step outside the command, and the declared service set equal to the deployed one |
-| I4 | Each write class is turned on at every site, and the rule that keeps admin surfaces at the founding site is lifted for it | not built | The design's gate G3, per class |
+| I4 | Each write class is turned on at every site, and the rule that keeps admin surfaces at the founding site is lifted for it. No class is on at every site until only the goatnet's hub can make a platform admin ([ADR 1205](../adr/1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md) D10): a platform-admin grant made at a site that is not the hub is refused at every other site and raises an alert | not built; the platform-admin guard is designed, not built | The design's gate G3, per class; and a partition-harness scenario in which a platform-admin grant made at B while cut off is refused at A after the link returns |
 | I5 | The partition drill passes on a standing two-site goatnet, and then on a second one: the sites are cut apart, a person is admitted and a machine enrolled on each side, and the sites agree after the link returns | not measured | The design's gate G4, with each drill kept as a measurement |
 
 ## Order of work
@@ -192,6 +192,18 @@ Three releases after 0.5.2 reach 1.0, with the 0.7.x releases that carry group I
 | 1.0.0-rc.N, then 1.0.0 | Surfaces frozen; proof on hardware and by people who did not build it | C1, C2, C4, C5; D agreed; H7, H8; I5 |
 
 Rows that need a person or a machine outside the build: B9 (a real partner), C1 and C2 (hardware), H7 and H8 (a phone), I5 (two standing two-site goatnets), C4 (a person outside the team), A1 and D (decisions). Each is prepared so that the act itself is short.
+
+## Fast follow after 1.0
+
+The operator decided on 2026-11-14 that these follow 1.0 soon after it, and are not
+gate rows: 1.0 does not wait for them. Each is designed and none is built.
+
+| Item | Design |
+|---|---|
+| A site joins, and a severed site rejoins, only on the hub's authorization (`admit_site`, or a `restore_site` after the sever) | [ADR 1205](../adr/1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md) D9 |
+| The sever-and-restore drill on a standing two-site goatnet, with the operator present: the hub severs a site, the site's later writes reach no one, and the site returns only by rebuild, re-seed from the hub and the hub's `restore_site` | ADR 1205 D4 and D12 |
+| After a sever, the hub lists every row the severed site committed since a stated time, by commit origin, and revokes them | ADR 1205 D11 |
+| A site, or a whole environment, is rebuilt from nothing and a combed, revalidated extract of its people, machines and processes (phoenix) | ADR 1237 (Proposed; PR #672) |
 
 ## How the gate is kept
 
