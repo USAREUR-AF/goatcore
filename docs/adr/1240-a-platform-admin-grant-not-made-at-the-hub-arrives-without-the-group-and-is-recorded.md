@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Proposed |
 | Date | 2026-11-14 |
 | Deciders | operator |
 | Repo scope | goat core |
