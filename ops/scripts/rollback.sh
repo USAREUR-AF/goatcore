@@ -132,6 +132,26 @@ rssh() {
 ledger_json() {
   if yq --version 2>&1 | grep -qi mikefarah; then yq -o=json '.' "$1"; else yq '.' "$1"; fi
 }
+# A role's explicit restore-only policy applies even when every host is offline
+# or carries an older ledger row. Read-only modes exit before this guard is called.
+refuse_declared_irreversible() {
+  local meta="$ROLE_DIR/meta/main.yml" declared
+  [ -f "$meta" ] || return 0
+  command -v jq >/dev/null 2>&1 || die "jq is required to verify declared rollback safety"
+  if ! declared="$(ledger_json "$meta" | jq -sce '
+    if length != 1 or (.[0] | type) != "object" then error("invalid role metadata") else .[0] end
+    | [.dependencies[]? | select(type == "object" and .role == "rollback-ledger")
+       | .vars | select(.rollback_reversible == false)]
+  ')"; then
+    die "cannot verify declared rollback safety for $SERVICE"
+  fi
+  if [ "$(printf '%s' "$declared" | jq length)" -gt 0 ]; then
+    note "REFUSING: '$SERVICE' declares reversible:false in its role metadata."
+    printf '%s' "$declared" | jq -r '.[] | .rollback_restore_pointer // "Consistent-state restoration is required."' >&2
+    exit "$EX_REFUSE_UNSAFE"
+  fi
+}
+
 runtime_ledger_path() { echo "/var/lib/goat/${1}/deploy-history.jsonl"; }
 
 # Pull the host map once (connection details only live in the YAML).
@@ -266,6 +286,9 @@ if [ -z "$SITE" ] && [ "$HAVE_JQ" -eq 1 ]; then
     die "'$SERVICE' is deployed on $NCOUNT goatnets ($LIST); a rollback with no --site would flip every one, prod included. Re-run with --site <$PIPES>."
   fi
 fi
+
+# Enforce the current source policy before consulting any host ledger.
+refuse_declared_irreversible
 
 # Artifact-type gate — refuse / guide where a pin swap is not the mechanism.
 resolve_artifact_meta

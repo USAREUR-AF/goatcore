@@ -29,17 +29,10 @@
     - name: Verify mgmt-host base stack is up (postgres-a)
       ansible.builtin.command:
         cmd: docker compose -f /opt/mgmt-host/docker-compose.yml ps -q postgres-a
+      when: not (spire_agent_only | default(false) | bool)
       register: spire_pg_check
       changed_when: false
       failed_when: spire_pg_check.stdout == ""
-
-    - name: Copy docker-compose.spire.yml overlay to /opt/mgmt-host/
-      ansible.builtin.copy:
-        src: ../compose/mgmt-host/docker-compose.spire.yml
-        dest: /opt/mgmt-host/docker-compose.spire.yml
-        owner: root
-        group: root
-        mode: "0644"
 
   roles:
     - spire

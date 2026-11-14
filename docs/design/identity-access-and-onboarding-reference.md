@@ -187,13 +187,15 @@ power, and re-cutting it does not add operator power (§7). Operator power is a
   `Principal{Vendor: prefix}` (org-scoped). This is the token a normal participant
   `.cbor` carries.
 
-### 2.8 SPIFFE/SPIRE SVID (Phase A live on ZAGROS)
-- X.509-SVID from an on-goatnet SPIRE server; trust domain (ZAGROS)
-  `spiffe://zagros.zagros.example` (`ops/ansible/group_vars/zagros_hosts/spire.yml:7`).
+### 2.8 SPIFFE/SPIRE SVID
+- The SPIRE trust domain comes from mandatory deployment values
+  (`ops/ansible/roles/spire/defaults/main.yml:14`).
 - **Composes with the fabric by CN**: SPIRE's first `-dns` becomes the SVID Subject
-  CN, which the CN-only Zenoh ACL admits exactly like a portal-minted leaf; the
-  router concatenates the SPIRE bundle into its trust roots
-  (`ops/ansible/roles/spire/tasks/main.yml:8,360-361`; `group_vars/zagros_hosts/spire.yml:23-26`).
+  CN (`ops/ansible/roles/spire/tasks/main.yml:420-425`). The router folds configured
+  extra trust roots into its CA bundle
+  (`ops/ansible/roles/goat-zenoh/tasks/main.yml:474-490`).
+- Image upgrades use the [staged upgrade and restore contract](spire-upgrades.md).
+  Persisted enrollment and Workload API health are separate checks in the role.
 
 ### 2.9 Collab account (off-mesh, recorded but never governed)
 - A person account in the collab IdP (Dex + Kanidm), provisioned by the onboard-runner's

@@ -232,12 +232,7 @@ DIGEST_ALLOWLIST=(
   # (`compose run --rm`), never long-lived. A goatnet names its own reference
   # in .env. See the compose comment in ops/compose/mgmt-host/docker-compose.yml.
   "ghcr.io/usareur-af/mgmt-host-bootstrap"
-  # SPIRE server/agent (Phase-A overlay docker-compose.spire.yml):
-  # upstream images, deploy-time-pinned by digest via the goatnet's pins
-  # (SPIRE_SERVER_IMAGE/SPIRE_AGENT_IMAGE). In-tree default is a
-  # dev-only tag until the source/license decision lands (ADR 0412).
-  "ghcr.io/spiffe/spire-server"
-  "ghcr.io/spiffe/spire-agent"
+
 )
 
 # Scan every *.yml in the compose directory; report tag-only image defaults

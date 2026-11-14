@@ -71,6 +71,13 @@ Additive over the 0859 jsonl: `image`/`action`/`via` retained for back-compat; `
 
 `--list` / `--status` extend to read the host ledger. Refusals are explicit and name the safe alternative.
 
+Before reading a host ledger, rollback enforces any explicit
+`rollback_reversible: false` in the current role's rollback-ledger dependency.
+That declaration requires `jq` and valid role metadata; unavailable or malformed
+policy refuses. SPIRE keeps its image artifact type for live verification and
+uses this declaration to require consistent-state restoration. Host reachability
+and older host rows cannot override it. Read-only list and status modes remain available.
+
 **One goatnet per roll — fail-closed (GB-055).** A component's ledger lists the hosts of every goatnet it runs on (`goat-get`: nova-a, zagros-dev, zagros, zagros-prod). A roll with no `--site` would flip them all at once, prod included, so it is refused when the ledger spans more than one goatnet: the error names the goatnets and the operator re-runs with `--site <goatnet>`. A component on a single goatnet still rolls back with no `--site`. `--site` narrows the roll to the hosts whose `site:` is that goatnet — the host→goatnet fact `generate-pins.py` resolves and records in the ledger, and the same field `--list` / `--status` and a rollback plan narrow on. A plan carries its `--site` through to `apply`, which refuses (GB-053) if the goatnet's host set moved under it, so a reviewed plan rolls back only the goatnet it was reviewed for. Both avenues carry the guard (ADR 1201): `goatbuilder rollback` always; `rollback.sh` wherever jq is present (the same gate as its host-truth path).
 
 ## CI coverage ratchet — fail-closed

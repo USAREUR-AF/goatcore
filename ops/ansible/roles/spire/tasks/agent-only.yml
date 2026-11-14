@@ -36,25 +36,31 @@
       reachable by every mesh peer, and NOT the Docker service name, which only
       resolves on the server's own compose network.
 
-- name: spire agent-only | identify the CA holder for this goatnet
+- name: spire agent-only | identify the CA holders in this play
   ansible.builtin.set_fact:
-    spire_ca_holder: >-
-      {{ (ansible_play_hosts_all
-          | map('extract', hostvars)
-          | selectattr('spire_enabled', 'defined')
-          | selectattr('spire_enabled')
-          | map(attribute='inventory_hostname') | list | first) | default('', true) }}
+    spire_ca_holders: >-
+      {{ ansible_play_hosts_all | map('extract', hostvars)
+         | selectattr('spire_enabled', 'defined') | selectattr('spire_enabled')
+         | map(attribute='inventory_hostname') | list }}
 
-- name: spire agent-only | refuse without exactly one reachable CA holder in play
+- name: spire agent-only | require exactly one CA holder in play
   ansible.builtin.assert:
-    that:
-      - spire_ca_holder | length > 0
+    that: spire_ca_holders | length == 1
     fail_msg: >-
-      spire agent-only: no host in this play has spire_enabled true, so there is
-      nobody to fetch a trust bundle or a join token from. Include the server
-      host in the same run — the bundle and the token are both minted THERE and
-      delivered here over the control path, which is what avoids standing
-      host-to-host credentials between the two.
+      Include exactly one host with spire_enabled true in this play.
+      The bundle and token must come from that CA holder over the control path.
+
+- name: spire agent-only | select the sole CA holder
+  ansible.builtin.set_fact:
+    spire_ca_holder: "{{ spire_ca_holders | first }}"
+
+- name: spire agent-only | validate against the running CA holder before changing configuration
+  ansible.builtin.include_tasks: version-check.yml
+
+- name: spire agent-only | install the trust-bundle validation dependency
+  ansible.builtin.package:
+    name: openssl
+    state: present
 
 - name: spire agent-only | data + socket dirs
   ansible.builtin.file:
@@ -74,7 +80,6 @@
   ansible.builtin.command:
     cmd: >-
       docker exec spire-server {{ spire_bin_dir }}/spire-server bundle show
-      -socketPath /run/spire/sockets/server.sock
   register: spire_bundle_export
   changed_when: false
   delegate_to: "{{ spire_ca_holder }}"
@@ -88,6 +93,12 @@
       bundle. Pinning it would pin garbage and the agent would fail at first
       contact with an error about the server rather than about this file.
 
+- name: spire agent-only | validate every exported PEM certificate before replacing trust
+  ansible.builtin.command:
+    argv: [openssl, crl2pkcs7, -nocrl, -certfile, /dev/stdin]
+    stdin: "{{ spire_bundle_export.stdout }}"
+  changed_when: false
+
 - name: spire agent-only | pin the bundle before the agent can start
   ansible.builtin.copy:
     content: "{{ spire_bundle_export.stdout }}\n"
@@ -98,16 +109,15 @@
 
 # ---- join token: single-use, minted on the server for THIS node -------------
 
-- name: spire agent-only | does this agent already hold an SVID
+- name: spire agent-only | does this agent have persisted enrollment state
   ansible.builtin.stat:
-    path: "{{ spire_data_dir }}/agent/agent_svid.der"
+    path: "{{ spire_data_dir }}/agent/agent-data.json"
   register: spire_agent_svid_remote
 
 - name: spire agent-only | mint a join token on the CA holder
   ansible.builtin.command:
     cmd: >-
       docker exec spire-server {{ spire_bin_dir }}/spire-server token generate
-      -socketPath /run/spire/sockets/server.sock
       -spiffeID spiffe://{{ spire_trust_domain }}/{{ spire_agent_node_path }}
   register: spire_token_gen_remote
   changed_when: true
@@ -158,13 +168,30 @@
   register: spire_agent_up
   changed_when: "'Started' in spire_agent_up.stderr or 'Created' in spire_agent_up.stderr"
 
-- name: spire agent-only | the agent must actually obtain an SVID
+- name: spire agent-only | wait for persisted enrollment state
   ansible.builtin.stat:
-    path: "{{ spire_data_dir }}/agent/agent_svid.der"
+    path: "{{ spire_data_dir }}/agent/agent-data.json"
   register: spire_agent_svid_after
   retries: 12
   delay: 5
   until: spire_agent_svid_after.stat.exists
+
+# State presence avoids reusing a single-use token; health is a separate gate.
+- name: spire agent-only | the Workload API must be healthy
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - spire-agent
+      - "{{ spire_bin_dir }}/spire-agent"
+      - healthcheck
+      - -socketPath
+      - /run/spire/sockets/agent.sock
+  register: spire_agent_health
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: spire_agent_health.rc == 0
 
 - name: spire agent-only | summary
   ansible.builtin.debug:

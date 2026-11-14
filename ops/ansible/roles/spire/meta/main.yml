@@ -17,3 +17,5 @@ dependencies:
       rollback_component: spire
       rollback_artifact_type: image
       rollback_ref: "{{ spire_server_image }}"
+      rollback_reversible: false
+      rollback_restore_pointer: "Consistent PostgreSQL + server/agent state restore: docs/design/spire-upgrades.md"

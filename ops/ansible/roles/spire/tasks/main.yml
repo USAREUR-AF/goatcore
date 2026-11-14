@@ -66,6 +66,17 @@
   ansible.builtin.meta: end_host
   when: spire_agent_only | default(false) | bool
 
+- name: spire | validate the version transition before changing configuration
+  ansible.builtin.include_tasks: version-check.yml
+
+- name: spire | copy the co-located compose overlay after version preflight
+  ansible.builtin.copy:
+    src: ../compose/mgmt-host/docker-compose.spire.yml
+    dest: "{{ spire_compose_dir }}/docker-compose.spire.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: spire | ensure config dir (root — holds read-only-mounted server.conf/agent.conf)
   ansible.builtin.file:
     path: "{{ spire_config_dir }}"
@@ -312,9 +323,9 @@
   loop_control:
     label: "{{ item.item.trust_domain | default('?') }}"
 
-- name: spire | is the agent already attested? (persisted SVID on disk)
+- name: spire | does the agent have persisted enrollment state
   ansible.builtin.stat:
-    path: "{{ spire_data_dir }}/agent/agent_svid.der"
+    path: "{{ spire_data_dir }}/agent/agent-data.json"
   register: spire_agent_svid
 
 - name: spire | generate one-time join token (only when agent not yet attested)
@@ -323,6 +334,7 @@
       docker exec spire-server {{ spire_bin_dir }}/spire-server token generate
       -spiffeID spiffe://{{ spire_trust_domain }}/{{ spire_agent_node_path }}
   register: spire_token_gen
+  no_log: true
   when: not spire_agent_svid.stat.exists
   changed_when: true
 
@@ -350,6 +362,15 @@
       -f docker-compose.yml -f docker-compose.spire.yml up -d spire-agent
     chdir: "{{ spire_compose_dir }}"
   changed_when: true
+
+- name: spire | the co-located Workload API must be healthy
+  ansible.builtin.command:
+    argv: [docker, exec, spire-agent, "{{ spire_bin_dir }}/spire-agent", healthcheck, -socketPath, /run/spire/sockets/agent.sock]
+  register: spire_agent_health
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: spire_agent_health.rc == 0
 
 # --- Fold in PLATFORM workload entries (ADR 1098 stage 4, Option B) ---------
 # `spire_platform_workload_entries` is generated from the portal's recorded
