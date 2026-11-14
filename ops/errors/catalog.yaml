@@ -3416,6 +3416,20 @@ entries:
     matches:
       - "the audit spool is not built"
 
+  - code: GB-293
+    tool: goatbuilder
+    title: the back-out cannot tell what our core router's leaf held before this peering
+    what: "Our core router's leaf (its certificate and key) holds the leaf this peering's admission placed, and no admission run in the peering's working folder recorded what was there before (both peerings admitted by hand, say), so the back-out can neither put it back nor remove it. No other peering is set up from this machine (no working folder beside this one holds an agreement); when one is, the leaf is kept for it and the back-out goes on. Nothing was changed on any host."
+    causes:
+      - the leaf was placed by hand, not by goatbuilder federate admission
+      - the admission folder of the peering's working folder was removed or moved
+    fixes:
+      - "read the unknown core leaf lines of goatbuilder federate backout <partner> --dry-run; put back what each path held before this peering, or remove it when nothing did, then run the back-out again"
+    read: docs/design/federation-backout-partner-data.md
+    exit: 1
+    matches:
+      - "nothing records what was there before it \\(GB-293\\)"
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable

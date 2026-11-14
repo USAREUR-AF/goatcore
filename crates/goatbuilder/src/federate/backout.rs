@@ -370,8 +370,9 @@ enum Leaf {
     /// Another's bytes at the path (or this peering's leaf cannot be read to
     /// compare): left alone.
     Foreign,
-    /// This peering's, and another peering's working folder holds the same
-    /// leaf: kept, because that peering uses it too.
+    /// This peering's, and another peering uses it too: its working folder
+    /// holds the same leaf, or that peering is still set up from this machine
+    /// and our core serves one leaf to every peering. Kept, with why.
     Shared(String),
     /// This peering's: put back to what was there before its first
     /// admission, from this backup.
@@ -581,8 +582,21 @@ impl CoreLeaf {
                 .filter(|p| *p != self.work)
                 .find(|p| std::fs::read(p.join("pki").join(name)).is_ok_and(|b| b == mine));
             if let Some(p) = shared {
-                return Leaf::Shared(p.display().to_string());
+                return Leaf::Shared(format!(
+                    "the same leaf is in {}, another peering's",
+                    p.display()
+                ));
             }
+        }
+        // Our core router serves this one leaf to every peering. While another
+        // peering is still set up from here, its edge reaches our core through
+        // the leaf the core serves now; putting back what was there before
+        // this peering, or removing it, could leave that peering without one.
+        if let Some(p) = self.other_peering() {
+            return Leaf::Shared(format!(
+                "our core serves one leaf to every peering, and {} holds another peering's agreement: kept so that peering keeps its leaf",
+                p.display()
+            ));
         }
         // What was there before the peering: what the earliest admission that
         // touched this path found there. A later run's backup is this
@@ -603,6 +617,28 @@ impl CoreLeaf {
             )),
             Err(e) => Leaf::Unknown(e),
         }
+    }
+
+    /// Another peering's working folder beside this one (the default
+    /// `/var/lib/goat-federation/<partner>` layout) that holds its agreement:
+    /// that peering is set up from this machine and may still reach our core.
+    fn other_peering(&self) -> Option<PathBuf> {
+        let parent = self.work.parent()?;
+        let mut found: Vec<PathBuf> = std::fs::read_dir(parent)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| *p != self.work)
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|f| f.to_str())
+                    .is_some_and(is_sovereign_id)
+            })
+            .filter(|p| p.join("agreement.json").is_file())
+            .collect();
+        found.sort();
+        found.into_iter().next()
     }
 
     /// Each path's plan, with the certificate and key taken as one unit: if
@@ -668,11 +704,7 @@ impl CoreLeaf {
                     "kept",
                     format!("does not hold {}", ours.display()),
                 ),
-                Leaf::Shared(p) => row(
-                    "present",
-                    "kept",
-                    format!("the same leaf is in {p}, another peering's"),
-                ),
+                Leaf::Shared(why) => row("present", "kept", why),
                 Leaf::Restore(..) => row(
                     "present",
                     "remove",
@@ -686,7 +718,7 @@ impl CoreLeaf {
                 Leaf::Unknown(why) => row(
                     "unknown",
                     "kept",
-                    format!("{why}; nothing is changed: decide by hand"),
+                    format!("{why}; nothing is changed: decide by hand whether to put back what was there before this peering or remove it, then run the back-out again"),
                 ),
             });
         }
@@ -1001,6 +1033,10 @@ pub struct Summary {
     pub absent: usize,
     pub kept: Vec<String>,
     pub refused: Vec<String>,
+    /// Our core router's leaf paths that hold this peering's leaf, where
+    /// nothing records what was there before (GB-293): the back-out stops,
+    /// and a person decides whether to put something back or remove it.
+    pub undecided: Vec<String>,
     /// The core candidate digest when the core will restart.
     pub core_candidate: Option<String>,
     /// The partner is still admitted by the deployment's configuration.
@@ -1014,6 +1050,11 @@ pub fn summarize(recs: &[HostRecord], partner: &str) -> Summary {
             match (row.state.as_str(), row.action.as_str()) {
                 ("not-ours" | "refused", _) => s
                     .refused
+                    .push(format!("{}: {} ({})", rec.host, row.resource, row.note)),
+                // Our core's leaf where nothing records what was there before:
+                // a stop of its own, which a person decides (GB-293).
+                ("unknown", _) if row.component == "core leaf" => s
+                    .undecided
                     .push(format!("{}: {} ({})", rec.host, row.resource, row.note)),
                 // A row a host could not read is not one that is absent: the
                 // resource may still be there (the core may still admit the
@@ -1065,6 +1106,7 @@ pub fn plan_view(t: &Target, recs: &[HostRecord], extra: &[(String, String)]) ->
             for r in rows {
                 let verb = match (r.state.as_str(), r.action.as_str()) {
                     ("not-ours" | "refused", _) => "REFUSED",
+                    ("unknown", _) => "unknown",
                     (_, "remove") => "remove",
                     (_, "restart") => "restart",
                     (_, "removed") => "removed",
@@ -1704,18 +1746,35 @@ pub fn backout_with(
         return Ok(r);
     }
 
-    if !s.refused.is_empty() {
+    if !s.refused.is_empty() || !s.undecided.is_empty() {
         if o.table {
             print!("{view}");
         }
-        checks.push(row(
-            "survey",
-            false,
-            format!("refused (GB-221): {}", s.refused.join("; ")),
-            Some(
-                "nothing was changed; fix what each line names, then run the back-out again".into(),
-            ),
-        ));
+        if !s.refused.is_empty() {
+            checks.push(row(
+                "survey",
+                false,
+                format!("refused (GB-221): {}", s.refused.join("; ")),
+                Some(
+                    "nothing was changed; fix what each line names, then run the back-out again"
+                        .into(),
+                ),
+            ));
+        }
+        if !s.undecided.is_empty() {
+            checks.push(row(
+                "core leaf",
+                false,
+                format!(
+                    "our core router's leaf holds this peering's, and nothing records what was there before it (GB-293): {}",
+                    s.undecided.join("; ")
+                ),
+                Some(format!(
+                    "nothing was changed; put back what each path held before this peering, or remove it when nothing did, then goatbuilder federate backout {} --dry-run",
+                    t.partner
+                )),
+            ));
+        }
         let mut r = Report::new("federate-backout", checks, EXIT_REFUSED);
         r.printed = o.table;
         r.view_rows = Some(view_rows);
@@ -3724,9 +3783,11 @@ mod tests {
                 peering: "xab".into(),
                 rows: rows.into_values().collect(),
             }];
+            // A stop of its own (GB-293), not another peering's resource.
+            let s = summarize(&recs, "xab");
             assert!(
-                !summarize(&recs, "xab").refused.is_empty(),
-                "{why}: the back-out stops"
+                s.refused.is_empty() && s.undecided.len() == 2,
+                "{why}: the back-out stops: {s:?}"
             );
         };
         // No record at all: admission's placing was not recorded.
