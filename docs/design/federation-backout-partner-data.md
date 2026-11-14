@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Decided, 13 November 2026: option (a)** ([ADR 1234](../adr/1234-a-partners-data-lives-in-its-own-store-dropped-whole-when-the-peering-ends.md)), under the rule in "The decision". To be reviewed later; no date is set. The back-out that carries it out is designed and not built. Today's behavior is stated under "What happens today"
+| Status | **Decided, 13 November 2026: option (a)** ([ADR 1234](../adr/1234-a-partners-data-lives-in-its-own-store-dropped-whole-when-the-peering-ends.md)), under the rule in "The decision". To be reviewed later; no date is set. The back-out that carries it out is built on a goat-zenoh role core and not measured; "What happened before the build" is the behavior before it
 | Decides | What `goatbuilder federate backout <partner>` does with the core's receive stores for that partner, above all when it is the last peering |
 | Gate row | B7 of the goatbuilder 1.0 gate: "Backing a peering out removes everything the command created and nothing else", proven by the back-out scenario and a comparison of both hosts with their state before the peering |
 | Related | [sovereign-federation-runbook.md](../operations/sovereign-federation-runbook.md), Step 9 · [federation-package-spec.md](federation-package-spec.md), "Receiving storage interests" · [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md) |
@@ -39,12 +39,19 @@ design to get somewhere working for now".
   of the structure instead.
 - **Option (c) is not built**, now or as a follow-up. Deleting a partner's
   samples by key is rule 4's deletion by key.
-- **What the back-out will do** (designed, not built): remove the partner's
-  entry from `zenoh_sovereign_peerings`, run the core play, and delete
-  `sovereign_from_<partner>` only after the router has restarted without that
-  store, behind the back-out's existing typed confirmation. GB-227 ("a
+- **What the back-out does** (built, unit-tested, not measured): on a
+  goat-zenoh role core with no route of its own, behind the back-out's typed
+  confirmation and after the core step, it takes the partner's entry out of
+  `zenoh_sovereign_peerings` in `group_vars/<core router group>/peerings.yml`
+  (`admit_role::remove_peering`), and runs the role's play with
+  `goat_zenoh_drop_partner_store=<partner>`. The role restarts the router on
+  the configuration without `sovereign_from_<partner>` and only then deletes
+  that directory (`roles/goat-zenoh/tasks/drop-partner-store.yml`). GB-227 ("a
   back-out never edits configuration") and the F-447 rule that the role never
-  deletes a store directory change with it, in the same change.
+  deletes a store directory changed with it: GB-227 now names an entry the
+  back-out did not write or could not take out, and the role deletes the one
+  store it is told to drop. A core admitted through the deployment's own route
+  (`FED_CORE_*`) keeps its role entry, reported as GB-227.
 - **A store directory nothing declares** (an entry removed by hand, outside a
   back-out) has no retention. The role reports it, as it does today
   (`.undeclared-stores`); no automatic deletion is added for it.
@@ -96,7 +103,7 @@ template; not measured on a running core.
   such as the federation test environment's, never has it, so a back-out there
   leaves no residue.
 
-The removal from the role comes with the back-out's build.
+The role no longer renders the shared store (built, `roles/goat-zenoh/tests/render-check.py`).
 
 ## Where the store comes from
 
@@ -134,7 +141,7 @@ no longer declares has no `time_to_live` applied to it. This repository has no
 measurement of the pinned router dropping samples by `time_to_live`; the
 options below that rely on it inherit that gap.
 
-## What happens today
+## What happened before the build
 
 **Plain:** a back-out takes the partner's access rules out of the core, but the
 partner's entry in the role's list and both stores stay. Removing the entry by
