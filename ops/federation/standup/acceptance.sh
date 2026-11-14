@@ -349,6 +349,9 @@ if [ -n "${FED_ACCEPTANCE_ATTEMPT:-}" ]; then
   AGREEMENT_HEX=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["agreement_sha256"].split(":", 1)[1])' "$SDIR/derived.json")
   MY_CHAL=$(python3 "$HERE/acceptance_session.py" challenge)
   THEIR_CHAL=""
+  # When this run started, in seconds since the epoch (UTC). Staged beside our samples,
+  # so the partner can tell this run's from an earlier run's (wait_for_partner).
+  MY_STARTED=$(date -u +%s)
   DERIVED=1
   echo "  session: $SESSION_ID (derived, attempt $FED_ACCEPTANCE_ATTEMPT)"
   echo
@@ -374,6 +377,11 @@ session_lanes() {
   # offered, and two writes outside every lane.
   for set in $(list "$OUR_SETS"); do
     put_ours "$set/$sk/$US" "$US-$MY_CHAL-${set#release/}"; gap
+    # In a derived session the start time goes after the sample, never before: a
+    # reader that finds an earlier run's start time beside this run's sample only
+    # waits a moment more, while a new start time beside an earlier run's sample would
+    # let that sample's challenge be learned.
+    [ -n "$DERIVED" ] && { put_ours "$set/$sk/$US/started" "$MY_STARTED"; gap; }
     put_ours "$set/$sk/$US/persist" "$US-$MY_CHAL-${set#release/}-persist"; gap
   done
   if [ "$HAVE_OUT" = 1 ]; then
@@ -449,15 +457,36 @@ session_lanes() {
     begin; edge_refusals
   fi
 }
-# wait_for_partner KEY: in a derived session, read KEY on our core until something is
-# there or FED_SESSION_WAIT runs out, saying how long is left, so the operator knows
-# to start the other side. Sets GOT, GOT_RC and GOT_ERR as get_side does.
+# wait_for_partner KEY: in a derived session, read KEY on our core until this run's
+# sample of the partner's is there or FED_SESSION_WAIT runs out, saying how long is
+# left, so the operator knows to start the other side. A sample whose start time
+# (KEY/started) is before our own start minus FED_SESSION_WAIT is an earlier run's:
+# it is ignored, so its challenge is never learned. That rests on the two sides'
+# clocks agreeing within FED_SESSION_WAIT. A sample with no start time beside it is
+# from a partner that does not stage one, and is read as before. Sets GOT, GOT_RC and
+# GOT_ERR as get_side does; an earlier run's sample leaves GOT empty.
 wait_for_partner() {
-  local end next=0 left
+  local end next=0 left sample started said=""
   end=$((SECONDS + ${FED_SESSION_WAIT:-300}))
   while :; do
+    # The start time first, then the sample: the partner writes its sample before its
+    # start time, so a start time read here is never newer than the sample read next.
+    get_side ours "$1/started"
+    started="$GOT"
     get_side ours "$1"
-    [ "$GOT_RC" -eq 0 ] && [ -n "$GOT" ] && return 0
+    if [ "$GOT_RC" -eq 0 ] && [ -n "$GOT" ]; then
+      sample="$GOT"
+      if [[ "$started" =~ ^[0-9]{1,12}$ ]] && [ "$started" -lt $((MY_STARTED - ${FED_SESSION_WAIT:-300})) ]; then
+        if [ -z "$said" ]; then
+          echo "  $THEM's sample on our core is from an earlier run (it started $(date -u -d "@$started" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "at $started")); waiting for this run's"
+          said=1
+        fi
+        GOT=""
+      else
+        GOT="$sample"; GOT_RC=0
+        return 0
+      fi
+    fi
     left=$((end - SECONDS))
     [ "$left" -le 0 ] && return 0
     if [ "$SECONDS" -ge "$next" ]; then
@@ -489,6 +518,14 @@ session_persist() {
   n="persistence/inbound/$set"; key="$(wire_of "$THEM" "$set")/acceptance/$SESSION_ID/$THEM/persist"
   val="$THEM-$THEIR_CHAL-${set#release/}-persist"
   begin
+  # In a derived session the partner's challenge comes from this run's sample: with
+  # none (nothing of this run's arrived, or only an earlier run's), there is nothing to
+  # compare a second sample with.
+  if [ -n "$DERIVED" ] && [ -z "$THEIR_CHAL" ]; then
+    obs key "$key"
+    blk "$n" inbound persistence "$THEM's second sample on $set/** from this run has not arrived" "Re-run once they have run this session."
+    return 0
+  fi
   scope ours "$key"; rc=$?
   obs key "$key"; obs scope "$SCOPE"
   case "$rc" in

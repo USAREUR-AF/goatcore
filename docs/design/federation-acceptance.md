@@ -536,15 +536,26 @@ With `FED_ACCEPTANCE_ATTEMPT=<n>` and no manifest file, a run:
 A run with no signer or no verifier is refused before it starts (exit 2): no result is
 published unsigned. When nothing of the partner's arrives, the run publishes nothing and ends
 open (exit 3, X-ACCEPT-001); a retry draws a new challenge and needs the partner to run within
-its wait. A sample left on our core by the partner's earlier run teaches that run's challenge,
-so our result then echoes a stale one: the partner refuses it, our run may still pass, and both
-sides run again to hold the same verdict. It never lets a stale result pass; it can only leave
-the two verdicts unequal until a rerun.
+its wait.
 
-**Designed, not built:** each sample carries its run's start time, and a reader ignores a
-partner sample older than its own start minus `FED_SESSION_WAIT`. That rests on both sides'
-clocks agreeing within that bound. Phase 1's preflight does not check the clock today, so a
-clock check comes with it.
+**A partner sample from an earlier run** (built, tests
+`test_derived_a_partner_sample_left_by_an_earlier_run_is_ignored_and_both_verdicts_agree` and
+`test_derived_each_run_stages_when_it_started_beside_its_samples`). Samples stay on the cores
+between runs, and an earlier run's sample carries that run's challenge. So each run stages, beside
+each sample, the time it started, in seconds since the epoch (UTC):
+`release/<set>/acceptance/<session id>/<us>/started`, written after the sample. A reader reads
+the start time first, then the sample, so the start time it holds is never newer than the sample.
+It ignores a sample whose start time is before its own start minus `FED_SESSION_WAIT`, printing
+that the partner's sample is from an earlier run, and keeps waiting for this run's. Its challenge
+is never learned, so our result never echoes it. When only an earlier run's samples are there,
+their rows are BLOCKED and the run ends open (exit 3). A sample with no start time beside it is
+from a partner whose runner does not stage one, and is read as before. A partner's earlier run
+that started within `FED_SESSION_WAIT` of ours is not told apart this way; its result is still
+refused when it echoes another challenge (GB-273, §6.1), so it can leave the two verdicts unequal
+until a rerun, never pass a stale result.
+
+This rests on the two sides' clocks agreeing within `FED_SESSION_WAIT`. **Designed, not built:**
+phase 1's preflight checks that each of our hosts' clocks is synchronized; it does not today.
 
 ## 7. Publishing `exchanging`
 

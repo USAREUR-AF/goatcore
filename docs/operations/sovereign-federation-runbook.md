@@ -328,6 +328,11 @@ writes the partner file with its `acceptance:` block and a diff into `<dir>`, ne
 deployment's own file, and refuses unless the combined result passed
 ([§7](../design/federation-acceptance.md#7-publishing-exchanging)).
 
+A sample the partner's earlier run left on your core is ignored, and the run says so, so its
+challenge is never echoed. It is told apart by the time each run stages beside its samples, which
+rests on both sides' clocks agreeing within `FED_SESSION_WAIT`: keep each host's clock
+synchronized (NTP).
+
 | Check | Required evidence |
 |---|---|
 | Fresh delivery, every agreed direction and set | a unique run id, nonce and payload digest, published through release staging and read back exactly at the receiving core |

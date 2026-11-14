@@ -639,14 +639,15 @@ class AcceptanceRun(unittest.TestCase):
         self.assertIn("waiting for xab's phase 14", out)
         self.assertFalse(os.path.isdir(os.path.join(self.tmp, "ev-xaa", "bilateral")), out)
 
-    def test_derived_each_run_draws_a_new_challenge_and_a_stale_partner_result_is_refused(self):
+    def test_derived_each_run_draws_a_new_challenge_and_an_earlier_runs_partner_sample_teaches_nothing(self):
         ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived()
         self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
         with open(os.path.join(ev["xaa"], "result.json")) as f:
             first = json.load(f)["session"]["challenge"]
-        # xaa again, alone, in the same session: a new challenge, so xab's result,
-        # still on xaa's core and echoing the first, is refused as stale and the run
-        # waits, then stays open.
+        # xaa again, alone, in the same session: a new challenge. xab's samples and
+        # result are still on xaa's core, from xab's run that started before xaa's
+        # start minus the wait: an earlier run's, so its challenge is not learned, no
+        # result is published or verified, and the run stays open.
         p = self.derived_side("xaa", ev["xaa"], full=True, wait="3")
         out = p.communicate(timeout=120)[0]
         with open(os.path.join(ev["xaa"], "result.json")) as f:
@@ -655,7 +656,9 @@ class AcceptanceRun(unittest.TestCase):
         self.assertNotEqual(second["challenge"], first)
         self.assertEqual(second["id"], json.load(open(os.path.join(ev["xab"], "result.json")))["session"]["id"])
         self.assertEqual(p.returncode, 3, out)
-        self.assertIn("GB-273", out)
+        self.assertIn("from an earlier run", out)
+        self.assertIn("BILATERAL OPEN", out)
+        self.assertNotIn("FAIL", out.replace("ACCEPTANCE FAILED", ""))
 
     def test_derived_a_partner_sample_left_by_an_earlier_run_is_ignored_and_both_verdicts_agree(self):
         """A sample the partner's earlier run left on our core carries that run's
