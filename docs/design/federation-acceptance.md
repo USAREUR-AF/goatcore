@@ -538,7 +538,13 @@ published unsigned. When nothing of the partner's arrives, the run publishes not
 open (exit 3, X-ACCEPT-001); a retry draws a new challenge and needs the partner to run within
 its wait. A sample left on our core by the partner's earlier run teaches that run's challenge,
 so our result then echoes a stale one: the partner refuses it, our run may still pass, and both
-sides run again to hold the same verdict.
+sides run again to hold the same verdict. It never lets a stale result pass; it can only leave
+the two verdicts unequal until a rerun.
+
+**Designed, not built:** each sample carries its run's start time, and a reader ignores a
+partner sample older than its own start minus `FED_SESSION_WAIT`. That rests on both sides'
+clocks agreeing within that bound. Phase 1's preflight does not check the clock today, so a
+clock check comes with it.
 
 ## 7. Publishing `exchanging`
 

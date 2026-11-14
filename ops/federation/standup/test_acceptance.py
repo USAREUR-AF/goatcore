@@ -657,7 +657,9 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(p.returncode, 3, out)
         self.assertIn("GB-273", out)
 
-    def test_derived_a_result_whose_signature_covers_other_bytes_is_refused_gb_272(self):
+    def test_derived_a_signature_over_other_bytes_than_the_published_result_is_refused_gb_272(self):
+        # The partner's signer signs other bytes than the result it publishes; a wire
+        # edit of the value on the core is not exercised here.
         ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(second={"extra": {"FED_TEST_SIG_TAMPER": "1"}})
         self.assertEqual(rc_a, 2, out_a)
         self.assertIn("GB-272", out_a)
