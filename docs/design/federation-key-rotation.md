@@ -196,7 +196,7 @@ Generating the new key on the edge, with only a signing request leaving it, woul
 1. **Check what is staged**, on the edge and before anything moves: the key matches the certificate; the certificate chains to `peering_edge_local_ca_path`; its Subject CN is `peering_edge_local_id`; its key is ECDSA P-384, which `peering_edge_ike_proposals` requires (`defaults/main.yml:112`); it is valid now and for at least `peering_edge_min_valid_days` more (default 30). Any failure is refused (GB-289 for missing or unreadable files, GB-290 for the rest) and nothing is moved.
 2. **Set the live pair aside** into `/etc/swanctl/.previous-<id>/` (0700), once per rotation id, as `roles/goat-peering-wg/tasks/carrier-key.yml` does for the carrier key.
 3. **Switch**: move the staged pair over the live names, run `swanctl --load-creds`, then `swanctl --rekey --ike <name> --reauth`. A rekey without `--reauth` keeps the authentication of the old IKE SA, so the new certificate would not be presented until the next re-authentication.
-4. **Confirm**: wait up to `peering_edge_dpd_timeout` (150 s by default, `defaults/main.yml:124`) for an established IKE SA and an installed CHILD SA (`swanctl --list-sas --ike <name>`). If neither appears, **roll back**: move the set-aside pair back, load it, re-authenticate, and stop with GB-K6e. During `ipsec-leaf` the old leaf is still valid under an unchanged CA, so the roll-back restores the link.
+4. **Confirm**: wait up to `peering_edge_dpd_timeout` (150 s by default, `defaults/main.yml:124`) for an established IKE SA and an installed CHILD SA (`swanctl --list-sas --ike <name>`). If neither appears, **roll back**: move the set-aside pair back, load it, re-authenticate, and stop with GB-302. During `ipsec-leaf` the old leaf is still valid under an unchanged CA, so the roll-back restores the link.
 5. Phase 14.
 
 **`ipsec-ca`**, three steps, both sides. The overlap runs from step 1 to step 3: during it, the partner accepts leaves under our old and our new CA.
@@ -222,7 +222,7 @@ A journal whose staged sha256 differs from the `.next` files now on the edge (so
 
 ### 8.5 Refusal codes
 
-Five codes. GB-289, GB-290, GB-297 and GB-298 are reserved for this design; the fifth is written GB-K6e until it has a number. Each prints the host, the file and the fix:
+Five codes, GB-289, GB-290, GB-297, GB-298 and GB-302, reserved for this design. Each prints the host, the file and the fix:
 
 | Code | Refused when |
 |---|---|
@@ -230,7 +230,7 @@ Five codes. GB-289, GB-290, GB-297 and GB-298 are reserved for this design; the 
 | GB-290 | The staged certificate does not match its key, does not chain to the CA it must chain to, names another CN, uses another key type than the proposals require, or is not valid now and for the minimum days |
 | GB-297 | `ipsec-ca` without `--partner-holds-ipsec-ca`, or with a fingerprint other than the staged CA's |
 | GB-298 | A resumed rotation whose journal names material other than what is staged, or another rotation of this peering is unfinished |
-| GB-K6e | The IKE SA did not come up on the new leaf within `peering_edge_dpd_timeout`; the old pair was restored (or, with `--no-overlap`, could not be) |
+| GB-302 | The IKE SA did not come up on the new leaf within `peering_edge_dpd_timeout`; the old pair was restored (or, with `--no-overlap`, could not be) |
 
 A `rotate … ipsec-*` on a peering whose agreement is not `ipsec-fips` is refused with the stage's existing usage code, GB-189.
 
@@ -238,7 +238,7 @@ A `rotate … ipsec-*` on a peering whose agreement is not `ipsec-fips` is refus
 
 Written before the code, as for the other keys:
 
-- **Role, with a stand-in `swanctl` and test certificates made at test time** (as `roles/goat-peering-wg/tests/test-rotation.sh` makes its keys): a key that does not match its certificate, a wrong CN, a certificate from another CA, an RSA key, and one expiring within the minimum days are each refused, and nothing on disk changes. A good pair is set aside once per id, and a second run with the same id moves nothing. A run stopped after the set-aside, and one stopped after the move, each finish without a second move and with exactly one `--load-creds` and one `--reauth` after the resume. A stand-in that never reports an established SA makes the run restore the old pair and exit with GB-K6e. The retire step removes the set-aside key and keeps the certificate.
+- **Role, with a stand-in `swanctl` and test certificates made at test time** (as `roles/goat-peering-wg/tests/test-rotation.sh` makes its keys): a key that does not match its certificate, a wrong CN, a certificate from another CA, an RSA key, and one expiring within the minimum days are each refused, and nothing on disk changes. A good pair is set aside once per id, and a second run with the same id moves nothing. A run stopped after the set-aside, and one stopped after the move, each finish without a second move and with exactly one `--load-creds` and one `--reauth` after the resume. A stand-in that never reports an established SA makes the run restore the old pair and exit with GB-302. The retire step removes the set-aside key and keeps the certificate.
 - **Template**: without `peering_edge_remote_ca_next_path`, `swanctl.conf` renders byte for byte as today; with it, `remote.cacerts` lists the current file and then the next.
 - **goatbuilder unit and binary tests**: the stage keys parse, and are refused for a WireGuard agreement with GB-189. `ipsec-ca` is refused without the read-back and with a wrong one (GB-297). The journal resumes at the right step, and a mismatched journal is GB-298. A peering with no rotation renders phase 11 exactly as before.
 - **Not covered by this design's tests**: the federation test environment has no `ipsec-fips` unit (§6 uses the `forwarder` unit), and strongSwan in a container needs the `xfrm` interface and privileges the environment does not grant. So the samples-throughout check for K6 needs a new unit, which is not designed here. Not measured on the pinned strongSwan: whether `--reauth` makes the new IKE SA before the old one is deleted (strongSwan's `make_before_break`), which decides whether the switch has any gap at all.
