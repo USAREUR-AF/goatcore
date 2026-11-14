@@ -51,12 +51,40 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
         r.clone(),
         Source::arg("-C, else the current directory"),
     ));
+    let usb = o.via == "usb";
+    let phone = o.class == "phone";
     match o.address {
         Some(a) => v.push(Input::new("address", a, Source::arg("--address"))),
+        // A node reached over USB has no LAN address, and the run takes none.
+        None if usb => {}
         None => v.push(Input::unset(
             "address",
             "pass --address <the node's LAN address> (phase 1 says how to find it)",
         )),
+    }
+    // Where a `--via usb` run keeps the SSH configuration and the inventory
+    // line it writes for the node, and the phone scripts' own base name.
+    if usb || phone {
+        let base = joinnode::usb_base(repo, site, o.node);
+        let from = || "usb_base (above)".to_string();
+        v.push(Input::new(
+            "usb_base",
+            base.clone(),
+            Source::derived(
+                "the project's state directory (deploy.state_dir, else ~/.goat/state)",
+                "join-node-<site>-<node>-usb: what phone-node-ssh.sh writes for the node is named from it",
+            ),
+        ));
+        v.push(Input::new(
+            "usb_ssh_config",
+            format!("{base}.ssh"),
+            Source::derived(from(), "<usb_base>.ssh, the SSH configuration that reaches the node over the Android debug bridge"),
+        ));
+        v.push(Input::new(
+            "inventory usb",
+            format!("{base}.ini"),
+            Source::derived(from(), "<usb_base>.ini, the node's inventory line for the phases before it has a mesh address"),
+        ));
     }
     let pass_var = match o.pass_var {
         Some(p) => {
@@ -65,11 +93,16 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
         }
         None => {
             let p = format!("{upper}_NODE_PASS");
-            v.push(Input::new(
-                "pass_var",
-                p.clone(),
-                site_rule("<SITE>_NODE_PASS, the variable phase 2 reads the node's password from"),
-            ));
+            // A phone node's phase 2 reads no password.
+            if !phone {
+                v.push(Input::new(
+                    "pass_var",
+                    p.clone(),
+                    site_rule(
+                        "<SITE>_NODE_PASS, the variable phase 2 reads the node's password from",
+                    ),
+                ));
+            }
             p
         }
     };
@@ -87,7 +120,7 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
         group.clone(),
         Source::derived(
             format!("the site '{site}' and the class '{}'", o.class),
-            "<site>_hosts for core, else <site>_<class>_hosts",
+            "<site>_hosts for core and phone, else <site>_<class>_hosts",
         ),
     ));
     for i in joinnode::inventories_of(o.via)
@@ -131,7 +164,16 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
                 .or_else(|| super::setting_line(repo, &["lite", "ssh_user"]))
                 .unwrap_or_else(|| Source::derived("settings::ssh_user", "the project's SSH user"));
             v.push(Input::new("ssh_user", u.clone(), src));
-            if let Some(a) = o.address {
+            if usb {
+                v.push(Input::new(
+                    "ssh_target",
+                    format!("{u}@{}", o.node),
+                    Source::derived(
+                        "ssh_user and node (above)",
+                        "<ssh_user>@<node>, through usb_ssh_config",
+                    ),
+                ));
+            } else if let Some(a) = o.address {
                 v.push(Input::new(
                     "ssh_target",
                     format!("{u}@{a}"),
@@ -204,7 +246,7 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
         ));
     }
     // Phase 13's certificate steps for a joiner's core node.
-    if joiner && o.class == "core" {
+    if joiner && (o.class == "core" || phone) {
         if let Ok(l) = joinnode::leaves(repo, site) {
             v.push(Input::new(
                 "leaf_src_dir",
@@ -273,7 +315,9 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
     } else {
         crate::secrets::store(repo)
     };
-    for (name, secret, when) in [
+    // A phone node's phase 2 prepares the VM over the Android debug bridge;
+    // it reads no first-login password.
+    let reads = [
         (
             pass_var.clone(),
             true,
@@ -287,7 +331,8 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             false,
             "phase 13 (core): the bootstrap administrator's address",
         ),
-    ] {
+    ];
+    for (name, secret, when) in reads.into_iter().skip(usize::from(phone)) {
         let from_store = store.contains(&name).then(|| {
             Source::derived(
                 format!("the declared secrets store ({store_name})"),

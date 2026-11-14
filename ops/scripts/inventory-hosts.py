@@ -53,6 +53,8 @@ def main() -> int:
                          "address, e.g. the Forgejo bot mint in goat-standup.sh")
     ap.add_argument("--user", default=default_user(),
                     help="ssh user when the inventory line carries no ansible_user=")
+    ap.add_argument("--host", default=None,
+                    help="print this one host only, when a group lists it")
     a = ap.parse_args()
 
     files = ([Path(x) for x in a.inventory] if a.inventory
@@ -88,6 +90,8 @@ def main() -> int:
                 parts = line.split()
                 host = parts[0]
                 if not re.fullmatch(r"[A-Za-z0-9_.:-]+", host):
+                    continue
+                if a.host and host != a.host:
                     continue
                 if a.ssh_target:
                     kv = dict(p.split("=", 1) for p in parts[1:] if "=" in p)

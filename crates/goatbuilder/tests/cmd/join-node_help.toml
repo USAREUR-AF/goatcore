@@ -19,9 +19,10 @@ Options:
       --site <SITE>          The site the node joins
   -C, --repo <DIR>           The repository root. Defaults to the checkout this binary is run in
       --node <NODE>          The node's inventory name
-      --class <CLASS>        The machine class: core | obs | breakglass | network-jump
+      --class <CLASS>        The machine class: core | obs | breakglass | network-jump | phone
       --yes                  Confirm a declarative verb without prompting (for automation)
-      --address <ADDRESS>    The node's LAN address (required to run; phase 1 says how to find it)
+      --address <ADDRESS>    The node's LAN address (required to run; phase 1 says how to find it).
+                             Not taken with `--via usb`
       --frozen               Refuse any run that would need to fast-forward the checkout (strict C3)
       --offline              An islanded site: do not fetch the trunk; judge the checkout against
                              the cached one, and record the run as offline (C3;
@@ -31,8 +32,10 @@ Options:
       --mock <DIR>           Run against a fixture directory instead of hosts: no registry, no
                              transport, deterministic (goatbuilder-conformance.md §"The fixture")
       --via <VIA>            How this machine reaches the goatnet's hosts: `mesh` (this machine is
-                             on its mesh) or `door` (through its env door; the plan opens it first)
-                             [default: mesh] [possible values: mesh, door]
+                             on its mesh) or `door` (through its env door; the plan opens it first).
+                             `usb`, with `--class phone`: the node over the Android debug bridge
+                             until it is enrolled, the goatnet's other hosts over the mesh [default:
+                             mesh] [possible values: mesh, door, usb]
       --from <FROM>          Resume from this phase [default: 1]
       --lang <TAG>           Language for help and error explanations (a tag such as fr, uk, de);
                              output a pipeline reads stays English. Default: the OS locale [env:

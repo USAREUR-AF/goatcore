@@ -1,4 +1,5 @@
-# The synthetic goatnet zagros: a founder, a joiner, and a third site joining.
+# The synthetic goatnet zagros: a founder, a joiner, a third site joining, and
+# a phone site joining.
 schema: goatbuilder/v1
 repo:
   source: example-org/zagros
@@ -27,6 +28,11 @@ environments:
         joins: alpha
         classes:
           core: {}
+      - name: delta
+        role: joiner
+        joins: alpha
+        classes:
+          phone: {}
 promotion:
   path:
     - name: zagros
