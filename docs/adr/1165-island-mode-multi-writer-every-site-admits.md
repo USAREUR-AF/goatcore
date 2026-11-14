@@ -26,7 +26,8 @@ On 2026-11-13 the operator chose island mode as part of 1.0, with "yeah c": the 
 starts now, 1.0 requires it, and the cut-apart drill on standing goatnets proves it. On
 2026-11-14: "I thought we agreedthat all sites would be island mode fully capable." Every
 site of a goatnet is to be fully capable on its own; no service is kept at one site as a
-matter of design. Accepted the same day, with ADR 1205.
+matter of design. The operator accepted this ADR on 2026-11-14: "and accept and merge and
+move on with all here". ADR 1205 is accepted with it.
 
 ## Decision
 
