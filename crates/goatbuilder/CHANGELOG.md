@@ -123,7 +123,7 @@ carry the check's detail, which gives the case and the route:
   value is named with its key and the group whose vars set it;
 - its agreement was not found: both paths that were looked at are named.
 
-GB-188's catalog entry gains this cause (#742).
+GB-188's catalog entry gains this cause (#753, fixes #742).
 
 ### For someone contributing
 
