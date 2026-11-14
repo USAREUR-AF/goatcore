@@ -929,6 +929,48 @@ mod tests {
         assert!(core[3].label.contains("pass 3") && !core[3].cmd.contains("--skip-tags"), "{}", core[3].cmd);
     }
 
+    /// A stand-in for the end-state model: prints `services` (JSON) as the
+    /// model's services, whatever site it is asked about.
+    fn fake_model(repo: &Path, services: &str) {
+        let d = repo.join("ops/goatbuilder/endstate");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("endstate.py"), format!("import json\nprint(json.dumps({{\"services\": json.loads(r'''{services}''')}}))\n")).unwrap();
+    }
+
+    /// Gate row I3, the health publishers: after the data router, a joiner's
+    /// core node runs each health publisher the end-state model marks present
+    /// at the site, in a fixed order, for the site's core group limited to the
+    /// node; one marked absent or undecided does not run. A publisher marked
+    /// present whose play is not in the checkout is refused at plan time
+    /// (GB-288). With no model to read, the plan says so on a SKIP line.
+    #[test]
+    fn a_joiners_core_node_runs_the_publishers_the_model_marks_present() {
+        let t = joiner_checkout();
+        // No model: a SKIP line says the publishers are not deployed, and why.
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let skip = ph.iter().find(|p| p.label.starts_with("[health publishers]")).expect("a line for the publishers");
+        assert_eq!(skip.kind, "SKIP");
+        assert!(skip.label.contains("not read"), "{}", skip.label);
+        // The model marks fabric-crawler and fabric-health present, mesh-health absent, time-health undecided.
+        fake_model(t.path(), r#"{"fabric-crawler": {"present": true}, "fabric-health": {"present": true}, "mesh-health": {"present": false}, "time-health": {"present": null}}"#);
+        for play in ["fabric-health-deploy.yml", "fabric-crawler-deploy.yml"] {
+            std::fs::write(t.path().join("ops/ansible").join(play), "---\n").unwrap();
+        }
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let pubs: Vec<&Phase> = ph.iter().filter(|p| p.label.starts_with("[health publishers]")).collect();
+        assert_eq!(pubs.len(), 2, "{:?}", pubs.iter().map(|p| &p.label).collect::<Vec<_>>());
+        assert!(pubs[0].cmd.ends_with("fabric-health-deploy.yml -e target=zagros_b_hosts -l node-x"), "{}", pubs[0].cmd);
+        assert!(pubs[1].cmd.ends_with("fabric-crawler-deploy.yml -e target=zagros_b_hosts -l node-x"), "{}", pubs[1].cmd);
+        assert!(pubs.iter().all(|p| p.n == 13 && p.kind == "A"));
+        let router = ph.iter().position(|p| p.cmd.contains("zenoh-deploy.yml")).unwrap();
+        assert!(ph.iter().position(|p| p.cmd.contains("fabric-health-deploy.yml")).unwrap() > router);
+        // Present, and no play in the checkout: refused when the plan is made.
+        std::fs::remove_file(t.path().join("ops/ansible/fabric-crawler-deploy.yml")).unwrap();
+        let e = plan(t.path(), &opts("zagros-b", "core", "zagros")).err().expect("refused");
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-288"), "{e}");
+        assert!(e.to_string().contains("fabric-crawler"), "{e}");
+    }
+
     /// STAGED_SERVICES is stage-service-leaves.yml's service_leaf_map.
     #[test]
     fn the_staged_services_are_the_staging_plays() {

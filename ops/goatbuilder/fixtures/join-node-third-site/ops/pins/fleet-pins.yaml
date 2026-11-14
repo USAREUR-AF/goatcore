@@ -1,0 +1,12 @@
+# The fixture goatnet's pin table, as far as join-node's health publishers
+# read it through the end-state model: gamma declares fabric-health and
+# mesh-health, and time-health is absent at gamma.
+goatnets:
+  zagros:
+    members: [alpha_hosts, beta_hosts, gamma_hosts]
+components:
+  fabric-health: {}
+  mesh-health: {}
+  time-health:
+    deviations:
+      gamma_hosts: {absent: true}

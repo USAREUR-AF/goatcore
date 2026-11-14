@@ -11,3 +11,8 @@ address is the placeholder `TBD_GAMMA_MESH_IP_A` until phase 12.
 real `standup-config-preflight.py` and `signal-federation-check.py` and
 stand-ins for every program that reaches a host, and runs `join-node` from
 phase 1 to 15.
+
+`ops/pins/fleet-pins.yaml` is the goatnet's pin table as far as the health
+publishers go: the end-state model, which the test also copies, reads it and
+marks fabric-health and mesh-health present at `gamma` and time-health absent.
+join-node deploys the publishers the model marks present.
