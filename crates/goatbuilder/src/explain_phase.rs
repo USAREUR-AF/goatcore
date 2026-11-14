@@ -217,6 +217,8 @@ pub fn dispatch(input: &[String], report: bool, format: OutputFormat) -> Option<
             "goatbuilder: --report writes a report of an error explain interpreted; `explain {}` answers from the phase catalog and has none to write. Run it without --report",
             input.join(" ")
         );
+        // Two requests that exclude each other: the command line's own code.
+        eprintln!("  (GB-242 — goatbuilder explain GB-242)");
         return Some(2);
     }
     let exit = match answer(&input[0], input.get(1).map(String::as_str), format) {

@@ -42,7 +42,7 @@
 use std::path::Path;
 use crate::runner::Cmd;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 use crate::config;
 use crate::standup::{sh_quote, sh_word};
@@ -223,7 +223,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     match o.class {
         "core" if joiner => {
             if founder_site.is_empty() {
-                return Err(anyhow!("group_vars/{group}/vars.yml declares goatnet_founder: false and no join_founder_site — a joiner must name the founder it seeds from"));
+                return Err(goat_errors::coded("GB-250", format!("group_vars/{group}/vars.yml declares goatnet_founder: false and no join_founder_site — a joiner must name the founder it seeds from")).into());
             }
             // site-seed-from-peer.yml is the generic play; a site that keeps its
             // own <site>-seed-from-peer.yml gets that one instead.
@@ -251,7 +251,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         }
         "obs" => {
             if let Some(missing) = crate::standup::obs_play_missing(repo).filter(|_| !joiner) {
-                return Err(anyhow!("{missing}"));
+                return Err(goat_errors::coded("GB-248", missing).into());
             }
             let og = &group;
             ev.push(p(13, "A", "[obs] observability host: baseline + LUKS (own nodes only)", format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={og} -e site_id={site} -l {node} && {pre} {inv} tang-server.yml -e target={og} -l {node} && {pre} {inv} mgmt-host-luks.yml -e target={og} -e site_id={site} -l {node}")));
@@ -277,7 +277,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             let inv_extra = if repo.join("ops/ansible").join(&extra).is_file() { format!(" -i {extra}") } else { String::new() };
             ev.push(p(13, "A", "[network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses)", format!("cd '{r}/ops/ansible' && {pre} {inv}{inv_extra} herd-connector-deploy.yml -e herd_connector_target_hosts={rg} -e target={rg} -l {node}")));
         }
-        other => return Err(anyhow!("class '{other}' is not one this verb converges; known: {}", CLASSES.join(", "))),
+        other => return Err(goat_errors::coded("GB-247", format!("class '{other}' is not one this verb converges; known: {}", CLASSES.join(", "))).into()),
     }
     ev.push(p(14, "T", "unmask the apt timers now that the node is finished", format!("ssh {user_w}@{addr} 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'")));
     ev.push(p(15, "GATE", "done means proven: every applicable acceptance row PASS, never UNKNOWN (a joiner adds the replicating-both-ways evidence)", format!("python3 '{r}/ops/validation/generate-values.py' {site} && python3 '{r}/ops/validation/run-acceptance.py' --env {site} --values '{r}/ops/validation/values-{site}.yaml' --all-eligible --by-layer")));
@@ -310,18 +310,18 @@ pub(crate) fn inventories_of(via: &str) -> &'static str {
 pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
     let cfg = config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml"))?;
     let Some(env) = cfg.environments.iter().find(|e| e.name == o.env) else {
-        return Err(anyhow!("unknown environment \"{}\"; declared: {:?}", o.env, cfg.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>()));
+        return Err(goat_errors::coded("GB-241", format!("unknown environment \"{}\"; declared: {:?}", o.env, cfg.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>())).into());
     };
     if !env.sites.is_empty() {
         let Some(site) = env.sites.iter().find(|s| s.name == o.site) else {
-            return Err(anyhow!("site '{}' is not declared for environment '{}' (declared: {})", o.site, o.env, env.sites.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")));
+            return Err(goat_errors::coded("GB-247", format!("site '{}' is not declared for environment '{}' (declared: {})", o.site, o.env, env.sites.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "))).into());
         };
         if !site.classes.is_empty() && !site.classes.contains_key(o.class) {
-            return Err(anyhow!("class '{}' is not declared at site '{}' (declared: {})", o.class, o.site, site.classes.keys().cloned().collect::<Vec<_>>().join(", ")));
+            return Err(goat_errors::coded("GB-247", format!("class '{}' is not declared at site '{}' (declared: {})", o.class, o.site, site.classes.keys().cloned().collect::<Vec<_>>().join(", "))).into());
         }
     }
     if !CLASSES.contains(&o.class) {
-        return Err(anyhow!("class '{}' is not one this verb converges; known: {}", o.class, CLASSES.join(", ")));
+        return Err(goat_errors::coded("GB-247", format!("class '{}' is not one this verb converges; known: {}", o.class, CLASSES.join(", "))).into());
     }
     execute(repo, o)
 }
@@ -393,13 +393,13 @@ fn not_run(repo: &Path, site: &str) -> Vec<Check> {
 /// The plan and the run, once the environment, site and class are known.
 fn execute(repo: &Path, o: &Options) -> Result<Report> {
     if !VIAS.contains(&o.via) {
-        return Err(anyhow!("--via '{}' is not a transport; known: {} (mesh = this machine is on the goatnet's mesh; door = through its env door, docs/design/env-doors.md)", o.via, VIAS.join(", ")));
+        return Err(goat_errors::coded("GB-242", format!("--via '{}' is not a transport; known: {} (mesh = this machine is on the goatnet's mesh; door = through its env door, docs/design/env-doors.md)", o.via, VIAS.join(", "))).into());
     }
     if !o.dry_run && o.address.is_none() {
-        return Err(anyhow!("--address <the node's LAN address> is required to run (phase 1 says how to find it); --dry-run plans without it"));
+        return Err(goat_errors::coded("GB-242", "--address <the node's LAN address> is required to run (phase 1 says how to find it); --dry-run plans without it").into());
     }
     if !o.dry_run && crate::settings::ssh_user(repo).is_none() {
-        return Err(anyhow!("this checkout declares no SSH user for a new machine: set deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml; --dry-run plans without it"));
+        return Err(goat_errors::coded("GB-251", "this checkout declares no SSH user for a new machine: set deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml; --dry-run plans without it").into());
     }
     let phases = plan(repo, o)?;
     let resume = format!("goatbuilder join-node {} --site {} --node {} --class {}{}{}", o.env, o.site, o.node, o.class, o.address.map(|a| format!(" --address {a}")).unwrap_or_default(), if o.via == "door" { " --via door" } else { "" });

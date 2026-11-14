@@ -186,8 +186,8 @@ fn parse_marker(text: &str) -> Result<Marker> {
             .map(|(_, v)| v.trim().to_string())
             .filter(|v| !v.is_empty())
     };
-    let goatcore_ref = get("goatcore_ref").ok_or_else(|| anyhow::anyhow!("no goatcore_ref= line"))?;
-    let overlay_commit = get("overlay_commit").ok_or_else(|| anyhow::anyhow!("no overlay_commit= line"))?;
+    let goatcore_ref = get("goatcore_ref").ok_or_else(|| anyhow::Error::from(goat_errors::coded("GB-259", "no goatcore_ref= line".to_string())))?;
+    let overlay_commit = get("overlay_commit").ok_or_else(|| anyhow::Error::from(goat_errors::coded("GB-259", "no overlay_commit= line".to_string())))?;
     let mut embargo: Vec<String> = get("embargo")
         .unwrap_or_default()
         .split(',')

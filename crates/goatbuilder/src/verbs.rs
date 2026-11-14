@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::config::{self, Config};
@@ -81,11 +81,11 @@ impl Fixture {
         if self.config.environments.iter().any(|e| e.name == env) {
             Ok(())
         } else {
-            Err(anyhow!(
+            Err(anyhow::Error::from(goat_errors::coded("GB-241", format!(
                 "environment '{env}' is not declared in {} (declared: {})",
                 self.root.join("goatbuilder.yaml").display(),
                 self.config.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>().join(", ")
-            ))
+            ))))
         }
     }
 
@@ -150,7 +150,7 @@ pub fn status(fixture: &Fixture, env: &str, only: Option<&str>) -> Result<Report
         }
     }
     if checks.is_empty() {
-        return Err(anyhow!("nothing declared for {env}{}", only.map(|o| format!(" and component {o}")).unwrap_or_default()));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-255", format!("nothing declared for {env}{}", only.map(|o| format!(" and component {o}")).unwrap_or_default()))));
     }
     Ok(Report::new("status", checks, EXIT_NOT_CONVERGED))
 }
@@ -401,7 +401,7 @@ pub fn deploy(fixture: &mut Fixture, env: &str, only: Option<&str>, actor: &str,
     fixture.converger.publications()?;
     let components = fixture.components_on(env, only);
     if components.is_empty() {
-        return Err(anyhow!("nothing declared for {env}{}", only.map(|o| format!(" and component {o}")).unwrap_or_default()));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-255", format!("nothing declared for {env}{}", only.map(|o| format!(" and component {o}")).unwrap_or_default()))));
     }
     for component in components {
         let declared = fixture.declared_ref(env, &component)?;
@@ -436,7 +436,7 @@ pub fn deploy_plan(fixture: &Fixture, env: &str, only: Option<&str>) -> Result<R
     fixture.environment(env)?;
     let components = fixture.components_on(env, only);
     if components.is_empty() {
-        return Err(anyhow!("nothing declared for {env}{}", only.map(|o| format!(" and component {o}")).unwrap_or_default()));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-255", format!("nothing declared for {env}{}", only.map(|o| format!(" and component {o}")).unwrap_or_default()))));
     }
     let machines = fixture.converger.machines(env);
     let mut checks = Vec::new();
@@ -488,7 +488,7 @@ pub fn rollback(fixture: &mut Fixture, env: &str, component: &str, n: u32, actor
         attributed(actor)?;
     }
     if !(1..=7).contains(&n) {
-        return Err(anyhow!("N must be 1..7 (got: {n})"));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-246", format!("N must be 1..7 (got: {n})"))));
     }
     let current = fixture.declared_ref(env, component)?;
     let artifacts: BTreeMap<String, Artifact> = match std::fs::read_to_string(fixture.root.join("declared/artifacts.yaml")) {

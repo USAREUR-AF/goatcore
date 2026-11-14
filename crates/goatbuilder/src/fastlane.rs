@@ -23,7 +23,7 @@ use crate::runner::Cmd;
 use std::path::Path;
 use std::process::Stdio;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 use crate::pins::read_yaml;
 use crate::{pins, promote, push};
@@ -64,7 +64,7 @@ pub fn not_a_pin_revert(comp: &serde_json::Value) -> Option<String> {
 fn sh(cmd: &str, args: &[&str]) -> Result<String> {
     let out = Cmd::new(cmd).args(args).output().with_context(|| cmd.to_string())?;
     if !out.status.success() {
-        return Err(anyhow!("{}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-258", String::from_utf8_lossy(&out.stderr).trim().to_string())));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -298,7 +298,7 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
         let reason = format!("Superseded {today} by a FASTLANE of {} to {tag} (ADR 1127, ack {}): {}. Every rung moved at once, so this candidate's ref is no longer running anywhere. Its evidence stands — it was overtaken, not invalidated.", o.component, o.ack, o.reason);
         let (lines, code) = promote::call(repo, &promote::Sub::Abandon { record: rec.clone(), reason, superseded_by: Some(new_ref.clone()) });
         if code != 0 {
-            return Err(anyhow!("{}", lines.join("\n")));
+            return Err(anyhow::Error::from(goat_errors::coded("GB-033", lines.join("\n"))));
         }
         for l in lines {
             note(checks, l);

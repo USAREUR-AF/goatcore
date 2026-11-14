@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::runner::Finished;
@@ -171,10 +171,12 @@ fn all(state: &Path) -> Vec<(String, serde_json::Value)> {
 fn find(state: &Path, which: &str) -> Result<(String, serde_json::Value)> {
     let runs = all(state);
     if which == "last" {
-        return runs
-            .into_iter()
-            .last()
-            .ok_or_else(|| anyhow!("no run is recorded under {}/runs", state.display()));
+        return runs.into_iter().last().ok_or_else(|| {
+            anyhow::Error::from(goat_errors::coded(
+                "GB-264",
+                format!("no run is recorded under {}/runs", state.display()),
+            ))
+        });
     }
     let hits: Vec<_> = runs
         .into_iter()
@@ -182,17 +184,25 @@ fn find(state: &Path, which: &str) -> Result<(String, serde_json::Value)> {
         .collect();
     match hits.len() {
         1 => Ok(hits.into_iter().next().unwrap()),
-        0 => Err(anyhow!(
-            "no run {which} under {}/runs; `goatbuilder runs` lists them",
-            state.display()
-        )),
-        n => Err(anyhow!(
-            "{n} runs start with {which}: {}; give more of the id",
-            hits.iter()
-                .map(|h| h.0.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+        0 => Err(goat_errors::coded(
+            "GB-264",
+            format!(
+                "no run {which} under {}/runs; `goatbuilder runs` lists them",
+                state.display()
+            ),
+        )
+        .into()),
+        n => Err(goat_errors::coded(
+            "GB-264",
+            format!(
+                "{n} runs start with {which}: {}; give more of the id",
+                hits.iter()
+                    .map(|h| h.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )
+        .into()),
     }
 }
 
@@ -508,6 +518,36 @@ mod tests {
         assert_eq!(exit_of(&serde_json::json!({ "exit": null })), "-");
     }
     use crate::runner::{CommandEntry, PhaseEntry};
+
+    /// Each run `find` cannot name is refused with GB-264: `last` with no run
+    /// recorded, an id that matches none, and a prefix several runs share.
+    #[test]
+    fn a_run_find_cannot_name_is_gb_264() {
+        let code = |r: Result<(String, serde_json::Value)>| {
+            r.unwrap_err()
+                .downcast_ref::<goat_errors::Coded>()
+                .map(|c| c.code.to_string())
+        };
+        let state = tempfile::tempdir().unwrap();
+        assert_eq!(code(find(state.path(), "last")).as_deref(), Some("GB-264"));
+        for id in ["20261112T000000Z-aaa", "20261112T000000Z-aab"] {
+            let d = state.path().join("runs").join(id);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("run.json"), "{}").unwrap();
+        }
+        assert_eq!(
+            code(find(state.path(), "nosuch")).as_deref(),
+            Some("GB-264")
+        );
+        assert_eq!(
+            code(find(state.path(), "20261112")).as_deref(),
+            Some("GB-264")
+        );
+        assert_eq!(
+            find(state.path(), "20261112T000000Z-aab").unwrap().0,
+            "20261112T000000Z-aab"
+        );
+    }
 
     fn finished(dir: &Path, cmds: &[(&str, i32)], target: &str) -> Finished {
         Finished {

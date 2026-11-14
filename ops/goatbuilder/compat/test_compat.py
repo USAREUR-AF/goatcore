@@ -268,6 +268,57 @@ class A4ConditionalFields(unittest.TestCase):
         self.assertTrue(compat.conditional_problems([{"format": "x/v1", "items": "hits", "field": "score", "present_when": {"layer": "lexical"}, "reason": "r"}]))
 
 
+class A4ExitCodes(unittest.TestCase):
+    """A kept exit code moves only with its reason (README, "Changing a surface on purpose")."""
+
+    def test_the_release_s_exit_passes(self):
+        self.assertEqual(compat.exit_problems({"name": "d", "exit": 2, "release_exit": 2}), [])
+
+    def test_an_edited_exit_with_no_reason_is_refused(self):
+        p = compat.exit_problems({"name": "validate-not-yaml", "exit": 1, "release_exit": 2})
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("validate-not-yaml", p[0])
+        self.assertIn("exit_changed", p[0])
+
+    def test_an_edited_exit_with_its_reason_passes(self):
+        d = {"name": "d", "exit": 1, "release_exit": 2, "exit_changed": "a config that is not YAML is GB-025"}
+        self.assertEqual(compat.exit_problems(d), [])
+
+    def test_an_empty_reason_is_no_reason(self):
+        self.assertTrue(compat.exit_problems({"name": "d", "exit": 1, "release_exit": 2, "exit_changed": " "}))
+
+    def test_a_kept_document_without_the_release_s_exit_is_refused(self):
+        self.assertTrue(compat.exit_problems({"name": "d", "exit": 1}))
+
+    def test_a_reason_must_be_words(self):
+        for reason in (True, [""], ["x"], 1, {"why": "x"}):
+            self.assertTrue(compat.exit_problems({"name": "d", "exit": 1, "release_exit": 2, "exit_changed": reason}), reason)
+
+    def test_a_hand_edited_release_exit_is_refused(self):
+        b = compat.Baseline(HERE)
+        docs = copy.deepcopy(b.documents())
+        d = next(x for x in docs if x["name"] == "validate-not-yaml")
+        d["exit"], d["release_exit"] = 1, 1
+        p = compat.release_values_problems(b.release, docs, b.meta)
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("release_exit", p[0])
+
+    def test_the_kept_release_values_match_their_digest(self):
+        b = compat.Baseline(HERE)
+        self.assertEqual(compat.release_values_problems(b.release, b.documents(), b.meta), [])
+
+    def test_editing_exit_alone_does_not_touch_the_digest(self):
+        b = compat.Baseline(HERE)
+        docs = copy.deepcopy(b.documents())
+        d = next(x for x in docs if x["name"] == "validate-not-yaml")
+        d["exit"], d["exit_changed"] = 1, "a config that is not YAML is GB-025"
+        self.assertEqual(compat.release_values_problems(b.release, docs, b.meta), [])
+
+    def test_every_kept_document_records_the_release_s_exit(self):
+        for d in compat.Baseline(HERE).documents():
+            self.assertEqual(compat.exit_problems(d), [], d)
+
+
 class A5ErrorCodes(unittest.TestCase):
     BASE = [{"code": "GB-001", "title": "unknown component"}, {"code": "GB-002", "title": "no plan"}]
 

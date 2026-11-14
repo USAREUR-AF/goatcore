@@ -13,7 +13,7 @@ use crate::runner::Cmd;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde_json::json;
 
 use crate::converger::Converger;
@@ -213,7 +213,7 @@ fn read_all_tails(repo: &Path, inv: &[String], group: &str) -> Result<GroupRead>
 /// Every fleet-pins component on this goatnet with a ledger to read.
 fn components_of(repo: &Path, env: &str) -> Result<Vec<String>> {
     let pins: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(repo.join("ops/pins/fleet-pins.yaml"))?)?;
-    let comps = pins.get("components").and_then(|c| c.as_mapping()).ok_or_else(|| anyhow!("fleet-pins.yaml has no components"))?;
+    let comps = pins.get("components").and_then(|c| c.as_mapping()).ok_or_else(|| anyhow::Error::from(goat_errors::coded("GB-257", "fleet-pins.yaml has no components".to_string())))?;
     // A component is read wherever the pins put it, whether or not it has a
     // deploy play of its own: the comparison needs the ledger, not the play.
     Ok(comps.keys().filter_map(|k| k.as_str().map(String::from)).filter(|c| push::declared(repo, c, env, None).map(|d| !d.members.is_empty()).unwrap_or(false)).collect())

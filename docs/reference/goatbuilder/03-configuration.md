@@ -144,8 +144,11 @@ ok    config  basic/goatbuilder.yaml validates against goatbuilder/v1
 validate: ok (1 check)
 ```
 
-A config that does not validate is GB-025. In goat's repository, regenerate
-rather than edit:
+A config that is YAML but does not validate (the schema, or a cross-field
+rule) is GB-025, exit 1. A file that is not YAML at all is GB-245, exit 2:
+its fix is the syntax error the message names, at its line and column. A
+config that cannot be read is GB-244. In goat's repository, regenerate rather
+than edit:
 
 ```bash
 python3 ops/goatbuilder/gen-config.py

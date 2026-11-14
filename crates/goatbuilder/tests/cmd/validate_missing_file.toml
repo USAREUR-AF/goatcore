@@ -5,4 +5,5 @@ status.code = 2
 stdout = ""
 stderr = """
 goatbuilder: cannot read config tests/fixtures/configs/no-such-file.yaml: No such file or directory (os error 2)
+  (GB-244 — goatbuilder explain GB-244)
 """

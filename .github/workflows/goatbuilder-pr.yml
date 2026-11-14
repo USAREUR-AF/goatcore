@@ -215,6 +215,8 @@ jobs:
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y -qq jq >/dev/null
           pip install --quiet yq   # the jq-wrapping yq the script side reads the in-repo ledger with
+          # The gate ignores only goatbuilder's `(GB-NNN — goatbuilder explain GB-NNN)` line; a real difference still fails.
+          ops/goatbuilder/parity-rollback.sh --self-test
           # No host is reachable from a runner, and the gate pins that no-reach path:
           # an ssh that refuses at once keeps every one of the 81 components from
           # waiting out a connect timeout per host on the script side.
@@ -234,7 +236,9 @@ jobs:
         env:
           GOAT_MESH_PROBE: "0"
           GOAT_DOOR_OPEN: "0"   # decide the door, do not open it: nothing is reachable here
-        run: PATH="$RUNNER_TEMP/noreach:$PATH" ops/goatbuilder/parity-history.sh crates/target/debug/goatbuilder zagros_dev
+        run: |
+          ops/goatbuilder/parity-history.sh --self-test
+          PATH="$RUNNER_TEMP/noreach:$PATH" ops/goatbuilder/parity-history.sh crates/target/debug/goatbuilder zagros_dev
       - name: Parity gate — both avenues refuse an incomplete ledger verification on the real path (#1545)
         working-directory: ${{ github.workspace }}
         run: ops/goatbuilder/parity-verify-refusals.sh crates/target/debug/goatbuilder

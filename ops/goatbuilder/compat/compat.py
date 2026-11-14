@@ -309,6 +309,46 @@ def document_problems(base, new, conditional=()) -> list:
     return out + held + _shape_problems(shape(base), shape(new), "")
 
 
+def exit_problems(d: dict) -> list:
+    """A kept invocation's `exit` is its release's (`release_exit`), or moved with a reason.
+
+    Exit codes are a promised surface: a pull request that changes one edits
+    `exit` and says why in `exit_changed`, so the change is reviewed.
+    """
+    name = d.get("name", "?")
+    if "release_exit" not in d:
+        return [f"{name}: no `release_exit`; rerun compat.py refresh to record the release's exit code"]
+    reason = d.get("exit_changed")
+    if d.get("exit") != d["release_exit"] and not (isinstance(reason, str) and reason.strip()):
+        return [f"{name}: `exit` is {d.get('exit')} but the release exited {d['release_exit']}; "
+                f"give the reason in `exit_changed:`, or restore {d['release_exit']}"]
+    return []
+
+
+def release_values_digest(tag: str, docs: list) -> str:
+    """The SHA-256 over what the release did for each kept invocation: its tag,
+    and every (name, format, args, release_exit). refresh records it in
+    baseline.yaml; an `exit` edit with its reason leaves it unchanged."""
+    rows = sorted(
+        [d["name"], d["format"], list(d.get("args") or []), d.get("release_exit")]
+        for d in docs
+    )
+    text = json.dumps({"release": tag, "documents": rows}, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def release_values_problems(tag: str, docs: list, meta: dict) -> list:
+    """The kept release values are the ones refresh recorded from the published binary."""
+    want = meta.get("documents_sha256")
+    if not want:
+        return ["baseline.yaml has no documents_sha256; rerun compat.py refresh with the published binary and SHA256SUMS"]
+    if release_values_digest(tag, docs) != want:
+        return [f"documents/manifest.yaml: a kept name, format, args or release_exit differs from what refresh recorded "
+                f"from {tag} (documents_sha256 in baseline.yaml); change `exit` with `exit_changed:` instead, "
+                f"or rerun compat.py refresh with the published binary"]
+    return []
+
+
 # ---------------------------------------------------------------- A5: the error codes
 
 
@@ -405,6 +445,8 @@ def check_all(repo: str, root: str, binary: str, only=("surface", "documents", "
         rows.append((False, "baseline", b.release, f"{PINS} pins no {b.meta.get('binary')} of {b.release}; the upgrade tests own that file: add the release's lines there from its SHA256SUMS"))
     else:
         rows.append((False, "baseline", b.release, f"baseline.yaml's binary_sha256 is not the {PINS} pin for {b.meta.get('binary')} of {b.release}; rerun compat.py refresh with the published binary and SHA256SUMS"))
+    for p in release_values_problems(b.release, b.documents(), b.meta):
+        rows.append((False, "baseline", "documents/manifest.yaml", p))
     deps = b.deprecations()
     for p in deprecation_problems(deps):
         rows.append((False, "surface", "deprecations.yaml", p))
@@ -431,7 +473,7 @@ def check_all(repo: str, root: str, binary: str, only=("surface", "documents", "
             if err:
                 rows.append((False, "documents", item, err))
                 continue
-            p = document_problems(b.document(d), doc, cond)
+            p = exit_problems(d) + document_problems(b.document(d), doc, cond)
             if rc != d["exit"]:
                 p.append(f"exit {d['exit']} in {b.release}, {rc} now")
             rows.append((not p, "documents", item, "; ".join(p) if p else "a superset of the release's document"))
@@ -540,6 +582,7 @@ def refresh(repo: str, root: str, tag: str, binary: str, sums=None) -> int:
         "binary": name,
         "binary_sha256": _sha256(binary),
         "sums_sha256": _sha256(sums),
+        "documents_sha256": release_values_digest(tag, Baseline(root).documents()),
         "recorded": datetime.date.today().isoformat(),
     })
     _write_manifest(os.path.join(root, "baseline.yaml"), None, meta)
@@ -568,6 +611,7 @@ def _refresh_last_release(repo: str, root: str, tag: str, binary: str, b: "Basel
         if err:
             raise SystemExit(f"compat: {d['name']}: {err}")
         d["exit"] = rc
+        d["release_exit"] = rc
         d.pop("exit_changed", None)  # the release's own exit now; the reason was for the change before it
         with open(os.path.join(root, "documents", d["name"] + "." + d["format"]), "w") as f:
             if d["format"] == "json":
