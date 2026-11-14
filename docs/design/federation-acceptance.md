@@ -564,8 +564,12 @@ that started within `FED_SESSION_WAIT` of ours is not told apart this way; its r
 refused when it echoes another challenge (GB-273, §6.1), so it can leave the two verdicts unequal
 until a rerun, never pass a stale result.
 
-This rests on the two sides' clocks agreeing within `FED_SESSION_WAIT`. **Designed, not built:**
-phase 1's preflight checks that each of our hosts' clocks is synchronized; it does not today.
+This rests on the two sides' clocks agreeing within `FED_SESSION_WAIT`. Phase 1's preflight
+checks that each of our hosts' clocks is synchronized and within its budget (GB-268), and
+`goatbuilder federate test <partner> --bilateral` runs that clock check again, alone, right
+before phase 14 (`preflight.py --only clock`, into `<work>/preflight/clock-before-acceptance.json`),
+stopping on a FAIL (built, tests `with_bilateral_phase_1_checks_the_clock_alone_before_phase_14`
+and `a_stage_plan_table_lists_only_the_stage_phases`).
 
 ### 6.4 A combined PASS with each side's own surfaces only
 

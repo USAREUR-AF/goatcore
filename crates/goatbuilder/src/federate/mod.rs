@@ -330,7 +330,7 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
     let core_group = format!("{}_core", o.with);
 
     let mut ev = vec![
-        p(1, "GATE", "peering preflight (fail-closed)", format!("python3 '{r}/ops/federation/standup/preflight.py' '{}' --work '{work}' --edge-group '{edge_group}'", o.with)),
+        p(1, "GATE", "peering preflight (fail-closed)", format!("python3 '{r}/ops/federation/standup/preflight.py' '{}' --work '{work}' --edge-group '{edge_group}'{}", o.with, clock_only(work))),
         p(2, "A", "prepare what the package measures: the federation interface and the SPIRE bundle", play("peering-prepare.yml")),
         if measure_ssh {
             let words = measure::phase3_words(init_words, o.with, edge_group, runenv::var("FED_ROUTER_CONTAINER").ok().as_deref(), repo);
@@ -390,6 +390,19 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
     ev.push(p(14, "GATE", "acceptance — carries, refuses, and round-trips", format!("{}'{r}/ops/federation/standup/acceptance.sh' '{agreement}'{as_arg}", bilateral_env(work))));
     let _ = resume;
     ev
+}
+
+/// Phase 1 right before a derived session's phase 14 (`federate test
+/// --bilateral`): the clock check alone (GB-268), because the session rests on
+/// the two sides' clocks agreeing within FED_SESSION_WAIT
+/// (docs/design/federation-acceptance.md §6.3). Its result goes to its own file,
+/// so phase 1's full result stays as it was. Nothing when the run did not ask
+/// for a derived session.
+fn clock_only(work: &str) -> String {
+    if runenv::var("FED_ACCEPTANCE_ATTEMPT").ok().filter(|v| !v.is_empty()).is_none() {
+        return String::new();
+    }
+    format!(" --only clock --result '{work}/preflight/clock-before-acceptance.json'")
 }
 
 /// The variables phase 14 is given on a session both sides derive
@@ -470,7 +483,14 @@ const ADMIT_PHASE: u32 = 10;
 /// header, one aligned table of phases with this checkout's path and the home
 /// folder shortened, then each phase's command verbatim and unwrapped, so a
 /// line pastes as the command it runs.
+#[cfg(test)]
 fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[Phase], listed: &[crate::inputs::Input]) -> String {
+    plan_view_of(repo, o, work, edge_group, phases, listed, |n| n >= o.from && n <= o.to)
+}
+
+/// [`plan_view`] of the phases `runs` names: a stage's own phases
+/// (`federate test --bilateral` runs phase 1 and phase 14), else `--from` to `--to`.
+fn plan_view_of(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[Phase], listed: &[crate::inputs::Input], runs: impl Fn(u32) -> bool) -> String {
     let home = runenv::var("HOME").unwrap_or_default();
     // The resolved path: with `-C ../..` the literal "../../" must not be
     // stripped from paths that merely contain it.
@@ -514,7 +534,7 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
         let mut c = l.chars();
         c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
     };
-    let shown: Vec<&Phase> = phases.iter().filter(|p| p.n >= o.from && p.n <= o.to).collect();
+    let shown: Vec<&Phase> = phases.iter().filter(|p| runs(p.n)).collect();
     // The first person's step on the page, other than phase 10, which has its
     // own section below: goatbuilder runs it.
     let admit = |ph: &Phase| ph.n == ADMIT_PHASE && ph.kind == "MANUAL";
@@ -1116,7 +1136,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     if printed {
         // The plan is the human answer; the rows still go to -o json and the
         // tutor's log, but are not printed again as a table.
-        print!("{}", plan_view(repo, o, &work, &edge_group, &phases, listed.as_deref().unwrap_or_default()));
+        print!("{}", plan_view_of(repo, o, &work, &edge_group, &phases, listed.as_deref().unwrap_or_default(), |n| s.runs(n, o.from, o.to)));
     }
     if o.dry_run {
         checks.extend(preflight::plan_rows(&inputs));
@@ -1428,6 +1448,20 @@ mod tests {
         let after: Vec<_> = names.iter().map(|n| runenv::var_os(n)).collect();
         assert_eq!(before, after, "the process environment is unchanged");
         assert!(runenv::var("FED_GB_ENV_PROBE").is_err(), "and this thread does not see the other run's value");
+    }
+
+    /// `federate test --bilateral` runs phase 1 (its clock check alone) and
+    /// phase 14: its plan table lists those two, not the phases between.
+    #[test]
+    fn a_stage_plan_table_lists_only_the_stage_phases() {
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 14, to: 14, dry_run: true, table: true };
+        let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
+        let view = plan_view_of(&repo(), &o, &work_s, "velmara_edge", &phases, &[], |n| n == 1 || n == 14);
+        let rows: Vec<&str> = view.lines().skip_while(|l| !l.starts_with("PHASE")).skip(1).take_while(|l| !l.is_empty()).collect();
+        let numbers: Vec<&str> = rows.iter().filter_map(|l| l.split_whitespace().next()).collect();
+        assert_eq!(numbers, ["1", "14"], "{view}");
     }
 
     #[test]

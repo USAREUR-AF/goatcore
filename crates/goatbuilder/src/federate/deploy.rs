@@ -502,19 +502,38 @@ pub fn whole(
 /// `federate test <partner> --bilateral [<attempt>]`: phase 14 on a session both
 /// sides derive (docs/design/federation-acceptance.md §6.3), with this binary as
 /// its signer and verifier. Opt-in: without it, phase 14 is as it always was.
+///
+/// A derived session rests on the two sides' clocks agreeing within
+/// FED_SESSION_WAIT, so with `--bilateral` phase 1 runs first with its clock
+/// check alone (GB-268): a clock that drifted since phase 1 stops the run
+/// before phase 14 starts.
 pub fn test_bilateral(repo: &Path, o: &Options, attempt: Option<u32>) -> Result<Report> {
     match attempt {
-        Some(n) => crate::federate::runenv::set("FED_ACCEPTANCE_ATTEMPT", n.to_string()),
-        None => crate::federate::runenv::unset("FED_ACCEPTANCE_ATTEMPT"),
+        Some(n) => {
+            crate::federate::runenv::set("FED_ACCEPTANCE_ATTEMPT", n.to_string());
+            test_phases(repo, o, BTreeSet::from([CLOCK, TEST]))
+        }
+        None => {
+            crate::federate::runenv::unset("FED_ACCEPTANCE_ATTEMPT");
+            test(repo, o)
+        }
     }
-    test(repo, o)
 }
+
+/// Phase 1, which `federate test --bilateral` runs with its clock check alone.
+const CLOCK: u32 = 1;
 
 /// `goatbuilder federate test <partner>`: acceptance alone.
 pub fn test(repo: &Path, o: &Options) -> Result<Report> {
+    test_phases(repo, o, BTreeSet::from([TEST]))
+}
+
+fn test_phases(repo: &Path, o: &Options, only: BTreeSet<u32>) -> Result<Report> {
     let again = Some(format!("goatbuilder federate test {}", o.with));
+    // --from and --to stay at phase 14: `only` names the phases that run, and
+    // the journal and "run it again" read the stage, not phase 1.
     let mut s = Surface {
-        only: Some(BTreeSet::from([TEST])),
+        only: Some(only),
         stage: "test",
         again,
         ..Default::default()

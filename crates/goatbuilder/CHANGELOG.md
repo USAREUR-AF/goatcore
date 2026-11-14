@@ -101,8 +101,9 @@ signing key and publishes it on its own core, reads the partner's, and
 verifies it under the key confirmed at phase 5; the combined result in
 `<evidence>/bilateral/` is then marked authenticated. Both sides start phase
 14 within `FED_SESSION_WAIT` (300 seconds by default) of each other, normally
-on the same call. It is opt-in: without `--bilateral`, phase 14 runs as before
-and its exit is unchanged. A partner result that does not verify is GB-272,
+on the same call; phase 1's clock check (GB-268) runs first, alone, and stops
+the run on a clock that is unsynchronized or over the budget. It is opt-in:
+without `--bilateral`, phase 14 runs as before and its exit is unchanged. A partner result that does not verify is GB-272,
 one from another session or run GB-273, and an unset or unresolved signing key
 GB-142. (#720)
 

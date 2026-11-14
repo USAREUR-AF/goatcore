@@ -321,7 +321,9 @@ each side's signed result crosses on the fabric and is verified and combined in 
 **Both sides start phase 14 within `FED_SESSION_WAIT` (300 seconds by default) of each other,
 normally on the same call**; each run prints how long it will still wait. Ask for it with
 `goatbuilder federate test <partner> --bilateral` on both sides; without the flag, phase 14 is as
-it was.
+it was. The session rests on the two sides' clocks agreeing within that wait, so with the flag
+phase 1's clock check runs first, alone, and a host whose clock is unsynchronized or over the
+budget stops the run there (GB-268), before phase 14 starts.
 
 `combine` writes `<evidence>/bilateral/<session id>.json` and `.md`, with your rows and the
 partner's side by side, and exits 0 only when the required scope of both sides passed. `propose`

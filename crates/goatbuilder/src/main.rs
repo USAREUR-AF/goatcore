@@ -548,7 +548,8 @@ pub enum Cmd {
         /// the agreement, each side's result signed and the partner's verified
         /// under the key bound at phase 5 (default attempt 1). Both sides start
         /// phase 14 within FED_SESSION_WAIT of each other, normally on the same
-        /// call. Without it, phase 14 is unchanged.
+        /// call, and phase 1's clock check (GB-268) runs first, alone. Without it,
+        /// phase 14 is unchanged.
         #[arg(long, value_name = "ATTEMPT", num_args = 0..=1, default_missing_value = "1")]
         bilateral: Option<u32>,
     },
