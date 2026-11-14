@@ -30,6 +30,8 @@ on:
     paths:
       - 'ops/compose/goat-obs/**'
       - 'ops/compose/mgmt-host/monitoring/rules/compose-orphans.yml'
+      - 'ops/compose/mgmt-host/monitoring/rules/**'
+      - 'ops/compose/mgmt-host/monitoring/tests/**'
       # Host readers of the portal registry, SQLite and Postgres eras (ADR 1165
       # step A): the shared Postgres reader and the scripts that use it.
       - 'ops/scripts/portal_registry_pg.py'
@@ -134,6 +136,17 @@ jobs:
       # ./prometheus/rules, so these fixtures are never visible to the server.
       - name: promtool test rules
         working-directory: ops/compose/goat-obs/prometheus
+        run: promtool test rules tests/*.yml
+
+      # The mgmt-host compose stack's own Prometheus (docker-compose.obs.yml,
+      # the same v2.54.1) loads monitoring/rules/*.yml, which no step checked:
+      # the Spock and postgres alerts among them. Its tests sit beside, under
+      # monitoring/tests/, which the stack does not mount.
+      - name: promtool check rules (mgmt-host stack)
+        working-directory: ops/compose/mgmt-host/monitoring
+        run: promtool check rules rules/*.yml
+      - name: promtool test rules (mgmt-host stack)
+        working-directory: ops/compose/mgmt-host/monitoring
         run: promtool test rules tests/*.yml
 
       # The dashboards/ half, which nothing checked until ADR 1128. A panel

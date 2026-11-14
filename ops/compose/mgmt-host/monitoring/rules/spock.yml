@@ -158,6 +158,22 @@ groups:
           description: "The hourly drift-watch cron has not emitted a successful-run timestamp in >2h. Check `systemctl status spock-drift-watch.timer` on the mgmt-host. Without drift-watch the L2a hourly observability layer is silently dark."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
+      # A platform-admin grant reached a site from a node that is not the hub
+      # (ADR 1205 D10). The guard on Kratos identities applied the row without
+      # PLATFORM-ADMIN and logged it in goat_ceiling_refused; drift-watch counts
+      # that table per peer (spock_ceiling_refused_rows, the table as it
+      # stands). drift-watch runs hourly, so the window is 2h. Critical: with
+      # reason not_hub, a site wrote a grant past its own guard.
+      - alert: SpockCeilingRefused
+        expr: increase(spock_ceiling_refused_rows[2h]) > 0
+        labels:
+          severity: critical
+          component: spock
+        annotations:
+          summary: "Peer {{ $labels.peer }} refused {{ $value | printf \"%.0f\" }} platform-admin grant(s) not made at the hub"
+          description: "The platform-admin guard at peer {{ $labels.peer }} (database {{ $labels.db }}) applied a replicated grant of PLATFORM-ADMIN without the group (ADR 1205 D10). Read goat_ceiling_refused there for the identity, the sending node (origin), the reason, the groups as received and committed_at. Reason not_hub: the sending site made the grant past its own guard; treat that site as broken into and consider the hub's sever_site (ADR 1205 D4). Reason forwarding: a subscription at the peer has non-empty forward_origins, which ADR 1205 D9 forbids; recreate it with none. Reason no_hub: goat.hub_site is not set at the peer; set goatnet_hub_site and run the ory-narrow-repset role."
+          runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/adr/1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md"
+
   - name: spock.conflicts
     interval: 30s
     rules:
