@@ -205,6 +205,17 @@ pub(crate) struct HostClockHealthV1 {
     pub attestation_age_ms: i64,
     #[prost(bool, tag = "11")]
     pub attested: bool,
+    /// A reading taken by a neighbor, not reported by the machine itself
+    /// (ADR 1232): our router refused this machine's timestamps as ahead of
+    /// its own clock. Such a row is outside the site's grade and count.
+    #[prost(bool, tag = "12")]
+    pub observed_by_neighbor: bool,
+    /// The machine's clock minus our router's, latest, in milliseconds.
+    #[prost(double, tag = "13")]
+    pub neighbor_offset_ms: f64,
+    /// Our router's Zenoh ID; empty when not known.
+    #[prost(string, tag = "14")]
+    pub observed_by: String,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]

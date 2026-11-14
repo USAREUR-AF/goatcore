@@ -27,7 +27,8 @@
 
 use crate::health_wire::{
     fmt_age, short_name, ConsistencyDetailV1, CryptoPostureV1, EnvDetail, EnvHealthV1,
-    FabricHealthV1, MeshDetailV1, MeshLinkHealthV1, PeerFaultDetailV1, PeerFaultKindV1,
+    FabricHealthV1, HostClockHealthV1, MeshDetailV1, MeshLinkHealthV1, PeerFaultDetailV1,
+    PeerFaultKindV1,
     PeerFaultV1, PeerVerdictV1, PresenceDetailV1, ProducerFootprintV1, TimeDetailV1,
     CONSISTENCY_KEY, CRYPTO_KEY, FOOTPRINT_PREFIX, HEALTH_KEY, HEALTH_PREFIX, MESH_KEY, NET_KEY,
     PEER_KEY, PEER_VERDICT_PREFIX, PEER_VERDICT_SCHEMA, PRESENCE_KEY, TIME_KEY,
@@ -1121,14 +1122,23 @@ fn print_presence(env: &EnvHealthV1) {
 // ---------------------------------------------------------------------------
 
 /// Headline reason for the time reading — what (if anything) pulled it off green.
+/// The headline reason. It grades the site's own hosts, as the site's color
+/// does; clocks a neighbor observed are counted apart and never as ours.
 fn time_reason(detail: &TimeDetailV1) -> String {
-    if detail.hosts.is_empty() {
-        return "no host clocks to grade".to_string();
+    let own: Vec<&HostClockHealthV1> = detail.hosts.iter().filter(|h| !h.observed_by_neighbor).collect();
+    let seen = detail.hosts.len() - own.len();
+    let seen_note = match seen {
+        0 => String::new(),
+        1 => "; 1 outside clock seen ahead by our router".to_string(),
+        n => format!("; {n} outside clocks seen ahead by our router"),
+    };
+    if own.is_empty() {
+        return format!("no host clocks to grade{seen_note}");
     }
-    let degraded = detail.hosts.iter().filter(|h| h.color == "red").count();
-    let warning = detail.hosts.iter().filter(|h| h.color == "amber").count();
-    let unattested = detail.hosts.iter().filter(|h| !h.attested).count();
-    let diverged = detail.hosts.iter().filter(|h| h.divergence_detected).count();
+    let degraded = own.iter().filter(|h| h.color == "red").count();
+    let warning = own.iter().filter(|h| h.color == "amber").count();
+    let unattested = own.iter().filter(|h| !h.attested).count();
+    let diverged = own.iter().filter(|h| h.divergence_detected).count();
     let mut parts: Vec<String> = Vec::new();
     if degraded > 0 {
         parts.push(format!("{degraded} degraded"));
@@ -1143,11 +1153,25 @@ fn time_reason(detail: &TimeDetailV1) -> String {
         parts.push(format!("{diverged} diverging from peer consensus"));
     }
     if parts.is_empty() {
-        let n = detail.hosts.len();
-        format!("all {n} host clock{} healthy", if n == 1 { "" } else { "s" })
+        let n = own.len();
+        format!("all {n} host clock{} healthy{seen_note}", if n == 1 { "" } else { "s" })
     } else {
-        parts.join("; ")
+        format!("{}{seen_note}", parts.join("; "))
     }
+}
+
+/// One line for a clock a neighbor observed: who, how far ahead, seen by which
+/// router. Every string comes off the bus and is made safe to print.
+fn neighbor_clock_line(h: &HostClockHealthV1) -> String {
+    let by = match clean_text(&h.observed_by) {
+        b if b.is_empty() => "our router".to_string(),
+        b => format!("router {b}"),
+    };
+    format!(
+        "  {:<32} {:>+9.1} s  seen by {by}",
+        clean_text(&h.host_id).chars().take(32).collect::<String>(),
+        h.neighbor_offset_ms / 1000.0
+    )
 }
 
 fn print_time(env: &EnvHealthV1) {
@@ -1160,7 +1184,9 @@ fn print_time(env: &EnvHealthV1) {
         );
         return;
     };
-    let n = detail.hosts.len();
+    let (seen, own): (Vec<&HostClockHealthV1>, Vec<&HostClockHealthV1>) =
+        detail.hosts.iter().partition(|h| h.observed_by_neighbor);
+    let n = own.len();
     println!(
         "TIME: {} — {n} host clock{}; {}",
         colorize(&env.overall_color),
@@ -1183,12 +1209,23 @@ fn print_time(env: &EnvHealthV1) {
     if detail.hosts.is_empty() {
         return;
     }
+    if !seen.is_empty() {
+        println!();
+        println!("  Seen by a neighbor, not self-reported (outside the site grade above):");
+        for h in &seen {
+            println!("{}", neighbor_clock_line(h));
+        }
+        println!("  Our router refused these machines' timestamps as ahead of its clock: goat health --domain peer");
+    }
+    if own.is_empty() {
+        return;
+    }
     println!();
     println!(
         "  {:<16} {:<7} {:<9} {:>10} {:>4} {:>5} {:>10}",
         "HOST", "STATE", "VERDICT", "OFFSET", "STR", "GNSS", "ATTEST"
     );
-    for h in &detail.hosts {
+    for h in own {
         let offset = format!("{:.1} ms", h.rms_offset_ms);
         let gnss = if h.gnss_present { "yes" } else { "—" };
         // attested→handshake-style age; unattested→the honest "no" (idle driver).
@@ -2085,7 +2122,6 @@ mod presence_tests {
 #[cfg(test)]
 mod time_tests {
     use super::*;
-    use crate::health_wire::HostClockHealthV1;
 
     fn host(id: &str, color: &str, verdict: &str, attested: bool) -> HostClockHealthV1 {
         HostClockHealthV1 {
@@ -2100,7 +2136,38 @@ mod time_tests {
             divergence_detected: false,
             attestation_age_ms: 5000,
             attested,
+            observed_by_neighbor: false,
+            neighbor_offset_ms: 0.0,
+            observed_by: String::new(),
         }
+    }
+
+    fn seen(id: &str, offset_ms: f64, by: &str) -> HostClockHealthV1 {
+        HostClockHealthV1 {
+            observed_by_neighbor: true,
+            neighbor_offset_ms: offset_ms,
+            observed_by: by.to_string(),
+            ..host(id, "red", "degraded", false)
+        }
+    }
+
+    #[test]
+    fn a_clock_a_neighbor_observed_is_counted_apart_from_the_sites_own() {
+        let d = TimeDetailV1 { hosts: vec![host("thor.x", "green", "healthy", true), seen("7f24", 17_700.0, "ab12")] };
+        assert_eq!(time_reason(&d), "all 1 host clock healthy; 1 outside clock seen ahead by our router");
+        let d = TimeDetailV1 { hosts: vec![seen("7f24", 17_700.0, "ab12"), seen("9c01", 2_500.0, "")] };
+        assert_eq!(time_reason(&d), "no host clocks to grade; 2 outside clocks seen ahead by our router");
+        let d = TimeDetailV1 { hosts: vec![host("a", "red", "degraded", true), seen("7f24", 900.0, "ab12")] };
+        assert_eq!(time_reason(&d), "1 degraded; 1 outside clock seen ahead by our router");
+    }
+
+    #[test]
+    fn a_neighbor_clock_line_gives_the_offset_and_the_observer_and_is_safe_to_print() {
+        let line = neighbor_clock_line(&seen("edge-box", 17_700.0, "ab12"));
+        assert!(line.contains("edge-box") && line.contains("+17.7 s") && line.ends_with("seen by router ab12"), "{line}");
+        let line = neighbor_clock_line(&seen("x\u{1b}[2Jy", 600.0, ""));
+        assert!(!line.chars().any(|c| c.is_control()), "{line:?}");
+        assert!(line.ends_with("seen by our router"), "{line}");
     }
 
     #[test]
