@@ -1086,7 +1086,8 @@ fn c11_standup() {
 fn c11_join_node() {
     let h = hollow();
     let r = h.repo();
-    // Phase 1 is manual; the run goes from 2 to the next manual step (8).
+    // Phase 1 is manual and the only manual step (gate row H2): the run goes
+    // from 2 to the end.
     let args = [
         "join-node",
         "-C",
@@ -1106,11 +1107,7 @@ fn c11_join_node() {
     let real: Vec<&str> = args.iter().copied().chain(["--yes"]).collect();
     let (out, procs) = run_recorded(h.command(&real), &h.root.path().join("rec/real"));
     ran("join-node", &out, &procs, &[0]);
-    let dry: Vec<&str> = args
-        .iter()
-        .copied()
-        .chain(["--to", "8", "--dry-run"])
-        .collect();
+    let dry: Vec<&str> = args.iter().copied().chain(["--dry-run"]).collect();
     let page = at_a_terminal(&h.command(&dry)).unwrap_or_else(|e| panic!("{e}"));
     let plan = h
         .command(&[
