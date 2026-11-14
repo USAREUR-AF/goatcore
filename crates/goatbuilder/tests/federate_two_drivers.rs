@@ -202,9 +202,9 @@ fn one_driver_is_the_default_and_hands_off_nothing() {
     );
 }
 
-/// The edge driver's mode is offered, and refused until it is built.
+/// The edge driver's mode is offered; after phase 1 it is refused until built.
 #[test]
-fn side_edge_is_offered_and_refused_until_built() {
+fn side_edge_is_offered_and_refused_after_phase_1() {
     let w = world();
     let help = std::process::Command::new(federate_world::bin())
         .args(["federate", "--help"])
@@ -216,7 +216,8 @@ fn side_edge_is_offered_and_refused_until_built() {
         String::from_utf8_lossy(&help.stdout)
     );
     two_drivers(&w);
-    let (out, _) = w.run(&["hello-ally", "--side", "edge", "--from", "1", "--to", "1"]);
+    // Phase 1's edge run is built; phase 2's is not.
+    let (out, _) = w.run(&["hello-ally", "--side", "edge", "--from", "2", "--to", "2"]);
     assert!(!out.status.success(), "{}", says(&out));
     assert!(says(&out).contains("not built"), "{}", says(&out));
     assert!(says(&out).contains("GB-267"), "{}", says(&out));
@@ -403,12 +404,11 @@ fn a_two_driver_deploy_runs_nothing() {
 }
 
 /// `--side` is one flag, shared with `init --over-ssh`'s phase 3 halves, so
-/// GB-267 answers only `--side edge` on its own on a peering run. A
+/// only `--side edge` on its own on a peering run is the edge driver's run. A
 /// misplaced flag for the built halves, or `--side edge` beside other
-/// measure flags or on `status`, gets the message it got before, never
-/// GB-267's advice to remove `drivers: two`.
+/// measure flags or on `status`, gets the message it got before.
 #[test]
-fn side_edge_is_gb_267_only_alone_on_a_peering_run() {
+fn side_edge_alone_on_a_peering_run_is_the_edge_drivers_run() {
     let w = world();
     two_drivers(&w);
     let (out, _) = w.run(&[
@@ -442,17 +442,24 @@ fn side_edge_is_gb_267_only_alone_on_a_peering_run() {
     let (out, _) = w.run(&["status", "--side", "edge"]);
     assert!(!says(&out).contains("GB-267"), "{}", says(&out));
 
+    // Alone on a peering run, it is the edge driver's run, which runs one
+    // phase, as a hand-off names it, and never answers GB-267 here.
     let (out, _) = w.run(&["hello-ally", "--side", "edge"]);
     let all = says(&out);
     assert!(!out.status.success(), "{all}");
-    assert!(all.contains("GB-267"), "{all}");
+    assert!(
+        all.contains("one phase") && !all.contains("GB-267"),
+        "{all}"
+    );
     assert!(!w.log().contains("preflight"), "{}", w.log());
 }
 
 /// Every command a hand-off object names parses with the binary that printed
-/// it: run as written (placeholders filled in), none is a usage error. The
-/// edge driver's run and `import` are not built, so each refuses with GB-267;
-/// `then` is an ordinary run, which stops at the same hand-off again.
+/// it: run as written (placeholders filled in), none is a usage error.
+/// Phase 1's edge run and import are built: the run ends with the way back,
+/// and the import refuses a file that is not there (GB-277). Phase 2's are
+/// not built, so each refuses with GB-267. `then` is an ordinary run, which
+/// stops at the same hand-off again while nothing is imported.
 #[test]
 fn every_command_a_hand_off_names_parses_and_refuses_as_not_built() {
     for phase in ["1", "2"] {
@@ -498,6 +505,13 @@ fn every_command_a_hand_off_names_parses_and_refuses_as_not_built() {
                 assert_eq!(
                     v["handoff"]["phase"], h["phase"],
                     "phase {phase} then: {all}"
+                );
+            } else if member == "command" && phase == "1" {
+                // Phase 1's edge run is built: it ends with the way back.
+                assert!(out.status.success(), "phase {phase} {member}: {all}");
+                assert_eq!(
+                    v["handoff"]["run_on"], "controller",
+                    "phase {phase} {member}: {all}"
                 );
             } else if member == "import" && phase == "1" {
                 // Phase 1's import is built: a result file that is not there
@@ -766,4 +780,258 @@ fn a_changed_or_unready_edge_result_stops_before_the_core_half() {
         }
         let _ = v;
     }
+}
+
+/// The edge driver's phase 1, as its controller's hand-off names it.
+fn edge_run(
+    w: &World,
+    commit: &str,
+    edge_work: &std::path::Path,
+    extra: &[&str],
+) -> (std::process::Output, serde_json::Value) {
+    let mut args = vec![
+        "hello-ally",
+        "--side",
+        "edge",
+        "--from",
+        "1",
+        "--to",
+        "1",
+        "--expect-commit",
+        commit,
+        "--work",
+        edge_work.to_str().unwrap(),
+    ];
+    args.extend_from_slice(extra);
+    w.run(&args)
+}
+
+/// The edge driver's run of phase 1 runs preflight's edge checks alone,
+/// writes their result under its own work, and prints the way-back object
+/// with the confirm code. The controller imports the file with that code and
+/// goes on to phase 2.
+#[test]
+fn an_edge_drivers_phase_1_writes_its_result_and_prints_the_way_back() {
+    let w = world();
+    let commit = two_drivers(&w);
+    let (out, _) = w.run(&["hello-ally", "--from", "1", "--to", "1"]);
+    assert!(out.status.success(), "{}", says(&out));
+    w.clear_log();
+
+    let edge_work = w.root.path().join("edge-work");
+    let (out, v) = edge_run(&w, &commit, &edge_work, &[]);
+    assert!(out.status.success(), "{}", says(&out));
+    let written = edge_work.join("handoff/1/edge.json");
+    let log = w.log();
+    assert!(
+        log.lines().any(|l| l.starts_with("preflight hello-ally")
+            && l.contains("--side edge")
+            && l.contains(&format!("--result {}", written.display()))),
+        "{log}"
+    );
+    let bytes = std::fs::read(&written).expect("the edge driver wrote its result");
+    let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(doc["side"], "edge", "{doc}");
+    assert_eq!(doc["peering"], "hello-ally", "{doc}");
+    let code = confirm_code(&bytes);
+    let h = &v["handoff"];
+    assert_eq!(h["phase"], 1, "{}", says(&out));
+    assert_eq!(h["code"], "GB-265");
+    assert_eq!(h["run_on"], "controller");
+    assert!(h["command"].is_null(), "{h}");
+    assert_eq!(h["commit"], commit.as_str());
+    assert_eq!(h["carry"], serde_json::json!([]));
+    assert_eq!(h["result"], "handoff/1/edge.json");
+    assert_eq!(h["result_path"], written.to_str().unwrap());
+    assert_eq!(h["result_sha256"], sha256_hex(&bytes));
+    assert_eq!(h["confirm_code"], code.as_str());
+    assert_eq!(
+        h["import"],
+        strings(&[
+            "goatbuilder",
+            "federate",
+            "import",
+            "hello-ally",
+            "1",
+            "{result}",
+            "--sha256",
+            &code
+        ])
+    );
+    assert_eq!(
+        h["then"],
+        strings(&["goatbuilder", "federate", "hello-ally", "--from", "1"])
+    );
+    let text = rows(&v, "handoff").join("\n");
+    assert!(text.contains(&code), "{text}");
+    assert!(
+        text.contains(&format!(
+            "goatbuilder federate import hello-ally 1 '{{result}}' --sha256 '{code}'"
+        )),
+        "{text}"
+    );
+    // The code is never in the file it confirms.
+    let held = String::from_utf8_lossy(&bytes).to_string();
+    assert!(
+        !held.contains(&code.replace(' ', "")),
+        "the result holds its own code: {held}"
+    );
+
+    // The way back, as the object names it, on the controller.
+    let carried = w.root.path().join("carried.json");
+    std::fs::copy(&written, &carried).unwrap();
+    let (out, _) = w.run(&[
+        "import",
+        "hello-ally",
+        "1",
+        carried.to_str().unwrap(),
+        "--sha256",
+        &code,
+    ]);
+    assert!(out.status.success(), "{}", says(&out));
+    let (out, v) = w.run(&["hello-ally", "--from", "1"]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(v["handoff"]["phase"], 2, "{}", says(&out));
+}
+
+/// The edge driver runs nothing unless its checkout is the controller's
+/// commit with nothing changed, and every carried file has the digest the
+/// hand-off names: each refusal is GB-278, and preflight never runs.
+#[test]
+fn the_edge_driver_refuses_a_checkout_or_carried_file_not_the_controllers() {
+    let w = world();
+    let commit = two_drivers(&w);
+    let edge_work = w.root.path().join("edge-work");
+    std::fs::create_dir_all(edge_work.join("pki")).unwrap();
+    std::fs::write(edge_work.join("pki/carried.pem"), "carried\n").unwrap();
+    let good = format!(
+        "pki/carried.pem={}",
+        sha256_hex(b"carried\n").trim_start_matches("sha256:")
+    );
+    let wrong = format!(
+        "pki/carried.pem={}",
+        sha256_hex(b"other\n").trim_start_matches("sha256:")
+    );
+    let missing = format!(
+        "pki/absent.pem={}",
+        sha256_hex(b"carried\n").trim_start_matches("sha256:")
+    );
+    let other = "0".repeat(40);
+    let refused = |what: &str, out: &std::process::Output| {
+        let all = says(out);
+        assert!(!out.status.success(), "{what}: {all}");
+        assert!(all.contains("GB-278"), "{what}: {all}");
+        assert!(
+            !w.log().contains("preflight"),
+            "{what}: preflight ran: {}",
+            w.log()
+        );
+        assert!(
+            !edge_work.join("handoff/1/edge.json").exists(),
+            "{what}: a result was written"
+        );
+    };
+    let (out, _) = w.run(&[
+        "hello-ally",
+        "--side",
+        "edge",
+        "--from",
+        "1",
+        "--to",
+        "1",
+        "--work",
+        edge_work.to_str().unwrap(),
+    ]);
+    refused("no --expect-commit", &out);
+    let (out, _) = edge_run(&w, &other, &edge_work, &[]);
+    refused("another commit", &out);
+    std::fs::write(w.repo.join("changed.txt"), "x\n").unwrap();
+    let (out, _) = edge_run(&w, &commit, &edge_work, &[]);
+    refused("a checkout with changes", &out);
+    assert!(says(&out).contains("changed.txt"), "{}", says(&out));
+    std::fs::remove_file(w.repo.join("changed.txt")).unwrap();
+    let (out, _) = edge_run(&w, &commit, &edge_work, &["--expect", &wrong]);
+    refused("a carried file with another digest", &out);
+    let (out, _) = edge_run(&w, &commit, &edge_work, &["--expect", &missing]);
+    refused("a carried file that is not there", &out);
+
+    let (out, _) = edge_run(&w, &commit, &edge_work, &["--expect", &good]);
+    assert!(
+        out.status.success(),
+        "the carried file as named: {}",
+        says(&out)
+    );
+    assert!(edge_work.join("handoff/1/edge.json").exists());
+}
+
+/// The edge driver's run is built for phase 1 only, one phase at a time, and
+/// only on a peering declared with two drivers.
+#[test]
+fn the_edge_driver_runs_phase_1_alone_and_only_for_two_drivers() {
+    let w = world();
+    let commit = two_drivers(&w);
+    let edge_work = w.root.path().join("edge-work");
+    let e = edge_work.to_str().unwrap();
+    let (out, _) = w.run(&[
+        "hello-ally",
+        "--side",
+        "edge",
+        "--from",
+        "2",
+        "--to",
+        "2",
+        "--expect-commit",
+        &commit,
+        "--work",
+        e,
+    ]);
+    assert!(
+        !out.status.success() && says(&out).contains("GB-267"),
+        "{}",
+        says(&out)
+    );
+    let (out, _) = w.run(&[
+        "hello-ally",
+        "--side",
+        "edge",
+        "--from",
+        "1",
+        "--to",
+        "2",
+        "--expect-commit",
+        &commit,
+        "--work",
+        e,
+    ]);
+    assert!(
+        !out.status.success() && says(&out).contains("one phase"),
+        "{}",
+        says(&out)
+    );
+    assert!(!w.log().contains("preflight"), "{}", w.log());
+
+    let w = world();
+    git(&w, &["init", "-q"]);
+    git(&w, &["add", "-A"]);
+    git(&w, &["commit", "-q", "-m", "fixture"]);
+    let commit = git(&w, &["rev-parse", "HEAD"]);
+    let (out, _) = w.run(&[
+        "hello-ally",
+        "--side",
+        "edge",
+        "--from",
+        "1",
+        "--to",
+        "1",
+        "--expect-commit",
+        &commit,
+        "--work",
+        e,
+    ]);
+    let all = says(&out);
+    assert!(
+        !out.status.success() && all.contains("drivers: two"),
+        "{all}"
+    );
+    assert!(!w.log().contains("preflight"), "{}", w.log());
 }

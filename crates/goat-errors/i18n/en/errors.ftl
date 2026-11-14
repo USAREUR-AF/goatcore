@@ -938,6 +938,11 @@ gb-293-title = the back-out cannot tell what our core router's leaf held before 
 gb-293-what = Our core router's leaf (its certificate and key) holds the leaf this peering's admission placed, and no admission run in the peering's working folder recorded what was there before (both peerings admitted by hand, say), so the back-out can neither put it back nor remove it. No other peering is set up from this machine (no working folder beside this one holds an agreement); when one is, the leaf is kept for it and the back-out goes on. Nothing was changed on any host.
 gb-293-cause-1 = the leaf was placed by hand, not by goatbuilder federate admission
 gb-293-cause-2 = the admission folder of the peering's working folder was removed or moved
+gb-278-title = the edge driver's checkout or carried files are not the controller's
+gb-278-what = On a two-driver peering (drivers: two), the edge driver runs a phase's edge half with the command the controller's hand-off names: `goatbuilder federate <peering> --side edge --from <N> --to <N> --expect-commit <commit>`, with one `--expect <file>=<sha256>` per file the controller carried. The edge driver refused to run: --expect-commit was not given; its checkout is not a git checkout, has no commit, has changes, or is at another commit than the one named; or a carried file is not under its <work> or in its checkout, or has another sha256. Nothing ran on the edge.
+gb-278-cause-1 = the edge driver's checkout was not updated to the controller's commit, or has local changes
+gb-278-cause-2 = the command was typed without the hand-off's --expect-commit
+gb-278-cause-3 = a carried file was not copied from the controller's <work>, or was changed on the way
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened
