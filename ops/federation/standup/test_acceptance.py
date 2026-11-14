@@ -667,8 +667,9 @@ class AcceptanceRun(unittest.TestCase):
             first = json.load(f)["session"]["challenge"]
         # xaa again, alone, in the same session: a new challenge. xab's samples and
         # result are still on xaa's core, from xab's run that started before xaa's
-        # start minus the wait: an earlier run's, so its challenge is not learned, no
-        # result is published or verified, and the run stays open.
+        # start minus twice the wait: an earlier run's, so its challenge is not
+        # learned, no result is published or verified, and the run stays open. The
+        # BLOCKED delivery rows say an earlier run's sample is there.
         p = self.derived_side("xaa", ev["xaa"], full=True, wait="3")
         out = p.communicate(timeout=120)[0]
         with open(os.path.join(ev["xaa"], "result.json")) as f:
@@ -680,45 +681,160 @@ class AcceptanceRun(unittest.TestCase):
         self.assertIn("from an earlier run", out)
         self.assertIn("BILATERAL OPEN", out)
         self.assertNotIn("FAIL", out.replace("ACCEPTANCE FAILED", ""))
+        inbound = {n: r for n, r in self.checks(ev["xaa"]).items() if n.startswith("delivery/inbound/")}
+        self.assertTrue(inbound, out)
+        for name, row in inbound.items():
+            self.assertEqual(row["verdict"], "BLOCKED", (name, out))
+            self.assertIn("earlier run", row["reason"], (name, out))
 
-    def test_derived_a_partner_sample_left_by_an_earlier_run_is_ignored_and_both_verdicts_agree(self):
-        """A sample the partner's earlier run left on our core carries that run's
-        challenge. It says when that run started; a run ignores a partner sample
-        that started before its own start minus FED_SESSION_WAIT and waits for this
-        run's, so our signed result echoes the partner's current challenge and both
-        sides reach the same verdict (§6.3)."""
-        import subprocess as sp, time
+    # A partner run's stamp, `<them>/run` beside its sample, carries the challenge and
+    # the run's start time in one value (§6.3). These cases put an earlier run's
+    # samples and stamp on xaa's core, then break one step of xab's current run.
+    OLD_CHALLENGE = "0123456789abcdef0123456789abcdef"
+
+    def session_id(self):
         path = os.path.join(self.tmp, "agreement.json")
         with open(path, "w") as f:
             json.dump(self.ag, f)
         der = os.path.join(self.tmp, "derived.json")
-        sp.run(["python3", str(HERE / "acceptance_session.py"), "derive", "--agreement", path, "--us", "xaa",
-                "--attempt", "1", "--out", der], check=True, capture_output=True)
-        sid = json.load(open(der))["session_id"]
-        old = "0123456789abcdef0123456789abcdef"
-        long_ago = str(int(time.time()) - 100000).encode()
+        subprocess.run(["python3", str(HERE / "acceptance_session.py"), "derive", "--agreement", path, "--us", "xaa",
+                        "--attempt", "1", "--out", der], check=True, capture_output=True)
+        return json.load(open(der))["session_id"]
+
+    def earlier_run_on_xaa(self, stamp=True, started_ago=100000):
+        """xab's samples from an earlier run on xaa's core: another challenge and,
+        when `stamp`, that run's stamp with a start time `started_ago` seconds past."""
+        import time
+        sid, old = self.session_id(), self.OLD_CHALLENGE
+        started = int(time.time()) - started_ago
         stale = {}
         for st in self.fabric.offered("xab"):
-            wire = "from/xab/%s/acceptance/%s/xab" % (st[len("release/"):], sid)
-            stale[wire] = ("xab-%s-%s" % (old, st[len("release/"):])).encode()
-            stale[wire + "/persist"] = ("xab-%s-%s-persist" % (old, st[len("release/"):])).encode()
-            stale[wire + "/started"] = long_ago
+            name = st[len("release/"):]
+            wire = "from/xab/%s/acceptance/%s/xab" % (name, sid)
+            stale[wire] = ("xab-%s-%s" % (old, name)).encode()
+            stale[wire + "/persist"] = ("xab-%s-%s-persist" % (old, name)).encode()
+            if stamp:
+                stale[wire + "/run"] = ("xab-%s-%s@%d" % (old, name, started)).encode()
         self.fabric.faults.stale["xaa"] = stale
+
+    def stand_in(self, name, body):
+        """A directory holding one executable stand-in, `name`, for PATH."""
+        d = tempfile.mkdtemp(dir=self.tmp)
+        path = os.path.join(d, name)
+        with open(path, "w") as f:
+            f.write("#!/usr/bin/env bash\n" + body)
+        os.chmod(path, 0o755)
+        return {"PATH": d + os.pathsep + os.environ["PATH"]}
+
+    def curl_stand_in(self, condition, action):
+        """curl that runs `action` (bash) for a call matching `condition` (bash test
+        over $put, 1 for a PUT, and $url), and is the real curl otherwise."""
+        real = shutil.which("curl")
+        return self.stand_in("curl", (
+            'put=0; url=""\n'
+            'for a in "$@"; do [ "$a" = PUT ] && put=1; case "$a" in http*) url="$a";; esac; done\n'
+            'if %s; then %s; fi\n'
+            'exec %s "$@"\n') % (condition, action, real))
+
+    BARE_SAMPLE_PUT = '[ "$put" = 1 ] && [[ "$url" =~ /acceptance/[^/]+/[a-z]+$ ]]'
+    STAMP_PUT = '[ "$put" = 1 ] && [[ "$url" == */run ]]'
+
+    def checks(self, evidence):
+        with open(os.path.join(evidence, "result.json")) as f:
+            return {c["name"]: c for c in json.load(f)["checks"]}
+
+    def assert_no_earlier_challenge_used(self, out_a, out_b):
+        for out in (out_a, out_b):
+            self.assertNotIn("GB-273", out)
+            self.assertNotIn(self.OLD_CHALLENGE, out)
+
+    def test_derived_a_partner_sample_left_by_an_earlier_run_is_ignored_and_both_verdicts_agree(self):
+        """A sample the partner's earlier run left on our core carries that run's
+        challenge, and that run's stamp says when it started; a run ignores a stamp
+        from before its own start minus twice FED_SESSION_WAIT and waits for this
+        run's, so our signed result echoes the partner's current challenge and both
+        sides reach the same verdict (§6.3)."""
+        self.earlier_run_on_xaa()
         ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(delay=3)
         self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
         for side in ("xaa", "xab"):
             self.assertEqual(self.bilateral(ev[side])["verdict"], "PASS", side)
-        self.assertNotIn("echoes " + old, out_a)
+        self.assert_no_earlier_challenge_used(out_a, out_b)
         self.assertIn("from an earlier run", out_a)
 
-    def test_derived_each_run_stages_when_it_started_beside_its_samples(self):
+    def test_derived_each_run_stamps_its_challenge_and_start_time_in_one_value(self):
         ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived()
         self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
-        sid = json.load(open(os.path.join(ev["xaa"], "result.json")))["session"]["id"]
+        result = json.load(open(os.path.join(ev["xaa"], "result.json")))["session"]
         st = self.fabric.offered("xaa")[0]
-        started = self.fabric.cores["xab"].store.get("from/xaa/%s/acceptance/%s/xaa/started" % (st[len("release/"):], sid))
-        self.assertIsNotNone(started, "xaa's start time crossed to xab's core with its samples")
-        self.assertRegex(started.decode(), r"^[0-9]{10}$")
+        name = st[len("release/"):]
+        stamp = self.fabric.cores["xab"].store.get("from/xaa/%s/acceptance/%s/xaa/run" % (name, result["id"]))
+        self.assertIsNotNone(stamp, "xaa's stamp crossed to xab's core with its samples")
+        self.assertRegex(stamp.decode(), r"^xaa-%s-%s@[0-9]{10}$" % (result["challenge"], name))
+
+    def test_derived_a_partner_sample_whose_write_failed_teaches_no_earlier_challenge(self):
+        # xab's stamp lands but its sample's write fails, beside an earlier run's
+        # sample: the challenge comes from the stamp, the earlier sample is named as
+        # an earlier run's (BLOCKED), and nothing echoes or refuses another challenge.
+        self.earlier_run_on_xaa()
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(
+            delay=3, wait="8", second={"extra": self.curl_stand_in(self.BARE_SAMPLE_PUT, "exit 28")})
+        self.assert_no_earlier_challenge_used(out_a, out_b)
+        rows = self.checks(ev["xaa"])
+        for name, row in rows.items():
+            if name.startswith("delivery/inbound/"):
+                self.assertEqual(row["verdict"], "BLOCKED", (name, out_a))
+                self.assertIn("earlier run", row["reason"], (name, out_a))
+        self.assertNotIn("FAIL", out_a.replace("ACCEPTANCE FAILED", ""))
+
+    def test_derived_a_partner_sample_arriving_after_its_stamp_is_waited_for(self):
+        self.earlier_run_on_xaa()
+        delayed = "( sleep 4; exec %s \"$@\" ) >/dev/null 2>&1 & exit 0" % shutil.which("curl")
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(
+            delay=3, wait="12", second={"extra": self.curl_stand_in(self.BARE_SAMPLE_PUT, delayed)})
+        self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
+        self.assert_no_earlier_challenge_used(out_a, out_b)
+
+    def test_derived_a_partner_stamp_arriving_after_its_sample_is_waited_for(self):
+        self.earlier_run_on_xaa()
+        delayed = "( sleep 4; exec %s \"$@\" ) >/dev/null 2>&1 & exit 0" % shutil.which("curl")
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(
+            delay=3, wait="12", second={"extra": self.curl_stand_in(self.STAMP_PUT, delayed)})
+        self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
+        self.assert_no_earlier_challenge_used(out_a, out_b)
+
+    def test_derived_a_failed_read_of_the_stamp_is_not_yet_never_an_older_runner(self):
+        self.earlier_run_on_xaa()
+        flag = os.path.join(self.tmp, "stamp-read-failed")
+        once = '[ "$put" = 0 ] && [[ "$url" == */run ]] && [ ! -e %s ]' % flag
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(
+            delay=3, wait="12", extra=self.curl_stand_in(once, ": > %s; exit 7" % flag), second={"extra": None})
+        self.assertTrue(os.path.exists(flag), "the stand-in failed a read of the stamp")
+        self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
+        self.assert_no_earlier_challenge_used(out_a, out_b)
+
+    def test_derived_a_partner_that_stages_no_stamp_is_read_as_before(self):
+        # A partner on an older runner stages no stamp (here: its stamp's write is
+        # dropped): its sample is read as before and both sides pass.
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(
+            second={"extra": self.curl_stand_in(self.STAMP_PUT, "exit 0")})
+        self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
+        for side in ("xaa", "xab"):
+            self.assertEqual(self.bilateral(ev[side])["verdict"], "PASS", side)
+
+    def test_derived_clocks_apart_by_less_than_the_wait_keep_a_fresh_sample(self):
+        # xaa's clock runs 8 s behind, the wait is 10 s, and xab starts 3 s after xaa:
+        # the runs overlap and the clocks agree within the wait, so xab keeps xaa's
+        # sample (its start is within twice the wait of xab's).
+        real = shutil.which("date")
+        skew = self.stand_in("date", (
+            'if [ "$*" = "-u +%%s" ]; then echo $(( $(%s -u +%%s) - 8 )); exit 0; fi\n'
+            'exec %s "$@"\n') % (real, real))
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(delay=3, wait="10", extra=skew, second={"extra": None})
+        self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
+        self.assertNotIn("from an earlier run", out_b)
+        for side in ("xaa", "xab"):
+            self.assertEqual(self.bilateral(ev[side])["verdict"], "PASS", side)
 
     def test_derived_a_signature_over_other_bytes_than_the_published_result_is_refused_gb_272(self):
         # The partner's signer signs other bytes than the result it publishes; a wire
