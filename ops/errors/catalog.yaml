@@ -3200,7 +3200,7 @@ entries:
   - code: GB-270
     tool: goatbuilder
     title: a backed-out partner's store was kept because the router does not yet run without it
-    what: "On a goat-zenoh role core, the back-out took the partner out of zenoh_sovereign_peerings and ran the role's play with goat_zenoh_drop_partner_store=<partner>, which deletes <storage path>/sovereign_from_<partner> only after the router runs without it (ADR 1234). The play did not get there: the partner is still declared, the live configuration still names the store, the router is not running, or it started before that configuration was written. The store was kept, and the back-out put the partner's entry back in peerings.yml, so running it again repeats the step."
+    what: "On a goat-zenoh role core, the back-out took the partner out of zenoh_sovereign_peerings, ran the role's play to restart the router without the partner's store, then ran ops/ansible/zenoh-drop-partner-store.yml, which deletes <storage path>/sovereign_from_<partner> only after the router runs without it (ADR 1234). One of the two plays did not get there: the partner is still declared, the live configuration still names the store, the router is not running, or it started before that configuration was written. The store was kept, and the back-out put the partner's entry back in peerings.yml, so running it again repeats the step."
     causes:
       - the role's play failed before or during the router's restart
       - the router did not restart after the configuration without the store was written

@@ -43,9 +43,9 @@ design to get somewhere working for now".
   goat-zenoh role core with no route of its own, behind the back-out's typed
   confirmation and after the core step, it takes the partner's entry out of
   `zenoh_sovereign_peerings` in `group_vars/<core router group>/peerings.yml`
-  (`admit_role::remove_peering`), and runs the role's play with
-  `goat_zenoh_drop_partner_store=<partner>`. The role restarts the router on
-  the configuration without `sovereign_from_<partner>` and only then deletes
+  (`admit_role::remove_peering`), and runs the role's play, which restarts the
+  router on the configuration without `sovereign_from_<partner>`. Only then
+  does a play of its own, `ops/ansible/zenoh-drop-partner-store.yml`, delete
   that directory (`roles/goat-zenoh/tasks/drop-partner-store.yml`). GB-227 ("a
   back-out never edits configuration") and the F-447 rule that the role never
   deletes a store directory changed with it: GB-227 now names an entry the

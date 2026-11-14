@@ -743,8 +743,9 @@
       {{ _orphans_left | join(', ') }}.
       Dispose of them (or clear the flag) before deploying.
   vars:
-    # The store of a partner this run drops (goat_zenoh_drop_partner_store,
-    # ADR 1234) is undeclared until drop-partner-store.yml deletes it at the end.
+    # The store of a partner the back-out is dropping (goat_zenoh_drop_partner_store,
+    # ADR 1234) is undeclared until ops/ansible/zenoh-drop-partner-store.yml deletes
+    # it, right after this play.
     _orphans_left: >-
       {{ _zenoh_orphan_stores.stdout_lines | default([])
          | reject('equalto', 'sovereign_from_' ~ (goat_zenoh_drop_partner_store | default('')))
@@ -1028,11 +1029,3 @@
     tasks_from: render-manifest
   vars:
     render_component: "{{ goat_zenoh_ledger_component | default('goat-zenoh') }}"
-
-# ADR 1234: `goatbuilder federate backout <partner>` runs this play with
-# goat_zenoh_drop_partner_store=<partner> after taking the partner out of
-# zenoh_sovereign_peerings. The router restarts on the configuration rendered
-# above, without the partner's store, and only then is its directory deleted.
-- name: Drop a backed-out partner's store
-  ansible.builtin.include_tasks: drop-partner-store.yml
-  when: (goat_zenoh_drop_partner_store | default('', true) | length) > 0

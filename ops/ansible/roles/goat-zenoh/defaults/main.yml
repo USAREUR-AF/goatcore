@@ -656,7 +656,7 @@ zenoh_from_retention_days: 7
 # necessarily dead (an unset zenoh_active_slot_anchors omits the entire slot pool).
 # The one exception is goat_zenoh_drop_partner_store (ADR 1234), set only by
 # `goatbuilder federate backout <partner>`: that partner's sovereign_from_<partner>
-# is deleted, after the router restarts without it (tasks/drop-partner-store.yml).
+# is deleted, after the router restarts without it (ops/ansible/zenoh-drop-partner-store.yml).
 #
 # Set true on a goatnet whose store base has been cleaned, to ratchet the state
 # in place: a deploy then REFUSES while any undeclared directory remains.
@@ -669,6 +669,7 @@ goat_zenoh_memory: 4G  # the router container (was the template's inline default
 goat_zenoh_memory_reservation: 512M  # the router container's memory reservation
 
 # Set only by `goatbuilder federate backout <partner>`, never in group_vars: the
-# partner whose store this run drops whole once the router runs without it
-# (ADR 1234; tasks/drop-partner-store.yml). Empty: nothing is dropped.
+# partner whose store the back-out is dropping (ADR 1234). The role's play does not
+# count that store as undeclared; ops/ansible/zenoh-drop-partner-store.yml deletes
+# it once the router runs without it. Empty: nothing is being dropped.
 goat_zenoh_drop_partner_store: ""

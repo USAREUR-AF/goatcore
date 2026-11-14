@@ -1,12 +1,14 @@
 ---
-# Drop ONE backed-out partner's store whole (ADR 1234, rule 3), at the end of the
-# role's play. `goatbuilder federate backout <partner>` runs the play with
-# goat_zenoh_drop_partner_store=<partner> after taking the partner's entry out of
-# zenoh_sovereign_peerings, so the configuration this play rendered no longer
-# declares sovereign_from_<partner>.
+# Drop ONE backed-out partner's store whole (ADR 1234, rule 3). Run by
+# ops/ansible/zenoh-drop-partner-store.yml, which `goatbuilder federate backout
+# <partner>` runs on the role's own group right after the role's play: by then the
+# partner's entry is out of zenoh_sovereign_peerings, and the role's play has
+# restarted the router on a configuration that no longer declares
+# sovereign_from_<partner>. It is not part of the role's own play, which never
+# flushes its handlers mid-role (the rollback ledger promotes on that flush).
 #
 # The directory is deleted only when all of these hold, and the play fails, keeping
-# it, when any does not:
+# it, when any does not (GB-270):
 #   - the partner is no longer in zenoh_sovereign_peerings;
 #   - the live configuration no longer names the store;
 #   - the router is running, and started no earlier than that configuration was
@@ -14,8 +16,8 @@
 # Another partner's store is never touched: the path is built from this one id.
 # A dry run (--check) deletes nothing and reads nothing on the router.
 #
-# This is the one place the role deletes a store directory (F-447 otherwise reports
-# and never deletes); a directory nothing declares that was not named here is still
+# This is the one place a store directory is deleted (F-447 otherwise reports and
+# never deletes); a directory nothing declares that was not named here is still
 # only reported in .undeclared-stores.
 - name: Drop a partner's store | the partner is named, and no longer declared
   ansible.builtin.assert:
@@ -30,9 +32,6 @@
       it must be a sovereign id (2-16 of a-z0-9-) that zenoh_sovereign_peerings no longer
       lists. The store of a partner the core still admits is never dropped. Nothing was deleted.
     quiet: true
-
-- name: Drop a partner's store | restart the router on the configuration rendered above
-  ansible.builtin.meta: flush_handlers
 
 - name: Drop a partner's store | the store's directory
   ansible.builtin.stat:

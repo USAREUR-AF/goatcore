@@ -1202,6 +1202,46 @@ pub fn slot_recheck(repo: &Path, env: Option<&str>, run: bool) -> (String, bool,
     }
 }
 
+/// A role core the back-out takes a partner out of: the role, and either the
+/// rewritten `peerings.yml` with the command that drops the store, or why
+/// the entry is kept.
+type RoleDrop = (
+    super::admit_role::RoleCore,
+    Result<(String, String), String>,
+);
+
+/// The play that drops a backed-out partner's store whole on a goat-zenoh
+/// role core (ADR 1234), on the role's own inventory group, after the role's
+/// play has restarted the router without it. The role's store and
+/// configuration paths and its stack name are passed as the role resolves
+/// them, since the play reads the task file by path and not the role's
+/// defaults. Refused (GB-236) when one does not resolve to a plain value.
+fn store_drop_cmd(
+    repo: &Path,
+    role: &super::admit_role::RoleCore,
+    partner: &str,
+) -> Result<String, String> {
+    let mut extra = format!(" -e goat_zenoh_drop_partner_store='{partner}'");
+    for key in [
+        "goat_zenoh_storage_path",
+        "goat_zenoh_config_path",
+        "zenoh_stack",
+    ] {
+        let v = role.role_value(repo, key)?;
+        if !plain(&v) {
+            return Err(format!(
+                "{key} '{v}' holds characters a plan line cannot carry safely (GB-236)"
+            ));
+        }
+        extra.push_str(&format!(" -e {key}='{v}'"));
+    }
+    let play = super::admit_role::RoleCore {
+        play: "zenoh-drop-partner-store.yml".into(),
+        ..role.clone()
+    };
+    Ok(format!("{}{extra}", play.play_cmd(repo, false)))
+}
+
 fn run_bash(repo: &Path, cmd: &str) -> Result<bool> {
     Ok(crate::federate::runenv::command("bash")
         .args(["-euo", "pipefail", "-c", cmd])
@@ -1376,10 +1416,12 @@ pub fn backout_with(
         }
     }
     // ADR 1234: on a goat-zenoh role core with no route of its own, the
-    // partner leaves the role's list in the file admission wrote it into, and
-    // the role's play drops its store whole once the router runs without it.
-    // An entry the back-out cannot take out (GB-237) is reported and kept.
-    let role_drop: Option<(super::admit_role::RoleCore, Result<String, String>)> = match &driver {
+    // partner leaves the role's list in the file admission wrote it into; the
+    // role's play restarts the router without the partner's store, and then
+    // ops/ansible/zenoh-drop-partner-store.yml deletes that store whole. An
+    // entry the back-out cannot take out (GB-237), or a store path the role's
+    // declarations do not resolve (GB-236), is reported and kept.
+    let role_drop: Option<RoleDrop> = match &driver {
         Some(_) => None,
         None => super::admit::role_core(repo, &t.partner, |k| crate::federate::runenv::var(k).ok())
             .map_err(|e| {
@@ -1388,7 +1430,10 @@ pub fn backout_with(
             .and_then(|role| {
                 match super::admit_role::remove_peering(repo, &role.group, &t.partner) {
                     Ok(None) => None,
-                    Ok(Some(text)) => Some((role, Ok(text))),
+                    Ok(Some(text)) => {
+                        let store = store_drop_cmd(repo, &role, &t.partner).map(|c| (text, c));
+                        Some((role, store))
+                    }
                     Err(e) => Some((role, Err(e))),
                 }
             }),
@@ -1465,11 +1510,17 @@ pub fn backout_with(
             role_drop
                 .iter()
                 .filter(|(_, plan)| plan.is_ok())
-                .map(|(role, _)| {
-                    (
-                        "take the partner out of the role's list, restart the core router without its store, then drop the store",
-                        drop_cmd(role, false),
-                    )
+                .flat_map(|(role, plan)| {
+                    [
+                        (
+                            "take the partner out of the role's list and restart the core router without its store",
+                            drop_cmd(role, false),
+                        ),
+                        (
+                            "drop the partner's store whole, once the router runs without it",
+                            plan.as_ref().map(|(_, c)| c.clone()).unwrap_or_default(),
+                        ),
+                    ]
                 }),
         )
         .enumerate()
@@ -1904,7 +1955,7 @@ pub fn backout_with(
     // A play that fails puts the list back, so running the back-out again
     // repeats this step.
     if core_done {
-        if let Some((role, Ok(text))) = &role_drop {
+        if let Some((role, Ok((text, store_cmd)))) = &role_drop {
             let file = super::admit_role::peerings_file(repo, &role.group);
             let shown = file
                 .strip_prefix(repo)
@@ -1937,6 +1988,15 @@ pub fn backout_with(
                         });
                         break;
                     }
+                }
+            }
+            if done.is_ok() {
+                checks.push(row("cmd", true, store_cmd.clone(), None));
+                if !exec(repo, store_cmd)? {
+                    done = Err(format!(
+                        "the core router does not yet run without sovereign_from_{}, or its store could not be deleted; the store was kept (GB-270)",
+                        t.partner
+                    ));
                 }
             }
             match done {
@@ -2656,7 +2716,7 @@ mod tests {
     fn role_core_checkout() -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();
         for (rel, text) in [
-            ("ops/ansible/roles/goat-zenoh/defaults/main.yml", "zenoh_router_image: \"x\"\nzenoh_stack: \"{{ site_id }}-zenoh\"\ngoat_zenoh_config_path: \"/etc/{{ zenoh_stack }}/config.json5\"\ngoat_zenoh_acl_seed_path: \"/etc/{{ zenoh_stack }}/config.seed.json5\"\ngoat_zenoh_acl_org_path: \"/etc/{{ zenoh_stack }}/acl-org-fragment.json5\"\ngoat_zenoh_tls_dir: \"/etc/{{ zenoh_stack }}/tls\"\nzenoh_sovereign_peerings: []\n"),
+            ("ops/ansible/roles/goat-zenoh/defaults/main.yml", "zenoh_router_image: \"x\"\nzenoh_stack: \"{{ site_id }}-zenoh\"\ngoat_zenoh_config_path: \"/etc/{{ zenoh_stack }}/config.json5\"\ngoat_zenoh_acl_seed_path: \"/etc/{{ zenoh_stack }}/config.seed.json5\"\ngoat_zenoh_acl_org_path: \"/etc/{{ zenoh_stack }}/acl-org-fragment.json5\"\ngoat_zenoh_tls_dir: \"/etc/{{ zenoh_stack }}/tls\"\ngoat_zenoh_storage_path: \"/var/lib/{{ zenoh_stack }}/rocksdb\"\nzenoh_sovereign_peerings: []\n"),
             ("ops/ansible/zenoh-deploy.yml", "- hosts: \"{{ target | mandatory }}\"\n"),
             ("ops/pins/fleet-pins.yaml", "components:\n  zenoh-router:\n    var: zenoh_router_image\n    ledger_component: xaa-zenoh\n    deploy_playbook: zenoh-deploy.yml\n"),
             ("ops/ansible/inventory/core-router.ini", "[core_router]\nxaa-core ansible_host=192.0.2.10\n"),
@@ -2859,18 +2919,33 @@ mod tests {
             .iter()
             .filter(|c| c.contains("goat_zenoh_drop_partner_store"))
             .collect();
-        assert_eq!(drops.len(), 2, "the role's dry run and deploy: {ran:?}");
+        assert_eq!(
+            drops.len(),
+            3,
+            "the role's dry run and deploy, then the store's own play: {ran:?}"
+        );
         assert!(
             drops[0].contains("--check") && !drops[1].contains("--check"),
             "{drops:?}"
         );
-        for c in &drops {
+        for c in &drops[..2] {
             assert!(
                 c.contains("zenoh-deploy.yml")
                     && c.contains("-e goat_zenoh_drop_partner_store='hello-ally'"),
                 "{c}"
             );
         }
+        assert!(
+            drops[2].contains("zenoh-drop-partner-store.yml")
+                && !drops[2].contains("--check")
+                && drops[2].contains("-e goat_zenoh_drop_partner_store='hello-ally'")
+                && drops[2].contains("-e goat_zenoh_storage_path='/var/lib/xaa-zenoh/rocksdb'")
+                && drops[2].contains("-e goat_zenoh_config_path='/etc/xaa-zenoh/config.json5'")
+                && drops[2].contains("-e zenoh_stack='xaa-zenoh'")
+                && drops[2].contains("-e target='core_router'"),
+            "{}",
+            drops[2]
+        );
         let core = ran
             .iter()
             .position(|c| c.contains("peering_backout_apply"))
