@@ -129,9 +129,7 @@ var Migrations = []pgstore.Migration{{Version: 1, SQL: schemaSQL}}
 
 // Tables are the registry's tables in version 1, in foreign-key order: a table
 // comes after every table it references. store-migrate copies them in this
-// order. The partition harness (ops/postgres/spock/tests/partition-harness)
-// replicates this list until island-mode step 6 declares the portal's
-// replication set in a role, which then owns the list.
+// order.
 var Tables = []string{
 	"vendors",
 	"topics",

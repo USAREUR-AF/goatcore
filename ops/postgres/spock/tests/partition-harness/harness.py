@@ -54,7 +54,8 @@ def portal_tables():
     No role declares a portal repset yet (program step 6). Until one does, the
     harness replicates the whole step A schema, which is what the registry
     would be in a repset as it stands; design §3.2 moves the per-site tables
-    out in step B.
+    out in step B. Step 6 declares the portal's replication set in a role,
+    which then owns this list, and the harness reads it from there.
     """
     body = PORTAL_REGISTRY_GO.read_text().split("var Tables = []string{", 1)[1].split("}", 1)[0]
     names = re.findall(r'"([a-z_]+)"', body)
