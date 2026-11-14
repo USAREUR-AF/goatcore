@@ -107,7 +107,7 @@ const EXPECTED: &[(&str, &str)] = &[
     ("update_unknown_site_json", "GB-072"),
     ("usage_bad_output_format", "GB-242"),
     ("usage_join_node_needs_class", "GB-242"),
-    ("usage_mock_on_a_verb_that_reads_the_checkout", "GB-039"),
+    ("usage_mock_on_a_verb_that_reads_the_checkout", "GB-276"),
     ("usage_no_verb", "GB-242"),
     ("usage_release_bad_from", "GB-018"),
     ("usage_standup_needs_site", "GB-243"),
@@ -131,93 +131,11 @@ const PENDING: &[&[(&str, &str)]] = &[PENDING_MAIN, PENDING_FEDERATE, PENDING_CO
 
 /// main.rs (W-L1): clap's errors and main's own refusals.
 /// Emptied by the change to main.rs.
-const PENDING_MAIN: &[(&str, &str)] = &[
-    (
-        "apply_missing_plan",
-        "main.rs: code the C10 refusal (GB-008)",
-    ),
-    (
-        "c10_federate_needs_yes",
-        "main.rs: code the C10 refusal (GB-008)",
-    ),
-    (
-        "c10_join_node_needs_yes",
-        "main.rs: code the C10 refusal (GB-008)",
-    ),
-    (
-        "c10_standup_needs_yes",
-        "main.rs: code the C10 refusal (GB-008)",
-    ),
-    (
-        "federate_site_flag_before_verb",
-        "main.rs: code the refusal (GB-238)",
-    ),
-    (
-        "federate_verb_refuses_mock",
-        "main.rs: print the refusal's code (GB-239)",
-    ),
-    (
-        "federate_verb_refuses_output",
-        "main.rs: print the refusal's code (GB-239)",
-    ),
-    (
-        "usage_mock_on_a_verb_that_reads_the_checkout",
-        "main.rs: print the code it already interprets (GB-039)",
-    ),
-    (
-        "plan_needs_out",
-        "main.rs: print clap's errors with their catalog code (GB-242)",
-    ),
-    (
-        "promote_abandon_needs_reason",
-        "main.rs: print clap's errors with their catalog code (GB-242)",
-    ),
-    (
-        "secrets_needs_a_subcommand",
-        "main.rs: print clap's errors with their catalog code (GB-242)",
-    ),
-    (
-        "standup_from_lettered_phase_is_refused",
-        "main.rs: print clap's errors with their catalog code (GB-242)",
-    ),
-    (
-        "standup_from_old_phase_zero_is_refused",
-        "main.rs: print clap's errors with their catalog code (GB-242)",
-    ),
-    (
-        "usage_no_verb",
-        "main.rs: print clap's errors with their catalog code (GB-242)",
-    ),
-    (
-        "usage_bad_output_format",
-        "main.rs: print clap's errors with their catalog code (GB-242)",
-    ),
-    (
-        "usage_join_node_needs_class",
-        "main.rs: print clap's errors with their catalog code (GB-242)",
-    ),
-    (
-        "usage_unknown_verb",
-        "main.rs: print clap's errors with their catalog code (GB-242)",
-    ),
-    (
-        "usage_update_check_and_force",
-        "main.rs: print clap's errors with their catalog code (GB-242)",
-    ),
-];
+const PENDING_MAIN: &[(&str, &str)] = &[];
 
 /// federate/ (W-B2): the federate verbs' own refusals.
 /// Emptied by the change to federate/.
-const PENDING_FEDERATE: &[(&str, &str)] = &[
-    (
-        "federate_unknown_fed_verbs",
-        "federate/mod.rs: code the refusal (GB-240)",
-    ),
-    (
-        "federate_undeclared_is_refused",
-        "federate/mod.rs: code the refusal (GB-149)",
-    ),
-];
+const PENDING_FEDERATE: &[(&str, &str)] = &[];
 
 /// config.rs (W-G): a config that cannot be read or is not YAML.
 /// Emptied by the change to config.rs.
