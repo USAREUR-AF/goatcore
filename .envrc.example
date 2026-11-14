@@ -1852,7 +1852,7 @@ export GOAT_KEEP_AWAKE=""
 # ops/scripts/lib/keep-awake.sh
 export GOAT_KEEP_AWAKE_ANY_OS=""
 
-# ops/ansible/filter_plugins/goat_leaf.py, ops/ansible/filter_plugins/test_goat_leaf.py
+# ops/ansible/filter_plugins/goat_leaf.py, tests/ansible_filter_plugins/test_goat_leaf.py
 export GOAT_LEAF_DIR=""
 
 # ops/oss/templates/_shared/.github/leak-gate/scan-diff.py

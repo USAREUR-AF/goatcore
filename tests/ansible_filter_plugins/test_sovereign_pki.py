@@ -1,16 +1,16 @@
 """test_sovereign_pki.py: the icam-mtls-proxy role's filters render what the registry
 library renders, and refuse what must not deploy. Needs PyYAML.
-Run directly: python3 ops/ansible/filter_plugins/test_sovereign_pki.py
+Run directly: python3 tests/ansible_filter_plugins/test_sovereign_pki.py
 """
 import importlib.util
 import unittest
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-SPEC = importlib.util.spec_from_file_location("sovereign_pki", HERE / "sovereign_pki.py")
+FILTERS = Path(__file__).resolve().parents[2] / "ops" / "ansible" / "filter_plugins"
+SPEC = importlib.util.spec_from_file_location("sovereign_pki", FILTERS / "sovereign_pki.py")
 mod = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(mod)
-REGISTRY = HERE.parents[1] / "identity" / "sovereign-pkis.yaml"
+REGISTRY = FILTERS.parents[1] / "identity" / "sovereign-pkis.yaml"
 
 
 class FilterTest(unittest.TestCase):

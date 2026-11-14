@@ -73,6 +73,7 @@ on:
       - 'ops/ci/test-machine-provenance-guard-wrapper.sh'
       - 'ops/ansible/roles/machine-provenance-guard/**'
       - 'ops/ansible/filter_plugins/**'
+      - 'tests/ansible_filter_plugins/test_acl_scope.py'
       - '.github/workflows/netbird-acl-parity.yml'
 
 concurrency:
@@ -88,8 +89,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      - name: Install PyYAML
-        run: pip install --no-input pyyaml
+      - name: Install PyYAML and pytest
+        run: pip install --no-input pyyaml pytest
       # WHERE THE OTHER THREE RUN. check-netbird-acl-parity.py,
       # test-netbird-acl-parity-qualified.py and test-gear-acting-group-scope.py
       # judge a goatnet's REAL pair: its taxonomy and the matrix generated from
@@ -103,7 +104,7 @@ jobs:
       # enforce actually refuses something. A guard that passes but never fails
       # is worthless, so the negative tests are part of the gate, not optional.
       - name: ADR 1124 resolver — resolution + fail-closed behaviour
-        run: python3 ops/ansible/filter_plugins/test_acl_scope.py
+        run: python3 -m pytest -q tests/ansible_filter_plugins/test_acl_scope.py
       # Gear is enrolled PER SCOPE, so a group that acts on gear and exists only
       # at goatnet altitude can never reach it.
       - name: Gear-acting groups are declared scope-locally
