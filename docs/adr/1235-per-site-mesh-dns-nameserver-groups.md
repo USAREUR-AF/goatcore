@@ -8,7 +8,7 @@
 | Amends | ADR-1056 |
 | Supersedes | — |
 | Superseded by | — |
-| Related | ADR-1165, ADR-1206, ADR-1233, ADR-1084 |
+| Related | ADR-1165, ADR-1205, ADR-1206, ADR-1233, ADR-1084 |
 
 ## TL;DR (for a layperson)
 
@@ -31,7 +31,7 @@ Two facts shape the fix:
 - **Distribution is declared.** A group is distributed to the groups named in `netbird_nameserver_distribution_groups`, by default `All`, today's behaviour. With both groups on `All`, every peer asks both, and a site cut off from the founder answers from its own replica.
 - **The island property rests on the client's merge.** It holds only while the NetBird client merges same-domain nameserver groups and queries them in parallel, as above. A client change there, for example taking one group per domain or querying groups in turn, would undo it: a peer could then wait on, or only ask, an unreachable site's replica. The live read checks it on the deployed client.
 - **Preferring a site's own replica is not decided here.** With every group on `All`, a peer asks every site's replica and takes the first answer. Letting each site prefer its own needs a per-site peer group in the NetBird ACL taxonomy, which is a later and bigger change with its own decision. `netbird_nameserver_distribution_groups` is where such groups would be named.
-- **One writer.** The group is registered through the founder's management API, with the founder's token (`<FOUNDER>_NB_API_TOKEN`), as standup registers the founder's group today. A second site writes no NetBird configuration of its own. The token resolves through `with-secrets`, and an unset or unresolved token is refused before the step runs (GB-281). Moving this write to each site belongs to the admin-surface class switch of ADR 1165 (gate row I4), not to this decision.
+- **One writer.** The group is registered through the hub's management API (the founder by default, [ADR 1205](1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md)), as standup registers the founder's group today. As built, `join-node` and `standup` take that site to be the joining site's founder (`join_founder_site`), and the token is the variable named after it (`<FOUNDER>_NB_API_TOKEN`). No other site writes NetBird configuration of its own. The token resolves through `with-secrets`, and an unset or unresolved token is refused before the step runs (GB-281). Moving this write to each site belongs to the admin-surface class switch of ADR 1165 (gate row I4), not to this decision.
 - **When cut off, a replica keeps every record.** The founder's names still resolve, and connections to them fail at the address, so reconnecting needs no DNS change. The role's no-drop guard already refuses to push a zone that removes live records.
 
 This amends ADR 1056 in one point: a goatnet has one nameserver group per site that replicates, each with up to three servers, rather than one group for the goatnet.
@@ -42,24 +42,24 @@ This amends ADR 1056 in one point: a goatnet has one nameserver group per site t
 
 **Per-site groups distributed only to that site's peers.** This is the cleanest form: each peer gets exactly its site's group. No NetBird group means "this site's peers" today, and adding one is a change to the ACL taxonomy with its own decision. Kept open: `netbird_nameserver_distribution_groups` lets a goatnet move to it by naming the groups, once they exist.
 
-**Each site registers its own group through its own management.** It removes the dependence on the founder's API and token for a joiner's group. It is an admin write at a second site to a NetBird database that Spock replicates both ways, which is exactly the multi-writer question ADR 1165 settles class by class. Rejected for now. It belongs to gate row I4.
+**Each site registers its own group through its own management.** It removes the dependence on the hub's API and token for a joiner's group. It is an admin write at a second site to a NetBird database that Spock replicates both ways, which is exactly the multi-writer question ADR 1165 settles class by class. Rejected for now. It belongs to gate row I4.
 
 **Joiners keep using the founder's DNS.** It is what was built. A site cut off from the founder then resolves nothing, so it is not island-mode capable. Rejected by the ruling.
 
 ## Consequences
 
-**Positive.** A joined site cut off from its founder keeps resolving every goatnet name. Losing any one replica no longer takes the zone away from any peer. The join path runs mesh DNS with no step outside the command. The founder stays the only writer of NetBird configuration.
+**Positive.** A joined site cut off from its founder keeps resolving every goatnet name. Losing any one replica no longer takes the zone away from any peer. The join path runs mesh DNS with no step outside the command. The hub's management (the founder by default) stays the only writer of NetBird configuration.
 
 **Negative.**
 - Every peer asks every site's group for the goatnet's zone, so lookups go to more than one replica. CoreDNS's cache and the client's merge keep this small, but it grows with the number of sites until per-site distribution exists.
-- A joining site's mesh DNS depends on the founder's API token being stored for the operator who joins it.
+- A joining site's mesh DNS depends on the hub's API token being stored for the operator who joins it.
 - The merge of same-domain groups is the NetBird client's behaviour, not a documented contract (see the Decision). The live read checks it on the deployed client, for success and for time: with one site's replica unreachable, a lookup must answer within the client's normal timeout, not after a stall while it waits on the unreachable replica.
 - A joining site's own service names enter the zone only when the generator renders more than one site into one zone file. Today it renders one site per zone, so a replica at a joined site serves the founder's names. Its own names are reached through NetBird's peer DNS and their mesh addresses.
 - A replica binds the site's `mesh_ip_a`, so a second core node at a site would bind the first node's address. That is the role's existing limit, not new.
 
 ## Assessor view (SCA-R)
 
-The resolver stays on the mesh only: it binds loopback and mesh addresses, never a public interface (SC-7). The zone is generated from the declared service registry and checked in CI, so every replica serves the same reviewed records (CM-2, CM-3). The NetBird configuration has one writer, the founder's management, through a token the declared secrets posture holds by reference and resolves per command (IA-5, AC-6). A site cut off from its founder keeps name resolution for its own continuity (CP-2, SC-20/SC-21 for the internal resolver). Residual risk: a site whose replica fails and is cut off from the founder has no resolver until either returns. The compensating control is the founder's replica, which every peer also asks.
+The resolver stays on the mesh only: it binds loopback and mesh addresses, never a public interface (SC-7). The zone is generated from the declared service registry and checked in CI, so every replica serves the same reviewed records (CM-2, CM-3). The NetBird configuration has one writer, the hub's management (the founder by default, ADR 1205), through a token the declared secrets posture holds by reference and resolves per command (IA-5, AC-6). A site cut off from its founder keeps name resolution for its own continuity (CP-2, SC-20/SC-21 for the internal resolver). Residual risk: a site whose replica fails and is cut off from the founder has no resolver until either returns. The compensating control is the founder's replica, which every peer also asks.
 
 ## Trigger conditions for revisit
 
