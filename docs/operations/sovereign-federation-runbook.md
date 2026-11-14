@@ -315,6 +315,13 @@ python3 $S propose --manifest session.json --us <us> --evidence <work>/evidence/
   --approved-by <us>=<name> --approved-by <them>=<name> --out <dir>
 ```
 
+Without a manifest file, on a session both sides derive from the agreement
+([federation-acceptance.md §6.3](../design/federation-acceptance.md#63-phase-14-on-a-derived-session)),
+each side's signed result crosses on the fabric and is verified and combined in the run itself.
+**Both sides start phase 14 within `FED_SESSION_WAIT` (300 seconds by default) of each other,
+normally on the same call**; each run prints how long it will still wait. The command does not
+start phase 14 this way yet.
+
 `combine` writes `<evidence>/bilateral/<session id>.json` and `.md`, with your rows and the
 partner's side by side, and exits 0 only when the required scope of both sides passed. `propose`
 writes the partner file with its `acceptance:` block and a diff into `<dir>`, never the

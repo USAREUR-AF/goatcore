@@ -178,8 +178,14 @@ def session_block(manifest_path, us):
             m = json.load(f)
     except (OSError, ValueError) as e:
         raise Malformed("the session manifest %s cannot be read: %s" % (manifest_path, e))
-    return {"id": m.get("session_id"), "manifest_sha256": sha256_file(manifest_path),
-            "challenge": (m.get("challenges") or {}).get(us), "expires_at": m.get("expires_at")}
+    block = {"id": m.get("session_id"), "manifest_sha256": sha256_file(manifest_path),
+             "challenge": (m.get("challenges") or {}).get(us), "expires_at": m.get("expires_at")}
+    if m.get("derived"):
+        # A derived session (acceptance_session.py §6.2): both sides hold the same
+        # digest, and this run's challenge is what the partner must echo.
+        block["derived_digest"] = m["derived"].get("digest")
+        block["attempt"] = m["derived"].get("attempt")
+    return block
 
 
 def bundle(checks, agreement, us, them, run_id, started, inputs, ended=None, session=None, software=None,

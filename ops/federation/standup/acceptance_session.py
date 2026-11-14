@@ -208,6 +208,86 @@ def compare_sessions(ours, theirs):
         raise Refused("%s; both sides must hold the same agreement and attempt (GB-274)" % "; ".join(problems))
 
 
+def challenge():
+    """One run's challenge: 128 random bits from the operating system's CSPRNG, as 32
+    lowercase hex digits. Never derived: a derived session's freshness rests on it."""
+    return secrets.token_hex(16)
+
+
+def run_manifest(derived_path, us, our_challenge, their_challenge, started):
+    """What a run on a derived session (§6.2) keeps for itself, in the shape `combine`
+    reads: the derived session's members, this run's challenge and, once their sample
+    has arrived, the challenge the partner's run staged. It never leaves this side."""
+    d = load(derived_path, "the derived session")
+    them = [p["sovereign_id"] for p in d.get("participants", []) if p.get("sovereign_id") != us]
+    if len(them) != 1:
+        raise Refused("the derived session does not name %s and one partner" % us)
+    for c in filter(None, (our_challenge, their_challenge)):
+        if not CHALLENGE.fullmatch(c):
+            raise Refused("a challenge is not 16 to 64 lowercase hex digits")
+    ch = {us: our_challenge}
+    if their_challenge:
+        ch[them[0]] = their_challenge
+    return {"schema": SCHEMA, "session_id": d["session_id"], "agreement_sha256": d["agreement_sha256"],
+            "policy": d["policy"], "participants": d["participants"], "created_by": us, "created_at": started,
+            "not_before": started, "expires_at": d["expires_at"], "challenges": ch, "limits": d["limits"],
+            "derived": {"digest": d["digest"], "attempt": d["attempt"]}}
+
+
+def import_signed(manifest_path, us, evidence, bundle_path, verified):
+    """Keep the partner's result, its signature verified under the key bound to them at
+    phase 5 (§6.1), beside our own evidence, marked authenticated. A run on a derived
+    session has no time window: what makes the result this run's is the challenge."""
+    m, them = _shape(load(manifest_path, "the run's session"), us)
+    b = load(bundle_path, "the partner's result")
+    if b.get("schema") != BUNDLE_SCHEMA:
+        raise Refused("not an acceptance result (schema %r) (GB-272)" % b.get("schema"))
+    run = b.get("run") or {}
+    if not RUN_ID.fullmatch(str(run.get("id"))):
+        raise Refused("the result's run id %r is not of the form acc-<letters, digits, hyphens> (GB-272)" % run.get("id"))
+    if run.get("observed_by") != them or run.get("us") != them:
+        raise Refused("the result was observed by %r, not by the partner %s (GB-273)" % (run.get("observed_by"), them))
+    sess = b.get("session") or {}
+    if sess.get("id") != m.get("session_id"):
+        raise Refused("the result belongs to session %r, not %s (GB-273)" % (sess.get("id"), m.get("session_id")))
+    if sess.get("derived_digest") != (m.get("derived") or {}).get("digest"):
+        raise Refused("the partner derived another session (%s, ours %s) (GB-274)" % (
+            sess.get("derived_digest"), (m.get("derived") or {}).get("digest")))
+    if (b.get("agreement") or {}).get("sha256") != m.get("agreement_sha256"):
+        raise Refused("the result observed another agreement (%s) (GB-273)" % (b.get("agreement") or {}).get("sha256"))
+    if sess.get("challenge") != (m.get("challenges") or {}).get(them):
+        raise Refused("the result carries another challenge than the one the partner's samples carried here (GB-273)")
+    ours = (m.get("challenges") or {}).get(us)
+    for c in b.get("checks", []):
+        if c.get("name", "").startswith("delivery/inbound/") and c.get("verdict") == "PASS":
+            if ours not in (c.get("observations") or {}).get("received", ""):
+                raise Refused("%s reports a delivery that does not carry this run's challenge (GB-273)" % c["name"])
+    for k in ("key_sha256", "key_b64", "result_sha256"):
+        if not isinstance((verified or {}).get(k), str):
+            raise Refused("the verifier's answer has no %s" % k)
+    if verified["result_sha256"] != sha256_file(bundle_path).split(":", 1)[1]:
+        raise Refused("the result kept is not the result verified (GB-272)")
+    d = os.path.join(evidence, "peer", them)
+    os.makedirs(d, exist_ok=True)
+    index_path = os.path.join(d, "imported.json")
+    index = load(index_path, "the import index") if os.path.exists(index_path) else {}
+    rid, digest = str(run.get("id")), sha256_file(bundle_path)
+    if digest in index or any(v.get("run") == rid for v in index.values()):
+        raise Refused("this result (%s, run %s) was already imported: a result is accepted once" % (digest, rid))
+    stored = dict(b)
+    stored["imported"] = {"at": ts(utcnow()), "from_file": os.path.basename(bundle_path), "sha256": digest,
+                          "peer_reported": True, "authenticated": True,
+                          "key": {"sha256": verified["key_sha256"], "b64": verified["key_b64"]}}
+    with open(os.path.join(d, rid + ".json"), "w") as f:
+        json.dump(stored, f, indent=2)
+        f.write("\n")
+    index[digest] = {"run": rid, "session": sess.get("id"), "imported_at": stored["imported"]["at"]}
+    with open(index_path, "w") as f:
+        json.dump(index, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return them, os.path.join(d, rid + ".json")
+
+
 def validate(manifest, agreement_path, us, now=None):
     if manifest.get("schema") != SCHEMA:
         raise Refused("not a session manifest (schema %r)" % manifest.get("schema"))
@@ -438,6 +518,19 @@ def combine(manifest_path, us, evidence):
         "authenticated": False,
         "gate": "operator review required: peer-reported rows are the partner's own report and are not "
                 "authenticated; no automatic decision may rest on them",
+    }
+    key = ((peer or {}).get("imported") or {}).get("key") if ((peer or {}).get("imported") or {}).get(
+        "authenticated") else None
+    if key:
+        # The partner's result verified under the key bound to them at phase 5; that key
+        # is kept here, beside the evidence, so it is read back against the key it was
+        # signed under and never against a later one (§6.1).
+        out["authenticated"] = True
+        out["peer_key"] = {"sha256": key["sha256"], "b64": key["b64"]}
+        out["gate"] = ("peer-reported rows are the partner's own report, signed under the key bound to %s at "
+                       "phase 5 (sha256:%s)" % (them, key["sha256"]))
+    out = {
+        **out,
         "rows": rows,
     }
     bd = os.path.join(evidence, "bilateral")
@@ -599,6 +692,20 @@ def main(argv=None):
     n.add_argument("--out", required=True)
     n.add_argument("--hours", type=float, default=24)
     n.add_argument("--policy")
+    sub.add_parser("challenge")
+    rm = sub.add_parser("run-manifest")
+    rm.add_argument("--derived", required=True)
+    rm.add_argument("--us", required=True)
+    rm.add_argument("--our-challenge", required=True)
+    rm.add_argument("--their-challenge", default="")
+    rm.add_argument("--started", required=True)
+    rm.add_argument("--out", required=True)
+    isg = sub.add_parser("import-signed")
+    isg.add_argument("--manifest", required=True)
+    isg.add_argument("--us", required=True)
+    isg.add_argument("--evidence", required=True)
+    isg.add_argument("--verified", required=True)
+    isg.add_argument("bundle")
     dv = sub.add_parser("derive")
     dv.add_argument("--agreement", required=True)
     dv.add_argument("--us", required=True)
@@ -645,6 +752,19 @@ def main(argv=None):
                 f.write("\n")
             print("session %s, valid until %s" % (m["session_id"], m["expires_at"]))
             print("manifest digest %s: read it aloud to the partner and compare" % sha256_file(a.out))
+            return 0
+        if a.cmd == "challenge":
+            print(challenge())
+            return 0
+        if a.cmd == "run-manifest":
+            m = run_manifest(a.derived, a.us, a.our_challenge, a.their_challenge, a.started)
+            with open(a.out, "w") as f:
+                json.dump(m, f, indent=2, sort_keys=True)
+                f.write("\n")
+            return 0
+        if a.cmd == "import-signed":
+            them, path = import_signed(a.manifest, a.us, a.evidence, a.bundle, load(a.verified, "the verifier's answer"))
+            print("imported %s's result, signed under the key bound at phase 5: %s" % (them, path))
             return 0
         if a.cmd == "derive":
             d = derive_session(a.agreement, a.us, a.attempt, a.policy)
