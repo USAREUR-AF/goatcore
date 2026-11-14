@@ -104,8 +104,8 @@ console_admit() { # console_admit <site> <handle> <email>  -> prints the proposa
 run_runner() { # run_runner <site>   one poll cycle of that site's onboard-runner; log in $SCRATCH/runner-<site>.log
   local root="$SCRATCH/runner-$1"
   mkdir -p "$root"
-  chmod 0777 "$root"
-  docker run --rm --network "$NET" --user postgres \
+  # As this user, so what the runner writes (its manifests) is removable by cleanup.
+  docker run --rm --network "$NET" --user "$(id -u):$(id -g)" -e HOME=/work \
     -v "$RUNNER_BIN:/usr/local/bin/onboard-runner:ro" \
     -v "$HERE/goat-shim.sh:/usr/local/bin/goat-shim:ro" \
     -v "$root:/work" \

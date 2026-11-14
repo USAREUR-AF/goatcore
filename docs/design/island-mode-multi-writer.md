@@ -190,6 +190,14 @@ twice.
   Base: `ops/postgres/spock/tests/partition-revoke/run.sh` and its CI job `partition-revoke`
   (PR #1538), which already proves class 3 for NetBird and Kratos with `GUARD=0`/`GUARD=1`.
 - Partition by disabling both subscriptions; heal by enabling.
+- Status: the console and an onboard-runner at each site are built
+  (`ops/postgres/spock/tests/partition-harness/console.sh`). The console's two
+  databases join a repset `id_console` in the harness only; no role does that yet.
+  The runner's NetBird and Kratos mint is a stand-in for `goat admin onboard
+  --native` (`goat-shim.sh`). Measured: `console-c2-claim-both-runners` fails as
+  C7 predicts, with both runners claiming the one proposal and two setup keys and two
+  identities minted for it. It is listed in `scenarios/expected-failing.tsv` until
+  the owner-filtered claim is built. Portal not built here.
 - One scenario per class per store, plus the cross-store cases: the same email onboarded
   at both sites; a revoke at A while B reissues the key; a slot claimed at both sites;
   the same org slug registered at both sites.
