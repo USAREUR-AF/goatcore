@@ -737,6 +737,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     }
     // `drivers: two`: an edge driver and a controller (federate/handoff.rs).
     let two_drivers = handoff::two(peering.drivers.as_deref());
+    if s.edge.is_some() && !two_drivers {
+        return Err(goat_errors::coded("GB-189", format!("--side edge is the edge driver's run of a peering declared with two drivers (drivers: two); peering {} declares one, so run it without --side edge", o.with)).into());
+    }
     let mut handed: Option<serde_json::Value> = None;
     if executes {
         preflight::export(&inputs);
@@ -830,7 +833,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         // half here, against that result (federate/handoff.rs).
         let mut core_cmd: Option<String> = None;
         let mut edge_result: Option<serde_json::Value> = None;
-        if two_drivers && handoff::core_half_built(ph.n) {
+        if two_drivers && s.edge.is_none() && handoff::core_half_built(ph.n) {
             if let Some((file, bound)) = run.as_ref().and_then(|r| handoff::imported(&r.state, ph.n)) {
                 match handoff::check_imported(Path::new(&work), ph.n, &file, &bound) {
                     Ok(edge) => {
@@ -862,7 +865,17 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         }
         // Two drivers: a phase that needs the edge stops here, before acting,
         // and hands it to the edge driver (docs/design/federation-two-drivers.md).
-        if core_cmd.is_none() && two_drivers && matches!(handoff::side_of(ph.n), handoff::Side::Edge | handoff::Side::Both) {
+        // The edge driver's run: its phase's edge half, writing the result
+        // the way back names (federate/handoff.rs).
+        let mut edge_cmd: Option<String> = None;
+        if let Some(e) = &s.edge {
+            if let Some(dir) = e.result.parent() {
+                std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+            }
+            let _ = std::fs::remove_file(&e.result);
+            edge_cmd = Some(format!("{} --side edge --result '{}'", ph.cmd, e.result.display()));
+        }
+        if core_cmd.is_none() && edge_cmd.is_none() && two_drivers && matches!(handoff::side_of(ph.n), handoff::Side::Edge | handoff::Side::Both) {
             if !handoff::hands_off(ph.n) {
                 let refusal = handoff::later_phase_not_built(ph.n);
                 let d = refusal.detail.clone();
@@ -1016,7 +1029,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             None => {
                 // -e, like standup and join-node: a phase that is several statements
                 // stops at the first failure instead of running on past it.
-                let cmd = core_cmd.as_deref().unwrap_or(&ph.cmd);
+                let cmd = core_cmd.as_deref().or(edge_cmd.as_deref()).unwrap_or(&ph.cmd);
                 let status = runenv::command("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
                 if status.success() { 0 } else { status.code().unwrap_or(1) }
             }
@@ -1042,6 +1055,17 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 r.end(ph, state::Outcome::Failed, &format!("GB-183: phase {} failed with exit {rc}", ph.n));
             }
             exit = EXIT_REFUSED;
+            break;
+        }
+        // The edge driver's way back: the run waits on the controller's import.
+        if let Some(e) = &s.edge {
+            let back = handoff::way_back(o.with, ph.n, e)?;
+            checks.extend(back.rows);
+            handed = Some(back.object);
+            if let Some(r) = run.as_mut() {
+                r.end(ph, state::Outcome::Stopped, &format!("{}: waiting on the controller's import", handoff::WAITING));
+            }
+            stopped = true;
             break;
         }
         // Phase 1's two sides, joined into the one result the later phases read.

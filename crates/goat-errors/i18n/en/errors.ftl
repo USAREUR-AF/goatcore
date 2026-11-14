@@ -916,6 +916,11 @@ gb-288-title = a health publisher a joining site declares has no play in the che
 gb-288-what = join-node deploys each health publisher the end-state model marks present at a joining site (endstate.py model <site>, from the pin table) after the site's data router, by running the publisher's play limited to the node. The model marks a publisher present whose play (ops/ansible/<publisher>-deploy.yml) is not in this checkout, so the plan was refused before any phase ran.
 gb-288-cause-1 = the checkout is an older or partial tree that does not carry the publisher's play
 gb-288-cause-2 = the pin table declares a publisher at the site that the site does not mean to run
+gb-278-title = the edge driver's checkout or carried files are not the controller's
+gb-278-what = On a two-driver peering (drivers: two), the edge driver runs a phase's edge half with the command the controller's hand-off names: `goatbuilder federate <peering> --side edge --from <N> --to <N> --expect-commit <commit>`, with one `--expect <file>=<sha256>` per file the controller carried. The edge driver refused to run: --expect-commit was not given; its checkout is not a git checkout, has no commit, has changes, or is at another commit than the one named; or a carried file is not under its <work> or in its checkout, or has another sha256. Nothing ran on the edge.
+gb-278-cause-1 = the edge driver's checkout was not updated to the controller's commit, or has local changes
+gb-278-cause-2 = the command was typed without the hand-off's --expect-commit
+gb-278-cause-3 = a carried file was not copied from the controller's <work>, or was changed on the way
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened

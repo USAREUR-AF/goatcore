@@ -164,8 +164,12 @@ Options:
 
       --expect-commit <COMMIT>
           With --side edge: the commit the edge driver's checkout must be at, as a hand-off object
-          names it. The edge driver's run is not built yet: refused with GB-267
-          (docs/design/federation-two-drivers.md)
+          names it. The run refuses a checkout at another commit or with changes (GB-278)
+
+      --expect <FILE=SHA256>
+          With --side edge: a file the controller produced, under the edge driver's <work> or its
+          checkout, and the sha256 the hand-off names. The run refuses a file that is not there or
+          has another digest (GB-278)
 
       --plan <FILE>
           deploy: the plan to execute (default <work>/plan.json)

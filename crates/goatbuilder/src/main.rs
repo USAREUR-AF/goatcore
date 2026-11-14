@@ -1615,9 +1615,18 @@ fn main() {
                 && !goat_federation::verbs::VERB_NAMES.contains(&with)
                 && !matches!(with, "status" | "allocate");
             if side_edge_alone {
-                Err(federate::handoff::edge_side_not_built())
-            } else if edge_run.expect_commit.is_some() {
-                Err(goat_errors::coded("GB-189", "--expect-commit belongs to the edge driver's run, `goatbuilder federate <partner> --side edge`").into())
+                if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                    Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
+                } else {
+                    let o = federate::Options { with, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) };
+                    let at = federate::work_dir(&o);
+                    federate::handoff::edge_run(&repo, edge_run, *from, *to, std::path::Path::new(&at)).and_then(|e| {
+                        let mut s = federate::Surface { edge: Some(e), ..Default::default() };
+                        federate::federate_with(&repo, &o, &mut s)
+                    })
+                }
+            } else if edge_run.expect_commit.is_some() || !edge_run.expect.is_empty() {
+                Err(goat_errors::coded("GB-189", "--expect-commit and --expect belong to the edge driver's run, `goatbuilder federate <partner> --side edge`").into())
             } else if with == "status" {
                 let format = match cli.output {
                     OutputFormat::Table => federate::status::Format::Table,

@@ -3372,6 +3372,22 @@ entries:
     matches:
       - "^GB-288: "
 
+  - code: GB-278
+    tool: goatbuilder
+    title: the edge driver's checkout or carried files are not the controller's
+    what: "On a two-driver peering (drivers: two), the edge driver runs a phase's edge half with the command the controller's hand-off names: `goatbuilder federate <peering> --side edge --from <N> --to <N> --expect-commit <commit>`, with one `--expect <file>=<sha256>` per file the controller carried. The edge driver refused to run: --expect-commit was not given; its checkout is not a git checkout, has no commit, has changes, or is at another commit than the one named; or a carried file is not under its <work> or in its checkout, or has another sha256. Nothing ran on the edge."
+    causes:
+      - the edge driver's checkout was not updated to the controller's commit, or has local changes
+      - the command was typed without the hand-off's --expect-commit
+      - a carried file was not copied from the controller's <work>, or was changed on the way
+    fixes:
+      - "git -C <checkout> fetch && git -C <checkout> checkout <commit>   (the commit the hand-off names), and commit or remove every changed file"
+      - "copy each carried file from the controller's <work> to the same path under the edge driver's <work>, then run the hand-off's command again"
+    read: docs/design/federation-two-drivers.md
+    exit: 1
+    matches:
+      - "\\(GB-278\\)"
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable

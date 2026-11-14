@@ -90,6 +90,17 @@ checkout (GB-276, new); and a peering that is not declared (GB-149). The
 undeclared peering now exits 1, refused, as GB-149 says and as `federate
 allocate`'s same refusal already did; it exited 2 (gate row C5) (#656).
 
+#### "Added: a two-driver peering's edge driver runs phase 1's edge checks and prints the way back"
+
+On a peering declared `drivers: two`, the edge driver runs the command the
+controller's phase 1 hand-off names: `goatbuilder federate <peering> --side
+edge --from 1 --to 1 --expect-commit <commit>`. It refuses to run unless its
+checkout is that commit with nothing changed, and each file given with
+`--expect <file>=<sha256>` has that digest (GB-278). It then runs preflight's
+edge checks into `<work>/handoff/1/edge.json` and prints the way back: the
+confirm code, and the `import` and `then` commands for the controller. The
+edge driver's run of phase 2 and later is not built yet (gate row B10).
+
 #### "Added: a two-driver peering's controller imports phase 1's edge result and runs its core half"
 
 On a peering declared `drivers: two`, `goatbuilder federate import <peering> 1
@@ -98,9 +109,8 @@ the file against the confirm code the edge driver printed, places it under
 `<work>/handoff/1/` and records its sha256 in the run journal. `goatbuilder
 federate <peering> --from 1` then hashes the file again, runs phase 1's core
 checks (preflight `--side core`), joins the two sides' results, and goes on to
-phase 2's hand-off. A result that cannot be imported is GB-277. The edge
-driver's own run, and the import of later phases, are not built yet (gate row
-B10).
+phase 2's hand-off. A result that cannot be imported is GB-277. The import
+of later phases is not built yet (gate row B10).
 
 #### Changed: what federate says about phase 10 names the command that runs it first
 
