@@ -495,6 +495,12 @@ def _json(text):
 # Writes nothing durable: steps 2-3 create login requests Hydra and Kratos
 # expire unused; the evidence says so.
 # --------------------------------------------------------------------------
+# *CLIENT_ID env that is a cloud credential, never a client of a goatnet issuer:
+# AZURE_CLIENT_ID is the Entra app ID of a service principal (traefik's Azure
+# DNS-01 solver carries one). Counting it failed the row on every such site.
+_NOT_OIDC_CLIENT_ID = ("AZURE_CLIENT_ID",)
+
+
 def _fence_clients(host, issuer):
     fmt = "{{.Name}}{{range .Config.Env}}|{{.}}{{end}}"
     cmd = f"for c in $(docker ps -q); do docker inspect --format '{fmt}' $c; done"
@@ -509,7 +515,7 @@ def _fence_clients(host, issuer):
         if iss and iss.rstrip("/") != issuer:
             continue  # this fence trusts another issuer
         for k, v in kv.items():
-            if k.endswith("CLIENT_ID") and v:
+            if k.endswith("CLIENT_ID") and v and k not in _NOT_OIDC_CLIENT_ID:
                 clients.setdefault(v, []).append(name.lstrip("/"))
     return clients, ""
 
