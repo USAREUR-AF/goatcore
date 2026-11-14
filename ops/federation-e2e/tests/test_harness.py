@@ -16,7 +16,9 @@
 4. lib/srctree.sh on a worktree that has just fetched a commit no ref holds, its objects
    loose: the clone build() makes is checked out at that commit and holds every object of it,
    so the commit stays readable after the source repository drops those loose objects; and a
-   clone an earlier run left without a checkout is made again, not reused.
+   clone an earlier run left without a checkout is made again, not reused. The same from a
+   shallow source repository, where git ignores --shared and --local: the clone gets no
+   alternates and only the objects the source's refs reach.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -282,6 +284,24 @@ def srctree_checks():
             os.remove(o)
         check(os.path.isdir(dest) and git("cat-file", "-e", f"{sha}^{{tree}}", cwd=dest).returncode == 0,
               "srctree: the clone lost the commit's tree when the source dropped its loose objects (it borrows objects it does not hold)")
+
+        # A shallow source: git clones it by transfer, with no alternates, and sends only what
+        # its refs reach, so a commit fetched by sha alone is not in the clone unless fetched.
+        git("clone", "-q", "--bare", "--depth", "1", "file://" + up, "shallow.git")
+        sh_common = os.path.join(d, "shallow.git")
+        check(os.path.exists(os.path.join(sh_common, "shallow")), "srctree: the shallow source is not shallow")
+        git("worktree", "add", "-q", os.path.join(d, "wt-shallow"), "main", cwd=sh_common)
+        write_text(os.path.join(up, "g"), "a later commit under test\n")
+        git("add", "g", cwd=up)
+        git("commit", "-q", "-m", "three", cwd=up)
+        sha3 = git("rev-parse", "HEAD", cwd=up).stdout.strip()
+        git("fetch", "-q", up, sha3, cwd=os.path.join(d, "wt-shallow"))
+        dest3 = os.path.join(d, "src", sha3)
+        p = subprocess.run(["bash", "-c", '. "$1"; src_tree "$2" "$3" "$4"', "_", os.path.join(ROOT, "lib", "srctree.sh"), sh_common, sha3, dest3],
+                           env=env, capture_output=True, text=True)
+        head3 = git("rev-parse", "-q", "--verify", "HEAD", cwd=dest3).stdout.strip() if os.path.isdir(dest3) else ""
+        check(p.returncode == 0 and head3 == sha3 and os.path.exists(os.path.join(dest3, "g")),
+              f"srctree: from a shallow source, the clone could not check out a commit fetched by sha: {p.stderr.strip()}")
 
         # A clone an earlier run left with no checkout is made again, not reused.
         git("fetch", "-q", up, sha, cwd=os.path.join(d, "wt"))
