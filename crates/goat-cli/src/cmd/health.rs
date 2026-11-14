@@ -1259,12 +1259,21 @@ fn print_time(env: &EnvHealthV1) {
 /// arrived: the reader publishes both on the same tick.
 const VERDICT_GRACE: Duration = Duration::from_secs(3);
 
-/// A peer row's display name: the attribution name, else its Zenoh ID.
+/// A peer row's display name: the attribution name, else its Zenoh ID, else
+/// its source address (a candidate keyed by address has an empty Zenoh ID).
 fn peer_label(p: &PeerFaultV1) -> &str {
-    match p.attribution_name.as_deref() {
-        Some(n) if !n.trim().is_empty() => n,
+    match (p.attribution_name.as_deref(), p.source_address.as_deref()) {
+        (Some(n), _) if !n.trim().is_empty() => n,
+        (_, Some(a)) if p.zid.is_empty() && !a.trim().is_empty() => a,
         _ => &p.zid,
     }
+}
+
+/// A trust-refusal candidate: a declared peer that holds no session while a
+/// client refuses the router's certificate. Never a peer at fault: the
+/// router's log cannot name the refusing client.
+fn is_candidate(p: &PeerFaultV1) -> bool {
+    p.kind == PeerFaultKindV1::TrustRootRefusedCandidate as i32 || p.grade == "candidate"
 }
 
 /// `direct_session` in words: absent is unknown, never a guess.
@@ -1284,6 +1293,7 @@ fn fmt_offset_secs(s: f64) -> String {
 fn peer_kind(p: &PeerFaultV1) -> &'static str {
     match PeerFaultKindV1::try_from(p.kind) {
         Ok(PeerFaultKindV1::ClockAhead) => "clock_ahead",
+        Ok(PeerFaultKindV1::TrustRootRefusedCandidate) => "trust_root_refused_candidate",
         _ => "unspecified",
     }
 }
@@ -1295,11 +1305,92 @@ fn peer_reason(detail: &PeerFaultDetailV1) -> String {
     } else {
         detail.verdict.as_str()
     };
-    if detail.verdict_reason.trim().is_empty() {
-        verdict.to_string()
+    let verdict = clean_text(verdict);
+    let reason = clean_text(&detail.verdict_reason);
+    if reason.is_empty() {
+        verdict
     } else {
-        format!("{verdict}: {}", detail.verdict_reason.trim())
+        format!("{verdict}: {reason}")
     }
+}
+
+/// The trust detector's reading in plain words, or None from a reader
+/// without the trust detector. `candidates` is the number of candidate rows.
+fn trust_sentence(detail: &PeerFaultDetailV1, candidates: usize) -> Option<String> {
+    let absent = |n: u32| {
+        format!(
+            "{n} declared peer{} hold{} no session",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "s" } else { "" }
+        )
+    };
+    let s = match detail.trust_verdict.as_str() {
+        "" => return None,
+        "clean" => {
+            let mut s =
+                "clean — no client refused the router's certificate in the window".to_string();
+            if let Some(n) = detail.declared_peers_absent.filter(|n| *n > 0) {
+                s.push_str(&format!(
+                    "; {} (absence alone is not this fault)",
+                    absent(n)
+                ));
+            }
+            s
+        }
+        "unattributed" => "a client is refusing the router's certificate and cannot be named \
+            from the router's log; no declared peer is shown absent"
+            .to_string(),
+        "candidates" => {
+            let n = if candidates > 0 {
+                candidates as u32
+            } else {
+                detail.declared_peers_absent.unwrap_or(0)
+            };
+            format!(
+                "a client is refusing the router's certificate; {} and {}, \
+                 not confirmed (the router's log cannot name the client)",
+                absent(n),
+                if n == 1 {
+                    "is a candidate"
+                } else {
+                    "are candidates"
+                }
+            )
+        }
+        "unmeasured" => "not measured — the router is not known to log refused TLS \
+            handshakes at its log level, so silence is not proof that none are refused"
+            .to_string(),
+        other => format!("{} (a reading this build does not know)", clean_text(other)),
+    };
+    Some(s)
+}
+
+/// The TLS alert counts in the window, one `name count (rate/min)` per name.
+fn tls_alerts_line(detail: &PeerFaultDetailV1) -> Option<String> {
+    if detail.tls_alerts.is_empty() {
+        return None;
+    }
+    let parts: Vec<String> = detail
+        .tls_alerts
+        .iter()
+        .map(|a| {
+            let name = match clean_text(&a.name) {
+                n if n.is_empty() => "unnamed".to_string(),
+                n => n,
+            };
+            format!(
+                "{name} {} ({:.1}/min{})",
+                a.count_in_window,
+                a.per_minute,
+                if a.trust_refusal {
+                    ", refuses our certificate"
+                } else {
+                    ""
+                }
+            )
+        })
+        .collect();
+    Some(parts.join(" · "))
 }
 
 /// The peer detail as JSON, for `--json`: the site grade and every row, with
@@ -1317,6 +1408,15 @@ fn peer_json(detail: &PeerFaultDetailV1) -> serde_json::Value {
         "peering": peering,
         "peering_rejections_per_minute": detail.peering_rejections_per_minute,
         "peering_max_offset_seconds": detail.peering_max_offset_seconds,
+        "trust_verdict": (!detail.trust_verdict.is_empty()).then(|| detail.trust_verdict.clone()),
+        "tls_alerts": detail.tls_alerts.iter().map(|a| serde_json::json!({
+            "name": a.name,
+            "count_in_window": a.count_in_window,
+            "per_minute": a.per_minute,
+            "trust_refusal": a.trust_refusal,
+            "last_seen_unix_ms": a.last_seen_unix_ms,
+        })).collect::<Vec<_>>(),
+        "declared_peers_absent": detail.declared_peers_absent,
         "peers": detail.peers.iter().map(|p| serde_json::json!({
             "label": peer_label(p),
             "zid": p.zid,
@@ -1334,6 +1434,8 @@ fn peer_json(detail: &PeerFaultDetailV1) -> serde_json::Value {
             "direct_session": fmt_direct(p.direct_session),
             "peering": peering,
             "observed_by": p.observed_by,
+            "source_address": p.source_address,
+            "absent_since_unix_ms": p.absent_since_unix_ms,
         })).collect::<Vec<_>>(),
     })
 }
@@ -1367,32 +1469,49 @@ fn render_peer(env: &EnvHealthV1) -> String {
         colorize(&env.overall_color),
         peer_reason(detail)
     );
+    let local_clock = clean_text(&detail.local_clock);
+    let peering = clean_text(&detail.peering);
     let mut context = format!(
         "  site {} · {}s window · our clock {} · {} peer{} known",
-        env.scope,
+        clean_text(&env.scope),
         env.window_secs,
-        if detail.local_clock.is_empty() {
+        if local_clock.is_empty() {
             "unknown"
         } else {
-            &detail.local_clock
+            &local_clock
         },
         detail.peers_known,
         if detail.peers_known == 1 { "" } else { "s" },
     );
-    if !detail.observed_by.is_empty() {
-        let _ = write!(context, " · observed by {}", detail.observed_by);
+    let observed_by = clean_text(&detail.observed_by);
+    if !observed_by.is_empty() {
+        let _ = write!(context, " · observed by {observed_by}");
     }
     let _ = writeln!(out, "{context}");
-    if !detail.peering.is_empty() {
+    if !peering.is_empty() {
         let _ = writeln!(
             out,
             "  peering {}: {:.1} rejections/min, largest offset {}",
-            detail.peering,
+            peering,
             detail.peering_rejections_per_minute,
             fmt_offset_secs(detail.peering_max_offset_seconds),
         );
     }
+    let (candidates, clock_rows): (Vec<&PeerFaultV1>, Vec<&PeerFaultV1>) =
+        detail.peers.iter().partition(|p| is_candidate(p));
+    if let Some(trust) = trust_sentence(detail, candidates.len()) {
+        let _ = writeln!(out, "  trust: {trust}");
+    }
+    if let Some(alerts) = tls_alerts_line(detail) {
+        let _ = writeln!(out, "  TLS alerts in the window: {alerts}");
+    }
     match env.overall_color.as_str() {
+        _ if detail.verdict == "trust_unmeasured" => {
+            let _ = writeln!(
+                out,
+                "  ⓘ the clock reading is clean, but refused handshakes are not measured — UNCONFIRMED, never a false green."
+            );
+        }
         "unmetered" | "idle" => {
             let _ = writeln!(
                 out,
@@ -1411,30 +1530,34 @@ fn render_peer(env: &EnvHealthV1) -> String {
     if detail.unparsed_lines_window > 0 {
         let _ = writeln!(
             out,
-            "  ⓘ {} rejection line(s) in the window did not parse; this reading never grades green.",
-            detail.unparsed_lines_window
+            "  ⓘ {} {} line(s) in the window did not parse; this reading never grades green.",
+            detail.unparsed_lines_window,
+            if detail.trust_verdict.is_empty() {
+                "rejection"
+            } else {
+                "rejection or TLS alert"
+            }
         );
     }
-    if detail.peers.is_empty() {
+    if !candidates.is_empty() {
+        render_candidates(&mut out, env.ts_unix_ms, &candidates);
+    }
+    if clock_rows.is_empty() {
         return out;
     }
     let _ = writeln!(out);
     let _ = writeln!(out, "  PEER                             STATE     GRADE                   OFFSET  REJ/MIN DIRECT   PEERING");
-    for p in &detail.peers {
+    for p in &clock_rows {
         let _ = writeln!(
             out,
             "  {:<32} {} {:<19} {:>10} {:>8.1} {:<8} {}",
-            peer_label(p),
-            pad_state(&p.color, 9),
-            p.grade,
+            clean_text(peer_label(p)),
+            pad_state(&clean_text(&p.color), 9),
+            clean_text(&p.grade),
             fmt_offset_secs(p.offset_seconds),
             p.rejections_per_minute,
             fmt_direct(p.direct_session),
-            if detail.peering.is_empty() {
-                "—"
-            } else {
-                &detail.peering
-            },
+            if peering.is_empty() { "—" } else { &peering },
         );
     }
     let _ = writeln!(out);
@@ -1451,6 +1574,45 @@ fn render_peer(env: &EnvHealthV1) -> String {
         "  sit behind the one holding the session (DIRECT no, or unknown without a sessions file)."
     );
     out
+}
+
+/// The candidate block: declared peers that hold no session while a client
+/// refuses the router's certificate. A shortlist, never peers at fault.
+/// Ages are taken from the reading's own clock (`now_ms`), not this machine's.
+fn render_candidates(out: &mut String, now_ms: i64, candidates: &[&PeerFaultV1]) {
+    use std::fmt::Write as _;
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "  CANDIDATES — not at fault: declared peers with no session while a client refuses our certificate"
+    );
+    let _ = writeln!(
+        out,
+        "  CANDIDATE                        OWNER                    ABSENT SINCE"
+    );
+    for p in candidates {
+        let label = match clean_text(peer_label(p)) {
+            l if l.is_empty() => "(unnamed)".to_string(),
+            l => l,
+        };
+        let owner = match p.attribution_owner.as_deref().map(clean_text) {
+            Some(o) if !o.is_empty() => o,
+            _ => "—".to_string(),
+        };
+        let since = match p.absent_since_unix_ms {
+            Some(t) if t > 0 => fmt_age((now_ms - t).max(0)),
+            _ => "—".to_string(),
+        };
+        let _ = writeln!(out, "  {label:<32} {owner:<24} {since}");
+    }
+    let _ = writeln!(
+        out,
+        "  The router's log cannot name the refusing client, so this is a shortlist, not a verdict."
+    );
+    let _ = writeln!(
+        out,
+        "  ABSENT SINCE counts from when the reader could first judge the peer; it may be longer."
+    );
 }
 
 fn print_peer(env: &EnvHealthV1) {
@@ -2383,6 +2545,7 @@ mod consistency_tests {
 #[cfg(test)]
 mod peer_tests {
     use super::*;
+    use crate::health_wire::TlsAlertV1;
 
     const ZID_A: &str = "3c9a51e0d2b7f4a6c18e05d9b3a7f2e1";
     const ZID_B: &str = "7d2e4f6a8b0c1d3e5f7a9b1c3d5e7f90";
@@ -2414,6 +2577,8 @@ mod peer_tests {
             color: color.to_string(),
             limit_seconds: 0.5,
             direct_session: direct,
+            source_address: None,
+            absent_since_unix_ms: None,
         }
     }
 
@@ -2453,6 +2618,9 @@ mod peer_tests {
             peering: peering.to_string(),
             peering_rejections_per_minute: if peering.is_empty() { 0.0 } else { 13.5 },
             peering_max_offset_seconds: if peering.is_empty() { 0.0 } else { 17.1 },
+            tls_alerts: vec![],
+            trust_verdict: String::new(),
+            declared_peers_absent: None,
         }
     }
 
@@ -2573,6 +2741,275 @@ mod peer_tests {
         let out = render_peer(&env("amber", d));
         assert!(out.contains("our own clock is the likelier fault"), "{out}");
         assert!(!out.contains("peer_at_fault"), "{out}");
+    }
+
+    fn alert(name: &str, count: u64, refusal: bool) -> TlsAlertV1 {
+        TlsAlertV1 {
+            name: name.to_string(),
+            count_in_window: count,
+            per_minute: count as f64 / 2.0,
+            trust_refusal: refusal,
+            last_seen_unix_ms: 1_794_571_190_000,
+        }
+    }
+
+    fn candidate(zid: &str, name: Option<&str>, address: Option<&str>) -> PeerFaultV1 {
+        PeerFaultV1 {
+            zid: zid.to_string(),
+            kind: PeerFaultKindV1::TrustRootRefusedCandidate as i32,
+            observed_by: OURS.to_string(),
+            attribution_name: name.map(str::to_string),
+            attribution_owner: name.map(|_| "example partner".to_string()),
+            grade: "candidate".to_string(),
+            color: "amber".to_string(),
+            direct_session: Some(false),
+            source_address: address.map(str::to_string),
+            // Four minutes before the reading's own time.
+            absent_since_unix_ms: Some(1_794_571_200_000 - 240_000),
+            ..Default::default()
+        }
+    }
+
+    fn trust_detail(trust: &str, verdict: &str, peers: Vec<PeerFaultV1>) -> PeerFaultDetailV1 {
+        PeerFaultDetailV1 {
+            verdict: verdict.to_string(),
+            verdict_reason: "clients refuse the router's certificate".to_string(),
+            local_clock: "synced".to_string(),
+            observed_by: OURS.to_string(),
+            peers_known: 3,
+            tls_alerts: vec![
+                alert("CertificateExpired", 1, false),
+                alert("UnknownCA", 6, true),
+            ],
+            trust_verdict: trust.to_string(),
+            declared_peers_absent: Some(peers.iter().filter(|p| is_candidate(p)).count() as u32),
+            peers,
+            ..Default::default()
+        }
+    }
+
+    fn trust_env(color: &str, detail: PeerFaultDetailV1) -> EnvHealthV1 {
+        EnvHealthV1 {
+            scope: "example-site".to_string(),
+            ..env(color, detail)
+        }
+    }
+
+    #[test]
+    fn a_beat_without_trust_fields_prints_exactly_as_before() {
+        // A clock-only reader sends tags 1..=11: no trust line, no alert line,
+        // no candidate block, and the clock table byte for byte as before.
+        let out = render_peer(&env("red", at_fault("xab")));
+        let want = "\
+PEER: RED — peer_at_fault: 2 peer(s) had timestamps rejected in the last 60 s
+  site zagros-sandbox · 60s window · our clock synced · 2 peers known · observed by 5be08d2f41a97c36e0d1f8b2a4c6e9d7
+  peering xab: 13.5 rejections/min, largest offset +17.10 s
+
+  PEER                             STATE     GRADE                   OFFSET  REJ/MIN DIRECT   PEERING
+  lab-router-b                     RED       peer_at_fault         +17.00 s     12.0 yes      xab
+  7d2e4f6a8b0c1d3e5f7a9b1c3d5e7f90 RED       peer_at_fault          +0.80 s      1.5 unknown  xab
+
+  OFFSET is the peer's time minus our router's; the router replaces a timestamp more
+  than its limit ahead. A Zenoh ID names the router that stamped the sample, which can
+  sit behind the one holding the session (DIRECT no, or unknown without a sessions file).
+";
+        assert_eq!(out, want);
+        let mut d = at_fault("");
+        d.unparsed_lines_window = 2;
+        let out = render_peer(&env("amber", d));
+        assert!(
+            out.contains("  ⓘ 2 rejection line(s) in the window did not parse"),
+            "{out}"
+        );
+        assert!(!out.contains("trust"), "{out}");
+    }
+
+    #[test]
+    fn candidates_print_in_their_own_block_and_are_not_at_fault() {
+        let d = trust_detail(
+            "candidates",
+            "trust_refused_candidates",
+            vec![
+                candidate(ZID_A, Some("lab-router-b"), None),
+                candidate("", None, Some("10.0.0.7")),
+            ],
+        );
+        let out = render_peer(&trust_env("amber", d));
+        assert!(
+            out.starts_with("PEER: AMBER — trust_refused_candidates: "),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "  trust: a client is refusing the router's certificate; 2 declared peers hold \
+                 no session and are candidates, not confirmed"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "  TLS alerts in the window: CertificateExpired 1 (0.5/min) · \
+                 UnknownCA 6 (3.0/min, refuses our certificate)"
+            ),
+            "{out}"
+        );
+        assert!(out.contains("CANDIDATES — not at fault"), "{out}");
+        let b = out
+            .lines()
+            .find(|l| l.contains("lab-router-b"))
+            .expect("named");
+        assert!(
+            b.contains("example partner") && b.trim_end().ends_with("4m ago"),
+            "{b}"
+        );
+        // Keyed by address: the address is the label, no owner.
+        let c = out
+            .lines()
+            .find(|l| l.contains("10.0.0.7"))
+            .expect("address");
+        assert!(c.contains('—') && c.trim_end().ends_with("4m ago"), "{c}");
+        // No clock table, and nothing worded as a peer at fault.
+        assert!(!out.contains("REJ/MIN"), "{out}");
+        assert!(
+            !out.contains("peer_at_fault") && !out.contains("RED"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn candidates_and_clock_rows_print_apart() {
+        let mut d = at_fault("");
+        d.trust_verdict = "candidates".to_string();
+        d.tls_alerts = vec![alert("UnknownCA", 2, true)];
+        d.peers
+            .push(candidate("", Some("lab-router-c"), Some("10.0.0.8")));
+        let out = render_peer(&env("red", d));
+        let table = out.find("REJ/MIN").expect("clock table");
+        let block = out.find("CANDIDATES").expect("candidate block");
+        let c = out.find("lab-router-c").unwrap();
+        assert!(
+            block < table && c < table,
+            "candidate is not a clock row: {out}"
+        );
+        assert!(
+            out.contains("1 declared peer holds no session and is a candidate"),
+            "{out}"
+        );
+        let clock_rows = out
+            .lines()
+            .filter(|l| l.contains("peer_at_fault") && l.contains(" s "))
+            .count();
+        assert_eq!(clock_rows, 2, "{out}");
+    }
+
+    #[test]
+    fn unattributed_says_the_client_cannot_be_named() {
+        let mut d = trust_detail("unattributed", "trust_refused_unattributed", vec![]);
+        d.declared_peers_absent = None;
+        let out = render_peer(&trust_env("amber", d));
+        assert!(
+            out.contains(
+                "  trust: a client is refusing the router's certificate and cannot be named"
+            ),
+            "{out}"
+        );
+        assert!(!out.contains("CANDIDATES"), "{out}");
+    }
+
+    #[test]
+    fn trust_not_measured_is_never_printed_as_healthy() {
+        let mut d = trust_detail("unmeasured", "trust_unmeasured", vec![]);
+        d.tls_alerts.clear();
+        let out = render_peer(&trust_env("unmetered", d));
+        assert!(
+            out.starts_with("PEER: UNMETERED — trust_unmeasured"),
+            "{out}"
+        );
+        assert!(
+            out.contains("  trust: not measured — the router is not known to log refused TLS handshakes at its log level"),
+            "{out}"
+        );
+        assert!(out.contains("never a false green"), "{out}");
+        assert!(!out.contains("no router log to judge"), "{out}");
+        assert!(!out.contains("GREEN") && !out.contains("clean —"), "{out}");
+        assert!(!out.contains("TLS alerts"), "{out}");
+    }
+
+    #[test]
+    fn a_clean_trust_reading_names_absence_without_blame() {
+        let mut d = trust_detail("clean", "clean", vec![]);
+        d.tls_alerts.clear();
+        d.declared_peers_absent = Some(1);
+        let out = render_peer(&trust_env("green", d));
+        assert!(
+            out.contains(
+                "  trust: clean — no client refused the router's certificate in the window; \
+                 1 declared peer holds no session (absence alone is not this fault)"
+            ),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn strings_off_the_bus_are_cleaned_before_printing() {
+        let mut c = candidate("", Some("lab\x1b[31m-router\u{7}"), None);
+        c.attribution_owner = Some("own\ner".to_string());
+        let mut d = trust_detail("candidates", "trust_refused_candidates\r", vec![c]);
+        d.verdict_reason = "reason\x1b]0;title\x07".to_string();
+        d.tls_alerts = vec![alert("Unknown\x1bCA", 1, true)];
+        d.observed_by = "ab\ncd".to_string();
+        let out = render_peer(&trust_env("amber", d));
+        assert!(
+            !out.contains('\x1b') && !out.contains('\x07') && !out.contains('\r'),
+            "{out:?}"
+        );
+        assert!(out.contains("lab[31m-router"), "{out}");
+        assert!(out.contains("owner"), "{out}");
+        assert!(out.contains("UnknownCA 1"), "{out}");
+        assert!(out.contains("observed by abcd"), "{out}");
+        let mut d = trust_detail("weird\x1b", "clean", vec![]);
+        d.tls_alerts.clear();
+        let out = render_peer(&trust_env("amber", d));
+        assert!(
+            out.contains("trust: weird (a reading this build does not know)"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn json_carries_the_trust_reading() {
+        let d = trust_detail(
+            "candidates",
+            "trust_refused_candidates",
+            vec![candidate("", None, Some("10.0.0.7"))],
+        );
+        let j = env_detail_json(&trust_env("amber", d)).unwrap();
+        assert_eq!(j["trust_verdict"], "candidates");
+        assert_eq!(j["declared_peers_absent"], 1);
+        let alerts = j["tls_alerts"].as_array().unwrap();
+        assert_eq!(alerts.len(), 2);
+        assert_eq!(alerts[1]["name"], "UnknownCA");
+        assert_eq!(alerts[1]["count_in_window"], 6);
+        assert_eq!(alerts[1]["per_minute"], 3.0);
+        assert_eq!(alerts[1]["trust_refusal"], true);
+        assert_eq!(alerts[1]["last_seen_unix_ms"], 1_794_571_190_000i64);
+        let p = &j["peers"][0];
+        assert_eq!(p["kind"], "trust_root_refused_candidate");
+        assert_eq!(p["grade"], "candidate");
+        assert_eq!(p["label"], "10.0.0.7");
+        assert_eq!(p["zid"], "");
+        assert_eq!(p["source_address"], "10.0.0.7");
+        assert_eq!(p["absent_since_unix_ms"], 1_794_571_200_000i64 - 240_000);
+        // A clock-only reader: null and empty, never invented.
+        let j = env_detail_json(&env("red", at_fault(""))).unwrap();
+        assert_eq!(j["trust_verdict"], serde_json::Value::Null);
+        assert_eq!(j["declared_peers_absent"], serde_json::Value::Null);
+        assert_eq!(j["tls_alerts"], serde_json::json!([]));
+        assert_eq!(j["peers"][0]["source_address"], serde_json::Value::Null);
+        assert_eq!(
+            j["peers"][0]["absent_since_unix_ms"],
+            serde_json::Value::Null
+        );
     }
 
     #[test]

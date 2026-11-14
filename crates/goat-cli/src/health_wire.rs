@@ -423,13 +423,18 @@ pub(crate) struct ConsistencyDetailV1 {
 
 // --- peer domain (ADR 1232) — goat-peer-health, arm 17 ---
 
-/// What the router saw wrong with a peer. Only the clock detector exists.
+/// What the router saw wrong with a peer: the clock detector and the
+/// trust-refusal detector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, prost::Enumeration)]
 #[repr(i32)]
 pub(crate) enum PeerFaultKindV1 {
     PeerFaultKindUnspecified = 0,
     /// The router rejected this peer's timestamps as ahead of its clock.
     ClockAhead = 1,
+    /// Clients refuse the router's certificate and this declared peer holds no
+    /// session. A candidate, not a confirmed cause: the router's log cannot
+    /// name the refusing client.
+    TrustRootRefusedCandidate = 2,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -461,7 +466,7 @@ pub(crate) struct PeerFaultV1 {
     pub attribution_name: Option<String>,
     #[prost(string, optional, tag = "12")]
     pub attribution_owner: Option<String>,
-    /// peer_at_fault | local_clock_suspect | quiet | cleared | unmeasured
+    /// peer_at_fault | local_clock_suspect | quiet | cleared | unmeasured | candidate
     #[prost(string, tag = "13")]
     pub grade: String,
     #[prost(string, tag = "14")]
@@ -471,13 +476,42 @@ pub(crate) struct PeerFaultV1 {
     /// Whether this Zenoh ID holds a session with our router; absent = unknown.
     #[prost(bool, optional, tag = "16")]
     pub direct_session: Option<bool>,
+    /// The peers-file key when it is a source address, not a Zenoh ID (a
+    /// candidate row for such an entry has `zid` = "").
+    #[prost(string, optional, tag = "17")]
+    pub source_address: Option<String>,
+    /// Candidate rows: the first reading at which the reader saw the declared
+    /// peer hold no session. Since the reader started; not persisted.
+    #[prost(int64, optional, tag = "18")]
+    pub absent_since_unix_ms: Option<i64>,
+}
+
+/// One TLS alert name the router received in the window: a fact about the
+/// router (some client ended a handshake), not about a named peer.
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct TlsAlertV1 {
+    /// As logged, e.g. UnknownCA, BadCertificate, CertificateExpired.
+    #[prost(string, tag = "1")]
+    pub name: String,
+    #[prost(uint64, tag = "2")]
+    pub count_in_window: u64,
+    #[prost(double, tag = "3")]
+    pub per_minute: f64,
+    /// In the trust-refusal set: the client does not accept the chain the
+    /// router presents.
+    #[prost(bool, tag = "4")]
+    pub trust_refusal: bool,
+    #[prost(int64, tag = "5")]
+    pub last_seen_unix_ms: i64,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct PeerFaultDetailV1 {
     #[prost(message, repeated, tag = "1")]
     pub peers: Vec<PeerFaultV1>,
-    /// peer_at_fault | local_clock_suspect | recovering | clean | unmeasured
+    /// peer_at_fault | local_clock_suspect | recovering |
+    /// trust_refused_candidates | trust_refused_unattributed | trust_unmeasured |
+    /// clean | unmeasured
     #[prost(string, tag = "2")]
     pub verdict: String,
     #[prost(string, tag = "3")]
@@ -501,6 +535,16 @@ pub(crate) struct PeerFaultDetailV1 {
     pub peering_rejections_per_minute: f64,
     #[prost(double, tag = "11")]
     pub peering_max_offset_seconds: f64,
+    /// Trust detector, site level: every TLS alert name in the window, by name.
+    #[prost(message, repeated, tag = "12")]
+    pub tls_alerts: Vec<TlsAlertV1>,
+    /// The trust detector alone: clean | unattributed | candidates | unmeasured;
+    /// "" from a reader without the trust detector.
+    #[prost(string, tag = "13")]
+    pub trust_verdict: String,
+    /// Declared peers holding no session; absent = cannot be judged.
+    #[prost(uint32, optional, tag = "14")]
+    pub declared_peers_absent: Option<u32>,
 }
 
 /// The JSON document on `ops/peer/verdict/<zid>` (schema goat.peer.verdict.v1):
@@ -645,5 +689,50 @@ mod tests {
             Some(EnvDetail::Mesh(d)) => assert_eq!(d.links[0].peer_fqdn, "a.x"),
             _ => panic!("expected mesh detail"),
         }
+    }
+
+    #[test]
+    fn peer_trust_fields_decode_on_their_proto_tags() {
+        // Hand-encoded: PeerFaultV1 kind=2 (tag 2), source_address (tag 17),
+        // absent_since_unix_ms (tag 18); detail tls_alerts (tag 12),
+        // trust_verdict (tag 13), declared_peers_absent (tag 14).
+        let mut row = vec![0x10, 0x02];
+        row.extend_from_slice(&[0x8a, 0x01, 0x08]);
+        row.extend_from_slice(b"10.0.0.7");
+        row.extend_from_slice(&[0x90, 0x01, 0x05]);
+        let mut alert = vec![0x0a, 0x09];
+        alert.extend_from_slice(b"UnknownCA");
+        alert.extend_from_slice(&[0x10, 0x03, 0x20, 0x01]);
+        let mut detail = vec![0x0a, row.len() as u8];
+        detail.extend_from_slice(&row);
+        detail.extend_from_slice(&[0x62, alert.len() as u8]);
+        detail.extend_from_slice(&alert);
+        detail.extend_from_slice(&[0x6a, 0x0a]);
+        detail.extend_from_slice(b"candidates");
+        detail.extend_from_slice(&[0x70, 0x01]);
+        let d = PeerFaultDetailV1::decode(detail.as_slice()).expect("decode");
+        assert_eq!(
+            d.peers[0].kind,
+            PeerFaultKindV1::TrustRootRefusedCandidate as i32
+        );
+        assert_eq!(d.peers[0].source_address.as_deref(), Some("10.0.0.7"));
+        assert_eq!(d.peers[0].absent_since_unix_ms, Some(5));
+        assert_eq!(d.tls_alerts[0].name, "UnknownCA");
+        assert_eq!(d.tls_alerts[0].count_in_window, 3);
+        assert!(d.tls_alerts[0].trust_refusal);
+        assert_eq!(d.trust_verdict, "candidates");
+        assert_eq!(d.declared_peers_absent, Some(1));
+    }
+
+    #[test]
+    fn peer_detail_from_a_reader_without_trust_fields_decodes_empty() {
+        // Tags 1..=11 only, as a clock-only reader sends them.
+        let mut detail = vec![0x12, 0x05];
+        detail.extend_from_slice(b"clean");
+        let d = PeerFaultDetailV1::decode(detail.as_slice()).expect("decode");
+        assert_eq!(d.verdict, "clean");
+        assert!(d.tls_alerts.is_empty());
+        assert_eq!(d.trust_verdict, "");
+        assert_eq!(d.declared_peers_absent, None);
     }
 }

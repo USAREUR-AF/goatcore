@@ -1,6 +1,6 @@
 # Peer fault handling
 
-**Status:** Partly built, not deployed on any goatnet. The reader, its deploy role, the `peer` domain in `goat health`, `goat top` and panoscope, the neighbor-observed row in the `time` domain and the federation preflight's clock check are built; attribution to an owner, notices, tracking and closing are designed. Decided in [ADR 1232](../adr/1232-faults-on-peers-we-do-not-own-follow-one-five-stage-path.md).
+**Status:** Partly built, not deployed on any goatnet. The reader, its deploy role, the `peer` domain in `goat health`, `goat top` and panoscope, the neighbor-observed row in the `time` domain, the federation preflight's clock check, and the rendering of the trust-refusal reading in `goat health` and `goat top` are built; attribution to an owner, notices, tracking and closing are designed. Decided in [ADR 1232](../adr/1232-faults-on-peers-we-do-not-own-follow-one-five-stage-path.md).
 **Related:** [`environment-health-surface.md`](environment-health-surface.md) ([ADR 1036](../adr/1036-environment-health-surface.md)) · [`universal-ntp-hygiene.md`](universal-ntp-hygiene.md) · [`zenoh-ntp-integration.md`](zenoh-ntp-integration.md) · [`anomaly-probation-lifecycle.md`](anomaly-probation-lifecycle.md) ([ADR 1068](../adr/1068-anomaly-probation-lifecycle.md)) · [`zenoh-brokerless-consequences.md`](zenoh-brokerless-consequences.md)
 
 ## What this is
@@ -15,7 +15,7 @@ the measurement reads clean.
 |---|---|---|
 | 1. Measure | A reader beside the router turns evidence the router already produces into a number per peer | Built for the clock fault: the reader is goatstuff `ops/zenoh-trial-peers/peer-health`, deployed by `ops/ansible/peer-health-deploy.yml` (role `peer-health`). Not deployed |
 | 2. Attribute | The peer's Zenoh ID is joined to a machine and an owner | The reader fills name and owner from a file it is given (built); nothing generates that file (not built) |
-| 3. Tell | Admins, the owner and the peer itself each see the verdict | Pager built; the reader publishes the per-peer verdict key, `goat health --domain peer`, `goat top` and panoscope render the domain, and `goat health` on a peer prints the router's verdict on that machine (built); notices not built |
+| 3. Tell | Admins, the owner and the peer itself each see the verdict | Pager built; the reader publishes the per-peer verdict key, `goat health --domain peer`, `goat top` and panoscope render the domain, and `goat health` on a peer prints the router's verdict on that machine (built); `goat health --domain peer` and `goat top` show the trust-refusal reading, with candidate peers apart from peers at fault (built, not deployed); notices not built |
 | 4. Track | One probation entry of kind `peer` per fault, with a deadline | Probation list built for the identity kind; the `peer` kind is reserved, not built |
 | 5. Close | The entry closes when the same measurement reads clean for a set period | The reader reports a peer as cleared after a clean period (built); closing a tracked entry is not built |
 
@@ -174,5 +174,10 @@ Each step is one revertible change.
 4. **Probation entries of kind `peer`** with owner, deadline, automatic close, the pager on escalation,
    and the owner notice template.
 5. **The second detector: a source that connects and holds no session.** Building a second detector on
-   the same frame is the test that the method is general.
+   the same frame is the test that the method is general. The renderers are built, not deployed:
+   `goat health --domain peer` prints the trust verdict (clean, unattributed, candidates or not
+   measured), the TLS alert counts per name, and the candidate peers in their own block, never counted
+   as peers at fault; `--json` carries `trust_verdict`, `tls_alerts`, `declared_peers_absent` and each
+   row's `source_address` and `absent_since_unix_ms`; the `goat top` PEER chip shows the site grade,
+   which the trust reading can turn amber or unmetered, never green.
 6. **The clock check in join and federation preflight.** Built for federation; not built for join.
