@@ -137,10 +137,11 @@
       - -v
       - ON_ERROR_STOP=1
       - -c
-      - "GRANT CONNECT ON DATABASE {{ pg_monitoring_db }} TO {{ pg_monitoring_role }};"
+      - "GRANT CONNECT ON DATABASE {{ item }} TO {{ pg_monitoring_role }};"
+  loop: "{{ ([pg_monitoring_db] + pg_monitoring_spock_databases) | unique }}"
   changed_when: false
 
-# Spock views live in the spock schema of the replicated DB. pg_monitor
+# Spock views live in the spock schema of each replicated DB. pg_monitor
 # membership isn't enough — spock schema USAGE + SELECT on its views are
 # separate grants. Use `IF EXISTS` so this no-ops cleanly if the role is
 # run before spock is installed (greenfield day-0 ordering).
@@ -156,7 +157,7 @@
       - -U
       - postgres
       - -d
-      - "{{ pg_monitoring_db }}"
+      - "{{ item }}"
       - -v
       - ON_ERROR_STOP=0
       - -c
@@ -170,6 +171,7 @@
           END IF;
         END
         $$;
+  loop: "{{ ([pg_monitoring_db] + pg_monitoring_spock_databases) | unique }}"
   changed_when: false
   failed_when: false
 
@@ -247,6 +249,7 @@
       PEER_NODE_EXPORTER_TARGET={{ peer_node_exporter_target }}
       PEER_SIGNAL_METRICS_TARGET={{ peer_signal_metrics_target }}
       POSTGRES_EXPORTER_PASSWORD={{ postgres_exporter_password }}
+      POSTGRES_EXPORTER_SPOCK_DATABASES={{ pg_monitoring_spock_databases | join(',') }}
     mode: "0600"
     create: false
 

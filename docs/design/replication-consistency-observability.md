@@ -46,8 +46,8 @@ Three classes — keep them disjoint, name them so operators know what changed:
 | `SpockSubscriptionLag` | warning | `spock_subscription_lag_seconds > 60` for 2m | shipped |
 | `SpockSlotInvalidated` | critical | `pg_replication_slot_wal_status_lost == 1` for 1m | shipped |
 | `SpockSlotWALNearLimit` | critical | retained_wal > 80% of `max_slot_wal_keep_size` for 5m | shipped |
-| `SpockConflictLogged` | warning | `increase(spock_resolutions_total[5m]) > 0` (was `spock_conflict_log_total`, a metric that never existed: F-574) | shipped, fixed by ADR 1193 |
-| `SpockApplyExceptionLogged` | warning | `increase(spock_exceptions_total[5m]) > 0` | ADR 1193 |
+| `SpockConflictLogged` | warning | `increase(spock_resolutions_total[5m]) > 0`, one series per replicated database (`datname`) (was `spock_conflict_log_total`, a metric that never existed: F-574) | built: the mgmt host's postgres-exporter counts `spock.resolutions` in every database Spock replicates (the observability role's `pg_monitoring_spock_databases`: the Spock mesh's databases, and Ory's when Ory replicates). Until 2026-11-14 it read only the `postgres` database, which has no spock schema, so the metric was never exported there. Proven by `ops/postgres/spock/tests/exporter-every-database/run.sh` (a real conflict in kratos counted, CI `postgres-spock.yml`) and `ops/compose/goat-obs/prometheus/tests/spock-every-database.test.yml` (promtool) |
+| `SpockApplyExceptionLogged` | warning | `increase(spock_exceptions_total[5m]) > 0`, one series per replicated database (`datname`) | built, read in every replicated database as `SpockConflictLogged` is; its promtool case is in the same test file (ADR 1193) |
 | **`SpockSubscriptionNotReplicating`** | **critical** | `spock_subscription_replicating == 0` for 2m | **52A new** |
 | **`SpockSlotInactive`** | **critical** | `pg_replication_slot_active == 0` for 2m | **52A new** |
 | **`SpockSlotWALSenderLag`** | **warning** | per-subscriber WAL sender backlog > 100 MB for 5m | **52A new** |

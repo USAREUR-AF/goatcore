@@ -30,6 +30,8 @@ on:
     paths:
       - 'ops/compose/goat-obs/**'
       - 'ops/compose/mgmt-host/monitoring/rules/compose-orphans.yml'
+      # tests/spock-every-database.test.yml holds the mgmt host's Spock alerts.
+      - 'ops/compose/mgmt-host/monitoring/rules/spock.yml'
       # Host readers of the portal registry, SQLite and Postgres eras (ADR 1165
       # step A): the shared Postgres reader and the scripts that use it.
       - 'ops/scripts/portal_registry_pg.py'

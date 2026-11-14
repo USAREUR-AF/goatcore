@@ -23,3 +23,17 @@ pg_monitoring_role: monitoring
 # pg_monitor at the cluster level so it can read pg_replication_slots
 # from any DB connection.
 pg_monitoring_db: netbird
+
+# Every database Spock replicates on this host, each with its own spock
+# schema: the Spock mesh's databases (spock_mesh_databases, as the
+# spock-mesh-peering role reads them) and, when Ory replicates
+# (ory_spock_enabled), Ory's (ory_spock_databases). The monitoring role gets
+# CONNECT and the spock grants in each, and postgres-exporter counts each
+# one's Spock conflicts and skipped changes (POSTGRES_EXPORTER_SPOCK_DATABASES
+# in .env). A site that replicates other databases sets this list itself.
+pg_monitoring_spock_databases: >-
+  {{ (((spock_mesh_databases | default([{'name': spock_mesh_database | default(pg_monitoring_db)}]))
+       | map(attribute='name') | list)
+      + ((ory_spock_databases | default(['kratos', 'hydra']))
+         if (ory_spock_enabled | default(false) | bool) else []))
+     | unique | list }}
