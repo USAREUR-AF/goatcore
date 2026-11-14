@@ -1079,7 +1079,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -2566,7 +2566,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -4053,7 +4053,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -5540,7 +5540,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -7027,7 +7027,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -8514,7 +8514,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -10001,7 +10001,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -11488,7 +11488,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -12975,7 +12975,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -14462,7 +14462,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -15949,7 +15949,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -17436,7 +17436,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -18923,7 +18923,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -20410,7 +20410,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -21897,7 +21897,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
@@ -23384,7 +23384,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS) ==="
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233) ==="
     },
     {
       "name": "cmd",
