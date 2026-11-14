@@ -6,7 +6,7 @@
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
-Status: WIP — gate: two real environments complete phase 14 from both sides and both exit 0.
+Status: not measured: the gate names two real environments, so it waits on goatbuilder 1.0 gate row B9 — gate: two real environments complete phase 14 from both sides and both exit 0.
 
 ## 1. The job
 
@@ -199,7 +199,7 @@ The launcher is the deployment's or the drill's: it holds whatever certificates 
 
 ### 2.5 Our own surfaces, from the declarations
 
-**Built.** Status: WIP — gate: phase 14 run by `goatbuilder federate <partner>` on two real
+**Built.** Status: not measured: the gate names two real environments, so it waits on goatbuilder 1.0 gate row B9 — gate: phase 14 run by `goatbuilder federate <partner>` on two real
 environments with none of `FED_OURS_REST`, `FED_EDGE_LOG_OURS` and `FED_SPIRE_OURS` exported,
 and the refusal and SPIRE rows reaching PASS.
 

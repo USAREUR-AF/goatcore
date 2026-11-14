@@ -66,7 +66,7 @@ deduplicated.
 
 ## Phase 3 from the operator's machine
 
-Status: WIP — gate: the federation end-to-end test runs phase 3 for both sides from outside
+Status: not measured as a whole (run `8cd5b71721aa-20261114T043329-1599826`, the federation test environment's full matrix on `main` at 8cd5b717: `nothing-hand-written` passed phase 3 on both sides with `FED_ROUTER_DOCKER_HOST` withheld; no scenario checks that the hosts hold no `goat` binary and no signing key) — gate: the federation end-to-end test runs phase 3 for both sides from outside
 the edge and core hosts, with no `goat` binary, no signing key and no `FED_ROUTER_DOCKER_HOST`
 on either host, and the packages pass lint and compose as before.
 
@@ -146,9 +146,9 @@ package back. goatbuilder instead measures both hosts from the operator's machin
 
 ## Phase 3 in two halves
 
-Status: WIP — gate: goatbuilder 1.0 gate row B10, a scenario with two drivers per sovereign
+Status: not built: the edge driver's run is not built (goatbuilder 1.0 gate row B10), and `two-drivers-per-sovereign` fails in run `8cd5b71721aa-20261114T043329-1599826`, the federation test environment's full matrix on `main` at 8cd5b717 — gate: goatbuilder 1.0 gate row B10, a scenario with two drivers per sovereign
 in which the edge driver has no route to the core (the contract is
-docs/design/federation-two-drivers.md, in review).
+docs/design/federation-two-drivers.md).
 
 Some sites have no machine that reaches both the edge host and the core host. Phase 3's
 measurement then runs in two halves, one on each machine:

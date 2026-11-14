@@ -16,7 +16,7 @@ caller passes `None` until allocation lands, and preflight.py reads the group's
 own vars and then the roles' port defaults); the phase-10 restart step that calls
 the slot recheck. **Not measured:** no run against real hosts.
 
-Status: WIP — gate: the federation test environment's port-collision, wide-store
+Status: measured on the `goatbuilder` avenue (run `8cd5b71721aa-20261114T043329-1599826`, the federation test environment's full matrix on `main` at 8cd5b717: `preflight-port-in-use`, `preflight-store-wider` and `preflight-slot-list` refuse at phase 1, and `nothing-hand-written` passes phase 1 with no input exported by hand); not measured on the script avenue, which the matrix does not run — gate: the federation test environment's port-collision, wide-store
 and slot-drift scenarios refuse at phase 1 on this branch, and a clean two-party
 peering passes phase 1 with no input exported by hand, on both avenues.
 
@@ -86,10 +86,10 @@ character is not exported either, because the phase commands run through
 | `FED_CA_KEY` | phase 8 | `goat_federation_ca_key` (a plaintext PEM path) |
 | `FED_CA_KEY_FROM_AGE` | phase 8 | `goat_federation_ca_key_from_age: true` gives `1`; unset otherwise (phase 8 then opens no age-encrypted key) |
 | `FED_CA_KEY_AGE`, `FED_AGE_IDENTITY` | preflight, phase 8 | `goat_federation_ca_key_age`, else `<deploy.state_dir>/<site>-ca/ca.key.age` (`portal_ca_key_src`); `goat_federation_age_identity`, else `~/.config/age/keys.txt` |
-| `FED_CORE_SAN` | preflight, phase 8 | the names the core certificate carries, in this order without duplicates: the addresses the edge dials (`goat_zenoh_edge_core_endpoints` in any file of `group_vars/<edge>/`, the hand-written `deployment.yml` or the rendered `peering-deployment.yml`), the address the core's republisher dials (`goat_fed_republisher_core_endpoint` in `group_vars/<core>/` or `group_vars/all/`), and the core's address from `site_values::core_address` (the peering's `hosts: core`, else the `ansible_host` of the one host of `[<core group>]` in the peering inventory), the same function the rendered halves use. Phase 8 mints no core certificate without it, so preflight refuses (GB-130) when none of these declares one, naming each place it looked. Status: WIP — gate: scenario nothing-hand-written mints the core certificate with FED_CORE_SAN unset |
+| `FED_CORE_SAN` | preflight, phase 8 | the names the core certificate carries, in this order without duplicates: the addresses the edge dials (`goat_zenoh_edge_core_endpoints` in any file of `group_vars/<edge>/`, the hand-written `deployment.yml` or the rendered `peering-deployment.yml`), the address the core's republisher dials (`goat_fed_republisher_core_endpoint` in `group_vars/<core>/` or `group_vars/all/`), and the core's address from `site_values::core_address` (the peering's `hosts: core`, else the `ansible_host` of the one host of `[<core group>]` in the peering inventory), the same function the rendered halves use. Phase 8 mints no core certificate without it, so preflight refuses (GB-130) when none of these declares one, naming each place it looked. Status: measured (run `8cd5b71721aa-20261114T043329-1599826`, the federation test environment's full matrix on `main` at 8cd5b717: `nothing-hand-written` passed phase 8 with `FED_CORE_SAN` withheld) — gate: scenario nothing-hand-written mints the core certificate with FED_CORE_SAN unset |
 | `FED_CORE_CN` | phase 8 | the CN the edge pins for its core: `goat_zenoh_edge_core_cn` in `group_vars/<edge>/` (the rendered `peering-deployment.yml` included), else the core's site-inventory name (`site_values::phase8_core_cn`) |
-| `FED_DECLARATION` | preflight, phase 3 | `ops/federation/<environment>/peerings/<with>/federation.toml`, when `goatbuilder federate allocate` generated it (its first line is the generated marker); preflight's declaration check (GB-144) reads the same file (`declaration_path` in preflight.py, which also finds it without FED_DECLARATION on the script avenue), and phase 3 passes it to `init --declaration`, so nothing is copied into the goat context. Unset, init reads the goat context's `federation.toml`. Status: WIP — gate: scenario nothing-hand-written runs phase 3 with no hand-copied context federation.toml |
-| `FED_ROUTER_DOCKER_HOST` | preflight, phase 3 | `ssh://<user>@<core>` from the peering's `hosts: core` (`hosts: user`, else `deploy.ssh_user`); else `ssh://<ansible_user>@<ansible_host>` of the one host in `[<core group>]` of the peering inventory, `peering-edges.ini` or the per-peering `peering-<edge group>.ini` (`deploy.ssh_user` when the host names no user). Nothing when the group has several hosts. When nothing gives it, the driver exports `FED_ROUTER_DOCKER_HOST_SOURCES`, and the core-router refusal (GB-138) names each place it looked. Status: WIP — gate: nothing-hand-written finds the core router with FED_ROUTER_DOCKER_HOST unset |
+| `FED_DECLARATION` | preflight, phase 3 | `ops/federation/<environment>/peerings/<with>/federation.toml`, when `goatbuilder federate allocate` generated it (its first line is the generated marker); preflight's declaration check (GB-144) reads the same file (`declaration_path` in preflight.py, which also finds it without FED_DECLARATION on the script avenue), and phase 3 passes it to `init --declaration`, so nothing is copied into the goat context. Unset, init reads the goat context's `federation.toml`. Status: measured (run `8cd5b71721aa-20261114T043329-1599826`, the federation test environment's full matrix on `main` at 8cd5b717: `nothing-hand-written` passed phase 3; no goat context holds a peering's federation.toml there) — gate: scenario nothing-hand-written runs phase 3 with no hand-copied context federation.toml |
+| `FED_ROUTER_DOCKER_HOST` | preflight, phase 3 | `ssh://<user>@<core>` from the peering's `hosts: core` (`hosts: user`, else `deploy.ssh_user`); else `ssh://<ansible_user>@<ansible_host>` of the one host in `[<core group>]` of the peering inventory, `peering-edges.ini` or the per-peering `peering-<edge group>.ini` (`deploy.ssh_user` when the host names no user). Nothing when the group has several hosts. When nothing gives it, the driver exports `FED_ROUTER_DOCKER_HOST_SOURCES`, and the core-router refusal (GB-138) names each place it looked. Status: measured (run `8cd5b71721aa-20261114T043329-1599826`, the federation test environment's full matrix on `main` at 8cd5b717: `nothing-hand-written` passed phase 3 with `FED_ROUTER_DOCKER_HOST` withheld) — gate: nothing-hand-written finds the core router with FED_ROUTER_DOCKER_HOST unset |
 | `FED_SLOT_DB` or `FED_SLOT_REGISTRY_STORE` with `FED_SLOT_PG_SSH` | preflight | not derived; `portal_store` and `portal_db_*` in `group_vars/<env>_hosts/` are read for the rest |
 
 Preflight proves the age-encrypted key opens and matches the certificate,
@@ -108,7 +108,7 @@ fills an input nothing else derived, and replaces one derived only by convention
 (for example the enrollment CA path); a value in the edge group's group_vars
 still wins over it, and a variable set in the environment wins over both.
 
-Status: WIP — gate: the federation test environment's nothing-hand-written
+Status: not measured as stated: `nothing-hand-written` declares none of these, and its list of what was written by hand in run `8cd5b71721aa-20261114T043329-1599826`, the federation test environment's full matrix on `main` at 8cd5b717 names none of them, since the tree derives them — gate: the federation test environment's nothing-hand-written
 scenario no longer lists these variables when its deployment declares them.
 
 | Declaration | Gives |
@@ -230,9 +230,9 @@ immediately before the restart:
 
 ## By side
 
-Status: WIP — gate: goatbuilder 1.0 gate row B10, a scenario with two drivers per sovereign in
+Status: not built: the edge driver's run is not built (goatbuilder 1.0 gate row B10), and `two-drivers-per-sovereign` fails in run `8cd5b71721aa-20261114T043329-1599826`, the federation test environment's full matrix on `main` at 8cd5b717 — gate: goatbuilder 1.0 gate row B10, a scenario with two drivers per sovereign in
 which the edge driver holds no CA key and has no route to the core (the contract is
-docs/design/federation-two-drivers.md, in review).
+docs/design/federation-two-drivers.md).
 
 **Built** (offline tests; not yet used by the one command, and not run on two machines):
 `preflight.py <peering> --work <dir> --side edge|core` runs one side's checks, for a peering

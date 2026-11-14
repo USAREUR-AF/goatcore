@@ -45,7 +45,7 @@ helper's message.
 
 A later, separate change may make the opt-in the default.
 
-Status: WIP — gate: on the federation test environment, phase 8 issues a fresh
+Status: built; not measured: no scenario in the federation test environment opens the CA key from `ca.key.age` — gate: on the federation test environment, phase 8 issues a fresh
 peering's leaves with only the deployment's `ca.key.age`, its age identity and
 the opt-in declared, and leaves no key file behind; without the opt-in nothing is
 decrypted.
@@ -86,7 +86,7 @@ core, and phase 12 refused with "NO connection to any core endpoint". Something
 other than a regular file at that path (such as that directory) is refused by
 name before anything is issued. `--rotate` does not replace it.
 
-Status: WIP — gate: nothing-hand-written on the federation test environment
+Status: measured (run `8cd5b71721aa-20261114T043329-1599826`, the federation test environment's full matrix on `main` at 8cd5b717: `nothing-hand-written` passed phases 11 to 12 with the rendered edge half, and its list of what was written by hand names no `our-ca.pem`) — gate: nothing-hand-written on the federation test environment
 passes phase 12 with the rendered edge half and no hand-placed `our-ca.pem`.
 
 ## Explicit replacement
@@ -127,7 +127,7 @@ environment is not yet measured with this change.
 
 ## Installing on the edge
 
-Status: WIP — gate: the federation e2e matrix passing with
+Status: not measured: no scenario sets `goat_zenoh_edge_install_certs: true`, and the run on two real environments waits on goatbuilder 1.0 gate row B9 — gate: the federation e2e matrix passing with
 `goat_zenoh_edge_install_certs: true` on both sides, then a run on two real
 environments with no certificate file copied by hand.
 

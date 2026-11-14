@@ -15,7 +15,7 @@ key. Gate row B10 asks that `goatbuilder federate` can be driven from the two, w
 approval, the run journal and resume holding across them. This document says how, and what has to
 be built for it, because today the command assumes one machine reaches both.
 
-Status: WIP — gate: a scenario with two drivers per sovereign, in which the edge driver holds no
+Status: not built: the edge driver's run is not built (goatbuilder 1.0 gate row B10), and `two-drivers-per-sovereign` fails in run `8cd5b71721aa-20261114T043329-1599826`, the federation test environment's full matrix on `main` at 8cd5b717 — gate: a scenario with two drivers per sovereign, in which the edge driver holds no
 CA key and has no route to the core, passes every required acceptance check (goatbuilder 1.0 gate
 row B10).
 

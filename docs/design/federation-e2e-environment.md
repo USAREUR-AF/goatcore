@@ -1,6 +1,6 @@
 # Federation e2e environment
 
-Status: WIP — gate: the full scenario matrix runs from `ops/federation-e2e/env` against `main` with every scenario built, and the fast subset runs in `.github/workflows/federation-e2e.yml`.
+Status: built; not measured as a whole: the full matrix runs from `ops/federation-e2e/env` against `main` (run `8cd5b71721aa-20261114T043329-1599826`, the federation test environment's full matrix on `main` at 8cd5b717: 28 passed, 7 failed, 3 blocked, 2 skipped), and the fast subset runs in `.github/workflows/federation-e2e.yml`, but not every scenario is built (`back-out-one-peering`'s two-peering form and `module-revert` are skipped as not built) — gate: the full scenario matrix runs from `ops/federation-e2e/env` against `main` with every scenario built, and the fast subset runs in `.github/workflows/federation-e2e.yml`.
 
 The federation e2e environment runs synthetic sovereign environments on one Linux machine and federates them through the real driver, so that any goatcore ref can be measured against a fixed list of scenarios. Each scenario states its pass condition and ends in one of five outcome words. The environment extends `ops/federation-e2e/run.sh`, the two-sovereign end-to-end test; run.sh keeps working and now calls the same engine.
 

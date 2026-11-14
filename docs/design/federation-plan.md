@@ -16,7 +16,7 @@ stage); the allocated per-peering values (the plan reads the group's vars and
 the roles' defaults until allocation is wired in); the host firewall input when a value resolves only inside a play (that host is BLOCKED). **Not measured:** no run against real
 hosts.
 
-Status: WIP — gate: on the federation test environment, a plan of a clean
+Status: built; not measured: no scenario runs the plan twice for the same hash or rechecks it after phase 9 renders again — gate: on the federation test environment, a plan of a clean
 two-party peering is READY with the same hash on two runs, and after phase 9
 renders again the recheck refuses with GB-200 naming `rendered`.
 
