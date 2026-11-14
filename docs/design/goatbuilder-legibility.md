@@ -23,7 +23,7 @@ Nothing goatbuilder does or decides is hidden from the person running it. A pers
 
 **C11.** For every action the tool takes, its command, its inputs with their sources, and its reason can be read from the tool before, during and after the run.
 
-C11 is a new group of the 1.0 gate. Its proof is the conformance test below: C11 holds when all four checks pass for all four verb families and the known-failing file is empty. Step 8 records C11 beside C1 to C10 in [`goatbuilder.md`](goatbuilder.md) and in [`06-contract.md`](../reference/goatbuilder/06-contract.md).
+C11 is a new group of the 1.0 gate. Its proof is the conformance test below: C11 holds when all four checks pass for all four verb families and the known-failing file is empty. Step 8 records C11 beside C1 to C10 in [`goatbuilder.md`](goatbuilder.md) and in [`06-contract.md`](../reference/goatbuilder/06-contract.md): **built**, the clause is written in both, naming the test.
 
 Decided with the clause:
 

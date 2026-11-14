@@ -3,12 +3,14 @@
 Every declarative verb makes ten guarantees, C1 to C10. When a guarantee cannot
 be met, the verb refuses, names the reason and prints the recovery command. It
 never proceeds on a guess. The contract is enforced in one module of the binary
-that every declarative verb calls.
+that every declarative verb calls. An eleventh clause, C11, says that what the
+tool does can always be read from the tool; it is written and tested, and does
+not hold yet (below).
 
 | Field | Value |
 |---|---|
 | Canon | [goatbuilder.md](../../design/goatbuilder.md) §"The deploy contract" |
-| Tests | [goatbuilder-conformance.md](../../design/goatbuilder-conformance.md); every clause, C1 to C10, is built as a test on a fixture |
+| Tests | [goatbuilder-conformance.md](../../design/goatbuilder-conformance.md); every clause, C1 to C10, is built as a test on a fixture; C11's test is `crates/goatbuilder/tests/legibility.rs` |
 
 ## The ten guarantees
 
@@ -41,6 +43,30 @@ that every declarative verb calls.
 |---|---|---|
 | **C9** | **Reversible.** A rollback is a new declaration of the prior digest and travels the same converge-and-verify path | `rollback` writes a row with `action: rollback` and the prior ref |
 | **C10** | **Machine contract.** Every verb is non-interactive when asked, has a typed exit code, and renders a table, JSON or YAML from one flag | `-o json`; `--yes`; GB-008 without a terminal |
+
+**Legibility**
+
+| | Guarantee | What you see |
+|---|---|---|
+| **C11** | **Legible.** For every action the tool takes, its command, its inputs with their sources, and its reason can be read from the tool before, during and after the run | the dry run prints each command the real run will start; each run of a verb that drives hosts writes `<state>/runs/<id>/run.json`; `goatbuilder runs` and `goatbuilder show <run>` read it |
+
+C11's test, `crates/goatbuilder/tests/legibility.rs`, runs standup, join-node,
+deploy and federate on stand-ins that reach no host and checks four things for
+each:
+
+- (a) every process the tool started is in the run record, with its command and
+  a log file;
+- (b) every value in a command line is in the record's inputs, with where it
+  came from;
+- (c) the commands the dry run prints at a terminal are the ones the real run
+  starts, in order;
+- (d) every phase has an entry in the phase catalog, and every document path
+  the tool prints exists.
+
+C11 holds when all four pass for all four verbs. Today some do not: the ones
+that fail are listed in `crates/goatbuilder/tests/legibility-known-failing.txt`,
+and that file, not this page, is the current list. The design is
+[goatbuilder-legibility.md](../../design/goatbuilder-legibility.md).
 
 ## Declarative and read-only verbs
 
