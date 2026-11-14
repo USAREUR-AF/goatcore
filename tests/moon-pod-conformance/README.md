@@ -13,7 +13,7 @@ A conformance smoke-test suite that walks the 24-hour deployment path against a 
 
 Runs against:
 
-- `goat-moon-open-pod` — continuously in CI on every commit to that repo.
+- `goat-moon-open-pod` — meant to run in CI on every commit to that repository. Not wired yet: the suite is a skeleton (Status above).
 - Vendor-built moon-pods — vendors run locally to self-check before requesting evaluation.
 - Partner-built moon-pods — same as vendor-built.
 - Goat-side at partnership-onboarding time — we run it as part of conformance evaluation.
