@@ -112,3 +112,18 @@ The `|| workflow_dispatch` branch lets operators always force a run via `gh work
 `zenoh-base-image.yml` and `zenoh-image.yml` were deleted in the ADR 0858 step 5 change-set (2026-05-18). The substrate now pulls upstream `eclipse/zenoh:1.9.0` directly + bind-mounts the upstream-published rocksdb backend `.so`. Five image workflows remain.
 
 If we end up with > 10 image workflows, factor `detect-relevant-changes` into a reusable workflow at `.github/workflows/_path-relevance.yml` to deduplicate the boilerplate. Five workflows is below the bar; inline copy is more readable.
+
+## goatbuilder-pr: a pull request of documents only (2026-11-14)
+
+**Built.** `goatbuilder-pr.yml` runs on any change under `docs/`, because `crates/goatbuilder/tests/doc_configs.rs` validates every whole `goatbuilder.yaml` example in any document. For a pull request that changes nothing else, that test is the only gate there that reads the change, so the workflow now runs only it.
+
+- **Which change counts.** A first job, `scope`, reads the pull request's whole diff against the base it merges into (`git diff --name-status HEAD^1 HEAD` on the merge commit). This is not the latest push's delta that the image guard above reads: the question here is what the pull request changes, not what one push changed. `ops/ci/goatbuilder-pr-scope.sh` answers `docs-only` only when every changed path is an added or edited document under `docs/`, or a `*.md` file outside `crates/`, `ops/`, `tests/` and `.github/`. It answers `full` for anything else:
+  - a path under `docs/tutorials/`: the tutorials' rehearsals run as written, and `tests/goatlite_budget.rs` reads `00-goatlite.md`;
+  - a path under `docs/reference/goatbuilder/`: the command reference is regenerated and compared;
+  - a document deleted, renamed, copied or changed in type, because an error or phase catalog entry may name its path;
+  - an empty diff.
+
+  Its `--self-test` runs first in the same step.
+- **The required checks still report.** `check + clippy + test` runs for every pull request. Each of its steps is conditioned on the scope, so for documents only it restores the cargo caches (restore only, never saving a partial build under the full run's key) and runs `cargo test -p goatbuilder --test doc_configs`. `macOS test (unit, golden, flows)` is skipped by its job-level `if`, which GitHub counts as passed for a required check. Both jobs use `!cancelled()`, and anything other than exactly `docs-only` means every gate. So a `scope` job that fails or prints nothing runs everything; it never skips a check.
+- **CodeQL is not part of this.** `codeql.yml` already starts only on Go, Python, JavaScript and TypeScript paths. The `Analyze (go)`, `Analyze (python)` and `Analyze (javascript-typescript)` runs a documents-only pull request shows come from GitHub's managed Code Quality scan (workflow name `CodeQL - Code Quality`), which no file in this repository configures. Only a repository administrator can turn it off or filter it.
+- **Measured.** Before: on #681 (an ADR and `INDEX.md`), each of the two `goatbuilder-pr` jobs took 5.2 minutes. After: not measured yet; the first documents-only pull request that runs this workflow measures it.

@@ -39,6 +39,7 @@ on:
       - 'ops/scripts/fastlane.sh'
       - 'ops/scripts/pr-land.sh'
       - '.github/workflows/goatbuilder-pr.yml'
+      - 'ops/ci/goatbuilder-pr-scope.sh'
       - 'crates/goat-errors/**'
       - 'crates/goat-federation/**'
       - 'crates/goat-cli/src/cmd/federate.rs'
@@ -123,21 +124,54 @@ defaults:
     working-directory: crates
 
 jobs:
+  # A pull request that changes only documents no gate here reads, beyond the
+  # documents' configuration examples, runs tests/doc_configs.rs alone:
+  # ops/ci/goatbuilder-pr-scope.sh says which paths those are. Both required
+  # checks still report: "check + clippy + test" runs that one test, and the
+  # macOS job is skipped by its `if`, which GitHub counts as passed. Any other
+  # change, and any scope that is not exactly `docs-only` (this job failing
+  # included), runs every gate.
+  scope:
+    name: scope (documents only, or every gate)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: The pull request's changes, against the base it merges into
+        id: scope
+        working-directory: ${{ github.workspace }}
+        run: |
+          ops/ci/goatbuilder-pr-scope.sh --self-test
+          # A pull request's checkout is its merge commit: its first parent is the base.
+          s=$(git diff --name-status HEAD^1 HEAD | ops/ci/goatbuilder-pr-scope.sh)
+          echo "scope=$s" >> "$GITHUB_OUTPUT"
+
   host:
     name: check + clippy + test
+    needs: scope
+    # Runs for every pull request, documents only included: its steps choose.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: read
     timeout-minutes: 20
+    env:
+      FULL: ${{ needs.scope.outputs.scope != 'docs-only' }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/apt-failover
+        if: env.FULL == 'true'
       - name: Install Rust toolchain (1.100.0 + clippy)
         uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: clippy
       - name: Cache cargo registry + git deps
+        if: env.FULL == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -148,36 +182,70 @@ jobs:
           restore-keys: |
             cargo-goatbuilder-pr-
       - name: Cache cargo build target
+        if: env.FULL == 'true'
         uses: actions/cache@v4
         with:
           path: crates/target
           key: target-goatbuilder-pr-${{ hashFiles('crates/Cargo.lock') }}
           restore-keys: |
             target-goatbuilder-pr-
+      # Documents only: the same caches, restored and never saved, so a short
+      # run never writes a partial build under the key the full run reads.
+      - name: Restore the cargo registry (documents only)
+        if: env.FULL != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-goatbuilder-pr-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            cargo-goatbuilder-pr-
+      - name: Restore the cargo build target (documents only)
+        if: env.FULL != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: crates/target
+          key: target-goatbuilder-pr-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            target-goatbuilder-pr-
+      - name: Documents only — every whole configuration example the documents ship validates (tests/doc_configs.rs)
+        if: env.FULL != 'true'
+        run: cargo test -p goatbuilder --test doc_configs
       - name: goatbuilder ships no environment or programme name
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: |
           python3 ops/ci/check-goatbuilder-portable.py --self-test
           python3 ops/ci/check-goatbuilder-portable.py
       - name: cargo check
+        if: env.FULL == 'true'
         run: cargo check -p goatbuilder --all-targets
       - name: cargo clippy (deny warnings)
+        if: env.FULL == 'true'
         run: cargo clippy -p goatbuilder -p goat-federation -p goat-fun -p goat-selfupdate --all-targets -- -D warnings
       - name: Install the Python the pins and promote flows render with
+        if: env.FULL == 'true'
         run: pip install --quiet pyyaml jsonschema
       - name: Mark the time before the tests, for the state-directory guard
+        if: env.FULL == 'true'
         run: touch "$RUNNER_TEMP/goatbuilder-tests-start"
       - name: cargo test (unit, golden commands, tutor, the C11 conformance test, A2 configuration compatibility, the docs' config examples; every test target but the flows)
+        if: env.FULL == 'true'
         run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test verify_release --test federate_verbs --test legibility --test legibility_one_door --test config_compat --test deprecation --test deploy_success --test doc_configs --test status_real_hosts
       - name: cargo test -p goat-fun (the shared hidden runner, goat and goatbuilder bound) and goat-federation (the verbs goatbuilder runs)
+        if: env.FULL == 'true'
         run: cargo test -p goat-fun -p goat-selfupdate -p goat-federation
       - name: The one-door allow-list only shrinks, against the pull request's base
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: |
           python3 ops/ci/check-one-door-allow-shrinks.py --self-test
           git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
           python3 ops/ci/check-one-door-allow-shrinks.py --base FETCH_HEAD
       - name: cargo test (whole-flow integration; a skipped flow fails the job)
+        if: env.FULL == 'true'
         run: |
           set -o pipefail
           cargo test -p goatbuilder --test flows -- --nocapture 2>&1 | tee /tmp/flows.log
@@ -187,24 +255,30 @@ jobs:
       # checksums; only a cache miss downloads, and fetch.sh refuses a download
       # whose SHA-256 is not the pin. REQUIRED=1: a missing binary fails the job.
       - name: Cache the released goatbuilder binaries the upgrade test runs
+        if: env.FULL == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cache/goatbuilder-upgrade
           key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
       - name: Fetch the released binaries, checked against their pins
+        if: env.FULL == 'true'
         run: goatbuilder/tests/upgrade/fetch.sh ~/.cache/goatbuilder-upgrade
       - name: cargo test (upgrade, gate rows E1, E2 and E3)
+        if: env.FULL == 'true'
         env:
           GOATBUILDER_UPGRADE_REQUIRED: '1'
         run: GOATBUILDER_UPGRADE_DIR="$HOME/.cache/goatbuilder-upgrade" cargo test -p goatbuilder --test upgrade --test upgrade_federation --test upgrade_update
       - name: The tests wrote nothing into the real state directory
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: bash ops/ci/check-goatbuilder-tests-leave-home.sh --after "$RUNNER_TEMP/goatbuilder-tests-start"
       - name: The promise — commands and documents of the last release still hold (A3, A4)
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         # The baseline is ops/goatbuilder/compat/ (its README says how a release moves it).
         run: bash ops/ci/check-goatbuilder-compat.sh crates/target/debug/goatbuilder
       - name: Every message has a translation in every shipped language
+        if: env.FULL == 'true'
         working-directory: .
         run: |
           python3 ops/scripts/translate-ftl.py --self-test
@@ -214,6 +288,7 @@ jobs:
             exit 1
           }
       - name: Parity gate — `rollback --list/--status` read exactly what rollback.sh reads
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         timeout-minutes: 8   # an apt mirror stall has no timeout of its own
         run: |
@@ -235,6 +310,7 @@ jobs:
           chmod +x "$RUNNER_TEMP/myq/yq"
           PATH="$RUNNER_TEMP/noreach:$RUNNER_TEMP/myq:$PATH" ops/goatbuilder/parity-rollback.sh crates/target/debug/goatbuilder
       - name: Parity gate — `history` lists exactly what rollback.sh --list lists
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         timeout-minutes: 8
         env:
@@ -244,9 +320,11 @@ jobs:
           ops/goatbuilder/parity-history.sh --self-test
           PATH="$RUNNER_TEMP/noreach:$PATH" ops/goatbuilder/parity-history.sh crates/target/debug/goatbuilder zagros_dev
       - name: Parity gate — both avenues refuse an incomplete ledger verification on the real path (#1545)
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: ops/goatbuilder/parity-verify-refusals.sh crates/target/debug/goatbuilder
       - name: End state — the model's self-test, both avenues grade the fixtures alike (ADR 1206)
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: |
           python3 ops/goatbuilder/endstate/endstate.py --self-test
@@ -255,66 +333,82 @@ jobs:
           # catalog-wide run needs the roles goatstuff carries, so it runs on an assembled tree
           python3 ops/ci/check-role-honours-presence-flag.py --self-test
       - name: Fresh source on an assembled tree — goatcore at goatcore.ref plus an overlay is judged against that pair (C3)
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: ops/ci/test-source-of-record.sh
       - name: Parity gate — `fastlane --dry-run` checks exactly what fastlane.sh checks
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ github.token }}   # cannot read the GHCR packages API; both sides refuse at the digest step with the same words
         run: ops/goatbuilder/parity-fastlane.sh crates/target/debug/goatbuilder microscope sha-b7a1621
       - name: The ladder's readiness document and runtime-health gate (ops/release/tests)
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: |
           python3 ops/release/tests/test_readiness.py
           python3 ops/release/tests/test_runtime_health.py
       - name: Every input a standup reaches is set — the scan finds the fixture's gaps in one pass
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 ops/scripts/test_standup_required_inputs.py
       - name: Each phase runs through the shared runner; a goatlite's phase 1 creates its own secrets store (LP-007)
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 tests/test_standup_phase_run.py
       - name: The deploy secrets check names every env lookup the play reaches — role defaults and task lookups
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 -W error::ResourceWarning -m unittest tests/test_deploy_secrets_role_defaults.py tests/test_deploy_secrets_task_lookups.py -v
       - name: goatlite's render — the LAN surface, and lite.internet's internet-correct values (goatlite.md §6)
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_goatlite_render_*.py' -v
       - name: Phase 8 records the mesh IPs where the router certificate reads them, and re-mints only on a change
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 ops/scripts/test_standup_mesh_record.py
       - name: The autoinstall seed per node class carries the asserted LUKS layout, the role package lists and key-only access
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 ops/scripts/test_node_seed.py
       - name: Phase 12's dependency graph is valid, and both avenues run it in waves
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: |
           python3 ops/goatbuilder/standup-dag.py --check
           ops/goatbuilder/test-standup-waves.sh
       - name: Parity gate — `teardown --dry-run` plans exactly the teardown goat-teardown.sh plans
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         env:
           GOAT_MESH_PROBE: "0"
         run: ops/goatbuilder/parity-teardown.sh crates/target/debug/goatbuilder zagros_prod:zagros-prod zagros:uk zagros_dev:zagros-dev
       - name: Parity gate — `federate --dry-run` plans exactly the phases peering-standup.sh plans
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: ops/goatbuilder/parity-federate.sh crates/target/debug/goatbuilder hello-ally
       - name: Parity gate — `goatbuilder federate <verb>` answers exactly as `goat federate <verb>` over the conformance vectors
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: |
           (cd crates && cargo build -p goat-cli)
           ops/goatbuilder/parity-federate-verbs.sh crates/target/debug/goat crates/target/debug/goatbuilder
       - name: Every operator-facing phase sequence is whole numbers from 1, no gaps, no letters
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         env:
           GOAT_MESH_PROBE: "0"
         run: ops/ci/check-phase-numbering.sh crates/target/debug/goatbuilder
       - name: The standup rehearsal converges every class of the fixture, in phase order, on a copy
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: |
           cp -R ops/goatbuilder/fixtures/standup "$RUNNER_TEMP/standup-fixture"
           crates/target/debug/goatbuilder --mock "$RUNNER_TEMP/standup-fixture" standup dev --site alpha --ack "CI" --yes
           crates/target/debug/goatbuilder --mock "$RUNNER_TEMP/standup-fixture" status --env dev
       - name: The goatnet tutorials' rehearsals run as written and match the worked example's checkpoints
+        if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: ops/tutorials/check.sh crates/target/debug/goatbuilder
 
@@ -324,6 +418,9 @@ jobs:
   # shipped for Windows (goat-cli-pr.yml's windows job has no counterpart here).
   macos:
     name: macOS test (unit, golden, flows)
+    needs: scope
+    # Skipped, which counts as passed, only for a pull request of documents only.
+    if: ${{ !cancelled() && needs.scope.outputs.scope != 'docs-only' }}
     runs-on: macos-15
     timeout-minutes: 25
     steps:
