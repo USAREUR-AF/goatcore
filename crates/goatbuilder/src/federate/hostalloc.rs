@@ -686,6 +686,58 @@ mod tests {
         assert_eq!(readiness(&cmp, &[]).outcome, "SKIP");
     }
 
+    /// A SKIP says which case it is and what to do (#742): with no host, the
+    /// groups it looked in and the two ways to declare them; not verified,
+    /// each value with the key and the file it is read from, and how to make
+    /// it resolve.
+    #[test]
+    fn a_skip_says_which_case_and_the_route_to_pass() {
+        let w = tempfile::tempdir().unwrap();
+        let ours = p("velmara", "zagros");
+        // No host for this peering.
+        let r = repo("[meadow_edge]\nedge-m ansible_host=192.0.2.10\n");
+        let cmp = compare(
+            r.path(),
+            std::slice::from_ref(&ours),
+            &ours,
+            "velmara_edge",
+            &w.path().join("velmara"),
+            &mine(),
+        );
+        let row = readiness(&cmp, &[]);
+        assert_eq!(row.outcome, "SKIP", "{}", row.detail);
+        for want in [
+            "velmara_edge",
+            "velmara_core",
+            "goatbuilder federate allocate velmara",
+            "inventory/peering-velmara_edge.ini",
+            "ops/ansible/inventory/peering-edges.ini",
+            "make a new plan",
+        ] {
+            assert!(row.detail.contains(want), "{want}: {}", row.detail);
+        }
+        // Not verified: meadow shares our edge, and its interface is templated.
+        let r = repo(SHARED);
+        std::fs::write(
+            r.path()
+                .join("ops/ansible/group_vars/meadow_edge/peering.yml"),
+            "peering_wg_interface: \"{{ meadow_if }}\"\npeering_wg_listen_port: 51825\n",
+        )
+        .unwrap();
+        let (cmp, found) = run(r.path(), &w.path().join("velmara"), &mine());
+        let row = readiness(&cmp, &found);
+        assert_eq!(row.outcome, "SKIP", "{}", row.detail);
+        for want in [
+            "not verified",
+            "wireguard interface of meadow/pasture",
+            "group_vars/meadow_edge: peering_wg_interface is templated",
+            "goatbuilder federate allocate meadow",
+            "make a new plan",
+        ] {
+            assert!(row.detail.contains(want), "{want}: {}", row.detail);
+        }
+    }
+
     /// A conflict between two other peerings is not this peering's: it stays
     /// out of this plan.
     #[test]

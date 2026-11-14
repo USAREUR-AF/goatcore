@@ -2664,6 +2664,33 @@ mod tests {
         );
     }
 
+    /// A check the recheck does not rerun, recorded as SKIP, makes the plan
+    /// unready; the refusal and the plan view carry the row's detail, which
+    /// names the case and what to do (#742).
+    #[test]
+    fn a_skip_row_carries_its_detail_into_the_refusal_and_the_view() {
+        let r = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let mut p = planned(r.path(), &w.path().display().to_string());
+        let now = chrono::Utc::now();
+        p.created_at = now.to_rfc3339();
+        p.readiness = vec![Readiness {
+            check: "host-allocation".into(),
+            outcome: "SKIP".into(),
+            code: None,
+            detail: "not verified: the value named here".into(),
+        }];
+        assert_eq!(
+            unready_at(&p, now, 24),
+            ["host-allocation was SKIP when the plan was made: not verified: the value named here"]
+        );
+        let view = super::super::deploy::summary(&p, Path::new("/w/plan.json"));
+        assert!(
+            view.contains("readiness:  host-allocation SKIP: not verified: the value named here"),
+            "{view}"
+        );
+    }
+
     /// Private keys under <work>/pki are not hashed into the plan; the
     /// certificates are.
     #[test]
