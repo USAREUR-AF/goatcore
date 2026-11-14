@@ -29,12 +29,6 @@ check-no-live-secret.sh
 # on fixtures; a run on each pull request's own diff is not wired yet.
 check-warrant-narrowing.py
 
-# Its subject is not in this repository (the inspection tools live in
-# goatstuff); it fails here for that reason, not on a defect in this tree.
-check-netbird-service-identities.py
+# Its subject is not in this repository (netvis lives in goatstuff); it fails
+# here for that reason, not on a defect in this tree.
 check-netvis-client.js
-
-# Fails on main today. Each is fixed before it is wired, and its line goes in
-# the same change.
-check-netbird-user-sql.sh
-check-no-default-allow.sh

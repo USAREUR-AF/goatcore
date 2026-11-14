@@ -494,6 +494,12 @@ jobs:
         run: python3 ops/ci/check-workflow-discipline.py --self-test
       - name: every workflow keeps the CI discipline rules
         run: python3 ops/ci/check-workflow-discipline.py
+      - name: check-netbird-user-sql --self-test
+        run: bash ops/ci/check-netbird-user-sql.sh --self-test
+      - name: check-netbird-service-identities --self-test
+        run: python3 ops/ci/check-netbird-service-identities.py --self-test
+      - name: check-no-default-allow --self-test
+        run: bash ops/ci/check-no-default-allow.sh --self-test
       - name: tree guards (each runs; every failure is named)
         run: |
           set +e  # the step shell is bash -e; run every guard and name each failure
@@ -507,8 +513,11 @@ jobs:
             ops/ci/check-goatmap-groups-header.py \
             ops/ci/check-goatmap-no-hardcoded-site.sh \
             ops/ci/check-goatnet-ca-hygiene.py \
+            ops/ci/check-netbird-service-identities.py \
             ops/ci/check-netbird-url-container-pin.py \
+            ops/ci/check-netbird-user-sql.sh \
             ops/ci/check-no-bare-portal-key-lookup.sh \
+            ops/ci/check-no-default-allow.sh \
             ops/ci/check-no-docker-bridge-ip-pins.sh \
             ops/ci/check-no-goatnet-defaults.sh \
             ops/ci/check-no-live-secret-shape-test.sh \
