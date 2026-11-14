@@ -4,8 +4,8 @@
 #
 # COPY into the edge's and the core's group_vars (for example
 # group_vars/<peering>_edge/host-firewall.yml and group_vars/<peering>_core/host-firewall.yml).
-# Default is OFF; with it off the peering plays do not include the role and nothing
-# changes. Design: docs/design/peering-host-firewall.md. Role defaults:
+# Default is OFF. The peering plays require it on an edge: with it off they refuse
+# (GB-279) before changing anything on the edge. On a core it is opt-in. Design: docs/design/peering-host-firewall.md. Role defaults:
 # ops/ansible/roles/goat-host-firewall/defaults/main.yml.
 
 goat_host_firewall_baseline: false     # <-- the switch

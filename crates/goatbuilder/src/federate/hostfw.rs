@@ -31,6 +31,11 @@ use super::hostalloc::agreement_of;
 pub const RENDERER: &str =
     "ops/ansible/roles/goat-host-firewall/files/goat-host-firewall-render.py";
 
+/// The task every edge play runs first (GB-279): the peering plays require the
+/// baseline on an edge. The plan holds an edge to it only when the checkout
+/// carries it, as it reads the role's default from the checkout.
+pub const REQUIRE: &str = "ops/ansible/roles/goat-host-firewall/tasks/require.yml";
+
 /// The fields of `_hf_input.host` read from the live host. They never change
 /// the ruleset or its hash, and the plan cannot read them, so it leaves them out.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -48,10 +53,12 @@ pub struct HostFirewall {
     /// `ansible_host`, else the inventory name: a host that moves is a changed input.
     pub address: String,
     pub group: String,
-    /// NOT APPLICABLE (baseline off), PASS (rendered), or BLOCKED.
+    /// NOT APPLICABLE (baseline off on a core), PASS (rendered), or BLOCKED
+    /// (an edge with the baseline off is BLOCKED with GB-279).
     pub outcome: String,
     pub detail: String,
-    /// The renderer's refusal code (GB-210..215), when it refused.
+    /// The renderer's refusal code (GB-210..215) when it refused, or GB-279 for
+    /// an edge with the baseline off.
     #[serde(default)]
     pub code: Option<String>,
     /// The ruleset's sha256, as the renderer and the role print it.
@@ -1022,6 +1029,17 @@ pub fn entry(
         ruleset: None,
     };
     match baseline_on(c.repo, host) {
+        // The peering plays require the baseline on an edge: each edge play
+        // refuses first (roles/goat-host-firewall/tasks/require.yml, GB-279).
+        Ok(false) if profile == "edge" && c.repo.join(REQUIRE).is_file() => {
+            return HostFirewall {
+                code: Some("GB-279".into()),
+                ..base(
+                    "BLOCKED",
+                    "host firewall baseline: off (goat_host_firewall_baseline is not true), and the peering plays require it on an edge (GB-279): set goat_host_firewall_baseline: true and goat_host_firewall_management_sources in the edge's group_vars".into(),
+                )
+            }
+        }
         Ok(false) => {
             return base(
                 "NOT APPLICABLE",
@@ -1108,6 +1126,7 @@ mod tests {
         for f in [
             RENDERER,
             "ops/ansible/roles/goat-host-firewall/defaults/main.yml",
+            REQUIRE,
             "ops/ansible/roles/goat-peering-wg/defaults/main.yml",
             "ops/ansible/roles/goat-peering-edge/defaults/main.yml",
             "ops/ansible/roles/goat-fed-republisher/defaults/main.yml",
@@ -1206,9 +1225,30 @@ mod tests {
         assert_eq!(core["peerings"], json!([]));
     }
 
-    /// Baseline off: NOT APPLICABLE, and the renderer is not called.
+    /// Baseline off on a core host: NOT APPLICABLE, and the renderer is not
+    /// called. The baseline stays opt-in on a core.
     #[test]
-    fn off_is_not_applicable() {
+    fn off_is_not_applicable_on_a_core() {
+        let f = fixture();
+        write(
+            f.repo
+                .path()
+                .join("ops/ansible/group_vars/all/host-firewall.yml"),
+            "goat_host_firewall_baseline: false\n",
+        );
+        let e = entry(&ctx(&f), "core-a", "192.0.2.20", "velmara_core", "core");
+        assert_eq!(e.outcome, "NOT APPLICABLE");
+        assert!(e.detail.starts_with("host firewall baseline: off"));
+        assert!(e.sha256.is_none() && e.ruleset.is_none());
+    }
+
+    /// Baseline off on an edge: BLOCKED with GB-279, as the edge plays refuse
+    /// it (roles/goat-host-firewall/tasks/require.yml), naming the setting.
+    /// The renderer is not called. A checkout whose edge plays do not carry
+    /// the requirement (an older tree, a stand-in repository) is NOT
+    /// APPLICABLE, as before.
+    #[test]
+    fn off_on_an_edge_is_blocked_with_gb_279() {
         let f = fixture();
         write(
             f.repo
@@ -1217,9 +1257,23 @@ mod tests {
             "goat_host_firewall_baseline: false\n",
         );
         let e = entry(&ctx(&f), "edge-a", "192.0.2.10", "velmara_edge", "edge");
-        assert_eq!(e.outcome, "NOT APPLICABLE");
-        assert!(e.detail.starts_with("host firewall baseline: off"));
+        assert_eq!(e.outcome, "BLOCKED");
+        assert_eq!(e.code.as_deref(), Some("GB-279"));
+        assert!(
+            e.detail.starts_with("host firewall baseline: off"),
+            "{}",
+            e.detail
+        );
+        assert!(
+            e.detail.contains("goat_host_firewall_baseline: true"),
+            "{}",
+            e.detail
+        );
         assert!(e.sha256.is_none() && e.ruleset.is_none());
+        std::fs::remove_file(f.repo.path().join(REQUIRE)).unwrap();
+        let e = entry(&ctx(&f), "edge-a", "192.0.2.10", "velmara_edge", "edge");
+        assert_eq!(e.outcome, "NOT APPLICABLE");
+        assert!(e.code.is_none());
     }
 
     /// Baseline on: the plan records the ruleset and the hash the renderer
