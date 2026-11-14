@@ -1094,6 +1094,33 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&own).unwrap(), "pulled\n");
     }
 
+    /// Inside a run, a spawned child whose stdout and stderr the caller pipes
+    /// keeps them for the caller: the runner does not take them to stream, so
+    /// `wait_with_output` reads what the child printed (the host firewall
+    /// renderer's JSON at deploy, federate/hostfw.rs).
+    #[test]
+    fn a_spawned_child_keeps_the_streams_its_caller_piped() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "deploy", vec![], None);
+        phase("10", "deploy", "");
+        let mut child = Cmd::new("sh")
+            .args(["-c", "cat; echo to-stderr >&2"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            let mut stdin = child.stdin.take().unwrap();
+            stdin.write_all(b"{\"sha256\": \"x\"}").unwrap();
+        }
+        let out = child.wait_with_output().unwrap();
+        end();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "{\"sha256\": \"x\"}");
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "to-stderr\n");
+    }
+
     #[test]
     fn a_line_from_the_checkout_carries_its_working_directory() {
         let base = Path::new("/srv/checkout");
