@@ -20866,6 +20866,11 @@
     {
       "name": "probe-ran",
       "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint CLOUDFLARE_API_TOKEN_PROD"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PROD_NB_API_TOKEN"
     },
     {
@@ -21507,7 +21512,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "CLOUDFLARE_API_TOKEN_PROD (secret, not shown)  environment $CLOUDFLARE_API_TOKEN_PROD"
+      "detail": "CLOUDFLARE_API_TOKEN_PROD (secret) not set now  environment $CLOUDFLARE_API_TOKEN_PROD (read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "input",
@@ -21567,6 +21573,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PROD_RELAY_SECRET"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint CLOUDFLARE_API_TOKEN_PROD"
     },
     {
       "name": "probe-ran",
@@ -22272,7 +22283,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "CLOUDFLARE_API_TOKEN_PROD (secret, not shown)  environment $CLOUDFLARE_API_TOKEN_PROD"
+      "detail": "CLOUDFLARE_API_TOKEN_PROD (secret) not set now  environment $CLOUDFLARE_API_TOKEN_PROD (read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "input",
