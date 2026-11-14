@@ -230,6 +230,7 @@ fn join_node(s: &Site, from: Option<&str>) -> (Output, serde_json::Value) {
         .env("GAMMA_NODE_PASS", &s.node_pass)
         .env("GAMMA_PG_PASS", PG_PASS)
         .env("ZAGROS_SIGNAL_FEDERATION_TOKEN", "token-stand-in")
+        .env("ALPHA_NB_API_TOKEN", "api-token-stand-in")
         .env("GOAT_NO_FUN", "1")
         .output()
         .unwrap();
@@ -644,4 +645,44 @@ fn a_joiners_core_node_gets_its_front_door_with_signal_federation_off() {
         !plays.iter().any(|l| l.contains("traefik-acme.yml")),
         "a LAN site gets no ACME door: {plays:#?}"
     );
+}
+
+/// Gate row I3: a joining site's core node runs its own mesh DNS replica, so
+/// a site cut off from the founder still resolves the goatnet's names
+/// (docs/adr/1235-per-site-mesh-dns-nameserver-groups.md). Phase 13 runs
+/// goat-coredns.yml on the node after Ory, with the site's own nameserver
+/// group (`gamma-mesh-dns`) and the goatnet's zone, and registers the group
+/// through the founder's management API, before phase 14.
+#[test]
+fn a_joiner_core_node_runs_its_mesh_dns_replica() {
+    let s = site();
+    let (out, _) = join_node(&s, Some("2"));
+    assert!(out.status.success(), "{}", says(&out));
+    let log = std::fs::read_to_string(&s.log).unwrap();
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    let dns = plays
+        .iter()
+        .position(|l| l.contains("goat-coredns.yml"))
+        .unwrap_or_else(|| panic!("no mesh DNS play ran for the joiner: {plays:#?}"));
+    let ory = plays
+        .iter()
+        .position(|l| l.contains("ory-deploy.yml"))
+        .unwrap();
+    assert!(ory < dns, "mesh DNS after Ory: {plays:#?}");
+    let p = plays[dns];
+    for want in [
+        " -l gamma-core-1 ",
+        "-e mesh_dns_zone_dir_name=alpha ",
+        "-e netbird_nameserver_group_name=gamma-mesh-dns ",
+        "-e netbird_api=https://zagros.example.org/api ",
+        "-e netbird_api_token_envvar=ALPHA_NB_API_TOKEN",
+    ] {
+        assert!(p.contains(want), "{want:?} in {p}");
+    }
+    let acceptance = log
+        .lines()
+        .position(|l| l.starts_with("acceptance "))
+        .unwrap();
+    let dns_line = log.lines().position(|l| l == p).unwrap();
+    assert!(dns_line < acceptance, "mesh DNS runs before phase 15");
 }

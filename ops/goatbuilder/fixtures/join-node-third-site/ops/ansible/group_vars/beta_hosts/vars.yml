@@ -13,6 +13,8 @@ auth_audience: netbird
 auth_oidc_config_endpoint: https://auth.zagros.example.org/.well-known/openid-configuration
 kratos_secrets_cookie_env: ZAGROS_KRATOS_COOKIE
 site_enrollment_dns: netbird.zagros.example.org
+site_id: beta
+site_dns_zone: zagros.example.org
 federation_peers_for_a: "federation-proxy:10001"
 signal_federation_proxy_enabled: true
 signal_federation_ingress_enabled: true
