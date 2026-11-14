@@ -13,8 +13,8 @@
 #   (xaa)       (core-xaa)       (xaa's edge)     (xab's)      (core-xab, stores)
 #
 # Our core has the RocksDB backend the role bind-mounts, the role's sovereign
-# ingress stores verbatim (sovereign_from over from/**, sovereign_from_xaa over
-# from/xaa/**; ops/ansible/roles/goat-zenoh/templates/config.json5.j2), the role's
+# ingress store verbatim (sovereign_from_xaa over from/xaa/**, one store per
+# partner and none shared, ADR 1234; ops/ansible/roles/goat-zenoh/templates/config.json5.j2), the role's
 # pinned router id and timestamping, and the store directory bind-mounted as the
 # role mounts it (templates/docker-compose.yml.j2). The edges are routers as
 # roles/goat-zenoh-edge renders them: no storage, scouting off, the partner-* and
@@ -287,7 +287,6 @@ dial() { # <host:port> <root ca label or ""> <connect label or "">
   echo '      backend_search_dirs: ["/opt/zenoh/plugins"],'
   echo '      volumes: { rocksdb: {} },'
   echo '      storages: {'
-  storage sovereign_from 'from/**'
   storage sovereign_from_xaa 'from/xaa/**'
   echo '      },'
   echo '    },'
@@ -383,12 +382,12 @@ fi
 
 url() { echo "http://127.0.0.1:$(docker port "$1" 8000/tcp | head -n 1 | sed 's/.*://')"; }
 crest=""; erest=""; frest=""; fcrest=""; clrest=""
-ready() { # both stores listed at our core, every router and the client answering
+ready() { # the partner's store listed at our core, every router and the client answering
   crest=$(url "$core"); erest=$(url "$edge"); frest=$(url "$far"); fcrest=$(url "$farcore"); clrest=$(url "$client")
   i=0
   while [ $i -lt 60 ]; do
     n=$(curl -fs -m 10 "$crest/@/local/router/status/plugins/storage_manager/storages/**" 2>/dev/null | grep -o 'storages/sovereign_from[a-z_]*' | sort -u | wc -l)
-    if [ "$n" -ge 2 ] && curl -fs -m 10 -o /dev/null "$erest/@/local/router" 2>/dev/null && curl -fs -m 10 -o /dev/null "$frest/@/local/router" 2>/dev/null &&
+    if [ "$n" -ge 1 ] && curl -fs -m 10 -o /dev/null "$erest/@/local/router" 2>/dev/null && curl -fs -m 10 -o /dev/null "$frest/@/local/router" 2>/dev/null &&
        curl -fs -m 10 -o /dev/null "$fcrest/@/local/router" 2>/dev/null && curl -fs -m 10 -o /dev/null "$clrest/@/local/**" 2>/dev/null; then
       return 0
     fi

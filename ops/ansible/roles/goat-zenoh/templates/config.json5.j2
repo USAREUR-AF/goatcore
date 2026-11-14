@@ -328,24 +328,13 @@
         // delivered to live subscribers, and then gone -- a later query answers
         // EMPTY and nobody can audit what a partner actually sent.
         //
-        // Its own store rather than a carve-out of another, for two reasons.
-        // Partner data is the one class we did not generate and may be obliged
-        // to delete on request or on peering termination, and its retention is a
-        // different decision from ours (zenoh_from_retention_days).
-        sovereign_from: {
-          key_expr: "from/**",
-          volume: {
-            id: "rocksdb",
-            dir: "{{ goat_zenoh_storage_path }}/sovereign_from",
-            on_closure: "do_nothing",
-            create_db: true,
-            db_recovery_enabled: false,
-          },
-          garbage_collect_period: 86400,
-          time_to_live: {{ zenoh_from_retention_days | int * 86400 * 1000 }},
-        },
-        // Preserve the existing store and its data. Each peer also needs an
-        // interest that fits its edge grant; from/** is wider than that grant.
+        // One store per partner and nothing shared (ADR 1234). Partner data is
+        // the one class we did not generate; its retention is its own decision
+        // (zenoh_from_retention_days, the same for every partner), and when a
+        // peering ends its store is dropped whole. Each store's interest also
+        // fits that partner's edge grant, which a from/** interest does not.
+        // The shared store on from/** that earlier releases rendered is gone:
+        // it held every partner's samples a second time.
 {% for _p in zenoh_sovereign_peerings %}
         "sovereign_from_{{ _p.sovereign }}": {
           key_expr: "from/{{ _p.sovereign }}/**",

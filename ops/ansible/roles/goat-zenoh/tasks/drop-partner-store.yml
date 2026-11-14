@@ -1,0 +1,97 @@
+---
+# Drop ONE backed-out partner's store whole (ADR 1234, rule 3), at the end of the
+# role's play. `goatbuilder federate backout <partner>` runs the play with
+# goat_zenoh_drop_partner_store=<partner> after taking the partner's entry out of
+# zenoh_sovereign_peerings, so the configuration this play rendered no longer
+# declares sovereign_from_<partner>.
+#
+# The directory is deleted only when all of these hold, and the play fails, keeping
+# it, when any does not:
+#   - the partner is no longer in zenoh_sovereign_peerings;
+#   - the live configuration no longer names the store;
+#   - the router is running, and started no earlier than that configuration was
+#     written (so it is not serving the store).
+# Another partner's store is never touched: the path is built from this one id.
+# A dry run (--check) deletes nothing and reads nothing on the router.
+#
+# This is the one place the role deletes a store directory (F-447 otherwise reports
+# and never deletes); a directory nothing declares that was not named here is still
+# only reported in .undeclared-stores.
+- name: Drop a partner's store | the partner is named, and no longer declared
+  ansible.builtin.assert:
+    that:
+      - goat_zenoh_drop_partner_store is string
+      - goat_zenoh_drop_partner_store is match('^[a-z0-9][a-z0-9-]{1,15}$')
+      - >-
+        (zenoh_sovereign_peerings | default([], true) | selectattr('sovereign', 'defined')
+         | selectattr('sovereign', 'equalto', goat_zenoh_drop_partner_store) | list | length) == 0
+    fail_msg: >-
+      goat_zenoh_drop_partner_store is '{{ goat_zenoh_drop_partner_store | default('') }}':
+      it must be a sovereign id (2-16 of a-z0-9-) that zenoh_sovereign_peerings no longer
+      lists. The store of a partner the core still admits is never dropped. Nothing was deleted.
+    quiet: true
+
+- name: Drop a partner's store | restart the router on the configuration rendered above
+  ansible.builtin.meta: flush_handlers
+
+- name: Drop a partner's store | the store's directory
+  ansible.builtin.stat:
+    path: "{{ goat_zenoh_storage_path }}/sovereign_from_{{ goat_zenoh_drop_partner_store }}"
+    get_checksum: false
+  register: _zdps_store
+
+- name: Drop a partner's store | the dry run deletes nothing
+  ansible.builtin.debug:
+    msg: >-
+      {{ _zdps_store.stat.path }} {{ 'would be deleted after the router restarts without it'
+      if _zdps_store.stat.exists else 'is absent' }}.
+  when: ansible_check_mode
+
+- name: Drop a partner's store | only after the router runs without it
+  when:
+    - not ansible_check_mode
+    - _zdps_store.stat.exists
+  block:
+    - name: Drop a partner's store | the live configuration
+      ansible.builtin.slurp:
+        src: "{{ goat_zenoh_config_path }}"
+      register: _zdps_cfg
+
+    - name: Drop a partner's store | when it was written
+      ansible.builtin.stat:
+        path: "{{ goat_zenoh_config_path }}"
+        get_checksum: false
+      register: _zdps_cfg_stat
+
+    - name: Drop a partner's store | whether the router runs, and since when
+      ansible.builtin.command:
+        argv: [docker, inspect, -f, "{{ '{{.State.Running}} {{.State.StartedAt}}' }}", "{{ zenoh_stack }}-router"]
+      register: _zdps_router
+      changed_when: false
+      failed_when: false
+
+    - name: Drop a partner's store | the router serves a configuration without the store
+      vars:
+        _words: "{{ (_zdps_router.stdout | default('')).split() }}"
+        _started: "{{ (_words[1] | default(''))[:19] }}"
+        _written: "{{ '%Y-%m-%dT%H:%M:%S' | strftime(_zdps_cfg_stat.stat.mtime | int, utc=true) }}"
+      ansible.builtin.assert:
+        that:
+          - ('"sovereign_from_' ~ goat_zenoh_drop_partner_store ~ '"') not in (_zdps_cfg.content | b64decode)
+          - ('/sovereign_from_' ~ goat_zenoh_drop_partner_store ~ '"') not in (_zdps_cfg.content | b64decode)
+          - _zdps_router.rc == 0
+          - (_words[0] | default('')) == 'true'
+          - _started is match('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$')
+          - _started >= _written
+        fail_msg: >-
+          {{ _zdps_store.stat.path }} was kept: the router must run on a configuration
+          that no longer declares it before it is deleted. {{ goat_zenoh_config_path }}
+          (written {{ _written }} UTC) {{ 'still names it' if ('sovereign_from_' ~ goat_zenoh_drop_partner_store ~ '"') in (_zdps_cfg.content | b64decode) else 'does not name it' }};
+          {{ zenoh_stack }}-router answers '{{ _zdps_router.stdout | default('') | trim }}'
+          (running, started). Run the back-out again once the router has restarted.
+        quiet: true
+
+    - name: Drop a partner's store | delete it whole
+      ansible.builtin.file:
+        path: "{{ _zdps_store.stat.path }}"
+        state: absent

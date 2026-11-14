@@ -1375,6 +1375,31 @@ pub fn backout_with(
             t.core_files.push(("peering_backout_core_tls_dir", tls));
         }
     }
+    // ADR 1234: on a goat-zenoh role core with no route of its own, the
+    // partner leaves the role's list in the file admission wrote it into, and
+    // the role's play drops its store whole once the router runs without it.
+    // An entry the back-out cannot take out (GB-237) is reported and kept.
+    let role_drop: Option<(super::admit_role::RoleCore, Result<String, String>)> = match &driver {
+        Some(_) => None,
+        None => super::admit::role_core(repo, &t.partner, |k| crate::federate::runenv::var(k).ok())
+            .map_err(|e| {
+                anyhow::Error::from(goat_errors::coded("GB-221", format!("{e} (GB-221)")))
+            })?
+            .and_then(|role| {
+                match super::admit_role::remove_peering(repo, &role.group, &t.partner) {
+                    Ok(None) => None,
+                    Ok(Some(text)) => Some((role, Ok(text))),
+                    Err(e) => Some((role, Err(e))),
+                }
+            }),
+    };
+    let drop_cmd = |role: &super::admit_role::RoleCore, check: bool| {
+        format!(
+            "{} -e goat_zenoh_drop_partner_store='{}'",
+            role.play_cmd(repo, check),
+            t.partner
+        )
+    };
     let mut checks = vec![row(
         "banner",
         true,
@@ -1436,6 +1461,17 @@ pub fn backout_with(
             ),
         ]
         .into_iter()
+        .chain(
+            role_drop
+                .iter()
+                .filter(|(_, plan)| plan.is_ok())
+                .map(|(role, _)| {
+                    (
+                        "take the partner out of the role's list, restart the core router without its store, then drop the store",
+                        drop_cmd(role, false),
+                    )
+                }),
+        )
         .enumerate()
         {
             checks.push(row("step", true, format!("{} {label}", n + 1), None));
@@ -1575,6 +1611,21 @@ pub fn backout_with(
             Some(false) => format!("keep {}: it is not the file apply generates for {}", rec_path.display(), t.partner),
         },
     ));
+    if let Some((role, plan)) = &role_drop {
+        let file = super::admit_role::peerings_file(repo, &role.group);
+        let shown = file
+            .strip_prefix(repo)
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+        extra.push((
+            "Partner's store".into(),
+            match plan {
+                Ok(_) => format!("take {} out of zenoh_sovereign_peerings in {shown} (commit the change through review), then run the role's play on [{}], dry run then deploy: the core router restarts without sovereign_from_{} and that store is then deleted whole (ADR 1234)", t.partner, role.group, t.partner),
+                Err(e) => format!("kept: {e}"),
+            },
+        ));
+    }
     if !s.kept.is_empty() {
         extra.push((
             "Kept: another peering's, or the deployment's configuration to remove by review".into(),
@@ -1848,6 +1899,71 @@ pub fn backout_with(
             }
         }
     }
+    // ADR 1234: the partner leaves the role's list, and the role's play
+    // restarts the router without its store, then deletes that store whole.
+    // A play that fails puts the list back, so running the back-out again
+    // repeats this step.
+    if core_done {
+        if let Some((role, Ok(text))) = &role_drop {
+            let file = super::admit_role::peerings_file(repo, &role.group);
+            let shown = file
+                .strip_prefix(repo)
+                .unwrap_or(&file)
+                .display()
+                .to_string();
+            let mut backups = Vec::new();
+            let mut done = super::admit::publish(
+                text.as_bytes(),
+                &file,
+                &mut backups,
+                &base.join("core/role/backup"),
+            )
+            .map_err(|e| format!("cannot write {shown} ({e})"));
+            if done.is_ok() {
+                for check in [true, false] {
+                    let cmd = drop_cmd(role, check);
+                    checks.push(row("cmd", true, cmd.clone(), None));
+                    if !exec(repo, &cmd)? {
+                        done = Err(format!(
+                            "the role's play on [{}] {}",
+                            role.group,
+                            if check {
+                                "failed its dry run"
+                            } else {
+                                "did not restart the router without the partner's store and drop it"
+                            }
+                        ));
+                        break;
+                    }
+                }
+            }
+            match done {
+                Ok(()) => checks.push(row(
+                    "core store",
+                    true,
+                    format!(
+                        "{} left zenoh_sovereign_peerings in {shown}: commit that change through review; the core router restarted without sovereign_from_{} and that store was deleted whole",
+                        t.partner, t.partner
+                    ),
+                    None,
+                )),
+                Err(e) => {
+                    let back = super::admit::put_back(&backups);
+                    core_done = false;
+                    checks.push(row(
+                        "core store",
+                        false,
+                        format!("{e}; {back} (GB-224)"),
+                        Some(format!(
+                            "read the play output above, then goatbuilder federate backout {}",
+                            t.partner
+                        )),
+                    ));
+                    exit = EXIT_NOT_CONVERGED;
+                }
+            }
+        }
+    }
     if !core_done {
         // The partner is still admitted on the core: keep its directory slot and
         // record until the core step has run, so the record matches the core.
@@ -1940,10 +2056,10 @@ pub fn backout_with(
                 "the core still admits {} through zenoh_sovereign_peerings (GB-227)",
                 t.partner
             ),
-            Some(
-                "remove the entry from the core's configuration by review and run the core play"
-                    .into(),
-            ),
+            Some(match &role_drop {
+                Some((_, Err(e))) => format!("the back-out could not take the entry out: {e}"),
+                _ => "the entry is declared where admission did not write it: remove it there by review and run the core play".into(),
+            }),
         ));
         exit = EXIT_NOT_CONVERGED;
     } else {

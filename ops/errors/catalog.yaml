@@ -3185,11 +3185,13 @@ entries:
   - code: GB-227
     tool: goatbuilder
     title: the core still admits the partner through its own configuration
-    what: "The core router was configured by roles/goat-zenoh from zenoh_sovereign_peerings, which declares the partner's subject and grants as sovereign-<partner> ids. That is the deployment's configuration, not a spliced fragment, so the back-out reports it and does not edit it. The partner has no edge left to reach the core through."
+    what: "The core router was configured by roles/goat-zenoh from zenoh_sovereign_peerings, which declares the partner's subject and grants as sovereign-<partner> ids. The back-out takes the partner's entry out of group_vars/<core router group>/peerings.yml, the file admission writes it into, and runs the role's play, which restarts the router without the partner's store and then deletes that store whole (ADR 1234). After the back-out the core still declares the partner: the entry is in a file admission does not write, the back-out could not rewrite peerings.yml (GB-237), the core was admitted through the deployment's own route (FED_CORE_*), or the role's play failed. The partner has no edge left to reach the core through."
     causes:
-      - the core admits the peering from zenoh_sovereign_peerings rather than from the spliced fragment
+      - the core admits the peering from a zenoh_sovereign_peerings entry the back-out did not write, or could not take out
+      - the role's play failed after the entry was taken out, and the entry was put back
     fixes:
-      - "remove the partner's entry from zenoh_sovereign_peerings by review and run the core play (a router restart)"
+      - "remove the partner's entry from zenoh_sovereign_peerings by review where it is declared and run the core play (a router restart); the role then reports sovereign_from_<partner> in .undeclared-stores"
+      - "after a failed play: read its output, then goatbuilder federate backout <partner> again"
     read: docs/operations/sovereign-federation-runbook.md
     exit: 3
     matches:

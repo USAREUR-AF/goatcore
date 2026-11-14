@@ -637,10 +637,11 @@ goat_zenoh_router_peer_deliver_key_exprs: ["**", "**/@adv/**"]
 # runbook rather than implying parity with partner onboarding.
 #
 # Empty by default. A goatnet with no declared peering renders no peer subject,
-# no peer rule and no `from/**` store — byte-identical to today.
+# no peer rule and no partner store — byte-identical to today.
 zenoh_sovereign_peerings: []
 
-# Retention for the `from/**` ingress store. Separate from the fabric default
+# Retention for each partner's ingress store, sovereign_from_<partner> on
+# `from/<partner>/**` (the same for every partner; ADR 1234). Separate from the fabric default
 # because partner data is the one class we did not generate and may be obliged
 # to delete on request or on peering termination. An unset horizon is how
 # "quarantine" becomes "keeps forever" -- ~0.5 GB/day/peering against a 30-day
@@ -650,17 +651,24 @@ zenoh_from_retention_days: 7
 # F-447 — undeclared ("orphaned") rocksdb store directories. A render that stops
 # declaring a storage leaves the directory and its samples on disk, still opened
 # by the fabric-crawler and covered by no retention rule. The role lists them on
-# every deploy and writes them to <storage_path>/.undeclared-stores; it NEVER
-# deletes, because a store the current render omits is not necessarily dead (an
-# unset zenoh_active_slot_anchors omits the entire slot pool).
+# every deploy and writes them to <storage_path>/.undeclared-stores; it never
+# deletes one of them, because a store the current render omits is not
+# necessarily dead (an unset zenoh_active_slot_anchors omits the entire slot pool).
+# The one exception is goat_zenoh_drop_partner_store (ADR 1234), set only by
+# `goatbuilder federate backout <partner>`: that partner's sovereign_from_<partner>
+# is deleted, after the router restarts without it (tasks/drop-partner-store.yml).
 #
 # Set true on a goatnet whose store base has been cleaned, to ratchet the state
 # in place: a deploy then REFUSES while any undeclared directory remains.
 zenoh_orphan_stores_fail: false
-
 
 # Container memory ceilings. The defaults are the values these limits had
 # when they were written into the compose template; a small host lowers them
 # in group_vars. ops/ci/check-compose-memory-is-variable.sh refuses a literal.
 goat_zenoh_memory: 4G  # the router container (was the template's inline default)
 goat_zenoh_memory_reservation: 512M  # the router container's memory reservation
+
+# Set only by `goatbuilder federate backout <partner>`, never in group_vars: the
+# partner whose store this run drops whole once the router runs without it
+# (ADR 1234; tasks/drop-partner-store.yml). Empty: nothing is dropped.
+goat_zenoh_drop_partner_store: ""

@@ -366,28 +366,7 @@ fn is_templated(v: &str) -> bool {
 /// a template, which no literal id matches.
 pub fn merge_peerings(repo: &Path, group: &str, them: &str, cn: &str) -> Result<String, String> {
     let file = peerings_file(repo, group);
-    let gv = repo.join("ops/ansible/group_vars");
-    let mut others: Vec<PathBuf> = vec![
-        gv.join(format!("{group}.yml")),
-        gv.join(format!("{group}.yaml")),
-    ];
-    if let Ok(rd) = std::fs::read_dir(gv.join(group)) {
-        others.extend(rd.filter_map(|e| e.ok().map(|e| e.path())));
-    }
-    for f in others.iter().filter(|f| **f != file) {
-        let set = std::fs::read_to_string(f)
-            .ok()
-            .and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok())
-            .is_some_and(|d| d.get("zenoh_sovereign_peerings").is_some());
-        if set {
-            return Err(format!(
-                "zenoh_sovereign_peerings is set in {}, and admission writes it in {} (GB-237): move the entries into {} and remove the variable from the other file",
-                f.strip_prefix(repo).unwrap_or(f).display(),
-                file.strip_prefix(repo).unwrap_or(&file).display(),
-                file.strip_prefix(repo).unwrap_or(&file).display()
-            ));
-        }
-    }
+    one_owner(repo, group, &file)?;
     // The text is kept: everything but the list's own block is written back as read.
     let original: Option<String> = std::fs::read_to_string(&file).ok();
     let doc: serde_yaml::Value = match &original {
@@ -500,6 +479,110 @@ pub fn merge_peerings(repo: &Path, group: &str, them: &str, cn: &str) -> Result<
     Ok(text)
 }
 
+/// Refused (GB-237) when a file of the group other than `file` sets
+/// `zenoh_sovereign_peerings`: the variable would then have two owners.
+fn one_owner(repo: &Path, group: &str, file: &Path) -> Result<(), String> {
+    let gv = repo.join("ops/ansible/group_vars");
+    let mut others: Vec<PathBuf> = vec![
+        gv.join(format!("{group}.yml")),
+        gv.join(format!("{group}.yaml")),
+    ];
+    if let Ok(rd) = std::fs::read_dir(gv.join(group)) {
+        others.extend(rd.filter_map(|e| e.ok().map(|e| e.path())));
+    }
+    for f in others.iter().filter(|f| *f != file) {
+        let set = std::fs::read_to_string(f)
+            .ok()
+            .and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok())
+            .is_some_and(|d| d.get("zenoh_sovereign_peerings").is_some());
+        if set {
+            return Err(format!(
+                "zenoh_sovereign_peerings is set in {}, and admission writes it in {} (GB-237): move the entries into {} and remove the variable from the other file",
+                f.strip_prefix(repo).unwrap_or(f).display(),
+                file.strip_prefix(repo).unwrap_or(file).display(),
+                file.strip_prefix(repo).unwrap_or(file).display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `group_vars/<group>/peerings.yml` without this partner's entry, for the
+/// back-out (ADR 1234): every other line is kept byte for byte, as admission
+/// keeps them, and the last partner leaves `zenoh_sovereign_peerings: []`.
+/// `Ok(None)` when the file does not list the partner. Refused (GB-237) on
+/// what admission refuses: another file of the group setting the variable, a
+/// list that is not literal, an entry without a literal sovereign id, or a
+/// layout the rewrite would change.
+pub fn remove_peering(repo: &Path, group: &str, them: &str) -> Result<Option<String>, String> {
+    let file = peerings_file(repo, group);
+    let shown = file
+        .strip_prefix(repo)
+        .unwrap_or(&file)
+        .display()
+        .to_string();
+    let refuse = |why: String| format!("{shown}: {why} (GB-237). Nothing was written");
+    let Ok(original) = std::fs::read_to_string(&file) else {
+        return Ok(None);
+    };
+    one_owner(repo, group, &file)?;
+    let doc: serde_yaml::Value =
+        serde_yaml::from_str(&original).map_err(|e| refuse(format!("it is not YAML ({e})")))?;
+    let Some(top) = doc.as_mapping() else {
+        return Ok(None);
+    };
+    let list = match top.get("zenoh_sovereign_peerings") {
+        None | Some(serde_yaml::Value::Null) => return Ok(None),
+        Some(serde_yaml::Value::Sequence(l)) => l.clone(),
+        Some(_) => {
+            return Err(refuse(
+                "zenoh_sovereign_peerings is not a literal list of entries".into(),
+            ))
+        }
+    };
+    for (i, e) in list.iter().enumerate() {
+        match e.get("sovereign").and_then(|v| v.as_str()) {
+            Some(t) if !is_templated(t) => {}
+            _ => {
+                return Err(refuse(format!(
+                    "entry {} of zenoh_sovereign_peerings has no literal sovereign id, so the back-out cannot tell whether it is {them}'s",
+                    i + 1
+                )))
+            }
+        }
+    }
+    let kept: Vec<serde_yaml::Value> = list
+        .iter()
+        .filter(|e| e.get("sovereign").and_then(|v| v.as_str()) != Some(them))
+        .cloned()
+        .collect();
+    if kept.len() == list.len() {
+        return Ok(None);
+    }
+    let key = |k: &str| serde_yaml::Value::String(k.into());
+    let mut block = serde_yaml::Mapping::new();
+    block.insert(
+        key("zenoh_sovereign_peerings"),
+        serde_yaml::Value::Sequence(kept.clone()),
+    );
+    let block =
+        serde_yaml::to_string(&serde_yaml::Value::Mapping(block)).map_err(|e| e.to_string())?;
+    let text = replace_list_block(&original, &block).map_err(refuse)?;
+    let back: serde_yaml::Value = serde_yaml::from_str(&text)
+        .map_err(|e| refuse(format!("the rewritten file would not be YAML ({e})")))?;
+    let mut want = top.clone();
+    want.insert(
+        key("zenoh_sovereign_peerings"),
+        serde_yaml::Value::Sequence(kept),
+    );
+    if back.as_mapping() != Some(&want) {
+        return Err(refuse(
+            "the back-out cannot take the entry out here without changing another variable (an anchor or alias shared with the list, or a layout it cannot split)".into(),
+        ));
+    }
+    Ok(Some(text))
+}
+
 /// The comment admission writes at the top of a new peerings.yml.
 const PEERINGS_HEADER: [&str; 2] = [
     "# Each partner this core admits (the goat-zenoh role's zenoh_sovereign_peerings),\n",
@@ -607,6 +690,68 @@ mod tests {
         "ops/ansible/group_vars/core_router/zenoh.yml",
         "zenoh_router_image: \"ghcr.io/example-org/zenoh@sha256:00\"\nsite_id: zagros\n",
     );
+
+    #[test]
+    fn the_back_out_takes_one_partner_out_and_keeps_every_other_line() {
+        let f = "ops/ansible/group_vars/core_router/peerings.yml";
+        let r = checkout(&[(
+            f,
+            "# kept\nzenoh_sovereign_peerings:\n- sovereign: xab\n  cn: fed.xab.zagros.01\n  extra: 1\n- sovereign: xac\n  cn: fed.xac.zagros.01\n\n# after\nzenoh_from_retention_days: 7\n",
+        )]);
+        assert_eq!(
+            remove_peering(r.path(), "core_router", "xab").unwrap().unwrap(),
+            "# kept\nzenoh_sovereign_peerings:\n- sovereign: xac\n  cn: fed.xac.zagros.01\n\n# after\nzenoh_from_retention_days: 7\n"
+        );
+        assert_eq!(
+            remove_peering(r.path(), "core_router", "xad").unwrap(),
+            None,
+            "a partner not listed"
+        );
+        let r = checkout(&[(
+            f,
+            "zenoh_sovereign_peerings:\n- sovereign: xab\n  cn: fed.xab.zagros.01\n",
+        )]);
+        assert_eq!(
+            remove_peering(r.path(), "core_router", "xab")
+                .unwrap()
+                .unwrap(),
+            "zenoh_sovereign_peerings: []\n"
+        );
+        assert_eq!(
+            remove_peering(checkout(&[]).path(), "core_router", "xab").unwrap(),
+            None,
+            "no file"
+        );
+    }
+
+    #[test]
+    fn the_back_out_refuses_what_admission_refuses() {
+        let f = "ops/ansible/group_vars/core_router/peerings.yml";
+        for (files, why) in [
+            (
+                vec![
+                    (f, "zenoh_sovereign_peerings:\n- sovereign: xab\n"),
+                    (
+                        "ops/ansible/group_vars/core_router/zenoh.yml",
+                        "zenoh_sovereign_peerings: []\n",
+                    ),
+                ],
+                "is set in",
+            ),
+            (
+                vec![(f, "zenoh_sovereign_peerings: \"{{ others }}\"\n")],
+                "not a literal list",
+            ),
+            (
+                vec![(f, "zenoh_sovereign_peerings:\n- sovereign: \"{{ p }}\"\n")],
+                "no literal sovereign",
+            ),
+        ] {
+            let r = checkout(&files);
+            let e = remove_peering(r.path(), "core_router", "xab").unwrap_err();
+            assert!(e.contains(why) && e.contains("GB-237"), "{e}");
+        }
+    }
 
     #[test]
     fn the_role_core_comes_from_the_group_whose_vars_configure_the_role() {
