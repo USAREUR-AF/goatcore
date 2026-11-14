@@ -10,6 +10,15 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Added: goatbuilder.yaml takes deploy.cloud, deploy.owner and deploy.cross_goatnet
+
+Three optional `deploy` fields say what a goatlite decided from its preset,
+so a full configuration grown from one behaves the same: `cloud: none`
+means no play asks for a cloud account; `owner` is the bootstrap owner,
+used in place of `$OWNER_EMAIL`; `cross_goatnet: false` means standup
+phase 14 does not reach the cross-goatnet boxes. Undeclared, nothing
+changes. The `grow` command that writes them is not built yet (#765).
+
 #### Changed: every site's end state declares every service, and a joining site's missing ones are named gaps
 
 `goatbuilder endstate` and `ops/goatbuilder/endstate/endstate.py` now declare
@@ -26,6 +35,28 @@ service owns as `SKIPPED` with the same text instead of N/A. `goatbuilder
 join-node` lists the gaps under "What <site> does not run yet", from the
 catalog, before the services the site turns off (ADR 1233, #671).
 
+#### Fixed: backing out one of two peerings keeps the core leaf the other still uses
+
+Our core router serves one leaf to every peering. `goatbuilder federate
+backout <partner>` no longer touches it while another peering is still set
+up from this machine (its working folder beside this one holds an
+`agreement.json`): the `core leaf` row reads `keep` and names that folder,
+and the back-out removes everything else of the peering. When no other
+peering is set up and nothing records what the leaf paths held before, the
+back-out stops with GB-293, naming each path and the choice to make, instead
+of stopping as GB-221 or showing the leaf as `absent` (#716).
+
+#### Fixed: after a signing-key rotation, phase 5 hands the directory over to the new key
+
+The peering directory binds our identity to the first key that wrote it and
+takes a new key only on a request signed by the old one. Phase 5's directory
+step now reads the key the directory binds. When it is not ours, it signs
+the pointer's write with the previous seed, `FED_PREVIOUS_SIGNING_KEY` (or
+`--previous-key`), and prints both keys. Before, every write after a
+rotation was refused. If the previous seed is missing, unreadable or of a
+third key, it prints GB-285 and publishes nothing; the step stays advisory
+and phase 5 goes on. The `rotate … signing` stage is not built (#683).
+
 #### "Added: join-node runs mesh DNS at a joining site"
 
 A site that joins a goatnet now runs its own mesh DNS, so it still resolves
@@ -37,7 +68,7 @@ founder's second. The group is written through the founder's management
 API, with the founder's token (`<FOUNDER>_NB_API_TOKEN`), resolved through
 the secrets injector; an unset or unresolved token is refused before the
 step (GB-281). A site with no zone file to serve is refused when the plan
-is made (GB-280). See ADR 1235.
+is made (GB-280). See ADR 1235 (#678).
 
 #### "Fixed: a host-allocation SKIP says which case it is and what clears it"
 
@@ -63,7 +94,7 @@ GB-188's catalog entry gains this cause (#742).
 kept `-o json` documents. The upgrade tests' list pins v0.7.0's four
 published binaries (`crates/goatbuilder/tests/upgrade/releases.sha256`), and
 v0.7.0's configuration files are kept for gate row A2 with the outcome its
-published binary gives each.
+published binary gives each (#776).
 
 #### Added: the release check starts at the cut-off, and the tag's tree check decides a rerun
 

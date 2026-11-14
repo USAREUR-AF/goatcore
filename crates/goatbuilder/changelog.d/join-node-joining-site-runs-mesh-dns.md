@@ -12,4 +12,4 @@ founder's second. The group is written through the founder's management
 API, with the founder's token (`<FOUNDER>_NB_API_TOKEN`), resolved through
 the secrets injector; an unset or unresolved token is refused before the
 step (GB-281). A site with no zone file to serve is refused when the plan
-is made (GB-280). See ADR 1235.
+is made (GB-280). See ADR 1235 (#678).
