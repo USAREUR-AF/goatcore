@@ -7,9 +7,10 @@ from those files, between two marker lines. A release folds them into a dated
 section and removes them. A released section is never rendered again: after
 the release it is text like any other, and may be edited by hand.
 
-  changelog.py check                     exit 0 when every entry is well formed and the
-                                         Unreleased section equals its render; exit 1 with
-                                         each reason when not
+  changelog.py check                     exit 0 when every entry is well formed, none is
+                                         already in a released section, and the Unreleased
+                                         section equals its render; exit 1 with each reason
+                                         when not
   changelog.py write                     rewrite the Unreleased section from the entries
   changelog.py release <version> <date>  fold the entries into "## <version> — <date>",
                                          remove them, and empty the Unreleased section
@@ -173,6 +174,39 @@ def unreleased_lines(entries: list[dict]) -> list[str]:
     return [BEGIN] + ([""] + body + [""] if body else []) + [END]
 
 
+def released_sections(lines: list[str], end: int) -> list[tuple[str, list[str]]]:
+    """Each released section after the END marker, as (version, its lines)."""
+    starts = [i for i in range(end + 1, len(lines)) if lines[i].startswith("## ")]
+    out = []
+    for n, i in enumerate(starts):
+        stop = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        out.append((lines[i][3:].split(" ", 1)[0], lines[i + 1:stop]))
+    return out
+
+
+def _holds(lines: list[str], block: list[str]) -> bool:
+    k = len(block)
+    return any(lines[i:i + k] == block for i in range(len(lines) - k + 1))
+
+
+def already_released(entries: list[dict], lines: list[str], end: int) -> list[str]:
+    """An entry whose rendered text (its title line and its body) is already inside a
+    released section: a branch cut before a release and merged after it leaves its
+    rendered lines in the release and its entry file behind. A release removes the
+    file, so the file is what goes."""
+    sections = released_sections(lines, end)
+    problems = []
+    for e in entries:
+        block = [f"#### {e['title']}", ""] + e["body"].split("\n")
+        for version, body in sections:
+            if _holds(body, block):
+                problems.append(f"{ENTRIES}/{e['name']}: already released in {version}; remove the entry file "
+                                f"(a release folds an entry and removes its file; a branch cut before {version} "
+                                f"and merged after it leaves both)")
+                break
+    return problems
+
+
 def check(repo: Path) -> list[str]:
     """Every reason the changelog is not as rendered; empty when it is."""
     try:
@@ -181,10 +215,11 @@ def check(repo: Path) -> list[str]:
         b, e = region(lines)
     except Refused as r:
         return list(r.args[0])
+    problems = already_released(entries, lines, e)
     if lines[b:e + 1] != unreleased_lines(entries):
-        return [f"{CHANGELOG}: the Unreleased section differs from its render; "
-                f"run `python3 ops/release/changelog.py write` (a hand edit there is lost: edit {ENTRIES}/ instead)"]
-    return []
+        problems.append(f"{CHANGELOG}: the Unreleased section differs from its render; "
+                        f"run `python3 ops/release/changelog.py write` (a hand edit there is lost: edit {ENTRIES}/ instead)")
+    return problems
 
 
 def write(repo: Path) -> None:
