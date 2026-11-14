@@ -657,6 +657,45 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(p.returncode, 3, out)
         self.assertIn("GB-273", out)
 
+    def test_derived_a_partner_sample_left_by_an_earlier_run_is_ignored_and_both_verdicts_agree(self):
+        """A sample the partner's earlier run left on our core carries that run's
+        challenge. It says when that run started; a run ignores a partner sample
+        that started before its own start minus FED_SESSION_WAIT and waits for this
+        run's, so our signed result echoes the partner's current challenge and both
+        sides reach the same verdict (§6.3)."""
+        import subprocess as sp, time
+        path = os.path.join(self.tmp, "agreement.json")
+        with open(path, "w") as f:
+            json.dump(self.ag, f)
+        der = os.path.join(self.tmp, "derived.json")
+        sp.run(["python3", str(HERE / "acceptance_session.py"), "derive", "--agreement", path, "--us", "xaa",
+                "--attempt", "1", "--out", der], check=True, capture_output=True)
+        sid = json.load(open(der))["session_id"]
+        old = "0123456789abcdef0123456789abcdef"
+        long_ago = str(int(time.time()) - 100000).encode()
+        stale = {}
+        for st in self.fabric.offered("xab"):
+            wire = "from/xab/%s/acceptance/%s/xab" % (st[len("release/"):], sid)
+            stale[wire] = ("xab-%s-%s" % (old, st[len("release/"):])).encode()
+            stale[wire + "/persist"] = ("xab-%s-%s-persist" % (old, st[len("release/"):])).encode()
+            stale[wire + "/started"] = long_ago
+        self.fabric.faults.stale["xaa"] = stale
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(delay=3)
+        self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
+        for side in ("xaa", "xab"):
+            self.assertEqual(self.bilateral(ev[side])["verdict"], "PASS", side)
+        self.assertNotIn("echoes " + old, out_a)
+        self.assertIn("from an earlier run", out_a)
+
+    def test_derived_each_run_stages_when_it_started_beside_its_samples(self):
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived()
+        self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
+        sid = json.load(open(os.path.join(ev["xaa"], "result.json")))["session"]["id"]
+        st = self.fabric.offered("xaa")[0]
+        started = self.fabric.cores["xab"].store.get("from/xaa/%s/acceptance/%s/xaa/started" % (st[len("release/"):], sid))
+        self.assertIsNotNone(started, "xaa's start time crossed to xab's core with its samples")
+        self.assertRegex(started.decode(), r"^[0-9]{10}$")
+
     def test_derived_a_signature_over_other_bytes_than_the_published_result_is_refused_gb_272(self):
         # The partner's signer signs other bytes than the result it publishes; a wire
         # edit of the value on the core is not exercised here.
