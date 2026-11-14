@@ -18,7 +18,9 @@
    so the commit stays readable after the source repository drops those loose objects; and a
    clone an earlier run left without a checkout is made again, not reused. The same from a
    shallow source repository, where git ignores --shared and --local: the clone gets no
-   alternates and only the objects the source's refs reach.
+   alternates and only the objects the source's refs reach. A sha that is not 40 lowercase
+   hex (an empty one names the directory of every cached tree) is refused before anything is
+   removed.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -302,6 +304,21 @@ def srctree_checks():
         head3 = git("rev-parse", "-q", "--verify", "HEAD", cwd=dest3).stdout.strip() if os.path.isdir(dest3) else ""
         check(p.returncode == 0 and head3 == sha3 and os.path.exists(os.path.join(dest3, "g")),
               f"srctree: from a shallow source, the clone could not check out a commit fetched by sha: {p.stderr.strip()}")
+
+        # A sha that is not 40 lowercase hex is refused before anything is removed: with an
+        # empty one, DEST would be the directory of every cached tree.
+        sib = os.path.join(d, "src", "f" * 40)
+        os.makedirs(sib, exist_ok=True)
+        write_text(os.path.join(sib, "kept"), "a sibling tree\n")
+        for bad in ("", "abc123", sha.upper()):
+            dest_bad = os.path.join(d, "src", bad)
+            p = subprocess.run(["bash", "-c", '. "$1"; src_tree "$2" "$3" "$4"', "_", os.path.join(ROOT, "lib", "srctree.sh"), common, bad, dest_bad],
+                               env=env, capture_output=True, text=True)
+            check(p.returncode != 0 and "not a full sha" in p.stderr, f"srctree: the sha {bad!r} was not refused: rc {p.returncode} {p.stderr.strip()}")
+            check(os.path.exists(os.path.join(sib, "kept")), f"srctree: the sha {bad!r} removed a sibling tree")
+            if not os.path.exists(os.path.join(sib, "kept")):
+                os.makedirs(sib, exist_ok=True)
+                write_text(os.path.join(sib, "kept"), "a sibling tree\n")
 
         # A clone an earlier run left with no checkout is made again, not reused.
         git("fetch", "-q", up, sha, cwd=os.path.join(d, "wt"))
