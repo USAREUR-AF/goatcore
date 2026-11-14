@@ -216,6 +216,21 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             ));
         }
     }
+    // Phase 13's mesh DNS step for a joiner's core node (ADR 1235).
+    if joiner && o.class == "core" && !founder.is_empty() {
+        if let Ok(m) = joinnode::mesh_dns_values(repo, &gv_path, site, &founder) {
+            let zone_rule = || Source::derived(
+                format!("site_dns_zone {} (this site's, else the founder's)", m.zone),
+                "the ops/dns/<dir>/mesh-hosts whose records carry the zone, as generate-mesh-hosts.py finds it",
+            );
+            v.push(Input::new("mesh_dns_zone_dir_name", m.dir.clone(), zone_rule()));
+            v.push(Input::new("mesh_coredns_smoke_test_name", m.first_name.clone(), zone_rule()));
+            v.push(Input::new("netbird_nameserver_group_name", m.group_name.clone(), site_rule("<site>-mesh-dns, the site's own nameserver group (ADR 1235)")));
+            v.push(Input::new("netbird_api", m.api.clone(), Source::derived("site_dns_zone of the founder (else this site's)", "https://<zone>/api, the founder's management: the one writer")));
+            v.push(Input::new("mesh_dns_api_token_var", m.token.clone(), Source::derived("join_founder_site (above)", "<FOUNDER, - as _, upper>_NB_API_TOKEN, resolved through with-secrets in phase 13")));
+            v.push(Input::new("mesh_dns_peer_replica_group", m.peer_group.clone(), Source::derived("join_founder_site (above)", "<founder, - as _>_hosts: its first host is the second replica")));
+        }
+    }
     if plain("intra_site_pair").as_deref() == Some("true") {
         v.push(Input::new("intra_site_pair", "true", at("intra_site_pair")));
     }
@@ -273,7 +288,7 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
     } else {
         crate::secrets::store(repo)
     };
-    for (name, secret, when) in [
+    let mut reads: Vec<(String, bool, &str)> = vec![
         (
             pass_var.clone(),
             true,
@@ -287,7 +302,15 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             false,
             "phase 13 (core): the bootstrap administrator's address",
         ),
-    ] {
+    ];
+    if joiner && o.class == "core" && !founder.is_empty() {
+        reads.push((
+            format!("{}_NB_API_TOKEN", founder.replace('-', "_").to_uppercase()),
+            true,
+            "phase 13 (a joiner's core node): the founder's management API token, which registers the site's mesh DNS nameserver group",
+        ));
+    }
+    for (name, secret, when) in reads {
         let from_store = store.contains(&name).then(|| {
             Source::derived(
                 format!("the declared secrets store ({store_name})"),
@@ -326,12 +349,15 @@ mod tests {
         let mut vars =
             String::from("site_id: zagros-b\nsite_enrollment_dns: mesh.zagros.example.org\n");
         if joiner {
-            vars.push_str("goatnet_founder: false\njoin_founder_site: zagros-a\n");
+            vars.push_str("goatnet_founder: false\njoin_founder_site: zagros-a\nsite_dns_zone: zagros.example.org\n");
         }
         std::fs::write(gv.join("vars.yml"), vars).unwrap();
         // The site's leaf-cert manifest, which a joiner's certificate steps read.
         std::fs::create_dir_all(root.join("ops/enrollment/manifests")).unwrap();
         std::fs::write(root.join("ops/enrollment/manifests/zagros-b-certs.yaml"), "site_id: zagros-b\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n").unwrap();
+        // The goatnet's mesh zone, which a joiner's core node serves.
+        std::fs::create_dir_all(root.join("ops/dns/zagros-a")).unwrap();
+        std::fs::write(root.join("ops/dns/zagros-a/mesh-hosts"), "100.127.0.1 isitup.zagros-a.zagros.example.org\n").unwrap();
         std::fs::create_dir_all(root.join("ops/goatbuilder")).unwrap();
         std::fs::write(
             root.join("ops/goatbuilder/goatbuilder.yaml"),

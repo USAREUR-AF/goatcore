@@ -3448,6 +3448,36 @@ entries:
     matches:
       - "nothing records what was there before it \\(GB-293\\)"
 
+  - code: GB-280
+    tool: goatbuilder
+    title: a joining site has no mesh DNS zone to serve
+    what: "join-node deploys a mesh DNS replica on a joining site's core node, so the site still resolves the goatnet's names when it is cut off from its founder (ADR 1235). The replica serves the goatnet's generated zone, an ops/dns/<dir>/mesh-hosts whose records carry the site's site_dns_zone (the founder's when the site declares none). No such file was found, or neither site declares site_dns_zone, so the plan was refused before any phase ran."
+    causes:
+      - "the goatnet's zone was never generated or committed (ops/dns/generate-mesh-hosts.py)"
+      - "neither the joining site's nor the founder's group_vars declare site_dns_zone"
+    fixes:
+      - "python3 ops/dns/generate-mesh-hosts.py, or --init <site_id> for a zone that has no file yet, then commit ops/dns/<dir>/mesh-hosts"
+      - "declare site_dns_zone in group_vars/<site>_hosts/vars.yml"
+    read: docs/adr/1235-per-site-mesh-dns-nameserver-groups.md
+    exit: 1
+    matches:
+      - "^GB-280: "
+
+  - code: GB-281
+    tool: goatbuilder
+    title: the founder's management API token for mesh DNS is unset or unresolved
+    what: "join-node's mesh DNS step registers the joining site's nameserver group through the founder's management API, with the token in <FOUNDER>_NB_API_TOKEN. After the secrets injector ran, the variable was empty or still held a secret store's reference, so the step was refused before it registered anything. The message names the variable, never its value."
+    causes:
+      - "the variable is not stored under the declared secrets posture"
+      - "the store's tool is not signed in, so with-secrets could not resolve the reference"
+    fixes:
+      - "python3 ops/secrets/posture.py hint <FOUNDER>_NB_API_TOKEN says where to store it"
+      - "sign in to the declared store's tool, then re-run: goatbuilder join-node <environment> --site <site> --node <node> --class core --address <address> --from 13"
+    read: docs/adr/1235-per-site-mesh-dns-nameserver-groups.md
+    exit: 1
+    matches:
+      - "^GB-281: "
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable

@@ -305,7 +305,7 @@ linked to its authoritative upstream source.
 | 1052 | [Vendor → org: rename the machine surfaces, back-compat-first](1052-vendor-to-org-machine-rename.md) | Proposed | |
 | 1053 | [Relay auth secret-rotation acceptance window + clock-skew grace](1053-relay-auth-skew-grace-secret-rotation.md) | Accepted (built) | goat-relay (60 s skew grace + dual current/previous secret window) | F-221 |
 | 1055 | [Relay observability: structured logging + self-stats endpoint + alerting](1055-relay-observability-logging-stats-anomaly-processor.md) | Proposed (drop-counters built; rest designed) | goat-relay (`tracing` + JSON, stats surface fed to relay-health `--deep`, alert rules) | F-228 · `relay-observability.md` |
-| 1056 | [Mesh DNS redundancy via a 3-server nameserver group](1056-mesh-dns-redundancy-three-server-group.md) | Proposed | |
+| 1056 | [Mesh DNS redundancy via a 3-server nameserver group](1056-mesh-dns-redundancy-three-server-group.md) | Proposed; amended by 1235 (proposed: one nameserver group per site that replicates, its own replica first) | |
 | 1057 | [Relay liveness counts inbound data traffic as keepalive evidence](1057-relay-liveness-credits-data-traffic.md) | Accepted (built, live on ZAGROS) | goat-relay (`mark_alive` on any inbound frame; delta from upstream Go which resets only on HealthCheck ack) | F-219 · `relay-flap-remediation-plan.md` · M-072 |
 | 1058 | [relay metrics self-publish → management-host ingest (auto-populate the relay-health dashboard)](1058-relay-metrics-self-publish-ingest.md) | Accepted | |
 | 1060 | [Universal deploy-rollback ledger](1060-universal-deploy-rollback-ledger.md) | Accepted (deployed + live-fired on ZAGROS, M-075) | goat core (`roles/rollback-ledger/` meta-dep auto-included by every deploying role; on-host jsonl as truth covering group_vars/env pins; `rollback.sh` dispatch-by-artifact-type; `check-rollback-coverage.sh` fail-closed ratchet) | extends [ADR 0859](0859-easy-rollback-engineering-principle.md) · [`universal-deploy-rollback.md`](../design/universal-deploy-rollback.md) · 0224 (config) · 1044 (cert) · 0811 (data) |
@@ -459,6 +459,7 @@ an ADR edits no shared file: write the ADR, then run
 
 | # | Title | Status | Notes |
 |---|---|---|---|
+| 1235 | [Every site that replicates runs its own mesh DNS, as its own nameserver group](1235-per-site-mesh-dns-nameserver-groups.md) | Proposed | Amends 1056 |
 | 1236 | [A site's SPIRE server is made redundant by two independent servers, adopted only after a gated trial](1236-a-sites-spire-server-is-made-redundant-by-two-independent-servers-after-a-gated-trial.md) | **Proposed.** Nothing in a running goatnet changes on merge. The decision is the direction and the gates; the build follows a trial that passes them | Amends 1164 |
 | 1237 | [A site is rebuilt from nothing and a combed extract of its identities](1237-a-site-is-rebuilt-from-nothing-and-a-combed-extract-of-its-identities.md) | Proposed | — |
 | 1238 | [The learning program: ten rungs, then fourteen stages beyond](1238-the-learning-program-is-a-ten-rung-ladder-and-a-lane-beyond-it-in-use-while-proposed.md) | Proposed — in use now. It is a best guess, open for comment | — |

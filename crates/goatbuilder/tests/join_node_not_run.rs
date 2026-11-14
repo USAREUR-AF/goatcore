@@ -57,7 +57,14 @@ fn checkout(with_model: bool) -> tempfile::TempDir {
     std::fs::create_dir_all(&gv).unwrap();
     std::fs::write(
         gv.join("vars.yml"),
-        "goatnet_founder: false\njoin_founder_site: zagros\nsite_enrollment_dns: netbird.example.org\nisitup_enabled: false\nid_admin_console_enabled: false\n",
+        "goatnet_founder: false\njoin_founder_site: zagros\nsite_enrollment_dns: netbird.example.org\nsite_dns_zone: zagros.example.org\nisitup_enabled: false\nid_admin_console_enabled: false\n",
+    )
+    .unwrap();
+    // The goatnet's mesh zone, which a joining site's core node serves (ADR 1235).
+    std::fs::create_dir_all(r.join("ops/dns/zagros")).unwrap();
+    std::fs::write(
+        r.join("ops/dns/zagros/mesh-hosts"),
+        "100.127.0.1 isitup.zagros.zagros.example.org\n",
     )
     .unwrap();
     // The site's leaf-cert manifest, which join-node's certificate steps read.

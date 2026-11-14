@@ -75,9 +75,23 @@
     # 1-server behavior, fully backward-compatible). For a 3-server group, set
     # this in group_vars (or -e) AND run the play with -l covering all 3 hosts
     # so each deploys its own CoreDNS replica on its own mesh IP.
-    mesh_dns_servers:
-      - host: "{{ inventory_hostname }}"
-        mesh_ip: "{{ mesh_ip_a }}"
+    #
+    # A joining site's own group (join-node phase 13, ADR 1235) names the
+    # group whose first host is the founder's replica in
+    # mesh_dns_peer_replica_group: the list is then this host first, the
+    # founder's second, so a site cut off from the founder answers from its own.
+    mesh_dns_peer_replica_group: ""
+    mesh_dns_servers: >-
+      {{ [{'host': inventory_hostname, 'mesh_ip': mesh_ip_a}]
+         + ([{'host': groups[mesh_dns_peer_replica_group][0],
+              'mesh_ip': hostvars[groups[mesh_dns_peer_replica_group][0]]['mesh_ip_a']}]
+            if mesh_dns_peer_replica_group | length > 0 else []) }}
+    # The NetBird groups a newly created nameserver group is distributed to,
+    # by name (ADR 1235). All is every peer, today's behaviour. A goatnet with
+    # per-site peer groups names them here; a name NetBird does not hold is
+    # refused before the group is created. An existing group keeps the
+    # distribution it has.
+    netbird_nameserver_distribution_groups: ["All"]
 
     # Zone-only mode: -e mesh_dns_register_group=false deploys the zone file +
     # CoreDNS to the targeted hosts but leaves the live netbird nameserver
@@ -217,7 +231,7 @@
       run_once: true
       when: mesh_dns_register_group | bool
 
-    - name: Discover the "All" group ID (default catch-all in netbird-mgmt)
+    - name: Read the NetBird groups (the distribution groups are resolved from them)
       ansible.builtin.uri:
         url: "{{ netbird_api }}/groups"
         method: GET
@@ -231,10 +245,25 @@
       become: false   # an HTTPS call from the operator's machine: no local sudo
       when: mesh_dns_register_group | bool and mesh_dns_group is none
 
-    - name: Resolve the All group ID
+    - name: Resolve the distribution groups' IDs (All by default)
       ansible.builtin.set_fact:
-        all_group_id: >-
-          {{ (nb_groups.json | selectattr('name', 'equalto', 'All') | first).id }}
+        distribution_group_ids: >-
+          {{ nb_groups.json
+             | selectattr('name', 'in', netbird_nameserver_distribution_groups)
+             | map(attribute='id') | list }}
+      run_once: true
+      when: mesh_dns_register_group | bool and mesh_dns_group is none
+
+    - name: Every distribution group exists in NetBird
+      ansible.builtin.assert:
+        that:
+          - distribution_group_ids | length == netbird_nameserver_distribution_groups | length
+        fail_msg: >-
+          netbird_nameserver_distribution_groups names
+          {{ netbird_nameserver_distribution_groups | join(', ') }}, and NetBird holds
+          {{ distribution_group_ids | length }} of them. Create the missing group or
+          correct the list; no nameserver group was created.
+        quiet: true
       run_once: true
       when: mesh_dns_register_group | bool and mesh_dns_group is none
 
@@ -252,8 +281,7 @@
           nameservers: "{{ mesh_dns_ns_array }}"
           domains:
             - "{{ netbird_nameserver_domain }}"
-          groups:
-            - "{{ all_group_id }}"
+          groups: "{{ distribution_group_ids }}"
           enabled: true
           primary: false
           search_domains_enabled: false
