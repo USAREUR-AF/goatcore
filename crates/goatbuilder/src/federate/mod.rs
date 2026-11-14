@@ -997,6 +997,10 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         checks.extend(r.finish(if exit != EXIT_OK { "failed" } else if stopped { "stopped" } else { "passed" }));
     }
     let printed = o.dry_run && o.table;
+    // The plan stands for every row but one: when the values this run uses
+    // could not be listed, the plan shows none, and that row is printed after
+    // it (output::after_view).
+    let mut view_rows = None;
     if printed {
         // The plan is the human answer; the rows still go to -o json and the
         // tutor's log, but are not printed again as a table.
@@ -1006,7 +1010,10 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         checks.extend(preflight::plan_rows(&inputs));
         match &listed {
             Ok(l) => checks.extend(crate::inputs::rows(l)),
-            Err(e) => checks.push(Check { name: "input".into(), ok: false, detail: format!("the values this run uses could not be listed: {e:#}"), fix: None }),
+            Err(e) => {
+                view_rows = Some(checks.len());
+                checks.push(Check { name: "input".into(), ok: false, detail: format!("the values this run uses could not be listed: {e:#}"), fix: None });
+            }
         }
         checks.push(row("footer", "PLAN ONLY — nothing above executed. Phases 5 and 10 are MANUAL and stop the run; resume with --from 6 and --from 11. Acceptance criteria for every phase: docs/operations/sovereign-federation-runbook.md. The shape and why: https://github.com/usareur-af/goatdocs/blob/main/docs/design/staged-delivery-pattern.md".into()));
     }
@@ -1014,6 +1021,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     r.exit = exit;
     r.ok = exit == EXIT_OK;
     r.printed = printed;
+    r.view_rows = view_rows;
     r.handoff = handed;
     Ok(r)
 }

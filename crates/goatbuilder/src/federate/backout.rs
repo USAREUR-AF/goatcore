@@ -1685,6 +1685,9 @@ pub fn backout_with(
     }
     let view = plan_view(&t, &recs, &extra);
 
+    // In table mode the plan view stands for the rows so far; a stop's row
+    // after it is printed after the view (main.rs, output::after_view).
+    let view_rows = checks.len();
     if slot_blocks {
         if o.table {
             print!("{view}");
@@ -1697,6 +1700,7 @@ pub fn backout_with(
         ));
         let mut r = Report::new("federate-backout", checks, EXIT_REFUSED);
         r.printed = o.table;
+        r.view_rows = Some(view_rows);
         return Ok(r);
     }
 
@@ -1714,6 +1718,7 @@ pub fn backout_with(
         ));
         let mut r = Report::new("federate-backout", checks, EXIT_REFUSED);
         r.printed = o.table;
+        r.view_rows = Some(view_rows);
         return Ok(r);
     }
 
@@ -1777,6 +1782,7 @@ pub fn backout_with(
             ));
             let mut r = Report::new("federate-backout", checks, EXIT_REFUSED);
             r.printed = true;
+            r.view_rows = Some(view_rows);
             return Ok(r);
         }
     }
@@ -1792,6 +1798,7 @@ pub fn backout_with(
         let mut r = Report::new("federate-backout", checks, EXIT_REFUSED);
         r.exit = EXIT_NOT_CONVERGED;
         r.printed = true;
+        r.view_rows = Some(view_rows);
         return Ok(r);
     }
 
@@ -2157,6 +2164,7 @@ pub fn backout_with(
     r.exit = exit;
     r.ok = exit == EXIT_OK;
     r.printed = true;
+    r.view_rows = Some(view_rows);
     Ok(r)
 }
 
@@ -2611,6 +2619,94 @@ mod tests {
         let r2 = backout_with(&repo, &o2, &mut exec2).unwrap();
         assert_eq!(r2.exit, EXIT_REFUSED);
         assert_eq!(ran2.borrow().len(), 1);
+    }
+
+    /// The rows a table-mode run prints after its plan view, as main.rs prints
+    /// them: a stop's verdict, code and reason, which the view does not show.
+    fn after_the_view(r: &Report) -> String {
+        assert!(r.printed, "the plan view was printed in table mode");
+        crate::output::after_view(r, crate::output::ColorChoice::Never)
+            .unwrap_or_else(|| panic!("nothing printed after the view: {:?}", r.checks))
+    }
+
+    /// A stop after the plan view reaches the terminal in table mode: the
+    /// view is all a person saw, and it does not say why the run stopped.
+    #[test]
+    fn a_slot_recheck_stop_after_the_plan_view_prints_gb_223() {
+        if crate::federate::runenv::var("FED_SLOT_DB").is_ok()
+            || crate::federate::runenv::var("FED_SLOT_REGISTRY_STORE").is_ok()
+        {
+            return; // the check would not be BLOCKED in this environment
+        }
+        let d = tempfile::tempdir().unwrap();
+        let (repo, work) = stand_in(d.path());
+        let ran = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut exec = fake_hosts(work.clone(), ran.clone());
+        let o = Options {
+            partner: "hello-ally",
+            env: None,
+            r#as: None,
+            edge_group: None,
+            work: Some(&work),
+            mock: None,
+            dry_run: false,
+            yes: true,
+            table: true,
+        };
+        let r = backout_with(&repo, &o, &mut exec).unwrap();
+        assert_eq!(r.exit, EXIT_REFUSED);
+        let shown = after_the_view(&r);
+        assert!(
+            shown.contains("GB-223") && shown.contains("BLOCKED"),
+            "{shown}"
+        );
+        assert!(shown.contains("nothing was changed"), "its fix: {shown}");
+    }
+
+    /// A survey that finds a resource another peering holds stops the back-out
+    /// after its plan view; in table mode the refusal, its code and what it
+    /// found are printed after the view.
+    #[test]
+    fn a_survey_refusal_after_the_plan_view_prints_gb_221_and_why() {
+        let d = tempfile::tempdir().unwrap();
+        let (repo, work) = stand_in(d.path());
+        // No lazy slot storage: the slot recheck does not apply, so the survey's
+        // refusal is what stops the run.
+        std::fs::remove_file(
+            repo.join("ops/ansible/group_vars/zagros_hosts/zenoh-lazy-storage.yml"),
+        )
+        .unwrap();
+        let w = work.clone();
+        let mut exec = move |_: &Path, _: &str| -> Result<bool> {
+            let survey = Path::new(&w).join("backout/survey");
+            std::fs::create_dir_all(&survey).unwrap();
+            std::fs::write(
+                survey.join("edge-x.json"),
+                r#"{"host":"edge-x","peering":"hello-ally","rows":[
+                  {"component":"tunnel","resource":"interface wg-fed0","state":"not-ours","action":"kept","note":"other:xab"}]}"#,
+            )
+            .unwrap();
+            Ok(true)
+        };
+        let o = Options {
+            partner: "hello-ally",
+            env: None,
+            r#as: None,
+            edge_group: None,
+            work: Some(&work),
+            mock: None,
+            dry_run: false,
+            yes: true,
+            table: true,
+        };
+        let r = backout_with(&repo, &o, &mut exec).unwrap();
+        assert_eq!(r.exit, EXIT_REFUSED, "{:?}", r.checks);
+        let shown = after_the_view(&r);
+        assert!(shown.contains("GB-221"), "{shown}");
+        assert!(
+            shown.contains("other:xab"),
+            "what the survey found: {shown}"
+        );
     }
 
     #[test]

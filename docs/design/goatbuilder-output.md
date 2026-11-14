@@ -28,7 +28,13 @@ held by tests, so a new verb cannot drift.
 The human table is for people and may change. `-o json` is the contract.
 Scripts, parity gates and CI checks read `-o json`, never the table. When a
 verb prints its own human view (a plan, a lesson page), its rows still go to
-`-o json` and to the tutor's log unchanged.
+`-o json` and to the tutor's log unchanged. A view stands for the rows it was
+printed for; a row after them that did not pass (a stop's verdict, code and
+reason, such as a back-out refused after its plan, GB-221 or GB-223) is still
+printed in table mode, after the view (`output::after_view`, from
+`Report::view_rows`). Built for `federate backout`'s plan and `federate`'s dry
+run, the two verbs whose view is printed before their run can stop; the other
+views (doctor's summary, the mock status page) print every row they are given.
 
 `goatbuilder federate status -o json` is its own versioned document,
 `goatbuilder.federate.status/v1`, and a real federate run keeps its journal in
