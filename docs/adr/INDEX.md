@@ -228,7 +228,7 @@ linked to its authoritative upstream source.
 
 | # | Title | Status | Repo scope | Diagram |
 |---|---|---|---|---|
-| 0856 | [Partner-peering capability mint via offline-CA URI-SAN cert](0856-partner-peering-capability-mint.md) | Proposed | goat core | — |
+| 0856 | [Partner-peering capability mint via offline-CA URI-SAN cert](0856-partner-peering-capability-mint.md) | Proposed | goat core | — · Amended by [ADR 1239](1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md) (the moon pod is a learning tool, not a sovereignty guarantee) |
 | 0857 | [Overlay-patch the Ory consent UI to forward Kratos `traits.groups` into the JWT](0857-patched-selfservice-ui-for-groups-claim.md) | Accepted | |
 | 0858 | [Zenoh runtime image: pivot from build-from-source to upstream off-the-shelf](0858-zenoh-image-upstream-pivot.md) | Proposed | goat core | Partially supersedes 0708 |
 | 0859 | [Easy rollback as an engineering principle](0859-easy-rollback-engineering-principle.md) | Proposed | |
@@ -461,7 +461,7 @@ an ADR edits no shared file: write the ADR, then run
 |---|---|---|---|
 | 1237 | [A site is rebuilt from nothing and a combed extract of its identities](1237-a-site-is-rebuilt-from-nothing-and-a-combed-extract-of-its-identities.md) | Proposed | — |
 | 1238 | [The learning program is a ten-rung ladder and a lane beyond it, in use while it is proposed; the people learning decide what it becomes](1238-the-learning-program-is-a-ten-rung-ladder-and-a-lane-beyond-it-in-use-while-proposed.md) | Proposed — in use as the working program while it is proposed. It moves to Accepted on the conditions in decision 6 | — |
-| 1239 | [A moon pod is a learning tool and not a sovereignty guarantee](1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md) | Proposed | Amends 0223, 1025, 1157, 1164 |
+| 1239 | [A moon pod is a learning tool and not a sovereignty guarantee](1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md) | Proposed | Amends 0223, 0856, 1025, 1157, 1164 |
 
 <!-- END generated: adr-index -->
 

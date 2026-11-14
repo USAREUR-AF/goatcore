@@ -6,7 +6,7 @@
 | Date | 2026-11-14 |
 | Deciders | operator |
 | Repo scope | goat core (documents only) |
-| Amends | [ADR 0223](0223-goat-moon-pod-repo-containment.md), [ADR 1025](1025-zenoh-dynamic-tenant-authz-slot-pool.md), [ADR 1157](1157-cross-sovereign-federation-edge-terminated.md), [ADR 1164](1164-per-site-spire-trust-domains.md) |
+| Amends | [ADR 0223](0223-goat-moon-pod-repo-containment.md), [ADR 0856](0856-partner-peering-capability-mint.md), [ADR 1025](1025-zenoh-dynamic-tenant-authz-slot-pool.md), [ADR 1157](1157-cross-sovereign-federation-edge-terminated.md), [ADR 1164](1164-per-site-spire-trust-domains.md) |
 | Supersedes | — |
 | Superseded by | — |
 | Related | [ADR 1092](1092-moon-pod-peer-classes.md) (the `POD` class: a pod inside the environment's own identity planes), [ADR 0821](0821-mission-partner-sharing-pattern.md), [ADR 1208](1208-sovereign-environments-release-namespaces-and-grant-encryption.md) (sovereign environments) |
@@ -74,7 +74,8 @@ which a pod could carry real data.
 | 0223, naming | "`moon` for sovereign-orbital partner relationships" | `moon` names the relationship plane of a pod. It does not mean the pod is sovereign |
 | 0223, deliverables | the conformance suite: "CI runs continuously against `goat-moon-open-pod`" | the suite is a skeleton (`tests/moon-pod-conformance/README.md`). No CI runs it |
 | 0223, out of scope | cross-moon-pod federation is out of scope because "each moon is sovereign-orbital" | still out of scope; "sovereign" is withdrawn (D1.2) |
-| 0223, hosted SaaS | requirement 6, the "sovereignty floor", "requires partner-controlled custody of data, identity, and audit" | the pod's data, identity and audit sit inside an environment its owner controls (D1.2). Requirement 6 does not make the pod sovereign |
+| 0223, hosted SaaS | requirement 6, the "sovereignty floor", "requires partner-controlled custody of data, identity, and audit" | the pod's data, identity and audit sit inside an environment its owner controls (D1.2). Requirement 6 does not make the pod sovereign, and the contract now names it the custody floor ([`moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md)) |
+| [0856](0856-partner-peering-capability-mint.md), partner-side cert custody | partner-side custody is the partner's responsibility, "per the sovereignty floor" | per the custody floor, requirement 6 of the contract. It assigns custody of the partner's certificate; it does not make the partner sovereign within the environment (D1.2) |
 | 0223, consequences | `USAREUR-AF/zagros-moon-pod` "private during MVP" | the repository is public. It holds the learning pod |
 | [1025](1025-zenoh-dynamic-tenant-authz-slot-pool.md), external partners | a "sovereign goat partner (runs the goat stack but in a separate sovereign trust root — moon-pod / standalone-goatnet)" | that case is a party running its own environment (D1.4). A moon pod is not it: it joins an environment someone else runs |
 | [1157](1157-cross-sovereign-federation-edge-terminated.md), section 1 | "Steps 2 and 3 are the moon-pod federation process already in the repo" | steps 2 and 3 are the SPIRE federation mechanism in the repository, which the learning pod also exercises. Cross-sovereign federation is between environments (D1.4), not with a moon pod |
@@ -105,7 +106,7 @@ definition is the source of D1.2.
 
 ## Consequences
 
-- Readers of ADRs 0223, 1025, 1157 and 1164 meet the correction through their INDEX notes and
+- Readers of ADRs 0223, 0856, 1025, 1157 and 1164 meet the correction through their INDEX notes and
   through this ADR, not in the ADRs' own text.
 - The sibling repositories (goatstuff, goatdocs, `zagros-moon-pod`, `hello-galaxy-zagros-pod`)
   state the same four points in their own home documents. Each corrects its own text.
