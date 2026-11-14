@@ -88,9 +88,8 @@ After running, the role asserts:
    yet is fine — the role's success means the deploy is set up to
    fire kTLS once traffic arrives).
 
-End-to-end production validation (real netbird daemons connecting
-through this relay + iperf3 throughput against the M-006-tuned
-≥110 Mbps baseline) is Block 33D scope.
+The relay is in service: NetBird daemons connect through it. A published
+iperf3 result against the M-006-tuned ≥110 Mbps baseline is Block 33D scope.
 
 ## Related
 

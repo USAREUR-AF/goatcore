@@ -76,6 +76,18 @@ What a real run would leave to you, at phase 5:
 
      /tmp/goat-peering-rehearsal/keys.txt
 
+At phase 10, goatbuilder runs this for you:
+  goatbuilder federate plan hello-ally
+  goatbuilder federate deploy hello-ally
+  goatbuilder federate test hello-ally
+
+  deploy asks you to approve the plan, then what our core admits, and runs
+  phases 10 to 13. Without a terminal, pass what you approved: --approve-plan
+  <plan hash> --approve-admission <digest>.
+  By hand instead, the fallback: review what apply rendered, admit the edge on
+  our core yourself (goatbuilder explain federate 10 lists the steps), then
+  carry on with --from 11.
+
 Phase 1 checks these before anything changes:
   inputs          every required input is present
   edge-ports      the tunnel and edge router ports are free on the edge
