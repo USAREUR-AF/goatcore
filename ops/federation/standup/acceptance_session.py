@@ -145,6 +145,18 @@ def new_manifest(agreement_path, us, hours=24, policy_path=None, now=None):
     }
 
 
+def canonical_bytes(v):
+    raise NotImplementedError
+
+
+def derive_session(agreement_path, us, attempt, policy_path=None):
+    raise NotImplementedError
+
+
+def compare_sessions(ours, theirs):
+    raise NotImplementedError
+
+
 def validate(manifest, agreement_path, us, now=None):
     if manifest.get("schema") != SCHEMA:
         raise Refused("not a session manifest (schema %r)" % manifest.get("schema"))
