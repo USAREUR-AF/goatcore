@@ -1,9 +1,0 @@
-# status without --mock names the verbs that read hosts.
-bin.name = "goatbuilder"
-args = ["status", "-C", "../..", "--env", "dev"]
-status.code = 2
-stdout = ""
-stderr = """
-goatbuilder: status reads hosts only through a converger, and the push converger's status path is not built yet: run it with --mock <fixture>, or read the ledgers with `goatbuilder deploy --env <env> --component <c> --verify-only`
-  (GB-026 — goatbuilder explain GB-026)
-"""

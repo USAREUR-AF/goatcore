@@ -1372,11 +1372,8 @@ fn main() {
                 }
                 r
             }),
-            None => Err(goat_errors::coded(
-                "GB-026",
-                "status reads hosts only through a converger, and the push converger's status path is not built yet: run it with --mock <fixture>, or read the ledgers with `goatbuilder deploy --env <env> --component <c> --verify-only`",
-            )
-            .into()),
+            // Real hosts, read as diff reads them and graded as verify grades them (gate row C3).
+            None => inspect::status(&repo, env, component.as_deref()),
         },
         Cmd::Deploy { env, component, ack, group, dry_run, verify_only } => match &cli.mock {
             Some(dir) => {

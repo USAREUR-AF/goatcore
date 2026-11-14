@@ -146,6 +146,15 @@ reaches the ledger's host the same way, where it used to reach whatever
 host the door landed on, and the live canary passes `--site` to both
 rollback avenues and to `rollback --list` (#644).
 
+#### Added: goatbuilder status reads real hosts
+
+`goatbuilder status --env <env>` without `--mock` refused with GB-026. It now
+reads each machine's deploy ledger the way `goatbuilder diff` reads it and grades
+it the way `goatbuilder verify` grades it, so the three agree about every
+machine. It reads only: no play runs and nothing is written. It exits 3 while
+any machine is pending or unknown. GB-026 is retired: no release after this one
+prints it.
+
 ### For someone contributing
 
 #### Fixed: CI runs on main to the end, and several checks say why they fail

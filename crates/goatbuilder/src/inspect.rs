@@ -551,8 +551,6 @@ fn status_check(n: &str, d: &Drift) -> Check {
 /// `diff` reads (one pass per member group) and graded the way `verify` grades,
 /// so the three never disagree about a machine (gate row C3). Reads only: no
 /// play runs and no file is written. Exit 3 while any machine is pending or unknown.
-// main.rs's `status` arm calls this once it is wired (the arm still refuses with GB-026).
-#[allow(dead_code)]
 pub fn status(repo: &Path, env: &str, only: Option<&str>) -> Result<Report> {
     let (rows, _transport, mut checks) = read_expected(repo, env, only)?;
     let n = env.replace('_', "-");

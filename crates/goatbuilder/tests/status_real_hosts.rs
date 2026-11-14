@@ -80,7 +80,12 @@ fn row(r: &str) -> serde_json::Value {
 fn world() -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
     let p = d.path();
-    for dir in ["ops/pins", "ops/scripts", "ops/ansible/inventory", "ops/ansible/group_vars/zagros_hosts"] {
+    for dir in [
+        "ops/pins",
+        "ops/scripts",
+        "ops/ansible/inventory",
+        "ops/ansible/group_vars/zagros_hosts",
+    ] {
         std::fs::create_dir_all(p.join(dir)).unwrap();
     }
     std::fs::write(
@@ -88,11 +93,23 @@ fn world() -> tempfile::TempDir {
         "goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  portal:\n    var: portal_image\n  herd:\n    var: herd_image\n",
     )
     .unwrap();
-    std::fs::write(p.join("ops/ansible/group_vars/zagros_hosts/pins.yml"), format!("portal_image: \"{PORTAL}\"\nherd_image: \"{HERD}\"\n")).unwrap();
+    std::fs::write(
+        p.join("ops/ansible/group_vars/zagros_hosts/pins.yml"),
+        format!("portal_image: \"{PORTAL}\"\nherd_image: \"{HERD}\"\n"),
+    )
+    .unwrap();
     for c in ["portal", "herd"] {
-        std::fs::write(p.join(format!("ops/ansible/{c}-deploy.yml")), "- name: deploy\n  hosts: \"{{ target }}\"\n").unwrap();
+        std::fs::write(
+            p.join(format!("ops/ansible/{c}-deploy.yml")),
+            "- name: deploy\n  hosts: \"{{ target }}\"\n",
+        )
+        .unwrap();
     }
-    std::fs::write(p.join("ops/ansible/inventory/mgmt-hosts.ini"), "[zagros_hosts]\n").unwrap();
+    std::fs::write(
+        p.join("ops/ansible/inventory/mgmt-hosts.ini"),
+        "[zagros_hosts]\n",
+    )
+    .unwrap();
     test_support::copied_executable(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts/served-payloads.py"),
         &p.join("ops/scripts/served-payloads.py"),
@@ -108,7 +125,12 @@ fn world() -> tempfile::TempDir {
     let w = serde_json::json!({"inventory": {"zagros_hosts": {"hosts": all}, "_meta": {"hostvars": {}}}, "hosts": hosts});
     std::fs::write(p.join("hosts.json"), w.to_string()).unwrap();
     let git = |args: &[&str]| {
-        let st = Command::new("git").args(args).current_dir(p).env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap();
+        let st = Command::new("git")
+            .args(args)
+            .current_dir(p)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .status()
+            .unwrap();
         assert!(st.success(), "git {args:?}");
     };
     git(&["init", "-q"]);
@@ -133,7 +155,11 @@ fn run(repo: &Path, args: &[&str]) -> (i32, serde_json::Value, String) {
         .env("GOAT_EXPLAIN", "0")
         .output()
         .unwrap();
-    let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
     let doc = serde_json::from_slice(&o.stdout).unwrap_or(serde_json::Value::Null);
     (o.status.code().unwrap_or(-1), doc, text)
 }
@@ -141,7 +167,16 @@ fn run(repo: &Path, args: &[&str]) -> (i32, serde_json::Value, String) {
 fn checks(doc: &serde_json::Value) -> Vec<(String, String)> {
     doc["checks"]
         .as_array()
-        .map(|a| a.iter().map(|c| (c["name"].as_str().unwrap_or("").to_string(), c["detail"].as_str().unwrap_or("").to_string())).collect())
+        .map(|a| {
+            a.iter()
+                .map(|c| {
+                    (
+                        c["name"].as_str().unwrap_or("").to_string(),
+                        c["detail"].as_str().unwrap_or("").to_string(),
+                    )
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -155,9 +190,14 @@ fn from_rows(doc: &serde_json::Value) -> BTreeMap<(String, String), V> {
         }
         let v = if d.starts_with("same: ") || d.starts_with("converged on ") {
             V::Healthy
-        } else if d.ends_with(": host unreachable") || d.contains(": no answer from this host") || d.starts_with("unknown: host unreachable") || d.starts_with("unknown: no answer") {
+        } else if d.ends_with(": host unreachable")
+            || d.contains(": no answer from this host")
+            || d.starts_with("unknown: host unreachable")
+            || d.starts_with("unknown: no answer")
+        {
             V::Unread
-        } else if d.starts_with("DRIFT") || d.starts_with("pending: ") || d.starts_with("unknown: ") {
+        } else if d.starts_with("DRIFT") || d.starts_with("pending: ") || d.starts_with("unknown: ")
+        {
             V::Drifted
         } else {
             panic!("row with no verdict: {name}: {d}")
@@ -170,7 +210,12 @@ fn from_rows(doc: &serde_json::Value) -> BTreeMap<(String, String), V> {
 /// `verify`'s per-host rows, `zagros/<host>`, for one component.
 fn from_verify(doc: &serde_json::Value, component: &str, into: &mut BTreeMap<(String, String), V>) {
     for (name, d) in checks(doc) {
-        let Some(host) = name.strip_prefix("zagros/").filter(|h| h.starts_with("core-")) else { continue };
+        let Some(host) = name
+            .strip_prefix("zagros/")
+            .filter(|h| h.starts_with("core-"))
+        else {
+            continue;
+        };
         let v = if d.starts_with("converged on") {
             V::Healthy
         } else if d.starts_with("unknown — ") || d.contains("no ledger row came back") {
@@ -189,8 +234,14 @@ fn status_on_real_hosts_agrees_with_verify_and_diff_for_every_machine() {
     let w = world();
     let repo = w.path();
     let (code, status, text) = run(repo, &["status", "--env", "zagros"]);
-    assert!(!text.contains("GB-026"), "status without --mock still refuses with GB-026:\n{text}");
-    assert_eq!(code, 3, "status exits 3 while a machine is behind or unread:\n{text}");
+    assert!(
+        !text.contains("GB-026"),
+        "status without --mock still refuses with GB-026:\n{text}"
+    );
+    assert_eq!(
+        code, 3,
+        "status exits 3 while a machine is behind or unread:\n{text}"
+    );
     assert_eq!(status["verb"], "status", "{text}");
     let by_status = from_rows(&status);
 

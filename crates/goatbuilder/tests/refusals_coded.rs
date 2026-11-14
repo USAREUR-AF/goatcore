@@ -101,7 +101,7 @@ const EXPECTED: &[(&str, &str)] = &[
     ("secrets_needs_a_subcommand", "GB-242"),
     ("standup_from_lettered_phase_is_refused", "GB-242"),
     ("standup_from_old_phase_zero_is_refused", "GB-242"),
-    ("status_without_mock_refuses", "GB-026"),
+    ("status_with_no_component_declared_refuses", "GB-050"),
     ("update_no_surface", "GB-072"),
     ("update_unknown_site", "GB-072"),
     ("update_unknown_site_json", "GB-072"),
