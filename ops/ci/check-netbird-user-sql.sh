@@ -20,11 +20,16 @@
 #   - SQL against other tables (name_server_groups / groups …) — account-init
 #     seeds those with full idempotent rows. NOT policies / policy_rules: no
 #     raw SQL writes a policy (ADR 1185, ops/ci/check-no-default-allow.sh).
+# Not scanned:
+#   - a role's test harness, ops/ansible/roles/<role>/tests/. It creates its
+#     own stand-in tables in a throwaway database it starts itself, so its
+#     `users` is not netbird's and no goatnet runs it.
 #
 # Usage:
 #   ops/ci/check-netbird-user-sql.sh             # scan tracked ops/ansible tree
 #   ops/ci/check-netbird-user-sql.sh --staged    # staged diff only
 #   ops/ci/check-netbird-user-sql.sh path ...    # specific paths
+#   ops/ci/check-netbird-user-sql.sh --self-test # prove red and green on fixtures
 #
 # Exit: 0 clean · 1 violation (file:line listed) · 2 usage/dep error
 set -euo pipefail
@@ -32,8 +37,41 @@ set -euo pipefail
 repo_root() { git rev-parse --show-toplevel 2>/dev/null || pwd; }
 cd "$(repo_root)"
 
+self_test() {
+  local t self rc out
+  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  t="$(mktemp -d)"
+  mkdir -p "$t/ops/ansible/roles/r/tasks" "$t/ops/ansible/roles/r/tests"
+  printf '%s\n' '- shell: psql -c "INSERT INTO users (id) VALUES (1)"' > "$t/ops/ansible/roles/r/tasks/insert.yml"
+  printf '%s\n' '- shell: psql -c "UPDATE users SET role = '"'"'owner'"'"' WHERE id = 1"' > "$t/ops/ansible/roles/r/tasks/promote.yml"
+  printf '%s\n' 'pg n netbird -c "INSERT INTO users VALUES (1, false);"' > "$t/ops/ansible/roles/r/tests/run-test.sh"
+  ( cd "$t" && git init -q && git add -A )
+  rc=0
+  out="$(cd "$t" && bash "$self" 2>&1)" || rc=$?
+  rm -rf "$t"
+  local fails=0
+  if [[ $rc -eq 1 ]] && grep -q 'roles/r/tasks/insert.yml' <<< "$out"; then
+    echo "  ok    an INSERT INTO users in a role's tasks is refused"
+  else
+    echo "  FAIL  the INSERT in tasks was not refused (rc=$rc)"; fails=$((fails+1))
+  fi
+  if ! grep -q 'roles/r/tasks/promote.yml' <<< "$out"; then
+    echo "  ok    a role-only UPDATE passes"
+  else
+    echo "  FAIL  the role-only UPDATE was refused"; fails=$((fails+1))
+  fi
+  if ! grep -q 'roles/r/tests/' <<< "$out"; then
+    echo "  ok    a role's test harness is not scanned"
+  else
+    echo "  FAIL  the test harness was scanned"; fails=$((fails+1))
+  fi
+  [[ $fails -eq 0 ]] || { echo "$out"; return 1; }
+  echo "self-test ok"
+}
+
 mode="tree"; paths=()
 case "${1:-}" in
+  --self-test) self_test; exit $? ;;
   --staged) mode="staged" ;;
   "" ) ;;
   * ) paths=("$@") ;;
@@ -59,6 +97,7 @@ for f in "${files[@]}"; do
   [[ -f "$f" ]] || continue
   case "$f" in ops/ansible/*) ;; *) continue ;; esac
   case "$f" in *.md|*/README*) continue ;; esac
+  case "$f" in ops/ansible/roles/*/tests/*) continue ;; esac   # a role's own test harness
 
   while IFS=: read -r lineno content; do
     [[ -z "$lineno" ]] && continue
@@ -97,6 +136,7 @@ for f in "${files[@]}"; do
         done
       fi
       if [[ $bad -eq 1 ]]; then
+        # shellcheck disable=SC2016  # the backticks are literal text in the message
         printf '  %s:%s: UPDATE users SET touches a non-role column (only `role` may be mutated): %s\n' \
           "$f" "$lineno" "$(printf '%s' "$content" | sed 's/^[[:space:]]*//')"
         hits=$((hits+1))
