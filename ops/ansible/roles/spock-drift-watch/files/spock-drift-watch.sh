@@ -6,6 +6,13 @@
 # (db, table) in $SPOCK_DRIFT_TABLES, run a count + content-hash diff
 # and emit Prometheus textfile-collector metrics.
 #
+# A heal can lose a row that the diff then reports as equal: when two sites
+# wrote different rows under one key, last-write-wins keeps one at both. So
+# for every peer and watched table it also reports how many rows Spock's own
+# log (spock.resolutions) shows replaced with different content:
+# spock_ace_lww_lost_rows. It is a count of the log as it stands, so an alert
+# fires on an increase; nothing is kept between runs.
+#
 # Inputs (from /etc/spock-drift-watch.env, or $SPOCK_DRIFT_ENV_FILE):
 #   SPOCK_DRIFT_SITE        — site label
 #   SPOCK_DRIFT_TEXTFILE    — path to the .prom output file
@@ -60,6 +67,10 @@ emit "# HELP spock_ace_drift_watch_last_run_seconds Unix epoch of last successfu
 emit "# TYPE spock_ace_drift_watch_last_run_seconds gauge"
 emit "# HELP spock_ace_drift_watch_peers Number of peers configured (drift-watch is dormant when <2)."
 emit "# TYPE spock_ace_drift_watch_peers gauge"
+emit "# HELP spock_ace_lww_lost_rows Rows of a watched table this peer's spock.resolutions shows last-write-wins replaced with different content (insert_exists, update_update). Alert on an increase."
+emit "# TYPE spock_ace_lww_lost_rows gauge"
+emit "# HELP spock_ace_lww_lost_readable 1 when drift-watch's user can read this peer's spock.resolutions (or the database has none), 0 when it cannot and no loss count is made."
+emit "# TYPE spock_ace_lww_lost_readable gauge"
 
 PEER_COUNT=$(jq 'length' <<<"$SPOCK_DRIFT_PEERS")
 emit "spock_ace_drift_watch_peers{site=\"${SPOCK_DRIFT_SITE}\"} ${PEER_COUNT}"
@@ -77,24 +88,29 @@ fi
 # "<count>|<hash>" or "ERR" on persistent failure.
 peer_query() {
   local peer_json="$1" db="$2" table="$3" where="${4:-}"
-  local host port user password_env password
-  host=$(jq -r '.host'        <<<"$peer_json")
-  port=$(jq -r '.port'        <<<"$peer_json")
-  user=$(jq -r '.user'        <<<"$peer_json")
-  password_env=$(jq -r '.password_env' <<<"$peer_json")
-  password="${!password_env:-}"
-
-  if [[ -z "$password" ]]; then
-    echo "ERR"
-    return
-  fi
-
   local sql
   # Identifier interpolation: table comes from config (operator-controlled,
   # not user input), so direct interpolation is safe; we still use
   # quote_ident-equivalent defensive double-quoting.
   sql="SELECT COUNT(*)::text || '|' || COALESCE(md5(string_agg(md5(t::text), ',' ORDER BY t::text)), '') FROM \"${table//\"/\"\"}\" t${where:+ WHERE $where};"
 
+  peer_sql "$peer_json" "$db" "$sql"
+}
+
+# Helper: run one statement on one peer's database, with the peer's password
+# and a 3-attempt retry. Echoes the rows, or "ERR" on persistent failure.
+peer_sql() {
+  local peer_json="$1" db="$2" sql="$3"
+  local host port user password_env password
+  host=$(jq -r '.host'        <<<"$peer_json")
+  port=$(jq -r '.port'        <<<"$peer_json")
+  user=$(jq -r '.user'        <<<"$peer_json")
+  password_env=$(jq -r '.password_env' <<<"$peer_json")
+  password="${!password_env:-}"
+  if [[ -z "$password" ]]; then
+    echo "ERR"
+    return
+  fi
   local _attempt out
   for _attempt in 1 2 3; do
     out=$(PGPASSWORD="$password" psql \
@@ -107,6 +123,26 @@ peer_query() {
   done
   echo "ERR"
 }
+
+# Rows last-write-wins replaced with different content, per table, from one
+# peer's spock.resolutions in one database: "<table>|<count>" lines. A
+# resolution whose two versions are equal (both sites wrote the same row) is
+# no loss. Whether this peer's user may read the log is asked first: a
+# statement naming spock.resolutions fails as it is parsed when the table is
+# missing or its schema is not readable. Absent is no loss; denied is
+# reported as spock_ace_lww_lost_readable 0, not as a failed run, since the
+# user drift-watch connects as need not be a superuser.
+RESOLUTIONS_ACCESS_SQL="SELECT CASE
+  WHEN NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'spock') THEN 'absent'
+  WHEN NOT has_schema_privilege('spock', 'USAGE') THEN 'denied'
+  WHEN to_regclass('spock.resolutions') IS NULL THEN 'absent'
+  WHEN has_table_privilege('spock.resolutions', 'SELECT') THEN 'readable'
+  ELSE 'denied' END;"
+LOST_SQL="SELECT regexp_replace(relname, '^.*[.]', '') || '|' || count(*)
+            FROM spock.resolutions
+           WHERE conflict_type IN ('insert_exists', 'update_update')
+             AND local_tuple IS DISTINCT FROM remote_tuple
+           GROUP BY regexp_replace(relname, '^.*[.]', '');"
 
 mapfile -t PEERS_LIST < <(jq -c '.[]' <<<"$SPOCK_DRIFT_PEERS")
 mapfile -t TABLES_LIST < <(jq -c '.[]' <<<"$SPOCK_DRIFT_TABLES")
@@ -156,6 +192,31 @@ for ((i=0; i<${#PEERS_LIST[@]}; i++)); do
 
       emit "spock_ace_drift_rows{site=\"${SPOCK_DRIFT_SITE}\",db=\"${db}\",table_pair=\"${pair}/${table}\"} ${drift}"
     done
+  done
+done
+
+# Per peer: what last-write-wins replaced on apply, for every watched table.
+mapfile -t LOST_DBS < <(jq -r '[.[].db] | unique | .[]' <<<"$SPOCK_DRIFT_TABLES")
+for peer_json in "${PEERS_LIST[@]}"; do
+  peer_name=$(jq -r '.name' <<<"$peer_json")
+  for db in "${LOST_DBS[@]}"; do
+    access=$(peer_sql "$peer_json" "$db" "$RESOLUTIONS_ACCESS_SQL")
+    lost=""
+    [[ "$access" == "readable" ]] && lost=$(peer_sql "$peer_json" "$db" "$LOST_SQL")
+    if [[ "$access" == "ERR" || "$lost" == "ERR" ]]; then
+      fail=$((fail + 1))
+      continue
+    fi
+    if [[ "$access" == "denied" ]]; then
+      echo "spock-drift-watch: ${peer_name}/${db}: this user cannot read spock.resolutions; no loss count" >&2
+      emit "spock_ace_lww_lost_readable{site=\"${SPOCK_DRIFT_SITE}\",peer=\"${peer_name}\",db=\"${db}\"} 0"
+      continue
+    fi
+    emit "spock_ace_lww_lost_readable{site=\"${SPOCK_DRIFT_SITE}\",peer=\"${peer_name}\",db=\"${db}\"} 1"
+    while read -r table; do
+      n=$(awk -F'|' -v t="$table" '$1 == t {print $2}' <<<"$lost")
+      emit "spock_ace_lww_lost_rows{site=\"${SPOCK_DRIFT_SITE}\",peer=\"${peer_name}\",db=\"${db}\",table=\"${table}\"} ${n:-0}"
+    done < <(jq -r --arg db "$db" '.[] | select(.db == $db) | .table' <<<"$SPOCK_DRIFT_TABLES")
   done
 done
 

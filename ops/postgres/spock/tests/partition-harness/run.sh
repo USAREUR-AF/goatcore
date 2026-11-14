@@ -372,6 +372,11 @@ dump_logs() { # dump_logs <file>
 export HARNESS_PG_PW="$PW"
 "${PY[@]}" drift-env "$WORK/drift.env" "$TS_PORT_a" "$TS_PORT_b" HARNESS_PG_PW
 DRIFT_SH="$REPO/ops/ansible/roles/spock-drift-watch/files/spock-drift-watch.sh"
+drift_lost() { # drift_lost <peer> <db> <table>  -> rows drift-watch reports last-write-wins replaced there
+  SPOCK_DRIFT_ENV_FILE="$WORK/drift.env" bash "$DRIFT_SH" >/dev/null 2>"$WORK/drift.err" || true
+  { grep -E "^spock_ace_lww_lost_rows\{[^}]*peer=\"$1\",db=\"$2\",table=\"$3\"\} " "$WORK/drift.prom" || true; } \
+    | awk '{s += $NF} END {print s + 0}'
+}
 drift_check() { # drift_check <label>  -> fail() per drifting table, with the differing rows
   local rc=0 line db tab
   SPOCK_DRIFT_ENV_FILE="$WORK/drift.env" bash "$DRIFT_SH" >/dev/null 2>"$WORK/drift.err" || rc=$?

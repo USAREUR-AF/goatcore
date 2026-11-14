@@ -57,6 +57,40 @@ Run on both peers. Compare:
 
 Output one line per (db, table_pair, site_pair) to the textfile collector. The script does not attempt to identify *which* rows differ — that's L3 reconciler scope per ADR 0823.
 
+## Losses a heal hides
+
+The diff compares what the sites hold now. When two sites wrote different
+rows under one key while cut off, last-write-wins keeps one of them at both
+sites on heal, so the diff reports them equal and the other row is gone.
+Spock logs each such replacement in `spock.resolutions` (with
+`spock.save_resolutions = on`, set in the image's `postgresql.conf`).
+
+For every peer and every watched table, drift-watch reports how many rows that
+log shows replaced with different content:
+
+```text
+spock_ace_lww_lost_rows{site,peer,db,table}
+```
+
+It counts `insert_exists` and `update_update` rows whose local and remote
+versions differ. A resolution whose two versions are equal, such as one row
+written identically at both sites, is not a loss. A row whose versions differ
+only in a value each site stamps for itself (a `created_at`, say) still
+counts. The gauge is the count of the log as it stands, so nothing is kept
+between runs, and it falls when the log is pruned. `SpockHealReplacedRow`
+(`ops/compose/mgmt-host/monitoring/rules/spock.yml`) alerts on an increase
+over 2h, twice the hourly cadence.
+
+Reading `spock.resolutions` needs `USAGE` on schema `spock` and `SELECT` on
+the table, which a non-superuser does not have by default. When the peer's
+user cannot read it, drift-watch writes no loss count for that peer and
+database, reports `spock_ace_lww_lost_readable{site,peer,db} 0`, and still
+exits 0. It reports `1` when the count was made, or the database has no
+Spock. The partition harness
+(`ops/postgres/spock/tests/partition-harness`, scenario
+`portal-c1-two-topics-both-sides-loss-reported`) proves the count on a real
+heal.
+
 ## What this role does NOT do
 
 - **Not authoritative-mode merge.** Reports only. Per ADR 1010 §D5 + ADR 0823 §7.
