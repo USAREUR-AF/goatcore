@@ -1142,6 +1142,51 @@ mod tests {
         assert!(!o.status.success() && String::from_utf8_lossy(&o.stdout).contains("generate-relays.sh zagros terraform-zagros"));
     }
 
+    /// Gate row I3, the front door: a joiner's core node that declares signal
+    /// federation off still gets its front door, after the data router, for
+    /// the site's core group limited to the node. Its profile is the site's
+    /// declaration: `dashboard_cert_delivery_mode: acme` is an internet site,
+    /// whose door is traefik-acme.yml; anything else is a LAN site, whose door
+    /// is lan-traefik-routes.yml. With federation on, the federation steps set
+    /// up the door (traefik-acme.yml), and no second door step runs.
+    #[test]
+    fn a_joiner_gets_its_front_door_with_signal_federation_off() {
+        let t = joiner_checkout();
+        let gv = t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml");
+        let base = std::fs::read_to_string(&gv).unwrap();
+        fn door(ph: &[Phase]) -> Vec<&Phase> {
+            ph.iter().filter(|p| p.label.starts_with("[front door]")).collect()
+        }
+        // Federation on: the federation steps own the door.
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        assert!(door(&ph).is_empty(), "{:?}", door(&ph).iter().map(|p| &p.label).collect::<Vec<_>>());
+        assert_eq!(ph.iter().filter(|p| p.cmd.contains("traefik-acme.yml")).count(), 1);
+        // Federation off, a LAN site: the LAN routes, after the router.
+        std::fs::write(&gv, format!("{base}signal_federation_absent_reason: one node holds every peer\n")).unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let d = door(&ph);
+        assert_eq!(d.len(), 1, "{:?}", d.iter().map(|p| &p.label).collect::<Vec<_>>());
+        assert_eq!((d[0].n, d[0].kind), (13, "A"));
+        assert!(d[0].cmd.ends_with("lan-traefik-routes.yml -e target=zagros_b_hosts -e site_id=zagros-b -l node-x"), "{}", d[0].cmd);
+        let at = |needle: &str| ph.iter().position(|p| p.cmd.contains(needle)).unwrap();
+        assert!(at("zenoh-deploy.yml") < at("lan-traefik-routes.yml"), "after the router");
+        // Federation off, an internet site: traefik-acme.yml, limited to the node.
+        std::fs::write(&gv, format!("{base}signal_federation_absent_reason: one node holds every peer\ndashboard_cert_delivery_mode: acme\n")).unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let d = door(&ph);
+        assert_eq!(d.len(), 1);
+        assert!(d[0].cmd.ends_with("traefik-acme.yml -e target=zagros_b_hosts -l node-x"), "{}", d[0].cmd);
+        assert!(ph.iter().all(|p| !p.cmd.contains("lan-traefik-routes.yml")));
+        // Other classes, and a founder's core node, get no door step here.
+        for class in ["obs", "breakglass", "network-jump"] {
+            assert!(door(&plan(t.path(), &opts("zagros-b", class, "zagros")).unwrap()).is_empty(), "{class}");
+        }
+        let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvf).unwrap();
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\n").unwrap();
+        assert!(door(&plan(t.path(), &opts("zagros", "core", "zagros")).unwrap()).is_empty());
+    }
+
     /// A joiner that declares federation off with a reason gets the gate (the
     /// two sides must agree) and a SKIP, and no federation play runs.
     #[test]
