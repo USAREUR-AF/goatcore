@@ -146,7 +146,9 @@ the sending node is not always the node that made the commit, so every replicate
 there is treated as not from the hub. `goat.hub_site` is cluster-wide, written with
 `ALTER SYSTEM` and reloaded, so running apply workers read a new value without a restart.
 It holds `goatnet_hub_site`, the hub's node name as `spock-mesh-peering` names it; in the
-`kratos` database the same site's node is `<name>_kratos`, and the trigger accepts either.
+`kratos` database the same site's node is `<name>_kratos`, and the trigger accepts either
+name by equality only (`goat_is_hub_node`): `<name>_other`, a prefix or a pattern is not the
+hub. `ops/postgres/spock/tests/hub-authority/unit.sh` checks that, in CI before the harness.
 
 A harness scenario proves each part before it is built: a platform-admin grant at B
 refused at A (gate row I4 of [`goatbuilder-v1-gate.md`](goatbuilder-v1-gate.md)), a join
