@@ -1003,11 +1003,14 @@ fn declared(repo: &Path, o: &PlanOptions) -> Result<(config::Peering, config::Co
         .find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true))
         .cloned()
         .ok_or_else(|| {
-            anyhow!(
-                "peering '{}' is not declared in {} peerings: — declare it first (C1)",
-                o.with,
-                cfg_path.display()
-            )
+            anyhow::Error::from(goat_errors::coded(
+                "GB-149",
+                format!(
+                    "peering '{}' is not declared in {} peerings: — declare it first (C1)",
+                    o.with,
+                    cfg_path.display()
+                ),
+            ))
         })?;
     Ok((found, cfg))
 }

@@ -6,4 +6,5 @@ status.code = 2
 stdout = ""
 stderr = """
 goatbuilder: put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate lint --context-dir <dir> ...
+  (GB-238 — goatbuilder explain GB-238)
 """

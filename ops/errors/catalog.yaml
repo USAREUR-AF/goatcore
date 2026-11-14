@@ -3235,6 +3235,20 @@ entries:
     matches:
       - "\\(GB-270\\)"
 
+  - code: GB-276
+    tool: goatbuilder
+    title: --mock was given to a verb that reads the checkout
+    what: "--mock runs a verb against a fixture directory instead of hosts. Only the verbs that drive or read hosts take one (the message lists them). This verb reads the checkout itself, so a fixture it was named would have been ignored, and the run would have reported on files the person never pointed it at. Nothing ran."
+    causes:
+      - "--mock given to a verb that reads the checkout, such as pins, validate or doctor"
+    fixes:
+      - "drop --mock: the verb reads the checkout (-C <dir> names another one)"
+      - "goatbuilder --mock <fixture> <verb>   with one of the verbs the message lists"
+    read: docs/design/goatbuilder-conformance.md
+    exit: 2
+    matches:
+      - "the fixture would have been ignored"
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable

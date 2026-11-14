@@ -1186,12 +1186,27 @@ fn long_running(cmd: &Cmd) -> bool {
     )
 }
 
+/// A command line clap cannot parse: its own message, then the catalog code
+/// (GB-242, gate row C5), and clap's exit code (2). Help and version are not
+/// refusals: they print and exit as clap does.
+fn usage_exit(e: clap::Error) -> ! {
+    use clap::error::ErrorKind;
+    if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+        e.exit()
+    }
+    let _ = e.print();
+    eprintln!("  (GB-242 — goatbuilder explain GB-242)");
+    std::process::exit(e.exit_code())
+}
+
 fn main() {
     // The language is chosen before clap builds the command, so the help clap
     // prints is already localized (goat's order, docs/design/goat-cli-i18n.md).
     i18n::select_language(i18n::preparse_lang().as_deref());
-    let matches = i18n::localize_command(Cli::command()).get_matches();
-    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    let matches = i18n::localize_command(Cli::command())
+        .try_get_matches()
+        .unwrap_or_else(|e| usage_exit(e));
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| usage_exit(e));
     if cli.offline {
         // The plays and the ledger row read it from the environment, as from the script avenue.
         // main only, before any thread starts, so set_var is sound here; nowhere else in
@@ -1224,6 +1239,7 @@ fn main() {
                  the verbs read only the files they are named and the party's context, and run for real; \
                  drop the flag (the verbs take --json for a JSON report; -C/--repo is taken only by init --over-ssh)"
             );
+            eprintln!("  (GB-239 — goatbuilder explain GB-239)");
             std::process::exit(2);
         }
         if let Cmd::Federate { verb: Some(federate::plan::Stage::Verb(verb)), site, measure, .. } = cli.cmd {
@@ -1276,7 +1292,9 @@ fn main() {
         );
         eprintln!("goatbuilder: {text}");
         if goat_errors::explain_on_stderr() {
-            eprint!("{}", goat_errors::render_human(&goat_errors::interpret_coded("GB-039", &text), "goatbuilder"));
+            eprint!("{}", goat_errors::render_human(&goat_errors::interpret_coded("GB-276", &text), "goatbuilder"));
+        } else {
+            eprintln!("  (GB-276 — goatbuilder explain GB-276)");
         }
         std::process::exit(EXIT_USAGE);
     }
@@ -1470,7 +1488,7 @@ fn main() {
         Cmd::Plan { verb, component, env, group, n, site, out } => inspect::plan(&repo, cli.mock.as_deref(), &inspect::PlanOpts { verb, component, env: env.as_deref(), group: group.as_deref(), n: *n, site: site.as_deref(), out }),
         Cmd::Apply { plan } => {
             if !cli.yes && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                Err(anyhow::anyhow!("apply is a mutation: pass --yes without a terminal (C10)"))
+                Err(goat_errors::coded("GB-008", "apply is a mutation: pass --yes without a terminal (C10)").into())
             } else {
                 inspect::apply(&repo, cli.mock.as_deref(), plan)
             }
@@ -1512,7 +1530,7 @@ fn main() {
             }),
             None => standup::site_for(&repo, None, env, site.as_deref()).and_then(|site| {
                 if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                    Err(anyhow::anyhow!("standup is a mutation: pass --yes without a terminal (C10)"))
+                    Err(goat_errors::coded("GB-008", "standup is a mutation: pass --yes without a terminal (C10)").into())
                 } else {
                     standup::standup(&repo, &standup::Options { env, site: &site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: *skip_obs, obs_only: *obs_only, dry_run: *dry_run, parallel: *parallel, check: *check })
                 }
@@ -1521,13 +1539,13 @@ fn main() {
         Cmd::Teardown { env, site, profile, dry_run, services, from, to } => match &cli.mock {
             Some(dir) => verbs::Fixture::open(dir).and_then(|mut f| standup::teardown_mock(&mut f, env, site, standup::MockRun { dry_run: *dry_run, from: *from, to: *to })),
             None if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) => {
-                Err(anyhow::anyhow!("teardown is a mutation: pass --yes without a terminal (C10)"))
+                Err(goat_errors::coded("GB-008", "teardown is a mutation: pass --yes without a terminal (C10)").into())
             }
             None => standup::teardown(&repo, &standup::Options { env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false, check: false }, *services),
         },
         Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run } => {
             if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                Err(anyhow::anyhow!("join-node is a mutation: pass --yes without a terminal (C10)"))
+                Err(goat_errors::coded("GB-008", "join-node is a mutation: pass --yes without a terminal (C10)").into())
             } else {
                 joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
             }
@@ -1592,13 +1610,13 @@ fn main() {
             // A mock executes nothing, with or without --dry-run, so it mutates nothing.
             } else if !site.is_empty() && goat_federation::verbs::VERB_NAMES.contains(&with) {
                 // `federate --context-dir D init`: clap read the verb as a partner.
-                Err(anyhow::anyhow!("put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate {with} --context-dir <dir> ..."))
+                Err(goat_errors::coded("GB-238", format!("put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate {with} --context-dir <dir> ...")).into())
             } else if !site.is_empty() {
                 Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run"))
             } else if !measure.is_empty() {
                 Err(anyhow::anyhow!("--over-ssh and its host flags apply to `goatbuilder federate init`; a peering run measures phase 3 over SSH with FED_MEASURE=ssh (for init, put the flags after the word init)"))
             } else if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
+                Err(goat_errors::coded("GB-008", "federate is a mutation: pass --yes without a terminal (C10)").into())
             } else {
                 let name = partner.as_deref().unwrap_or(with);
                 let o = federate::Options { with: name, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) };

@@ -161,4 +161,5 @@ Options:
                          (stall-bounded). Also reads GOATBUILDER_TIMEOUT [env: GOATBUILDER_TIMEOUT=]
   -h, --help             Print help
   -V, --version          Print version
+  (GB-242 — goatbuilder explain GB-242)
 """

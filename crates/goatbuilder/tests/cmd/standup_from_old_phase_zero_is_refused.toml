@@ -7,4 +7,5 @@ stderr = """
 error: invalid value '0' for '--from <FROM>': phases start at 1 now; the gates are phase 1, the host baseline phase 2
 
 For more information, try '--help'.
+  (GB-242 — goatbuilder explain GB-242)
 """

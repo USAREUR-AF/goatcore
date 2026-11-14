@@ -5,4 +5,5 @@ status.code = 2
 stdout = ""
 stderr = """
 goatbuilder: federate is a mutation: pass --yes without a terminal (C10)
+  (GB-008 — goatbuilder explain GB-008)
 """

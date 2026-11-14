@@ -9,4 +9,5 @@ error: the argument '--check' cannot be used with '--force'
 Usage: goatbuilder update --check
 
 For more information, try '--help'.
+  (GB-242 — goatbuilder explain GB-242)
 """

@@ -7,4 +7,5 @@ stderr = """
 error: invalid value '12m' for '--from <FROM>': the first-login step is now phase 11
 
 For more information, try '--help'.
+  (GB-242 — goatbuilder explain GB-242)
 """

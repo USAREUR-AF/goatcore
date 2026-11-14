@@ -10,4 +10,5 @@ error: the following required arguments were not provided:
 Usage: goatbuilder promote abandon --reason <REASON> <RECORD>
 
 For more information, try '--help'.
+  (GB-242 — goatbuilder explain GB-242)
 """

@@ -632,7 +632,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     // cannot pick a different path on each avenue.
     let fed_verbs = env_or("FED_VERBS", String::new());
     if !matches!(fed_verbs.as_str(), "" | "goat" | "goatbuilder") {
-        return Err(anyhow!("FED_VERBS is goat or goatbuilder, not '{fed_verbs}'"));
+        return Err(goat_errors::coded("GB-240", format!("FED_VERBS is goat or goatbuilder, not '{fed_verbs}'")).into());
     }
     // `--mock <dir>` reads the flat `<dir>/goatbuilder.yaml`, the same fixture
     // shape standup opens; without it, the repository's own config.
@@ -649,7 +649,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     // peering: the repository's own.
     if !cfg.peerings.iter().any(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true)) {
         let declared = cfg.peerings.iter().map(|p| format!("{} on {}", p.with, p.environment)).collect::<Vec<_>>().join(", ");
-        return Err(anyhow!("peering '{}' is not declared in {} peerings: (declared: {}) — declare it first (C1)", o.with, cfg_path.display(), if declared.is_empty() { "none" } else { &declared }));
+        return Err(goat_errors::coded("GB-149", format!("peering '{}' is not declared in {} peerings: (declared: {}) — declare it first (C1)", o.with, cfg_path.display(), if declared.is_empty() { "none" } else { &declared })).into());
     }
     // Two drivers: a run that would reach a phase after 2 needing the edge is
     // refused here, before a deploy's lock, live recheck or admission acts.
