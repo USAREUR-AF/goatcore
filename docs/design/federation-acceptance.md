@@ -557,6 +557,40 @@ until a rerun, never pass a stale result.
 This rests on the two sides' clocks agreeing within `FED_SESSION_WAIT`. **Designed, not built:**
 phase 1's preflight checks that each of our hosts' clocks is synchronized; it does not today.
 
+### 6.4 A combined PASS with each side's own surfaces only
+
+**Designed, not built.** In a session, each side holds only its own core, edge and SPIRE
+server. Two groups of rows cannot pass that way today, so a combined verdict stays open (exit 3)
+even when everything else passed:
+
+- the refusal rows (§2.2) need client sessions that hold the partner's identity: the partner's
+  agreed name, a name nobody agreed and our core's name, each on a certificate from the
+  partner's CA;
+- `spire/svid-chains` needs the partner's `spire-server` to show that their workload chains to the
+  bundle we hold for them.
+
+Each side holds what the other's rows need. So each row moves to the side that owns its surface,
+and the partner's half crosses in the signed result, as the delivery rows already do
+(`observed_by_peer`, §6):
+
+| Row | Who acts | Who observes, on what |
+|---|---|---|
+| `refusal/*` on our edge | the partner's runner starts its three probe sessions from its own side, with its own CA, against our edge, and stages each session's zenoh id and run id beside its samples | our runner, on our own edge's ACL trace (`FED_EDGE_LOG_OURS`), matching the decision lines to the session ids the partner staged (§2.2's rule, with those ids in place of `FED_PROBE_THEIRS_ZID`) |
+| `refusal/*` on the partner's edge | our runner starts our probes, with our CA, against their edge | the partner's runner, on its own trace; our row is BLOCKED and names theirs (`observed_by_peer`) |
+| `spire/refresh`, `spire/bundle-held` | none | each side on its own server (`FED_SPIRE_OURS`), as today |
+| `spire/svid-chains` | each runner stages its own workload's SVID chain (certificates only, no key) beside its samples | the other runner verifies that chain against the bundle its own server holds for the partner, and that it does not chain to its own trust domain |
+
+Nothing new is trusted. The probe session ids and the SVID chain reach the partner as staged
+values in an offered set, and each side's verdict on them arrives in its result, signed under the
+key bound at phase 5 (§6.1). `combine` already requires a row marked `observed_by_peer` to be
+decided by the partner's mirror row. The probes are the side's own: its launcher (§2.4) starts
+sessions holding its own identities, so it is an own surface. Today the launcher starts sessions
+holding the partner's identity, which only a drill owning both sides can do.
+
+When this is built, a session run with own surfaces only can reach a combined PASS. The
+lab-only variant, which gives each side the partner's `FED_PROBE_LAUNCHER` and
+`FED_SPIRE_THEIRS`, then proves the same rows a second way. It is not a gate.
+
 ## 7. Publishing `exchanging`
 
 **Built.** A partner file's `level` is the grant (ADR 1157): `apply` renders it, and data moves
