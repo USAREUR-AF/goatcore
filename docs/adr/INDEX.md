@@ -2,8 +2,9 @@
 
 This file is the live status board for the ADR series. Every load-bearing
 decision in goat is either listed here as Accepted, drafted as
-Proposed, or queued in the backlog. New decisions add a row in the same
-PR that lands the implementation.
+Proposed, or queued in the backlog. The rows of ADR 1234 and below are
+kept by hand. A new ADR's row is rendered from the ADR file itself: see
+"ADRs above 1234, rendered from their own files" below.
 
 **Authoring order rationale.** The 0000 (meta) and 0100 (strategy /
 accreditation) series are written first because they are read first by
@@ -446,6 +447,16 @@ linked to its authoritative upstream source.
 | 1200 | [The deployment engineering is proved end to end in three tiers, with the ledger as the only proof](1200-deployment-e2e-three-tiers.md) | **Accepted** | |
 | 1208 | [Each sovereign runs its own environment, shares only by deliberate release, and seals restricted data to its intended receivers](1208-sovereign-environments-release-namespaces-and-grant-encryption.md) | Accepted 2026-10-30 | |
 | 1209 | [Card sign-in is per sovereign PKI profile; the US DoD card is the first profile, not the design](1209-card-sign-in-is-per-sovereign-pki-profile.md) | Proposed (2026-10-30) | Amends 1069. One registry `ops/identity/sovereign-pkis.yaml` describes every PKI (issuer match, identity rule with capture regex, subject CN format, trust anchor, revocation, example card); the goatnet `icam-mtls-proxy` role, the collab front's `sovereign_pkis` and the store's `OPENBAO_SOVEREIGN_PKI_DIR` render from it; identity = `<pki>:<identifier>`; nationality never inferred from the PKI; binding admin-done; capped trust stores load issuing CAs only; us-dod EDIPI read as `^(\d{10})(?:\d{6})?@mil$` (live UPN is 16 digits). Rejected: a role per nation, hand-kept per-door PKI lists, nationality from the issuer, loading all 49 DISA CAs. |
+
+## ADRs above 1234, rendered from their own files
+
+The rows above are kept by hand. Every ADR numbered above 1234 is listed here
+instead, rendered from its own header by `ops/release/adr_index.py`, so adding
+an ADR edits no shared file: write the ADR, then run
+`python3 ops/release/adr_index.py write`.
+
+<!-- BEGIN generated: adr-index, ADRs above 1234 from their own files; run python3 ops/release/adr_index.py write -->
+<!-- END generated: adr-index -->
 
 ---
 

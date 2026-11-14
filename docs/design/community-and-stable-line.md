@@ -136,6 +136,54 @@ The phase catalog's tables are rendered the same way: one source, a
 generated region between marker lines, a check that the region equals the
 render, and `--write` to rewrite it (`ops/ci/check-phase-catalog.py`).
 
+## The ADR index, one row per ADR file
+
+`docs/adr/INDEX.md` lists every ADR. A new ADR's row is rendered from the ADR
+file itself, so a pull request that adds an ADR edits no shared file.
+
+**What an ADR declares.** Everything its row needs is already in the ADR, in
+the header that `docs/adr/TEMPLATE.md` gives it:
+
+- the number, from the file name `NNNN-<slug>.md`, one file per number;
+- the title, from the first line, `# ADR NNNN — <title>`;
+- the status, the `| Status | ... |` row of the header table, verbatim;
+- the notes, the ADR numbers named in its `| Amends | ... |` and
+  `| Supersedes | ... |` rows, written `Amends 1225; supersedes 1100`, or `—`.
+
+A Status written another way, as a `**Status:**` line or in YAML front
+matter, is refused with the reason, never read by guessing.
+
+**Where the rows go.** The rows of ADR 1234 and below stay as they are, kept
+by hand. Every ADR above 1234 is listed in one table, under the heading "ADRs
+above 1234, rendered from their own files", between two marker lines. Its
+columns are #, Title, Status and Notes. It is its own table because a marker
+line inside a Markdown table would end the table.
+
+**The check.** `ops/release/adr_index.py check` fails when an ADR above 1234
+cannot be read, when the table differs from its render, or when a row for an
+ADR above 1234 is written by hand anywhere else in the file. `write`
+rewrites the table. Both run in `docs-guards`, after the script's own
+self-test. The existing ADR checks stay: number uniqueness, every ADR has a
+row, and an INDEX status that agrees with its ADR. A rendered row has the
+same shape as a hand-kept one, so each reads both.
+
+**Why the rows of 1234 and below are not rendered.** Rendered from their
+files today, about 200 of the 359 rows would change: 62 titles differ from
+the files' first lines; 203 status cells differ from the files' Status
+(formatting, dates, and amendment notes kept only in INDEX), and 107 files
+write their Status in another form; the fourth column holds scope, notes or
+a paragraph of decision text. Thirteen rows disagree with their ADR on the
+status itself, and which side is right is each owner's decision
+(`ops/ci/check-adr-index-status-agrees.sh`). Moving those rows into the
+render is per-owner work, one ADR at a time, after which the frozen
+boundary can move down.
+
+**What still edits a hand-kept row.** When a new ADR supersedes one of
+1234 or below, the old ADR's `Superseded by` and Status change in its own
+file, and its hand-kept row's Status changes to match, as before; the
+status check holds the two to each other. An amendment changes nothing in
+the old row: the new ADR's row says what it amends.
+
 ## Status of each part
 
 | Part | Status |
@@ -150,5 +198,7 @@ render, and `--write` to rewrite it (`ops/ci/check-phase-catalog.py`).
 | Release notes with the headings "for someone deploying", "for someone contributing", "to be removed" | designed |
 | The example environments move to each new `goatcore/v` tag by a pull request the release opens | designed |
 | goatbuilder's changelog rendered from one file per entry (`crates/goatbuilder/changelog.d/`, `ops/release/changelog.py`), checked in `docs-guards` | built, self-test only |
-| ADR index and error-code reference rendered from one file per entry, so that a new entry edits no shared file | designed |
+| The ADR index's rows for ADRs above 1234, rendered from each ADR's header (`ops/release/adr_index.py`), checked in `docs-guards` | built, self-test only |
+| The ADR index's rows for ADR 1234 and below rendered too, reconciled by each ADR's owner | designed |
+| The error-code reference rendered from one file per entry | designed |
 | A column in `docs/RELEASE-CONTENTS.md` saying whether each component's interface is kept between releases | designed |
