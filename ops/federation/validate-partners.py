@@ -33,6 +33,7 @@ OURS = {
     "goat-zenoh-router", "operator-trial-peer", "fabric-health-trial-peer",
     "grant-keyd-trial-peer", "audit-subscriber", "audit-subscriber-trial-peer",
     "ntp-health-pub-trial-peer", "goat-time-health-trial-peer",
+    "goat-peer-health-trial-peer",
     "goat-mesh-health-trial-peer", "goat-presence-health-trial-peer",
     "goat-node-net-health-trial-peer", "goat-consistency-health-trial-peer",
     "goat-fabric-crawler-trial-peer", "goat-consistency-console-trial-peer",

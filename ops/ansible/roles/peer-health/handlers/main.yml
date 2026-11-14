@@ -1,0 +1,7 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+- name: restart peer-health-feed
+  ansible.builtin.systemd:
+    name: peer-health-feed.service
+    state: restarted
+    daemon_reload: true

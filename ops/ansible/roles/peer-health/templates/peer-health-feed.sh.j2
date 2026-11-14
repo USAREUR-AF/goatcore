@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Feed for the goat-peer-health reader (ADR 1232). Runs on the host as
+# peer-health-feed.service. Three jobs, each a loop:
+#   1. follow the router container's log and append the timestamp-rejection
+#      lines to {{ peer_health_feed_dir }}/router.log
+#   2. append a heartbeat line, so the reader can tell "no rejections" from
+#      "the feed stopped"
+#   3. write the router's current session list to sessions.json and the
+#      router's own Zenoh ID to router.zid
+# The reader container mounts the directory read-only.
+set -u
+DIR="{{ peer_health_feed_dir }}"
+LOG="$DIR/router.log"
+ROUTER="{{ peer_health_router_container }}"
+ADMIN="{{ peer_health_router_admin_url }}"
+MAX={{ peer_health_feed_max_bytes }}
+umask 022
+mkdir -p "$DIR"
+: >> "$LOG"
+
+heartbeat() {
+  while :; do
+    now=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)
+    # The heartbeat also tells the reader which router it sits beside: the
+    # reader learns that from a "Using ZID:" line, and the router's own
+    # start-up line is not in this feed.
+    if [ -s "$DIR/router.zid" ]; then
+      printf '%s  INFO peer-health-feed: alive. Using ZID: %s\n' "$now" "$(cat "$DIR/router.zid")" >> "$LOG"
+    else
+      printf '%s  INFO peer-health-feed: alive\n' "$now" >> "$LOG"
+    fi
+    size=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
+    [ "$size" -gt "$MAX" ] && : > "$LOG"
+    sleep {{ peer_health_feed_heartbeat_secs }}
+  done
+}
+
+sessions() {
+  [ -n "$ADMIN" ] || return 0
+  while :; do
+    if curl -fsS -m 8 "$ADMIN/@/*/router" -o "$DIR/.router.json" 2>/dev/null; then
+      python3 - "$DIR/.router.json" "$DIR/sessions.json" <<'PY' || true
+import json, os, sys
+src, dst = sys.argv[1], sys.argv[2]
+zids = []
+router = ""
+for entry in json.load(open(src)):
+    parts = (entry.get("key") or "").split("/")
+    if len(parts) >= 3 and parts[0] == "@" and parts[2] == "router":
+        router = parts[1]
+    for s in (entry.get("value") or {}).get("sessions") or []:
+        z = s.get("peer")
+        if z and z not in zids:
+            zids.append(z)
+tmp = dst + ".tmp"
+json.dump(sorted(zids), open(tmp, "w"))
+os.replace(tmp, dst)
+if router:
+    ztmp = os.path.join(os.path.dirname(dst), ".router.zid.tmp")
+    open(ztmp, "w").write(router + "\n")
+    os.replace(ztmp, os.path.join(os.path.dirname(dst), "router.zid"))
+PY
+    fi
+    sleep {{ peer_health_sessions_refresh_secs }}
+  done
+}
+
+follow() {
+  # The loop restarts the follow when the router container is recreated.
+  while :; do
+    docker logs --since 1m -f "$ROUTER" 2>&1 \
+      | grep --line-buffered -F 'uhlc: incoming timestamp' >> "$LOG"
+    sleep 5
+  done
+}
+
+heartbeat & sessions & follow &
+wait

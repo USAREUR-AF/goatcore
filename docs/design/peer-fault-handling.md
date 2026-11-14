@@ -1,6 +1,6 @@
 # Peer fault handling
 
-**Status:** Designed, not built. Decided in [ADR 1232](../adr/1232-faults-on-peers-we-do-not-own-follow-one-five-stage-path.md).
+**Status:** Partly built, not deployed on any goatnet. The reader, its deploy role and the `peer` domain's rendering in panoscope are built; attribution to an owner, notices, tracking and closing are designed. Decided in [ADR 1232](../adr/1232-faults-on-peers-we-do-not-own-follow-one-five-stage-path.md).
 **Related:** [`environment-health-surface.md`](environment-health-surface.md) ([ADR 1036](../adr/1036-environment-health-surface.md)) · [`universal-ntp-hygiene.md`](universal-ntp-hygiene.md) · [`zenoh-ntp-integration.md`](zenoh-ntp-integration.md) · [`anomaly-probation-lifecycle.md`](anomaly-probation-lifecycle.md) ([ADR 1068](../adr/1068-anomaly-probation-lifecycle.md)) · [`zenoh-brokerless-consequences.md`](zenoh-brokerless-consequences.md)
 
 ## What this is
@@ -13,11 +13,11 @@ the measurement reads clean.
 
 | Stage | What happens | Status |
 |---|---|---|
-| 1. Measure | A reader beside the router turns evidence the router already produces into a number per peer | Not built |
-| 2. Attribute | The peer's Zenoh ID is joined to a machine and an owner | Not built |
-| 3. Tell | Admins, the owner and the peer itself each see the verdict | Pager and health renderers built; notices and the per-peer key not built |
+| 1. Measure | A reader beside the router turns evidence the router already produces into a number per peer | Built for the clock fault: the reader is goatstuff `ops/zenoh-trial-peers/peer-health`, deployed by `ops/ansible/peer-health-deploy.yml` (role `peer-health`). Not deployed |
+| 2. Attribute | The peer's Zenoh ID is joined to a machine and an owner | The reader fills name and owner from a file it is given (built); nothing generates that file (not built) |
+| 3. Tell | Admins, the owner and the peer itself each see the verdict | Pager built; the reader publishes the per-peer verdict key and panoscope renders the `peer` domain (built); notices not built |
 | 4. Track | One probation entry of kind `peer` per fault, with a deadline | Probation list built for the identity kind; the `peer` kind is reserved, not built |
-| 5. Close | The entry closes when the same measurement reads clean for a set period | Not built |
+| 5. Close | The entry closes when the same measurement reads clean for a set period | The reader reports a peer as cleared after a clean period (built); closing a tracked entry is not built |
 
 A fault kind supplies a detector for stage 1 and a notice text for stage 3. Stages 2, 4 and 5 are the same
 for every kind.
@@ -88,6 +88,11 @@ The router is the only vantage point we control for a machine we do not own.
 - **One reader beside each router that terminates an outside connection.** It follows the router's log
   stream and admin space, counts fault events per peer Zenoh ID, and publishes the result. It stores
   nothing and enforces nothing. If it stops, the fabric behaves as before.
+- **One play deploys it.** `ops/ansible/peer-health-deploy.yml -e target=<group>` installs the reader and a
+  host unit that feeds it. The unit follows the router container's log, keeps the timestamp-rejection
+  lines in a file the reader follows, and writes the router's session list from its admin space. The
+  reader connects with its own leaf (`goat-peer-health-trial-peer`); the router's access rules let that
+  leaf publish `ops/peer/health/**` and `ops/peer/verdict/**` and nothing else. Built, not deployed.
 - **It publishes on the existing health contract.** A new domain `peer` on `ops/peer/health/<site>` as
   `EnvHealthV1` gains a `PeerFaultDetailV1` detail. `goat health`, panoscope and stethoscope render a new
   domain without a new surface ([`environment-health-surface.md`](environment-health-surface.md) §4.4).

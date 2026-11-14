@@ -129,7 +129,7 @@ fn gv_first(file: &Path, key: &str) -> String {
 
 /// The services stage-service-leaves.yml stages a leaf for (its
 /// `service_leaf_map`). A test holds this list in step with the play.
-const STAGED_SERVICES: [&str; 7] = ["fabric-health", "mesh-health", "presence-health", "time-health", "consistency-health", "fabric-crawler", "goat-topology"];
+const STAGED_SERVICES: [&str; 8] = ["fabric-health", "mesh-health", "presence-health", "time-health", "peer-health", "consistency-health", "fabric-crawler", "goat-topology"];
 
 /// A joining site's leaves, from its manifest
 /// (`ops/enrollment/manifests/<site>-certs.yaml`): where mint-site-certs.sh

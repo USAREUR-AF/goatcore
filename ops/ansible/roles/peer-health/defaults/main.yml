@@ -1,0 +1,81 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# Defaults for the peer-health role: deploys the goat-peer-health reader (ADR
+# 1232, docs/design/peer-fault-handling.md). The reader turns the router's own
+# timestamp-rejection log lines into one reading per peer and publishes the
+# per-site roll-up on ops/peer/health/<site> (EnvHealthV1{domain:"peer"}) and
+# one verdict document per faulty peer on ops/peer/verdict/<zid>. It enforces
+# nothing and stores nothing.
+#
+# Two parts on the host:
+#   peer-health-feed.service  a host unit that follows the router container's
+#                             log and writes the lines the reader needs to a
+#                             file, plus the router's current session list
+#   peer-health (container)   reads that file read-only; an mTLS Zenoh client
+#
+# The container never gets the docker socket. Only the host unit reads the
+# router's log.
+#
+# Deployed per goatnet by peer-health-deploy.yml (-e target=<site>_hosts).
+
+# Image: digest-pinned (ADR 0859). The role carries no pin: a goatnet's pin
+# table or its group_vars set it, and the role refuses an empty value. Built in
+# the goatstuff repository by .github/workflows/peer-health-image.yml.
+peer_health_image: ""
+
+# Site identifier: the <site> segment of ops/peer/health/<site>.
+peer_health_site: "{{ site_id }}"
+
+# Set on a per-partner edge router: every rejection this reader counts is then
+# attributed to that one peering, whatever Zenoh ID the line carries. Empty on a
+# core router.
+peer_health_peering: ""
+
+# The router this reader sits beside.
+peer_health_router_container: "{{ zenoh_stack | default('goat-zenoh') }}-router"
+peer_health_zenoh_endpoint: "tls/{{ zenoh_stack | default('goat-zenoh') }}-router:7447"
+peer_health_zenoh_network: "{{ zenoh_stack | default('goat-zenoh') }}_default"
+
+# The router's admin REST endpoint as the HOST reaches it (the feed unit reads
+# the session list from it). Empty disables the session list; the reader then
+# reports direct_session as unknown.
+peer_health_router_admin_url: "http://{{ goat_zenoh_rest_host | default('127.0.0.1') }}:{{ goat_zenoh_rest_port | default(8000) }}"
+
+# Reader timing. A peer drops out after clean_after with no rejection; a feed
+# with no line at all for silence_after reads unmeasured, never green. The feed
+# unit writes a heartbeat line every heartbeat seconds, so silence means the
+# feed stopped, not that the peers are healthy.
+peer_health_interval_ms: 30000
+peer_health_window_secs: 60
+peer_health_clean_after_secs: 600
+peer_health_silence_after_secs: 180
+peer_health_feed_heartbeat_secs: 30
+peer_health_sessions_refresh_secs: 30
+# The feed file is truncated when it passes this size; the reader follows a
+# truncated file from its start.
+peer_health_feed_max_bytes: 5242880
+
+# Optional attribution map (Zenoh ID or source address -> {name, owner}),
+# rendered from this variable when it is not empty.
+peer_health_peers: {}
+
+# Host-side cert directory. Infra-class leaf cert + key minted via the
+# offline-CA cert-sign with Subject CN=goat-peer-health-trial-peer (zenoh ACL
+# subject `infra-peer-health`, rule `infra-w-peer-health`). A wrong or empty CN
+# means every publish is silently denied.
+#   {cert_dir}/peer-health-cert.pem
+#   {cert_dir}/peer-health-key.pem
+peer_health_cert_dir: "/opt/peer-health/certs"
+
+# CA root the client uses to verify the router: the router's own bundle,
+# mounted, never a private copy.
+peer_health_ca_root_src: "/etc/{{ zenoh_stack | default('goat-zenoh') }}/tls/ca-root-cert.pem"
+
+peer_health_compose_dir: "/opt/peer-health"
+peer_health_feed_dir: "/var/lib/peer-health/feed"
+peer_health_rust_log: "goat_peer_health=info,zenoh=warn"
+
+# Container memory ceiling. Per-host values go in group_vars.
+# ops/ci/check-compose-memory-is-variable.sh refuses a literal in the template.
+peer_health_memory_limit: 256M  # the peer-health container
