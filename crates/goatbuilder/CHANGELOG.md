@@ -7,6 +7,39 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+
+### For someone deploying
+
+#### Changed: every site's end state declares every service, and a joining site's missing ones are named gaps
+
+`goatbuilder endstate` and `ops/goatbuilder/endstate/endstate.py` now declare
+every service a site cut off from the others needs at every site that
+replicates: the replication core (Traefik, NetBird management, signal, Ory,
+the Kratos self-service UI), the NetBird dashboard, the portal, the id console,
+the onboarding engine and mesh DNS. No catalog row is founder-only. What a
+joining site does not run yet is graded `GAP`, "declared, not yet built at
+this site", with the gate row that closes it: I1 and I4 for the admin
+surfaces, I3 for mesh DNS. A `GAP` is counted and printed and does not by
+itself make the site red. Acceptance run with `--endstate` reports a row such a
+service owns as `SKIPPED` with the same text instead of N/A. `goatbuilder
+join-node` lists the gaps under "What <site> does not run yet", from the
+catalog, before the services the site turns off (ADR 1233, #671).
+
+#### "Fixed: a host-allocation SKIP says which case it is and what clears it"
+
+A plan whose host-allocation check was SKIP cannot be deployed: deploy does
+not run that check again, so it refuses the plan (GB-188), and a new plan
+records the same SKIP. The refusal used to say only "host-allocation was SKIP
+when the plan was made". Now the plan view, the refusal and the run record
+carry the check's detail, which gives the case and the route:
+- the inventory names no host for this peering: run `goatbuilder federate
+  allocate <partner>`, or name the hosts in `peering-edges.ini`;
+- another peering on a shared machine has a value that does not resolve: each
+  value is named with its key and the group whose vars set it;
+- its agreement was not found: both paths that were looked at are named.
+
+GB-188's catalog entry gains this cause (#742).
+
 <!-- END generated: changelog unreleased -->
 
 ## 0.7.0 — 2026-11-14
@@ -88,21 +121,6 @@ A final check compares the running daemon's root with
 leave containerd on an empty root after its next restart, so `docker exec` and
 every healthcheck answered `NotFound` while the services kept running. The
 data-root migration runbook gives the check by hand (#664).
-
-#### Changed: every site's end state declares every service, and a joining site's missing ones are named gaps
-
-`goatbuilder endstate` and `ops/goatbuilder/endstate/endstate.py` now declare
-every service a site cut off from the others needs at every site that
-replicates: the replication core (Traefik, NetBird management, signal, Ory,
-the Kratos self-service UI), the NetBird dashboard, the portal, the id console,
-the onboarding engine and mesh DNS. No catalog row is founder-only. What a
-joining site does not run yet is graded `GAP`, "declared, not yet built at
-this site", with the gate row that closes it: I1 and I4 for the admin
-surfaces, I3 for mesh DNS. A `GAP` is counted and printed and does not by
-itself make the site red. Acceptance run with `--endstate` reports a row such a
-service owns as `SKIPPED` with the same text instead of N/A. `goatbuilder
-join-node` lists the gaps under "What <site> does not run yet", from the
-catalog, before the services the site turns off (ADR 1233, #671).
 
 #### Added: the end state grades federation-proxy where a site turns it on
 
@@ -304,21 +322,6 @@ again, read the unit's journal if it still does not match, then resume with
 `goatbuilder federate <peering> --from 11`. `goatbuilder explain GB-271`
 gives the same. Every other failed assertion still reads X-ANSIBLE-003
 (#646).
-
-#### "Fixed: a host-allocation SKIP says which case it is and what clears it"
-
-A plan whose host-allocation check was SKIP cannot be deployed: deploy does
-not run that check again, so it refuses the plan (GB-188), and a new plan
-records the same SKIP. The refusal used to say only "host-allocation was SKIP
-when the plan was made". Now the plan view, the refusal and the run record
-carry the check's detail, which gives the case and the route:
-- the inventory names no host for this peering: run `goatbuilder federate
-  allocate <partner>`, or name the hosts in `peering-edges.ini`;
-- another peering on a shared machine has a value that does not resolve: each
-  value is named with its key and the group whose vars set it;
-- its agreement was not found: both paths that were looked at are named.
-
-GB-188's catalog entry gains this cause (#742).
 
 #### Fixed: the command reference lists federate's own flags
 
