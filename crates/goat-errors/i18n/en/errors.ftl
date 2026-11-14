@@ -989,6 +989,12 @@ gb-278-what = On a two-driver peering (drivers: two), the edge driver runs a pha
 gb-278-cause-1 = the edge driver's checkout was not updated to the controller's commit, or has local changes
 gb-278-cause-2 = the command was typed without the hand-off's --expect-commit
 gb-278-cause-3 = a carried file was not copied from the controller's <work>, or was changed on the way
+gb-295-title = a cut-off site's access-rule cutover would have created or deleted a policy
+gb-295-what = ops/ansible/netbird-acl-cutover.yml ran with cut_off=true, for a site cut off from the others. While cut off, a site may only update the access-rule policies it already has, by their ids: NetBird assigns a created policy's id, so two cut-off sites that each create the same rule leave two policies after the heal, and a delete at one site is undone or doubled by the other. This run would have created or deleted at least one policy (the message names each policy it would have created and each id it would have deleted), so it stopped before it wrote anything, updates included.
+gb-295-cause-1 = the access-rule matrix names a rule the site has no policy for yet
+gb-295-cause-2 = reap_orphans=true, and the site holds a generated policy the matrix no longer names
+gb-295-cause-3 = enforce with the Default policy action delete
+gb-295-cause-4 = the teardown play, which only deletes
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened
