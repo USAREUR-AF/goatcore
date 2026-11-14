@@ -141,5 +141,46 @@ class UndoneOnExit(unittest.TestCase):
                          "a CA that could not be saved is never overwritten")
 
 
+class ARestoreThatFailsIsSaid(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.s = Sandbox(self._tmp.name)
+        self.ca = self.s.tmp / "ca.pem"
+        self.ca.write_text("a throwaway CA\n")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_a_restore_that_fails_names_the_command_and_fails_the_run(self):
+        # After the change, sudo fails, as sudo with an expired timestamp and no terminal does.
+        script = ("sys_arm_undo; sys_trust_registry '%s'; sys_point_ghcr\n"
+                  "cat > '%s' <<'EOF'\n#!/bin/sh\necho \"sudo $*\" >> '%s'\nexit 1\nEOF\n"
+                  "exit 0" % (self.ca, self.s.bin / "sudo", self.s.log))
+        r = self.s.bash(script)
+        self.assertNotEqual(r.returncode, 0, "a run whose restore failed does not exit 0")
+        self.assertIn("NOT RESTORED", r.stderr, r.stderr)
+        self.assertIn(str(self.s.hosts), r.stderr, "the message names the hosts file to fix")
+        self.assertIn(str(self.s.certs / "ghcr.io"), r.stderr, "and the certificate directory")
+
+    def test_a_hosts_file_that_cannot_be_read_is_never_emptied(self):
+        r = self.s.bash("sys_arm_undo; sys_point_ghcr\nchmod 0200 \"$E2E_HOSTS_FILE\"")
+        self.s.hosts.chmod(0o600)
+        self.assertNotEqual(self.s.hosts.read_text(), "", "a read error is not taken for an empty file")
+        self.assertIn("NOT RESTORED", r.stderr, r.stderr)
+
+    def test_sudo_must_need_no_password_not_merely_be_cached(self):
+        # `sudo -k -n true` succeeds only where sudo needs no password at all; a cached
+        # timestamp could expire before the undo runs.
+        p = self.s.bin / "sudo"
+        p.write_text('#!/bin/sh\n[ "$1" = -k ] && [ "$2" = -n ] && exit 1\nexec "$@"\n')
+        p.chmod(0o755)
+        r = self.s.bash("sys_sudo_ready")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("NOPASSWD", r.stderr, r.stderr)
+        p.write_text('#!/bin/sh\n[ "$1" = -k ] && shift\n[ "$1" = -n ] && shift\nexec "$@"\n')
+        r = self.s.bash("sys_sudo_ready")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
