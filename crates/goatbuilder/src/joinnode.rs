@@ -493,6 +493,10 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         if !status.success() {
             let rc = status.code().unwrap_or(1);
             checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the node is left partway through phase {}. `--dry-run` prints this phase's command and the gate that proves it.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
+            // F5: the phase's output, as the runner kept it, matched against
+            // the error catalog (explain_phase::interpreted), as standup does.
+            let id = ph.n.to_string();
+            checks.extend(crate::explain_phase::interpreted("join-node", &id, crate::explain_phase::runner_log(&id).as_deref()));
             exit = EXIT_REFUSED;
             break;
         }

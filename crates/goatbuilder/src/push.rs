@@ -635,6 +635,9 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                     // checkout is refused by ansible-preflight before any play runs).
                     let fatal: Vec<String> = text.lines().filter(|l| l.contains("fatal:") || l.contains("REFUSE")).take(3).map(|l| l.chars().take(200).collect()).collect();
                     checks.push(not_done(&format!("{}/{g}/deploy", p.name), format!("deploy FAILED — log {log}; {}", fatal.join(" | "))));
+                    // F5: the play's output, kept in its log, matched against the
+                    // error catalog under the deploy step's key.
+                    checks.extend(crate::explain_phase::interpreted("deploy", "deploy", Some(&log)));
                     rc_not_converged = true;
                     skipped_verify(g, "not checked: the deploy failed");
                     continue;

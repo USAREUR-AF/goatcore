@@ -836,9 +836,7 @@ fn envrc_export(repo: &Path, name: &str) -> Option<String> {
 /// number, `image-pull` or `observability-leg-<leg>`. None when the catalog has
 /// no such step.
 fn interpreted(key: &str, log: Option<&str>) -> Option<Check> {
-    let output = log.and_then(|l| std::fs::read_to_string(l).ok()).unwrap_or_default();
-    let f = crate::explain_phase::failed_phase("standup", key, &output, log)?;
-    Some(Check { name: "interpreted".into(), ok: false, detail: f.detail(), fix: Some(f.fix.clone()) })
+    crate::explain_phase::interpreted("standup", key, log)
 }
 
 fn row(name: &str, detail: String) -> Check {
