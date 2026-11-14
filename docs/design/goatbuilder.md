@@ -363,6 +363,54 @@ kratos-selfservice-ui and mesh-coredns are placed by reading a live joiner's run
 
 That ADR is [ADR 1233](../adr/1233-a-joiner-runs-the-replication-core.md) (Proposed); the live read it names for kratos-selfservice-ui and mesh-coredns is not done.
 
+**(f) No manual phase after reaching the node (gate row H2).** Status: **designed**. Nothing in this part is built.
+
+Today phases 8 and 10 are manual. A person mints a setup key, and then enrols the node by typing `netbird up` on it. Phase 9 sends `$(printenv <SITE>_NB_SETUP_KEY)` to the node. It runs that line in plain bash, not through the secrets injector, so under a reference store the node received the reference `op://...` instead of the key ([phone-node.md](phone-node.md), rows 4 and 5). The design below removes the two manual phases and both ways a secret can be passed unresolved. It reuses what `standup` already does at its phase 8 ([goatbuilder-speed.md](goatbuilder-speed.md), "Phase 8 enrolment as a scripted step").
+
+1. **Where the setup key is minted and kept.** The key is minted on the host that holds the NetBird database of the goatnet the node joins, with `mgmt-host-bootstrap create-setup-key`:
+   - It is single use, and lives one hour.
+   - For a joiner, that host is the first host of the founder's core group, because the new site has no database yet. `mesh-enroll-host.yml` takes the minting host as a variable, `mesh_enroll_mint_host`, whose default is the site's first host, as today.
+   - The key is held under `no_log`. It is written to a 0600 file under `/run` on the node, handed to `netbird up --setup-key-file`, and the file is removed whatever the outcome.
+   - The key never reaches the operator's machine. So it is not in the operator's secret store, not in any argument list, and not in any log.
+
+   The gate row says the key is minted *into the declared secret store*. This design does not do that, and the row's text needs a decision from its owner. A single-use, one-hour key gains nothing from being stored. Storing it would put a live credential on the operator's machine that the play never needs there. If a stored copy is required anyway:
+   - Under a value store (`env-file`, `sops`, `git-crypt`), `posture.py set --stdin-json` can store it without it appearing in an argument list.
+   - Under a reference store (`1password`, `openbao`, `vaultwarden`, `custom`), `posture.py` refuses to write values ([ADR 1186](../adr/1186-credentials-at-rest-are-references-only.md), [ADR 1204](../adr/1204-declared-secrets-posture-and-zero-saas-quickstart.md)). Writing one into such a store would need a new decision, and this design does not make it.
+
+2. **The groups the key carries.** A key with no `--auto-groups` puts the peer in NetBird's implicit `All` group only, and that group grants no peers (`ops/mgmt-host-bootstrap/main.go`). `mesh-enroll-host.yml` mints without `--auto-groups` today. The manual phase 8 says "read the group off a live peer, do not guess", and the design keeps that rule:
+   - The play reads, from the same database, the groups held by the peer of the minting host, leaving out `All`.
+   - It mints with those groups.
+   - It refuses, before any key exists, if that peer holds no group other than `All`.
+   - The SQL against NetBird's `peers` and `group_peers` tables has to be checked against a live database before this is called built.
+
+3. **How the key reaches the node.** Only through the 0600 file in step 1. It never travels as an argument, an environment variable on the operator's machine, or a here-string through ssh. Phase 10 becomes the step `mesh-enroll-host.yml -e target=<node's group> -l <node> -e mesh_enroll_mint_host=<host> -e mesh_ips_out=<state dir file>`. Its gate is unchanged, and now a command rather than a person:
+   - `netbird status` shows `Interface type: Kernel`;
+   - `nft list tables` holds `table ip netbird`.
+
+   The step reads `mesh_enrollment_url` from the site's group_vars, as `standup` does. A site without it is refused before any key is minted.
+
+4. **Phase 8 goes, and phase 12 fills itself.** The mint is part of phase 10, so phase 8 has nothing left to do. Right after phase 10, `standup-mesh-record.py <site> --ips <file> --no-mint` writes the node's mesh address into the site's group_vars and the mesh inventory. That is the one edit a person made between phases 10 and 12. Phase 12 stays a gate over it.
+
+   `--no-mint` leaves the router certificate alone. A joiner's service certificates are row I3's concern ("(b)", above).
+
+5. **Phase 9 sends no secret.** With the key minted at phase 10, phase 9 runs `preflight-enrollment.sh` with a new `--key-at-enrolment` argument. The setup-key check then reports SKIP with the reason, and the other checks run as before: the clock, a stale `wt0`, and the enrolment address. Nothing secret is piped to the node.
+
+6. **Every secret reference join-node passes to a node is resolved, or the run is refused.** After steps 1 to 5, a secret reaches a node only in two places:
+   - **Every play.** These already run through `ansible-preflight.sh`, which execs `with-secrets` and refuses an unresolved reference (`goat_unresolved_reference_guard`).
+   - **Phase 2's first-login password.** `seed-ssh-key.sh` reads it from the variable `--pass-var` names. Phase 2 will run the seed under `ops/scripts/with-secrets`, so a reference resolves.
+
+   `join-node` itself refuses, before it contacts the node, when a value it reads to hand to a node still has a reference store's prefix after resolution. Those prefixes are `op://`, `bao://`, `bw://`, or the declared `ref_prefix`. The refusal names the variable and the store, and never the value. It needs one new catalog code, which is not claimed yet.
+
+7. **What stays a person's step.** Only phase 1: finding the node on the site's LAN and passing `--address`. With a password-only box, the first-login password is also set in the environment before the run. That is input, not a step: the run does not stop for it.
+
+   Allowing USB debugging on a phone stays a person's step too. That is row H3's concern, not this row's.
+
+**The test** (the row's "Proven by"): the H1 fixture run, from phase 1 to 15 with no operator step between phase 2 and phase 15.
+- The stand-ins record every argument list and every byte piped to `ssh`.
+- The fixture's database stand-in prints a key.
+- The test fails if that key, or any value the store holds, appears in a recorded argument list, in the run's log, or in its JSON report.
+- A separate case declares a reference store whose reference is not resolved, and expects the refusal in 6 before any phase contacts the node.
+
 ### `federate`: which party we are in phases 7, 8, 9 and 14
 
 Phases 7 (verify), 8 (mint the peering leaves), 9 (apply) and 14 (acceptance) always name our party with `--as`. Given on the command line, `--as` is used as given. Without it, both avenues read our sovereign id by one rule (`our_id` in `crates/goatbuilder/src/federate/mod.rs`, `our_id` in `ops/scripts/peering-standup.sh`):
