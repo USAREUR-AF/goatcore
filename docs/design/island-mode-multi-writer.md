@@ -125,10 +125,30 @@ each mechanism below makes another site refuse what did not come from it.
 | Mechanism | Where | Scope | Status |
 |---|---|---|---|
 | Directives accepted only from the hub's replication origin; `sever_site`, `restore_site`, owner-site precedence, identity ownership (D1 to D7) | `goat_hub_directives` (`ops/postgres/spock/hub-authority/netbird.sql`), role `spock-hub-directives` | In 1.0 | built; proven by the harness; applied by no play until PR #596 |
-| The first site declares itself the hub at standup, and a joining site inherits the value; the hub's name is read only from each site's configuration (D8) | `goatbuilder standup` writes `goatnet_hub_site` beside `goatnet_founder`; the config preflight refuses a joiner that declares no hub or another; the D10 guard reads the Postgres setting `goat.hub_site`, written by Ansible | In 1.0 | designed, not built |
-| A platform-admin grant is made only at the hub (D10) | grant paths refuse at a non-hub site; a trigger on Kratos `identities` refuses a replicated or local row adding `PLATFORM-ADMIN` whose origin is not the hub, logs it in `goat_ceiling_refused`, and alerts; an alert on `netbird_admin_reconcile_stray_admins`; the sponsor ceiling at a non-hub site stops at `iam-admin` | In 1.0 (gate row I4) | designed, not built |
+| The first site declares itself the hub at standup, and a joining site inherits the value; the hub's name is read only from each site's configuration (D8) | `goatbuilder standup` writes `goatnet_hub_site` beside `goatnet_founder`; the config preflight refuses a joiner that declares no hub or another; the D10 guard reads the Postgres setting `goat.hub_site`, which role `ory-narrow-repset` writes from `goatnet_hub_site` | In 1.0 | `goat.hub_site` and its writer: built, run in the partition harness; the standup and preflight parts: designed, not built |
+| A platform-admin grant is made only at the hub (D10, and the amendment proposed in [ADR 1240](../adr/1240-a-platform-admin-grant-not-made-at-the-hub-arrives-without-the-group-and-is-recorded.md)) | grant paths refuse at a non-hub site; a trigger on Kratos `identities` (`ops/postgres/spock/hub-authority/kratos.sql`, installed by `ory-narrow-repset`) refuses a local grant of `PLATFORM-ADMIN` at a non-hub site, applies a replicated one whose sending node is not the hub without the group, and logs it in `goat_ceiling_refused`, which alerts; an alert on `netbird_admin_reconcile_stray_admins`; the sponsor ceiling at a non-hub site stops at `iam-admin` | In 1.0 (gate row I4) | the trigger and `goat_ceiling_refused`: built, run in the partition harness (`kratos-c2-platform-admin-grant-hub-only`); the alerts, the grant-path refusals and the sponsor ceiling: designed, not built |
 | A join or rejoin needs an applied `admit_site` (or a later `restore_site`) for the joining node (D9) | a new directive kind; `spock-mesh-peering` checks the local applied-directives table before `spock.sub_create` from a node; `standup` and `join-node` for a joining site stop before their Spock step and print the hub's command; the role refuses a non-empty `spock_mesh_forward_origins` | After 1.0 | designed, not built |
 | After a sever, the hub lists the rows whose current version the severed node committed since a stated time, by commit origin, and revokes them (D11) | a function installed with the hub-authority SQL, run at the hub | After 1.0 | designed, not built |
+
+How the D10 trigger decides. It reads only `metadata_public->'groups'`, the
+admin-managed groups (ADR 1182). A grant is a row whose groups hold `PLATFORM-ADMIN`
+where the site's previous row did not, or a new row that holds it; a removal is never
+touched. A local grant is allowed at the hub and at a site with no Spock node, and raises
+an error at any other site, and at a Spock site with no `goat.hub_site`; the error names
+the role that writes the setting. A replicated grant is applied as is only when its
+sending node is the hub, read from the Spock apply backend's server-set `backend_type`
+and the subscription's `sub_origin`. Otherwise it is applied with `PLATFORM-ADMIN` taken
+out and the other groups kept, so the rest of the row still replicates, and logged in
+`goat_ceiling_refused` with the reason (`not_hub`, `forwarding` or `no_hub`), the groups
+as received and the commit timestamp of the sending site's commit. The trigger enforces
+D9's empty `forward_origins` itself: while any subscription at the site forwards origins,
+the sending node is not always the node that made the commit, so every replicated grant
+there is treated as not from the hub. `goat.hub_site` is cluster-wide, written with
+`ALTER SYSTEM` and reloaded, so running apply workers read a new value without a restart.
+It holds `goatnet_hub_site`, the hub's node name as `spock-mesh-peering` names it; in the
+`kratos` database the same site's node is `<name>_kratos`, and the trigger accepts either
+name by equality only (`goat_is_hub_node`): `<name>_other`, a prefix or a pattern is not the
+hub. `ops/postgres/spock/tests/hub-authority/unit.sh` checks that, in CI before the harness.
 
 A harness scenario proves each part before it is built: a platform-admin grant at B
 refused at A (gate row I4 of [`goatbuilder-v1-gate.md`](goatbuilder-v1-gate.md)), a join

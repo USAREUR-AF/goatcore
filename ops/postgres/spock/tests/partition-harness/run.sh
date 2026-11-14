@@ -30,6 +30,11 @@
 #
 # Usage (Linux Docker, CI):  IMAGE=postgres-spock:smoke ./run.sh [scenario ...]
 #   KEEP=1 leaves the containers up.
+#   Two runs on one machine need their own names and ports (a run removes only
+#   containers under its own prefix): HARNESS_PFX (default ph), HARNESS_NET
+#   (partition-harness-net), and the host ports HARNESS_PORT_PG_A (55432),
+#   HARNESS_PORT_PG_B (55433), HARNESS_PORT_KRATOS_A (54434),
+#   HARNESS_PORT_KRATOS_B (54534), HARNESS_PORT_HYDRA (54445).
 
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -37,11 +42,11 @@ REPO="$(cd "$HERE/../../../../.." && pwd)"
 cd "$HERE"
 
 IMAGE="${IMAGE:?set IMAGE to a postgres-spock image}"
-PFX="ph"
-NET="partition-harness-net"
+PFX="${HARNESS_PFX:-ph}"
+NET="${HARNESS_NET:-partition-harness-net}"
 PW="partition"
-TS_PORT_a=55432
-TS_PORT_b=55433
+TS_PORT_a="${HARNESS_PORT_PG_A:-55432}"
+TS_PORT_b="${HARNESS_PORT_PG_B:-55433}"
 # shellcheck source=../lib/two-site.sh
 source ../lib/two-site.sh
 
@@ -52,11 +57,12 @@ RUN="$(date +%s)"
 WORK="$(mktemp -d)"
 RESULTS="${RESULTS:-$WORK/results.tsv}"
 : > "$RESULTS"
-KRATOS_ADMIN_a=54434; KRATOS_ADMIN_b=54534; HYDRA_ADMIN=54445
+KRATOS_ADMIN_a="${HARNESS_PORT_KRATOS_A:-54434}"; KRATOS_ADMIN_b="${HARNESS_PORT_KRATOS_B:-54534}"
+HYDRA_ADMIN="${HARNESS_PORT_HYDRA:-54445}"
 SHARED_NID="$(python3 -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["ory_shared_nid"])' "$REPO/ops/ansible/roles/ory/defaults/main.yml")"
 PRESEED_TS="$(python3 -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["ory_shared_preseed_ts"])' "$REPO/ops/ansible/roles/ory/defaults/main.yml")"
 
-EXTRA=(ph-nb-a ph-nb-b ph-kratos-a ph-kratos-b ph-hydra-a)
+EXTRA=("$PFX-nb-a" "$PFX-nb-b" "$PFX-kratos-a" "$PFX-kratos-b" "$PFX-hydra-a")
 cleanup() {
   [[ "${KEEP:-0}" == 1 ]] && { echo "KEEP=1, leaving containers up"; return; }
   ts_down "${EXTRA[@]}"
@@ -104,9 +110,9 @@ goat_table() { [[ "$1" == goat_* ]]; }
 while read -r t; do goat_table "$t" || NB_TABLES+=("$t"); done < <("${PY[@]}" tables netbird)
 nb_list="'$(IFS=,; echo "${NB_TABLES[*]}" | sed "s/,/','/g")'"
 for s in a b; do
-  docker run -d --name "ph-nb-$s" --network "$NET" \
+  docker run -d --name "$PFX-nb-$s" --network "$NET" \
     -e NETBIRD_RUN_MIGRATIONS=true -e NETBIRD_STORE_ENGINE=postgres -e NB_DISABLE_GEOLOCATION=true \
-    -e NB_STORE_ENGINE_POSTGRES_DSN="host=ph-$s user=postgres password=$PW dbname=netbird port=5432 sslmode=disable" \
+    -e NB_STORE_ENGINE_POSTGRES_DSN="host=$PFX-$s user=postgres password=$PW dbname=netbird port=5432 sslmode=disable" \
     -v "$WORK/management.json:/etc/netbird/management.json:ro" \
     "$NB_IMAGE" management --log-file console --disable-anonymous-metrics >/dev/null
 done
@@ -115,20 +121,20 @@ for s in a b; do
   for _ in $(seq 1 90); do
     have=$(q "$s" netbird "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ($nb_list);")
     [[ "$have" == "${#NB_TABLES[@]}" ]] && break
-    docker inspect -f '{{.State.Running}}' "ph-nb-$s" | grep -q true || break
+    docker inspect -f '{{.State.Running}}' "$PFX-nb-$s" | grep -q true || break
     sleep 2
   done
   if [[ "$have" != "${#NB_TABLES[@]}" ]]; then
     echo "::error::site $s: $have of ${#NB_TABLES[@]} repset tables exist after NetBird AutoMigrate"
     q "$s" netbird "SELECT 'missing: ' || t FROM unnest(ARRAY[$nb_list]) t
                     WHERE t NOT IN (SELECT table_name FROM information_schema.tables WHERE table_schema='public');"
-    docker logs "ph-nb-$s" 2>&1 | tail -40
+    docker logs "$PFX-nb-$s" 2>&1 | tail -40
     exit 1
   fi
 done
 sleep 5  # AutoMigrate creates indexes after the tables
-for s in a b; do docker logs "ph-nb-$s" 2>&1 | grep -iE 'version|migrat' | head -3 | sed "s/^/  nb-$s: /"; done
-docker rm -f ph-nb-a ph-nb-b >/dev/null
+for s in a b; do docker logs "$PFX-nb-$s" 2>&1 | grep -iE 'version|migrat' | head -3 | sed "s/^/  nb-$s: /"; done
+docker rm -f "$PFX-nb-a" "$PFX-nb-b" >/dev/null
 echo "  ${#NB_TABLES[@]} repset tables present at both sites; management stopped (writes below are SQL)"
 
 echo "== Kratos and Hydra schemas (migrate of the pinned images, each site)"
@@ -176,10 +182,10 @@ oidc: { subject_identifiers: { supported_types: [public] } }
 YAML
 chmod -R a+rX "$WORK/ory"
 for s in a b; do
-  docker run --rm --network "$NET" -e DSN="postgres://postgres:$PW@ph-$s:5432/kratos?sslmode=disable" \
+  docker run --rm --network "$NET" -e DSN="postgres://postgres:$PW@$PFX-$s:5432/kratos?sslmode=disable" \
     -v "$WORK/ory:/etc/config:ro" "$KRATOS_IMAGE" migrate -c /etc/config/kratos.yaml sql -e --yes \
     >"$WORK/migrate.log" 2>&1 || { cat "$WORK/migrate.log"; exit 1; }
-  docker run --rm --network "$NET" -e DSN="postgres://postgres:$PW@ph-$s:5432/hydra?sslmode=disable" \
+  docker run --rm --network "$NET" -e DSN="postgres://postgres:$PW@$PFX-$s:5432/hydra?sslmode=disable" \
     -v "$WORK/ory:/etc/config:ro" "$HYDRA_IMAGE" migrate -c /etc/config/hydra.yaml sql up -e --yes \
     >"$WORK/migrate.log" 2>&1 || { cat "$WORK/migrate.log"; exit 1; }
   # roles/ory: pre-seed the shared networks row before either service starts.
@@ -212,10 +218,25 @@ wire() { # wire <db> <repset> [sql file ...]   (the files the roles install befo
 }
 wire netbird netbird_mgmt "$REPO/ops/postgres/spock/revocation-guard/netbird.sql" \
                           "$REPO/ops/postgres/spock/hub-authority/netbird.sql"
-wire kratos  ory_narrow   "$REPO/ops/postgres/spock/revocation-guard/kratos.sql"
+wire kratos  ory_narrow   "$REPO/ops/postgres/spock/revocation-guard/kratos.sql" \
+                          "$REPO/ops/postgres/spock/hub-authority/kratos.sql"
 wire hydra   ory_narrow
 ts_wait_replicating "${DBS[@]}"
 echo "  replicating: ${DBS[*]}"
+# Each site's own configuration names the hub (ADR 1205 D8), as the server
+# setting goat.hub_site, written as ory-narrow-repset writes it from
+# goatnet_hub_site; never a replicated row. Set after the subscriptions, so
+# the scenarios also show that running apply workers read it after a reload.
+for s in a b; do
+  printf '%s\n' "SET goat.hub_site = '';" "ALTER SYSTEM SET goat.hub_site = 'site_a';" "SELECT pg_reload_conf();" \
+    | docker exec -i "$PFX-$s" psql -U postgres -d kratos -v ON_ERROR_STOP=1 -q >/dev/null
+done
+sleep 1
+for s in a b; do
+  [[ "$(q "$s" kratos "SELECT current_setting('goat.hub_site', true);")" == site_a ]] \
+    || { echo "::error::$PFX-$s does not read goat.hub_site"; exit 1; }
+done
+echo "  goat.hub_site = site_a at both sites"
 
 # Every site's slots have confirmed the other's current WAL, twice: once for
 # the writes, once for what the guard's re-apply triggers wrote on arrival.
@@ -233,17 +254,17 @@ sync_all() {
 echo "== Kratos at both sites, Hydra at the hub (A)"
 for s in a b; do
   port="KRATOS_ADMIN_$s"
-  docker run -d --name "ph-kratos-$s" --network "$NET" -p "127.0.0.1:${!port}:4434" \
-    -e DSN="postgres://postgres:$PW@ph-$s:5432/kratos?sslmode=disable" \
+  docker run -d --name "$PFX-kratos-$s" --network "$NET" -p "127.0.0.1:${!port}:4434" \
+    -e DSN="postgres://postgres:$PW@$PFX-$s:5432/kratos?sslmode=disable" \
     -v "$WORK/ory:/etc/config:ro" "$KRATOS_IMAGE" serve -c /etc/config/kratos.yaml --dev >/dev/null
 done
-docker run -d --name ph-hydra-a --network "$NET" -p "127.0.0.1:$HYDRA_ADMIN:4445" \
-  -e DSN="postgres://postgres:$PW@ph-a:5432/hydra?sslmode=disable" \
+docker run -d --name "$PFX-hydra-a" --network "$NET" -p "127.0.0.1:$HYDRA_ADMIN:4445" \
+  -e DSN="postgres://postgres:$PW@$PFX-a:5432/hydra?sslmode=disable" \
   -v "$WORK/ory:/etc/config:ro" "$HYDRA_IMAGE" serve -c /etc/config/hydra.yaml all --dev >/dev/null
 for url in "http://127.0.0.1:$KRATOS_ADMIN_a/admin/health/ready" "http://127.0.0.1:$KRATOS_ADMIN_b/admin/health/ready" \
            "http://127.0.0.1:$HYDRA_ADMIN/health/ready"; do
   for _ in $(seq 1 60); do curl -fs -o /dev/null "$url" && break; sleep 1; done
-  curl -fsS -o /dev/null "$url" || { echo "::error::$url not ready"; for c in ph-kratos-a ph-kratos-b ph-hydra-a; do docker logs "$c" 2>&1 | tail -20; done; exit 1; }
+  curl -fsS -o /dev/null "$url" || { echo "::error::$url not ready"; for c in "$PFX-kratos-a" "$PFX-kratos-b" "$PFX-hydra-a"; do docker logs "$c" 2>&1 | tail -20; done; exit 1; }
 done
 echo "  ready"
 
@@ -259,12 +280,16 @@ kapi() { # kapi <site> <METHOD> <path> [json]
 hapi() { # hapi <METHOD> <path> [json]   (Hydra runs at the hub only)
   curl -fsS -X "$1" "http://127.0.0.1:$HYDRA_ADMIN$2" -H 'Content-Type: application/json' ${3:+-d "$3"}
 }
-kratos_create() { # kratos_create <site> <email> <name>  -> prints the identity id; the creating site owns it (ADR 1205 D5)
-  kapi "$1" POST /admin/identities "$(jq -cn --arg e "$2" --arg n "$3" --arg o "site_$1" \
+kratos_create() { # kratos_create <site> <email> <name> [metadata_public json]  -> prints the identity id; the creating site owns it (ADR 1205 D5)
+  kapi "$1" POST /admin/identities "$(jq -cn --arg e "$2" --arg n "$3" --arg o "site_$1" --argjson m "${4:-null}" \
     '{schema_id:"default", traits:{email:$e, name:$n}, metadata_admin:{owner_site:$o},
-      credentials:{password:{config:{password:"harness-Passw0rd-not-secret"}}}}')" | jq -r .id
+      credentials:{password:{config:{password:"harness-Passw0rd-not-secret"}}}} + (if $m then {metadata_public:$m} else {} end)')" | jq -r .id
 }
 kname() { kr "$1" "SELECT traits->>'name' FROM identities WHERE id='$2';"; }
+pa_admin() { # pa_admin <site> <identity id>  -> yes|no: metadata_public.groups holds PLATFORM-ADMIN
+  kr "$1" "SELECT CASE WHEN coalesce(metadata_public->'groups', '[]'::jsonb) ? 'PLATFORM-ADMIN' THEN 'yes' ELSE 'no' END
+             FROM identities WHERE id = '$2';"
+}
 
 # Hub directives (ADR 1205). Site A is the hub. The applier is the script the
 # spock-hub-directives role installs, run here against one site.

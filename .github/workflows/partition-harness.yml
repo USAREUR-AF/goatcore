@@ -52,6 +52,10 @@ jobs:
           load: true
           tags: postgres-spock:harness
           cache-from: type=gha,scope=postgres-spock
+      - name: Platform-admin guard unit cases (ADR 1205 D10)
+        env:
+          IMAGE: postgres-spock:harness
+        run: ops/postgres/spock/tests/hub-authority/unit.sh
       - name: Partition harness
         env:
           IMAGE: postgres-spock:harness
