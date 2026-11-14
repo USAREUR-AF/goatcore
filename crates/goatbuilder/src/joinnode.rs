@@ -836,6 +836,10 @@ mod tests {
         let gv = t.path().join("ops/ansible/group_vars");
         std::fs::create_dir_all(gv.join("zagros_b_hosts")).unwrap();
         std::fs::write(gv.join("zagros_b_hosts/vars.yml"), "goatnet_founder: false\njoin_founder_site: zagros\nsite_enrollment_dns: netbird.example.net\n").unwrap();
+        // The site's leaf-cert manifest: the router and one service leaf.
+        let m = t.path().join("ops/enrollment/manifests");
+        std::fs::create_dir_all(&m).unwrap();
+        std::fs::write(m.join("zagros-b-certs.yaml"), "site_id: zagros-b\nout_dir: /s/zagros-b-leaves\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n  - name: portal\n    cn: portal\n").unwrap();
         t
     }
 
@@ -882,6 +886,34 @@ mod tests {
         assert!(core[0].label.contains("pass 1") && core[0].cmd.ends_with(" --skip-tags after-ory"), "{}", core[0].cmd);
         assert!(core[1].cmd.contains("ory-deploy.yml"), "Ory follows pass 1: {}", core[1].cmd);
         assert!(core[3].label.contains("pass 3") && !core[3].cmd.contains("--skip-tags"), "{}", core[3].cmd);
+    }
+
+    /// Gate row I3, the certificates: before the data router, a joiner's core
+    /// node mints the site's leaves from its manifest and stages the service
+    /// leaves the manifest carries onto the node. A site with no manifest is
+    /// refused when the plan is made (GB-286), and so is a manifest with no
+    /// router leaf, which the router's play reads (GB-287).
+    #[test]
+    fn a_joiners_core_node_mints_and_stages_its_leaves_before_the_router() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let at = |needle: &str| ph.iter().position(|p| p.cmd.contains(needle)).unwrap_or_else(|| panic!("no phase runs {needle}"));
+        let (mint, stage, router) = (at("mint-site-certs.sh"), at("stage-service-leaves.yml"), at("zenoh-deploy.yml"));
+        assert!(at("signal-federation-verify.yml") < mint && mint < stage && stage + 1 == router, "{mint} {stage} {router}");
+        assert_eq!((ph[mint].n, ph[mint].kind, ph[stage].n, ph[stage].kind), (13, "T", 13, "A"));
+        assert!(ph[mint].cmd.ends_with("/ops/scripts/mint-site-certs.sh' zagros-b"), "{}", ph[mint].cmd);
+        assert!(ph[stage].cmd.contains("stage-service-leaves.yml -e target=zagros_b_hosts -l node-x -e leaf_src_dir=/s/zagros-b-leaves "), "{}", ph[stage].cmd);
+        assert!(ph[stage].cmd.ends_with(r#"-e '{"leaf_only": ["fabric-health"]}'"#), "{}", ph[stage].cmd);
+        // No router leaf in the manifest: refused at plan time.
+        let m = t.path().join("ops/enrollment/manifests/zagros-b-certs.yaml");
+        std::fs::write(&m, "site_id: zagros-b\nout_dir: /s/zagros-b-leaves\nleaves:\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n").unwrap();
+        let e = plan(t.path(), &opts("zagros-b", "core", "zagros")).err().expect("refused");
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-287"), "{e}");
+        // No manifest at all: refused at plan time.
+        std::fs::remove_file(&m).unwrap();
+        let e = plan(t.path(), &opts("zagros-b", "core", "zagros")).err().expect("refused");
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-286"), "{e}");
+        assert!(e.to_string().contains("ops/enrollment/manifests/zagros-b-certs.yaml"), "{e}");
     }
 
     /// Gate row I3, the data router: a joiner's core node runs zenoh-deploy.yml
