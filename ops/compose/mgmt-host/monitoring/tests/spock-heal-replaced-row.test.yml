@@ -1,0 +1,45 @@
+# promtool unit test for SpockHealReplacedRow (rules/spock.yml).
+#
+# Run by .github/workflows/goat-obs-checks.yml; locally with
+#   promtool test rules ops/compose/mgmt-host/monitoring/tests/spock-heal-replaced-row.test.yml
+#
+# spock_ace_lww_lost_rows is drift-watch's count of the rows spock.resolutions
+# shows last-write-wins replaced with different content. It is a count of the
+# log as it stands, written hourly, so the alert keys on an increase.
+rule_files:
+  - ../rules/spock.yml
+
+evaluation_interval: 1m
+
+tests:
+  # One table's count rises once (a heal replaced a row); another stays flat.
+  - interval: 15m
+    input_series:
+      - series: 'spock_ace_lww_lost_rows{site="zagros-a",peer="site_a",db="portal_registry",table="topics"}'
+        values: '0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+      - series: 'spock_ace_lww_lost_rows{site="zagros-a",peer="site_a",db="netbird",table="peers"}'
+        values: '2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2'
+    alert_rule_test:
+      # Before the rise, and on a count that has never moved: silent.
+      - eval_time: 45m
+        alertname: SpockHealReplacedRow
+        exp_alerts: []
+      # Just after the rise: fires for the table that rose, and only that one.
+      - eval_time: 75m
+        alertname: SpockHealReplacedRow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: spock
+              site: zagros-a
+              peer: site_a
+              db: portal_registry
+              table: topics
+            exp_annotations:
+              summary: "A heal replaced 1 row(s) of portal_registry.topics by last-write-wins, at peer site_a"
+              description: "A heal replaced a row by last-write-wins; check spock.resolutions on peer site_a (database portal_registry, table topics). Two sites wrote different rows under one key while cut off; the kept version is at both sites and the other is in the log's local_tuple or remote_tuple. Decide whether the lost version must be written back. Post-partition runbook §3."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+      # More than 2h after the rise, with the count flat since: silent again.
+      - eval_time: 255m
+        alertname: SpockHealReplacedRow
+        exp_alerts: []

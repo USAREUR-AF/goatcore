@@ -158,6 +158,22 @@ groups:
           description: "The hourly drift-watch cron has not emitted a successful-run timestamp in >2h. Check `systemctl status spock-drift-watch.timer` on the mgmt-host. Without drift-watch the L2a hourly observability layer is silently dark."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
+      # A heal replaced a row by last-write-wins: two sites wrote different
+      # rows under one key while cut off, and one site's row is gone at both.
+      # The row compare above reports such a table equal; this reads Spock's
+      # own log through drift-watch (spock_ace_lww_lost_rows, a count of the
+      # log as it stands). drift-watch runs hourly, so the window is 2h. Unlike
+      # SpockConflictLogged it ignores a conflict whose two versions were equal.
+      - alert: SpockHealReplacedRow
+        expr: increase(spock_ace_lww_lost_rows[2h]) > 0
+        labels:
+          severity: warning
+          component: spock
+        annotations:
+          summary: "A heal replaced {{ $value | printf \"%.0f\" }} row(s) of {{ $labels.db }}.{{ $labels.table }} by last-write-wins, at peer {{ $labels.peer }}"
+          description: "A heal replaced a row by last-write-wins; check spock.resolutions on peer {{ $labels.peer }} (database {{ $labels.db }}, table {{ $labels.table }}). Two sites wrote different rows under one key while cut off; the kept version is at both sites and the other is in the log's local_tuple or remote_tuple. Decide whether the lost version must be written back. Post-partition runbook §3."
+          runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+
   - name: spock.conflicts
     interval: 30s
     rules:
