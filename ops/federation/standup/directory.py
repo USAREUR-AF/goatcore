@@ -10,7 +10,11 @@ sha256 of that package, until a date, signed by the party itself. This step:
      FED_PACKAGE_URL set, the pointer names our own public host, which must
      serve our package byte for byte. Unset, the directory hosts it: we upload
      our package to <directory>/v1/parties/<us>/package and the pointer names
-     that, so a party behind NAT needs no public host;
+     that, so a party behind NAT needs no public host. When the directory binds
+     another key to us, our signing key was rotated: the pointer's write is then
+     authorised by the seed it replaces (--previous-key, or
+     FED_PREVIOUS_SIGNING_KEY), and without that seed nothing is published
+     (GB-285);
   2. uploads our CA certificate to <directory>/v1/parties/<us>/ca: the
      certificate in FED_CA_CERT, else in the profile's ca-roots.pem, whose
      SHA-256 is our package's identity.ca_fingerprint;
@@ -56,7 +60,7 @@ peering: a directory that is down, refusing or wrong produces a WARN and exit 0.
 usage:
   directory.py --url URL --ours FILE [--package-url URL] [--key FILE] [--ca FILE]
                [--theirs FILE] [--their-id SOVEREIGN_ID] [--keyring FILE] [--work DIR]
-               [--per-counterparty] [--place-pointer-package]
+               [--per-counterparty] [--place-pointer-package] [--previous-key FILE]
 """
 from __future__ import annotations
 
@@ -487,14 +491,60 @@ def _https(url: str) -> bool:
     return urllib.parse.urlparse(url).scheme == "https"
 
 
-def signed_put(url: str, sid: str, resource: str, body: bytes, seed: bytes, content_type: str, timeout: float):
-    """PUT body to <url>/v1/parties/<resource>, signed as the saltlick write rule requires."""
+def signed_put(url: str, sid: str, resource: str, body: bytes, seed: bytes, content_type: str, timeout: float,
+               authorised_by: bytes | None = None):
+    """PUT body to <url>/v1/parties/<resource>, signed as the saltlick write rule requires.
+
+    The request presents seed's key. With authorised_by, the request statement is signed by
+    that seed instead: saltlick's rotation, where the key the directory binds authorises the
+    key that replaces it."""
     key_b64 = b64(public_key(seed))
     path = resource if resource == sid else sid + "/" + resource
+    signer = seed if authorised_by is None else authorised_by
     headers = {"Content-Type": content_type, "X-Saltlick-Key": key_b64,
-               "X-Saltlick-Signature": b64(sign(seed, request_statement("PUT", path, body, key_b64)))}
+               "X-Saltlick-Signature": b64(sign(signer, request_statement("PUT", path, body, key_b64)))}
     target = entry_url(url, sid) + ("" if resource == sid else "/" + resource)
     return _http("PUT", target, body, headers, timeout)
+
+
+def bound_key(url, sid: str, timeout: float):
+    """The key the directory binds to sid (its entry's X-Saltlick-Bound-Key), or None when it
+    has no entry or could not be read: the write that follows then meets the directory's own
+    rule, as before."""
+    try:
+        status, headers, _ = _get(entry_url(url, sid), timeout)
+    except (OSError, urllib.error.URLError, http.client.HTTPException):
+        return None
+    return headers.get("x-saltlick-bound-key") if status == 200 else None
+
+
+def hand_over(url, sid: str, key_b64: str, previous_key: str | None, timeout: float):
+    """The seed that authorises our first write under a new signing key, or None when the
+    directory binds no other key. Raises ValueError, with GB-285's words, when it binds another
+    key and the seed it would take is not given or is not that key's.
+
+    A party's new key reaches the directory only through its entry, and saltlick accepts it
+    only when the request is signed by the key it replaces (its README, "Write control"). The
+    package and the pointer are signed by the new key alone."""
+    bound = bound_key(url, sid, timeout)
+    if not bound or bound == key_b64:
+        return None
+    named = (f"the directory binds `{sid}` to {key_groups(bound)}, and our package is signed by "
+             f"{key_groups(key_b64)}")
+    if not previous_key:
+        raise ValueError(f"GB-285: {named}. Publishing under the new key needs the seed it replaces: "
+                         "set FED_PREVIOUS_SIGNING_KEY (or --previous-key) to the file of the seed that "
+                         "signed our last package; nothing published")
+    try:
+        previous = load_seed(previous_key)
+    except (OSError, ValueError) as e:
+        raise ValueError(f"GB-285: {named}, and FED_PREVIOUS_SIGNING_KEY is not readable ({e}); "
+                         "nothing published") from e
+    if b64(public_key(previous)) != bound:
+        raise ValueError(f"GB-285: {named}, and FED_PREVIOUS_SIGNING_KEY holds the seed of "
+                         f"{key_groups(b64(public_key(previous)))}, not of the key the directory binds; "
+                         "nothing published")
+    return previous
 
 
 def counterparty_slot(sid: str, their_id: str) -> str:
@@ -601,10 +651,12 @@ def mark_single_slot(work: str | None, raw: bytes):
 
 def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None, work: str | None,
             timeout: float, ca_path: str | None = None, their_id: str | None = None,
-            per_counterparty: bool = False) -> list:
+            per_counterparty: bool = False, previous_key: str | None = None) -> list:
     """Publish our pointer, and with no package_url our package; then our CA.
     With per_counterparty and their_id, also our package for that counterparty, and the
     pointer and single package only when they are free or already this peering's.
+    When the directory binds another key to us, the pointer is the hand-over: its write is
+    authorised by previous_key, the seed of the key it replaces (hand_over).
     Returns warnings; an empty list means everything was published."""
     try:
         pkg = json.loads(ours_raw)
@@ -650,6 +702,10 @@ def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None,
         except OSError:
             pass  # a convenience copy for the operator; the pointer is already built
     key_b64 = b64(pub)
+    try:
+        authorised_by = hand_over(url, sid, key_b64, previous_key, timeout)
+    except (OSError, ValueError, RuntimeError) as e:
+        return [str(e)]
     slot = per_counterparty and bool(their_id)
     write_single = True
     warnings = []
@@ -662,6 +718,12 @@ def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None,
         if not their_id:
             warnings.append("the counterparty's sovereign_id is not known, so no per-counterparty slot was published; "
                             "set FED_COUNTERPARTY_ID (--their-id)")
+    if not write_single and authorised_by is not None:
+        # The key is handed over through the entry alone, and the entry is another
+        # peering's: rewriting it would take that peering's pointer away.
+        return [f"GB-285: the directory binds `{sid}` to {key_groups(bound_key(url, sid, timeout) or '')}, "
+                "and the pointer names another peering's package, so this peering cannot hand the key over "
+                "through it; run phase 5 of the peering whose package the pointer names first; nothing published"]
     if not write_single:
         # Another peering's package holds the single slot, or the pointer names it.
         # Leave both: a counterparty on an older release reads them for that peering.
@@ -673,7 +735,8 @@ def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None,
         # The entry first: its first publish binds the key, and the directory refuses
         # a hosted file for a name no entry has claimed.
         try:
-            status, _, resp = signed_put(url, sid, sid, body, seed, "application/json", timeout)
+            status, _, resp = signed_put(url, sid, sid, body, seed, "application/json", timeout,
+                                         authorised_by=authorised_by)
         except (OSError, urllib.error.URLError, RuntimeError) as e:
             return [f"directory unreachable at {url}: {e}"]
         text = resp.decode(errors="replace").strip()
@@ -711,6 +774,9 @@ def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None,
                     record_pointer(work, body)
     if how:
         print(f"    published `{sid}` → {package_url} ({how})")
+    if how and authorised_by is not None:
+        print(f"    the directory binds {key_groups(key_b64)} to `{sid}` in place of "
+              f"{key_groups(b64(public_key(authorised_by)))}, authorised by the key it replaces")
     print(f"    our verifying key, to read aloud: {key_groups(key_b64)}")
     warnings += publish_ca(url, sid, pkg, seed, ca_path, timeout)
     warnings += publish_bundle(url, sid, seed, work, timeout)
@@ -1194,6 +1260,9 @@ def main(argv=None) -> int:
     ap.add_argument("--ours", required=True)
     ap.add_argument("--package-url")
     ap.add_argument("--key")
+    ap.add_argument("--previous-key", default=os.environ.get("FED_PREVIOUS_SIGNING_KEY") or None,
+                    help="the seed of the signing key the directory binds, when --key is a new one: it "
+                         "authorises the hand-over (default from FED_PREVIOUS_SIGNING_KEY)")
     ap.add_argument("--ca")
     ap.add_argument("--theirs")
     ap.add_argument("--their-id")
@@ -1250,7 +1319,7 @@ def main(argv=None) -> int:
         if slot_for and not SOVEREIGN_ID_RE.match(slot_for):
             slot_for = None
     warnings += publish(a.url, ours_raw, a.package_url, a.key, a.work, a.timeout, a.ca,
-                        their_id=slot_for, per_counterparty=a.per_counterparty)
+                        their_id=slot_for, per_counterparty=a.per_counterparty, previous_key=a.previous_key)
 
     theirs_on_disk = None
     if a.theirs and os.path.isfile(a.theirs):
