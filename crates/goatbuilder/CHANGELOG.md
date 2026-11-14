@@ -47,7 +47,7 @@ two policies after the heal. A run that would create a policy, reap one
 GB-295 before it writes anything, naming each policy it would have created and
 each id it would have deleted. Disabling the Default policy is an update and
 still runs. After the heal, run the cutover at the hub without `cut_off` to
-make the creates and deletes. Without `cut_off` the cutover runs as before.
+make the creates and deletes. Without `cut_off` the cutover runs as before (#708).
 
 #### Fixed: backing a peering out removes its entry from the edge's host firewall
 
