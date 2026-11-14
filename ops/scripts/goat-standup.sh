@@ -1201,6 +1201,21 @@ step 12 A "onboard-runner (auto-mint on approval, ADR 1062 stage 3)" \
 step 12 A "grant-keyd (encryption key distribution)" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} grant-keyd-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*'"
 
+# Phase 12. The site services site-services.yml imports, which no other phase ran:
+#      phase 10 runs that file only on LAN and only for its lan-dns, traefik and
+#      stun tags, so a site that enabled the console or isitup, listed them in
+#      isitup_services and routed them in Traefik got neither, and the phase-13
+#      declared-service-actually-deployed row failed. Each runs only when the
+#      site's vars.yml sets its flag true (the roles refuse otherwise), and on
+#      the founder mgmt host only: the console is an admin-write surface
+#      (ADR 1084 §D3, its play's router_role guard), and isitup is graded there.
+#      A failed play fails the step; only an unset flag skips.
+#      The console after the portal it reads; isitup last, after the surfaces it lists.
+step 12 A "id-admin console (single-homed admin surface; opt-in via id_admin_console_enabled)" \
+  "cd '$REPO/ops/ansible' && ( grep -qE '^id_admin_console_enabled:[[:space:]]*true' group_vars/${GROUP}/vars.yml 2>/dev/null && { $ANSIBLE_PRE ${INV[*]} id-admin-console-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*'; exit \$?; }; echo 'id_admin_console_enabled not true for ${GROUP} — console not requested, skipping' )"
+step 12 A "isitup status page (opt-in via isitup_enabled)" \
+  "cd '$REPO/ops/ansible' && ( grep -qE '^isitup_enabled:[[:space:]]*true' group_vars/${GROUP}/vars.yml 2>/dev/null && { $ANSIBLE_PRE ${INV[*]} isitup-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*'; exit \$?; }; echo 'isitup_enabled not true for ${GROUP} — status page not requested, skipping' )"
+
 # Phase 12. notional publishers/subscribers (synthetic demo traffic) — OPTIONAL per
 #      goatnet. A dev/demo goatnet opts in with synth_vendors_enabled: true in
 #      its group_vars so the fabric has real traffic for panoscope/portal; a
