@@ -149,6 +149,12 @@ spire_federates_with: []                 # one entry per partner trust domain:
 spire_federation_bundle_endpoint_port: 8443
 ```
 
+**Built:** a disabled `goat-peering-spire` export does not resolve or contact
+an empty server delegate. Its delegated tasks use the inventory host only
+for the skipped disabled case. Enabled export requires a declared SPIRE
+server host; it never falls back to the edge for a missing server. Phase 13
+retains its existing disabled-host stop and enabled-value validation.
+
 Three mechanisms:
 1. **`server.conf` federation block** — renders `federation { bundle_endpoint {…}
    federates_with "<td>" {…} }` from `spire_federates_with`, configuring SPIRE to serve our public

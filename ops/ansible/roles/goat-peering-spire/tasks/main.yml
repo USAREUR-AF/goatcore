@@ -61,7 +61,7 @@
       - -id
       - "{{ peering_spire_partner_trust_domain }}"
     stdin: "{{ _ps_their_bundle }}"
-  delegate_to: "{{ peering_spire_server_host }}"
+  delegate_to: "{{ peering_spire_server_host if (peering_spire_enabled | bool) else inventory_hostname }}"
   changed_when: false
 
 - name: peering-spire | is the relationship already declared?
@@ -75,7 +75,7 @@
       - show
       - -trustDomain
       - "{{ peering_spire_partner_trust_domain | regex_replace('^spiffe://', '') }}"
-  delegate_to: "{{ peering_spire_server_host }}"
+  delegate_to: "{{ peering_spire_server_host if (peering_spire_enabled | bool) else inventory_hostname }}"
   register: _ps_show
   changed_when: false
   failed_when: false
@@ -97,7 +97,7 @@
       - https_spiffe
       - -endpointSpiffeID
       - "{{ peering_spire_partner_trust_domain }}/spire/server"
-  delegate_to: "{{ peering_spire_server_host }}"
+  delegate_to: "{{ peering_spire_server_host if (peering_spire_enabled | bool) else inventory_hostname }}"
   changed_when: true
 
 # Before forwards were named for the partner, one pair served the host's one peering
@@ -254,7 +254,7 @@
       - "{{ peering_spire_partner_trust_domain }}"
       - -format
       - pem
-  delegate_to: "{{ peering_spire_server_host }}"
+  delegate_to: "{{ peering_spire_server_host if (peering_spire_enabled | bool) else inventory_hostname }}"
   register: _ps_held
   changed_when: false
   failed_when: _ps_held.rc != 0 or 'BEGIN CERTIFICATE' not in _ps_held.stdout
