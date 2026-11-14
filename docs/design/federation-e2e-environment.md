@@ -58,7 +58,7 @@ Several runs share one Docker daemon, and other work on the machine uses Docker 
 | Subnets | `10.<230+N>.0.0/16`: sovereign `/24`s at `.1`, `.2`, `.4`, `.5`, boundary at `.3` |
 | Label | `org.goat.fe2e.lab=fe2e-lN` on every container and network |
 | Images | `fe2e-host:<hash of host/>`, `fe2e-republisher:<sha12>`, and `fe2e-saltlick:<sha12>` with `--directory-ref` |
-| State | `FE2E_HOME` (default `~/.cache/fe2e`): `src/<sha>`, `bin/<sha>`, `saltlick/<sha>`, `runs/`, `labs/` (one lock per lab) |
+| State | `FE2E_HOME` (default `~/.cache/fe2e`): `src/<sha>`, `bin/<sha>`, `saltlick/<sha>`, `runs/`, `labs/` (one lock per lab). `src/<sha>` and `saltlick/<sha>` are plain clones that hold every object of the commit themselves (`lib/srctree.sh`): a commit no ref holds is fetched into the clone by sha, so a shallow source repository, where git ignores `--shared`, still gives a whole tree |
 
 `env down --lab N` removes the containers and networks carrying that lab's label and nothing else. Containers inside a host (edge router, probes, republisher) live in that host's own dockerd and disappear with it.
 
