@@ -38,7 +38,7 @@ Commands:
            peering and the core as they were
   import   A two-driver peering's import of an edge result, as a hand-off object names it: checked
            against the edge driver's confirm code, placed under the working directory and journaled.
-           Built for phase 1; a later phase's import refuses with GB-267
+           Built for phases 1 and 3; another phase's import refuses with GB-267
            (docs/design/federation-two-drivers.md)
   help     Print this message or the help of the given subcommand(s)
 
@@ -146,8 +146,8 @@ Options:
           the edge and writes the result to --half-out; `core` measures only the core, joins the
           edge half read from --edge-half, and builds the package. Without it, both hosts are
           measured here, as always. On a peering run, `--side edge` is the edge driver's run of a
-          two-driver peering (`drivers: two`): not built yet, and refused with GB-267
-          (docs/design/federation-two-drivers.md)
+          two-driver peering (`drivers: two`): built for phases 1 and 3, refused with GB-267 for
+          another phase (docs/design/federation-two-drivers.md)
           
           [possible values: edge, core]
 

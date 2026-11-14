@@ -99,7 +99,8 @@ checkout is that commit with nothing changed, and each file given with
 `--expect <file>=<sha256>` has that digest (GB-278). It then runs preflight's
 edge checks into `<work>/handoff/1/edge.json` and prints the way back: the
 confirm code, and the `import` and `then` commands for the controller. The
-edge driver's run of phase 2 and later is not built yet (gate row B10).
+edge driver's run of phase 3 is built too; phase 2's and those of 11 and
+later are not yet (gate row B10).
 
 #### "Added: a two-driver peering's controller imports phase 1's edge result and runs its core half"
 
@@ -123,6 +124,22 @@ run stops at phase 10 without a terminal, it names `plan`, then `deploy
 admitting by hand, then `--from 11`, as the fallback, which still works.
 `goatbuilder explain federate 10` leads with the same commands. Phase 10 is
 still listed as a manual phase.
+
+#### "Added: a two-driver peering hands phase 3 to the edge driver and joins its edge half"
+
+On a peering declared `drivers: two`, the controller now stops at phase 3
+with a hand-off object whose result is the edge half
+(`handoff/3/edge-half.json`). On the edge driver, `goatbuilder federate
+<peering> --side edge --from 3 --to 3 --expect-commit <commit>` measures the
+edge half over SSH, reaching only the edge host, and prints the way back with
+its confirm code. On the controller, `goatbuilder federate import <peering> 3
+<file> --sha256 <code>` checks the file as the core half would (GB-114): the
+code, the peering, the 24-hour bound, and the edge host the inventory names
+(`--edge-group` for a group other than `<peering>_edge`). Then
+`goatbuilder federate <peering> --from 3` hashes the file again and measures
+the core half against it, reaching only the core host. A two-driver run from
+phase 3 with `FED_MEASURE=here` is refused before it acts (GB-267). Phase 2
+and phases 11 to 14 are not built yet (gate row B10).
 
 #### Fixed: federate status resumes from the first phase it cannot show passed
 
