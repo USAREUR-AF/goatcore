@@ -43,18 +43,18 @@ Three classes — keep them disjoint, name them so operators know what changed:
 
 | Alert | Severity | Fires when | Status |
 |---|---|---|---|
-| `SpockSubscriptionLag` | warning | `spock_subscription_lag_seconds > 60` for 2m | shipped |
+| `SpockSubscriptionLag` | warning | `spock_subscription_lag_seconds > 60 and spock_subscription_lag_bytes > 1048576` for 2m, one series per replicated database (`datname`) and subscription | built: read from Spock 5's `spock.lag_tracker` (`replication_lag`, `replication_lag_bytes`), joined to `spock.sub_show_status()` on the provider node, in every replicated database. Until 2026-11-14 the query read a `replication_lag` column `sub_show_status()` does not have in Spock 5, in the `postgres` database only, so the metric was never exported. The seconds alone are the age of the last change applied, which grows on an idle, caught-up database (measured: 79s after 79s idle, at 312 bytes), so the alert also needs the WAL still to apply (measured: 192 MB, then 96 MB, while a stopped subscription caught up, 1168 bytes after). Proven by `ops/postgres/spock/tests/exporter-every-database/run.sh` (CI `postgres-spock.yml`) and `ops/compose/goat-obs/prometheus/tests/spock-subscription.test.yml` (promtool) |
 | `SpockSlotInvalidated` | critical | `pg_replication_slot_wal_status_lost == 1` for 1m | shipped |
 | `SpockSlotWALNearLimit` | critical | `pg_replication_slot_retained_wal_bytes` > 80% of its own Postgres's `spock_config_max_slot_wal_keep_size_bytes` (the live cap, matched on `instance`) for 5m (was divided by `spock_max_slot_wal_keep_size_bytes`, a series the exporter never emitted, so it never fired) | shipped, fixed; measured by its promtool unit test (`monitoring/tests/spock-slot-wal-near-limit.test.yml`) |
 | `SpockConflictLogged` | warning | `increase(spock_resolutions_total[5m]) > 0`, one series per replicated database (`datname`) (was `spock_conflict_log_total`, a metric that never existed: F-574) | built: the mgmt host's postgres-exporter counts `spock.resolutions` in every database Spock replicates (the observability role's `pg_monitoring_spock_databases`: the Spock mesh's databases, and Ory's when Ory replicates). Until 2026-11-14 it read only the `postgres` database, which has no spock schema, so the metric was never exported there. Proven by `ops/postgres/spock/tests/exporter-every-database/run.sh` (a real conflict in kratos counted, CI `postgres-spock.yml`) and `ops/compose/goat-obs/prometheus/tests/spock-every-database.test.yml` (promtool) |
 | `SpockApplyExceptionLogged` | warning | `increase(spock_exceptions_total[5m]) > 0`, one series per replicated database (`datname`) | built, read in every replicated database as `SpockConflictLogged` is; its promtool case is in the same test file (ADR 1193) |
-| **`SpockSubscriptionNotReplicating`** | **critical** | `spock_subscription_replicating == 0` for 2m | **52A new** |
+| **`SpockSubscriptionNotReplicating`** | **critical** | `spock_subscription_lag_replicating == 0` for 2m, one series per replicated database (`datname`) and subscription | built: the status column of `spock.sub_show_status()`, read in every replicated database by the same query; a stopped subscription in kratos reads 0 in `run.sh`, and its promtool case is in `spock-subscription.test.yml` |
 | **`SpockSlotInactive`** | **critical** | `pg_replication_slot_active == 0` for 2m | **52A new** |
 | **`SpockSlotWALSenderLag`** | **warning** | per-subscriber WAL sender backlog > 100 MB for 5m | **52A new** |
 
 The three new alerts close known blind spots:
 
-- **NotReplicating** catches a subscription stuck in `init` / `down` / `unknown` state where lag isn't being measured at all (lag stays 0 → no `SubscriptionLag` alert → silent halt).
+- **NotReplicating** catches a subscription that is `disabled`, `down` or `initializing`: it applies nothing, so its lag bytes do not grow and `SubscriptionLag` stays quiet (a silent halt). An apply worker that is stuck while its status still reads `replicating` is not visible on the subscriber either way in Spock 5.0.11 (`spock.lag_tracker` is updated only when a change is applied); the provider side's `SlotWALSenderLag` and `SlotWALNearLimit` see its slot fill.
 - **SlotInactive** catches the 2026-04-25 Mac observation pattern: the subscription view says "replicating" while `pg_replication_slots.active = false`. Both directions are needed — `replicating==1` AND `active==1` — and we alert when either falls.
 - **SlotWALSenderLag** is the *provider-side* mirror of subscriber lag: catches the case where the provider's WAL is queueing up faster than the network drains it (no consumer-side lag alert fires until the queue actually starts replaying).
 
@@ -82,7 +82,7 @@ Already shipped in [`signal-server.yml`](../../ops/compose/mgmt-host/monitoring/
 Add two inhibition rules in [`alertmanager.yml.j2`](../../ops/ansible/roles/observability/templates/alertmanager.yml.j2):
 
 - `SpockSlotInvalidated` suppresses `SpockSlotInactive` (same `slot_name`) — invalidated slots are necessarily inactive; one alert is enough.
-- `SpockSubscriptionNotReplicating` suppresses `SpockSubscriptionLag` (same `subscription_name`) — lag is meaningless when the subscription isn't replicating.
+- `SpockSubscriptionNotReplicating` suppresses `SpockSubscriptionLag` (same `subscription_name`) — lag is meaningless when the subscription isn't replicating. Its `equal` does not name `datname` yet, so a subscription not replicating in one database also suppresses the lag alert of the subscription of the same name in another database (not built).
 
 ## 4. Metric inventory
 
@@ -90,7 +90,9 @@ Tactical pack adds three custom metrics to [`postgres-exporter-queries.yml`](../
 
 ```
 # new in postgres-exporter custom queries
-spock_subscription_replicating{subscription_name,site}     # 0/1 — already present in shape, promoted to first-class with explicit label set
+spock_subscription_lag_replicating{datname,subscription_name,site}  # 0/1 — spock.sub_show_status() status = 'replicating'
+spock_subscription_lag_seconds{datname,subscription_name,site}      # spock.lag_tracker replication_lag, seconds
+spock_subscription_lag_bytes{datname,subscription_name,site}        # spock.lag_tracker replication_lag_bytes
 pg_replication_slot_active{slot_name,database,site}        # 0/1 — extracted from existing pg_replication_slot query
 spock_wal_sender_lag_bytes{subscriber,site}                # bytes — per pg_stat_replication
 
