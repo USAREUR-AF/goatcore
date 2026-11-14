@@ -912,6 +912,39 @@
       when: participates_in_spock | default(false) | bool
 
 # ============================================================================
+# Phase 4C — hub-directive applier (ADR 1205)
+#
+# A 30-second timer that carries out, at this site, the directives the
+# goatnet's hub inserts into goat_hub_directives (sever or restore a site,
+# edit an identity this site owns). Applied where the site replicates with
+# Spock and its group_vars name the hub (goatnet_hub_site); a Spock site that
+# names no hub is reported and left without the applier.
+# Run alone: --tags hub-directives.
+# ============================================================================
+- name: "site-bootstrap: hub-directive applier (when participates_in_spock)"
+  tags: [after-ory, hub-directives]
+  hosts: "{{ (site_id | replace('-', '_')) ~ '_hosts' }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Report a Spock site that names no hub
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} replicates with Spock and its group_vars do
+          not set goatnet_hub_site, so the hub-directive applier is not
+          installed here (ADR 1205 D1).
+      when:
+        - participates_in_spock | default(false) | bool
+        - (goatnet_hub_site | default('')) | length == 0
+
+    - name: Apply spock-hub-directives role
+      ansible.builtin.import_role:
+        name: spock-hub-directives
+      when:
+        - participates_in_spock | default(false) | bool
+        - (goatnet_hub_site | default('')) | length > 0
+
+# ============================================================================
 # Phase 5 — pgBackRest paired-stanza on local NVMe
 #
 # Two distinct stanzas (e.g. <site>-a-netbird on Router-A + <site>-b-netbird

@@ -1916,7 +1916,9 @@ mod tests {
             p.get("tags").and_then(|t| t.as_sequence()).map(|s| s.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(),
         )).collect();
         assert!(tags[0].1.is_empty(), "the pre-flight gate runs in both phases");
-        let part: Vec<&str> = tags[1..].iter().map(|(n, t)| { assert_eq!(t.len(), 1, "{n}: {t:?}"); t[0].as_str() }).collect();
+        // The first tag is the phase (stack or after-ory); a play may carry
+        // more tags after it, so it can be run alone (hub-directives).
+        let part: Vec<&str> = tags[1..].iter().map(|(n, t)| { assert!(!t.is_empty(), "{n}: no phase tag"); t[0].as_str() }).collect();
         let first_after = part.iter().position(|t| *t == "after-ory").unwrap();
         assert!(part[..first_after].iter().all(|t| *t == "stack") && part[first_after..].iter().all(|t| *t == "after-ory"), "{part:?}");
         assert!(tags[1 + first_after].0.contains("seed account"), "{}", tags[1 + first_after].0);

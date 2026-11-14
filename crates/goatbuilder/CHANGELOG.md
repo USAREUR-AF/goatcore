@@ -207,6 +207,13 @@ under `-o json` and as a section of the plan page, and names the secrets
 posture probes it ran to read them. A secret is shown by its source only,
 never its value (#649).
 
+#### Added: site bootstrap installs the hub-directive applier at Spock sites that name a hub
+
+`site-bootstrap.yml` now applies the `spock-hub-directives` role (ADR 1205)
+at each site that replicates with Spock and sets `goatnet_hub_site`. A Spock
+site that names no hub gets a message and no applier. The play carries the
+tag `hub-directives` beside its phase tag, so it can be run alone. (#596)
+
 #### Added: a failed standup phase names the error in its output
 
 When a standup phase fails, its output (the log the run kept of it) is matched
