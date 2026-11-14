@@ -509,11 +509,17 @@ impl Cmd {
         let child = self.inner.spawn();
         match child {
             Ok(mut c) => {
-                if let Some(o) = c.stdout.take() {
-                    copy_in_background(o, log.clone(), stdout_to_stderr());
+                // Only the streams the runner piped are its to stream; one the
+                // caller set (`stdout`, `stderr`) stays on the child for the caller.
+                if !self.stdout_set {
+                    if let Some(o) = c.stdout.take() {
+                        copy_in_background(o, log.clone(), stdout_to_stderr());
+                    }
                 }
-                if let Some(e) = c.stderr.take() {
-                    copy_in_background(e, log, true);
+                if !self.stderr_set {
+                    if let Some(e) = c.stderr.take() {
+                        copy_in_background(e, log, true);
+                    }
                 }
                 entry.log_note = Some("started in the background; its end is not recorded".into());
                 self.record(entry);
@@ -1092,6 +1098,33 @@ mod tests {
             Some(own.display().to_string().as_str())
         );
         assert_eq!(std::fs::read_to_string(&own).unwrap(), "pulled\n");
+    }
+
+    /// Inside a run, a spawned child whose stdout and stderr the caller pipes
+    /// keeps them for the caller: the runner does not take them to stream, so
+    /// `wait_with_output` reads what the child printed (the host firewall
+    /// renderer's JSON at deploy, federate/hostfw.rs).
+    #[test]
+    fn a_spawned_child_keeps_the_streams_its_caller_piped() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "deploy", vec![], None);
+        phase("10", "deploy", "");
+        let mut child = Cmd::new("sh")
+            .args(["-c", "cat; echo to-stderr >&2"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            let mut stdin = child.stdin.take().unwrap();
+            stdin.write_all(b"{\"sha256\": \"x\"}").unwrap();
+        }
+        let out = child.wait_with_output().unwrap();
+        end();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "{\"sha256\": \"x\"}");
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "to-stderr\n");
     }
 
     #[test]
