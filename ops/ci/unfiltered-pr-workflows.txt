@@ -1,0 +1,9 @@
+# check-workflow-discipline.py rule R4: pull-request workflows that run with no
+# paths / paths-ignore filter, each with its reason after the `#`.
+# A file named here must exist; remove its line when it gains a filter.
+acl-assertions.yml      # always reports a check; its jobs start the Rust build only when the ACL declaration, evaluator or Cargo inputs change
+agent-references.yml    # an assistant session link can land in any file, most often a doc; scans only the changed files
+ci.yml                  # the public build and the always-on guards; its `changes` job decides which jobs need to run
+contributor-trust.yml   # required check on main (ADR 1221): decides from the author and paths whether a security review is needed
+leak-gate.yml           # required check on main: a deployment name or key can be added in any file
+stable-guard.yml        # filtered by branch instead: runs only for pull requests into `stable`, which it closes (ADR 1231)
