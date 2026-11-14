@@ -23,7 +23,9 @@
 # its store and the runner are the real code.
 #
 # Inputs: CONSOLE_IMAGE (default: built here) and RUNNER_BIN (default: built
-# here from the runner Dockerfile's build stage).
+# here from the runner Dockerfile's build stage). The images built here are
+# tagged with the run's prefix (HARNESS_PFX), so two runs on one machine never
+# build over, or depend on, each other's tags.
 
 CONSOLE_DBS=(id_console_onboard id_console_orgs)
 DBS+=("${CONSOLE_DBS[@]}")
@@ -33,7 +35,7 @@ CONSOLE_PORT_b="${HARNESS_PORT_CONSOLE_B:-58081}"
 CONSOLE_KEY="partition-harness-runner-key-not-secret"
 CONSOLE_ENV="zagros"
 
-BUILD_CONSOLE=0; [[ -n "${CONSOLE_IMAGE:-}" ]] || { CONSOLE_IMAGE="goat-id-console:partition-harness"; BUILD_CONSOLE=1; }
+BUILD_CONSOLE=0; [[ -n "${CONSOLE_IMAGE:-}" ]] || { CONSOLE_IMAGE="goat-id-console:partition-harness-$PFX"; BUILD_CONSOLE=1; }
 BUILD_RUNNER=0;  [[ -n "${RUNNER_BIN:-}" ]] || { RUNNER_BIN="$WORK/onboard-runner"; BUILD_RUNNER=1; }
 console_build() { # the images the caller did not supply; run in the background, so it reports by file
   local c
@@ -41,8 +43,8 @@ console_build() { # the images the caller did not supply; run in the background,
     docker build -q -t "$CONSOLE_IMAGE" "$REPO/ops/goat-id-console" >/dev/null
   fi
   if [[ "$BUILD_RUNNER" == 1 ]]; then
-    docker build -q --target build -t onboard-runner-build:partition-harness "$REPO/ops/onboard-runner" >/dev/null
-    c=$(docker create onboard-runner-build:partition-harness)
+    docker build -q --target build -t "onboard-runner-build:partition-harness-$PFX" "$REPO/ops/onboard-runner" >/dev/null
+    c=$(docker create "onboard-runner-build:partition-harness-$PFX")
     docker cp -q "$c:/onboard-runner" "$RUNNER_BIN"
     docker rm "$c" >/dev/null
   fi
