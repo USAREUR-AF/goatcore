@@ -15,6 +15,12 @@
 # is made again.
 src_tree() {
   local common="$1" sha="$2" src="$3" head
+  # A full sha, before anything is removed: with an empty one, DEST would be the directory of
+  # every cached tree. (A case pattern, not =~, for bash 3.2.)
+  case "$sha" in
+    *[!0-9a-f]* | "") echo "src_tree: not a full sha: '$sha'" >&2; return 1 ;;
+  esac
+  [ "${#sha}" -eq 40 ] || { echo "src_tree: not a full sha: '$sha'" >&2; return 1; }
   if [ -d "$src/.git" ]; then
     head="$(git -C "$src" rev-parse -q --verify HEAD 2>/dev/null || true)"
     if [ "$head" = "$sha" ] && git -C "$src" cat-file -e "$sha^{tree}" 2>/dev/null; then
