@@ -88,7 +88,7 @@ phone node is by default is not decided.
 | After a phone reboot the VM does not start until the phone is unlocked and the Terminal app is opened | Measured |
 | A computer on the USB cable restarts the VM when it finds none running | Built as a two-minute cron job outside this repository; it cannot pass the lock screen after a phone reboot |
 | Hours on battery, Doze, battery saver, heat under load, a mobile-data uplink | Unmeasured |
-| A launcher on the phone that starts the VM at boot | Not built |
+| A launcher on the phone that starts the VM at boot (`ops/phone/vm-launcher`) | Built. Measured once, 2026-11-14: after a reboot and one unlock the app opened the Terminal app 14 s later and the VM was running 20 s after the unlock, with no computer acting. Before the first unlock nothing starts; a phone with no lock screen is unmeasured |
 
 ## What the run needed outside the tool
 

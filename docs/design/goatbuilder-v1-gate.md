@@ -103,7 +103,7 @@ are proposed; an item moves only by a change to this table.
 | A `boundary` machine class | not built | Later | The boundary node is the router `goatbuilder federate` deploys; no tutorial needs the class |
 | A `phone` machine class and `--via usb` | not built | In (H3 to H5) | A phone is built by the command that builds a computer, or it is not a goatbuilder node |
 | What a phone node replicates | designed ([phone-node.md](phone-node.md)) | **Open decision** | A full joiner is a replication member; a phone that is off for days falls behind and must be seeded again. The alternative is a phone profile that is a mesh peer with its own router and is not a replication member. The class in H5 is declared either way; the decision is which one `--class phone` means by default |
-| A launcher on the phone that starts the VM at boot | not built | Later | It is an Android app with its own release. Until it exists, H8's "without a person" is met by a computer on the USB cable and a phone with no screen lock |
+| A launcher on the phone that starts the VM at boot | built (`ops/phone/vm-launcher`), measured once on one phone after a reboot and one unlock; no release or signing key of its own yet | Later | It is an Android app with its own release. Until it exists, H8's "without a person" is met by a computer on the USB cable and a phone with no screen lock |
 
 ### E. Upgrading is tested
 
