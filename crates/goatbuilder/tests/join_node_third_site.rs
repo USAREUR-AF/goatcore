@@ -122,6 +122,11 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
              esac\nexit 0\n"
         ),
     );
+    // mint-site-certs.sh mints on this machine; the stand-in records it.
+    executable(
+        &checkout.join("ops/scripts/mint-site-certs.sh"),
+        &format!("#!/bin/sh\nprintf 'mint %s\\n' \"$*\" >> '{l}'\n"),
+    );
     executable(
         &checkout.join("ops/scripts/ansible-preflight.sh"),
         "#!/bin/sh\nexit 0\n",
@@ -524,4 +529,49 @@ fn a_joiners_core_node_runs_its_data_router() {
         .unwrap();
     let router_line = log.lines().position(|l| l == plays[router]).unwrap();
     assert!(router_line < acceptance, "the router runs before phase 15");
+}
+
+/// Gate row I3, the certificates: a joining site's core node gets its router
+/// and service leaves without a hand step. Phase 13 mints the site's leaves
+/// from its manifest (mint-site-certs.sh, idempotent) and stages the service
+/// leaves the manifest carries onto the node (stage-service-leaves.yml), both
+/// before the data router, whose play reads the router leaf.
+#[test]
+fn a_joiners_core_node_mints_and_stages_its_leaves_before_the_router() {
+    let s = site();
+    let (out, _) = join_node(&s, Some("2"));
+    assert!(out.status.success(), "{}", says(&out));
+    let log = std::fs::read_to_string(&s.log).unwrap();
+    let lines: Vec<&str> = log.lines().collect();
+    let mint = lines
+        .iter()
+        .position(|l| *l == "mint gamma")
+        .unwrap_or_else(|| panic!("the site's leaves were not minted:\n{log}"));
+    let stage = lines
+        .iter()
+        .position(|l| l.contains("stage-service-leaves.yml"))
+        .unwrap_or_else(|| panic!("no service leaves were staged:\n{log}"));
+    let router = lines
+        .iter()
+        .position(|l| l.contains("zenoh-deploy.yml"))
+        .unwrap();
+    assert!(
+        mint < stage && stage < router,
+        "mint, stage, then the router:\n{log}"
+    );
+    let st = lines[stage];
+    assert!(
+        st.contains(
+            "stage-service-leaves.yml -e target=gamma_hosts -l gamma-core-1 -e leaf_src_dir="
+        ),
+        "{st}"
+    );
+    assert!(
+        st.contains("/.goat/state/gamma-leaves"),
+        "the manifest's out_dir, else <state dir>/<site>-leaves: {st}"
+    );
+    assert!(
+        st.contains(r#"{"leaf_only": ["fabric-health", "mesh-health"]}"#),
+        "only the service leaves the manifest carries: {st}"
+    );
 }

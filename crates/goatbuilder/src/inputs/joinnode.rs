@@ -203,6 +203,19 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             ),
         ));
     }
+    // Phase 13's certificate steps for a joiner's core node.
+    if joiner && o.class == "core" {
+        if let Ok(l) = joinnode::leaves(repo, site) {
+            v.push(Input::new(
+                "leaf_src_dir",
+                l.out_dir,
+                Source::derived(
+                    format!("ops/enrollment/manifests/{site}-certs.yaml"),
+                    "its out_dir, else <state dir>/<site>-leaves: where mint-site-certs.sh writes the site's leaves",
+                ),
+            ));
+        }
+    }
     if plain("intra_site_pair").as_deref() == Some("true") {
         v.push(Input::new("intra_site_pair", "true", at("intra_site_pair")));
     }
@@ -316,6 +329,9 @@ mod tests {
             vars.push_str("goatnet_founder: false\njoin_founder_site: zagros-a\n");
         }
         std::fs::write(gv.join("vars.yml"), vars).unwrap();
+        // The site's leaf-cert manifest, which a joiner's certificate steps read.
+        std::fs::create_dir_all(root.join("ops/enrollment/manifests")).unwrap();
+        std::fs::write(root.join("ops/enrollment/manifests/zagros-b-certs.yaml"), "site_id: zagros-b\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n").unwrap();
         std::fs::create_dir_all(root.join("ops/goatbuilder")).unwrap();
         std::fs::write(
             root.join("ops/goatbuilder/goatbuilder.yaml"),
