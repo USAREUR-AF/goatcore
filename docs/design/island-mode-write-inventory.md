@@ -401,6 +401,7 @@ issued to two subjects.
 | Scenario | Proves rows | Pass condition beyond the common one |
 |---|---|---|
 | `portal-c1-topic-create-both-sides` | P19 | One `topics` row |
+| `portal-c1-two-topics-both-sides-loss-reported` | P19 | Two `topics` rows at both sites; a row last-write-wins replaced on heal (a `spock.resolutions` `insert_exists` or `update_differs` since the heal) is reported by drift-watch as a loss, not passed as equal |
 | `portal-c1-schema-upload-both-sides` | P22 | Both versions present; schema bytes readable at both sites |
 | `portal-c1-access-request-both-sides` | P24 | Two request rows |
 | `portal-c1-grant-both-sides` | P26 | Two grant rows |
