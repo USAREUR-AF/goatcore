@@ -53,6 +53,41 @@ fn without_bilateral_phase_14_is_unchanged() {
     assert!(!cmd.contains("FED_KEYRING"), "{cmd}");
 }
 
+/// A derived session rests on the two sides' clocks agreeing within
+/// FED_SESSION_WAIT (docs/design/federation-acceptance.md §6.3): with
+/// `--bilateral`, phase 1's clock check (GB-268) runs again, alone, right
+/// before phase 14, so a clock that drifted since phase 1 stops the run there.
+#[test]
+fn with_bilateral_phase_1_checks_the_clock_alone_before_phase_14() {
+    let w = world();
+    let (out, _) = w.run(&["test", "hello-ally", "--bilateral", "--dry-run"]);
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(out.status.success(), "{}", says(&out));
+    let pre = text
+        .lines()
+        .position(|l| l.contains("preflight.py"))
+        .unwrap_or_else(|| panic!("no phase 1 command in: {text}"));
+    let acc = text
+        .lines()
+        .position(|l| l.contains("acceptance.sh"))
+        .unwrap_or_else(|| panic!("no phase 14 command in: {text}"));
+    assert!(pre < acc, "phase 1 runs before phase 14: {text}");
+    let line = text.lines().nth(pre).unwrap();
+    assert!(line.contains("--only clock"), "only the clock check: {line}");
+}
+
+#[test]
+fn without_bilateral_test_runs_phase_14_alone() {
+    let w = world();
+    let (out, _) = w.run(&["test", "hello-ally", "--dry-run"]);
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(out.status.success(), "{}", says(&out));
+    assert!(
+        !text.contains("preflight.py"),
+        "no phase 1 without the flag: {text}"
+    );
+}
+
 #[test]
 fn bilateral_belongs_to_federate_test_only() {
     let w = world();
