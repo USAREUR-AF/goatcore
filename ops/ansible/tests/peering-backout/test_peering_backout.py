@@ -193,7 +193,7 @@ class TwoPeeringsOneHost(unittest.TestCase):
             path = f"{bindir}/{name}"
             with open(path, "w", encoding="utf-8") as f:
                 f.write("#!/bin/sh\n" + body + "\n")
-            os.chmod(path, 0o755)
+            os.chmod(path, 0o700)
         fx = tbc.Fixture(tbc.fragment("xaa", "xab"), tbc.fragment("xaa", "xac"))
         work = f"{self.tmp}/work/xac"
         r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_edge:xac_core:peering_forwarders",
