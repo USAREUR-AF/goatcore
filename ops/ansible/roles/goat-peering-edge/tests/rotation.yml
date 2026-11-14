@@ -1,0 +1,14 @@
+---
+# Runs tasks/rotate.yml (credential rotation, K6) on localhost against the stand-in
+# swanctl that test-rotation.sh puts first on PATH. Certificates are made at test time.
+- name: goat-peering-edge credential rotation, against a stand-in swanctl
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  environment:
+    PATH: "{{ stand_in_bin }}:{{ lookup('env', 'PATH') }}"
+  tasks:
+    - name: The rotation
+      ansible.builtin.include_tasks: ../tasks/rotate.yml
