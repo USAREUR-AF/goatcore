@@ -287,6 +287,9 @@ jobs:
       - name: a carrier key rotation sets each key aside once and makes a new one (stand-in wg)
         timeout-minutes: 5
         run: bash ops/ansible/roles/goat-peering-wg/tests/test-rotation.sh
+      - name: an IPsec leaf rotation checks the staged pair, sets the live one aside once and rolls back (stand-in swanctl)
+        timeout-minutes: 5
+        run: bash ops/ansible/roles/goat-peering-edge/tests/test-rotation.sh
 
   peering-host-firewall:
     needs: changes

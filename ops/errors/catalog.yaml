@@ -3416,6 +3416,65 @@ entries:
     matches:
       - "the audit spool is not built"
 
+  - code: GB-289
+    tool: goatbuilder
+    title: the IPsec rotation's staged material is missing or unreadable
+    what: "A credential rotation of an ipsec-fips peering (goat-peering-edge with peering_edge_rotation set) switches the edge to a new leaf that the offline ceremony issued and an operator staged beside the live files: <name>-cert.next.pem in the swanctl x509 directory, <name>-key.next.pem in its private directory at mode 0600, and for an ipsec-ca rotation our new CA as <name>-local-ca.next.pem in x509ca. The rotation also needs our current IPsec CA certificate at peering_edge_local_ca_path to check the new leaf's chain. One of them is missing, unreadable, or the key is not mode 0600. The role refused before anything moved."
+    causes:
+      - the new leaf, its key, or (for ipsec-ca) our new CA was not staged on this edge
+      - peering_edge_local_ca_path is not set, or names no file on the edge
+      - the staged key was copied without mode 0600
+    fixes:
+      - "stage what the ceremony issued at the paths the message names, with the key at mode 0600, then run the rotation again"
+      - "set peering_edge_local_ca_path in the edge's group_vars to our current per-peering IPsec CA certificate"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-289\\)"
+
+  - code: GB-290
+    tool: goatbuilder
+    title: the staged IPsec certificate is not right for this link
+    what: "Before an IPsec credential rotation moves anything, goat-peering-edge checks the staged certificate: its key is the staged key, it chains to the CA it must chain to (our current CA for ipsec-leaf, the staged new CA for ipsec-ca), its subject CN is peering_edge_local_id, its key is ECDSA P-384 (secp384r1) as the proposals require, it is valid now, and it stays valid for peering_edge_min_valid_days more days (default 30). The message names each check that failed. Nothing was moved."
+    causes:
+      - the leaf was issued for another peering or another identity
+      - the leaf was issued by another CA, or the staged key belongs to another certificate
+      - the leaf uses another key type, or expires too soon
+    fixes:
+      - "have the ceremony issue the leaf again with Subject CN = peering_edge_local_id and an ECDSA P-384 key, from the right CA, then stage it and run the rotation again"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-290\\)"
+
+  - code: GB-302
+    tool: goatbuilder
+    title: the IPsec link did not come up on the new leaf; the old pair was put back
+    what: "After switching to the staged leaf, goat-peering-edge loaded the credentials, re-authenticated the IKE SA and waited up to peering_edge_rotation_confirm_seconds (the DPD timeout by default) for an established IKE SA with an installed CHILD SA. None came up, so it put the set-aside pair back from .previous-<id>/, loaded it and re-authenticated. For ipsec-ca with --no-overlap, a partner that no longer trusts our old CA cannot carry the link on the old pair either."
+    causes:
+      - the partner does not trust the CA that issued the new leaf
+      - the partner's edge expects another identity, or is not reachable
+    fixes:
+      - "read swanctl --list-sas and the charon log on both edges, then stage the new pair again and run the rotation again"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge \\(GB-302\\)"
+
+  - code: GB-303
+    tool: goatbuilder
+    title: the partner has not read back our new IPsec CA
+    what: "An ipsec-ca rotation switches the edge to a leaf issued by our new per-peering CA only once the partner trusts that CA. Nothing on our side can read the partner's trust store, so the switch needs the sha256 fingerprint the partner read back after placing our new CA (peering_edge_rotation_ca_readback, or goatbuilder federate rotate <partner> ipsec-ca --partner-holds-ipsec-ca <sha256>). It was not given, or it is not the staged CA's fingerprint. Nothing was moved."
+    causes:
+      - the partner has not placed our new CA yet, or has not read its fingerprint back on the call
+      - the fingerprint read back belongs to another file
+    fixes:
+      - "have the partner place our new CA beside their current one and read back its sha256 fingerprint, then run the rotation again with that fingerprint"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-303\\)"
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable

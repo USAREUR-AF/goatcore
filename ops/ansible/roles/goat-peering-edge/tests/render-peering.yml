@@ -1,0 +1,8 @@
+---
+# The fixed peering render-swanctl.yml renders with (documentation addresses only).
+peering_edge_name: xab
+peering_edge_local_id: fed.xaa.xab.01
+peering_edge_remote_id: fed.xab.xaa.01
+peering_edge_remote_addr: "192.0.2.10"
+peering_edge_local_link_ip: 169.254.10.0
+peering_edge_remote_link_ip: 169.254.10.1

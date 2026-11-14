@@ -450,6 +450,11 @@
 - name: peering-edge | flush handlers so the SA reflects this run
   ansible.builtin.meta: flush_handlers
 
+# Credential rotation (K6), only with a rotation id; the SA is loaded above.
+- name: peering-edge | credential rotation
+  ansible.builtin.include_tasks: rotate.yml
+  when: peering_edge_rotation | length > 0
+
 # F-530 fix 2: this role runs `meta: flush_handlers` before its own health/smoke,
 # so it is rollback_promote_mode: explicit (meta/main.yml) — the pending ledger row
 # is promoted here, as the LAST deploy step, only once the gates above have passed.

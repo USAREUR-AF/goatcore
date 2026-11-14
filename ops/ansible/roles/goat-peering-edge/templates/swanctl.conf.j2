@@ -49,7 +49,10 @@ connections {
             # Only the partner CA delivered for THIS peering. Per-peering, so
             # revoking one partner does not disturb another, and so no foreign
             # root is ever reachable from anything but this connection.
-            cacerts = {{ peering_edge_remote_ca_path | basename }}
+{# During a partner's CA rotation (peering_edge_remote_ca_next_path), their new CA is
+   accepted beside the current one until they retire the old (federation-key-rotation.md §8.3). #}
+            cacerts = {{ peering_edge_remote_ca_path | basename }}{% if peering_edge_remote_ca_next_path | length > 0 %},{{ peering_edge_remote_ca_next_path | basename }}{% endif %}
+
         }
 
         children {

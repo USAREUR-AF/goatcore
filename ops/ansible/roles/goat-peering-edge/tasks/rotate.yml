@@ -1,0 +1,224 @@
+---
+# Credential rotation of this peering's IPsec leaf (K6,
+# docs/design/federation-key-rotation.md §8). Runs only with a rotation id in
+# peering_edge_rotation. The role still writes no secret: the offline ceremony
+# issued the new material and an operator staged it beside the live files
+# (peering_edge_cert_next_path, peering_edge_key_next_path, and for an ipsec-ca
+# rotation peering_edge_local_ca_next_path).
+#
+# Steps, each redone only when its effect is missing, so a killed run finishes:
+#   1. check what is staged (GB-289 missing, GB-290 wrong), before anything moves;
+#   2. set the live pair aside in .previous-<id>/ (0700), once per id;
+#   3. switch: move the staged pair over the live names;
+#   4. load the credentials and re-authenticate the IKE SA (a rekey without
+#      --reauth keeps the old authentication, so the new leaf would not be shown);
+#   5. confirm an established IKE SA with an installed CHILD SA, or put the old
+#      pair back and stop (GB-302).
+# The set-aside directory is the edge's marker: staged files gone and the
+# directory present means the switch already happened.
+
+- name: peering-edge | rotation | the rotation id is a plain word and the kind is known
+  ansible.builtin.assert:
+    that:
+      - peering_edge_rotation is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+      - peering_edge_rotation_kind in ['leaf', 'ca']
+    fail_msg: >-
+      peering_edge_rotation '{{ peering_edge_rotation }}' is not a rotation id (letters,
+      digits, '-' and '_'), or peering_edge_rotation_kind '{{ peering_edge_rotation_kind }}'
+      is not leaf or ca. Nothing was moved.
+    quiet: true
+
+- name: peering-edge | rotation | where things stand
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: true
+    checksum_algorithm: sha256
+  loop:
+    - "{{ peering_edge_cert_next_path }}"
+    - "{{ peering_edge_key_next_path }}"
+    - "{{ peering_edge_local_ca_next_path }}"
+    - "{{ peering_edge_local_ca_path if peering_edge_local_ca_path | length > 0 else '/nonexistent-goat-local-ca' }}"
+    - "{{ peering_edge_swanctl_dir }}/.previous-{{ peering_edge_rotation }}"
+  register: _pe_rot_stat
+
+- name: peering-edge | rotation | name what was found
+  ansible.builtin.set_fact:
+    _pe_rot_cert_next: "{{ _pe_rot_stat.results[0].stat }}"
+    _pe_rot_key_next: "{{ _pe_rot_stat.results[1].stat }}"
+    _pe_rot_ca_next: "{{ _pe_rot_stat.results[2].stat }}"
+    _pe_rot_ca_now: "{{ _pe_rot_stat.results[3].stat }}"
+    _pe_rot_aside: "{{ peering_edge_swanctl_dir }}/.previous-{{ peering_edge_rotation }}"
+    _pe_rot_aside_exists: "{{ _pe_rot_stat.results[4].stat.exists }}"
+    _pe_rot_chain_ca: >-
+      {{ peering_edge_local_ca_next_path if peering_edge_rotation_kind == 'ca' else peering_edge_local_ca_path }}
+
+- name: peering-edge | rotation | the switch has not happened yet
+  ansible.builtin.set_fact:
+    _pe_rot_to_switch: "{{ _pe_rot_cert_next.exists or _pe_rot_key_next.exists or not _pe_rot_aside_exists }}"
+
+- name: peering-edge | rotation | refuse without the staged material (GB-289)
+  ansible.builtin.assert:
+    that:
+      - _pe_rot_cert_next.exists and _pe_rot_cert_next.readable | default(true)
+      - _pe_rot_key_next.exists
+      - (_pe_rot_key_next.mode | default('0000')) == '0600'
+      - peering_edge_local_ca_path | length > 0 and _pe_rot_ca_now.exists
+      - peering_edge_rotation_kind != 'ca' or _pe_rot_ca_next.exists
+    fail_msg: >-
+      goat-peering-edge refuses (GB-289): the rotation's staged material is missing or
+      unreadable on {{ inventory_hostname }}. It needs {{ peering_edge_cert_next_path }},
+      {{ peering_edge_key_next_path }} at mode 0600, our current IPsec CA certificate at
+      peering_edge_local_ca_path ('{{ peering_edge_local_ca_path }}'){{
+      ', and our new CA at ' ~ peering_edge_local_ca_next_path if peering_edge_rotation_kind == 'ca' else '' }}.
+      Stage what the ceremony issued and run the rotation again. Nothing was moved.
+    quiet: true
+  when: _pe_rot_to_switch | bool
+
+- name: peering-edge | rotation | read the staged certificate and key
+  when: _pe_rot_to_switch | bool
+  block:
+    - name: peering-edge | rotation | the staged certificate's facts
+      ansible.builtin.shell:
+        cmd: >-
+          set -e;
+          c={{ peering_edge_cert_next_path | quote }}; k={{ peering_edge_key_next_path | quote }};
+          ca={{ _pe_rot_chain_ca | trim | quote }};
+          echo "cn=$(openssl x509 -noout -subject -nameopt multiline -in "$c" | sed -n 's/^ *commonName *= *//p')";
+          echo "match=$( [ "$(openssl x509 -noout -pubkey -in "$c" | openssl sha256)" = "$(openssl pkey -pubout -in "$k" | openssl sha256)" ] && echo yes || echo no)";
+          echo "chain=$(openssl verify -CAfile "$ca" "$c" >/dev/null 2>&1 && echo yes || echo no)";
+          echo "curve=$(openssl x509 -noout -text -in "$c" | sed -n 's/.*ASN1 OID: *//p' | head -1)";
+          echo "lasts=$(openssl x509 -noout -checkend {{ (peering_edge_min_valid_days | int) * 86400 }} -in "$c" >/dev/null && echo yes || echo no)";
+          nb=$(openssl x509 -noout -startdate -in "$c" | cut -d= -f2);
+          echo "started=$( [ "$(date -d "$nb" +%s 2>/dev/null || echo 0)" -le "$(date +%s)" ] && echo yes || echo no)"
+        executable: /bin/bash
+      register: _pe_rot_facts
+      changed_when: false
+      failed_when: false
+
+    - name: peering-edge | rotation | the staged certificate as a map
+      ansible.builtin.set_fact:
+        _pe_rot_f:
+          cn: "{{ _pe_rot_facts.stdout | default('') | regex_search('(?m)^cn=(.*)$', '\\1') | default([''], true) | first }}"
+          match: "{{ _pe_rot_facts.stdout | default('') | regex_search('(?m)^match=(.*)$', '\\1') | default([''], true) | first }}"
+          chain: "{{ _pe_rot_facts.stdout | default('') | regex_search('(?m)^chain=(.*)$', '\\1') | default([''], true) | first }}"
+          curve: "{{ _pe_rot_facts.stdout | default('') | regex_search('(?m)^curve=(.*)$', '\\1') | default([''], true) | first }}"
+          lasts: "{{ _pe_rot_facts.stdout | default('') | regex_search('(?m)^lasts=(.*)$', '\\1') | default([''], true) | first }}"
+          started: "{{ _pe_rot_facts.stdout | default('') | regex_search('(?m)^started=(.*)$', '\\1') | default([''], true) | first }}"
+
+    - name: peering-edge | rotation | refuse a certificate that is not right for this link (GB-290)
+      ansible.builtin.assert:
+        that:
+          - _pe_rot_f.match | default('no') == 'yes'
+          - _pe_rot_f.chain | default('no') == 'yes'
+          - _pe_rot_f.cn | default('') == peering_edge_local_id
+          - _pe_rot_f.curve | default('') == 'secp384r1'
+          - _pe_rot_f.lasts | default('no') == 'yes'
+          - _pe_rot_f.started | default('no') == 'yes'
+        fail_msg: >-
+          goat-peering-edge refuses (GB-290): the staged certificate {{ peering_edge_cert_next_path }}
+          on {{ inventory_hostname }} is not right for this link:
+          {{ 'its key is not the staged key; ' if _pe_rot_f.match | default('no') != 'yes' else '' }}{{
+          'it does not chain to ' ~ (_pe_rot_chain_ca | trim) ~ '; ' if _pe_rot_f.chain | default('no') != 'yes' else '' }}{{
+          'its CN is ' ~ (_pe_rot_f.cn | default('') or '(none)') ~ ', not ' ~ peering_edge_local_id ~ '; ' if _pe_rot_f.cn | default('') != peering_edge_local_id else '' }}{{
+          'its key is ' ~ (_pe_rot_f.curve | default('') or 'not EC') ~ ', not ECDSA P-384 (secp384r1), which the proposals require; ' if _pe_rot_f.curve | default('') != 'secp384r1' else '' }}{{
+          'it is not valid for ' ~ peering_edge_min_valid_days ~ ' more days; ' if _pe_rot_f.lasts | default('no') != 'yes' else '' }}{{
+          'it is not valid yet; ' if _pe_rot_f.started | default('no') != 'yes' else '' }}
+          have the ceremony issue it again. Nothing was moved.
+        quiet: true
+
+- name: peering-edge | rotation | refuse a new CA the partner has not read back (GB-303)
+  ansible.builtin.assert:
+    that:
+      - peering_edge_rotation_ca_readback | regex_replace('^sha256:', '') | lower == _pe_rot_ca_next.checksum | default('')
+    fail_msg: >-
+      goat-peering-edge refuses (GB-303): an ipsec-ca rotation switches to a leaf of our new CA
+      only once the partner has placed that CA, and peering_edge_rotation_ca_readback
+      ('{{ peering_edge_rotation_ca_readback }}') is not the staged CA's sha256
+      ({{ _pe_rot_ca_next.checksum | default('none') }}). Have the partner read back the
+      fingerprint of the file they placed. Nothing was moved.
+    quiet: true
+  when:
+    - _pe_rot_to_switch | bool
+    - peering_edge_rotation_kind == 'ca'
+
+- name: peering-edge | rotation | set the live pair aside, once for this id
+  when: not (_pe_rot_aside_exists | bool)
+  block:
+    - name: peering-edge | rotation | the rotation's directory
+      ansible.builtin.file:
+        path: "{{ _pe_rot_aside }}"
+        state: directory
+        mode: "0700"
+    - name: peering-edge | rotation | copy the live certificate and key aside
+      ansible.builtin.command:
+        argv: [cp, -p, "--", "{{ item }}", "{{ _pe_rot_aside }}/"]
+      loop:
+        - "{{ peering_edge_cert_path }}"
+        - "{{ peering_edge_key_path }}"
+      changed_when: true
+
+- name: peering-edge | rotation | switch to the staged pair
+  ansible.builtin.command:
+    argv: [mv, "--", "{{ item.src }}", "{{ item.dest }}"]
+    removes: "{{ item.src }}"
+  loop:
+    - { src: "{{ peering_edge_key_next_path }}", dest: "{{ peering_edge_key_path }}" }
+    - { src: "{{ peering_edge_cert_next_path }}", dest: "{{ peering_edge_cert_path }}" }
+
+- name: peering-edge | rotation | load the credentials and re-authenticate the IKE SA
+  ansible.builtin.shell:
+    cmd: "swanctl --load-creds && swanctl --rekey --ike {{ peering_edge_name | quote }} --reauth"
+  changed_when: true
+  when: not (peering_edge_rotation_retire | bool)
+
+- name: peering-edge | rotation | wait for the SA on the new leaf
+  ansible.builtin.shell:
+    cmd: >-
+      swanctl --list-sas --ike {{ peering_edge_name | quote }} | grep -q ESTABLISHED &&
+      swanctl --list-sas --ike {{ peering_edge_name | quote }} | grep -q INSTALLED
+  register: _pe_rot_up
+  until: _pe_rot_up.rc == 0
+  retries: "{{ [((peering_edge_rotation_confirm_seconds | int) / 5) | round(0, 'ceil') | int, 1] | max }}"
+  delay: "{{ 5 if (peering_edge_rotation_confirm_seconds | int) >= 5 else 1 }}"
+  changed_when: false
+  failed_when: false
+  when: not (peering_edge_rotation_retire | bool)
+
+- name: peering-edge | rotation | put the old pair back and stop (GB-302)
+  when:
+    - not (peering_edge_rotation_retire | bool)
+    - _pe_rot_up.rc != 0
+  block:
+    - name: peering-edge | rotation | restore the set-aside pair
+      ansible.builtin.command:
+        argv: [cp, -p, "--", "{{ _pe_rot_aside }}/{{ item.name }}", "{{ item.dest }}"]
+      loop:
+        - { name: "{{ peering_edge_key_path | basename }}", dest: "{{ peering_edge_key_path }}" }
+        - { name: "{{ peering_edge_cert_path | basename }}", dest: "{{ peering_edge_cert_path }}" }
+      changed_when: true
+    - name: peering-edge | rotation | load the old pair and re-authenticate
+      ansible.builtin.shell:
+        cmd: "swanctl --load-creds && swanctl --rekey --ike {{ peering_edge_name | quote }} --reauth"
+      changed_when: true
+      failed_when: false
+    - name: peering-edge | rotation | stop
+      ansible.builtin.fail:
+        msg: >-
+          goat-peering-edge (GB-302): the IKE SA of {{ peering_edge_name }} did not come up on the
+          new leaf within {{ peering_edge_rotation_confirm_seconds }} s on {{ inventory_hostname }}.
+          The old pair was put back from {{ _pe_rot_aside }} and loaded{{
+          '; with an ipsec-ca rotation whose partner no longer trusts our old CA, it cannot carry the link'
+          if peering_edge_rotation_kind == 'ca' else '' }}. Read `swanctl --list-sas` and the charon log
+          on both edges before staging the new pair again.
+
+- name: peering-edge | rotation | our new CA becomes the CA the chain is checked against
+  ansible.builtin.command:
+    argv: [mv, "--", "{{ peering_edge_local_ca_next_path }}", "{{ peering_edge_local_ca_path }}"]
+    removes: "{{ peering_edge_local_ca_next_path }}"
+  when: peering_edge_rotation_kind == 'ca'
+
+- name: "peering-edge | rotation | retire, remove the set-aside key and keep its certificate"
+  ansible.builtin.file:
+    path: "{{ _pe_rot_aside }}/{{ peering_edge_key_path | basename }}"
+    state: absent
+  when: peering_edge_rotation_retire | bool
