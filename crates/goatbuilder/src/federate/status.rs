@@ -433,7 +433,12 @@ fn next_step(
         .get(&14)
         .is_some_and(|r| r.outcome == Outcome::Passed);
     if !passed_14 {
-        let next = on.map(|(n, _)| n + 1).unwrap_or(1);
+        // From the first phase the journal does not show passed: a phase with
+        // no record, or an outcome that is not a pass (a word a later goatbuilder
+        // wrote is never one), is not proven done, wherever the last run ended.
+        let next = (1..=14)
+            .find(|n| st.phases.get(n).is_none_or(|r| r.outcome != Outcome::Passed))
+            .unwrap_or(14);
         return format!("{again} --from {next}");
     }
     match acc {
