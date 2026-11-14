@@ -111,12 +111,12 @@ commit is complete and green.
 
 ### While a release is being cut
 
-Three rules hold from the version branch's cut-off until the tag:
+Four rules hold from the version branch's cut-off until the tag:
 
 1. **Merges freeze.** From the cut-off until the tag is pushed, nothing merges to `main`
    except the version pull request and the changes its text names as part of the release.
    Anything else waits until after the tag, so the commit that is tagged is the commit that
-   was checked.
+   was checked, or differs from it only as rule 4 allows.
 2. **A cancelled run is run again once.** A CI run on `main` that was cancelled because a
    later merge started a new one is not a failure. It is run again once, on the same
    commit, and the rerun's result is the one that counts. Since #618 a run on `main` is no
@@ -128,6 +128,14 @@ Three rules hold from the version branch's cut-off until the tag:
    taken are recorded in the version pull request. A question of policy, cost or people, or
    about an action that cannot be undone, is not an engineering question: the release waits
    for its answer.
+4. **The release check starts at the cut-off.** The release check in the federation test
+   environment (`ops/federation-e2e/`) starts on the version commit as soon as it is made at
+   the cut-off, before the version pull request is opened, and does not wait for that pull
+   request's CI. The tag goes on the version pull request's merge commit. Before the tag,
+   `git diff --name-only <checked commit> <merge commit>` must name nothing the binary, the
+   plays or the scenarios are built from: nothing under `crates/`, `ops/ansible/` or
+   `ops/federation-e2e/`. If it names any, each stage of the check that those paths feed
+   runs again on the merge commit, and the tag waits for it.
 
 Serving a release inside a goatnet is the goat-get and goat-docs roles' bump:
 
