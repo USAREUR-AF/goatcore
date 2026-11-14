@@ -332,9 +332,13 @@ deployment's own file, and refuses unless the combined result passed
 ([§7](../design/federation-acceptance.md#7-publishing-exchanging)).
 
 A sample the partner's earlier run left on your core is ignored, and the run says so, so its
-challenge is never echoed. It is told apart by the time each run stages beside its samples, which
-rests on both sides' clocks agreeing within `FED_SESSION_WAIT`: keep each host's clock
-synchronized (NTP).
+challenge is never echoed. It is told apart by the run stamp each run stages beside its samples
+(its challenge and start time in one value). A run that started more than twice
+`FED_SESSION_WAIT` before yours is an earlier run's; a partner's current run is kept as long as
+both sides start within `FED_SESSION_WAIT` of each other and their clocks agree within
+`FED_SESSION_WAIT` ([§6.3](../design/federation-acceptance.md#63-phase-14-on-a-derived-session)
+states the exact bound). Keep each host's clock synchronized (NTP). When only an earlier run's
+sample is there, the delivery row is BLOCKED and says so: run phase 14 again on both sides.
 
 | Check | Required evidence |
 |---|---|

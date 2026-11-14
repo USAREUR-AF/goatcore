@@ -379,12 +379,12 @@ session_lanes() {
   # one sample per offered set, a second (persist) sample per set, a set nobody
   # offered, and two writes outside every lane.
   for set in $(list "$OUR_SETS"); do
+    # In a derived session this run's stamp, `<us>-<challenge>-<set>@<started>`,
+    # goes beside the sample and before it: the challenge and the start time in one
+    # value, so a reader never pairs one run's start time with another run's
+    # challenge (wait_for_partner).
+    [ -n "$DERIVED" ] && { put_ours "$set/$sk/$US/run" "$US-$MY_CHAL-${set#release/}@$MY_STARTED"; gap; }
     c1=$(put_ours_code "$set/$sk/$US" "$US-$MY_CHAL-${set#release/}"); gap
-    # In a derived session the start time goes after the sample, never before: a
-    # reader that finds an earlier run's start time beside this run's sample only
-    # waits a moment more, while a new start time beside an earlier run's sample would
-    # let that sample's challenge be learned.
-    [ -n "$DERIVED" ] && { put_ours "$set/$sk/$US/started" "$MY_STARTED"; gap; }
     c2=$(put_ours_code "$set/$sk/$US/persist" "$US-$MY_CHAL-${set#release/}-persist"); gap
     codes="$codes$set ${c1:-000} ${c2:-000}
 "
@@ -428,8 +428,7 @@ session_lanes() {
   for set in $(list "$THEIR_SETS"); do
     begin; key="$(wire_of "$THEM" "$set")/$sk/$THEM"; val="$THEM-$THEIR_CHAL-${set#release/}"
     if [ -n "$DERIVED" ]; then
-      wait_for_partner "$key"
-      learn_their_challenge "$GOT" "$set"
+      wait_for_partner "$key" "$set"
       val="$THEM-$THEIR_CHAL-${set#release/}"
       i=1
     else
@@ -443,6 +442,8 @@ session_lanes() {
     obs sent_sha256 "$(sha "$val")"; obs received_sha256 "$(sha "$GOT")"
     if [ "$GOT_RC" -ne 0 ]; then blk "delivery/inbound/$set" inbound positive "$THEM's session sample under $set/**: our core's REST surface did not answer" "$GOT_ERR"
     elif [ "$GOT" = "$val" ]; then ok "delivery/inbound/$set" inbound positive "$THEM's session sample on $set/** arrived as $(wire_of "$THEM" "$set")/** with their challenge, byte for byte"; landed=1
+    elif [ -n "$DERIVED" ] && [ -n "$NOT_THIS_RUN" ]; then blk "delivery/inbound/$set" inbound positive "$NOT_THIS_RUN" \
+      "Re-run once they have run this session within ${FED_SESSION_WAIT:-300}s of this side."
     elif [ -z "$GOT" ]; then blk "delivery/inbound/$set" inbound positive "nothing from $THEM on $set/** within ${FED_SESSION_WAIT:-300}s" \
       "Either they have not run this session yet, or it was not delivered; re-run once they have."
     else no "delivery/inbound/$set" inbound positive "$THEM's session sample on $set/** arrived with other bytes" "sent sha256 $(sha "$val"), read sha256 $(sha "$GOT")"; fi
@@ -475,38 +476,70 @@ session_lanes() {
     begin; edge_refusals
   fi
 }
-# wait_for_partner KEY: in a derived session, read KEY on our core until this run's
-# sample of the partner's is there or FED_SESSION_WAIT runs out, saying how long is
-# left, so the operator knows to start the other side. A sample whose start time
-# (KEY/started) is before our own start minus FED_SESSION_WAIT is an earlier run's:
-# it is ignored, so its challenge is never learned. That rests on the two sides'
-# clocks agreeing within FED_SESSION_WAIT. A sample with no start time beside it is
-# from a partner that does not stage one, and is read as before. Sets GOT, GOT_RC and
-# GOT_ERR as get_side does; an earlier run's sample leaves GOT empty.
+# wait_for_partner KEY SET: in a derived session, read the partner's run stamp
+# (KEY/run, `<them>-<challenge>-<set>@<started>`) and sample (KEY) on our core until
+# this run's sample is there or FED_SESSION_WAIT runs out, saying how long is left,
+# so the operator knows to start the other side. The challenge is learned from the
+# stamp, and the sample must then carry it.
+#   - A stamp that started before our own start minus twice FED_SESSION_WAIT is an
+#     earlier run's, and its challenge is never learned. A partner still waiting
+#     when we start began at most FED_SESSION_WAIT (plus its own set-up) before us,
+#     so twice the wait keeps its sample while the two clocks agree within about
+#     FED_SESSION_WAIT (design §6.3 states the exact bound).
+#   - A stamp that cannot be read (GOT_RC not 0) is not there yet: wait.
+#   - No stamp, read cleanly, is a partner whose runner stages none: its sample is
+#     read as before, and the challenge is learned from it.
+# Sets GOT, GOT_RC and GOT_ERR as get_side does for the sample, sets THEIR_CHAL, and
+# sets NOT_THIS_RUN to the reason when what is there is not this run's sample.
 wait_for_partner() {
-  local end next=0 left sample started said=""
-  end=$((SECONDS + ${FED_SESSION_WAIT:-300}))
+  local key="$1" set="${2#release/}" end next=0 left v rest chal started said="" w fresh
+  w=${FED_SESSION_WAIT:-300}
+  NOT_THIS_RUN=""
+  end=$((SECONDS + w))
   while :; do
-    # The start time first, then the sample: the partner writes its sample before its
-    # start time, so a start time read here is never newer than the sample read next.
-    get_side ours "$1/started"
-    started="$GOT"
-    get_side ours "$1"
-    if [ "$GOT_RC" -eq 0 ] && [ -n "$GOT" ]; then
-      sample="$GOT"
-      if [[ "$started" =~ ^[0-9]{1,12}$ ]] && [ "$started" -lt $((MY_STARTED - ${FED_SESSION_WAIT:-300})) ]; then
+    fresh=""
+    get_side ours "$key/run"
+    if [ "$GOT_RC" -ne 0 ]; then
+      NOT_THIS_RUN="$THEM's run stamp on $2/** could not be read within ${w}s${GOT_ERR:+: }$GOT_ERR"
+    elif [ -z "$GOT" ]; then
+      NOT_THIS_RUN=""
+      get_side ours "$key"
+      if [ "$GOT_RC" -eq 0 ] && [ -n "$GOT" ]; then learn_their_challenge "$GOT" "$2"; return 0; fi
+    else
+      v="${GOT#"$THEM"-}"; started="${v##*@}"; rest="${v%@*}"; chal="${rest%-"$set"}"
+      if [ "$v" = "$GOT" ] || [ "$rest" = "$v" ] || [ "$chal" = "$rest" ] \
+         || ! [[ "$chal" =~ ^[0-9a-f]{16,64}$ ]] || ! [[ "$started" =~ ^[0-9]{1,12}$ ]]; then
+        NOT_THIS_RUN="$THEM's run stamp on $2/** is not of the form $THEM-<challenge>-$set@<seconds>: '$GOT'"
+      elif [ "$started" -lt $((MY_STARTED - 2 * w)) ]; then
+        NOT_THIS_RUN="the run stamp on our core for $2/** is from $THEM's earlier run (started $(date -u -d "@$started" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "at $started")); this run's did not arrive within ${w}s"
         if [ -z "$said" ]; then
           echo "  $THEM's sample on our core is from an earlier run (it started $(date -u -d "@$started" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "at $started")); waiting for this run's"
           said=1
         fi
-        GOT=""
       else
-        GOT="$sample"; GOT_RC=0
-        return 0
+        [ -z "$THEIR_CHAL" ] && THEIR_CHAL="$chal"
+        fresh=1
+        get_side ours "$key"
+        if [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "$THEM-$chal-$set" ]; then NOT_THIS_RUN=""; return 0; fi
       fi
     fi
     left=$((end - SECONDS))
-    [ "$left" -le 0 ] && return 0
+    if [ "$left" -le 0 ]; then
+      get_side ours "$key"
+      if [ -n "$fresh" ] && [ "$GOT_RC" -eq 0 ]; then
+        # This run's stamp is there and its sample is not. Another run's sample (the
+        # same shape, another challenge) is named; other bytes are a delivery FAIL.
+        v="${GOT#"$THEM"-}"; v="${v%-"$set"}"
+        if [ -z "$GOT" ]; then
+          NOT_THIS_RUN="$THEM's run stamp for this run is on our core for $2/**, its sample did not arrive within ${w}s"
+        elif [ "$v" != "$GOT" ] && [[ "$v" =~ ^[0-9a-f]{16,64}$ ]]; then
+          NOT_THIS_RUN="$THEM's run stamp for this run is on our core for $2/**, but the sample beside it is an earlier run's (another challenge); this run's did not arrive within ${w}s"
+        else
+          NOT_THIS_RUN=""
+        fi
+      fi
+      return 0
+    fi
     if [ "$SECONDS" -ge "$next" ]; then
       echo "  waiting for $THEM's phase 14, ${left}s left"
       next=$((SECONDS + 10))
