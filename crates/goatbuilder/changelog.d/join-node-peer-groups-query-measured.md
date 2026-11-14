@@ -9,4 +9,4 @@ on a disposable Postgres, enrols two real clients with keys from
 join-node's phase 10 to read the groups the minting host's peer holds.
 `tests/test_mesh_enroll_peer_groups.py` holds the query's shape always, and
 its result when the script runs it. The query was designed and is now
-measured.
+measured. (#754)
