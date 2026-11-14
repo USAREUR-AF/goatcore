@@ -669,7 +669,10 @@ class AcceptanceRun(unittest.TestCase):
         # result are still on xaa's core, from xab's run that started before xaa's
         # start minus twice the wait: an earlier run's, so its challenge is not
         # learned, no result is published or verified, and the run stays open. The
-        # BLOCKED delivery rows say an earlier run's sample is there.
+        # BLOCKED delivery rows say an earlier run's sample is there. An earlier run
+        # is one that started more than twice the wait before this one.
+        import time
+        time.sleep(8)
         p = self.derived_side("xaa", ev["xaa"], full=True, wait="3")
         out = p.communicate(timeout=120)[0]
         with open(os.path.join(ev["xaa"], "result.json")) as f:
@@ -781,19 +784,29 @@ class AcceptanceRun(unittest.TestCase):
             delay=3, wait="8", second={"extra": self.curl_stand_in(self.BARE_SAMPLE_PUT, "exit 28")})
         self.assert_no_earlier_challenge_used(out_a, out_b)
         rows = self.checks(ev["xaa"])
-        for name, row in rows.items():
-            if name.startswith("delivery/inbound/"):
-                self.assertEqual(row["verdict"], "BLOCKED", (name, out_a))
-                self.assertIn("earlier run", row["reason"], (name, out_a))
-        self.assertNotIn("FAIL", out_a.replace("ACCEPTANCE FAILED", ""))
+        inbound = [n for n in rows if n.startswith("delivery/inbound/")]
+        self.assertTrue(inbound, out_a)
+        for name in inbound:
+            self.assertEqual(rows[name]["verdict"], "BLOCKED", (name, out_a))
+            self.assertIn("earlier run", rows[name]["reason"], (name, out_a))
+        # xab's own run fails its staged-sample check (its write failed); xaa's rows
+        # carry no FAIL.
+        self.assertNotIn("FAIL", [r["verdict"] for r in rows.values()], out_a)
 
     def test_derived_a_partner_sample_arriving_after_its_stamp_is_waited_for(self):
+        # xab's sample lands 4 s after its stamp, beside an earlier run's sample: xaa
+        # waits for the sample carrying the stamp's challenge. (xab's own read-back of
+        # its staged sample runs before the late write, so xab's run is not judged.)
         self.earlier_run_on_xaa()
         delayed = "( sleep 4; exec %s \"$@\" ) >/dev/null 2>&1 & exit 0" % shutil.which("curl")
         ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(
             delay=3, wait="12", second={"extra": self.curl_stand_in(self.BARE_SAMPLE_PUT, delayed)})
-        self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
         self.assert_no_earlier_challenge_used(out_a, out_b)
+        rows = self.checks(ev["xaa"])
+        inbound = [n for n in rows if n.startswith("delivery/inbound/")]
+        self.assertTrue(inbound, out_a)
+        for name in inbound:
+            self.assertEqual(rows[name]["verdict"], "PASS", (name, out_a))
 
     def test_derived_a_partner_stamp_arriving_after_its_sample_is_waited_for(self):
         self.earlier_run_on_xaa()
