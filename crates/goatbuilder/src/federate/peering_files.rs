@@ -1930,6 +1930,35 @@ mod tests {
         assert!(!installs_certs(d.path(), "xab_edge"));
     }
 
+    /// The host firewall baseline the peering plays require on an edge (GB-279)
+    /// is written into the edge group before its peering is allocated. A hand
+    /// file that holds only goat_host_firewall_* keys is that setting, not
+    /// evidence the peering runs; one that also sets a peering value still is.
+    #[test]
+    fn a_host_firewall_file_alone_is_not_a_running_peering() {
+        let d = repo_with(json!([p("xab", false)]));
+        let g = d.path().join("ops/ansible/group_vars/xab_edge");
+        std::fs::create_dir_all(&g).unwrap();
+        std::fs::write(
+            g.join("host-firewall.yml"),
+            "goat_host_firewall_baseline: true\n\
+             goat_host_firewall_management_sources:\n  - \"192.0.2.30/32\"\n\
+             goat_host_firewall_override:\n  other-tcp:\n    ports: [8101]\n    sources: [\"192.0.2.1/32\"]\n    reason: \"x\"\n",
+        )
+        .unwrap();
+        assert_eq!(hand_run_reason(d.path(), "xab_edge"), None);
+        let c = config::load(&d.path().join("ops/goatbuilder/goatbuilder.yaml")).unwrap();
+        let vs = alloc::allocate_all(&c, &AllocContext::default()).unwrap();
+        assert!(adoption_check(d.path(), &c, &vs, &AllocContext::default(), &[]).is_ok());
+        std::fs::write(
+            g.join("host-firewall.yml"),
+            "goat_host_firewall_baseline: true\npeering_wg_listen_port: 51820\n",
+        )
+        .unwrap();
+        let why = hand_run_reason(d.path(), "xab_edge").expect("a peering value is evidence");
+        assert!(why.contains("host-firewall.yml"), "{why}");
+    }
+
     /// A repository with one peering still hand-written (xac) and one to adopt
     /// (xab). `allocate` over every peering refuses (xac would move);
     /// `allocate xab` allocates and renders xab alone, around the values xac
