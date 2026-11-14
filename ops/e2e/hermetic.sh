@@ -51,6 +51,7 @@ esac
 # shellcheck source=ops/e2e/system.sh
 . "$HERE/system.sh"
 sys_guard "$HOSTS" "$THROWAWAY" || exit 2
+if [ "$HOSTS" = 1 ]; then sys_sudo_ready || exit 2; fi
 [ -n "$WORK" ] || WORK="$(mktemp -d "${TMPDIR:-/tmp}/goat-e2e.XXXXXX")"
 mkdir -p "$WORK"; WORK="$(cd "$WORK" && pwd)"
 [ -n "$RECORD" ] || RECORD="$WORK/report"

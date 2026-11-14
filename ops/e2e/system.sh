@@ -38,19 +38,49 @@ sys_guard() {
 }
 
 sys_undo() {
-  local tmp
+  local tmp rc=0 failed=0
   if [ "$SYS_HOSTS_ADDED" = 1 ]; then
     tmp="$(mktemp)"
-    grep -vxF '127.0.0.1 ghcr.io' "$E2E_HOSTS_FILE" > "$tmp" || true
-    # cp, not mv: the file keeps its inode, owner and mode.
-    sudo cp "$tmp" "$E2E_HOSTS_FILE" && SYS_HOSTS_ADDED=0
+    grep -vxF '127.0.0.1 ghcr.io' "$E2E_HOSTS_FILE" > "$tmp" || rc=$?
+    # grep exits 1 when no other line is left; 2 is a read error, whose empty output
+    # must never replace the file. cp, not mv: the file keeps its inode, owner and mode.
+    if [ "$rc" -le 1 ] && sudo cp "$tmp" "$E2E_HOSTS_FILE" && ! grep -qxF '127.0.0.1 ghcr.io' "$E2E_HOSTS_FILE"; then
+      SYS_HOSTS_ADDED=0
+    else
+      printf "hermetic: NOT RESTORED: %s still points ghcr.io at this machine; run: sudo sed -i '/^127\\.0\\.0\\.1 ghcr\\.io\$/d' %s\n" \
+        "$E2E_HOSTS_FILE" "$E2E_HOSTS_FILE" >&2
+      failed=1
+    fi
     rm -f "$tmp"
   fi
   if [ "$SYS_CERTS_MADE" = 1 ]; then
-    sudo rm -r "$E2E_CERTS_DIR/ghcr.io" && SYS_CERTS_MADE=0
+    if sudo rm -r "$E2E_CERTS_DIR/ghcr.io" && [ ! -e "$E2E_CERTS_DIR/ghcr.io" ]; then
+      SYS_CERTS_MADE=0
+    else
+      printf 'hermetic: NOT RESTORED: %s, which this run made, is still there; run: sudo rm -r %s\n' \
+        "$E2E_CERTS_DIR/ghcr.io" "$E2E_CERTS_DIR/ghcr.io" >&2
+      failed=1
+    fi
   elif [ -n "$SYS_CA_SAVED" ]; then
-    sudo cp "$SYS_CA_SAVED" "$E2E_CERTS_DIR/ghcr.io/ca.crt" && rm -f "$SYS_CA_SAVED" && SYS_CA_SAVED=""
+    if sudo cp "$SYS_CA_SAVED" "$E2E_CERTS_DIR/ghcr.io/ca.crt" && sudo cmp -s "$SYS_CA_SAVED" "$E2E_CERTS_DIR/ghcr.io/ca.crt"; then
+      rm -f "$SYS_CA_SAVED"; SYS_CA_SAVED=""
+    else
+      printf 'hermetic: NOT RESTORED: %s is not the CA this run replaced (kept at %s); run: sudo cp %s %s\n' \
+        "$E2E_CERTS_DIR/ghcr.io/ca.crt" "$SYS_CA_SAVED" "$SYS_CA_SAVED" "$E2E_CERTS_DIR/ghcr.io/ca.crt" >&2
+      failed=1
+    fi
   fi
+  # A run whose machine was not put back does not end as a success.
+  [ "$failed" = 0 ] || exit 1
+}
+
+# sys_sudo_ready: sudo needs no password at all (NOPASSWD). A cached timestamp is not
+# enough: it can expire before the undo runs, and the undo has no terminal to ask on.
+# `sudo -k -n` ignores the cached credentials for this one command, without removing them.
+sys_sudo_ready() {
+  sudo -k -n true 2>/dev/null && return 0
+  echo "hermetic: with hosts this run needs sudo with no password (NOPASSWD): it puts the hosts file and the certificate directory back on exit, and a cached sudo timestamp can expire before then" >&2
+  return 2
 }
 
 # sys_arm_undo: undo on any exit; a signal exits, so the EXIT trap runs.
