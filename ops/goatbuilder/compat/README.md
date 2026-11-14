@@ -31,7 +31,8 @@ also be its line in `crates/goatbuilder/tests/upgrade/releases.sha256`, the one
 list of published release checksums, which the upgrade tests (gates E1 to E3)
 own and compat only reads. Nothing here is read from the network at check time: the
 baseline is committed, so a check's result depends only on the tree and the
-build.
+build, and, for row A1 from a 1.0 baseline, on the release tags in the checkout
+and today's date.
 
 | Row | Rule | Kept here | Recorded from |
 |---|---|---|---|
@@ -83,8 +84,13 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
 
 - **A command or flag to be removed or renamed.** Add an entry to
   `deprecations.yaml` naming the command (and flag), its replacement and the
-  release that first warns. The deprecation period itself is a decision that is
-  not yet taken (row A1).
+  release that first warns. Until the baseline is 1.0 or later, the entry
+  excuses the removal at once. From a 1.0 baseline it excuses it only after
+  the deprecation period (ADR 1228, row A1): the build is a later major
+  release, the major that first warned had two minor releases after the one
+  that warned, and 90 days have passed since that release was tagged. The
+  check reads the tags' dates from the checkout and today's date in UTC, and
+  a refusal names the date it compared against and the date the period ends.
 - **An error code no longer printed, or whose fault is renamed.** Keep the
   entry in the catalog and mark it `retired: "<tag>: <why>"`, such as
   `retired: "goatbuilder/v0.6.0: standup reads the site from the plan"`

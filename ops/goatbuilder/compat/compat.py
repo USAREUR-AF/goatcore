@@ -7,7 +7,9 @@ goatbuilder to two of them, against the baseline kept beside it
 files are crates/goatbuilder/tests/config_compat.rs, and A5's error codes are
 ops/ci/check-error-codes-kept.py:
 
-  surface    A3  every command and flag of the last release is still there
+  surface    A1  from a 1.0 baseline, an entry excuses a removal only after
+                 its deprecation period (ADR 1228)
+             A3  every command and flag of the last release is still there
                  (and still takes a value if it took one, and no optional
                  argument became required), unless deprecations.yaml names it
   documents  A4  every kept `-o json` / `-o yaml` document of the last release
@@ -214,6 +216,105 @@ def deprecation_problems(deps: list) -> list:
         if not re.match(r"^goatbuilder/v\d+\.\d+\.\d+$", str(d.get("deprecated_in", ""))):
             out.append(f"{where}: `deprecated_in:` must name the release, goatbuilder/vX.Y.Z")
     return out
+
+
+# ---------------------------------------------------------------- A1: the deprecation period
+
+PERIOD_DAYS = 90
+PERIOD_MINORS = 2
+_RELEASE = re.compile(r"^goatbuilder/v(\d+)\.(\d+)\.(\d+)$")
+
+
+def _removed(base: dict, new: dict, d: dict) -> bool:
+    """Whether the build no longer has what entry `d` deprecates, and the last release had it."""
+    cmd, flag, value = d.get("command"), d.get("flag"), d.get("value")
+    if cmd not in base:
+        return False
+    if not flag:
+        return cmd not in new
+    if cmd not in new:
+        return True
+    if value is not None:
+        had = (base[cmd].get("values") or {}).get(flag) or []
+        has = (new[cmd].get("values") or {}).get(flag) or []
+        return value in had and value not in has
+    return flag in base[cmd]["flags"] and flag not in new[cmd]["flags"]
+
+
+def release_tag_dates(repo: str) -> dict:
+    """{goatbuilder/vX.Y.Z: the date it was tagged (UTC)}, from the annotated release tags."""
+    r = subprocess.run(
+        ["git", "-C", repo, "for-each-ref", "refs/tags/goatbuilder/", "--format=%(refname:short) %(creatordate:iso-strict)"],
+        capture_output=True, text=True,
+    )
+    out = {}
+    for line in r.stdout.splitlines():
+        tag, _, when = line.partition(" ")
+        if _RELEASE.match(tag) and when:
+            stamp = datetime.datetime.fromisoformat(when)
+            out[tag] = stamp.astimezone(datetime.timezone.utc).date()
+    return out
+
+
+def period_problems(base: dict, new: dict, deps: list, base_release: str, version: str, tags: dict, today) -> list:
+    """From a 1.0 baseline, each entry that excuses a removal must have served its
+    period (ADR 1228): the build is a later major, the major that first warned had
+    two minor releases after the one that warned, and 90 days have passed since it
+    was tagged. On 0.x an entry excuses a removal at once ("When it starts")."""
+    m = _RELEASE.match(base_release)
+    if not m or int(m.group(1)) < 1:
+        return []
+    base_major = int(m.group(1))
+    out = []
+    for d in deps:
+        if not _removed(base, new, d):
+            continue
+        what = " ".join(str(x) for x in (d.get("command"), d.get("flag"), d.get("value")) if x)
+        since = str(d.get("deprecated_in", ""))
+        build_major = int(version.split(".")[0]) if version.split(".")[0].isdigit() else 0
+        if build_major <= base_major:
+            out.append(f"{what}: removed in {version}, but a deprecated item is removed only in a major release; "
+                       f"keep it, with its warning, until goatbuilder {base_major + 1}.0.0")
+            continue
+        dm = _RELEASE.match(since)
+        if not dm or since not in tags:
+            out.append(f"{what}: deprecations.yaml names no tag {since} on this history, so its period cannot be read; "
+                       "name the release that first warned (fetch its tag)")
+            continue
+        later = sorted(
+            (t for t in tags
+             if (tm := _RELEASE.match(t)) and tm.group(1) == dm.group(1) and int(tm.group(2)) > int(dm.group(2)) and tm.group(3) == "0"),
+            key=lambda t: int(_RELEASE.match(t).group(2)),
+        )
+        ends = tags[since] + datetime.timedelta(days=PERIOD_DAYS)
+        if len(later) < PERIOD_MINORS:
+            out.append(f"{what}: deprecated in {since}, followed by {len(later)} minor release(s) of {dm.group(1)}.x "
+                       f"({', '.join(later) or 'none'}); it is removed only after two minor releases and 90 days "
+                       f"(compared against {today.isoformat()} (UTC); the 90 days end on {ends.isoformat()})")
+            continue
+        if today < ends:
+            out.append(f"{what}: deprecated in {since}; compared against {today.isoformat()} (UTC), "
+                       f"the 90 days from {since} (tagged {tags[since].isoformat()}) end on {ends.isoformat()}; "
+                       "keep it, with its warning, until then")
+    return out
+
+
+def _build_version(repo: str) -> str:
+    with open(os.path.join(repo, "crates", "goatbuilder", "Cargo.toml")) as f:
+        m = re.search(r'^version\s*=\s*"([^"]+)"', f.read(), re.M)
+    return m.group(1) if m else "0.0.0"
+
+
+def period_rows(repo: str, b, new: dict, deps: list, today=None) -> list:
+    """The A1 problems of this build: its version from crates/goatbuilder/Cargo.toml,
+    the release tags' dates from git, today's date in UTC. The tags are read from
+    the checkout, never fetched here: goatbuilder-pr fetches them before the check."""
+    today = today or datetime.datetime.now(datetime.timezone.utc).date()
+    base = b.surface()
+    if not any(_removed(base, new, d) for d in deps):
+        return []
+    tags = release_tag_dates(repo)
+    return period_problems(base, new, deps, b.release, _build_version(repo), tags, today)
 
 
 # ---------------------------------------------------------------- A4: the documents
@@ -547,6 +648,7 @@ def check_all(repo: str, root: str, binary: str, only=("surface", "documents")) 
         else:
             new = surface_values(binary, parse_reference(r.stdout))
             problems = surface_problems(b.surface(), new, deps)
+            problems += period_rows(repo, b, new, deps)
             for p in problems:
                 rows.append((False, "surface", p.split(":", 1)[0], p.split(":", 1)[1].strip()))
             if not problems:

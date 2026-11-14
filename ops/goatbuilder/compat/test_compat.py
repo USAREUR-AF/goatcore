@@ -234,6 +234,36 @@ class A1DeprecationPeriod(unittest.TestCase):
         self.assertEqual(len(p), 1, p)
         self.assertIn("goatbuilder deploy --env door", p[0])
 
+    def test_the_check_reads_the_build_version_and_the_tag_dates_from_the_checkout(self):
+        import subprocess
+        import tempfile
+
+        class Base:
+            release = "goatbuilder/v1.4.0"
+
+            def surface(self):
+                return surface()
+
+        with tempfile.TemporaryDirectory() as repo:
+            def git(*a, when="2027-01-10T12:00:00+00:00"):
+                env = dict(os.environ, GIT_COMMITTER_DATE=when, GIT_AUTHOR_DATE=when,
+                           GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+                subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.org",
+                                "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *a],
+                               check=True, capture_output=True, env=env)
+            os.makedirs(os.path.join(repo, "crates", "goatbuilder"))
+            with open(os.path.join(repo, "crates", "goatbuilder", "Cargo.toml"), "w") as f:
+                f.write('[package]\nname = "goatbuilder"\nversion = "1.5.0"\n')
+            git("init", "-q")
+            git("add", ".")
+            git("commit", "-q", "-m", "x")
+            for tag, when in (("v1.2.0", "2027-01-10T23:30:00-05:00"), ("v1.3.0", "2027-01-20T12:00:00+00:00"), ("v1.4.0", "2027-02-01T12:00:00+00:00")):
+                git("tag", "-a", "-m", tag, f"goatbuilder/{tag}", when=when)
+            self.assertEqual(compat.release_tag_dates(repo)["goatbuilder/v1.2.0"], datetime.date(2027, 1, 11), "the date in UTC")
+            p = compat.period_rows(repo, Base(), self.removed(), [self.ENV], today=datetime.date(2027, 5, 1))
+            self.assertEqual(len(p), 1, p)
+            self.assertIn("removed in 1.5.0", p[0])
+
     def test_tag_dates_are_read_from_the_annotated_tags(self):
         tags = compat.release_tag_dates(REPO)
         if "goatbuilder/v0.7.0" not in tags:
