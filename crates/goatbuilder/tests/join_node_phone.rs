@@ -124,9 +124,13 @@ fn site(prepared: bool) -> Site {
     );
     std::fs::create_dir_all(checkout.join("ops/scripts")).unwrap();
     std::fs::create_dir_all(checkout.join("ops/secrets")).unwrap();
+    std::fs::create_dir_all(checkout.join("ops/federation/standup")).unwrap();
     for s in [
         // The real gates, mesh record and secrets injector, as for H1 and H2.
         "ops/scripts/standup-config-preflight.py",
+        // Phase 3's clock check and the federation clock code it shares.
+        "ops/scripts/join-node-clock-check.py",
+        "ops/federation/standup/preflight_live.py",
         "ops/scripts/signal-federation-check.py",
         "ops/scripts/standup-mesh-record.py",
         "ops/scripts/inventory-hosts.py",
@@ -736,6 +740,10 @@ fn a_phone_joins_over_usb_from_phase_2_to_15() {
     for l in &to_node {
         assert!(l.starts_with(&format!("ssh -F {cfg} ")), "{l}");
     }
+    assert!(
+        to_node.iter().any(|l| l.contains("chronyc -c tracking")),
+        "phase 3 reads the phone's clock through the cable: {to_node:#?}"
+    );
     assert!(
         lines
             .iter()
