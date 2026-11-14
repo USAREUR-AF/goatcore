@@ -1,0 +1,14 @@
+---
+# Runs the forwarder's carrier key tasks (tasks/carrier-key.yml) on localhost
+# against the stand-in wg that test-rotation.sh puts first on PATH.
+- name: goat-peering-forwarder carrier keys, against a stand-in wg
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  environment:
+    PATH: "{{ stand_in_bin }}:{{ lookup('env', 'PATH') }}"
+  tasks:
+    - name: The carriers' keys
+      ansible.builtin.include_tasks: ../tasks/carrier-key.yml

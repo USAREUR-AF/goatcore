@@ -179,15 +179,10 @@
     group: root
     mode: "0700"
 
-# The carrier key is made here and never leaves this host. It authenticates the
-# carrier, not the peering. It is never taken from a variable.
-- name: peering-forwarder | make each carrier's private key if there is none
-  ansible.builtin.shell:
-    cmd: "umask 077; wg genkey > {{ peering_forwarder_config_dir }}/{{ item.interface }}.key"
-    creates: "{{ peering_forwarder_config_dir }}/{{ item.interface }}.key"
-  loop: "{{ _pf_peerings }}"
-  loop_control:
-    label: "{{ item.interface }}"
+# The carrier key is made here and never leaves this host; a rotation of one
+# peering's carrier sets that key aside first (tasks/carrier-key.yml).
+- name: peering-forwarder | each carrier's private key
+  ansible.builtin.include_tasks: carrier-key.yml
 
 - name: peering-forwarder | IPv4 forwarding, persistent
   ansible.builtin.copy:

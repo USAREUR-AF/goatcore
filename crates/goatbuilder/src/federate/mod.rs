@@ -723,6 +723,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     if s.rotate_leaves {
         rotation::leaves(&mut phases);
     }
+    if let Some(c) = &s.rotate_carrier {
+        rotation::carrier(&mut phases, c, o.with);
+    }
     let banner_mode = if o.dry_run {
         "(DRY RUN — nothing executes)"
     } else if o.mock.is_some() {

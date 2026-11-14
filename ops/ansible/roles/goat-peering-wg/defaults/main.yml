@@ -94,6 +94,10 @@ peering_wg_nft_path: "{{ peering_wg_config_dir }}/{{ peering_wg_interface }}.nft
 peering_wg_service: "goat-peering-wg@{{ peering_wg_interface }}.service"
 peering_wg_state_path: "/var/log/goat-peering-wg-{{ peering_wg_interface }}-state.json"
 peering_wg_carrier_key_path: "{{ peering_wg_config_dir }}/{{ peering_wg_carrier_interface }}.key"
+# A carrier key rotation's id (`goatbuilder federate rotate <partner> carrier`):
+# the key in place is set aside once in .previous-<id>/ and a new one made
+# (tasks/carrier-key.yml). Empty: no rotation.
+peering_wg_carrier_rotation: ""
 peering_wg_carrier_env_path: "{{ peering_wg_config_dir }}/{{ peering_wg_carrier_interface }}.env"
 peering_wg_carrier_service: "goat-peering-wg@{{ peering_wg_carrier_interface }}.service"
 
