@@ -38,3 +38,8 @@ version pull request of a release runs `changelog.py release <version>
 the files. The design is in
 [community-and-stable-line.md](../../../docs/design/community-and-stable-line.md),
 "The changelog, one file per entry".
+
+A pull request that adds or changes an entry is on a base that holds every
+goatbuilder release: when a release lands first, rebase onto `main` and run
+`write` again (`ops/ci/check-changelog-base-current.py` refuses it until
+then).
