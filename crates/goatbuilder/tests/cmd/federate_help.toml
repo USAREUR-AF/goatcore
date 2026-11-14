@@ -16,9 +16,10 @@ environment overrides one.
 
 Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner>`, `status
 [<partner>]`. `allocate [<peering>]` writes a peering's values and files for review; `backout
-<partner>` backs one peering out and leaves the others as they were. `goatbuilder federate
-init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags
-and exit codes of `goat federate <verb>`.
+<partner>` backs one peering out and leaves the others as they were; `rotate <partner> <key>`
+replaces one key of a running peering. `goatbuilder federate init|lint|compose|diff|verify|apply`
+runs one of the six federation verbs in process, with the flags and exit codes of `goat federate
+<verb>`.
 
 Usage: goatbuilder federate [OPTIONS] <WITH> [PARTNER]
        goatbuilder federate <COMMAND>
@@ -36,6 +37,10 @@ Commands:
   backout  Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation,
            edge router, republisher, forwarder mapping and core admission, and leave every other
            peering and the core as they were
+  rotate   Replace one key of a running peering and run the command again from the first phase it
+           changes: `rotate <partner> leaves` (phases 8 to 14) or `rotate <partner> carrier` (phases
+           2 to 14). The other keys are refused, each saying why
+           (docs/design/federation-key-rotation.md)
   import   A two-driver peering's import of an edge result, as a hand-off object names it: checked
            against the edge driver's confirm code, placed under the working directory and journaled.
            Built for phase 1; a later phase's import refuses with GB-267
@@ -93,16 +98,16 @@ Options:
           `update` — to stderr, so `-o json|yaml` stays a clean document. Or set
           RUST_LOG=goatbuilder=debug
 
-      --context-dir <DIR>
-          The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem
-          (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it)
-
       --timeout <SECS>
           Seconds to bound the connect/reach phase before failing fast — the one phase that can
           block on an unreachable host (`update`'s fetch of the served version). Does NOT cap a
           play's own run or the binary download (stall-bounded). Also reads GOATBUILDER_TIMEOUT
           
           [env: GOATBUILDER_TIMEOUT=]
+
+      --context-dir <DIR>
+          The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem
+          (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it)
 
       --cert <FILE>
           The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory)

@@ -93,23 +93,32 @@ passes phase 12 with the rendered edge half and no hand-placed `our-ca.pem`.
 
 `--rotate` deliberately replaces every requested certificate/key pair. This is the
 explicit reissuance path, including expiry. The operation requires the own CA key;
-it is never selected automatically by the driver. Existing files are retained in
-a private `.previous-*` directory. Key retention and retirement remain operator
-responsibilities. Unrequested material, including a core pair when no core SAN is
-provided, is left alone.
+it is never selected automatically by the driver; `goatbuilder federate rotate
+<partner> leaves` asks for it. The pairs it replaces are copied, at mode 0600, into
+the rotation's private directory under the output directory, and removed with it
+once the rotation commits. Unrequested material, including a core pair when no
+core SAN is provided, is left alone. A `.previous-*` set an earlier release kept is
+left where it is.
 
 Reject symlink outputs and non-regular targets, including during rotation. A
 non-blocking advisory lock serializes cooperating invocations using the same
 output directory. The directory must be controlled by its operator; locking does
 not defend against a privileged process replacing files outside this helper.
 
-All candidate pairs must validate before installation. Individual file replacement
-uses the same filesystem; ordinary installation errors attempt rollback. This is
-not a crash-atomic multi-file transaction. A killed process or host failure during
-installation can leave a mixed set. A `.rotation-pending` journal blocks further operations after an interrupted
-replacement, including a mixed set of otherwise valid pairs. Restore the previous
-set or complete the approved replacement using the retained private backup, verify
-the complete set, then remove the marker under the operator recovery procedure. This PR does not promise unattended recovery.
+All candidate pairs must validate before installation. A rotation is committed in
+one step: the private staging directory, holding the new pairs, the copy of the old
+ones and a journal naming the leaves, is renamed to `<out>/.rotation-pending`. The
+new files are then moved into place and every rotated pair validated, and the
+directory is removed. A run killed before the commit leaves only staging, removed
+by the next run, and the old pairs in place. A run killed after it leaves
+`.rotation-pending`: the next run, with or without `--rotate`, finishes that
+rotation from the pairs it holds and mints nothing; if those pairs do not validate,
+it restores the old pairs at their own modes, removes the directory and refuses, so
+the next rotation starts afresh. No run mints a third pair. A `.rotation-pending`
+that is a file, an earlier release's journal, is still refused for the operator
+recovery that release described. Status: built, and measured by
+`ops/federation/standup/test_peering_leaf_material_interrupted.py` with real
+OpenSSL and a process that ends abruptly mid-installation.
 
 New pairs are minted into a private (0700) staging directory, `<out>/.mint-*`,
 on the same filesystem, so installation is a rename. A run killed while minting
@@ -118,7 +127,8 @@ once it holds the lock and has found no `.rotation-pending` journal, removes eve
 `.mint-*` entry before it inspects anything: only the helper creates one, only
 while it holds the lock, so an entry seen under the lock belongs to a run that is
 no longer alive. A symlink of that name is unlinked, never followed. Installed
-leaves, `our-ca.pem` and a rotation's `.previous-*` set are never removed. A run
+leaves, `our-ca.pem`, a committed rotation's `.rotation-pending` and an earlier
+release's `.previous-*` set are never removed by the sweep. A run
 resumed after a kill during minting leaves `<out>` in the same shape as a clean
 run. Status: built, and measured by
 `ops/federation/standup/test_peering_leaf_material_interrupted.py`, which kills a
