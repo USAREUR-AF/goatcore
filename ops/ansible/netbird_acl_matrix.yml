@@ -131,3 +131,9 @@ netbird_acl_matrix:
         ports: ["7447"]
         action: accept
         bidirectional: false
+
+    # ADR 1185: the rules above are the whole surface, so NetBird's own
+    # Default All->All policy is removed at cutover, never kept or disabled.
+    cutover:
+      default_policy_action: delete
+      default_policy_name_pattern: "Default"
