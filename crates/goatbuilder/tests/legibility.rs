@@ -1133,6 +1133,11 @@ const SSH_REFUSED: &str = "fatal: [mgmt-alpha-01]: UNREACHABLE! => {\"msg\": \"F
 /// output, which holds the error, and the command by hand that standup's phase
 /// catalog gives for `key`. Returns the log's path.
 fn the_step_s_ssh_refusal_is_interpreted(out: &Output, key: &str) -> String {
+    the_ssh_refusal_is_interpreted("standup", out, key)
+}
+
+/// [`the_step_s_ssh_refusal_is_interpreted`] for any verb of the phase catalog.
+fn the_ssh_refusal_is_interpreted(verb: &str, out: &Output, key: &str) -> String {
     assert!(!out.status.success(), "a step fails: {}", text(out));
     let v: serde_json::Value =
         serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(out)));
@@ -1164,8 +1169,8 @@ fn the_step_s_ssh_refusal_is_interpreted(out: &Output, key: &str) -> String {
         logged.contains("Permission denied (publickey)"),
         "{log}: {logged}"
     );
-    let p = goat_errors::phases::explain_phase("standup", key)
-        .unwrap_or_else(|| panic!("standup step {key} has no phase-catalog entry"));
+    let p = goat_errors::phases::explain_phase(verb, key)
+        .unwrap_or_else(|| panic!("{verb} step {key} has no phase-catalog entry"));
     assert!(d.contains(&format!("By hand: {}", p.by_hand)), "{d}");
     log.to_string()
 }
@@ -1279,6 +1284,69 @@ fn f5_a_failed_observability_leg_carries_its_known_error_s_code_and_fix() {
         .unwrap();
     let log = the_step_s_ssh_refusal_is_interpreted(&out, "observability-leg-host");
     assert!(log.ends_with("/standup-alpha-obs-host.log"), "{log}");
+}
+
+/// F5 for join-node: a phase that fails with a known error carries its code
+/// and fix, that phase's own log, and the phase catalog's command by hand.
+/// Phase 5, the host baseline, fails the way a node that refuses our key fails.
+#[test]
+fn f5_a_failed_join_node_phase_carries_its_known_error_s_code_and_fix() {
+    let h = hollow();
+    let out = h
+        .command(&[
+            "-o",
+            "json",
+            "join-node",
+            "-C",
+            h.repo(),
+            "dev",
+            "--site",
+            "alpha",
+            "--node",
+            "node-x",
+            "--class",
+            "core",
+            "--address",
+            "192.0.2.10",
+            "--from",
+            "2",
+            "--yes",
+        ])
+        .env("GB_REC_SAY_WHEN", "mgmt-host-baseline.yml")
+        .env("GB_REC_SAY", SSH_REFUSED)
+        .env("GB_REC_SAY_EXIT", "4")
+        .output()
+        .unwrap();
+    the_ssh_refusal_is_interpreted("join-node", &out, "5");
+}
+
+/// F5 for deploy: a group's play that fails with a known error carries its
+/// code and fix, the play's own log, and the deploy step's command by hand.
+#[test]
+fn f5_a_failed_deploy_play_carries_its_known_error_s_code_and_fix() {
+    let h = hollow();
+    let out = h
+        .command(&[
+            "-o",
+            "json",
+            "deploy",
+            "-C",
+            h.repo(),
+            "--env",
+            "dev",
+            "--component",
+            "portal",
+            "--ack",
+            "A Person",
+            "--yes",
+        ])
+        .env("GB_REC_SAY_WHEN", "target=dev_hosts")
+        .env("GB_REC_SAY", SSH_REFUSED)
+        .env("GB_REC_SAY_EXIT", "4")
+        .output()
+        .unwrap();
+    let log = the_ssh_refusal_is_interpreted("deploy", &out, "deploy");
+    assert!(log.contains("goat-deploy-portal-dev_hosts-"), "{log}");
 }
 
 #[test]
@@ -1401,6 +1469,23 @@ const DEPLOY_STEPS: [&str; 6] = [
     "deploy",
     "verify",
 ];
+
+/// The step names check (d) holds deploy to are the phase catalog's deploy
+/// entries: the list follows the catalog, and check (d) then reads each entry.
+#[test]
+fn deploy_steps_are_the_catalog_s_deploy_entries() {
+    let text = std::fs::read_to_string(repo().join(PHASE_CATALOG)).unwrap();
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+    let catalog: BTreeSet<String> = doc["phases"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .filter(|e| e["verb"].as_str() == Some("deploy"))
+        .filter_map(|e| e["phase"].as_str().map(str::to_string))
+        .collect();
+    let steps: BTreeSet<String> = DEPLOY_STEPS.iter().map(|s| s.to_string()).collect();
+    assert_eq!(catalog, steps);
+}
 
 #[test]
 fn c11_deploy() {

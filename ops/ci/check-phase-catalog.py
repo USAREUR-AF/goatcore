@@ -29,7 +29,11 @@ SCHEMA = "goat-phases/v1"
 REQUIRED = ("what", "why", "changes", "verify", "runs", "by_hand", "read")
 
 # The documents carrying generated tables. A table is named by its marker.
-DOCUMENTS = ("docs/operations/sovereign-federation-runbook.md",)
+DOCUMENTS = (
+    "docs/operations/sovereign-federation-runbook.md",
+    "docs/operations/goatnet-standup.md",
+    "docs/reference/goatbuilder/10-sites.md",
+)
 
 BEGIN = re.compile(r"^<!-- BEGIN generated: phase-catalog (\S+) (\S+) -->$")
 END = "<!-- END generated: phase-catalog {verb} {table} -->"
@@ -45,9 +49,20 @@ def kind_cell(kind):
     return f"**{kind}**" if kind == "CONFIRM" else kind
 
 
+def order(e):
+    """Numbered phases in order, then the named steps in the catalog's order."""
+    return (0, e["phase"]) if isinstance(e["phase"], int) else (1, 0)
+
+
 def rows(entries, verb, stage=None):
     out = [e for e in entries if e["verb"] == verb and (stage is None or e.get("stage") == stage)]
-    return sorted(out, key=lambda e: e["phase"])
+    return sorted(out, key=order)
+
+
+def run_rows(entries, verb):
+    """The numbered phases, then the named steps that run beside them. A join
+    is where the run waits for a step, not a step of its own: it has no row."""
+    return [e for e in rows(entries, verb) if not str(e["phase"]).startswith("join-")]
 
 
 # Each table: its header, and how one entry becomes one row.
@@ -64,6 +79,22 @@ TABLES = {
         lambda es, v: [
             f"| {e['phase']} | {cell(e['title'])} | {cell(e['what'])} | {cell(e['verify'])} |"
             for e in rows(es, v, "deploy")
+        ],
+    ),
+    # A verb's whole run: each numbered phase, then each step that runs beside them.
+    "run": (
+        "| # | Kind | Phase | What it does | Worked when |\n|---|---|---|---|---|",
+        lambda es, v: [
+            f"| {e['phase']} | {kind_cell(e['kind'])} | {cell(e['title'])} | {cell(e['what'])} | {cell(e['verify'])} |"
+            for e in run_rows(es, v)
+        ],
+    ),
+    # One line a phase, for a chapter that lists a verb's phases.
+    "summary": (
+        "| Phase | Kind | What it does |\n|---|---|---|",
+        lambda es, v: [
+            f"| {e['phase']} | {kind_cell(e['kind'])} | {cell(e['title'])} |"
+            for e in run_rows(es, v)
         ],
     ),
     "failures": (

@@ -360,6 +360,33 @@ pub fn failed_phase(
     })
 }
 
+/// The log the runner kept of `phase`'s output: its last command that has
+/// one. `phase` is the id the step was opened under (`runner::phase`).
+pub fn runner_log(phase: &str) -> Option<String> {
+    crate::runner::commands()
+        .into_iter()
+        .rev()
+        .find(|c| c.phase.as_deref() == Some(phase) && c.log.is_some())
+        .and_then(|c| c.log)
+}
+
+/// F5 (docs/design/goatbuilder-legibility.md, step 7): the `interpreted` row
+/// for `verb`'s failed step `key`, its output read from `log` and matched
+/// against the error catalog ([`failed_phase`]). None when the phase catalog
+/// has no such step.
+pub fn interpreted(verb: &str, key: &str, log: Option<&str>) -> Option<crate::Check> {
+    let output = log
+        .and_then(|l| std::fs::read_to_string(l).ok())
+        .unwrap_or_default();
+    let f = failed_phase(verb, key, &output, log)?;
+    Some(crate::Check {
+        name: "interpreted".into(),
+        ok: false,
+        detail: f.detail(),
+        fix: Some(f.fix.clone()),
+    })
+}
+
 impl FailedPhase {
     /// The row's text, after the phase's own failure line: what the output
     /// says went wrong, what to do, where the output is, and how to run this
@@ -456,8 +483,12 @@ mod tests {
         assert!(!is_phase_query(&s(&["GB-074"])));
         assert!(!is_phase_query(&s(&["federate", "8", "extra"])));
         assert!(
-            !is_phase_query(&s(&["deploy", "1"])),
-            "deploy has no catalog entries yet"
+            !is_phase_query(&s(&["release", "1"])),
+            "release has no catalog entries"
+        );
+        assert!(
+            is_phase_query(&s(&["deploy", "verify"])),
+            "deploy's steps are named"
         );
         assert!(!is_phase_query(&s(&[])));
     }
