@@ -19,8 +19,42 @@ const WIDTH: usize = 80;
 /// pipe, so what it measures is the row form a script reads, which has always
 /// been wide. The terminal pages have unit tests on their layout, and
 /// `a_failing_row_is_on_the_page_a_person_reads` runs them on a real terminal.
+///
+/// One block is not prose and is held to no width: the command lines a plan
+/// page lists under "What each phase runs:", indented four spaces. Each is
+/// printed verbatim and unwrapped, so a line pastes as the command it runs
+/// (docs/design/goatbuilder-legibility.md, step 3). Every other line of that
+/// page, the phase titles under it included, is held to the width.
 const WIDE_ALLOWED: &[&str] =
     &["deploy", "diff", "history", "rollback", "standup", "teardown", "join-node", "verify", "survey", "pins", "promote", "validate", "explain", "doctor", "preflight", "assay"];
+
+/// The lines of a page held to the width: all but the indented command lines
+/// under "What each phase runs:", up to the next heading.
+fn prose_lines(page: &str) -> Vec<&str> {
+    let mut in_commands = false;
+    let mut kept = Vec::new();
+    for l in page.lines() {
+        if l.trim_end() == "What each phase runs:" {
+            in_commands = true;
+        } else if in_commands && !l.is_empty() && !l.starts_with(' ') && !l.starts_with(|c: char| c.is_ascii_digit()) {
+            in_commands = false;
+        }
+        if in_commands && l.starts_with("    ") {
+            continue;
+        }
+        kept.push(l);
+    }
+    kept
+}
+
+#[test]
+fn only_the_command_block_is_exempt_from_the_width() {
+    let long = "x ".repeat(60);
+    let page = format!("Plan\n\nWhat each phase runs:\n\n1  Check {long}\n    {long}\n\nNext heading\n    {long}\n");
+    let kept = prose_lines(&page);
+    assert!(kept.iter().any(|l| l.starts_with("1  Check")), "a phase title is held to the width: {kept:?}");
+    assert_eq!(kept.iter().filter(|l| l.starts_with("    ")).count(), 1, "only the command line is exempt: {kept:?}");
+}
 
 /// Verbs still printing em or en dashes (the sweep on #2341). Same surface as
 /// the width list: on a terminal these are rewritten to plain punctuation.
@@ -46,6 +80,15 @@ fn repo() -> PathBuf {
 /// deployment return early there.
 fn checkout_declares_a_deployment() -> bool {
     repo().join("ops/goatbuilder/goatbuilder.yaml").is_file()
+}
+
+/// A test's own directory under the system temp directory, removed when the
+/// returned guard drops (a panicking test included).
+fn scratch(prefix: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .expect("a temporary directory for the test")
 }
 
 fn copy_tree(from: &Path, to: &Path) {
@@ -166,8 +209,8 @@ fn on_a_terminal(args: &[String], dir: &Path) -> String {
 /// into one entry, and `doctor_prints_problems_...` covers that.
 #[test]
 fn a_failing_row_is_on_the_page_a_person_reads() {
-    let dir = std::env::temp_dir().join(format!("goatbuilder-standard-failing-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let held = scratch("goatbuilder-standard-failing-");
+    let dir = held.path().to_path_buf();
     let tutor = dir.join("tutor");
     copy_tree(&repo().join("ops/goatbuilder/fixtures/tutor"), &tutor);
     let t = tutor.display().to_string();
@@ -196,9 +239,8 @@ fn stdout(o: &Output) -> String {
 }
 
 fn with_corpus(name: &str, f: impl Fn(&Case, &Path)) {
-    let dir = std::env::temp_dir().join(format!("goatbuilder-standard-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let held = scratch(&format!("goatbuilder-standard-{name}-"));
+    let dir = held.path().to_path_buf();
     for c in corpus(&dir) {
         f(&c, &dir);
     }
@@ -259,7 +301,7 @@ fn pages_stay_inside_the_width() {
     let wide = std::sync::Mutex::new(std::collections::BTreeSet::<&'static str>::new());
     with_corpus("width", |c, dir| {
         let out = stdout(&run(&c.args, false, dir));
-        let over: Vec<&str> = out.lines().filter(|l| l.chars().count() > WIDTH && l.trim().contains(' ')).collect();
+        let over: Vec<&str> = prose_lines(&out).into_iter().filter(|l| l.chars().count() > WIDTH && l.trim().contains(' ')).collect();
         if !over.is_empty() {
             assert!(WIDE_ALLOWED.contains(&c.verb), "{}: lines over {WIDTH} columns:\n{}", c.verb, over.join("\n"));
             wide.lock().unwrap().insert(c.verb);
@@ -294,8 +336,8 @@ fn doctor_prints_problems_and_keeps_every_row_for_machines() {
     if !checkout_declares_a_deployment() {
         return; // a public clone of goatcore ships no deployment
     }
-    let dir = std::env::temp_dir().join(format!("goatbuilder-standard-doctor-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let held = scratch("goatbuilder-standard-doctor-");
+    let dir = held.path().to_path_buf();
     let r = repo().display().to_string();
     let args = |extra: &[&str]| -> Vec<String> { ["-C", &r, "doctor", "--env", "zagros_dev"].iter().chain(extra).map(|s| s.to_string()).collect() };
     let page = stdout(&run(&args(&[]), false, &dir));
@@ -331,8 +373,8 @@ fn json_on_a_terminal_is_the_document() {
     if !checkout_declares_a_deployment() {
         return; // a public clone of goatcore ships no deployment
     }
-    let dir = std::env::temp_dir().join(format!("goatbuilder-standard-jsontty-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let held = scratch("goatbuilder-standard-jsontty-");
+    let dir = held.path().to_path_buf();
     let r = repo().display().to_string();
     let out = on_a_terminal(&["-o".into(), "json".into(), "-C".into(), r, "promote".into(), "readiness".into()], &dir);
     let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));

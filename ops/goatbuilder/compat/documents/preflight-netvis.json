@@ -1,0 +1,38 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "preflight",
+  "ok": true,
+  "exit": 0,
+  "checks": [
+    {
+      "name": "preflight/state",
+      "ok": true,
+      "detail": "State: stateless"
+    },
+    {
+      "name": "preflight/rollback",
+      "ok": true,
+      "detail": "Rollback: pin-revert"
+    },
+    {
+      "name": "preflight/scope",
+      "ok": true,
+      "detail": "Scope: single"
+    },
+    {
+      "name": "preflight/candidate-ref",
+      "ok": true,
+      "detail": "ghcr.io/example-org/netvis:v0.4.0@sha256:a0a0a0a0a0a0… is digest-pinned"
+    },
+    {
+      "name": "preflight/rollback-validated",
+      "ok": true,
+      "detail": "rollback --dry-run confirms the earlier ref would be declared and converged"
+    },
+    {
+      "name": "preflight",
+      "ok": true,
+      "detail": "netvis on zagros-dev: ready — stateless · rollback: pin-revert · single"
+    }
+  ]
+}

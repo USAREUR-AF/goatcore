@@ -31,6 +31,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
 
       - name: Install mdBook
         uses: peaceiris/actions-mdbook@v2

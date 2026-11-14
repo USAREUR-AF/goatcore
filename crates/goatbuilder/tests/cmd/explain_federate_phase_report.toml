@@ -1,0 +1,9 @@
+# --report has nothing to write for a phase answer, so it is refused, not ignored.
+bin.name = "goatbuilder"
+args = ["explain", "--report", "federate", "8"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: --report writes a report of an error explain interpreted; `explain federate 8` answers from the phase catalog and has none to write. Run it without --report
+  (GB-242 — goatbuilder explain GB-242)
+"""

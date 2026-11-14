@@ -21,15 +21,18 @@ TimeoutStartSec={{ warrant_membership_timeout_sec }}
 EnvironmentFile=/etc/goat/warrant/warrant.env
 # goat refuses to start without a profile directory, and a system unit has no
 # $HOME; the state dir gives it one. The converger itself reads no profile
-# content; the operator-action audit emit reads router_endpoint from the
+# content (its ACL declaration comes from GOAT_ACL_DECLARATION_DIR below); the operator-action audit emit reads router_endpoint from the
 # profile.toml the role installs there (#1455).
 StateDirectory=goat-warrant
 Environment=HOME=/var/lib/goat-warrant
 Environment=GOAT_PROFILE_DIR=/var/lib/goat-warrant/profile
+# The goatnet's ACL declaration (taxonomy and matrix), installed by the role.
+# goat compiles in none, so without this the run exits E_ACL_DECLARATION_MISSING.
+Environment=GOAT_ACL_DECLARATION_DIR={{ warrant_membership_acl_dest_dir }}
 ExecStart={{ warrant_membership_goat_bin }} warrant apply --membership --scope {{ warrant_membership_scope }} --file {{ warrant_membership_dest_dir }} --mode {{ warrant_membership_mode }} --json --textfile-dir {{ warrant_membership_textfile_dir }}
 
 # Confinement. The unit holds an admin-scoped mesh token; on the host it needs
-# the network, its declaration (read) and the textfile dir (write).
+# the network, its two declarations (read) and the textfile dir (write).
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true

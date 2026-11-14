@@ -3,7 +3,7 @@ bin.name = "goatbuilder"
 args = ["validate", "-C", "../..", "tests/fixtures/configs/rung-undeclared-environment.yaml"]
 status.code = 1
 stdout = """
-FAIL  config  promotion/path/1: stage 'preprod' names undeclared environment 'staging'
+FAIL  config  GB-025: promotion/path/1: stage 'preprod' names undeclared environment 'staging'
 validate: refused (1 check)
 """
 stderr = ""

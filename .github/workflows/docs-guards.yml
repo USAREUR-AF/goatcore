@@ -19,9 +19,17 @@ on:
       - 'ops/ansible/group_vars/*/pins.yml'
       - 'ops/ansible/roles/**'
       - 'ops/ci/**'
+      - 'ops/release/adr_index.py'
       - 'ops/goat-id-console/**'
       - 'ops/goat-zenoh-portal/**'
       - 'ops/onboard-runner/**'
+      - 'README.md'
+      - '.github/release-notes/**'
+      - 'crates/goatbuilder/CHANGELOG.md'
+      - 'crates/goatbuilder/changelog.d/**'
+      - 'ops/release/changelog.py'
+      - '.github/workflows/_release-binary.yml'
+      - '.github/workflows/*-release.yml'
 
 permissions:
   contents: read
@@ -56,6 +64,10 @@ jobs:
         run: ops/ci/check-adr-index-complete.sh
       - name: index status agrees with each ADR
         run: ops/ci/check-adr-index-status-agrees.sh
+      - name: the index rows of ADRs above 1234 equal their render from the ADR files
+        run: |
+          python3 ops/release/adr_index.py --self-test
+          python3 ops/release/adr_index.py check
       - name: status-vocabulary guard self-test
         run: python3 ops/ci/check-adr-status-vocabulary.py --self-test
       - name: every status leads with an ADR-0002 token
@@ -70,6 +82,19 @@ jobs:
         run: python3 ops/ci/check-doc-links.py
       - name: every `path:line` citation is within its file
         run: ./ops/ci/check-doc-code-citations.sh
+
+      # The by-hand signature check in the documents: its cosign identity is the
+      # one the release workflows sign with (read from .github/workflows).
+      - name: every documented cosign identity is a release signer's
+        run: |
+          pip install --quiet pyyaml
+          python3 ops/ci/check-doc-signer-identity.py --self-test
+          python3 ops/ci/check-doc-signer-identity.py
+
+      - name: goatbuilder's changelog Unreleased section equals its render from changelog.d
+        run: |
+          python3 ops/release/changelog.py --self-test
+          python3 ops/release/changelog.py check
 
       # Not here: the skill-audience guard (ADR 1174) runs where the
       # .claude/skills tree lives, and the roster-handle guard reads a roster

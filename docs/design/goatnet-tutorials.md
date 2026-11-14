@@ -96,7 +96,7 @@ F-424).
 | Done | Checkpoint 2 on a live peering |
 | Undo | Cut the peering on your own edge host; the partner's certificate-authority file is the revocation instrument (`cross-sovereign-federation.md` §7) |
 
-It wraps `goatbuilder federate` (`crates/goatbuilder/src/federate.rs`), the
+It wraps `goatbuilder federate` (`crates/goatbuilder/src/federate/`), the
 fourteen-phase peering verb that subsumes `ops/scripts/peering-standup.sh`. It
 needs no new standup class: the boundary node is the router `federate` already
 deploys. What crosses is release-set namespaces the owner deliberately shares; a
@@ -164,3 +164,7 @@ more: `federate` honors `--mock <dir>` and reads that directory's flat
 `goatbuilder.yaml`, so a worked-example peering is planned against a declaration
 in the fixture rather than the repository's own config — the same `--mock` every
 other verb already took.
+
+What a hardware run of tutorials 2 and 3 has to show, and what tutorial 3
+needs from its counterparty, is in
+[goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md#the-tutorials-on-hardware).

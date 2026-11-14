@@ -76,6 +76,17 @@ services:
     containers: ["signal-*"]
     ledger: null
     assay: [signal-server]
+  # Signal federation's node-local dual-path proxy: signal dials its partner
+  # through it. signal-federation-transport.yml starts it on a site that turns
+  # federation on, and mgmt-host.yml keeps its compose profile on for the same
+  # flag, so both read the flag.
+  federation-proxy:
+    class: mgmt
+    play: signal-federation-transport.yml
+    present: {var: signal_federation_proxy_enabled, default: false}
+    containers: [federation-proxy]
+    ledger: signal-federation-transport
+    guard: [ops/ansible/signal-federation-transport.yml, ops/ansible/mgmt-host.yml]
   netbird-dashboard:
     class: mgmt
     present: {founder: true}

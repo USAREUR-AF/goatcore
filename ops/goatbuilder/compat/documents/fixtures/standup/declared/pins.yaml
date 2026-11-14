@@ -1,0 +1,18 @@
+# The declaration the rehearsal converges: one digest-pinned ref per component
+# on dev (contract C1).
+components:
+  netbird-mgmt:
+    dev:
+      ref: ghcr.io/example-org/netbird-mgmt:v0.30.0@sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a
+  zenoh-router:
+    dev:
+      ref: ghcr.io/example-org/zenoh-router:v1.9.0@sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b
+  portal:
+    dev:
+      ref: ghcr.io/example-org/portal:v1.4.0@sha256:3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c
+  obs-stack:
+    dev:
+      ref: ghcr.io/example-org/obs-stack:v2.0.1@sha256:4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d
+  breakglass-node:
+    dev:
+      ref: ghcr.io/example-org/breakglass-node:v0.3.0@sha256:5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e

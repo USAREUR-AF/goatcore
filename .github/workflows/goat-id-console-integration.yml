@@ -21,7 +21,7 @@ permissions:
 # ports; cancel a superseded run rather than let the newer one fail to bind.
 concurrency:
   group: goat-id-console-integration-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   integration:

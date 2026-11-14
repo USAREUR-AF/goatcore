@@ -23,8 +23,8 @@
 //! assembled tree is `goatcore_ref`; the rollback-ledger role records the
 //! commits and the patch ids in every row a play from the tree writes.
 
+use crate::runner::Cmd;
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Context, Result};
 
@@ -45,6 +45,14 @@ impl Fresh {
     pub fn refused(&self) -> bool {
         !self.check.ok
     }
+}
+
+/// The fresh-source command a real run starts: what a dry run prints for it,
+/// and what [`check`] runs (one builder, so the two cannot differ).
+pub fn command(repo: &Path) -> Cmd {
+    let mut cmd = Cmd::new(repo.join("ops/scripts/fresh-source.sh"));
+    cmd.args(["--repo".as_ref(), repo.as_os_str()]);
+    cmd
 }
 
 /// Run the check for `repo`. `GOAT_DEPLOY_OFFLINE=1` (`--offline`) and an
@@ -74,8 +82,7 @@ fn check_with(repo: &Path, set: &[(&str, &str)], unset: &[&str]) -> Result<Fresh
             });
         }
     }
-    let mut cmd = Command::new(repo.join("ops/scripts/fresh-source.sh"));
-    cmd.args(["--repo".as_ref(), repo.as_os_str()]);
+    let mut cmd = command(repo);
     for (k, v) in set {
         cmd.env(k, v);
     }
@@ -179,8 +186,8 @@ fn parse_marker(text: &str) -> Result<Marker> {
             .map(|(_, v)| v.trim().to_string())
             .filter(|v| !v.is_empty())
     };
-    let goatcore_ref = get("goatcore_ref").ok_or_else(|| anyhow::anyhow!("no goatcore_ref= line"))?;
-    let overlay_commit = get("overlay_commit").ok_or_else(|| anyhow::anyhow!("no overlay_commit= line"))?;
+    let goatcore_ref = get("goatcore_ref").ok_or_else(|| anyhow::Error::from(goat_errors::coded("GB-259", "no goatcore_ref= line".to_string())))?;
+    let overlay_commit = get("overlay_commit").ok_or_else(|| anyhow::Error::from(goat_errors::coded("GB-259", "no overlay_commit= line".to_string())))?;
     let mut embargo: Vec<String> = get("embargo")
         .unwrap_or_default()
         .split(',')
@@ -214,6 +221,7 @@ fn short(sha: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use std::fs;
     use std::path::PathBuf;
 
@@ -231,9 +239,8 @@ mod tests {
     }
 
     /// A bare trunk `origin` with ops/ansible and the real script, and a clone of it.
-    fn pair(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
-        let root = std::env::temp_dir().join(format!("gb-fresh-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+    fn pair(tag: &str) -> (crate::testdir::Held<PathBuf>, PathBuf, PathBuf) {
+        let root = crate::testdir::path(&format!("gb-fresh-{tag}-"));
         fs::create_dir_all(&root).unwrap();
         let (bare, a, b) = (root.join("o.git"), root.join("a"), root.join("b"));
         git(&root, &["init", "-q", "--bare", "o.git"]);
@@ -244,7 +251,7 @@ mod tests {
         fs::create_dir_all(a.join("docs")).unwrap();
         fs::write(a.join("ops/ansible/x"), "1").unwrap();
         let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts/fresh-source.sh");
-        fs::copy(&script, a.join("ops/scripts/fresh-source.sh")).unwrap();
+        crate::test_support::copied_executable(&script, &a.join("ops/scripts/fresh-source.sh"));
         git(&a, &["add", "-A"]);
         git(&a, &["commit", "-qm", "base"]);
         git(&a, &["remote", "add", "origin", bare.to_str().unwrap()]);
@@ -320,9 +327,8 @@ mod tests {
     /// An overlay trunk (bare), two overlay checkouts of it, and an assembled
     /// tree: a goatcore commit carrying the real check scripts, with the
     /// overlay's goatcore.ref and the marker beside it.
-    fn assembled_fixture(tag: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
-        let root = std::env::temp_dir().join(format!("gb-assembled-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+    fn assembled_fixture(tag: &str) -> (crate::testdir::Held<PathBuf>, PathBuf, PathBuf, PathBuf) {
+        let root = crate::testdir::path(&format!("gb-assembled-{tag}-"));
         fs::create_dir_all(&root).unwrap();
         let (bare, ov, other, tree) = (root.join("ov.git"), root.join("ov"), root.join("other"), root.join("tree"));
         git(&root, &["init", "-q", "--bare", "ov.git"]);
@@ -330,8 +336,8 @@ mod tests {
         git(&root, &["init", "-q", "-b", "main", "tree"]);
         let scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts");
         fs::create_dir_all(tree.join("ops/scripts/lib")).unwrap();
-        fs::copy(scripts.join("fresh-source.sh"), tree.join("ops/scripts/fresh-source.sh")).unwrap();
-        fs::copy(scripts.join("lib/source_of_record.py"), tree.join(SOURCE_OF_RECORD)).unwrap();
+        crate::test_support::copied_executable(&scripts.join("fresh-source.sh"), &tree.join("ops/scripts/fresh-source.sh"));
+        crate::test_support::copied_executable(&scripts.join("lib/source_of_record.py"), &tree.join(SOURCE_OF_RECORD));
         commit_file(&tree, "ops/ansible/x", "1", "goatcore base");
         let gref = head(&tree);
         git(&root, &["init", "-q", "-b", "main", "ov"]);
@@ -389,7 +395,7 @@ mod tests {
         assert!(parse_marker("overlay_commit=def\n").is_err());
         assert!(parse_marker("goatcore_ref=\noverlay_commit=def\n").is_err());
         // A plain checkout carries no marker: the script judges it against its trunk.
-        let d = std::env::temp_dir().join(format!("gb-nomarker-{}", std::process::id()));
+        let d = crate::testdir::path("gb-nomarker-");
         fs::create_dir_all(&d).unwrap();
         assert!(marker(&d).unwrap().is_none());
         let _ = fs::remove_dir_all(d);

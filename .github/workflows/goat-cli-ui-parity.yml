@@ -23,6 +23,7 @@ on:
   pull_request:
     paths:
       - 'crates/goat-cli/**'
+      - 'crates/goat-federation/**'
       - 'crates/panoscope-core/**'
       - 'crates/Cargo.toml'
       - 'crates/Cargo.lock'
@@ -48,8 +49,8 @@ jobs:
       - name: Test the parity guard's failure paths and valid inventory
         run: python3 ops/ci/test-cli-ui-parity.py
 
-      - name: Install Rust toolchain (stable)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (1.100.0)
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Cache cargo registry + git deps
         uses: actions/cache@v4

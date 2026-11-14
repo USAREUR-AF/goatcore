@@ -152,6 +152,12 @@ goatnet's own services. The home page links to it with a one-line summary. Each
 row is grouped under, and names, the declaration's `owner`, so nobody reads a
 member-hosted service as one the goat core team runs (#1518).
 
+A change to a declaration's `status:` block after the service is published
+needs only the row list rendered again, not this play:
+`ops/scripts/isitup-list.py apply <goatnet>` runs the list-only play
+(`isitup-rows.yml`), which needs no secret
+([isitup-status-page](isitup-status-page.md), "Keeping the list current").
+
 The owner decides what is listed, in the declaration:
 
 ```yaml

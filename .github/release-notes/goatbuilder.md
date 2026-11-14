@@ -1,5 +1,34 @@
 `goatbuilder`, the build, release, deploy and standup tool for a goatnet.
 
+**New in 0.6.1.** A patch release. *For someone deploying:* a `goatbuilder federate` run killed in phase 11, after it wrote the WireGuard link's files and before it restarted the link, now resumes and brings the link up; in 0.6.0 this was a known issue (#597). The Ory deploy reads the Postgres password itself and never recreates `postgres-a` (#593), and the audit-subscriber's lifecycle steps run with a writable `HOME` (#595). A peering can declare `drivers: two`; such a run stops at the first phase that needs the edge and prints what the edge driver runs (GB-265), and the parts not yet built are refused before acting (GB-267). `federate <partner> --side edge` alone is now refused with GB-267, and `import` is a reserved peering name (#601). *For someone contributing:* the federation test environment's required job runs as stages (#602). *To be removed:* nothing new. The full list is in `crates/goatbuilder/CHANGELOG.md`.
+
+**New in 0.6.0.** The full list is in `crates/goatbuilder/CHANGELOG.md`.
+
+*For someone deploying:* `goatbuilder update` verifies the release signature itself, with no `cosign` needed, and refuses a release whose signature does not verify (GB-261). Every run that drives hosts keeps a record, read with `goatbuilder runs`, `show` and `runs diff`. Every process goatbuilder starts is named, with its phase, command, host and log, before it prints anything, and a dry run prints the commands the real run executes. Each of federate's fourteen phases is described in one catalog. `goatbuilder explain federate <phase>` answers from it. A failed federate phase carries the matching error code and its fix. Several peerings each keep their own directory package by default (a behaviour change; a directory older than saltlick v0.5.0 keeps one package, so move it before adding a second peering). Admission keeps every other variable in the core's peerings file and refuses one it cannot read as literal entries (GB-237). A back-out reads the core the way admission wrote it, stops on anything it cannot read, and leaves the core's org fragment byte for byte as it was before admission. A run journal written by a later goatbuilder is read, not refused. The edge's checks read only the configuration path the core router names and refuse a key storage wider than the key-bundle grant; each stops when it cannot tell (a behaviour change). Values reach standup's and deploy's commands as one word each, and every error's "read more" path is a document that ships with goatcore. The isitup status page's probe list can be refreshed on its own, and a list behind its declaration is detected. Nothing half built ships switched on: what is not in 0.6.0 is listed in the changelog.
+
+*For someone contributing:* every pull request checks configuration, commands, documents and error codes against the last release (gate rows A2 to A5). ADR 1228 sets the deprecation period, and the library that prints the warning is built. The 1.0 gate gains group H (a node on a phone) and group I (a joined site that runs cut off). ADR 1231 adds a stable line: the branch `stable` follows each whole-tree release `goatcore/vX.Y.Z`, and all work lands on `main`. Outside pull requests carry the label `community`. The federation test environment proves one directory package per partner against saltlick v0.5.0.
+
+*To be removed:* `goat federate <verb>`, in the `goat` client, as announced in 0.5.0, no earlier than 30 days after 0.5.0 and not before a peering between two standing environments has been completed with `goatbuilder federate`. Nothing in goatbuilder.
+
+**New in 0.5.3:** the first published release since 0.5.1; 0.5.2 was tagged but its release did not run. It carries everything listed for 0.5.2 below, plus: the release workflows grant the permission their shared workflow needs; the goatlite administrator's address and `join-node`'s declared values reach their phases as one word each, and a bootstrap command missing its owner variable is refused; and `verify` reads a failed ledger read as unknown.
+
+**New in 0.5.2:** the federation documents are corrected against the code, and GB-129 now says that a narrower `offer:` is refused only for a hand-written federation.toml. `status` reads the hosts themselves. Declared paths and profiles reach standup's phases as one word each. When the edge and the core are on separate hosts, the edge's ingress check now reads the core, and a check that cannot run stops phase 12 (a behaviour change). An interrupted phase 8 no longer leaves private keys in its staging directory. `validate` names GB-025 on every failing row, and `release` prints commits at a fixed 12 characters. CI no longer depends on the Ubuntu archive: when a runner cannot reach it, the jobs fail over to the project's own package cache.
+
+**New in 0.5.0 and 0.5.1: federation is in goatbuilder.** (0.5.0 was tagged and not published; 0.5.1 is the same goatbuilder and the first published release that carries it.) You federate with a partner using goatbuilder alone. You make one decision (the partner, and the release sets it receives) and answer the run's prompts at phases 5, 6 and 10: the partner's key and CA fingerprint, the agreement digest, then the plan and what your core admits. The full list is in `crates/goatbuilder/CHANGELOG.md`.
+
+- `goatbuilder federate <partner>`: the whole procedure in one run. At a terminal it asks for the partner's key and CA fingerprint and for the agreement digest. It makes the plan and asks you to approve it, shows what our core will admit and asks again, then carries on through acceptance. A run that stops resumes where it stopped.
+- `goatbuilder federate plan <partner>`, `deploy <partner>`, `test <partner>`, `status [<partner>]` and `backout <partner>`: each stage on its own. `backout --dry-run` surveys what backing one peering out would remove.
+- `goatbuilder federate allocate [<peering>]`: allocates one peering's values and renders its inventory, both deployment halves and its `federation.toml`. It runs beside peerings that are still written by hand.
+- Admission on a core deployed by the goat-zenoh role: the role's own play, org fragment, router leaf and `zenoh_sovereign_peerings`. No restart command needs to be typed.
+- Values come from the declarations the deployment already has:
+  - `secrets.federation` for the signing key and CA;
+  - `environments[].peering_directory` for the directory and its CA;
+  - the site inventory for the peering's machines.
+
+  `FED_*` variables stay as overrides.
+- `goatbuilder federate init|lint|compose|diff|verify|apply` are the package verbs `goat federate` had, with the same flags and exit codes.
+- **Deprecated: `goat federate`.** It still works in 0.5.0 and tells you the goatbuilder command to run instead. It will be removed from `goat` 30 days after this release, and not before one peering between two standing environments has been completed with `goatbuilder federate`. After that, `goat federate` only answers with an error that names `goatbuilder federate`. The script `ops/scripts/peering-standup.sh` stays as it is: documented, not supported.
+
 **Assets.** `goatbuilder-linux-amd64`, `goatbuilder-linux-arm64` (both run on glibc 2.31 and later: Ubuntu 20.04, Debian 11 and later), `goatbuilder-darwin-amd64` (Intel), `goatbuilder-darwin-arm64` (Apple Silicon), each with a `.sha256`; `goatbuilder-docs.tar.gz`, the goatbuilder book built from this tag, with its `.sha256`; `SHA256SUMS` over all five; `SHA256SUMS.cosign-bundle`, a keyless cosign signature over `SHA256SUMS` made by this repository's release workflow.
 
 **Download, verify, install.** Replace `<tag>` with this release's tag and `<os>-<arch>` with `linux-amd64`, `linux-arm64`, `darwin-amd64` or `darwin-arm64`.
@@ -8,7 +37,7 @@
 base=https://github.com/USAREUR-AF/goatcore/releases/download/<tag>
 curl -fL --remote-name-all "$base/goatbuilder-<os>-<arch>" "$base/SHA256SUMS" "$base/SHA256SUMS.cosign-bundle"
 cosign verify-blob --bundle SHA256SUMS.cosign-bundle \
-  --certificate-identity-regexp '^https://github.com/USAREUR-AF/goatcore/' \
+  --certificate-identity-regexp '^https://github\.com/USAREUR-AF/goatcore/\.github/workflows/_release-binary\.yml@refs/tags/goatbuilder/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS        # on macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
 install -m 0755 goatbuilder-<os>-<arch> ~/.local/bin/goatbuilder

@@ -1,0 +1,46 @@
+# The phase catalog gate (docs/design/goatbuilder-legibility.md, step 6).
+#
+# ops/phases/catalog.yaml describes every phase of every goatbuilder verb: what
+# it does, why, what it changes, how to tell it worked, what it runs, the
+# command by hand, what to read. The documents' phase tables are rendered from
+# it. On any change to the catalog, its loader, its gate or a document that
+# carries a generated table: the gate tests itself, then checks every entry and
+# that each generated table equals the one rendered from the catalog.
+
+name: phase-catalog
+
+on:
+  pull_request:
+    paths:
+      - 'ops/phases/**'
+      - 'crates/goat-errors/**'
+      - 'docs/operations/sovereign-federation-runbook.md'
+      - 'ops/ci/check-phase-catalog.py'
+      - '.github/workflows/phase-catalog.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'ops/phases/**'
+      - 'docs/operations/sovereign-federation-runbook.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-catalog-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  catalog:
+    name: phase catalog and its generated tables
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: PyYAML
+        run: pip install pyyaml
+      - name: Gate self-test, then the catalog and the generated tables
+        run: python3 ops/ci/check-phase-catalog.py --self-test

@@ -61,12 +61,16 @@ jobs:
   unit:
     name: unit tests + lint
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     defaults:
       run:
         working-directory: ops/enrollment
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-go@v5
         with:
           # 'stable' matches the sibling enrollment.yml workflow's

@@ -11,11 +11,12 @@
 //! cannot answer (UNKNOWN), or none passed (GB-048); 1 when the assay cannot run
 //! at all (GB-049).
 
+use crate::runner::Cmd;
 use crate::{Check, Report, EXIT_NOT_CONVERGED, EXIT_OK};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 pub struct Options<'a> {
     pub site: &'a str,
@@ -66,8 +67,9 @@ impl Acceptance {
     /// The phase-13 line both standup drivers print and run (the parity gate diffs it
     /// against goat-standup.sh): the model into its file, the values, then the runner.
     pub fn phase_line(&self) -> String {
-        let sh = |a: &[String]| a.iter().map(|x| if x.contains('/') { format!("'{x}'") } else { x.clone() }).collect::<Vec<_>>().join(" ");
-        format!("{} > '{}' && {} && {}", sh(&self.model), self.endstate, sh(&self.gen), sh(&self.run))
+        let q = crate::standup::sh_quote;
+        let sh = |a: &[String]| a.iter().map(|x| if x.contains('/') { q(x) } else { x.clone() }).collect::<Vec<_>>().join(" ");
+        format!("{} > {} && {} && {}", sh(&self.model), q(&self.endstate), sh(&self.gen), sh(&self.run))
     }
 }
 
@@ -81,11 +83,11 @@ pub fn phase13(repo: &Path, site: &str, state_dir: &str) -> Acceptance {
 /// ops/scripts/with-secrets, the same resolution `goatbuilder secrets exec` and every
 /// standup phase use. A value store whose file cannot be read refuses here, by name,
 /// before anything is probed, so a missing store is never graded as a row.
-pub fn under_store(repo: &Path, argv: &[String]) -> Result<Command> {
+pub fn under_store(repo: &Path, argv: &[String]) -> Result<Cmd> {
     let posture = repo.join("ops/secrets/posture.py");
-    let kind = Command::new("python3").arg(&posture).arg("kind").output();
+    let kind = Cmd::new("python3").arg(&posture).arg("kind").output();
     if matches!(&kind, Ok(o) if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "value") {
-        let probe = Command::new("python3").arg(&posture).args(["exec", "--", "true"]).current_dir(repo).output();
+        let probe = Cmd::new("python3").arg(&posture).args(["exec", "--", "true"]).current_dir(repo).output();
         if let Ok(o) = probe {
             if !o.status.success() {
                 let why = String::from_utf8_lossy(&o.stderr).trim().to_string();
@@ -93,7 +95,7 @@ pub fn under_store(repo: &Path, argv: &[String]) -> Result<Command> {
             }
         }
     }
-    let mut c = Command::new(repo.join("ops/scripts/with-secrets"));
+    let mut c = Cmd::new(repo.join("ops/scripts/with-secrets"));
     c.args(argv).current_dir(repo);
     Ok(c)
 }
@@ -132,7 +134,7 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
 
 /// Run one derivation command and keep its stdout in an owner-only temp file.
 fn derive(argv: &[String], repo: &Path, stem: &str, ext: &str, what: &str) -> Result<PathBuf> {
-    let g = Command::new(crate::endstate::python()).args(&argv[1..]).current_dir(repo).output();
+    let g = Cmd::new(crate::endstate::python()).args(&argv[1..]).current_dir(repo).output();
     match g {
         Ok(out) if out.status.success() => {
             use std::io::Write;
@@ -192,7 +194,7 @@ fn finish(repo: &Path, o: &Options, mut run: Vec<String>, store: bool) -> Result
     let mut cmd = if store && !o.plan {
         under_store(repo, &run)?
     } else {
-        let mut c = Command::new(&run[0]);
+        let mut c = Cmd::new(&run[0]);
         c.args(&run[1..]).current_dir(repo);
         c
     };
@@ -397,6 +399,7 @@ pub fn grade(site: &str, rows: &[Row], with_rows: bool) -> Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn row(id: &str, status: &str, layer: &str) -> String {
         serde_json::json!({"id": id, "status": status, "evidence": "e", "layer": layer}).to_string()
@@ -462,8 +465,8 @@ mod tests {
         let r = d.path();
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         for rel in ["ops/scripts/with-secrets", "ops/scripts/standup-phase-run", "ops/secrets/posture.py"] {
-            std::fs::create_dir_all(r.join(rel).parent().unwrap()).unwrap();
-            std::fs::copy(src.join(rel), r.join(rel)).unwrap();
+            // Copied in a child process: these run by their path (ETXTBSY otherwise).
+            crate::test_support::copied_executable(&src.join(rel), &r.join(rel));
         }
         let write = |rel: &str, body: &str| {
             std::fs::create_dir_all(r.join(rel).parent().unwrap()).unwrap();

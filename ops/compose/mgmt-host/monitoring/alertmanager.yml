@@ -13,10 +13,11 @@
 #
 # This static file is the fallback for `docker compose -f
 # docker-compose.obs.yml up` invoked outside of Ansible (local dev,
-# offline triage, etc.). It deliberately drops every alert into
-# localhost:9999/noop — Alertmanager still renders / groups /
-# inhibits correctly and the Prometheus UI shows firing alerts; we
-# just don't wake anyone up from a dev workstation.
+# offline triage, etc.). It deliberately drops every alert: the
+# webhook-noop receiver has no integrations, so nothing is sent and
+# nothing is logged as a delivery failure. Alertmanager still renders /
+# groups / inhibits correctly and the Prometheus UI shows firing
+# alerts; we just don't wake anyone up from a dev workstation.
 
 global:
   resolve_timeout: 5m
@@ -59,6 +60,3 @@ inhibit_rules:
 
 receivers:
   - name: webhook-noop
-    webhook_configs:
-      - url: "http://localhost:9999/noop"
-        send_resolved: false

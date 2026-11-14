@@ -68,11 +68,44 @@ class Eviction(unittest.TestCase):
                            mc_image="fixture/mc")
 
     def test_probe_never_lists_or_deletes_at_high_usage(self):
+        # Over high-water with eviction disabled: still no listing and no
+        # deletion, but the run must now FAIL LOUDLY (exit 4) and raise the
+        # over_high_water gauge instead of printing a clean result. The prior
+        # contract, returning 0 here, is the silence that let a full bucket
+        # refuse every upload while the timer reported success.
         backend = Backend([version("site", 1, 300 * MIB, "v1")])
         backend.versions = lambda target: self.fail("measurement probe must not list versions")
-        self.assertEqual(engine.run(self.config, backend), 0)
+        self.assertEqual(engine.run(self.config, backend), 4)
         self.assertEqual(backend.removed, [])
         self.assertEqual(backend.trails, [])
+        prom = (self.directory / "audit_fifo_evict.prom").read_text()
+        self.assertIn('goat_audit_evict_over_high_water{bucket="audit-integrity"} 1', prom)
+        self.assertIn('goat_audit_evict_last_result{bucket="audit-integrity"} 4', prom)
+
+    def test_transient_metrics_failure_publishes_operation_failure(self):
+        original = engine.metrics
+        calls = []
+
+        def publish(*args, **kwargs):
+            calls.append(args)
+            if len(calls) == 1:
+                raise OSError("synthetic metrics write failure")
+            return original(*args, **kwargs)
+
+        with patch.object(engine, "metrics", side_effect=publish):
+            with self.assertRaises(OSError):
+                engine.run(self.config, Backend([]))
+        prom = (self.directory / "audit_fifo_evict.prom").read_text()
+        self.assertIn('goat_audit_evict_last_result{bucket="audit-integrity"} 3', prom)
+        self.assertEqual(len(calls), 2)
+
+    def test_probe_below_high_water_stays_quiet(self):
+        backend = Backend([version("site", 1, 300 * MIB, "v1")], used=800 * MIB)
+        backend.versions = lambda target: self.fail("measurement probe must not list versions")
+        self.assertEqual(engine.run(self.config, backend), 0)
+        prom = (self.directory / "audit_fifo_evict.prom").read_text()
+        self.assertIn('goat_audit_evict_over_high_water{bucket="audit-integrity"} 0', prom)
+        self.assertIn('goat_audit_evict_last_result{bucket="audit-integrity"} 0', prom)
 
     def test_all_snapshotted_versions_deleted_with_quota_relief(self):
         backend = Backend([version("site", 1, 40 * MIB, "v1"),
@@ -181,7 +214,22 @@ class Eviction(unittest.TestCase):
                            "Enable and start the evictor timer")
         self.assertLess(probe_index, timer_index)
         self.assertIn("--measure-only", tasks[probe_index]["ansible.builtin.command"]["argv"])
-        self.assertEqual(tasks[probe_index]["failed_when"], "_evict_probe.rc != 0")
+        # rc 4 proves the credential too: the bucket measured over high-water.
+        # The converge must not die before the timer task, or an over-water
+        # bucket loses its metrics and alerts exactly when they matter.
+        self.assertEqual(tasks[probe_index]["failed_when"], "_evict_probe.rc not in [0, 4]")
+        # Over high-water with eviction disabled warns and never fails the
+        # converge: disabled is the default and enabling is irreversible, so
+        # a red converge would have no way back to green. The alert carries
+        # the condition between converges.
+        warn_index = next(i for i, task in enumerate(tasks) if task["name"] ==
+                          "Warn when over high-water while eviction is disabled")
+        self.assertLess(timer_index, warn_index)
+        self.assertIn("ansible.builtin.debug", tasks[warn_index])
+        self.assertEqual(tasks[warn_index]["when"],
+                         ["_evict_probe.rc == 4", "not (audit_fifo_evict_enabled | bool)"])
+        self.assertFalse(any("ansible.builtin.fail" in task for task in tasks),
+                         "no task may fail the converge on a measurement")
         defaults = yaml.safe_load((ROOT / "ops/ansible/roles/audit-fifo-evict/defaults/main.yml").read_text())
         self.assertIs(defaults["audit_fifo_evict_enabled"], False)
 

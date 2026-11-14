@@ -1,0 +1,76 @@
+# promtool test rules ops/compose/goat-obs/prometheus/tests/alertmanager-health.test.yml
+#
+# Anchored on a measured failure shape: a webhook integration answered 4xx
+# on every dispatch cycle while the alert it carried stayed firing, and the
+# only evidence was container log lines nothing watched.
+rule_files:
+  - ../rules/alertmanager-health.yml
+
+evaluation_interval: 1m
+
+tests:
+  # No alertmanager scrape anywhere: silent.
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+
+  # Healthy delivery: attempts rise, the failure counter stays flat. Old
+  # failures left on the counter must not keep the alert firing.
+  - interval: 1m
+    input_series:
+      - series: 'alertmanager_notifications_total{integration="webhook"}'
+        values: '0+1x60'
+      - series: 'alertmanager_notifications_failed_total{integration="webhook"}'
+        values: '7+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+
+  # One transient failure must not page. A single failed flush holds the 15m
+  # increase above zero for about 15 minutes; with the previous `for: 10m`
+  # this case fired from minute 16. It must stay silent throughout.
+  - interval: 1m
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{integration="webhook"}'
+        values: '0x5 1+0x55'
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+
+  # A rejected integration: the failure counter rises every cycle.
+  - interval: 1m
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{integration="webhook"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              domain: observability
+              integration: webhook
+            exp_annotations:
+              summary: "alertmanager webhook notifications are failing"
+              description: |
+                Deliveries on the webhook integration have kept
+                failing for at least 20 minutes. A 4xx response is not retried, so
+                those pages are lost; connection errors and 5xx responses are
+                retried each group interval and have not recovered. Check the
+                alertmanager container logs for the receiver and status code: a
+                too-large payload, a rejected credential and an unreachable
+                endpoint all land here.

@@ -37,7 +37,7 @@ permissions:
 
 concurrency:
   group: federation-reference-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
@@ -48,7 +48,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache-dependency-path: ops/federation/reference/go.mod
 
       - name: gofmt

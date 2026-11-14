@@ -1,0 +1,13 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "validate",
+  "ok": false,
+  "exit": 1,
+  "checks": [
+    {
+      "name": "config",
+      "ok": false,
+      "detail": "GB-025: (root): Additional properties are not allowed ('flavour' was unexpected)"
+    }
+  ]
+}

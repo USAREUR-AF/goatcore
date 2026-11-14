@@ -1,0 +1,75 @@
+---
+# Find the core router container on the host this play runs against, the same
+# way `goat federate init` does (docs/design/federation-router-discovery.md):
+#   1. goat_zenoh_edge_core_container, when set, wins and is used as given;
+#   2. otherwise exactly one RUNNING container that carries the core role label
+#      org.goat.component=zenoh-core, or is named like the standard core role
+#      ({{ zenoh_stack }}-router, so *-zenoh-router), or has the legacy name
+#      goat-zenoh.
+# Zero or several matches leave _edge_core_container empty and put the reason in
+# _edge_core_problem. Neither check that reads the core reports a pass on it:
+# the key-storage comparison in main.yml reports "could not run" with that
+# reason and goes on; the ingress storage check (ingress-storage-check.yml)
+# looks on the core host next and fails the play if it finds no core there.
+#
+# _edge_core_on, when an includer sets it, names the inventory host to look on
+# (the core host, when the core router is not on this one); unset, this host.
+#
+# Sets: _edge_core_container (name or ID, or "") and _edge_core_problem.
+
+- name: edge | core router named explicitly
+  ansible.builtin.set_fact:
+    _edge_core_container: "{{ goat_zenoh_edge_core_container }}"
+    _edge_core_problem: ""
+  when: goat_zenoh_edge_core_container | default('') | length > 0
+
+- name: edge | list running containers to find the core router
+  ansible.builtin.command:
+    argv:
+      - docker
+      - ps
+      - --no-trunc
+      - --format
+      - "{% raw %}{{.ID}}\t{{.Names}}\t{{.Label \"org.goat.component\"}}{% endraw %}"
+  register: _edge_core_ps
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  delegate_to: "{{ _edge_core_on | default(inventory_hostname) }}"
+  when: goat_zenoh_edge_core_container | default('') | length == 0
+
+- name: edge | select the one running core router
+  vars:
+    # Rendered as JSON and parsed back, so the result is a list whatever the
+    # templating mode of the ansible-core running it.
+    _matches_json: >-
+      {%- set out = [] -%}
+      {%- for line in (_edge_core_ps.stdout | default('')).splitlines() -%}
+      {%- set r = line.split('\t') -%}
+      {%- if r | length == 3 and (r[2] == 'zenoh-core' or r[1] == 'goat-zenoh' or r[1] is search('-zenoh-router$')) -%}
+      {%- if r[0] not in (out | map(attribute='id') | list) -%}
+      {%- set _ = out.append({'id': r[0], 'name': r[1]}) -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+    _matches: "{{ _matches_json | from_json }}"
+  ansible.builtin.set_fact:
+    _edge_core_container: "{{ (_matches | first).name if _matches | length == 1 else '' }}"
+    _edge_core_problem: >-
+      {%- if (_edge_core_ps.rc | default(-1) | int) != 0 -%}
+      could not list containers: {{ (_edge_core_ps.stderr | default('') | trim) or 'docker ps failed' }}
+      {%- elif _matches | length == 0 -%}
+      no core router found (no running container labeled org.goat.component=zenoh-core,
+      named *-zenoh-router or named goat-zenoh); set goat_zenoh_edge_core_container
+      {%- elif _matches | length > 1 -%}
+      ambiguous: {{ _matches | map(attribute='name') | join(', ') }}; set goat_zenoh_edge_core_container
+      {%- endif -%}
+  when: goat_zenoh_edge_core_container | default('') | length == 0
+
+- name: edge | report which core router the checks read
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('core router: ' ~ _edge_core_container) if _edge_core_container | length > 0
+         else ('core router not selected: ' ~ _edge_core_problem) }}{{
+         (' on ' ~ _edge_core_on) if _edge_core_on is defined else '' }}

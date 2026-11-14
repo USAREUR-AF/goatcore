@@ -1,0 +1,16 @@
+##ACL-ORG-REGION storages
+##ACL-ORG-REGION write-rules
+      // INGRESS-only after the ADR 1020 split — this is the ONLY thing
+      // that lets a vendor PUBLISH, and only into its own namespace.
+      // Egress delivery is universal via trial-peer-deliver-all.
+      //
+      // One grant per peer, two prefixes (ADR 1032): the persisted
+      // <vendor>/** namespace + the non-persisted volatile/<vendor>/**
+      // class. Same identity boundary; volatile/<vendor>/** has NO
+      // storage entry (so nothing reaches rocksdb) and is excluded by the
+      // audit subscriber (--exclude-key volatile/**), so it routes live
+      // but is never persisted. Granting this write WITHOUT the audit
+      // exclude active would route the firehose into the locked audit
+      // bucket — keep them in lockstep.
+##ACL-ORG-REGION subjects
+##ACL-ORG-REGION policies

@@ -240,6 +240,13 @@
 # overlay whenever it exists on the host — never a base-file up on an
 # ACME-overlaid site.
 
+# NO DEPENDENCIES ON A NODE WITH NO IDENTITY PLANE: traefik depends_on
+# management-a, and `up -d traefik` starts a stopped dependency. On a node that
+# declares `mgmt_host_runs_identity_plane: false` the management server is
+# stopped on purpose (it cannot reach its OIDC issuer and can only restart-loop;
+# mgmt-host.yml stops it after its own converge). `--no-deps` there keeps this
+# role from starting it again. Every other host keeps today's command.
+
 - name: Detect the ACME compose overlay (traefik-acme.yml)
   ansible.builtin.stat:
     path: "{{ mgmt_host_compose_dir }}/docker-compose.acme.yml"
@@ -250,7 +257,9 @@
     cmd: >-
       docker compose
       {% if _traefik_acme_overlay.stat.exists %}-f docker-compose.yml -f docker-compose.acme.yml{% endif %}
-      up -d traefik
+      up -d
+      {% if not (mgmt_host_runs_identity_plane | default(true) | bool) %}--no-deps{% endif %}
+      traefik
     chdir: "{{ mgmt_host_compose_dir }}"
   register: _traefik_compose_up
   changed_when: "'Started' in _traefik_compose_up.stderr or 'Created' in _traefik_compose_up.stderr or 'Recreated' in _traefik_compose_up.stderr"

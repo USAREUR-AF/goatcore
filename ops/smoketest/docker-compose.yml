@@ -1,7 +1,7 @@
 # Smoketest dashboard — health checks for all goat services
 #
 # Traefik routes smoketest.netbird.legacy.example to this container.
-# The Go binary serves both the API and the React dashboard.
+# The Go binary serves both the API and the dashboard's static files.
 #
 # Requires: same Docker network as Traefik
 

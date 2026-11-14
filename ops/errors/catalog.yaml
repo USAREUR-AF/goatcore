@@ -21,6 +21,12 @@
 #   matches  regular expressions over the WHOLE text of an error, for errors that
 #            arrive as text (a tool's stderr carried inside a goat error). Any one
 #            matching is a hit. Case-sensitive; keep them literal and specific.
+#   retired  "<release tag>: <why>" for a code no binary raises any more: the tag of
+#            the release that stopped raising it, goatbuilder/vX.Y.Z or goat-cli-vX.Y.Z
+#            (ADR 1228's form), e.g. "goatbuilder/v0.6.0: <why>". A code a release
+#            printed is never deleted or given another meaning: logs keep it, and
+#            explain must still answer for it. A retired entry stays, and only it may
+#            change its title (ops/ci/check-error-codes-kept.py, gate row A5).
 #
 # Adding an entry is a YAML block here and nothing else, unless a binary should
 # emit the code itself (then cite it in the Rust and the gate checks it exists).
@@ -123,7 +129,7 @@ entries:
     fixes:
       - "goat profile show"
       - "goat profile rotate <new-bundle.cbor>   (after the operator re-issues it)"
-    read: docs/design/credential-rotation.md
+    read: docs/design/internal-tls-ca.md
     exit: 6
 
   - code: E_DOCTOR_INCONCLUSIVE
@@ -291,7 +297,7 @@ entries:
     fixes:
       - "goat machine ls   (shows each machine's handle, custodian and slot anchor)"
       - "pass the 32-hex slot anchor instead of the handle when the handle is ambiguous"
-    read: docs/design/machine-enrollment.md
+    read: docs/design/goat-cli-error-codes.md
     exit: 1
 
   - code: E_MESH_PEER_UNRESOLVED
@@ -306,7 +312,7 @@ entries:
       - "goat admin peer ls   (find the machine's peer and its name)"
       - "goat machine mesh-key <machine>   (when it never joined)"
       - "rename the peer back to `<handle>`, or remove the stale peer with goat admin peer cut <peer-id>"
-    read: docs/design/machine-enrollment.md
+    read: docs/design/goat-cli-error-codes.md
     exit: 1
 
   - code: E_NETBIRD_FAILED
@@ -445,7 +451,7 @@ entries:
     fixes:
       - "put the lines for the named variables from <owner>/goat-credentials refs/goat.refs into .envrc.local.d/<file>.refs"
       - "OP_ACCOUNT=<account> op run --env-file=.envrc.local.d/<file>.refs -- <the same command>"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/design/secret-store-requirements.md
     matches:
       - "NOT SET: "
       - "refusing before any host is touched"
@@ -454,7 +460,7 @@ entries:
   - code: GB-008
     tool: goatbuilder
     title: a mutation needs --yes when there is no terminal
-    what: deploy, release, rollback and fastlane change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10).
+    what: deploy, release, rollback, fastlane, standup, teardown, join-node, federate and apply change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10).
     causes:
       - run from a script, CI or a pipe
     fixes:
@@ -543,6 +549,81 @@ entries:
       - "no release signer is known"
     exit: 1
 
+  - code: GB-265
+    tool: goatbuilder
+    title: the run is waiting on the other driver
+    what: "The peering is declared with two drivers (`drivers: two`): an edge driver that reaches only the edge host and a controller that reaches the core. This phase needs the edge, so the controller stopped before acting and handed it to the edge driver. The stop prints the exact command to run there, the file it writes, and the two commands to run here after it; with -o json the report carries them as the member handoff. It stops as a by-hand stop does (exit 0)."
+    causes:
+      - "the peering's phase needs the edge host, and this machine is the controller"
+    fixes:
+      - "run the command the stop names on the edge driver, bring its result file here, then run the import and the command after it that the stop names"
+    read: docs/design/federation-two-drivers.md
+    matches:
+      - "^GB-265: "
+    exit: 0
+
+  - code: GB-266
+    tool: goatbuilder
+    title: the controller's checkout is not clean, so no hand-off is given
+    what: "A two-driver peering's hand-off pins the edge driver's checkout to the controller's commit, so the controller gives one only when its own checkout is a git checkout with nothing uncommitted. The run stopped at the phase that needs the edge, before acting, and names each file with changes."
+    causes:
+      - "phase 10 placed rendered files, or admission wrote peerings.yml, and they are not committed yet"
+      - "a file was edited by hand and not committed"
+      - "the deployment's directory is not a git checkout"
+    fixes:
+      - "commit each file the refusal names, then run the same command again"
+    read: docs/design/federation-two-drivers.md
+    matches:
+      - "^GB-266: "
+    exit: 1
+
+  - code: GB-267
+    tool: goatbuilder
+    title: this part of a two-driver peering is not built yet
+    what: "A peering declared with two drivers (`drivers: two`) is handed off between the edge driver and the controller only at phases 1 and 2, where the hand-off is built. Three cases are refused before anything runs: the edge driver's own run (`goatbuilder federate <partner> --side edge`, with or without the `--expect-commit` a hand-off object names), the controller's `goatbuilder federate import`, which is not built either, and a two-driver run that would reach a phase after 2 that needs the edge (3, 11, 12, 13 or 14), whose hand-off is designed and not built. That includes every `goatbuilder federate deploy`, which runs phase 10 then 11: it is refused before its plan is approved or rechecked, so phase 10 never admits the edge on our core."
+    causes:
+      - "goatbuilder federate <partner> --side edge was run on the edge driver, as a hand-off object's command names it"
+      - "goatbuilder federate import <partner> <phase> <result> --sha256 <code> was run, as a hand-off object's import names it"
+      - "a two-driver run that would reach phase 3, 11, 12, 13 or 14, such as --from 3, --from 4 with no --to, or goatbuilder federate deploy (a run from 4 to 10 is not refused)"
+    fixes:
+      - "run the peering with one driver for now: remove drivers: two from its peerings: entry, from a machine that reaches both the edge host and the core host"
+    read: docs/design/federation-two-drivers.md
+    matches:
+      - "^GB-267: "
+    exit: 1
+
+  - code: GB-261
+    tool: goatbuilder
+    title: the release's signature does not verify, so the update refuses
+    what: "`goatbuilder update` verifies the keyless signature over the release's SHA256SUMS (SHA256SUMS.cosign-bundle) itself, offline, against the Sigstore trusted root: the certificate chains to a Fulcio CA, Rekor's signed entry timestamp verifies, the entry names this file, and the certificate is the release signer's goatbuilder-release.yml at the served version's goatbuilder/v<version> tag. One of these failed, or the surface serves no signature. The message names the check. Nothing was installed."
+    causes:
+      - the surface serves a SHA256SUMS or a binary that the release workflow did not sign
+      - the signature is another repository's, another workflow's, or another version's
+      - Sigstore rotated its Fulcio CA or Rekor key after this goatbuilder was built
+      - the surface serves no SHA256SUMS.cosign-bundle
+    fixes:
+      - "check that the surface serves the release unchanged: the goat-get role's goat_get_goatbuilder_release_tag, and the release page's SHA256SUMS"
+      - "after a Sigstore key rotation: GOATBUILDER_UPDATE_TRUSTED_ROOT=<a trusted_root.json holding the new key> goatbuilder update"
+      - "goatbuilder -C <checkout> update, so that repo.release_source names the repository that publishes goatbuilder"
+    read: docs/design/goatbuilder-distribution.md
+    matches:
+      - "does not verify for the .* release workflow"
+      - "the surface serves no signature for SHA256SUMS"
+    exit: 1
+
+  - code: GB-262
+    tool: goatbuilder
+    title: the verb has no such phase
+    what: "`goatbuilder explain <verb> <phase>` answers from the phase catalog (ops/phases/catalog.yaml), by the phase's number or its id. The verb has no phase by that number or id. The message names the phases it has."
+    causes:
+      - a phase number outside the verb's range, or a mistyped id
+    fixes:
+      - "goatbuilder explain <verb>   (lists the verb's phases, by number and id)"
+    read: docs/design/goatbuilder-legibility.md
+    matches:
+      - "has no phase `"
+    exit: 2
+
   - code: GB-012
     tool: goatbuilder
     title: the candidate's image build did not succeed
@@ -585,7 +666,7 @@ entries:
       - a real regression in the candidate
       - the row's runner settings are stale for this goatnet
     fixes:
-      - "if the row exited 2: install what it names (goatbuilder doctor lists it: tool:live-rows, tool:goat-contexts), then resume with --from rows — do not delete the tag"
+      - "if the row exited 2: install what it names (goatbuilder doctor --browser-tests fails on a missing browser toolchain, tool:live-rows; tool:goat-contexts names a missing goat context), then resume with --from rows — do not delete the tag"
       - "ops/validation/flow-map.yaml names the rows; read the failed row's evidence under ops/validation/evidence/"
       - "fix on main and cut the next rc (dev), or investigate before graduating (preprod)"
     read: docs/design/release-candidate-validation.md
@@ -835,7 +916,7 @@ entries:
       - "env | grep 'op://'   (find the variable)"
       - "env -u <THAT_VAR> op run --env-file=… -- <command>"
       - "or complete the reference to op://<vault>/<item>/<field>"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/design/secret-store-requirements.md
     matches:
       - "incomplete op:// reference"
     exit: 1
@@ -1490,7 +1571,1646 @@ entries:
       - "NOT clean .*\\(GB-076\\)"
     exit: 3
 
+  - code: GB-100
+    tool: goatbuilder
+    title: the federation verbs cannot find this party's context directory
+    what: "goatbuilder federate init (and verify or apply without --as) reads this party's declaration, federation.toml, and init also reads the mTLS certificate and CA roots beside it. goatbuilder has no profile of its own, so it takes the directory from --context-dir, else $GOAT_CONTEXT_DIR, else the goat profile ($GOAT_PROFILE_DIR, else ~/.goat), and none of those was set."
+    causes:
+      - "none of --context-dir, GOAT_CONTEXT_DIR, GOAT_PROFILE_DIR or HOME is set, as in a bare container or a service unit"
+    fixes:
+      - "goatbuilder federate init --context-dir <dir>   (the directory holding federation.toml, mtls.cert.pem and ca-roots.pem)"
+      - "export GOAT_PROFILE_DIR=<goat profile directory>   (the verbs then read its active context, as goat does)"
+      - "goatbuilder federate verify <agreement> --as <sovereign_id>   (verify and apply need no context when --as is given)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "no context directory for the federation verbs"
+    exit: 2
+
+  - code: GB-110
+    tool: goatbuilder
+    title: the inventory does not name a federation host phase 3 can reach
+    what: "federate phase 3 measures the edge and the core from this machine, reaching each host the way the peering plays do: the host in the edge group and the host in the core group of inventory/peering-edges.ini, with its address, user, port, key and SSH options. The inventory could not be read, the group has no host or several, or the host uses a connection phase 3 does not use."
+    causes:
+      - ansible-inventory is not installed here, or the inventory does not parse
+      - the edge group (<partner>_edge) or the core group (<partner>_core) is empty or missing in inventory/peering-edges.ini
+      - the group has several hosts and none was named
+      - the host uses an ansible_connection other than ssh or local
+    fixes:
+      - "cd ops/ansible && ansible-inventory -i inventory/peering-edges.ini --playbook-dir . --graph   (what the plays see)"
+      - "add the host to the group, or name it: goatbuilder federate init --edge-host <host> --core-host <host>"
+    read: docs/design/federation-router-discovery.md
+    exit: 1
+
+  - code: GB-111
+    tool: goatbuilder
+    title: a federation host did not answer over SSH
+    what: "Before measuring anything, phase 3 runs `true` on the edge and on the core over SSH, with the inventory's connection settings and the plays' privilege escalation. That command failed, so nothing was measured. The message carries the ssh command it ran."
+    causes:
+      - this machine is not on a network that reaches the host (mesh profile, door or jump host)
+      - the host refused the key (see X-SSH-001)
+      - the host key changed (see X-SSH-003)
+    fixes:
+      - "run the ssh command the message prints, without its last argument, and read ssh's own error"
+      - "goatbuilder doctor --env <env>   (the transport row)"
+    read: docs/design/federation-router-discovery.md
+    exit: 1
+
+  - code: GB-112
+    tool: goatbuilder
+    title: sudo on a federation host wants a password
+    what: "The host answered over SSH, but `sudo -n true` failed: phase 3 reads the federation interface and the container runtime as root, the way the plays become root, and it never types a password."
+    causes:
+      - the host's operator user is not NOPASSWD in sudoers (the baseline play sets it)
+      - ansible_become_user names a user this account cannot become without a password
+    fixes:
+      - "run ops/ansible/mgmt-host-baseline.yml against the host once"
+      - "set ansible_become: false for the host if its user can already read wg and the container runtime"
+    read: docs/design/federation-router-discovery.md
+    matches:
+      - "sudo there wants a password"
+    exit: 1
+
+  - code: GB-113
+    tool: goatbuilder
+    title: no core router to measure on the core host
+    what: "Phase 3 measures the core router's image and version on the core host. It takes the router the operator names with --router-container, else the name the deployment's variables give (zenoh_stack, or site_id with the goat-zenoh role's default, as <zenoh_stack>-router), else the one running core router discovery finds. That router was not running, could not be read, or several candidates were found."
+    causes:
+      - the declared router is not running on the core host, or the variables give a different name than the one deployed
+      - nothing declares the router and no running container carries org.goat.component=zenoh-core or a standard name
+      - several core routers run on the host
+    fixes:
+      - "goatbuilder federate init --router-container <name>   (name it by hand)"
+      - "FED_ROUTER_CONTAINER=<name> goatbuilder federate <partner>   (the one command passes it to phase 3 as --router-container)"
+      - "set zenoh_stack or site_id for the core host in the deployment's group_vars or host_vars"
+      - "ssh <user>@<core> sudo docker ps --format '{{.Names}} {{.Label \"org.goat.component\"}}'   (what is running)"
+    read: docs/design/federation-router-discovery.md
+    matches:
+      - "no core router to measure on"
+    exit: 1
+
+  - code: GB-114
+    tool: goatbuilder
+    title: an edge half of phase 3 cannot be joined
+    what: "With two drivers, the edge driver measures phase 3's edge half with `goatbuilder federate init --over-ssh <partner> --side edge --half-out <file>` and prints its sha256 and a confirm code. The controller joins it with `--side core --edge-half <file> --edge-half-sha256 <code>` before it builds and signs the package. The half carries the edge's WireGuard public key, which the package is signed with, so it is joined only when it is the file the edge driver wrote. The file given could not be read; its sha256 is not the one confirmed; it is not an edge half; it was measured for another peering, on another host than this checkout's inventory names as the edge, or for another federation interface than the package asks for; or it was measured more than 24 hours ago, or later than now."
+    causes:
+      - the file was changed or not copied whole on its way from the edge driver, or another file was given
+      - the confirm code was mistyped, or read from another run of the edge half
+      - the edge half was measured for another partner or on another edge host
+      - the declaration or the init flags differ between the two machines, so the edge was measured for another interface (or none)
+      - the edge half is older than a day, or one of the two machines' clocks is wrong
+    fixes:
+      - "goatbuilder federate init --over-ssh <partner> --side edge --half-out <file>   (on the edge driver, with the same declaration and init flags; it prints the confirm code)"
+      - "sha256sum <file>   (on both machines: the two must agree)"
+    read: docs/design/federation-router-discovery.md
+    matches:
+      - "cannot be used for peering"
+    exit: 1
+
+  - code: GB-120
+    tool: goatbuilder
+    title: a peering names a partner with a reserved word
+    what: "A word of `goatbuilder federate` (init lint compose diff verify apply help status plan deploy test allocate backout rotate) can never name a partner: `goatbuilder federate <word>` runs that step, so the peering could never be run by name."
+    causes:
+      - a peerings entry's `with:` is one of the reserved words
+    fixes:
+      - "name the partner by its sovereign id in goatbuilder.yaml peerings: with:"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-120\\)"
+    exit: 2
+
+  - code: GB-121
+    tool: goatbuilder
+    title: two peerings would share a value
+    what: "A per-peering value (an interface, a UDP or TCP port, a link subnet, a forwarder port, a certificate directory, an inventory name) is pinned on one peering and already held by another, by a pin or by the allocation record, or a partner is declared twice on one environment. Two peerings on one edge or core host cannot share one."
+    causes:
+      - "two peerings pin the same value under values:"
+      - a pin takes a value the allocation record holds for another peering
+      - the same partner is declared twice on one environment
+    fixes:
+      - "pin a different value on one of the two peerings, or remove the pin and run goatbuilder federate allocate to have one allocated"
+      - "goatbuilder validate   (every collision, each naming both peerings)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-121\\)"
+    exit: 2
+
+  - code: GB-122
+    tool: goatbuilder
+    title: a pinned port is one the edge host already holds
+    what: "A pinned WireGuard or carrier listen port is a UDP port the environment's edge hosts already hold (environments[].peering_edge_reserved_udp; absent, NetBird's WireGuard on 51820). A second listener there fails or steals its traffic."
+    causes:
+      - values.wg_listen_port or values.carrier_listen_port is pinned to a reserved port
+      - "a peering running on the role default 51820, on edges with no mesh client, is being adopted"
+    fixes:
+      - "remove the pin and run goatbuilder federate allocate (it allocates odd ports from 51823 up and never takes a reserved port)"
+      - "when the environment's edges run no mesh client: set peering_edge_reserved_udp: [] on that environment in goatbuilder.yaml"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-122\\)"
+    exit: 2
+
+  - code: GB-123
+    tool: goatbuilder
+    title: a peering's pin is not usable
+    what: "A pin under a peering's values: is malformed (an interface name over 15 characters, a subnet that is not a /31 or /30 on its boundary, a relative certificate directory, a name with spaces), or pins a forwarder value on a peering no forwarder relays."
+    causes:
+      - a typing mistake in a pin
+      - "public_port or a carrier_* value pinned without forwarder:"
+    fixes:
+      - "correct the pin, or remove it to have the value allocated"
+      - "declare forwarder: endpoint: on the peering, or remove the forwarder pins"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-123\\)"
+    exit: 2
+
+  - code: GB-124
+    tool: goatbuilder
+    title: the peering allocation record cannot be used
+    what: "ops/goatbuilder/peering-values.yaml, the record of the per-peering values goatbuilder federate allocate chose, is unreadable, has another schema, holds a malformed value, gives two peerings one value, or records a port the edge host already holds. Allocation reads it so a re-run never moves a value; it will not guess around a broken one."
+    causes:
+      - a hand edit or a merge conflict in the record
+      - a record from a newer goatbuilder
+    fixes:
+      - "git log -p ops/goatbuilder/peering-values.yaml   (restore it from its history)"
+      - "remove the broken entry and run goatbuilder federate allocate to allocate it afresh (that peering's values may change)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-124\\)"
+    exit: 2
+
+  - code: GB-125
+    tool: goatbuilder
+    title: a peering file exists that goatbuilder did not generate
+    what: "goatbuilder federate allocate writes the peering inventory and each peering's peering-values.yml. It never overwrites a file it did not generate (its first line says who did), and never renders a variable a hand-written file already sets for the same hosts (the group, its parent peering group, or the host_vars of its inventory names), because Ansible's file order would then pick the value. Nothing was written."
+    causes:
+      - ops/ansible/inventory/peering-edges.ini or a peering-values.yml was written by hand before the values were allocated
+      - "a hand-written group_vars or host_vars file sets a variable allocate renders (a listen port, a certificate path)"
+    fixes:
+      - "move its values into goatbuilder.yaml (pins under the peering's values:, addresses under hosts:), remove the file, and run goatbuilder federate allocate again"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-125\\)"
+    exit: 2
+
+  - code: GB-126
+    tool: goatbuilder
+    title: a peering's inventory group is defined twice
+    what: "Not every peering declares hosts:, so ops/ansible/inventory/peering-edges.ini stays hand-written and each peering that declares hosts: gets its own rendered inventory file (inventory/peering-<edge_group>.ini), which the driver reads beside it. That peering's group is also defined in the hand-written inventory, so the plays would see it twice. Nothing was written."
+    causes:
+      - "hosts: added to a peering whose group is still in the hand-written peering-edges.ini"
+    fixes:
+      - "remove that peering's groups from ops/ansible/inventory/peering-edges.ini"
+      - "or remove hosts: from the peering and keep its groups in the hand-written inventory"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-126\\)"
+    exit: 2
+
+  - code: GB-127
+    tool: goatbuilder
+    title: no free per-peering value is left
+    what: "Every candidate in a per-peering value's sequence is held by another peering of the same environment (128 interfaces, ports or /31 subnets), or by a pin."
+    causes:
+      - many peerings on one environment, or pins scattered over the sequence
+    fixes:
+      - "pin the value under the peering's values:"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-127\\)"
+    exit: 2
+
+  - code: GB-128
+    tool: goatbuilder
+    title: a federate run disagrees with the peering's allocated values
+    what: "The allocation record holds this peering, and the run's working directory, edge group or core group is not the allocated one. Phase 8 would mint certificates where the edge does not read them, or the plays would run on another peering's hosts. Nothing ran."
+    causes:
+      - "--work or FED_WORK names a directory whose pki is not the allocated cert_dir"
+      - "--edge-group names another group than the allocated edge_group"
+      - "a partner declared on a second environment, or a core_group pin: the driver runs the republisher on <with>_core and does not read the allocated core group yet"
+    fixes:
+      - "goatbuilder federate allocate --dry-run   (the allocated values)"
+      - "pass the --work and --edge-group the refusal names, or pin cert_dir and edge_group under the peering's values: to what you pass"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-128\\)"
+    exit: 2
+
+  - code: GB-129
+    tool: goatbuilder
+    title: a peering's offer would widen what federation.toml declares
+    what: "federation.toml owns the release sets this party offers ([data] release). A peering's offer: may only narrow that list for one partner. It names a set federation.toml does not offer, is empty or malformed, or federation.toml cannot be read. Or the peering's federation.toml is hand-written (federation_toml: hand), whose [data] release phase 3 offers whole, and offer: is narrower than it; a peering whose federation.toml goatbuilder federate allocate generates gets the narrowed list. Nothing ran."
+    causes:
+      - "offer: names a set that is not in federation.toml's [data] release"
+      - "offer: is narrower than the [data] release of a hand-written federation.toml (federation_toml: hand), which phase 3 offers whole"
+      - "GOAT_PROFILE_DIR or GOAT_CONTEXT points at another goat context than the one phase 3 runs in"
+    fixes:
+      - "add the set to [data] release in federation.toml, the one owner of the offered sets, or remove it from offer:"
+      - "declare federation_toml: rendered on the peering so goatbuilder federate allocate generates its federation.toml, or narrow [data] release in the hand-written file to what this partner receives, or remove offer:"
+      - "goatbuilder validate   (the offer's shape)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-129\\)"
+    exit: 2
+
+  - code: GB-210
+    tool: goatbuilder
+    title: the host firewall baseline is missing a value it needs
+    what: "The host firewall baseline (roles/goat-host-firewall, rendered by its goat-host-firewall-render.py) could not build a ruleset, because a value it derives the rules from is missing or malformed. Nothing was applied."
+    causes:
+      - goat_host_firewall_management_sources is empty, so SSH would be admitted from nowhere
+      - an edge run reached the role without its peering values (the play was not peering-wg.yml or peering-edge.yml)
+      - a port, address or interface name in the input is not one (a partner endpoint given as a name, an interface name over 15 characters)
+      - "a management source is /0, the mesh interface is the host's uplink, or a br-* bridge that is not docker's (a VXLAN segment bridge) exists while container-bridges is kept"
+      - twice goat_host_firewall_confirm_timeout plus 15 s is not below goat_host_firewall_rollback_seconds
+      - the switch is false but the host still carries the baseline (/etc/goat-host-firewall/profile exists)
+    fixes:
+      - "set goat_host_firewall_management_sources in the host's group_vars to the address or CIDR the deployment manages it from"
+      - "python3 ops/ansible/roles/goat-host-firewall/files/goat-host-firewall-render.py --input <input.json> --list-rules   (what the baseline derives)"
+    read: docs/design/peering-host-firewall.md
+    matches:
+      - "goat-host-firewall: REFUSED \\(GB-210\\)"
+      - "goat-host-firewall refuses \\(GB-210\\)"
+    exit: 2
+
+  - code: GB-211
+    tool: goatbuilder
+    title: the host firewall override names a rule the baseline does not have, or is malformed
+    what: "The deployment's goat_host_firewall_override names a rule that is not in the baseline, names a fixed rule (loopback, established, invalid), uses a key other than drop, sources, ports, interface and reason, asks a fixed-expression rule for more than drop, or gives a reason holding a line break or another control character (the reason is written into the ruleset file). The whole override was refused and nothing was applied."
+    causes:
+      - a misspelled rule name, or a peering rule named for an interface this host does not carry
+      - an attempt to add a new allow rule; only named baseline rules can be changed, and other-tcp / other-udp are the named rules for a service the host also runs
+    fixes:
+      - "python3 ops/ansible/roles/goat-host-firewall/files/goat-host-firewall-render.py --input <input.json> --list-rules   (the names an override may use)"
+    read: docs/design/peering-host-firewall.md
+    matches:
+      - "goat-host-firewall: REFUSED \\(GB-211\\)"
+    exit: 3
+
+  - code: GB-212
+    tool: goatbuilder
+    title: the host firewall is loosened without a recorded reason
+    what: "An override entry widens a baseline rule (more sources, other ports, another interface), or a role input is wider than the profile (goat_host_firewall_mesh_udp_ports not empty, a mesh DNS port other than 5353, a management source broader than goat_host_firewall_management_prefix_floor, or that floor set broader than /24 or /64), and no reason is recorded for that rule. Tightening is free; loosening a named rule needs a reason recorded in the deployment's configuration. Nothing was applied."
+    causes:
+      - "the entry has no reason: key, or a blank one"
+      - "an entry meant to narrow widens instead (an empty sources list means any source)"
+    fixes:
+      - "add reason: \"<why this host needs it>\" to the entry in goat_host_firewall_override"
+      - narrow the rule instead, which needs no reason
+    read: docs/design/peering-host-firewall.md
+    matches:
+      - "goat-host-firewall: REFUSED \\(GB-212\\)"
+    exit: 3
+
+  - code: GB-213
+    tool: goatbuilder
+    title: the host firewall would cut the session managing the host
+    what: "The rendered ruleset admits no SSH from the source of the session running the play (read from SSH_CONNECTION on the host), so loading it would lock the deployment out. Nothing was applied."
+    causes:
+      - goat_host_firewall_management_sources does not hold the address this play connects from
+      - the override drops ssh-management, narrows its sources past this address, or binds it to another interface
+      - SSH listens on another port than goat_host_firewall_ssh_port
+      - the session's source could not be read, so the check could not run
+    fixes:
+      - "add the controller's address to goat_host_firewall_management_sources"
+      - "run the play from a declared management source"
+    read: docs/design/peering-host-firewall.md
+    matches:
+      - "goat-host-firewall: REFUSED \\(GB-213\\)"
+      - "goat-host-firewall refuses \\(GB-213\\)"
+    exit: 4
+
+  - code: GB-214
+    tool: goatbuilder
+    title: the host firewall ruleset was not loaded or not confirmed
+    what: "Loading the rendered ruleset failed, or a fresh connection to the host did not succeed after it was loaded. A ruleset that was loaded is undone by the rollback timer the role armed before loading it."
+    causes:
+      - the kernel refused the ruleset (nft -c failed), for example an nftables too old for a rule
+      - the new ruleset blocks the connection the controller makes, through a path the lockout check could not see (a jump host, a NAT between controller and host)
+      - systemd-run is not available on the host, so no rollback could be armed and nothing was loaded
+    fixes:
+      - "wait goat_host_firewall_rollback_seconds, then: nft list table inet goat_host_firewall   (the previous table is back)"
+      - "read /etc/goat-host-firewall/ruleset.nft.new on the host and the play output"
+    read: docs/design/peering-host-firewall.md
+    matches:
+      - "goat-host-firewall \\(GB-214\\)"
+    exit: 1
+
+  - code: GB-215
+    tool: goatbuilder
+    title: the host firewall would close a port this host listens on
+    what: "Before loading, the host firewall baseline reads the sockets the host listens on (ss) and found one, on a non-loopback address, that no rule admits and that the deployment has not named as closed on purpose. Loading would cut that service without anyone deciding it. Nothing was applied."
+    causes:
+      - the host runs another service beside the peering (a management server, a portal, an exporter)
+      - a port the deployment means to close is not listed in goat_host_firewall_closed_listeners
+    fixes:
+      - "admit it: goat_host_firewall_override: {other-tcp: {ports: [<port>], reason: \"<why>\"}}"
+      - "close it on purpose: goat_host_firewall_closed_listeners: [\"tcp/<port>\"]   (or the process name)"
+    read: docs/design/peering-host-firewall.md
+    matches:
+      - "goat-host-firewall: REFUSED \\(GB-215\\)"
+    exit: 5
+  # ---------------------------------- goatbuilder federate: journal and locks
+
+  - code: GB-180
+    tool: goatbuilder
+    title: another run of this peering is in progress
+    what: "A real run of `goatbuilder federate` holds <work>/.lock from start to end, so two runs of one peering never interleave phases or overwrite each other's run journal. This run found the lock held and changed nothing."
+    causes:
+      - another terminal or a scheduled job is running `goatbuilder federate` for the same peering
+      - two peerings were given the same working folder (--work or FED_WORK)
+    fixes:
+      - "wait for the other run to finish; the lock file names its process id"
+      - "give each peering its own working folder: --work /var/lib/goat-federation/<partner>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "another run of peering '[^']*' holds"
+    exit: 1
+
+  - code: GB-181
+    tool: goatbuilder
+    title: a resource this peering needs is held by another peering on the same host
+    what: "Before a peering takes a resource on a shared host (a tunnel interface, a port, a link subnet, a certificate folder), goatbuilder reads every other peering's run journal in the same work root under <root>/.allocation.lock. One of them holds the same resource on the same host, or a journal there could not be read, so nothing was claimed and nothing changed."
+    causes:
+      - two peerings were given the same per-peering value (a pinned value in `peerings:` or a hand-written group_vars file)
+      - a journal in the work root is damaged, so the check cannot tell what it holds
+    fixes:
+      - "give this peering a different value, or let allocation choose one, then make a new plan"
+      - "read the other peering's journal named in the message: <root>/<peering>/state.json"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "cannot take what another peering on the same host holds"
+      - "cannot tell whether peering '[^']*' may take its resources"
+    exit: 1
+
+  - code: GB-182
+    tool: goatbuilder
+    title: the run journal cannot be read
+    what: "<work>/state.json is the only account of what ran for this peering, so a journal that does not parse, has a later schema than this goatbuilder reads, or names another peering is refused rather than overwritten. A journal of the same schema that a later goatbuilder wrote is read: a word or field this one does not know is shown as written and kept."
+    causes:
+      - the file was edited by hand or cut short
+      - a later goatbuilder wrote it with a later schema (the message names the schema and the goatbuilder that wrote it)
+      - two peerings share one working folder
+    fixes:
+      - "use the goatbuilder that wrote it, or move the file aside and run again (the run then starts with no journal, and --resume skips nothing)"
+      - "give each peering its own working folder: --work /var/lib/goat-federation/<partner>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "the run journal (does not parse|is goatbuilder|is for peering|cannot be read)"
+      - "cannot read the run journal"
+    exit: 1
+
+  - code: GB-183
+    tool: goatbuilder
+    title: a federate phase failed
+    what: "The word the run journal records for a phase that exited non-zero, with its exit code. The run stopped there; no later phase ran."
+    causes:
+      - "the phase's own error, printed above it (a `goat federate` exit 20 to 24, a play's failed task, a refused gate)"
+    fixes:
+      - "fix the cause, then run the same command again; with --resume, the phases found unchanged are not run again"
+    read: docs/operations/sovereign-federation-runbook.md
+    matches:
+      - "GB-183: phase [0-9]+ failed with exit"
+    exit: 1
+
+  - code: GB-184
+    tool: goatbuilder
+    title: the working folder or its lock cannot be made, taken or written
+    what: "A real run of `goatbuilder federate` keeps its lock and its run journal in the peering's working folder, and the allocation lock in the folder above it. One of them could not be created, locked or written, so the run did not start (or, mid-run, its journal is behind; the run says so in a failed `journal` row)."
+    causes:
+      - the working folder is not writable by this user (the default /var/lib/goat-federation needs root or a folder made for you)
+      - the disk is full or the folder is on a read-only mount
+    fixes:
+      - "sudo install -d -o $USER /var/lib/goat-federation   (or pass --work <a folder you own>)"
+      - "check free space where the working folder is"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "cannot (create|open|take|write|read) the (working folder|peering lock|allocation lock|work root|run journal)"
+      - "cannot rename .*state\\.json"
+    exit: 1
+  # ------------------------------------------- federate phase 1, preflight (GB-130..149)
+
+  - code: GB-130
+    tool: goatbuilder
+    title: a federation input is missing
+    what: "federate phase 1 (preflight) found inputs the later phases need that nothing declared and nothing could derive. Every missing input is listed with where to declare it. Nothing was measured, signed or deployed."
+    causes:
+      - the deployment does not declare it (the edge group's group_vars, the peering's entry in goatbuilder.yaml peerings:, the inventory)
+      - the script avenue (peering-standup.sh) was run without exporting it; goatbuilder derives what it can, the script does not
+    fixes:
+      - "declare each listed value where the line names it, then: goatbuilder federate <partner> --from 1 --to 1"
+      - "export FED_<NAME>=...   (one command only; an exported value always overrides what goatbuilder derives)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "required inputs .*\\(GB-130\\)"
+
+  - code: GB-131
+    tool: goatbuilder
+    title: a port this peering needs is already held on the edge
+    what: "the tunnel listen port (UDP) or the edge router listen port (TCP) is held on the edge host by something other than this peering's own interface or container. NetBird holds UDP 51820 on a mesh host, which is also the WireGuard default."
+    causes:
+      - the tunnel listen port is the WireGuard default 51820 and NetBird's interface holds it
+      - another peering's edge router or interface already uses the port on a shared edge host
+    fixes:
+      - "pin another port in the peering declaration: goatbuilder.yaml peerings: values: wg_listen_port / edge_listen_port"
+      - "or set peering_wg_listen_port / goat_zenoh_edge_listen_port in group_vars/<edge group>/, then re-run phase 1"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "edge ports free .*\\(GB-131\\)"
+
+  - code: GB-132
+    tool: goatbuilder
+    title: the republisher metrics port is already held on the core
+    what: "the outbound republisher's loopback metrics port is held on the core host by something other than this peering's republisher. One port per peering on a shared core host."
+    causes:
+      - another peering's republisher uses the same metrics port on the core host
+      - another service listens on that loopback port
+    fixes:
+      - "pin republisher_metrics_port in the peering declaration (goatbuilder.yaml peerings: values:)"
+      - "or set goat_fed_republisher_metrics_port in group_vars/<peering>_core/"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "core metrics port free .*\\(GB-132\\)"
+
+  - code: GB-133
+    tool: goatbuilder
+    title: the edge or core host could not be probed for its ports
+    what: "the read-only probe (ops/ansible/peering-preflight.yml) returned no answer for a host, or `ss` could not list its sockets, so the ports were not checked. Not a pass."
+    causes:
+      - the host is unreachable with the inventory the peering plays use (mesh down, wrong ansible_host, no SSH key)
+      - iproute2 (`ss`) is not installed on the host
+    fixes:
+      - "cd ops/ansible && ansible -i inventory/peering-edges.ini <group> -m ping"
+      - "install iproute2 on the host, then re-run phase 1"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "no probe answer from"
+
+  - code: GB-134
+    tool: goatbuilder
+    title: the committed slot list differs from the slot registry
+    what: "ops/scripts/sync-slot-anchors.py --check found live slots with no declared store or declared stores for slots that are not live. A core router restarted on this list drops or misses receive stores. Slots minted between the fix and the restart drift it again, so the restart step runs this check once more."
+    causes:
+      - slots were minted or revoked since the list was last regenerated and committed
+      - the list was regenerated, and a slot was minted before the core router restarted
+    fixes:
+      - "python3 ops/scripts/sync-slot-anchors.py --env <goatnet> --db <registry.db>   (writes the list; commit it)"
+      - "python3 ops/federation/standup/preflight.py <partner> --work <dir> --only slot-anchors   (re-check just before the restart)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "slot list equals registry .*\\(GB-134\\)"
+
+  - code: GB-135
+    tool: goatbuilder
+    title: the slot registry could not be read
+    what: "sync-slot-anchors.py exited 2: the registry was unreadable, or it reported zero live slots. That is not a verdict on drift, and the check is not passed."
+    causes:
+      - FED_SLOT_DB names a file that is not the portal registry, or it cannot be opened read-only
+      - the management host named by FED_SLOT_PG_SSH is unreachable, or its portal database container differs
+    fixes:
+      - "check FED_SLOT_DB, or FED_SLOT_REGISTRY_STORE=postgres with FED_SLOT_PG_SSH (portal_store in group_vars/<goatnet>_hosts says which)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "slot list equals registry .*\\(GB-135\\)"
+
+  - code: GB-136
+    tool: goatbuilder
+    title: the core has no receive store matching what the edge grants
+    what: "the core router's storage_manager has no store whose key expression equals an ingress scope the edge admits (from/<partner>/** by the spec's rule, or the rendered goat_zenoh_edge_ingress_key_exprs). A store wider than the grant, such as from/**, declares a subscriber the edge refuses, so data would cross and not be kept."
+    causes:
+      - the core keeps only a historical from/** store
+      - the core's per-partner store names a different partner or lane than the edge grants
+    fixes:
+      - "add a store on the core whose key_expr equals each admitted scope (the goat-zenoh role renders one per partner); keep a historical from/** store beside it if its data is needed"
+    read: docs/design/federation-ingress-storage-preflight.md
+    exit: 1
+    matches:
+      - "core receive stores .*\\(GB-136\\)"
+
+  - code: GB-137
+    tool: goatbuilder
+    title: the core router's configuration could not be read
+    what: "preflight found the core router but could not read its configuration, so the receive stores were not checked. Reported SKIP, never PASS; FED_PREFLIGHT_STRICT=1 refuses on it."
+    causes:
+      - the core router reads its configuration from another path than /etc/zenoh/config.json5
+      - the account behind FED_ROUTER_DOCKER_HOST may list containers but not exec in them
+    fixes:
+      - "export FED_CORE_CONFIG_PATH=<path inside the core container>"
+      - "inspect the core's storages through its own approved workflow"
+    read: docs/design/federation-ingress-storage-preflight.md
+    exit: 1
+    matches:
+      - "core receive stores .*\\(GB-137\\)"
+
+  - code: GB-138
+    tool: goatbuilder
+    title: no core router container was found
+    what: "the selection phase 3 uses (goat federate init) found no running core router on the daemon preflight read: FED_ROUTER_DOCKER_HOST, else the local runtime. Discovery accepts the org.goat.component=zenoh-core label, *-zenoh-router names and legacy goat-zenoh."
+    causes:
+      - the core router runs on another host and FED_ROUTER_DOCKER_HOST does not point at it
+      - the core router is stopped, or runs under a custom name without the role label
+    fixes:
+      - "export FED_ROUTER_DOCKER_HOST=ssh://<user>@<core>   (goatbuilder derives it from the peering's hosts.core, else the one host of inventory group <partner>_core)"
+      - "export FED_ROUTER_CONTAINER=<name or ID>"
+    read: docs/design/federation-router-discovery.md
+    exit: 1
+    matches:
+      - "no running core router found"
+
+  - code: GB-139
+    tool: goatbuilder
+    title: several core router containers were found
+    what: "more than one running container qualifies as the core router, and preflight, like phase 3, will not choose among them."
+    causes:
+      - an old and a new core router run side by side
+      - two stacks on one host both carry a *-zenoh-router name
+    fixes:
+      - "export FED_ROUTER_CONTAINER=<name or ID of the core router>"
+    read: docs/design/federation-router-discovery.md
+    exit: 1
+    matches:
+      - "multiple running core routers found"
+
+  - code: GB-140
+    tool: goatbuilder
+    title: our CA certificate is missing or is not a CA
+    what: "the certificate phase 8 signs the peering leaves with does not exist, is not a PEM certificate, or is not a CA (basicConstraints CA:TRUE)."
+    causes:
+      - FED_CA_CERT, goat_federation_ca_cert or the derived ops/ansible/enrollment/ca/<site>/root-cert.pem names a missing file
+      - a leaf certificate was named instead of the CA
+    fixes:
+      - "set goat_federation_ca_cert in group_vars/<edge group>/ to our own CA certificate (never the partner's)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "signing CA \\(phase 8\\) .*\\(GB-140\\)"
+
+  - code: GB-141
+    tool: goatbuilder
+    title: our CA signing key cannot be resolved
+    what: "the CA private key phase 8 needs is missing, does not decrypt with the age identity, is not a private key, or does not match the CA certificate. The deployment keeps it at <deploy.state_dir>/<site>-ca/ca.key.age; preflight decrypts it in memory to compare and writes no plaintext."
+    causes:
+      - the ca.key.age file is not on this machine
+      - the age identity (~/.config/age/keys.txt, or FED_AGE_IDENTITY) is not the one the key was encrypted to
+      - the key belongs to another CA than the certificate
+    fixes:
+      - "restore <deploy.state_dir>/<site>-ca/ca.key.age, or set goat_federation_ca_key_age / FED_CA_KEY_AGE"
+      - "export FED_AGE_IDENTITY=<the identity file the key was encrypted to>"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "signing CA \\(phase 8\\) .*\\(GB-141\\)"
+
+  - code: GB-142
+    tool: goatbuilder
+    title: our federation signing key cannot be read
+    what: "FED_SIGNING_KEY names a file that does not exist, or whose content is neither 64 hex characters (the RFC 8032 seed) nor 44 base64."
+    causes:
+      - goat_federation_signing_key or FED_SIGNING_KEY names the wrong path
+      - the file holds a PEM or a public key rather than the seed
+    fixes:
+      - "set goat_federation_signing_key in group_vars/<edge group>/ to the file holding our Ed25519 seed"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "signing key .*\\(GB-142\\)"
+
+  - code: GB-143
+    tool: goatbuilder
+    title: the peering inventory does not reach the edge or core
+    what: "inventory/peering-edges.ini is missing, has no group for this peering's edge or core, lists no host in it, or does not list the group under [peering_edges:children] / [peering_cores:children]. A play limited to such a group runs against nothing and reports success."
+    causes:
+      - the edge or core group was never added to the deployment's inventory
+      - the committed inventory ships the host commented out
+    fixes:
+      - "add [<partner>_edge] and [<partner>_core] with their hosts, and list each group under its parent's :children"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "(edge|republisher) inventory .*\\(GB-143\\)"
+
+  - code: GB-144
+    tool: goatbuilder
+    title: the federation declaration or the profile is missing or wrong
+    what: "the goat context has no federation.toml, it has no valid sovereign_id or it declares a measured capability, or the profile certificate or CA bundle is missing."
+    causes:
+      - "`goat profile init` was not run for this context, or ran as another user (sudo -E keeps HOME)"
+      - federation.toml was not written, or declares transports, fabric_version, fabric_fips_image or pqc_capable
+    fixes:
+      - "goat profile init <bundle.cbor>"
+      - "goat federate init   (prints the declaration template when it is absent)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "(declaration|sovereign_id|profile certificate|CA root bundle) .*\\(GB-144\\)"
+
+  - code: GB-145
+    tool: goatbuilder
+    title: the core certificate would not name every address the edge dials
+    what: "FED_CORE_SAN does not cover an address the edge's deployment.yml dials. A core certificate without that SAN fails name verification, and nothing is logged at INFO when it does."
+    causes:
+      - an endpoint was added to group_vars/<edge group>/deployment.yml after FED_CORE_SAN was set by hand
+    fixes:
+      - "unset FED_CORE_SAN and let goatbuilder derive it from deployment.yml, or add the missing address"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "FED_CORE_SAN does not cover"
+
+  - code: GB-146
+    tool: goatbuilder
+    title: docker compose is not available for phase 12
+    what: "the edge role deploys with `docker compose`, and this machine has no docker, no compose plugin, or a compose that reports no version."
+    causes:
+      - docker-compose-plugin is not installed
+    fixes:
+      - "install docker-compose-plugin (or drop the plugin binary at /usr/libexec/docker/cli-plugins/docker-compose)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "docker compose plugin \\(phase 12\\) .*\\(GB-146\\)"
+
+  - code: GB-147
+    tool: goatbuilder
+    title: a peering directory value is not usable
+    what: "FED_DIRECTORY_URL is not https, or it, FED_PACKAGE_URL, FED_COUNTERPARTY_ID or FED_CA_CERT holds characters outside a plain URL. Those values reach a command line, so the run refuses them."
+    causes:
+      - an http:// directory address, or a value with spaces or quotes
+    fixes:
+      - "set goat_federation_directory_url to the https:// address of the directory"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "peering directory .*\\(GB-147\\)"
+
+  - code: GB-148
+    tool: goatbuilder
+    title: the federation working directory is not writable
+    what: "the run's working directory (--work, FED_WORK, else /var/lib/goat-federation/<partner>) cannot be created or written."
+    causes:
+      - the default under /var/lib needs root
+    fixes:
+      - "goatbuilder federate <partner> --work <a directory you can write>"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "working directory .*\\(GB-148\\)"
+
+  - code: GB-149
+    tool: goatbuilder
+    title: the peering is not declared
+    what: "the partner is not in goatbuilder.yaml peerings:. A peering nobody declared is one nobody reviewed (contract C1)."
+    causes:
+      - the peering was never added to the deployment's goatbuilder.yaml
+    fixes:
+      - "add the peering to ops/goatbuilder/goatbuilder.yaml peerings: (with, environment, site, edge_class)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "declared .*\\(GB-149\\)"
+
+  - code: GB-230
+    tool: goatbuilder
+    title: allocate would move a peering that already runs
+    what: "A peering the allocation record does not hold already runs from hand-written configuration (its edge group has hand group_vars, or the hand inventory names it), and the values allocation chose differ from the ones it runs on (its hand group_vars, else the role defaults). Rendering them would move its tunnel or ports on the next phase 2. Nothing was written."
+    causes:
+      - "goatbuilder federate allocate run for the first time in a deployment with a peering set up by hand"
+    fixes:
+      - "adopt it as it runs: pin the values the refusal names under the peering's values: in goatbuilder.yaml (a pin on 51820 needs that environment's peering_edge_reserved_udp to allow it)"
+      - "move it on purpose: FED_ALLOCATE_MOVE=<with> goatbuilder federate allocate --yes"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-230\\)"
+    exit: 2
+
+  - code: GB-231
+    tool: goatbuilder
+    title: the hand-written peering inventory puts one name in two peering groups
+    what: "No peering declares hosts:, so ops/ansible/inventory/peering-edges.ini is hand-written, and it puts one inventory name in two peering groups. Ansible merges the group_vars of every group a name is in, so each peering would read the other's rendered values. Nothing was written."
+    causes:
+      - "one machine listed under the same name for two peerings"
+    fixes:
+      - "give each peering its own inventory name for the machine, with the same ansible_host"
+      - "declare hosts: on every peering and let goatbuilder federate allocate render the inventory"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-231\\)"
+    exit: 2
+  - code: GB-234
+    tool: goatbuilder
+    title: the site inventory does not name one edge and one core for a peering without hosts
+    what: "A peering declares no hosts:, so goatbuilder federate allocate takes its machines from the site inventory (the environment's inventory:, else ops/ansible/inventory/*.ini but the peering-*.ini files): the group of the peering's edge_class and of the site's other class, each named as the class, <site>_<class>, <environment>_<class> or <environment>_<site>_<class>. More than one file names them, a class has no machine or several, or the two machines are reached as different users. The message names the candidates and where it looked. Nothing was written."
+    causes:
+      - "two inventory files define the site's class groups"
+      - "a class group lists several machines, or the edge class group lists none"
+      - "the edge and the core have different ansible_user values"
+    fixes:
+      - "declare hosts: {edge: <address>, core: <address>, user: <user>} on the peering"
+      - "declare the environment's inventory: so only that file is read"
+      - "make the site inventory name one machine per class"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-234\\)"
+    exit: 2
+
+  - code: GB-235
+    tool: goatbuilder
+    title: a named allocate would change another peering's inventory lines
+    what: "Every peering declares hosts:, so ops/ansible/inventory/peering-edges.ini is the whole generated peering inventory. `goatbuilder federate allocate <peering>` renders the named peering's groups into it and leaves every other line as it was; this run would change or drop a section of another peering (its hosts were changed in goatbuilder.yaml since the last allocate, or it is declared but not yet recorded). Nothing was written."
+    causes:
+      - "another peering's hosts: changed in goatbuilder.yaml since the inventory was last rendered"
+      - "a peering in the generated inventory is declared but has no entry in the allocation record"
+    fixes:
+      - "goatbuilder federate allocate   (every declared peering; review and commit what it changes)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-235\\)"
+    exit: 2
+  - code: GB-236
+    tool: goatbuilder
+    title: our core router's goat-zenoh role declarations do not resolve for admission
+    what: "Phase 10's admission names no route of its own (FED_CORE_PLAY and FED_CORE_RESTART are unset), and an inventory group of the site inventory (ops/ansible/inventory/*.ini, not peering-*.ini) has group_vars that configure the goat-zenoh role, so admission restarts the core through the role's own play on that group. It could not resolve that play: several groups configure the role and the peering core's address does not pick one, nothing gives the group's site_id, or no single fleet pin whose image variable the group sets names a deploy play that exists. The message names what was looked for and where. Nothing on the core changed."
+    causes:
+      - "two inventory groups both configure the goat-zenoh role"
+      - "the core router group's group_vars declare no site_id and the group is not named <site>_hosts"
+      - "no component in ops/pins/fleet-pins.yaml has the group's image variable as its var with a deploy play"
+    fixes:
+      - "declare site_id in group_vars/<core router group>/"
+      - "keep one inventory group per core router, or put the peering's core in the peering inventory with the same address"
+      - "set FED_CORE_PLAY or FED_CORE_RESTART to name the route by hand"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-236\\)"
+    exit: 2
+  - code: GB-237
+    tool: goatbuilder
+    title: admission cannot write the partner into the role core's zenoh_sovereign_peerings
+    what: "On a goat-zenoh role core, phase 10's admission writes the partner's zenoh_sovereign_peerings entry (sovereign, and the CN of the agreement's access-control fragment subject) into ops/ansible/group_vars/<core router group>/peerings.yml, the role's own declaration, beside the fragment. It could not: the fragment names no subject CN or several, another of the group's group_vars files already sets zenoh_sovereign_peerings (two owners), an entry's sovereign is a template (it contains {{, {% or {#, so no literal id matches it and the partner would be added a second time), peerings.yml cannot be rewritten without changing something else (admission replaces only the zenoh_sovereign_peerings block and keeps every other line of the file byte for byte, so it refuses a comment inside that list, a flow-style top level it cannot split into variables, or an anchor shared between the list and another variable), or peerings.yml is not YAML or not a mapping of variables. Nothing on the core changed."
+    causes:
+      - "a comment inside the zenoh_sovereign_peerings list of peerings.yml, a flow-style top level, or an anchor in the list that another variable aliases"
+      - "zenoh_sovereign_peerings is set by hand in another file of the core router group's group_vars"
+      - "an entry of zenoh_sovereign_peerings writes its sovereign as a Jinja template, or is not a mapping with a literal sovereign"
+      - "zenoh_sovereign_peerings itself is a template, a mapping or a scalar, not a literal list: read as empty, it would be written back holding this partner alone"
+      - "the fragment phase 9 rendered names no subject, or several"
+    fixes:
+      - "move a comment out of the zenoh_sovereign_peerings list (above it, or elsewhere in the file), write the file one `variable: value` block per variable, and keep anchors out of the list"
+      - "move the zenoh_sovereign_peerings entries into group_vars/<core router group>/peerings.yml and remove the variable from the other file"
+      - "write zenoh_sovereign_peerings as a literal list, and each entry's sovereign literally, as the partner's sovereign id"
+      - "run phase 9 again, then make a new plan and deploy"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-237\\)"
+    exit: 2
+  - code: GB-238
+    tool: goatbuilder
+    title: a federation verb's site flags are given where they do not belong
+    what: "goatbuilder federate init|lint|compose|diff|verify|apply read this party's context from --context-dir, --cert, --ca-roots, --context and --profile-dir. Those flags belong to the six verbs and come after the verb: given before it they are read as the name of a partner, and given to a peering run or to `federate plan` they would be ignored."
+    causes:
+      - "the flags were typed after `federate` and before the verb"
+      - "the flags were given to `goatbuilder federate <partner>` or `federate plan`, which read the deployment's own declarations"
+    fixes:
+      - "goatbuilder federate lint --context-dir <dir> <package>   (the verb first, then its flags)"
+      - "drop the flags from a peering run or a plan"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "after the verb: goatbuilder federate"
+      - "apply to the six verbs \\(goatbuilder federate init"
+    exit: 2
+  - code: GB-239
+    tool: goatbuilder
+    title: a flag that does not apply to the federation verb it was given to
+    what: "The six federation verbs (init, lint, compose, diff, verify, apply) read only the files they are named and the party's context, and run for real. --mock, -C/--repo (except for init --over-ssh) and -o/--output choose things they do not read; --over-ssh and its host flags belong to init alone. A run with one where it does not apply is refused rather than the flag ignored."
+    causes:
+      - "--mock, -C/--repo or -o/--output given to a federation verb"
+      - "--over-ssh or its host flags given to a verb other than init, to a plan or to a peering run"
+    fixes:
+      - "drop the flag; the verbs take --json for a JSON report"
+      - "goatbuilder -C <repo> federate init --over-ssh <peering>   (the one verb that reads a checkout)"
+      - "FED_MEASURE=ssh goatbuilder federate <partner>   (a peering run measures phase 3 over SSH)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "do not apply to goatbuilder federate init\\|lint\\|compose\\|diff\\|verify\\|apply"
+      - "--over-ssh and its host flags apply to `goatbuilder federate init`"
+    exit: 2
+  - code: GB-240
+    tool: goatbuilder
+    title: a federation switch names no choice it has
+    what: "Two variables choose how a peering run works: FED_VERBS who runs the federation verbs (goatbuilder, in process, the default; or goat), and FED_MEASURE where phase 3 measures (ssh, the default; or here). Any other value is refused, as peering-standup.sh refuses it, so a misspelling cannot choose a different path on each avenue."
+    causes:
+      - "FED_VERBS is set to something other than goat or goatbuilder"
+      - "FED_MEASURE is set to something other than ssh or here"
+    fixes:
+      - "unset FED_VERBS and FED_MEASURE   (the defaults)"
+      - "FED_VERBS=goat goatbuilder federate <partner>   (the verbs run in goat)"
+      - "FED_MEASURE=here goatbuilder federate <partner>   (phase 3 measures the machine the run is on)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "FED_VERBS is goat or goatbuilder"
+      - "FED_MEASURE is here or ssh"
+    exit: 2
+  - code: GB-241
+    tool: goatbuilder
+    title: the environment named is not declared
+    what: "A verb was given an environment that goatbuilder.yaml (or goatlite.yaml) does not declare in environments:. Nothing runs against an environment nobody declared."
+    causes:
+      - "a misspelt environment name"
+      - "the environment is declared in another checkout's goatbuilder.yaml"
+    fixes:
+      - "the names declared are listed in the message; pass one of them"
+      - "add the environment to ops/goatbuilder/goatbuilder.yaml environments:"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "unknown environment \""
+    exit: 2
+  - code: GB-242
+    tool: goatbuilder
+    title: the command line does not parse
+    what: "The arguments do not make a command goatbuilder knows: a required argument is missing, a value is not one the option takes, two options that exclude each other were both given, or the verb is unknown. Nothing ran."
+    causes:
+      - "a required argument or subcommand was left out"
+      - "an option was given a value it does not take"
+      - "two options that exclude each other were given together"
+      - "a misspelt verb"
+    fixes:
+      - "goatbuilder <verb> --help   (the arguments the verb takes)"
+      - "goatbuilder --help   (the verbs)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^error: the following required arguments were not provided"
+      - "^error: unrecognized subcommand"
+      - "^error: invalid value '"
+      - "^error: the argument '[^']*' cannot be used with"
+      - "^error: unexpected argument"
+      - "^error: a value is required for"
+      - "requires a subcommand but one was not provided"
+    exit: 2
+  - code: GB-243
+    tool: goatbuilder
+    title: a standup names no site
+    what: "standup stands up one site and needs --site. It may be left out only on a goatlite run, where goatlite.yaml (preset lite) names the one site the environment has."
+    causes:
+      - "--site was left out on an environment that is not a goatlite"
+    fixes:
+      - "goatbuilder standup <environment> --site <site>"
+    read: docs/operations/goatnet-standup.md
+    matches:
+      - "--site may be omitted only on a goatlite run"
+    exit: 2
+  - code: GB-244
+    tool: goatbuilder
+    title: the config file cannot be read
+    what: "goatbuilder reads the deployment's goatbuilder.yaml (or the file a verb was named) before anything else. It is not there, or it cannot be read."
+    causes:
+      - "the path is wrong, or -C names another checkout"
+      - "the checkout has no ops/goatbuilder/goatbuilder.yaml"
+    fixes:
+      - "goatbuilder -C <the deployment's checkout> <verb>"
+      - "goatbuilder validate <path>   (the file you meant)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "cannot read config "
+    exit: 2
+  - code: GB-245
+    tool: goatbuilder
+    title: the config file is not YAML
+    what: "The config file could be read, but it does not parse as YAML, so nothing in it can be checked. The message names the line and column."
+    causes:
+      - "a bracket, quote or indentation error near the line named"
+    fixes:
+      - "fix the line the message names, then goatbuilder validate <path>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "is not valid YAML: "
+    exit: 2
+  - code: GB-247
+    tool: goatbuilder
+    title: the site or class named is not declared
+    what: "standup and join-node act on a site goatbuilder.yaml declares under the environment, and join-node on a class that site declares and the verb converges (core, obs, breakglass, network-jump). The one named is not there."
+    causes:
+      - "a misspelt site or class"
+      - "the site or class is not declared yet"
+    fixes:
+      - "the names declared are listed in the message; pass one of them"
+      - "declare the site under environments[].sites, or the class under its classes:, in ops/goatbuilder/goatbuilder.yaml"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "is not declared for environment '"
+      - "is not declared at site '"
+      - "is not one this verb converges"
+    exit: 2
+  - code: GB-248
+    tool: goatbuilder
+    title: the observability leg cannot run
+    what: "A site that declares has_obs_host: true stands up its observability host in a leg beside the core. --obs-only asked for that leg alone and there is none to run, or the leg's play (ops/ansible/utility-host-bootstrap.yml) is not in this tree. The message says which."
+    causes:
+      - "has_obs_host is not true, its group_vars or inventory host is missing (--obs-only)"
+      - "the checkout has no ops/ansible/utility-host-bootstrap.yml"
+    fixes:
+      - "goatbuilder standup <environment> --site <site> --skip-obs   (stand up the site without its obs host)"
+      - "declare has_obs_host: true, the <site>_obs_hosts group_vars and its inventory host, then run --obs-only"
+    read: docs/operations/goatnet-standup.md
+    matches:
+      - "--obs-only: no obs leg to run"
+      - "so the obs leg cannot run"
+    exit: 2
+  - code: GB-249
+    tool: goatbuilder
+    title: the fixture's standup does not fit what was asked
+    what: "standup --mock rehearses the standup a fixture's converger.yaml declares for one environment and site, against that fixture's goatbuilder.yaml. The environment or site asked for is another, or a phase of the rehearsal names a site or class the declaration does not allow (a joiner may touch only the founder it attaches to; a class needs machines)."
+    causes:
+      - "--mock names a fixture for another environment or site"
+      - "the fixture's converger.yaml and goatbuilder.yaml disagree"
+    fixes:
+      - "goatbuilder standup <the fixture's environment> --site <its site> --mock <fixture>"
+      - "correct the fixture's converger.yaml standup: or its goatbuilder.yaml"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "the fixture rehearses "
+      - "a standup may touch only the founder it attaches to"
+      - "has no machines in converger.yaml standup.classes"
+    exit: 2
+  - code: GB-250
+    tool: goatbuilder
+    title: a joiner site names no founder
+    what: "A site whose vars.yml says goatnet_founder: false joins another site's goatnet, and seeds from it, so it must name that founder in join_founder_site."
+    causes:
+      - "join_founder_site is missing from the joiner's group_vars/<site>_hosts/vars.yml"
+    fixes:
+      - "set join_founder_site: <founder site> in group_vars/<site>_hosts/vars.yml"
+    read: docs/tutorials/02-first-federated-node.md
+    matches:
+      - "a joiner must name the founder it seeds from"
+    exit: 2
+  - code: GB-251
+    tool: goatbuilder
+    title: no SSH user is declared for a new machine
+    what: "join-node reaches a new machine as the project's declared SSH user before anything is installed on it. The checkout declares none, and no name is right for every project's machines, so a real run refuses (a dry run plans with a placeholder)."
+    causes:
+      - "deploy.ssh_user (or lite.ssh_user) is not set in goatbuilder.yaml"
+    fixes:
+      - "set deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml"
+      - "goatbuilder join-node ... --dry-run   (plans without it)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "declares no SSH user for a new machine"
+    exit: 2
+  - code: GB-252
+    tool: goatbuilder
+    title: the partner is declared on several environments
+    what: "The same partner is declared as a peering on more than one environment in goatbuilder.yaml peerings:, so the command cannot tell which peering it is about."
+    causes:
+      - "one partner is peered from two environments, and --env was not given"
+    fixes:
+      - "pass --env <environment>   (the environments are named in the message)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "is declared on several environments"
+    exit: 2
+  - code: GB-253
+    tool: goatbuilder
+    title: a host's back-out survey answered for another peering
+    what: "Back-out surveys each host of the peering read-only before it plans what to remove, and every answer names the peering it read. One host's answer names another peering, so nothing is planned from it: removing that peering's resources would be removing someone else's."
+    causes:
+      - "the inventory groups of two peerings share a host name"
+      - "the survey ran with another peering's working directory"
+    fixes:
+      - "goatbuilder federate backout <partner> --plan   (survey again with this peering's own work directory)"
+      - "give each peering its own inventory name for the machine (allocate does)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "answered for peering '"
+    exit: 2
+  - code: GB-254
+    tool: goatbuilder
+    title: a file goatbuilder reads or writes cannot be read or written
+    what: "A verb reads or writes a file of the checkout or its state (a pin table, a schema, a record, an inventory, a play) and the operating system refused: the file is missing, unreadable, or its directory is not writable. The message names the file and the system's reason."
+    causes:
+      - "the file is not in this checkout, or -C names another one"
+      - "the file or its directory is not readable or writable by this user"
+    fixes:
+      - "ls -l <the file the message names>"
+      - "goatbuilder -C <the right checkout> <verb>"
+    read: docs/design/goatbuilder.md
+    exit: 2
+  - code: GB-255
+    tool: goatbuilder
+    title: nothing is declared for the environment
+    what: "The fixture's (or checkout's) declarations name no component for the environment asked for, or none by the name given, so there is nothing to read, plan or roll back."
+    causes:
+      - "a misspelt environment or component"
+      - "the environment declares no component yet"
+    fixes:
+      - "goatbuilder pins --check   (what fleet-pins.yaml declares)"
+      - "pass an environment and component the declarations hold"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "nothing declared for "
+    exit: 2
+  - code: GB-256
+    tool: goatbuilder
+    title: a deploy play's hosts cannot be resolved
+    what: "To target a deploy, goatbuilder reads the component's play for its hosts: line, following at most three import_playbook hops. The play has neither, or the chain is longer."
+    causes:
+      - "the play has no hosts: line and no import_playbook"
+      - "more than three import_playbook hops"
+    fixes:
+      - "give the play a hosts: line (\"{{ target }}\" for a play targeted per group)"
+      - "declare deploy_playbook in fleet-pins.yaml for the play that does"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "no hosts: line and no import_playbook in"
+      - "more than three import_playbook hops"
+    exit: 2
+  - code: GB-257
+    tool: goatbuilder
+    title: fleet-pins.yaml is not in the shape goatbuilder edits
+    what: "goatbuilder reads fleet-pins.yaml's components and edits a component's block in place. The file has no components:, or the component's block or its fleet: line is not where the writer looks."
+    causes:
+      - "fleet-pins.yaml has no components: mapping"
+      - "the component's block was edited by hand into another shape"
+    fixes:
+      - "goatbuilder pins --check   (the table as goatbuilder reads it)"
+      - "restore the component's block to `<component>:` with a `fleet:` line, as the others are"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "fleet-pins.yaml has no components"
+      - ": no component block"
+      - ": no fleet: line"
+    exit: 2
+  - code: GB-258
+    tool: goatbuilder
+    title: a command a verb runs failed
+    what: "A verb runs git, gh, ansible or one of the repository's own steps and stops when it fails. The message is that command's own error output; it names what went wrong."
+    causes:
+      - "the command's own error, quoted in the message (a network failure, a missing credential, a refused push)"
+    fixes:
+      - "read the quoted output: its tool's own catalog entry may name it (goatbuilder explain '<the line>')"
+      - "run the command by hand with the same arguments (goatbuilder -v shows it)"
+    read: docs/design/goatbuilder.md
+    exit: 1
+  - code: GB-259
+    tool: goatbuilder
+    title: the assembled tree's marker is incomplete
+    what: "An assembled checkout (a goatcore commit plus an overlay) carries .goat-assembled, naming the goatcore_ref and overlay_commit it was built from; fresh-source checks against them. A line is missing."
+    causes:
+      - "the tree was assembled by hand, or the marker was edited"
+    fixes:
+      - "assemble the tree again with the overlay's assembly step"
+      - "cat .goat-assembled   (goatcore_ref= and overlay_commit= lines)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "no goatcore_ref= line"
+      - "no overlay_commit= line"
+    exit: 2
+  - code: GB-260
+    tool: goatbuilder
+    title: a rollback has no history to go back to, or its target is refused
+    what: "rollback goes back through the host's deploy ledger and the in-repo history (deploy-history.yml). There is no history for the component, not enough of it, or the ref it would roll to is flagged do_not_roll_to, or a host runs a ref neither history knows."
+    causes:
+      - "the component has not been adopted into deploy-history.yml"
+      - "the history holds fewer entries than the rollback asks for"
+      - "the target ref is flagged do_not_roll_to in the in-repo ledger"
+      - "a host runs a ref no history records (deployed by hand?)"
+    fixes:
+      - "goatbuilder rollback <component> --status"
+      - "investigate the host the message names before rolling back"
+    read: docs/design/universal-deploy-rollback.md
+    matches:
+      - "deploy-history.yml has no hosts entr"
+      - "no deploy-history.yml at "
+      - "cannot roll back "
+      - "flagged do_not_roll_to=true"
+      - "which is in NO known history"
+    exit: 2
+  - code: GB-263
+    tool: goatbuilder
+    title: a site id cannot name the variables its phases read
+    what: "Phase 12 reads the NetBird token from <SITE>_NB_API_TOKEN, named after the site that governs the ACL: the site itself, or a joiner's founder (join_founder_site). That site holds a character a variable name cannot, so the standup stops before any phase."
+    causes:
+      - "join_founder_site in the site's group_vars holds a space, a quote or another character outside letters, digits, - and _"
+      - "the site was named with such a character"
+    fixes:
+      - "set join_founder_site to the founder's site id (letters, digits, - and _)"
+      - "goatbuilder validate   (the site ids goatbuilder.yaml declares)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "is not a site id: phase 12 reads the token variable"
+    exit: 2
+  - code: GB-264
+    tool: goatbuilder
+    title: no recorded run matches
+    what: "goatbuilder show and runs diff name a run by its id, a prefix of one, or last, from the run records under <state>/runs. None is recorded there, none starts with the prefix given, or several do."
+    causes:
+      - "no verb that drives hosts has run with this state directory (a --mock run writes no record)"
+      - "a mistyped id, or a prefix too short to name one run"
+    fixes:
+      - "goatbuilder runs   (the recorded runs, newest first)"
+      - "give more of the run's id"
+    read: docs/design/goatbuilder-legibility.md
+    matches:
+      - "no run is recorded under "
+      - "no run \\S+ under .*/runs"
+      - "runs start with .*; give more of the id"
+    exit: 2
+  - code: GB-246
+    tool: goatbuilder
+    title: a rollback depth outside the ledger
+    what: "rollback N goes back N deploys in a host's ledger, which keeps the last seven. N outside 1 to 7 names no deploy the ledger holds."
+    causes:
+      - "N is 0, or more than 7"
+    fixes:
+      - "goatbuilder rollback <component> --env <goatnet> <N from 1 to 7>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "N must be 1..7"
+    exit: 2
+  - code: GB-185
+    tool: goatbuilder
+    title: the partner named to `federate status` is not a declared peering
+    what: "`goatbuilder federate status <partner>` reads a peering declared in goatbuilder.yaml `peerings:` (on `--env`, when given). The name given is not one of them, so nothing was read."
+    causes:
+      - the name is misspelled, or the peering is declared under another environment's config
+      - the peering has not been declared yet
+    fixes:
+      - "goatbuilder federate status   (every declared peering)"
+      - "declare it under peerings: in goatbuilder.yaml first (C1)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^status: peering '[^']*' is not declared in "
+    exit: 1
+  - code: GB-186
+    tool: goatbuilder
+    title: the plan was not approved
+    what: "`goatbuilder federate deploy` executes a plan only when approval names that plan's hash: `--approve-plan <hash>`, or a person at a terminal typing yes after reading the plan and its hash. `--yes` never approves a plan. No approval was given, or it named another hash, so nothing changed."
+    causes:
+      - there is no terminal and --approve-plan was not passed
+      - --approve-plan names the hash of an older plan (the plan was made again since)
+      - the person answered anything but yes
+    fixes:
+      - "read the plan, then: goatbuilder federate deploy <partner> --approve-plan <the hash it prints>"
+      - "goatbuilder federate plan <partner>   (a new plan, when the old one is out of date)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^deploy: (--approve-plan .* is not the hash|the plan was not approved|the plan needs approval)"
+    exit: 1
+
+  - code: GB-187
+    tool: goatbuilder
+    title: the plan is not the one approved
+    what: "The plan deploy was given is for another peering, or its hash changed between approval and execution (it is read again under the peering's lock, just before anything changes). Nothing changed. A plan that does not match its own hash is GB-201."
+    causes:
+      - no plan has been made yet (<work>/plan.json is missing)
+      - the plan was made again, or edited, after it was approved
+      - --plan names another peering's plan
+    fixes:
+      - "goatbuilder federate plan <partner>   (then read it and approve its hash)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^deploy: (the plan .* is for peering|the plan .* changed after it was approved|the recheck read plan)"
+    exit: 1
+
+  - code: GB-188
+    tool: goatbuilder
+    title: the plan no longer holds
+    what: "Immediately before anything changes, deploy runs the planner's live recheck: every live prerequisite is checked again and every input section is compared with a plan built now. Something did not hold (a section changed, a check was not PASS or NOT APPLICABLE or was not answered, or the plan was not READY), so the approved plan no longer describes the change, and a saved plan is not proof the environment stayed the same. Nothing changed."
+    causes:
+      - the agreement was composed again (a new package from either side)
+      - apply rendered the files again, or one was edited by hand
+    fixes:
+      - "goatbuilder federate plan <partner>   (a new plan from what is there now; approve its hash)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^deploy: (what the plan was made from has changed|the plan no longer holds)"
+    exit: 1
+
+  - code: GB-189
+    tool: goatbuilder
+    title: a stage of `goatbuilder federate` was asked for the wrong way
+    what: "The stages `status`, `deploy` and `test` take the partner after them and run their own phases; `--plan` and `--approve-plan` belong to `deploy`, whose start is phase 10 or, once the admission is done by hand, 11. Nothing ran."
+    causes:
+      - the partner was left out, or given after a peering name instead of a stage word
+      - --to, --resume or a --from other than 10 or 11 was given to a stage
+      - --plan or --approve-plan was given outside `deploy`
+    fixes:
+      - "goatbuilder federate deploy <partner> --approve-plan <hash>   (or --from 11 after the admission)"
+      - "goatbuilder federate test <partner>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^`goatbuilder federate (deploy|test)` (needs the partner|runs its own phases)"
+      - "^unexpected argument '[^']*': only a stage word"
+      - "^--plan and --approve-plan belong to"
+      - "^deploy: --from [0-9]+ is not a deploy start"
+      - "^--partner-key, --partner-ca-fingerprint(, --agreement-digest and --place-pointer-package| and --agreement-digest) belong to phases 5 and 6"
+      - "^--confirm, --approve-admission and --review-in-pr do not apply to"
+      - "^--approve-admission and --review-in-pr (are for phase 10|belong to)"
+      - "^--approve-admission, --review-in-pr and --confirm are for phase 10"
+      - "^--partner-key and --partner-ca-fingerprint are for phase 5"
+    exit: 1
+
+  - code: GB-190
+    tool: goatbuilder
+    title: the admission on our core is not recorded as done for what is rendered now
+    what: "`deploy --from 11` skips phase 10, the by-hand admission of the partner's edge on our core, so it runs only when the journal records phase 10 as done for exactly the files rendered now. It does not, so nothing changed: either the admission was never declared, or the rendered files changed after it."
+    causes:
+      - deploy has not stopped at phase 10 yet, so the admission was never done for these files
+      - the files were rendered again after the admission was declared
+    fixes:
+      - "goatbuilder federate deploy <partner> --approve-plan <hash>   (it stops at phase 10; do the admission, then run it again with --from 11)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^deploy: phase 10, admitting the edge on our core, is not recorded as done"
+    exit: 1
+
+  - code: GB-191
+    tool: goatbuilder
+    title: a value for confirmation 1 does not match
+    what: "At phase 5 or 6 a value given by flag or typed is not the one the files hold: their CA fingerprint is not their package's, their CA certificate does not carry that fingerprint, their verifying key is not 32 bytes of base64 or does not verify their half, a sovereign id is not a plain id or is not the declared counterparty, or the agreement digest differs. The run stopped; at phase 5 no keyring was written, and at phase 6 the composed agreement is left for inspection."
+    causes:
+      - a value was misheard or mistyped on the call
+      - the partner published a new package or CA after reading theirs aloud
+      - the two sides composed different agreements (their halves differ)
+    fixes:
+      - "read the values back group by group with the partner, then run the same command again"
+      - "goat federate diff <ours> <theirs>   (names the field where two agreements differ)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-191: "
+    exit: 1
+
+  - code: GB-192
+    tool: goatbuilder
+    title: confirmation 1 is waiting
+    what: "Phase 5 or 6 was asked to confirm (by --confirm or a value) and something is not there yet: their half or CA certificate has not arrived, a value read aloud was not given and there is no terminal to ask at, or the person did not type yes. The run stopped there, as a by-hand stop does (exit 0); a stop at phase 5 writes no keyring."
+    causes:
+      - the partner has not published yet
+      - one of --partner-key, --partner-ca-fingerprint, --agreement-digest is missing
+    fixes:
+      - "run the same command again with the values read aloud, or with --confirm at a terminal"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-192: "
+    exit: 0
+
+  - code: GB-193
+    tool: goatbuilder
+    title: our verifying key cannot be read, or does not verify our half
+    what: "Phase 5 shows our verifying key to read aloud, derived from the Ed25519 seed that signs our package (FED_SIGNING_KEY: 64 hex characters or 32 bytes base64). It is unset, unreadable or not a seed, or the key it gives does not verify the signature on our half, so the partner would bind a key that cannot verify our package."
+    causes:
+      - FED_SIGNING_KEY is not set in this environment
+      - it names a file that is not the package-signing seed, or a different seed than phase 3 signed with
+    fixes:
+      - "set FED_SIGNING_KEY to the seed that signed our package (the same one phase 3 uses)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-193: "
+    exit: 1
+
+  - code: GB-194
+    tool: goatbuilder
+    title: the edge cannot be admitted on our core
+    what: "Phase 10 by the command (confirmation 2) did not change our core: the agreement digest has not been confirmed with the partner for the agreement in place, --approve-admission names another digest (something changed since it was read), the deployment does not say where our core's access control lives or how it restarts, their CA does not match the agreement, or the fragment could not be merged, assembled or placed (what was placed is put back)."
+    causes:
+      - phase 6 ran without --agreement-digest (or --confirm), so the digest was never compared
+      - the files were rendered again after the summary was read
+      - FED_CORE_ACL_ORG, FED_CORE_PLAY or FED_CORE_RESTART, or FED_SLOT_* is not set
+      - their CA file holds more than the one certificate the agreement names
+    fixes:
+      - "compare the digest with the partner: goatbuilder federate <partner> --from 6 --to 6 --agreement-digest <digest>"
+      - "read the summary again and approve the digest it shows now"
+      - "set the FED_CORE_* settings in the deployment's environment, or run without the admission flags so phase 10 stops, admit by hand, and run --from 11"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-194: "
+    exit: 1
+
+  - code: GB-195
+    tool: goatbuilder
+    title: the core's dry run or the slot check refused the admission
+    what: "After placing the new access control (nothing loads it before a restart), the core router's dry run failed, or the committed slot list differs from the registry or the registry could not be read. Restarting now could drop or add stores, so the files placed were put back and the core was not restarted."
+    causes:
+      - the assembled configuration does not pass the core's play in check mode
+      - the slot list in the repository is behind the registry
+    fixes:
+      - "run the dry run by hand to read why (the message prints it)"
+      - "regenerate the slot list with ops/scripts/sync-slot-anchors.py, commit it, deploy the core, then run phase 10 again"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-195: "
+    exit: 1
+
+  - code: GB-196
+    tool: goatbuilder
+    title: the core restart failed after the admission was placed
+    what: "The new access control is in place on our core, and the restart through the deployment's play or command failed, so it may not be loaded."
+    causes:
+      - the play or restart command failed (its output is above)
+    fixes:
+      - "fix the cause, then run the same stage again with --approve-admission <digest>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-196: "
+    exit: 1
+
+  - code: GB-197
+    tool: goatbuilder
+    title: the admission is waiting for approval
+    what: "Phase 10 was asked to admit the edge (by --confirm, --approve-admission or --review-in-pr) and stopped without changing our core: the summary was written for review in a pull request, the person did not type yes, or there is no terminal and no --approve-admission. Exit 0, as a by-hand stop."
+    causes:
+      - --review-in-pr, or pr at the terminal
+      - no approval was given
+    fixes:
+      - "read the summary (or the review in <work>/admission/review.md), then run the same stage with --approve-admission <digest>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-197: "
+    exit: 0
+
+  - code: GB-200
+    tool: goatbuilder
+    title: the federation plan's inputs changed
+    what: "an input the saved plan rests on (versions, the agreement, a rendered file, a certificate, a resource or the acceptance policy) differs from what the plan recorded, so the approval given to that plan does not cover this change."
+    causes:
+      - a phase rendered, minted or composed again after the plan was made
+      - the checkout, the goat binary or a declared value changed after the plan was made
+    fixes:
+      - "goatbuilder federate plan <partner>, then review and approve the new plan"
+    read: docs/design/federation-plan.md
+    exit: 1
+    matches:
+      - "changed since the plan was written"
+
+  - code: GB-201
+    tool: goatbuilder
+    title: the federation plan is missing or altered
+    what: "<work>/plan.json is absent, is not a goat-federation-plan/v1 plan, or does not match its own hash, so it cannot stand for what was approved."
+    causes:
+      - no plan was made for this working directory
+      - the plan file was edited by hand after it was written
+    fixes:
+      - "goatbuilder federate plan <partner> --work <dir>"
+    read: docs/design/federation-plan.md
+    exit: 1
+    matches:
+      - "\\(GB-201\\)"
+
+  - code: GB-202
+    tool: goatbuilder
+    title: a live prerequisite of the federation plan no longer holds
+    what: "rerun immediately before a change, a live phase-1 check (ports, slot list, core router, receive stores) did not pass, so nothing may change. SKIP is not a pass here."
+    causes:
+      - another service took a port the plan expected free
+      - a slot was minted after the slot list was fixed
+      - the core router was replaced or stopped
+    fixes:
+      - "fix the cause the check names (its own code is shown beside GB-202), then goatbuilder federate plan <partner> --recheck"
+    read: docs/design/federation-plan.md
+    exit: 1
+    matches:
+      - "GB-202"
+
+  - code: GB-232
+    tool: goatbuilder
+    title: a rendered deployment half needs a site value no declaration yields
+    what: "The peering declares deployment: rendered, so goatbuilder federate allocate renders the edge's and the core's deployment halves (peering-deployment.yml). Each required site value is taken from the group_vars of the environment's groups (environments[].groups) or all when one sets it, and is otherwise derived from the declaration that owns it: the core's address from peerings[].hosts.core or its line in the peering inventory, the core router's port from goat_zenoh_listen_port (group_vars, else the goat-zenoh role default), the images from the role defaults and ops/pins/fleet-pins.yaml, the core's certificate name from its name in the site inventory (ops/ansible/inventory/*.ini). One of them could be found in none of these places; the message names each place it read. Nothing is invented and nothing was written."
+    causes:
+      - "the peering declares no hosts: and the peering inventory has no single host for its core group"
+      - "no role default and no fleet-pins component pins the image the message names"
+      - "the site values live in a group the environment does not name in environments[].groups"
+    fixes:
+      - "declare what the message names where it looked (peerings[].hosts, the core group's inventory line, the image pin)"
+      - "or set the named variable once in the group_vars of one of the environment's groups"
+      - "or declare deployment: hand on the peering and keep writing its deployment halves by hand"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-232\\)"
+    exit: 2
+
+  - code: GB-233
+    tool: goatbuilder
+    title: a peering's federation.toml cannot be generated from the environment's
+    what: "The peering declares federation_toml: rendered, so goatbuilder federate allocate generates its federation.toml from the environment's own ops/federation/<environment>/federation.toml, the one owner of sovereign_id, term_days, cut_contact, the release sets, the accept limits and the measured path MTU, and fills [transport] from the allocated values. That file is missing, is not TOML, or lacks a required top-level value. Nothing was written."
+    causes:
+      - "the environment has no ops/federation/<environment>/federation.toml yet"
+      - "sovereign_id, term_days or cut_contact is missing from it"
+    fixes:
+      - "write ops/federation/<environment>/federation.toml once for the environment (the template goat federate init prints is the shape)"
+      - "or declare federation_toml: hand on the peering and keep writing its federation.toml by hand"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-233\\)"
+    exit: 2
+
+  # ------------------------------------------------ federate: the peering forwarder
+
+  - code: GB-160
+    tool: goatbuilder
+    title: two peerings on one forwarder would share a value
+    what: "The peerings one forwarder relays must share no carrier interface, public port, carrier port or carrier address on it: the forwarder sends each packet by its port alone. Allocation keeps them apart across every environment the forwarder relays (by its endpoint); this refusal is the backstop for values that collide anyway."
+    causes:
+      - "a hand edit of peering-values.yaml gives two relayed peerings one forwarder value"
+      - "a pin under values: (public_port, carrier_port, carrier_interface, carrier_subnet) repeats another peering's value"
+    fixes:
+      - "pin different public_port, carrier_port, carrier_interface and carrier_subnet values under one peering's values:"
+      - "or give each environment its own forwarder (forwarder: group:)"
+    read: docs/design/peering-forwarder.md
+    matches:
+      - "\\(GB-160\\)"
+    exit: 2
+
+  - code: GB-161
+    tool: goatbuilder
+    title: a peering's partner id cannot name a forwarder entry
+    what: "The forwarder names each peering it relays by the partner id, and its role accepts 2-16 characters of a-z 0-9 and hyphen. This partner id is outside that, so the forwarder would refuse the entry."
+    causes:
+      - "the peering's with: holds an underscore, or is one character or longer than 16"
+    fixes:
+      - "declare the partner by its sovereign id (lower-case letters, digits, hyphens)"
+    read: docs/design/peering-forwarder.md
+    matches:
+      - "\\(GB-161\\)"
+    exit: 2
+
+  - code: GB-162
+    tool: goatbuilder
+    title: one forwarder group names two forwarders
+    what: "The forwarder's peerings are rendered into its inventory group's group_vars, so every host in the group would relay every peering. Two peerings name the same group with different forwarder endpoints."
+    causes:
+      - "two forwarders declared without forwarder: group:, so both took the default peering_forwarders"
+    fixes:
+      - "give each forwarder its own group under forwarder: group:"
+    read: docs/design/peering-forwarder.md
+    matches:
+      - "\\(GB-162\\)"
+    exit: 2
+
+  - code: GB-163
+    tool: goatbuilder
+    title: a forwarded peering has no allocated values yet
+    what: "The peering declares forwarder:, so phase 2 runs the forwarder play and copies the carrier keys, and both read the group_vars goatbuilder federate allocate renders from the allocation record. The record does not hold this peering, so those files do not exist. Nothing ran."
+    causes:
+      - "forwarder: was added to the peering and goatbuilder federate allocate was not run since"
+    fixes:
+      - "goatbuilder federate allocate   (then review and commit what it writes)"
+    read: docs/design/peering-forwarder.md
+    matches:
+      - "\\(GB-163\\)"
+    exit: 2
+  - code: GB-203
+    tool: goatbuilder
+    title: two peerings would bind the same value on one machine
+    what: "this peering and another declared peering would bind the same WireGuard interface, tunnel UDP port or republisher metrics port, or overlapping link subnets, on the same machine (by inventory address), so one would break the other."
+    causes:
+      - two environments, or two hand-named inventory groups, place their edges or cores on one machine
+      - a value was pinned or declared by hand without looking at the other peerings on that machine
+    fixes:
+      - "give this peering another value in its edge or core group's vars (or its allocation pin), then goatbuilder federate plan <partner>"
+    read: docs/design/federation-plan.md
+    exit: 1
+    matches:
+      - "GB-203"
+
   # ----------------------------------------------------------- external tools
+
+  # ------------------------------------------- federate backout, one peering (GB-220..229)
+
+  - code: GB-220
+    tool: goatbuilder
+    title: federate backout was not given a partner it can act on
+    what: "goatbuilder federate backout takes one partner: a sovereign id (2-16 characters of a-z0-9-) that is not a federate subcommand. The working directory and edge group must be plain paths and names, because they go into the play's command line. Nothing ran."
+    causes:
+      - the partner was left out, or is not a sovereign id
+      - --work or --edge-group holds a quote, a space or a shell character
+    fixes:
+      - "goatbuilder federate backout <partner> --dry-run"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "federate backout needs the partner"
+      - "backout takes the partner whose peering it removes"
+
+  - code: GB-221
+    tool: goatbuilder
+    title: the back-out found a resource it cannot show is this peering's alone
+    what: "The read-only survey found a resource under this peering's names that another peering holds (a WireGuard interface whose state file or peer names another partner, a carrier another peering's state names), or a core configuration it cannot prove changes by this peering alone (the live file is not seed + org fragment, partner ids overlap, a policy mixes partners). Nothing was changed on any host."
+    causes:
+      - two peerings were given the same interface, carrier or stack name in their group values
+      - the core's live configuration was edited by hand after the last assemble
+      - the core keeps no seed/org split (slot-pool mode), so the admission cannot be located
+    fixes:
+      - "read the REFUSED lines of goatbuilder federate backout <partner> --dry-run; give each peering its own names, or reconcile the core's live file with its seed and org fragment"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "refused \\(GB-221\\)"
+
+  - code: GB-222
+    tool: goatbuilder
+    title: the back-out survey did not complete
+    what: "ops/ansible/peering-backout.yml failed before every host of the peering answered, or no host answered while the working folder holds the peering's agreement, so there is no plan to show and nothing was changed."
+    causes:
+      - a host of <partner>_edge, <partner>_core or peering_forwarders is unreachable
+      - neither ops/ansible/inventory/peering-edges.ini nor a per-peering peering-<edge group>.ini names the peering's hosts, so the play matched no host
+    fixes:
+      - "read the play output above; fix reachability or the inventory, then goatbuilder federate backout <partner> --dry-run"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "survey play failed before every host answered"
+      - "answered the survey, but"
+
+  - code: GB-223
+    tool: goatbuilder
+    title: the slot recheck did not allow the core router restart
+    what: "Immediately before the core router restarts without this peering's admission, the committed slot list is checked against the registry, as the admission path does. It drifted, the registry could not be read, or no registry was named, so the core was not restarted. The edge side of the peering is already removed and the partner has no path to the core."
+    causes:
+      - slots were minted or revoked since the list was committed
+      - FED_SLOT_DB (or FED_SLOT_REGISTRY_STORE=postgres with FED_SLOT_PG_SSH) is not set for a deployment with lazy slot storage
+    fixes:
+      - "regenerate and commit the slot list (ops/scripts/sync-slot-anchors.py --env <env> ...), then goatbuilder federate backout <partner>"
+    read: docs/design/goatbuilder.md
+    exit: 3
+    matches:
+      - "\\(GB-223\\)"
+
+  - code: GB-224
+    tool: goatbuilder
+    title: the core router was not restarted on the reviewed candidate
+    what: "The core step installs only the candidate configuration whose digest the survey printed. The core's files changed since the survey (so the candidate's digest differs), more than one core router was found, or the restart failed. The org fragment kept beside it as <fragment>.before-backout-<partner> is the state before the step."
+    causes:
+      - another change reached the core between the survey and the restart
+      - several containers qualify as the core router
+    fixes:
+      - "goatbuilder federate backout <partner> --dry-run, review the new candidate, then run it again"
+      - "name the router with peering_backout_core_container or FED_ROUTER_CONTAINER"
+    read: docs/design/goatbuilder.md
+    exit: 3
+    matches:
+      - "\\(GB-224\\)"
+
+  - code: GB-225
+    tool: goatbuilder
+    title: resources of the peering are still present after the back-out
+    what: "The survey run after the removal still finds resources of this peering, or the removal play stopped partway. Every step is idempotent: running the back-out again removes what is left and reports the rest as absent."
+    causes:
+      - a host became unreachable during the removal
+      - a unit or container would not stop
+    fixes:
+      - "goatbuilder federate backout <partner>"
+    read: docs/design/goatbuilder.md
+    exit: 3
+    matches:
+      - "\\(GB-225\\)"
+
+  - code: GB-226
+    tool: goatbuilder
+    title: our package for the counterparty could not be withdrawn from the directory
+    what: "The back-out asks the peering directory to delete /v1/parties/<us>/packages/<partner>, signed by our bound key. The directory refused or could not be reached. This is a warning: a listing grants nothing, and the peering's hosts are already clean. Our single entry and every other party's entry are never touched."
+    causes:
+      - FED_SIGNING_KEY is not set, or is not the key the directory binds to us
+      - the directory is unreachable
+    fixes:
+      - "python3 ops/federation/standup/directory_withdraw.py --url <directory> --us <us> --them <partner> --key <signing key>"
+    read: docs/design/peering-directory-service.md
+    exit: 0
+    matches:
+      - "WARN \\(GB-226\\)"
+
+  - code: GB-227
+    tool: goatbuilder
+    title: the core still admits the partner through its own configuration
+    what: "The core router was configured by roles/goat-zenoh from zenoh_sovereign_peerings, which declares the partner's subject and grants as sovereign-<partner> ids. The back-out takes the partner's entry out of group_vars/<core router group>/peerings.yml, the file admission writes it into, and runs the role's play, which restarts the router without the partner's store and then deletes that store whole (ADR 1234). After the back-out the core still declares the partner: the entry is in a file admission does not write, the back-out could not rewrite peerings.yml (GB-237), the core was admitted through the deployment's own route (FED_CORE_*), or the role's play failed. The partner has no edge left to reach the core through."
+    causes:
+      - the core admits the peering from a zenoh_sovereign_peerings entry the back-out did not write, or could not take out
+      - the role's play failed after the entry was taken out, and the entry was put back
+    fixes:
+      - "remove the partner's entry from zenoh_sovereign_peerings by review where it is declared and run the core play (a router restart); the role then reports sovereign_from_<partner> in .undeclared-stores"
+      - "after a failed play: read its output, then goatbuilder federate backout <partner> again"
+    read: docs/operations/sovereign-federation-runbook.md
+    exit: 3
+    matches:
+      - "\\(GB-227\\)"
+
+  - code: GB-270
+    tool: goatbuilder
+    title: a backed-out partner's store was kept because the router does not yet run without it
+    what: "On a goat-zenoh role core, the back-out took the partner out of zenoh_sovereign_peerings, ran the role's play to restart the router without the partner's store, then ran ops/ansible/zenoh-drop-partner-store.yml, which deletes <storage path>/sovereign_from_<partner> only after the router runs without it (ADR 1234). One of the two plays did not get there: the partner is still declared, the live configuration still names the store, the router is not running, or it started before that configuration was written. The store was kept, and the back-out put the partner's entry back in peerings.yml, so running it again repeats the step."
+    causes:
+      - the role's play failed before or during the router's restart
+      - the router did not restart after the configuration without the store was written
+      - the partner is declared in another of the core router group's files
+    fixes:
+      - "read the role play's output above, then goatbuilder federate backout <partner>"
+    read: docs/design/federation-backout-partner-data.md
+    exit: 3
+    matches:
+      - "\\(GB-270\\)"
 
   - code: X-ANSIBLE-001
     tool: ansible
@@ -1530,7 +3250,7 @@ entries:
       - a group_vars fact missing for this goatnet
     fixes:
       - "goatbuilder deploy --env <env> --component <c> --dry-run   (names every variable the play needs)"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/operations/goatnet-standup.md
     matches:
       - "Assertion failed"
       - "\"assertion\": "
@@ -1544,7 +3264,7 @@ entries:
       - see the msg in the fatal line
     fixes:
       - "grep -n -A3 'fatal:' <log>"
-    read: docs/operations/troubleshooting.md
+    read: docs/operations/goatnet-standup.md
     matches:
       - "fatal: \\[[^\\]]+\\]: FAILED!"
 
@@ -1557,7 +3277,7 @@ entries:
       - a feature branch that touches group_vars or roles
     fixes:
       - "git pull --ff-only origin main   (the message prints the exact command)"
-    read: docs/design/engineering-baseline.md
+    read: docs/operations/goatnet-standup.md
     matches:
       - "ansible-preflight: REFUSE"
       - "ansible-preflight: refused"
@@ -1607,7 +3327,7 @@ entries:
       - an address was reused by another machine
     fixes:
       - "confirm the rebuild with the operator, then: ssh-keygen -R <address>"
-    read: docs/operations/troubleshooting.md
+    read: docs/operations/site-node-troubleshooting.md
     matches:
       - "REMOTE HOST IDENTIFICATION HAS CHANGED"
       - "Host key verification failed"
@@ -1622,7 +3342,7 @@ entries:
     fixes:
       - "eval $(op signin)   (OP_ACCOUNT=<account> for the team store)"
       - "goatbuilder doctor --credentials --all   (the tool:op-session row)"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/design/secret-store-requirements.md
     matches:
       - "not currently signed in"
       - "account is not signed in"
@@ -1640,7 +3360,7 @@ entries:
       - "env | grep 'op://'   (find the variable)"
       - "env -u <THAT_VAR> op run --env-file=… -- <command>"
       - "or complete it to op://<vault>/<item>/<field>"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/design/secret-store-requirements.md
     matches:
       - "invalid secret reference"
       - "too few '/'"
@@ -1655,7 +3375,7 @@ entries:
     fixes:
       - "op item get '<item>' --vault <vault>"
       - "check refs/goat.refs in <owner>/goat-credentials for the current line"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/design/secret-store-requirements.md
     matches:
       - "isn't an item"
       - "could not resolve"
@@ -1672,7 +3392,7 @@ entries:
     fixes:
       - "aws-vault exec <profile> --no-session -- aws sts get-caller-identity"
       - "aws-vault add <profile>   (re-enter the current key)"
-    read: docs/design/cloud-environments.md
+    read: docs/design/cloud-infrastructure-discipline.md
     matches:
       - "InvalidClientTokenId"
       - "SignatureDoesNotMatch"
@@ -1688,7 +3408,7 @@ entries:
     fixes:
       - "aws-vault add <profile>"
       - "aws-vault list"
-    read: docs/design/cloud-environments.md
+    read: docs/design/cloud-infrastructure-discipline.md
     matches:
       - "aws-vault: error"
       - "profile .* not found"
@@ -1718,7 +3438,7 @@ entries:
       - "aws login   (when the error names it)"
       - "env -u AWS_VAULT_KEYCHAIN_NAME aws-vault exec <profile> --no-session -- aws sts get-caller-identity   (when the keychain name is set)"
       - "aws-vault add <profile>   (when the key really is bad; it replaces the stored key without deleting it first)"
-    read: docs/design/cloud-environments.md
+    read: docs/design/cloud-infrastructure-discipline.md
     matches:
       - "Your session has expired. Please reauthenticate using 'aws login'"
 
@@ -1816,7 +3536,7 @@ entries:
       - the wrong public key or identity
     fixes:
       - "cosign verify --key <org key> <image@digest>"
-    read: docs/design/oci-goat-substrate.md
+    read: docs/reference/goatbuilder/02-install.md
     matches:
       - "no matching signatures"
       - "signature mismatch"
@@ -1830,7 +3550,7 @@ entries:
       - running docker without sudo on a host where the operator user is not in the docker group
     fixes:
       - "sudo docker …   (hosts run docker as root by baseline)"
-    read: docs/operations/troubleshooting.md
+    read: docs/operations/site-node-troubleshooting.md
     matches:
       - "permission denied while trying to connect to the Docker daemon socket"
 
@@ -1844,7 +3564,7 @@ entries:
     fixes:
       - "crane digest <repo.image_namespace>/<image>:<tag>"
       - "on the host: sudo docker pull <ref>"
-    read: docs/design/oci-goat-substrate.md
+    read: docs/design/base-images.md
     matches:
       - "manifest unknown"
       - "pull access denied"
@@ -1859,7 +3579,7 @@ entries:
       - a local Docker Desktop that is not launched (never launch it for goat work)
     fixes:
       - "on the host: sudo systemctl status docker"
-    read: docs/operations/troubleshooting.md
+    read: docs/operations/site-node-troubleshooting.md
     matches:
       - "Cannot connect to the Docker daemon"
 
@@ -1885,7 +3605,7 @@ entries:
       - the service is stopped
     fixes:
       - "sudo netbird service start   (or restart the desktop client)"
-    read: docs/operations/operator-laptop-hygiene.md
+    read: docs/operations/battle-drills/02-mesh-client.md
     matches:
       - "daemon is not running"
       - "failed to connect to daemon"
@@ -1912,7 +3632,7 @@ entries:
       - no grant for this surface
     fixes:
       - "for goat admin verbs: GOAT_PORTAL_TOKEN=op_… goat …"
-    read: docs/design/rbac-adherence.md
+    read: docs/design/identity-access-and-onboarding-reference.md
     matches:
       - "403 Forbidden"
 
@@ -1924,7 +3644,7 @@ entries:
       - the container is restarting or down
     fixes:
       - "on the host: sudo docker ps --format '{{.Names}} {{.Status}}' | grep -v healthy"
-    read: docs/operations/troubleshooting.md
+    read: docs/operations/site-node-troubleshooting.md
     matches:
       - "502 Bad Gateway"
       - "503 Service Unavailable"
@@ -1952,7 +3672,7 @@ entries:
       - "an environment assignment placed where direnv exec expects the command"
     fixes:
       - "direnv exec . env VAR=value cmd"
-    read: docs/operations/operator-laptop-hygiene.md
+    read: docs/operations/admin-operator-guide.md
     matches:
       - "direnv: error command '[A-Za-z_]+=[^']*' not found on PATH"
 
@@ -1966,7 +3686,7 @@ entries:
     fixes:
       - "netbird status | head -5"
       - "dig +short <name>   (then the same against the mesh resolver the profile names: goat names)"
-    read: docs/design/dns-service-discovery.md
+    read: docs/design/mesh-dns-redundancy.md
     matches:
       - "Temporary failure in name resolution"
       - "Could not resolve host"
@@ -1983,7 +3703,7 @@ entries:
     fixes:
       - "goat ca ls"
       - "date -u   (compare with a known-good clock)"
-    read: docs/design/fips-pqc-path.md
+    read: docs/design/internal-tls-ca.md
     matches:
       - "certificate verify failed"
       - "x509: certificate"
@@ -1997,7 +3717,7 @@ entries:
       - a laptop that never installed the console's Playwright suite
     fixes:
       - "(cd ops/goat-id-console/web/e2e && npm ci && npx playwright install chromium)"
-      - "goatbuilder doctor --all   (the tool:live-rows row says when this machine is ready)"
+      - "goatbuilder doctor --browser-tests   (the tool:live-rows row fails until this machine is ready)"
     read: docs/design/release-candidate-validation.md
     matches:
       - "has no node_modules"
@@ -2086,6 +3806,20 @@ entries:
     matches:
       - "is still encrypted — run: git-crypt unlock"
 
+  - code: X-ACCEPT-001
+    tool: acceptance.sh
+    title: "acceptance could not run a required check, so the peering is not accepted"
+    what: "ops/federation/standup/acceptance.sh (phase 14) found no failure, but a required check was BLOCKED (its input or evidence was unavailable) or SKIPPED (not exercised). Such a check proves nothing, so the verdict in <work>/evidence/acceptance/result.json is INCOMPLETE and the run exits 3, not 0."
+    causes:
+      - a surface the check reads is not configured (for example the partner's REST endpoint or the SPIRE servers)
+      - the agreement offers nothing in one direction, so that direction's checks had nothing to send
+      - a probe session the check needs was not started
+    fixes:
+      - "read the BLOCKED and skipped lines above the acceptance-counts line, or the why field of result.json; set what each names, then run phase 14 again"
+      - "ops/scripts/peering-standup.sh <peering> --from 14"
+    read: docs/design/federation-acceptance.md
+    matches:
+      - "ACCEPTANCE FAILED — [0-9]+ passed, [0-9]+ SKIPPED"
   - code: X-DIGEST-001
     tool: image-digest
     title: "no tool could read the image's digest"

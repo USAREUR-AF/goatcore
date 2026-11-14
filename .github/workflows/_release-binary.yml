@@ -281,9 +281,13 @@ jobs:
     needs: [nominator]
     if: ${{ !cancelled() && inputs.docs_script != '' && (needs.nominator.result == 'success' || needs.nominator.result == 'skipped') }}
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - name: docs_asset is named
         env:
           DOCS_ASSET: ${{ inputs.docs_asset }}
@@ -312,8 +316,22 @@ jobs:
           MDBOOK_I18N_HELPERS_VERSION: '0.4.0'
         run: |
           set -euo pipefail
-          sudo apt-get -o Acquire::Retries=3 -o DPkg::Lock::Timeout=120 update
-          sudo apt-get -o DPkg::Lock::Timeout=120 install -y gettext
+          # gettext comes from the runner's Ubuntu mirror. When the mirror does not answer
+          # within three minutes, Homebrew (on the runner image) provides it instead, so a
+          # release does not wait on a distribution archive.
+          if command -v msgfmt >/dev/null && command -v msgmerge >/dev/null; then
+            echo "gettext is already on the runner"
+          elif sudo timeout 90 apt-get -o Acquire::Retries=1 -o DPkg::Lock::Timeout=60 update \
+               && sudo timeout 90 apt-get -o Acquire::Retries=1 -o DPkg::Lock::Timeout=60 install -y gettext; then
+            echo "gettext installed from the Ubuntu mirror"
+          else
+            echo "::warning::the Ubuntu mirror did not provide gettext; installing it with Homebrew"
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install gettext
+            echo "$(brew --prefix gettext)/bin" >> "$GITHUB_PATH"
+            export PATH="$(brew --prefix gettext)/bin:$PATH"
+          fi
+          msgfmt --version | head -1
           cargo install --locked mdbook-i18n-helpers --version "=${MDBOOK_I18N_HELPERS_VERSION}"
       - name: Build the book
         env:

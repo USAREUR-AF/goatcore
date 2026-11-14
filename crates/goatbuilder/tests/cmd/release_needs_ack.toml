@@ -3,7 +3,7 @@ bin.name = "goatbuilder"
 args = ["release", "-C", "../..", "netvis", "--version", "0.0.1", "--dry-run"]
 status.code = 1
 stdout = """
-FAIL  refused  --ack '<name>' is required — a candidate reaches preprod and is attributed
+FAIL  refused  --ack '<name>' is required — a candidate reaches preprod and is attributed (GB-018)
 release: refused (1 check)
 """
 stderr = ""

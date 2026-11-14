@@ -16,6 +16,12 @@ GROUP="${SITE}_hosts"
 setup() {
   FIXTURE="$BATS_TEST_TMPDIR/repo"
   BIN="$BATS_TEST_TMPDIR/bin"
+  # goat-standup.sh keeps its state (timings, logs) under ~/.goat/state unless the
+  # checkout declares another; give the run a home of its own so a test run never
+  # writes into the real one. Python packages installed for the user stay found.
+  export PYTHONUSERBASE="${PYTHONUSERBASE:-$HOME/.local}"
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME"
   mkdir -p "$FIXTURE/ops/scripts" "$FIXTURE/ops/ansible" "$BIN"
   cp "$SUBJECT" "$FIXTURE/ops/scripts/goat-standup.sh"
   chmod +x "$FIXTURE/ops/scripts/goat-standup.sh"
@@ -23,6 +29,10 @@ setup() {
   # $(printenv NAME); it is real here, not stubbed, so that refusal is tested too.
   cp "$REPO_ROOT/ops/scripts/standup-phase-run" "$FIXTURE/ops/scripts/standup-phase-run"
   chmod +x "$FIXTURE/ops/scripts/standup-phase-run"
+  # goat-standup.sh reads deploy.state_dir and deploy.aws_profile through
+  # project-setting.sh and stops the run when that read fails, so it is real here.
+  cp "$REPO_ROOT/ops/scripts/project-setting.sh" "$FIXTURE/ops/scripts/project-setting.sh"
+  chmod +x "$FIXTURE/ops/scripts/project-setting.sh"
 
   # fresh-source.sh (contract C3): stubbed. This test is about phase 12's own
   # command and exit-code handling, not trunk staleness.

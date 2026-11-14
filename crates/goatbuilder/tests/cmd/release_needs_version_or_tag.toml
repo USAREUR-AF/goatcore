@@ -3,7 +3,7 @@ bin.name = "goatbuilder"
 args = ["release", "-C", "../..", "netvis", "--ack", "Gate", "--dry-run"]
 status.code = 1
 stdout = """
-FAIL  refused  --version X.Y.Z (or --tag) is required
+FAIL  refused  --version X.Y.Z (or --tag) is required (GB-018)
 release: refused (1 check)
 """
 stderr = ""

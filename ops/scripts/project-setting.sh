@@ -51,20 +51,41 @@ case "${BASH_SOURCE[0]}" in */*) HERE="${BASH_SOURCE[0]%/*}" ;; *) HERE=. ;; esa
 REPO="$(cd "$HERE/../.." && pwd)"
 if [ "${1:-}" = "--repo" ]; then REPO="${2:?--repo needs a directory}"; shift 2; fi
 
+# unquote <name> <raw>: a scalar as YAML reads it. A plain value, or a quoted one
+# with no escape in it, is unquoted here. A double-quoted value with a backslash, or
+# a single-quoted one with a doubled quote, is read through PyYAML, so it means what
+# goatbuilder's own YAML reader says it means; without PyYAML it is refused by name
+# (exit 3) rather than printed with its escapes still in it.
+unquote() {
+  local name="$1" raw="$2" inner
+  case "$raw" in
+    \"*\") inner="${raw:1:${#raw}-2}"; case "$inner" in *\\*) ;; *) printf '%s\n' "$inner"; return 0 ;; esac ;;
+    \'*\') inner="${raw:1:${#raw}-2}"; case "$inner" in *\'\'*) ;; *) printf '%s\n' "$inner"; return 0 ;; esac ;;
+    *) printf '%s\n' "$raw"; return 0 ;;
+  esac
+  if python3 -c 'import yaml' >/dev/null 2>&1; then
+    python3 -c 'import sys, yaml; print(yaml.safe_load(sys.argv[1]))' "$raw"
+  else
+    echo "project-setting.sh: $name is a quoted YAML value with escapes; reading it needs python3 with PyYAML (pip install pyyaml), or declare it without escapes" >&2
+    exit 3
+  fi
+}
+
 declared() {  # declared <section> <key>
-  local f="$REPO/ops/goatbuilder/goatbuilder.yaml"
+  local f="$REPO/ops/goatbuilder/goatbuilder.yaml" raw
   [ -f "$f" ] || return 0
-  awk -v section="$1" -v key="$2" '
+  raw="$(awk -v section="$1" -v key="$2" '
     /^[^ \t#]/ { inside = ($0 ~ ("^" section ":[ \t]*(#.*)?$")) ; next }
     inside && $0 ~ ("^  " key ":") {
       sub("^  " key ":[ \t]*", "")
       sub(/[ \t]+#.*$/, "")
       sub(/[ \t]+$/, "")
-      if ($0 ~ /^".*"$/ || $0 ~ /^\047.*\047$/) $0 = substr($0, 2, length($0) - 2)
       print
       exit
     }
-  ' "$f"
+  ' "$f")"
+  [ -n "$raw" ] || return 0
+  unquote "$1.$2" "$raw"
 }
 
 ca_audit_log() {

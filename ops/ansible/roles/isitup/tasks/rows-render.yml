@@ -1,0 +1,55 @@
+---
+# rows-render.yml: write the row list to the host.
+#
+# Imported by tasks/main.yml and tasks/rows-only.yml after rows-build.yml has
+# set isitup_rows, isitup_rows_sha256 and isitup_rows_source. Writes two files
+# and reads no sign-in secret.
+
+- name: Render services.env (per-site service list — drives page rows + health probe)
+  ansible.builtin.template:
+    src: services.env.j2
+    dest: "{{ isitup_dir }}/services.env"
+    owner: root
+    group: root
+    mode: "0644"
+  # services.env is single-file bind-mounted into the container; atomic-
+  # write template renders create a new inode the container can't see
+  # until recreate. Notify the same handler that the env_file template
+  # uses (compose --force-recreate). The list-only play names a handler that
+  # recreates the isitup container alone (isitup_rows_notify).
+  notify: "{{ isitup_rows_notify | default('reload isitup compose') }}"
+
+# What the page knows about each row beyond its probe result: lifecycle,
+# where it came from (core / offmesh / external) and who owns it. Lives in the
+# data/ directory, which is a DIRECTORY bind mount — so unlike services.env and
+# check.sh it needs no container recreate to be seen, and it is served with the
+# same no-store header as current.json. The page reads both on every refresh.
+#
+# It also carries `rendered`: the stamp of the list itself (digest, row count,
+# source commits, time). `rendered.at` is the time this list was first rendered
+# from this source, so a run that changes nothing leaves the file as it is.
+- name: Read the list stamp already on the host
+  ansible.builtin.slurp:
+    src: "{{ isitup_dir }}/data/meta.json"
+  register: isitup_meta_on_host
+  failed_when: false
+
+- name: Keep the render time while the list and its source are unchanged
+  ansible.builtin.set_fact:
+    isitup_rows_rendered_at: >-
+      {{ _isitup_prev.at
+         if (_isitup_prev.at is defined
+             and (_isitup_prev.sha256 | default('')) == isitup_rows_sha256
+             and (_isitup_prev.source | default({})) == isitup_rows_source)
+         else now(utc=True, fmt='%Y-%m-%dT%H:%M:%SZ') }}
+  vars:
+    _isitup_prev_meta: "{{ isitup_meta_on_host.content | default('e30=') | b64decode | from_json }}"
+    _isitup_prev: "{{ (_isitup_prev_meta['rendered'] | default({})) if (_isitup_prev_meta is mapping) else {} }}"
+
+- name: Render data/meta.json (per-row lifecycle, source and owner, and the list stamp)
+  ansible.builtin.template:
+    src: meta.json.j2
+    dest: "{{ isitup_dir }}/data/meta.json"
+    owner: root
+    group: root
+    mode: "0644"

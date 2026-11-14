@@ -1,0 +1,27 @@
+# C11 conformance checks that fail today (tests/legibility.rs).
+#
+# One line per failing check: <check> <verb> <why it fails>. The test reads
+# this file. A listed check that fails is reported and passes the test; a
+# listed check that passes fails the test, so the PR that makes a check pass
+# must remove its line; an unlisted check that fails, fails the test. Lines
+# are only ever removed. docs/design/goatbuilder-legibility.md names the step
+# that removes each one.
+
+# (a) every process the tool started is in the run record, with its log path.
+#     Removed by step 2 (one runner, per-phase logs) with step 4 (run.json).
+
+# (b) every value in a command line has an entry in `inputs`, with a source.
+#     Removed by step 5, verb by verb (federate first).
+b standup    the run record is written, but its `inputs` is empty until standup hands its list to the runner (runner::set_inputs)
+b join-node  the run record is written, but its `inputs` is empty until join-node hands its list to the runner (runner::set_inputs)
+b deploy     the run record is written, but its `inputs` is empty until deploy hands its list to the runner (runner::set_inputs)
+b federate   the run record is written, but its `inputs` is empty until federate hands its list to the runner (runner::set_inputs)
+
+# (c) the commands a terminal dry run prints are the commands the real run executes, in order.
+#     Removed by step 3 (with step 2 for the probes that print nothing today).
+
+# (d) every phase that can run has a phase-catalog entry, and every document path the tool prints exists.
+#     Removed by step 6 (ops/phases/catalog.yaml; the missing document).
+d standup    no phase catalog (ops/phases/catalog.yaml)
+d join-node  no phase catalog (ops/phases/catalog.yaml)
+d deploy     no phase catalog (ops/phases/catalog.yaml)

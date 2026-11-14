@@ -7,7 +7,11 @@
 # WHY THIS EXISTS. ops/compose/mgmt-host/docker-compose.yml reads
 # TRAEFIK_CPUS, TRAEFIK_MEMORY, MANAGEMENT_A_CPUS, MANAGEMENT_A_MEMORY,
 # SIGNAL_A_CPUS and SIGNAL_A_MEMORY from .env and falls back to the fleet
-# values (0.5/1G, 1.0/512M, 1.0/512M) when a key is absent. mgmt-host.yml
+# values (0.5/1G, 1.0/512M, 1.0/512M) when a key is absent. Every other
+# container memory limit and reservation of the mgmt-host compose files
+# (POSTGRES_A_MEMORY and the rest below) works the same way: the compose
+# file holds today's value as the default, and a mgmt_*_memory group_var
+# overrides it. mgmt-host.yml
 # writes them in its full .env render, but other plays copy the same compose
 # file and recreate a service without that render. Without this file, a
 # routine traefik-acme.yml run on a host whose .env predates the keys would
@@ -44,6 +48,46 @@
     - { key: MANAGEMENT_A_MEMORY, var: mgmt_management_memory }
     - { key: SIGNAL_A_CPUS, var: mgmt_signal_cpus }
     - { key: SIGNAL_A_MEMORY, var: mgmt_signal_memory }
+    - { key: POSTGRES_A_MEMORY, var: mgmt_postgres_memory }
+    - { key: POSTGRES_A_MEMORY_RESERVATION, var: mgmt_postgres_memory_reservation }
+    - { key: SIGNAL_A_MEMORY_RESERVATION, var: mgmt_signal_memory_reservation }
+    - { key: FEDERATION_PROXY_MEMORY, var: mgmt_federation_proxy_memory }
+    - { key: FEDERATION_PROXY_MEMORY_RESERVATION, var: mgmt_federation_proxy_memory_reservation }
+    - { key: MANAGEMENT_A_MEMORY_RESERVATION, var: mgmt_management_memory_reservation }
+    - { key: TRAEFIK_MEMORY_RESERVATION, var: mgmt_traefik_memory_reservation }
+    - { key: KRATOS_MEMORY, var: mgmt_kratos_memory }
+    - { key: KRATOS_MEMORY_RESERVATION, var: mgmt_kratos_memory_reservation }
+    - { key: HYDRA_MEMORY, var: mgmt_hydra_memory }
+    - { key: HYDRA_MEMORY_RESERVATION, var: mgmt_hydra_memory_reservation }
+    - { key: SELFSERVICE_UI_MEMORY, var: mgmt_selfservice_ui_memory }
+    - { key: SELFSERVICE_UI_MEMORY_RESERVATION, var: mgmt_selfservice_ui_memory_reservation }
+    - { key: ADMIT_AUDIT_MEMORY, var: mgmt_admit_audit_memory }
+    - { key: ADMIT_AUDIT_MEMORY_RESERVATION, var: mgmt_admit_audit_memory_reservation }
+    - { key: DASHBOARD_ADMIN_MEMORY, var: mgmt_dashboard_admin_memory }
+    - { key: OAUTH2_PROXY_DASHBOARD_ADMIN_MEMORY, var: mgmt_oauth2_proxy_dashboard_admin_memory }
+    - { key: PROMETHEUS_MEMORY, var: mgmt_prometheus_memory }
+    - { key: PROMETHEUS_MEMORY_RESERVATION, var: mgmt_prometheus_memory_reservation }
+    - { key: ALERTMANAGER_MEMORY, var: mgmt_alertmanager_memory }
+    - { key: ALERTMANAGER_MEMORY_RESERVATION, var: mgmt_alertmanager_memory_reservation }
+    - { key: NODE_EXPORTER_MEMORY, var: mgmt_node_exporter_memory }
+    - { key: NODE_EXPORTER_MEMORY_RESERVATION, var: mgmt_node_exporter_memory_reservation }
+    - { key: POSTGRES_EXPORTER_MEMORY, var: mgmt_postgres_exporter_memory }
+    - { key: POSTGRES_EXPORTER_MEMORY_RESERVATION, var: mgmt_postgres_exporter_memory_reservation }
     - { key: MGMT_HOST_BOOTSTRAP_IMAGE, var: mgmt_host_bootstrap_image }
   loop_control:
     label: "{{ item.key }}"
+
+# Postgres memory settings, as arguments on postgres-a's command line. Unset,
+# the image's baked config applies (shared_buffers 768MB, max_connections 300).
+- name: Write postgres-a's memory settings to .env, or remove them when unset
+  ansible.builtin.lineinfile:
+    path: "{{ compose_dir }}/.env"
+    regexp: "^POSTGRES_A_MEMORY_ARGS="
+    line: "POSTGRES_A_MEMORY_ARGS={{ _mgmt_postgres_memory_args }}"
+    state: "{{ 'present' if (_mgmt_postgres_memory_args | length > 0) else 'absent' }}"
+    owner: root
+    group: root
+    mode: "0600"
+    create: true
+  vars:
+    _mgmt_postgres_memory_args: "{{ ((['-c shared_buffers=' ~ mgmt_postgres_shared_buffers] if (mgmt_postgres_shared_buffers | default('') | string | length > 0) else []) + (['-c max_connections=' ~ mgmt_postgres_max_connections] if (mgmt_postgres_max_connections | default('') | string | length > 0) else [])) | join(' ') }}"

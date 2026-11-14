@@ -45,7 +45,7 @@ if ! git -C "$WT" diff --cached --quiet && [ -z "$(git -C "$WT" diff --cached --
 fi
 git -C "$WT" fetch -q origin main
 if git -C "$WT" diff --cached --quiet && git -C "$WT" diff --quiet origin/main -- 2>/dev/null; then
-  SHA="$(git -C "$WT" rev-parse --short origin/main)"
+  SHA="$(git -C "$WT" rev-parse --short=12 origin/main)"
   say "nothing to land — the worktree matches main ($SHA)"
   printf '%s\n' "$SHA"
   exit 0
@@ -76,6 +76,6 @@ fi
 gh pr merge "$N" -R "$REPO_SLUG" --squash --delete-branch 2>/dev/null \
   || gh pr merge "$N" -R "$REPO_SLUG" --squash --delete-branch --admin 2>&1 | tail -1 >&2
 git -C "$WT" fetch -q origin main
-SHA="$(git -C "$WT" rev-parse --short origin/main)"
+SHA="$(git -C "$WT" rev-parse --short=12 origin/main)"
 say "merged #$N — main is $SHA"
 printf '%s\n' "$SHA"

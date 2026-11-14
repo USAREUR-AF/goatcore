@@ -14,7 +14,12 @@ case "${1:-up}" in
     : "${WG_KEY_FILE:?WG_KEY_FILE not set}"
     : "${WG_LISTEN_PORT:?WG_LISTEN_PORT not set}"
     ip link show "$WG_IFNAME" >/dev/null 2>&1 || ip link add "$WG_IFNAME" type wireguard
-    wg set "$WG_IFNAME" private-key "$WG_KEY_FILE" listen-port "$WG_LISTEN_PORT"
+    # The key goes in through a pipe, not as a path. Ubuntu's AppArmor profile for
+    # /usr/bin/wg (26.04 onward) lets wg open key files under /etc/wireguard only, and
+    # `wg set private-key <path>` is refused anywhere else ("fopen: Permission denied").
+    # This shell reads the file; wg reads the pipe.
+    [ -r "$WG_KEY_FILE" ] || { echo "$WG_KEY_FILE is not readable" >&2; exit 1; }
+    cat "$WG_KEY_FILE" | wg set "$WG_IFNAME" private-key /dev/stdin listen-port "$WG_LISTEN_PORT"
     [ -z "${WG_MTU:-}" ] || ip link set "$WG_IFNAME" mtu "$WG_MTU"
     [ -z "${WG_LINK_ADDR:-}" ] || ip addr replace "$WG_LINK_ADDR" dev "$WG_IFNAME"
     if [ -n "${WG_PEER_KEY:-}" ]; then

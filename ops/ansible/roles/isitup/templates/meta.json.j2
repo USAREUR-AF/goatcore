@@ -1,8 +1,18 @@
 {#- data/meta.json — what the status page knows about each row beyond its probe
     result. Keyed by row id, the same id current.json carries. Rendered from the
-    `isitup_rows` fact, the same list services.env is rendered from. -#}
+    `isitup_rows` fact, the same list services.env is rendered from.
+
+    `rendered` stamps the list itself (tasks/rows-build.yml, rows-render.yml):
+      sha256  digest of the row list in canonical JSON; ops/scripts/isitup-list.py
+              compares it with the list the current tree declares
+      rows    how many rows the list has
+      at      UTC time this list was first rendered from this source
+      source  the commits it was rendered from: {"commit": …} for a plain
+              clone, {"goatcore": …, "overlay": …, …} for an assembled tree
+    A meta.json written before the stamp existed has `rows` only; the page and
+    the check both read that shape. -#}
 {%- set _meta = {} -%}
 {%- for r in isitup_rows -%}
 {%-   set _ = _meta.update({r.id: {'lifecycle': r.lifecycle, 'source': r.source, 'owner': r.owner, 'retire_after': r.retire_after}}) -%}
 {%- endfor -%}
-{{ {'rows': _meta} | to_nice_json }}
+{{ {'rows': _meta, 'rendered': {'sha256': isitup_rows_sha256, 'rows': isitup_rows | length, 'at': isitup_rows_rendered_at, 'source': isitup_rows_source}} | to_nice_json }}

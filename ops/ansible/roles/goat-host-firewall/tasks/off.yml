@@ -1,0 +1,19 @@
+---
+# Run by the peering plays when goat_host_firewall_baseline is false. Turning the switch
+# off does not unload a baseline a host already carries: its table stays and
+# goat-host-firewall.service reloads it at boot. Say so instead of leaving the operator
+# believing the host is unfiltered.
+- name: host-firewall | is a baseline still on this host
+  ansible.builtin.stat:
+    path: "{{ goat_host_firewall_dir }}/profile"
+  register: _hf_off_profile
+
+- name: host-firewall | the switch is off but the baseline is still loaded
+  ansible.builtin.fail:
+    msg: >-
+      goat-host-firewall refuses (GB-210): goat_host_firewall_baseline is false, but this
+      host still carries the baseline ({{ goat_host_firewall_dir }}/profile exists), and
+      goat-host-firewall.service reloads it at every boot. To take it off:
+      systemctl disable --now goat-host-firewall && rm -rf {{ goat_host_firewall_dir }} .
+      To keep it, set goat_host_firewall_baseline: true.
+  when: _hf_off_profile.stat.exists

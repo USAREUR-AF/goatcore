@@ -1,6 +1,6 @@
 [package]
 name = "goat-cli"
-version = "0.5.18"
+version = "0.5.19"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -15,6 +15,8 @@ path = "src/main.rs"
 goat-fun = { path = "../goat-fun" }
 panoscope-core = { path = "../panoscope-core" }
 goat-errors = { path = "../goat-errors" }
+# Federation package v1: the library behind `goat federate`.
+goat-federation = { path = "../goat-federation" }
 # The self-update core goatbuilder shares (asset name, version compare, checksum, atomic replace).
 goat-selfupdate = { path = "../goat-selfupdate" }
 # Grant-keyed (supplemental) encryption for the sealed data path (goat pub

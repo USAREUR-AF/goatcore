@@ -40,7 +40,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: "${DASHBOARD_ADMIN_MEMORY:-256M}"
     labels:
       - "site_id=${SITE_ID:-unknown}"
       - "router_role=${ROUTER_ROLE:-a}"

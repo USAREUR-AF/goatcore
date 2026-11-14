@@ -14,9 +14,12 @@ services.env to argv[1] and prints the expected rows as JSON on stdout:
 {"rows": [{"id", "name", "desc"}]}.
 
 As a module (row-list.py): `render(context, today)` returns
-(rows, services_env_text, meta_dict).
+(rows, services_env_text, meta_dict). `rows_sha256(rows)` is the digest
+tasks/rows-build.yml stamps the list with; list-freshness.sh holds the two
+against each other.
 """
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -68,6 +71,18 @@ def to_bool(value):
     return bool(value)
 
 
+def rows_sha256(rows):
+    """The digest tasks/rows-build.yml computes: sha256 of the row list as
+    canonical JSON (keys sorted, no spaces, ASCII escapes)."""
+    text = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# What tasks/rows-build.yml and rows-render.yml hand meta.json.j2 besides the rows.
+SOURCE = {"goatcore": "1" * 40, "overlay": "2" * 40}
+RENDERED_AT = "2026-01-01T00:00:00Z"
+
+
 def render(context, today=None):
     """Render rows -> services.env + meta.json exactly as tasks/main.yml does."""
     today = today or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
@@ -97,7 +112,8 @@ def render(context, today=None):
     env.globals["now"] = now
 
     rows = json.loads(env.get_template("isitup-rows.json.j2").render(**context))
-    ctx = dict(context, isitup_rows=rows)
+    ctx = dict(context, isitup_rows=rows, isitup_rows_sha256=rows_sha256(rows),
+               isitup_rows_source=SOURCE, isitup_rows_rendered_at=RENDERED_AT)
     services_env = env.get_template("services.env.j2").render(**ctx)
     meta = json.loads(env.get_template("meta.json.j2").render(**ctx))
     return rows, services_env, meta

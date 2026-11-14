@@ -1,0 +1,22 @@
+---
+# zenoh-drop-partner-store.yml — drop ONE backed-out partner's store whole on a
+# goat-zenoh role core (ADR 1234), after the role's play has restarted the router
+# without it.
+#
+#   Driver: goatbuilder federate backout <partner> runs it on the role's own
+#           inventory group, right after the role's play, with
+#           -e target=<group> -e goat_zenoh_drop_partner_store=<partner>
+#           and the role's goat_zenoh_storage_path, goat_zenoh_config_path and
+#           zenoh_stack as the role resolves them.
+#
+# The task file is read by path, so the role's defaults and its meta dependencies
+# (the rollback ledger) are not loaded and nothing else of the role runs. The
+# partner's entry must already be gone from zenoh_sovereign_peerings, as the
+# group's group_vars now hold it; the task refuses otherwise (GB-270).
+- name: Drop a backed-out partner's store
+  hosts: "{{ target | mandatory }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: The store, once the router runs without it
+      ansible.builtin.include_tasks: roles/goat-zenoh/tasks/drop-partner-store.yml

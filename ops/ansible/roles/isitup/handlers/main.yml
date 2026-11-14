@@ -19,3 +19,16 @@
   ansible.builtin.command:
     cmd: docker restart isitup
   listen: restart isitup container
+
+# The list-only play (isitup-rows.yml) changes services.env and nothing else,
+# so it recreates the isitup container alone. `--no-deps` and the single service
+# name leave oauth2-proxy-isitup running as it is.
+- name: Recreate the isitup container only
+  ansible.builtin.command:
+    cmd: >-
+      docker compose
+      -f /opt/mgmt-host/docker-compose.yml
+      -f /opt/mgmt-host/docker-compose.isitup.yml
+      up -d --force-recreate --no-deps isitup
+    chdir: /opt/mgmt-host
+  listen: recreate isitup container

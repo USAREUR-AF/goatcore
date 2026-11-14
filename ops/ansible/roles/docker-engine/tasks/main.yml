@@ -36,7 +36,7 @@
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
-      curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+      curl -fsSL https://download.docker.com/linux/{{ docker_engine_apt_distro }}/gpg \
         | gpg --dearmor -o {{ docker_engine_apt_keyring }}
       chmod a+r {{ docker_engine_apt_keyring }}
     creates: "{{ docker_engine_apt_keyring }}"
@@ -45,7 +45,7 @@
 
 - name: Add Docker apt source list
   ansible.builtin.copy:
-    content: "deb [arch={{ docker_engine_apt_arch }} signed-by={{ docker_engine_apt_keyring }}] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable\n"
+    content: "deb [arch={{ docker_engine_apt_arch }} signed-by={{ docker_engine_apt_keyring }}] https://download.docker.com/linux/{{ docker_engine_apt_distro }} {{ ansible_distribution_release }} stable\n"
     dest: "{{ docker_engine_apt_sources_list }}"
     owner: root
     group: root

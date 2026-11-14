@@ -1,0 +1,2 @@
+goat_peering_transport_kind: "ipsec-fips"
+goat_peering_remote_link_ip: "169.254.10.5"

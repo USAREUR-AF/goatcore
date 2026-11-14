@@ -21,7 +21,7 @@ on:
 permissions:
   contents: read
   issues: read
-  pull-requests: write   # only to remove a stale security-reviewed label
+  pull-requests: write   # to remove a stale security-reviewed label and to add the community label
 
 concurrency:
   group: contributor-trust-${{ github.event.pull_request.number }}

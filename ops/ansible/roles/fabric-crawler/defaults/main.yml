@@ -146,3 +146,8 @@ fabric_crawler_logprune_oncalendar: "hourly"
 # written to /var/lib/node_exporter/textfile there is real, writable, and never
 # scraped.
 fabric_crawler_logprune_textfile_dir: ""
+
+# Container memory ceilings. The defaults are the values these limits had
+# when they were written into the compose template; a small host lowers them
+# in group_vars. ops/ci/check-compose-memory-is-variable.sh refuses a literal.
+fabric_crawler_memory_limit: 3968M  # the fabric-crawler container

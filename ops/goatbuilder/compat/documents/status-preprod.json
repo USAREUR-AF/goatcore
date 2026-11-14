@@ -1,0 +1,13 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "status",
+  "ok": true,
+  "exit": 0,
+  "checks": [
+    {
+      "name": "preprod/preprod-core-a/portal",
+      "ok": true,
+      "detail": "converged on ghcr.io/example-org/portal:v1.3.2@sha256:9f8e7d6c5b4a…"
+    }
+  ]
+}

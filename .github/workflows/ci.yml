@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # Decides whether a pull request changes anything the build jobs read. A
@@ -23,11 +23,17 @@ jobs:
   # tests and always count as code. Pushes to main, workflow_dispatch, a
   # workflow change, any other path, or a diff that cannot be computed run
   # everything.
+  #
+  # `rpi` is narrower: the Pi flash lint and scratch-disk flash steps in
+  # python-and-ansible run only when a pull request changes
+  # ops/rpi-base-image/, their test scripts or this workflow. Pushes to main,
+  # workflow_dispatch and a diff that cannot be computed run them.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       code: ${{ steps.classify.outputs.code }}
+      rpi: ${{ steps.classify.outputs.rpi }}
     steps:
       # A pull_request checkout is the test merge commit; its first parent is
       # the base, so depth 2 is enough to diff the pull request's own changes.
@@ -39,11 +45,14 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           code=false
+          rpi=false
           if [ "$EVENT" != pull_request ]; then
             code=true
+            rpi=true
           elif ! files=$(git diff --name-only HEAD^1 HEAD); then
             echo "cannot diff against the base: running everything"
             code=true
+            rpi=true
           else
             while IFS= read -r f; do
               [ -z "$f" ] && continue
@@ -56,10 +65,15 @@ jobs:
               esac
               echo "$is_doc  $f"
               [ "$is_doc" = no ] && code=true
+              case "$f" in
+                ops/rpi-base-image/*|ops/ci/test-rpi-flash-linux.sh|tests/test_rpi_flash.py|.github/workflows/ci.yml) rpi=true ;;
+              esac
             done <<< "$files"
           fi
           echo "code=$code"
           echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "rpi=$rpi"
+          echo "rpi=$rpi" >> "$GITHUB_OUTPUT"
 
   rust:
     needs: changes
@@ -94,9 +108,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-go@v5
         with:
           go-version: stable
@@ -105,7 +123,8 @@ jobs:
       - name: protoc and plugins
         timeout-minutes: 5
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q protobuf-compiler libpcsclite-dev
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o APT::Update::Error-Mode=any update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y protobuf-compiler libpcsclite-dev
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.2
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
@@ -132,18 +151,27 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: deps
-        timeout-minutes: 5
+        # The Galaxy download is bounded (three attempts of at most 90 s), so the step's bound
+        # covers it; each command names itself in an annotation when it fails.
+        timeout-minutes: 8
         run: |
-          python3 -m pip install -q pyyaml jsonschema pytest ansible-core yamllint
-          sudo apt-get update -q && sudo apt-get install -y -q shellcheck ripgrep dosfstools parted xz-utils
-          ansible-galaxy collection install -r ops/ansible/requirements.yml
+          set -uo pipefail
+          dep() { what="$1"; shift; "$@" || { rc=$?; echo "::error title=deps::$what failed (exit $rc)"; exit "$rc"; }; }
+          dep "pip install" python3 -m pip install -q pyyaml jsonschema pytest ansible-core yamllint
+          dep "apt-get update" sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o APT::Update::Error-Mode=any update
+          dep "apt-get install" sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y shellcheck ripgrep dosfstools parted xz-utils openssh-server
+          dep "ansible collections" ops/ci/ansible-galaxy-install.sh -r ops/ansible/requirements.yml
       - name: every Python file compiles
         run: python3 -m compileall -q .
       # Plain scripts: pytest finds no tests in them, and one exits at import.
@@ -155,16 +183,28 @@ jobs:
             python3 "$s" | tail -3
           done
       - name: Python tests
+        # openssh-server (deps) lets tests reach a host over a real loopback sshd,
+        # as the edge role's core-on-another-host tests do; with
+        # GOAT_TEST_REQUIRE_SSHD=1 a test that needs sshd, and with
+        # GOAT_TEST_REQUIRE_ANSIBLE=1 one that needs ansible-playbook (installed in
+        # deps), fails instead of skipping.
+        env:
+          GOAT_TEST_REQUIRE_SSHD: "1"
+          GOAT_TEST_REQUIRE_ANSIBLE: "1"
         run: |
           set -o pipefail
           export PYTHONPATH="$PWD/ops/consistency/python"
-          python3 -m pytest -q --ignore=ops/ci/test_membership_reconcile.py --ignore=ops/consistency/python/tests/test_corpus.py --ignore=ops/consistency/python/tests/test_lite_sidecar.py ops/ci ops/consistency/python ops/goatbuilder tests 2>&1 | tail -40
+          python3 -m pytest -q --ignore=ops/ci/test_membership_reconcile.py --ignore=ops/consistency/python/tests/test_corpus.py --ignore=ops/consistency/python/tests/test_lite_sidecar.py ops/ci ops/consistency/python ops/goatbuilder ops/federation/standup tests 2>&1 | tail -40
       - name: Go vulnerability scan coverage
         run: |
           python3 ops/ci/test_go_vuln_coverage.py
           python3 ops/ci/check_go_vuln_coverage.py
       - name: .envrc.example generation reads an assembled tree's layers
         run: python3 ops/scripts/test_envrc_example_assembled.py
+      # The file is generated from what the repo reads; a change that adds or drops an
+      # environment variable regenerates it in the same pull request.
+      - name: .envrc.example documents exactly the variables the repo reads
+        run: python3 ops/scripts/generate-envrc-example.py --check
       # Runs the obs-host role's real read-only scrape-input preflight against
       # loopback HTTP fixtures; a rejected endpoint must stop before a write.
       - name: obs-host scrape inputs need a consumable sample
@@ -174,28 +214,28 @@ jobs:
         run: bash ops/ci/test-source-of-record.sh
       - name: Ansible roles and templates resolve
         run: bash ops/ci/check-role-template-refs-resolve.sh
-      - name: playbooks parse
+      - name: Container memory limits are variables with defaults
         run: |
-          cd ops/ansible
-          rc=0
-          for p in *.yml; do
-            # Not playbooks: data files and a tasks file imported by relay-server.yml.
-            # site-bootstrap, site-bootstrap-for (imports it) and site-resume index a group named from site_id, which needs an inventory.
-            case "$p" in netbird_acl_matrix.yml|netbird_acl_taxonomy.yml|requirements.yml|relay-server-rathole.yml|site-bootstrap.yml|site-bootstrap-for.yml|site-resume.yml) continue;; esac
-            ansible-playbook --syntax-check -i localhost, -e target=all -e mgmt_host_target=all -e migrator_host=all -e rathole_client_target=all -e site_id=zagros "$p" >/dev/null 2>&1 || { echo "syntax: $p"; rc=1; }
-          done
-          exit $rc
+          bash ops/ci/check-compose-memory-is-variable.sh --self-test
+          bash ops/ci/check-compose-memory-is-variable.sh
+      - name: playbooks parse
+        # Each failure prints ansible's own error (ops/ci/check-playbooks-parse.sh).
+        run: |
+          bash ops/ci/check-playbooks-parse.sh --self-test
+          bash ops/ci/check-playbooks-parse.sh
       - name: shell and YAML lint
         run: |
           bash ops/ci/check-bash-portability.sh
           yamllint -d relaxed .github/workflows
       - name: Pi flash scripts lint clean
+        if: needs.changes.outputs.rpi == 'true'
         run: |
           shellcheck ops/rpi-base-image/00-prerequisites.sh ops/rpi-base-image/01-flash.sh ops/ci/test-rpi-flash-linux.sh
           shellcheck -S warning ops/rpi-base-image/*.sh ops/rpi-base-image/helper-scripts/*.sh
       # A scsi_debug RAM disk stands in for the SD card; the runner's own disks
       # are only ever passed to --dry-run, which must refuse them.
       - name: Pi flash script refuses unsafe targets and flashes a scratch disk on Linux
+        if: needs.changes.outputs.rpi == 'true'
         timeout-minutes: 5
         run: |
           if ! sudo modprobe -n scsi_debug 2>/dev/null; then
@@ -207,17 +247,25 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: deps
         timeout-minutes: 5
         run: python3 -m pip install -q pyyaml ansible-core pytest
+      - name: fixture image build failures stay visible
+        run: python3 ops/ci/test_peering_build_failures.py
       - name: the partner file's forwarder block is validated
         run: python3 -m pytest -q ops/ci/test_validate_partners_forwarder.py
+      - name: the partner file's acceptance block is validated
+        run: python3 -m pytest -q ops/ci/test_validate_partners_acceptance.py
       - name: the forwarder role cannot be handed peering material
         run: |
           python3 ops/ci/check-peering-forwarder-holds-nothing.py
@@ -227,9 +275,40 @@ jobs:
         run: |
           sudo modprobe wireguard
           bash ops/ci/test-peering-forwarder-e2e.sh
+      - name: the carrier-keys play copies public keys and keeps the certificate directory 0700
+        timeout-minutes: 5
+        run: bash ops/ci/test-peering-carrier-keys.sh
       - name: the forwarder play, run on a systemd host, converges and refuses
         timeout-minutes: 10
         run: bash ops/ci/test-peering-forwarder-role.sh
+
+  peering-host-firewall:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: deps
+        timeout-minutes: 5
+        run: |
+          python3 -m pip install -q pyyaml pytest
+          sudo apt-get install -y -q nftables
+      - name: the baseline renders, and the override contract refuses what it must
+        run: python3 -m pytest -q ops/ansible/roles/goat-host-firewall/tests/test_render.py ops/ansible/roles/goat-host-firewall/tests/test_play_vars.py
+      - name: each rendered baseline, loaded in a network namespace, answers on exactly its ports
+        timeout-minutes: 5
+        run: bash ops/ansible/roles/goat-host-firewall/tests/netns-behavior.sh
+      - name: the role over SSH converges, refuses, keeps a second peering and rolls back
+        timeout-minutes: 12
+        run: bash ops/ci/test-host-firewall-role.sh
 
   bats-bash32:
     # Keep the Bats harness on host Bash 5 so failed [[ assertions are reliable.
@@ -241,9 +320,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
 
       - name: Cache GNU Bash 3.2.57
         id: bash32
@@ -275,7 +358,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
 
       - name: Verify interpreter and empty-array behavior
         run: |
@@ -295,7 +378,10 @@ jobs:
         # The expected-failure fixture is kept outside tests/.
         run: |
           bash ops/ci/check-bats-bash32.sh
+          # The suite must leave the real state directory (~/.goat/state) alone.
+          touch "$RUNNER_TEMP/leave-home.marker"
           bats tests/
+          bash ops/ci/check-goatbuilder-tests-leave-home.sh --after "$RUNNER_TEMP/leave-home.marker"
 
   go-vuln:
     # govulncheck on every tracked Go module, one matrix row each; signal-server
@@ -306,6 +392,9 @@ jobs:
     # purpose is named with its reason in ops/ci/check_go_vuln_coverage.py.
     # Unconditional (no `if:`): the guard accepts only a blocking scan.
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -329,10 +418,11 @@ jobs:
           - ops/zenoh/loadgen
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-go@v5
         with:
           # A patched Go release for the standard-library scan.
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           # go.* not go.sum: a dependency-free module carries no go.sum, and
           # setup-go trips on a pattern that resolves to nothing.
           cache-dependency-path: ${{ matrix.module }}/go.*

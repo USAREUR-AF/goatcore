@@ -1,0 +1,29 @@
+# The scripted converger for the standup rehearsal, and the rehearsal itself.
+#
+# machines: one behaviour per machine (converger.yaml in fixtures/basic/ lists
+# the vocabulary). alpha-core-2 converges on its second observation so the
+# rehearsal proves `standup` keeps observing a class until its records agree.
+#
+# standup: what the real driver reads from a site's declaration — the classes'
+# machines and the doctrine's phase order as class → components. Phase numbers
+# are goat-standup.sh's: 5 the mgmt stack, 9 the router and the obs stack,
+# 12 the service surface, 14 the rescue classes (ADR 1183).
+machines:
+  dev:
+    alpha-core-1: converge-now
+    alpha-core-2: { after: 2 }
+    alpha-obs-1: converge-now
+    alpha-breakglass-1: converge-now
+standup:
+  env: dev
+  site: alpha
+  classes:
+    core: [alpha-core-1, alpha-core-2]
+    obs: [alpha-obs-1]
+    breakglass: [alpha-breakglass-1]
+  phases:
+    - { phase: 5, class: core, components: [netbird-mgmt] }
+    - { phase: 9, class: core, components: [zenoh-router] }
+    - { phase: 9, class: obs, components: [obs-stack] }
+    - { phase: 12, class: core, components: [portal] }
+    - { phase: 14, class: breakglass, components: [breakglass-node] }

@@ -19,9 +19,9 @@
 //! `graduate`, `hotfix`, `abandon` and `open_set_for` here instead of
 //! shelling out to the script.
 
+use crate::runner::Cmd;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{anyhow, Result};
 use chrono::NaiveDate;
@@ -31,7 +31,10 @@ use serde_json::{json, Map, Value};
 use crate::pins::{is_digest, py_str, read_yaml};
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
-const KNOWN_GATES: [&str; 5] = ["candidate-record", "soak", "convergence-evidence", "validation-evidence", "operator-ack"];
+const KNOWN_GATES: [&str; 6] = ["candidate-record", "soak", "convergence-evidence", "validation-evidence", "operator-ack", "runtime-health"];
+/// runtime-health: the peak-memory ceiling, as a fraction of the container
+/// limit, when the gate entry in ladder.yaml sets no max_memory_fraction.
+const RUNTIME_HEALTH_MAX_MEMORY_FRACTION: f64 = 0.8;
 const RECORD_STATES: [&str; 3] = ["candidate", "graduated", "abandoned"];
 const HOTFIX_BACKFILL_MAX_DAYS: i64 = 3;
 const HOTFIX_BACKFILL_CUTOFF: (i32, u32, u32) = (2026, 9, 9);
@@ -61,6 +64,9 @@ pub enum Sub {
         component: String,
         #[arg(long, value_parser = crate::parse_ack)]
         ack: Option<String>,
+        /// Graduate although the runtime-health gate fails; REASON and the --ack name are written into the record.
+        #[arg(long = "override-runtime-health", value_name = "REASON")]
+        override_runtime_health: Option<String>,
     },
     /// Graduate every member of a set in one act, or refuse and name every member that is not ready.
     GraduateSet {
@@ -111,7 +117,7 @@ pub enum Sub {
         #[arg(long = "superseded-by")]
         superseded_by: Option<String>,
     },
-    /// CI invariants C1–C9 (fail-closed, current-tree). Exit 0/1.
+    /// CI invariants C1–C10 (fail-closed, current-tree). Exit 0/1.
     Check,
 }
 
@@ -319,6 +325,104 @@ fn gates(hop: &Value) -> Vec<Value> {
     get(hop, "gates").and_then(|g| g.as_array()).cloned().unwrap_or_default()
 }
 
+/// (max_memory_fraction, min_days, require_memory_limit) for one runtime-health
+/// gate entry. min_days defaults to the hop's own soak gate, so the capture is
+/// taken no earlier than the soak's end; a hop with no soak gate waits one day.
+fn runtime_health_settings(hop: &Value, gate: &Value) -> (Value, i64, bool) {
+    let soak_days = gates(hop).into_iter().find(|x| gate_id(x) == "soak").map(|s| get(&s, "min_days").and_then(|m| m.as_i64()).unwrap_or(1)).unwrap_or(1);
+    let max = get(gate, "max_memory_fraction").cloned().unwrap_or_else(|| json!(RUNTIME_HEALTH_MAX_MEMORY_FRACTION));
+    let min_days = get(gate, "min_days").and_then(|m| m.as_i64()).unwrap_or(soak_days);
+    let require = get(gate, "require_memory_limit") != Some(&Value::Bool(false));
+    (max, min_days, require)
+}
+
+/// The record's override for this rung when it names who AND why.
+fn runtime_health_override(rec: &Record, rung: &str) -> Option<Map<String, Value>> {
+    let o = rec.get("runtime_health_override").and_then(|o| o.as_object())?.get(rung)?.as_object()?;
+    let filled = |k: &str| o.get(k).filter(|v| truthy(v)).map(|v| !py_str(v).trim().is_empty()).unwrap_or(false);
+    if filled("reason") && filled("by") {
+        Some(o.clone())
+    } else {
+        None
+    }
+}
+
+/// An ISO-8601 time from a record, as UTC; None when unreadable.
+fn utc_time(v: Option<&Value>) -> Option<chrono::DateTime<chrono::Utc>> {
+    let s = v.filter(|v| !v.is_null()).map(py_str)?;
+    let s = s.trim();
+    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(t.with_timezone(&chrono::Utc));
+    }
+    for f in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f"] {
+        if let Ok(t) = chrono::NaiveDateTime::parse_from_str(s, f) {
+            return Some(t.and_utc());
+        }
+    }
+    date(s).and_then(|d| d.and_hms_opt(0, 0, 0)).map(|t| t.and_utc())
+}
+
+/// Every reason one captured runtime_health block fails the gate — the
+/// script's grade_runtime_health, line for line.
+fn grade_runtime_health(block: Option<&Value>, rung: &str, candidate_ref: Option<&str>, max_fraction: &Value, min_days: i64, require_limit: bool) -> Vec<String> {
+    let block = match block {
+        None | Some(Value::Null) => return vec![format!("runtime-health awaiting: no runtime_health.{rung} block (ops/release/rung-health.py --write-record, at the soak's end)")],
+        Some(b) => b,
+    };
+    if !block.is_object() {
+        return vec![format!("runtime-health: runtime_health.{rung} is not a mapping")];
+    }
+    let mut fails = Vec::new();
+    match (utc_time(get(block, "captured")), utc_time(get(block, "deployed"))) {
+        (Some(c), Some(d)) => {
+            let hours = (c - d).num_seconds().div_euclid(3600);
+            if hours < min_days * 24 {
+                fails.push(format!("runtime-health awaiting: runtime_health.{rung} was captured {hours} h after deploy, needs >= {} h (the soak)", min_days * 24));
+            }
+        }
+        _ => fails.push(format!("runtime-health: runtime_health.{rung} has no readable captured/deployed time")),
+    }
+    if let Some(m) = regex::Regex::new(r"@sha256:[0-9a-f]{64}").unwrap().find(candidate_ref.unwrap_or("")) {
+        let digest = &m.as_str()[1..];
+        let have: Vec<String> = get(block, "digests").and_then(|d| d.as_array()).map(|a| a.iter().map(py_str).collect()).unwrap_or_default();
+        if !have.iter().any(|d| d == digest) {
+            fails.push(format!("runtime-health: runtime_health.{rung} was not captured on the candidate digest {}", &digest[7..19]));
+        }
+    }
+    for (key, what) in [("restarts", "restarted"), ("oom_kills", "OOM-killed")] {
+        match get(block, key).and_then(|n| n.as_i64()) {
+            None => fails.push(format!("runtime-health: {rung} {key} unknown — the capture could not read it")),
+            Some(n) if n > 0 => fails.push(format!("runtime-health: {rung} {what} {n} time(s) since deploy")),
+            _ => {}
+        }
+    }
+    match get(block, "peak_memory_fraction").filter(|f| f.is_number()) {
+        None => {
+            if require_limit {
+                fails.push(format!("runtime-health: {rung} peak memory has no limit to grade against (set a memory limit, or require_memory_limit: false on the gate)"));
+            }
+        }
+        Some(f) => {
+            if f.as_f64().unwrap_or(0.0) > max_fraction.as_f64().unwrap_or(RUNTIME_HEALTH_MAX_MEMORY_FRACTION) {
+                fails.push(format!("runtime-health: {rung} peak memory reached {} of its limit, ceiling {}", py_str(f), py_str(max_fraction)));
+            }
+        }
+    }
+    fails
+}
+
+/// The runtime-health gate for this hop: graded on the LOWER rung (the hop's
+/// `from`), satisfied by a recorded override for that rung.
+fn runtime_health_failures(rec: &Record, hop: &Value, gate: &Value) -> Vec<String> {
+    let rung = s_of(get(hop, "from")).unwrap_or_default();
+    if runtime_health_override(rec, &rung).is_some() {
+        return Vec::new();
+    }
+    let (max, min_days, require) = runtime_health_settings(hop, gate);
+    let block = rec.get("runtime_health").and_then(|b| b.as_object()).and_then(|m| m.get(&rung));
+    grade_runtime_health(block, &rung, rec.s("candidate_ref").as_deref(), &max, min_days, require)
+}
+
 fn gate_failures(rec: &Record, hop: &Value, today: NaiveDate) -> Result<Vec<String>> {
     let mut fails = Vec::new();
     for g in gates(hop) {
@@ -331,7 +435,7 @@ fn gate_failures(rec: &Record, hop: &Value, today: NaiveDate) -> Result<Vec<Stri
             "soak" => {
                 let mind = get(&g, "min_days").and_then(|m| m.as_i64()).unwrap_or(1);
                 let opened_s = py_opt(rec.get("opened"));
-                let opened = date(&opened_s).ok_or_else(|| anyhow!("Invalid isoformat string: '{opened_s}'"))?;
+                let opened = date(&opened_s).ok_or_else(|| anyhow::Error::from(goat_errors::coded("GB-033", format!("Invalid isoformat string: '{opened_s}'"))))?;
                 if (today - opened).num_days() < mind {
                     fails.push(format!("soak: opened {opened}, needs >= {mind} day(s)"));
                 }
@@ -344,6 +448,7 @@ fn gate_failures(rec: &Record, hop: &Value, today: NaiveDate) -> Result<Vec<Stri
             "validation-evidence" if !rec.evidence("validation") => {
                 fails.push("evidence.validation is empty".to_string());
             }
+            "runtime-health" => fails.extend(runtime_health_failures(rec, hop, &g)),
             _ => {}
         }
     }
@@ -581,12 +686,13 @@ fn ymap(pairs: Vec<(&str, Value)>) -> serde_yaml::Mapping {
     m
 }
 
-/// The record as YAML, in field order, dates quoted as the script's dumper
-/// writes them (`opened: ''`).
+/// The record as YAML, in field order, dates and timestamps quoted as the
+/// script's dumper writes them (`opened: ''`, `captured: '…T…Z'`) at any
+/// depth — unquoted, the script's loader would read them back as dates.
 pub fn dump_record(doc: &Map<String, Value>) -> String {
     let m = ymap(doc.iter().map(|(k, v)| (k.as_str(), v.clone())).collect());
     let text = serde_yaml::to_string(&m).unwrap_or_default();
-    let re = regex::Regex::new(r"^(\s*[A-Za-z_][A-Za-z0-9_]*): (\d{4}-\d{2}-\d{2})$").unwrap();
+    let re = regex::Regex::new(r"^(\s*[A-Za-z_][A-Za-z0-9_]*): (\d{4}-\d{2}-\d{2}(?:[Tt ]\d{1,2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?)$").unwrap();
     text.lines().map(|l| match re.captures(l) {
         Some(c) => format!("{}: '{}'", &c[1], &c[2]),
         None => l.to_string(),
@@ -597,7 +703,7 @@ fn write_record(path: &Path, doc: &Map<String, Value>) -> Result<()> {
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
-    std::fs::write(path, dump_record(doc)).map_err(|e| anyhow!("{}: {e}", path.display()))
+    std::fs::write(path, dump_record(doc)).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))
 }
 
 fn ref_short(reference: &str) -> String {
@@ -641,10 +747,11 @@ fn cmd_open(t: &Tree, component: &str, reference: &str, reason: &str, o: &mut Ou
 }
 
 /// `graduate <component> --ack NAME`. `from_set` is the set path's internal call.
-pub fn cmd_graduate(t: &Tree, component: &str, ack: Option<&str>, from_set: bool, o: &mut Out) -> Result<i32> {
+/// `override_runtime_health` is `--override-runtime-health REASON`.
+pub fn cmd_graduate(t: &Tree, component: &str, ack: Option<&str>, override_runtime_health: Option<&str>, from_set: bool, o: &mut Out) -> Result<i32> {
     let (ladder, _, live) = t.load_ladder()?;
     let records = t.load_records();
-    let rec = match latest_record(&records, component, Some("candidate"), None, Some("ladder")) {
+    let mut rec = match latest_record(&records, component, Some("candidate"), None, Some("ladder")) {
         Some(r) => r.clone(),
         None => {
             let r = latest_record(&records, component, Some("candidate"), None, Some("hotfix")).ok_or_else(|| die(format!("no open ladder candidate or hotfix record for {component}")))?.clone();
@@ -663,6 +770,24 @@ pub fn cmd_graduate(t: &Tree, component: &str, ack: Option<&str>, from_set: bool
             o.err(format!("\n  graduate the set:  goatbuilder promote graduate-set {} --ack '<name>'", owning.s("name").unwrap_or_default()));
             o.err("  or take this component out of the set (edit the file, in a reviewed PR) if it genuinely moves alone.");
             return Ok(1);
+        }
+    }
+    if let Some(reason) = override_runtime_health {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Err(die("--override-runtime-health needs a reason"));
+        }
+        let by = match ack.filter(|a| !a.is_empty()) {
+            Some(a) => a,
+            None => return Err(die("--override-runtime-health needs --ack '<name>' — an override names who decided")),
+        };
+        let rt: Vec<String> = gates(&hop).iter().filter(|g| gate_id(g) == "runtime-health").flat_map(|g| runtime_health_failures(&rec, &hop, g)).collect();
+        if !rt.is_empty() {
+            let rung = s_of(get(&hop, "from")).unwrap_or_default();
+            let mut ov = rec.doc.get("runtime_health_override").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+            ov.insert(rung.clone(), json!({"by": by, "reason": reason, "recorded": today().to_string(), "failures": rt}));
+            rec.doc.insert("runtime_health_override".into(), Value::Object(ov));
+            o.out(format!("graduate: runtime-health overridden for {rung} by {by}: {reason}"));
         }
     }
     let mut fails = gate_failures(&rec, &hop, today())?;
@@ -804,7 +929,7 @@ pub fn cmd_abandon(t: &Tree, record: &str, reason: &str, superseded_by: Option<&
     Ok(0)
 }
 
-// --- check (C1–C9) -------------------------------------------------------------------------------
+// --- check (C1–C10) -------------------------------------------------------------------------------
 
 /// Every failure line, or an Err for the C1 case the script reports as its own line.
 pub fn check_failures(t: &Tree) -> Result<(Vec<String>, usize, usize, usize, usize)> {
@@ -825,6 +950,17 @@ pub fn check_failures(t: &Tree) -> Result<(Vec<String>, usize, usize, usize, usi
             let gid = gate_id(&g);
             if !KNOWN_GATES.contains(&gid.as_str()) {
                 failures.push(format!("C1: unknown gate id {}", py_repr(Some(&json!(gid)))));
+            }
+            if gid == "runtime-health" && g.is_object() {
+                let hop_name = format!("{}->{}", py_opt(get(&h, "from")), py_opt(get(&h, "to")));
+                let frac = get(&g, "max_memory_fraction").cloned().unwrap_or_else(|| json!(RUNTIME_HEALTH_MAX_MEMORY_FRACTION));
+                if !frac.as_f64().map(|f| f > 0.0 && f <= 1.0).unwrap_or(false) {
+                    failures.push(format!("C1: hop {hop_name} runtime-health max_memory_fraction must be a number in (0, 1]"));
+                }
+                let md = get(&g, "min_days").cloned().unwrap_or_else(|| json!(1));
+                if !md.as_i64().map(|d| d >= 1).unwrap_or(false) {
+                    failures.push(format!("C1: hop {hop_name} runtime-health min_days must be a whole number of days >= 1"));
+                }
             }
         }
     }
@@ -872,6 +1008,18 @@ pub fn check_failures(t: &Tree) -> Result<(Vec<String>, usize, usize, usize, usi
                 failures.push(format!("C2: {rp} soak_waiver must be a mapping carrying a non-empty reason — an unexplained waiver is worse than none"));
             } else if !w.as_object().map(|m| m.contains_key("by")).unwrap_or(false) {
                 failures.push(format!("C2: {rp} soak_waiver names no `by:` — name the operator, or write `by: null` to state that the record cannot attribute it"));
+            }
+        }
+        if let Some(ov) = rec.get("runtime_health_override").filter(|v| !v.is_null()) {
+            match ov.as_object() {
+                None => failures.push(format!("C2: {rp} runtime_health_override must map a rung to {{by, reason}}")),
+                Some(m) => {
+                    for rung in m.keys() {
+                        if runtime_health_override(rec, rung).is_none() {
+                            failures.push(format!("C2: {rp} runtime_health_override.{rung} must name a non-empty by and reason — an override nobody can attribute is worse than none"));
+                        }
+                    }
+                }
             }
         }
     }
@@ -947,6 +1095,43 @@ pub fn check_failures(t: &Tree) -> Result<(Vec<String>, usize, usize, usize, usi
         let age = (td - opened).num_days();
         if age > HOTFIX_BACKFILL_MAX_DAYS && !rec.evidence("validation") {
             failures.push(format!("C9: {} has owed its backfill for {age} days with evidence.validation empty — run the affected live rows, fill the evidence and `graduate`, or abandon it with a reason", t.rel(&rec.path)));
+        }
+    }
+    // C10 — runtime health on a hop `graduate` does not run (the dev->preprod
+    // move is a pin edit, so the PR that makes it is where the hop is held).
+    for h in get(&ladder, "hops").and_then(|h| h.as_array()).cloned().unwrap_or_default() {
+        if s_of(get(&h, "status")).as_deref() != Some("live") {
+            continue;
+        }
+        let to = s_of(get(&h, "to")).unwrap_or_default();
+        let upper = match live.iter().find(|r| rung_name(r) == to) {
+            Some(u) => rung_goatnet(u),
+            None => continue,
+        };
+        for g in gates(&h) {
+            if gate_id(&g) != "runtime-health" {
+                continue;
+            }
+            let since = get(&g, "records_opened_from").filter(|v| truthy(v)).map(py_str).unwrap_or_default();
+            for rec in &records {
+                if rec.error.is_some() || rec.s("state").as_deref() != Some("candidate") || rec.class() != "ladder" {
+                    continue;
+                }
+                if !since.is_empty() && rec.s("opened").unwrap_or_default() < since {
+                    continue;
+                }
+                let comp_def = match get(&pins, "components").and_then(|c| c.get(rec.s("component").unwrap_or_default())) {
+                    Some(c) => c.clone(),
+                    None => continue,
+                };
+                let (stt, val) = effective(&comp_def, &upper);
+                if stt != "value" || val.map(|v| py_str(&v)) != rec.s("candidate_ref") {
+                    continue;
+                }
+                for f in runtime_health_failures(rec, &h, &g) {
+                    failures.push(format!("C10: {} runs on {upper} but its {}->{to} gate fails: {f}", t.rel(&rec.path), py_opt(get(&h, "from"))));
+                }
+            }
         }
     }
     // C7 — graduation sets
@@ -1059,7 +1244,7 @@ fn live_hop(ladder: &Value) -> Option<Value> {
 }
 
 fn git_out(repo: &Path, args: &[&str]) -> (bool, String) {
-    match Command::new("git").arg("-C").arg(repo).args(args).output() {
+    match Cmd::new("git").arg("-C").arg(repo).args(args).output() {
         Err(e) => (false, e.to_string()),
         Ok(o) if !o.status.success() => {
             let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
@@ -1423,7 +1608,7 @@ fn candidate_readiness(rec: &Record, hop: Option<&Value>, today: NaiveDate) -> R
     let waiver = soak_waiver(rec);
     let state = if blockers.is_empty() {
         "ready"
-    } else if blockers.iter().all(|b| b.starts_with("soak")) {
+    } else if blockers.iter().all(|b| b.starts_with("soak") || b.starts_with("runtime-health awaiting")) {
         if !waiver.is_null() { "soak-waived" } else { "soaking" }
     } else {
         "blocked"
@@ -1715,6 +1900,9 @@ fn next_step(it: &Value) -> String {
     if blockers.iter().any(|b| b.contains("operator-ack")) {
         needs.push("ack");
     }
+    if blockers.iter().any(|b| b.starts_with("runtime-health")) {
+        needs.push("runtime health");
+    }
     let what = if needs.is_empty() { "gate".to_string() } else { needs.join(" + ") };
     if cls == "hotfix" {
         return format!("rows → {what} → graduate → no deploy");
@@ -1745,7 +1933,7 @@ fn age(it: &Value, today: NaiveDate) -> String {
 fn terminal_width() -> usize {
     let cols = std::env::var("COLUMNS").ok().and_then(|c| c.parse::<usize>().ok()).or_else(|| {
         if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-            Command::new("tput").arg("cols").output().ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<usize>().ok())
+            Cmd::new("tput").arg("cols").output().ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<usize>().ok())
         } else {
             None
         }
@@ -2034,7 +2222,7 @@ pub fn run(repo: &Path, cmd: &Sub, yes: bool) -> Result<Report> {
     let code = match cmd {
         Sub::Status { json } => cmd_status(&t, *json, &mut o),
         Sub::Open { component, reference, reason } => cmd_open(&t, component, reference, reason, &mut o),
-        Sub::Graduate { component, ack } => cmd_graduate(&t, component, ack.as_deref(), false, &mut o),
+        Sub::Graduate { component, ack, override_runtime_health } => cmd_graduate(&t, component, ack.as_deref(), override_runtime_health.as_deref(), false, &mut o),
         Sub::GraduateSet { name, ack } => cmd_graduate_set(&t, name, ack.as_deref(), &mut o),
         Sub::Hotfix { component, reference, reason, ack, previous_ref } => cmd_hotfix(&t, component, reference, reason, ack.as_deref(), previous_ref.as_deref(), &mut o),
         Sub::Review { json, ack, detail, no_header, component } => cmd_review(&t, *json, ack.as_deref(), *detail, *no_header, component.as_deref(), &mut o),
@@ -2063,6 +2251,68 @@ pub fn run(repo: &Path, cmd: &Sub, yes: bool) -> Result<Report> {
 mod tests {
     use super::*;
 
+    fn rh_record(block: Value, extra: Value) -> Record {
+        let mut doc = json!({
+            "component": "thing", "class": "ladder", "state": "candidate", "opened": "2026-08-01",
+            "candidate_ref": format!("ghcr.io/o/thing:sha-abc1234@sha256:{}", "a".repeat(64)),
+            "runtime_health": {"preprod": block},
+        });
+        for (k, v) in extra.as_object().cloned().unwrap_or_default() {
+            doc.as_object_mut().unwrap().insert(k, v);
+        }
+        Record { path: PathBuf::from("r.yaml"), doc: doc.as_object().cloned().unwrap(), error: None }
+    }
+
+    fn rh_block(over: Value) -> Value {
+        let mut b = json!({"captured": "2026-08-12T10:00:00Z", "deployed": "2026-08-10T09:00:00Z",
+                           "digests": [format!("sha256:{}", "a".repeat(64))], "restarts": 0, "oom_kills": 0,
+                           "peak_memory_fraction": 0.42});
+        for (k, v) in over.as_object().cloned().unwrap_or_default() {
+            b.as_object_mut().unwrap().insert(k, v);
+        }
+        b
+    }
+
+    fn rh_hop() -> Value {
+        json!({"from": "preprod", "to": "prod", "status": "live", "gates": [
+            {"id": "soak", "min_days": 2}, {"id": "runtime-health", "max_memory_fraction": 0.8}]})
+    }
+
+    fn rh(rec: &Record) -> Vec<String> {
+        gate_failures(rec, &rh_hop(), NaiveDate::from_ymd_opt(2026, 8, 12).unwrap()).unwrap().into_iter().filter(|f| f.starts_with("runtime-health")).collect()
+    }
+
+    #[test]
+    fn runtime_health_gate_matches_the_script() {
+        assert!(rh(&rh_record(rh_block(json!({})), json!({}))).is_empty());
+        assert_eq!(rh(&rh_record(rh_block(json!({"restarts": 8})), json!({}))), vec!["runtime-health: preprod restarted 8 time(s) since deploy"]);
+        assert_eq!(rh(&rh_record(rh_block(json!({"oom_kills": 25})), json!({}))), vec!["runtime-health: preprod OOM-killed 25 time(s) since deploy"]);
+        assert_eq!(rh(&rh_record(rh_block(json!({"peak_memory_fraction": 0.93})), json!({}))), vec!["runtime-health: preprod peak memory reached 0.93 of its limit, ceiling 0.8"]);
+        assert!(rh(&rh_record(rh_block(json!({"peak_memory_fraction": 0.8})), json!({}))).is_empty());
+        assert_eq!(rh(&rh_record(rh_block(json!({"oom_kills": null})), json!({}))), vec!["runtime-health: preprod oom_kills unknown — the capture could not read it"]);
+        assert_eq!(rh(&rh_record(rh_block(json!({"captured": "2026-08-11T08:00:00Z"})), json!({}))), vec!["runtime-health awaiting: runtime_health.preprod was captured 23 h after deploy, needs >= 48 h (the soak)"]);
+        assert_eq!(rh(&rh_record(rh_block(json!({"digests": [format!("sha256:{}", "b".repeat(64))]})), json!({}))), vec!["runtime-health: runtime_health.preprod was not captured on the candidate digest aaaaaaaaaaaa"]);
+        assert_eq!(rh(&rh_record(Value::Null, json!({}))), vec!["runtime-health awaiting: no runtime_health.preprod block (ops/release/rung-health.py --write-record, at the soak's end)"]);
+        assert_eq!(rh(&rh_record(rh_block(json!({"peak_memory_fraction": null})), json!({}))).len(), 1);
+    }
+
+    #[test]
+    fn runtime_health_override_needs_who_and_why() {
+        let ok = rh_record(rh_block(json!({"restarts": 3})), json!({"runtime_health_override": {"preprod": {"by": "A Person", "reason": "host reboot"}}}));
+        assert!(rh(&ok).is_empty());
+        let nobody = rh_record(rh_block(json!({"restarts": 3})), json!({"runtime_health_override": {"preprod": {"by": "", "reason": "x"}}}));
+        assert_eq!(rh(&nobody).len(), 1);
+    }
+
+    #[test]
+    fn an_awaited_capture_reads_soaking_and_names_runtime_health() {
+        let rec = rh_record(Value::Null, json!({"opened": "2026-08-11"}));
+        let rd = candidate_readiness(&rec, Some(&rh_hop()), NaiveDate::from_ymd_opt(2026, 8, 12).unwrap()).unwrap();
+        assert_eq!(rd["state"], json!("soaking"));
+        let blocked = json!({"state": "blocked", "class": "ladder", "blockers": ["runtime-health: preprod OOM-killed 2 time(s) since deploy"]});
+        assert_eq!(next_step(&blocked), "runtime health → graduate → PROD");
+    }
+
     #[test]
     fn effective_is_goatnet_deviation_then_fleet() {
         let d = json!({"fleet": "f", "deviations": {"g": {"value": "v", "reason": "r"}, "h": {"absent": true, "reason": "r"}}});
@@ -2083,6 +2333,14 @@ mod tests {
     #[test]
     fn json_dumps_escapes_non_ascii_as_the_script_does() {
         assert_eq!(json_dumps(&json!({"a": "—"})), "{\n  \"a\": \"\\u2014\"\n}");
+    }
+
+    #[test]
+    fn dump_record_quotes_nested_timestamps() {
+        let mut rec = Map::new();
+        rec.insert("runtime_health".into(), json!({"preprod": {"captured": "2026-10-03T10:00:00Z", "restarts": 0}}));
+        let text = dump_record(&rec);
+        assert!(text.contains("captured: '2026-10-03T10:00:00Z'"), "{text}");
     }
 
     #[test]
@@ -2135,7 +2393,7 @@ pub fn call(repo: &Path, cmd: &Sub) -> (Vec<String>, i32) {
     let mut o = Out::new();
     let code = match cmd {
         Sub::Open { component, reference, reason } => cmd_open(&t, component, reference, reason, &mut o),
-        Sub::Graduate { component, ack } => cmd_graduate(&t, component, ack.as_deref(), false, &mut o),
+        Sub::Graduate { component, ack, override_runtime_health } => cmd_graduate(&t, component, ack.as_deref(), override_runtime_health.as_deref(), false, &mut o),
         Sub::Hotfix { component, reference, reason, ack, previous_ref } => cmd_hotfix(&t, component, reference, reason, ack.as_deref(), previous_ref.as_deref(), &mut o),
         Sub::Abandon { record, reason, superseded_by } => cmd_abandon(&t, record, reason, superseded_by.as_deref(), &mut o),
         Sub::Check => cmd_check(&t, &mut o),
@@ -2153,10 +2411,10 @@ pub fn call(repo: &Path, cmd: &Sub) -> (Vec<String>, i32) {
 
 /// rc.sh's evidence edit: the record's empty `<field>: ''` becomes a folded scalar.
 pub fn record_set_evidence(path: &Path, field: &str, text: &str) -> Result<()> {
-    let s = std::fs::read_to_string(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    let s = std::fs::read_to_string(path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
     let from = format!("  {field}: ''\n");
     let to = format!("  {field}: >-\n    {text}\n");
-    std::fs::write(path, s.replacen(&from, &to, 1)).map_err(|e| anyhow!("{}: {e}", path.display()))
+    std::fs::write(path, s.replacen(&from, &to, 1)).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))
 }
 
 /// Every other OPEN ladder candidate for the component (rc.sh's preprod step
@@ -2283,9 +2541,8 @@ pub fn soak_min_days(repo: &Path) -> i64 {
 mod driver_tests {
     use super::*;
 
-    fn tree(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("goatbuilder-promote-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+    fn tree(name: &str) -> crate::testdir::Held<PathBuf> {
+        let d = crate::testdir::path(&format!("goatbuilder-promote-{name}-"));
         let recs = d.join("ops/release/records/comp");
         std::fs::create_dir_all(&recs).unwrap();
         let w = |f: &str, body: &str| std::fs::write(recs.join(f), body).unwrap();
@@ -2316,8 +2573,7 @@ mod driver_tests {
     /// candidate could start at dev. The finder names it, and what overtook it.
     #[test]
     fn stale_candidates_c6_names_the_overtaken_record_and_the_hotfix_that_overtook_it() {
-        let d = std::env::temp_dir().join(format!("goatbuilder-promote-{}-c6", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = crate::testdir::path("goatbuilder-promote-c6-");
         std::fs::create_dir_all(d.join("ops/release/records/comp")).unwrap();
         std::fs::create_dir_all(d.join("ops/pins")).unwrap();
         std::fs::write(d.join("ops/release/ladder.yaml"), "rungs:\n  - {name: dev, goatnet: zagros_dev, status: live}\n  - {name: preprod, goatnet: zagros, status: live}\n  - {name: prod, goatnet: zagros_prod, status: live}\n").unwrap();

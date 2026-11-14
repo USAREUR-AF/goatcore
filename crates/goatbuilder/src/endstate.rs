@@ -16,10 +16,11 @@
 //! Reads only. Exit 0 in the declared end state; 3 when any grade fails or cannot
 //! be read, or anything is orphaned (GB-068); 1 when it cannot run (GB-066).
 
+use crate::runner::Cmd;
 use crate::{Check, Report, EXIT_NOT_CONVERGED};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 pub struct Options<'a> {
     pub site: &'a str,
@@ -42,11 +43,11 @@ pub(crate) fn python() -> String {
     if let Ok(p) = std::env::var("GOATBUILDER_PYTHON") {
         return p;
     }
-    let has_yaml = |p: &str| Command::new(p).args(["-c", "import yaml"]).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+    let has_yaml = |p: &str| Cmd::new(p).args(["-c", "import yaml"]).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
     if has_yaml("python3") {
         return "python3".into();
     }
-    let ansible = Command::new("sh").args(["-c", "head -1 \"$(command -v ansible-playbook)\" 2>/dev/null"]).output();
+    let ansible = Cmd::new("sh").args(["-c", "head -1 \"$(command -v ansible-playbook)\" 2>/dev/null"]).output();
     if let Ok(o) = ansible {
         let line = String::from_utf8_lossy(&o.stdout).trim().trim_start_matches("#!").trim().to_string();
         let interp = line.split_whitespace().last().unwrap_or("").to_string();
@@ -105,7 +106,7 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
     if o.strict {
         argv.push("--strict".into());
     }
-    let mut cmd = Command::new(&argv[0]);
+    let mut cmd = Cmd::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(repo);
     // On a terminal this verb prints its own table from the grades.
     let page = o.stream && std::io::IsTerminal::is_terminal(&std::io::stdout());

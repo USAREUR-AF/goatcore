@@ -1,0 +1,64 @@
+---
+# Back out ONE peering's outbound republisher (ops/ansible/peering-backout.yml), on our
+# core host. Named after the partner by the role: the compose project and container
+# goat-fed-republisher-<partner>, /etc/goat-fed-republisher-<partner>/ (agreement, our
+# CA, its certificate and key) and /opt/goat-fed-republisher-<partner>/. Another
+# peering's republisher on the same host has another name and is never matched.
+- name: republisher | absent | the stack is named for this partner
+  ansible.builtin.assert:
+    that:
+      - _pb_names.republisher.stack is match('^[A-Za-z0-9_.-]+$')
+      - _pb_names.republisher.stack.endswith('-' ~ peering_backout_id)
+    fail_msg: >-
+      goat_fed_republisher_stack is '{{ _pb_names.republisher.stack }}', which does not end
+      in '-{{ peering_backout_id }}'. Nothing was changed.
+    quiet: true
+
+- name: republisher | absent | the container
+  ansible.builtin.command:
+    argv: [docker, container, inspect, --format, "{{ '{{.Name}} {{.State.Status}}' }}", "{{ _pb_names.republisher.stack }}"]
+  register: _pbr_ctr
+  changed_when: false
+  failed_when: false
+
+- name: republisher | absent | the directories and the compose project
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: false
+  loop: "{{ _pb_names.republisher.dirs + [_pb_names.republisher.compose] }}"
+  register: _pbr_paths
+
+- name: republisher | absent | record what is there
+  ansible.builtin.set_fact:
+    _pb_rows: >-
+      {%- set out = _pb_rows -%}
+      {%- set act = 'removed' if _pb_apply else 'remove' -%}
+      {%- set probe = _pbr_ctr | backout_probe_state('docker', _pb_names.republisher.stack) -%}
+      {%- set _ = out.append({'component': 'republisher', 'resource': 'container ' ~ _pb_names.republisher.stack, 'state': probe.state, 'action': (act if probe.state == 'present' else 'none'), 'note': probe.note}) -%}
+      {%- for p in _pbr_paths.results[:2] -%}
+      {%-   set _ = out.append({'component': 'republisher', 'resource': 'dir ' ~ p.item, 'state': ('present' if p.stat.exists else 'absent'), 'action': (act if p.stat.exists else 'none'), 'note': ''}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: republisher | absent | take the compose project down
+  ansible.builtin.command:
+    argv: [docker, compose, --project-directory, "/opt/{{ _pb_names.republisher.stack }}", -f, "{{ _pb_names.republisher.compose }}", down, --remove-orphans]
+  register: _pbr_down
+  changed_when: _pbr_down.rc == 0
+  failed_when: false
+  when: _pb_apply and _pbr_paths.results[2].stat.exists
+
+- name: republisher | absent | the container is gone
+  ansible.builtin.command:
+    argv: [docker, rm, -f, "{{ _pb_names.republisher.stack }}"]
+  register: _pbr_rm
+  changed_when: _pbr_rm.rc == 0
+  failed_when: false
+  when: _pb_apply and _pbr_ctr.rc == 0
+
+- name: republisher | absent | its directories are gone
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ _pb_names.republisher.dirs }}"
+  when: _pb_apply

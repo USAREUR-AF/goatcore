@@ -6,50 +6,237 @@ stdout = """
 A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages
 exchanged through the peering directory, one agreement composed and verified, the leaves minted from
 it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose
-opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step
+opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step.
 
-Usage: goatbuilder federate [OPTIONS] <WITH>
+At a terminal, `goatbuilder federate <partner>` is the whole procedure: it asks for the partner's
+key and CA fingerprint and the agreement digest, makes the plan and asks to approve it, shows what
+our core will admit and asks again, then carries on through acceptance. A run that stops resumes
+where it stopped. Values come from the deployment's declarations; a FED_* variable set in the
+environment overrides one.
+
+Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner>`, `status
+[<partner>]`. `allocate [<peering>]` writes a peering's values and files for review; `backout
+<partner>` backs one peering out and leaves the others as they were. `goatbuilder federate
+init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags
+and exit codes of `goat federate <verb>`.
+
+Usage: goatbuilder federate [OPTIONS] <WITH> [PARTNER]
+       goatbuilder federate <COMMAND>
+
+Commands:
+  init     Generate our half of a federation, read from the running system
+  lint     Check one package: is it well-formed, and does it agree with itself?
+  compose  Combine two packages into one agreement and print its digest
+  diff     Two digests disagree? Run this. It names the field
+  verify   Could we actually deliver this agreement? Dry-run it here
+  apply    Render the access rules and configuration this agreement implies
+  plan     The bounded plan of one peering before anything changes: versions, agreement digest,
+           rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's
+           readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
+  backout  Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation,
+           edge router, republisher, forwarder mapping and core admission, and leave every other
+           peering and the core as they were
+  import   A two-driver peering's import of an edge result, as a hand-off object names it. Not built
+           yet: refuses with GB-267 (docs/design/federation-two-drivers.md)
+  help     Print this message or the help of the given subcommand(s)
 
 Arguments:
-  <WITH>  The peering name (the counterparty, as declared)
+  <WITH>
+          The peering name (the counterparty, as declared), or a stage run alone: `status
+          [<partner>]`, `deploy <partner>`, `test <partner>`, `allocate [<peering>]`
+
+  [PARTNER]
+          The partner, after a stage word; after `allocate`, the one peering to allocate and render,
+          beside peerings that are still hand-written
 
 Options:
-      --env <ENV>                The environment the peering is declared on (checked against
-                                 goatbuilder.yaml peerings:)
-  -o, --output <OUTPUT>          Output format: a table for a person; JSON or YAML for a program
-                                 [default: table] [possible values: table, json, yaml]
-      --as <SOVEREIGN>           Which party we are (default: read from the declaration)
-  -C, --repo <DIR>               The repository root. Defaults to the checkout this binary is run in
-      --edge-group <EDGE_GROUP>  The ansible group the edge runs in (default <peering>_edge)
-      --yes                      Confirm a declarative verb without prompting (for automation)
-      --frozen                   Refuse any run that would need to fast-forward the checkout (strict
-                                 C3)
-      --work <WORK>              The working directory (default $FED_WORK, else
-                                 /var/lib/goat-federation/<peering>)
-      --from <FROM>              Resume from this phase [default: 1]
-      --offline                  An islanded site: do not fetch the trunk; judge the checkout
-                                 against the cached one, and record the run as offline (C3;
-                                 ops/scripts/fresh-source.sh)
-      --mock <DIR>               Run against a fixture directory instead of hosts: no registry, no
-                                 transport, deterministic (goatbuilder-conformance.md §"The
-                                 fixture")
-      --to <TO>                  Stop after this phase [default: 99]
-      --dry-run                  Print every phase and command; run nothing
-      --lang <TAG>               Language for help and error explanations (a tag such as fr, uk,
-                                 de); output a pipeline reads stays English. Default: the OS locale
-                                 [env: GOAT_LANG=]
-      --color <COLOR>            Color the table's ok/FAIL glyph and verdict (auto|always|never).
-                                 `auto` colors only a terminal; NO_COLOR and CLICOLOR_FORCE
-                                 override. JSON and YAML are never colored [default: auto] [possible
-                                 values: auto, always, never]
-  -v, --verbose                  Log what a run does — the external commands it shells out to, and
-                                 the network phase of `update` — to stderr, so `-o json|yaml` stays
-                                 a clean document. Or set RUST_LOG=goatbuilder=debug
-      --timeout <SECS>           Seconds to bound the connect/reach phase before failing fast — the
-                                 one phase that can block on an unreachable host (`update`'s fetch
-                                 of the served version). Does NOT cap a play's own run or the binary
-                                 download (stall-bounded). Also reads GOATBUILDER_TIMEOUT [env:
-                                 GOATBUILDER_TIMEOUT=]
-  -h, --help                     Print help
+  -o, --output <OUTPUT>
+          Output format: a table for a person; JSON or YAML for a program
+          
+          [default: table]
+          [possible values: table, json, yaml]
+
+  -C, --repo <DIR>
+          The repository root. Defaults to the checkout this binary is run in
+
+      --yes
+          Confirm a declarative verb without prompting (for automation)
+
+      --frozen
+          Refuse any run that would need to fast-forward the checkout (strict C3)
+
+      --offline
+          An islanded site: do not fetch the trunk; judge the checkout against the cached one, and
+          record the run as offline (C3; ops/scripts/fresh-source.sh)
+
+      --mock <DIR>
+          Run against a fixture directory instead of hosts: no registry, no transport, deterministic
+          (goatbuilder-conformance.md §"The fixture")
+
+      --lang <TAG>
+          Language for help and error explanations (a tag such as fr, uk, de); output a pipeline
+          reads stays English. Default: the OS locale
+          
+          [env: GOAT_LANG=]
+
+      --color <COLOR>
+          Color the table's ok/FAIL glyph and verdict (auto|always|never). `auto` colors only a
+          terminal; NO_COLOR and CLICOLOR_FORCE override. JSON and YAML are never colored
+          
+          [default: auto]
+          [possible values: auto, always, never]
+
+  -v, --verbose
+          Log what a run does — the external commands it shells out to, and the network phase of
+          `update` — to stderr, so `-o json|yaml` stays a clean document. Or set
+          RUST_LOG=goatbuilder=debug
+
+      --context-dir <DIR>
+          The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem
+          (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it)
+
+      --timeout <SECS>
+          Seconds to bound the connect/reach phase before failing fast — the one phase that can
+          block on an unreachable host (`update`'s fetch of the served version). Does NOT cap a
+          play's own run or the binary download (stall-bounded). Also reads GOATBUILDER_TIMEOUT
+          
+          [env: GOATBUILDER_TIMEOUT=]
+
+      --cert <FILE>
+          The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory)
+
+      --ca-roots <FILE>
+          The six verbs: the CA roots (default: ca-roots.pem in the context directory)
+
+      --context <NAME>
+          The six verbs: the goat context to read, as `goat --context` (default: $GOAT_CONTEXT, else
+          current_context in the profile's config.toml, else default)
+
+      --profile-dir <DIR>
+          The six verbs: the goat profile directory, as `goat --profile-dir` (default:
+          $GOAT_PROFILE_DIR, else ~/.goat)
+
+      --over-ssh <PEERING>
+          init: measure this peering's edge and core over SSH from this machine, reaching the hosts
+          of inventory groups <PEERING>_edge and <PEERING>_core in
+          ops/ansible/inventory/peering-edges.ini as the plays reach them. Only read-only commands
+          run there; nothing is copied to either host
+
+      --ssh-edge-group <GROUP>
+          init --over-ssh: the edge's inventory group (default <PEERING>_edge)
+
+      --ssh-core-group <GROUP>
+          init --over-ssh: the core's inventory group (default <PEERING>_core)
+
+      --edge-host <HOST>
+          init --over-ssh: the edge host to measure, when its group has several
+
+      --core-host <HOST>
+          init --over-ssh: the core host to measure, when its group has several
+
+      --router-container <NAME>
+          init --over-ssh: the core router container, by hand (default: the name the core host's
+          variables give, else the one discovery finds there)
+
+      --side <SIDE>
+          init --over-ssh: measure one half of phase 3 on this machine, for a peering no one machine
+          reaches both hosts of (docs/design/federation-router-discovery.md): `edge` measures only
+          the edge and writes the result to --half-out; `core` measures only the core, joins the
+          edge half read from --edge-half, and builds the package. Without it, both hosts are
+          measured here, as always. On a peering run, `--side edge` is the edge driver's run of a
+          two-driver peering (`drivers: two`): not built yet, and refused with GB-267
+          (docs/design/federation-two-drivers.md)
+          
+          [possible values: edge, core]
+
+      --half-out <FILE>
+          init --over-ssh --side edge: the file the edge half is written to
+
+      --edge-half <FILE>
+          init --over-ssh --side core: the edge half the edge driver wrote
+
+      --edge-half-sha256 <SHA256>
+          init --over-ssh --side core: the edge half's sha256 as the edge driver printed it, read
+          from there and confirmed here (the full digest, or its first 32 hex digits; spaces and
+          dashes are ignored)
+
+      --expect-commit <COMMIT>
+          With --side edge: the commit the edge driver's checkout must be at, as a hand-off object
+          names it. The edge driver's run is not built yet: refused with GB-267
+          (docs/design/federation-two-drivers.md)
+
+      --plan <FILE>
+          deploy: the plan to execute (default <work>/plan.json)
+
+      --approve-plan <SHA256>
+          deploy: approve exactly this plan hash, after reading the plan. --yes never approves a
+          plan
+
+      --confirm
+          Phases 5, 6 and 10: confirm the keys, the agreement digest and the admission here, at this
+          terminal, instead of stopping for them by hand. The default when both stdin and stderr are
+          a terminal
+
+      --no-confirm
+          Stop at phases 5 and 10 for the steps by hand even at a terminal, as before confirming at
+          the terminal was the default
+
+      --partner-key <BASE64>
+          Phase 5: the partner's verifying key, as read aloud on the call
+
+      --partner-ca-fingerprint <SHA256>
+          Phase 5: the partner's CA fingerprint, as read aloud on the call
+
+      --agreement-digest <SHA256>
+          Phase 6: the agreement digest, as compared with the partner
+
+      --place-pointer-package <SHA256>
+          Phase 5: place the package the partner's single pointer named and the directory held back,
+          after confirming on the call that it is the package for this peering (its digest, as the
+          stop shows it)
+
+      --approve-admission <SHA256>
+          Phase 10: approve exactly this admission digest, after reading what our core will admit.
+          --yes never approves it
+
+      --review-in-pr
+          Phase 10: write what our core would admit for review in a pull request, and stop
+
+      --env <ENV>
+          The environment the peering is declared on (checked against goatbuilder.yaml peerings:)
+
+      --as <SOVEREIGN>
+          Which party we are (default: read from the declaration)
+
+      --edge-group <EDGE_GROUP>
+          The ansible group the edge runs in (default <peering>_edge)
+
+      --work <WORK>
+          The working directory (default $FED_WORK, else /var/lib/goat-federation/<peering>)
+
+      --from <FROM>
+          Resume from this phase
+          
+          [default: 1]
+
+      --to <TO>
+          Stop after this phase
+          
+          [default: 99]
+
+      --dry-run
+          Print every phase and command; run nothing
+
+      --resume
+          Skip the phases the run journal (<work>/state.json) shows passed, whose inputs and local
+          outputs are unchanged now; checks and plays always run again. This is the default; the
+          flag is kept so scripts that pass it keep working
+
+      --no-resume
+          Run every phase in range, even ones the run journal shows passed with unchanged inputs
+          (the behavior before resuming was the default)
+
+  -h, --help
+          Print help (see a summary with '-h')
 """
 stderr = ""

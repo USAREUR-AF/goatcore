@@ -7,9 +7,10 @@
 //! (ADR 1186). A team adopting goat may declare `secrets: {store: env-file}`
 //! (or sops, git-crypt, openbao, env) and owns that trade.
 
+use crate::runner::Cmd;
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::{Context, Result};
 
@@ -23,9 +24,44 @@ fn ask(repo: &Path, args: &[&str]) -> Option<(i32, String)> {
     ask_with(repo, args, true)
 }
 
-fn ask_with(repo: &Path, args: &[&str], probe: bool) -> Option<(i32, String)> {
-    let mut cmd = Command::new("python3");
+// A test reads goat's own declared store by pointing the posture at a goatlite.yaml
+// that does not exist (GOAT_LITE_CONFIG). It is set for the test's own thread and
+// passed to the posture it spawns, never written to the process environment, which
+// other tests read in parallel.
+#[cfg(test)]
+thread_local! {
+    static LITE_CONFIG: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `GOAT_LITE_CONFIG` for every posture this test thread spawns.
+#[cfg(test)]
+pub(crate) fn set_test_lite_config(path: &str) {
+    LITE_CONFIG.with(|c| *c.borrow_mut() = Some(path.to_string()));
+}
+
+/// The `GOAT_LITE_CONFIG` this test thread set, if any, for each caller to put in
+/// the environment of the command it starts (whatever its command type).
+pub(crate) fn test_lite_config() -> Option<String> {
+    #[cfg(test)]
+    if let Some(p) = LITE_CONFIG.with(|c| c.borrow().clone()) {
+        return Some(p);
+    }
+    None
+}
+
+/// The posture command `args` runs: what a dry run prints for a probe, and what
+/// the probe starts (one builder, so the two cannot differ).
+pub fn posture_cmd(repo: &Path, args: &[&str]) -> Cmd {
+    let mut cmd = Cmd::new("python3");
     cmd.arg(posture(repo)).args(args).current_dir(repo);
+    if let Some(p) = test_lite_config() {
+        cmd.env("GOAT_LITE_CONFIG", p);
+    }
+    cmd
+}
+
+fn ask_with(repo: &Path, args: &[&str], probe: bool) -> Option<(i32, String)> {
+    let mut cmd = posture_cmd(repo, args);
     if !probe {
         cmd.env("GOAT_STORE_PROBE", "0");
     }
@@ -111,11 +147,11 @@ pub fn run(repo: &Path, args: &[String]) -> Result<Report> {
     // the one run verb both avenues share (ADR 1204).
     let mut cmd = if args.first().map(String::as_str) == Some("exec") {
         let rest: Vec<&String> = args[1..].iter().skip_while(|a| a.as_str() == "--").collect();
-        let mut c = Command::new(repo.join("ops/scripts/with-secrets"));
+        let mut c = Cmd::new(repo.join("ops/scripts/with-secrets"));
         c.args(rest);
         c
     } else {
-        let mut c = Command::new("python3");
+        let mut c = Cmd::new("python3");
         c.arg(posture(repo)).args(args);
         c
     };
@@ -136,6 +172,7 @@ pub fn run(repo: &Path, args: &[String]) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn repo() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -154,11 +191,23 @@ mod tests {
         assert!(text.contains("EXAMPLE_SECRET") && text.contains("secrets init"), "{text}");
     }
 
+    /// The posture command a dry run prints and a probe starts carries the
+    /// test thread's GOAT_LITE_CONFIG, as ask_with's did before it was built
+    /// by posture_cmd; it never reaches the process environment.
+    #[test]
+    fn posture_cmd_carries_the_test_lite_config() {
+        set_test_lite_config("/nonexistent/goatlite.yaml");
+        let c = posture_cmd(&repo(), &["kind"]);
+        let lite: Vec<_> = c.get_envs().filter(|(k, _)| *k == "GOAT_LITE_CONFIG").map(|(_, v)| v.map(|v| v.to_string_lossy().to_string())).collect();
+        assert_eq!(lite, vec![Some("/nonexistent/goatlite.yaml".to_string())]);
+        assert_ne!(std::env::var("GOAT_LITE_CONFIG").ok().as_deref(), Some("/nonexistent/goatlite.yaml"));
+    }
+
     /// goat's declared store, not a learner's: a goatlite.yaml at the checkout root
     /// outranks goatbuilder.yaml for the posture (ADR 1213 D4), so the tests that ask
     /// for goat's own answer point the posture at a file that does not exist.
     fn own_checkout() {
-        std::env::set_var("GOAT_LITE_CONFIG", "/nonexistent/goatlite.yaml");
+        set_test_lite_config("/nonexistent/goatlite.yaml");
     }
 
     #[test]

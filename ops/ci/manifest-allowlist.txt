@@ -1,0 +1,82 @@
+# Build and package manifests this repository carries, each with an owner and
+# a reason. Read by ops/ci/check-manifest-allowlist.py.
+#
+# The rule (goatdocs docs/design/engineering-baseline.md, "Languages,
+# frameworks and package managers"): a new language, framework or package
+# manager needs a written reason and a named owner before it lands. A manifest
+# that is not on this list fails the check. To add one, add its line here in
+# the same pull request and give the reason in the pull request description;
+# a code owner approves it like any other change.
+#
+# Rust, Go and Python keep the roles ADR 0112 gives them. Frontends are plain
+# JavaScript with no build step (goat-id-console and goat-zenoh-portal are the
+# reference); npm is used for Playwright test harnesses, with exact versions
+# (exceptions: ops/ci/manifest-version-exceptions.txt).
+#
+# A line whose manifest no longer exists fails the check: remove it in the
+# pull request that removes the manifest.
+#
+# format: <repo-relative path> | <owner> | <one-line reason>
+
+# --- Rust (ADR 0112)
+Cargo.toml | @USAREUR-AF/goat-owners | Rust workspace root for goat-relay and goat-relay-protocol
+goat-relay-protocol/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: relay wire protocol (ADR 0709)
+goat-relay/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: relay server (ADR 0709)
+crates/Cargo.toml | @USAREUR-AF/goat-owners | Rust workspace root for the operator and build tooling
+crates/goat-cli/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: the goat operator CLI
+crates/goat-errors/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: the error catalog interpreter (ADR 1199)
+crates/goat-federation/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: federation package, plan and acceptance library shared by goat and goatbuilder (ADR 1225)
+crates/goat-fun/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: goat CLI extras
+crates/goat-selfupdate/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: release self-update
+crates/goatbuilder/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: goatbuilder build, release, deploy and standup tool
+crates/panoscope-core/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: panoscope view model shared with goatstuff
+ops/consistency/rust/Cargo.toml | @USAREUR-AF/goat-owners | Rust workspace root for the consistency services
+ops/consistency/rust/goat-consistency/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: consistency core (ADR 1110)
+ops/consistency/rust/goat-consistency-console/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: consistency console service
+ops/consistency/rust/goat-consistency-health/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: consistency health publisher
+ops/consistency/rust/goat-consistency-wire/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: consistency wire types
+ops/federation/republisher/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: federation republisher
+ops/grant-crypto/keyd/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: grant key daemon (ADR 1106)
+ops/grant-crypto/sdk/Cargo.toml | @USAREUR-AF/goat-owners | Rust workspace root for the grant-crypto SDK (ADR 1106)
+ops/grant-crypto/sdk/capi/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: grant-crypto C ABI for the language bindings
+ops/grant-crypto/sdk/core/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: grant-crypto core
+ops/relay-auth-probe/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: live probe of deployed goat-relay instances
+ops/zenoh-ingress-gateway/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: receiver for router-to-router Zenoh peering
+ops/zenoh/pqc-image/bench/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: post-quantum TLS benchmark for the Zenoh image (ADR 1079)
+ops/zenoh/pqc-image/fips-probe/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: FIPS provider probe for the Zenoh image (ADR 1079)
+
+# --- Go (ADR 0112)
+ops/admit-audit/go.mod | @USAREUR-AF/goat-owners | Go service: NetBird management audit sidecar
+ops/enrollment/go.mod | @USAREUR-AF/goat-owners | Go module: machine enrollment and intent signing (ADR 1096)
+ops/federation/reference/go.mod | @USAREUR-AF/goat-owners | Go module: federation package v1 reference implementation
+ops/goat-id-console/go.mod | @USAREUR-AF/goat-owners | Go service: identity admin console
+ops/goat-zenoh-portal/go.mod | @USAREUR-AF/goat-owners | Go service: Zenoh portal
+ops/grant-crypto/go.mod | @USAREUR-AF/goat-owners | Go module: grant-crypto services
+ops/grant-crypto/sdk/bindings/go/go.mod | @USAREUR-AF/goat-owners | Go binding of the grant-crypto SDK (ADR 1106)
+ops/mgmt-host-bootstrap/go.mod | @USAREUR-AF/goat-owners | Go tool: sovereign NetBird account and setup-key creation
+ops/onboard-runner/go.mod | @USAREUR-AF/goat-owners | Go service: three-stage candidate onboarding executor (ADR 1062)
+ops/relay-probe/go.mod | @USAREUR-AF/goat-owners | Go tool: relay health probe (ADR 1058)
+ops/signal-federation-probe/go.mod | @USAREUR-AF/goat-owners | Go tool: synthetic-traffic probe for the federated signal server
+ops/smoketest/go.mod | @USAREUR-AF/goat-owners | Go service: smoketest runner and its dashboard server
+ops/snitch/go.mod | @USAREUR-AF/goat-owners | Go service: fleet visibility probe
+ops/time-hygiene/go.mod | @USAREUR-AF/goat-owners | Go tool: time hygiene (ADR 1037)
+ops/wg-cp0-mesh-reach/go.mod | @USAREUR-AF/goat-owners | Go test: wg-cp0 mesh-reach substrate invariant (ADR 1017)
+ops/zenoh/loadgen/go.mod | @USAREUR-AF/goat-owners | Go tool: Zenoh load generator (ADR 1012)
+signal-server/go.mod | @USAREUR-AF/goat-owners | Go service: federated signal server
+
+# --- Python (ADR 0112)
+ops/goat-zenoh-portal/requirements-spec-lint.txt | @USAREUR-AF/goat-owners | Python: hash-pinned OpenAPI spec lint for the portal
+ops/grant-crypto/sdk/bindings/python/pyproject.toml | @USAREUR-AF/goat-owners | Python binding of the grant-crypto SDK (ADR 1106)
+ops/serve/requirements.txt | @USAREUR-AF/goat-owners | Python: PyYAML for the hosted-services generator
+ops/smoketest/apptests/requirements.txt | @USAREUR-AF/goat-owners | Python: pytest and requests for the smoketest app tests
+
+# --- npm: Playwright test harnesses
+ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/playwright/package.json | @USAREUR-AF/goat-owners | npm: Playwright harness for the NetBird dashboard fixture test
+ops/goat-id-console/web/e2e/package.json | @USAREUR-AF/goat-owners | npm: Playwright harness for the identity console
+ops/goat-id-console/web/e2e/package-lock.json | @USAREUR-AF/goat-owners | npm lockfile for the identity console Playwright harness
+ops/goat-zenoh-portal/web/e2e/package.json | @USAREUR-AF/goat-owners | npm: Playwright harness for the Zenoh portal
+ops/goat-zenoh-portal/web/e2e/package-lock.json | @USAREUR-AF/goat-owners | npm lockfile for the Zenoh portal Playwright harness
+
+# --- npm: other
+ops/grant-crypto/sdk/bindings/ts/package.json | @USAREUR-AF/goat-owners | npm: TypeScript binding of the grant-crypto SDK for partner use (ADR 1106)
+ops/grant-crypto/sdk/bindings/ts/package-lock.json | @USAREUR-AF/goat-owners | npm lockfile for the grant-crypto TypeScript binding

@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use jsonschema::{Draft, JSONSchema};
 use serde::Deserialize;
 use serde_json::Value;
@@ -98,6 +98,22 @@ pub struct LiteInternet {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Secrets {
     pub store: String,
+    /// Where this side's federation keys are (`goatbuilder federate` reads them
+    /// as FED_SIGNING_KEY, FED_CA_CERT and FED_CA_KEY when those are unset).
+    #[serde(default)]
+    pub federation: Option<SecretsFederation>,
+}
+
+/// `secrets: federation:`: paths, never the keys themselves. A relative path is
+/// inside the active goat context directory (federate/declared.rs).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct SecretsFederation {
+    #[serde(default)]
+    pub signing_key: Option<String>,
+    #[serde(default)]
+    pub ca_cert: Option<String>,
+    #[serde(default)]
+    pub ca_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -137,6 +153,23 @@ pub struct Environment {
     pub groups: Vec<String>,
     #[serde(default)]
     pub sites: Vec<Site>,
+    /// UDP ports this environment's edge hosts already hold, which a peering's
+    /// tunnel or carrier never takes. Absent: NetBird's 51820.
+    #[serde(default)]
+    pub peering_edge_reserved_udp: Option<Vec<u16>>,
+    /// The peering directory this environment's peerings exchange through
+    /// (federate/declared.rs reads it as FED_DIRECTORY_URL and SSL_CERT_FILE).
+    #[serde(default)]
+    pub peering_directory: Option<PeeringDirectory>,
+}
+
+/// `environments[].peering_directory`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PeeringDirectory {
+    pub url: String,
+    /// The CA the directory's TLS certificate chains to, when it is not public.
+    #[serde(default)]
+    pub ca_cert: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -179,14 +212,84 @@ pub struct Peering {
     pub environment: String,
     pub site: String,
     pub edge_class: String,
+    /// Step 1's tunnel: `wireguard` or `ipsec` (the FIPS-validated IPsec
+    /// transport). Absent: wireguard. The one field for the transport.
+    #[serde(default)]
+    pub tunnel: Option<String>,
+    /// Release sets this peering offers, narrowing the `[data] release` of the
+    /// goat context's federation.toml, which owns them. Absent: all of them.
+    /// Checked by federate/declaration.rs: it may narrow, never widen.
+    #[serde(default)]
+    pub offer: Option<Vec<String>>,
+    /// Pins that override allocation, same keys as the allocated values.
+    #[serde(default)]
+    pub values: crate::federate::declaration::PeeringPins,
+    /// The machines' addresses, for the rendered peering inventory.
+    #[serde(default)]
+    pub hosts: Option<PeeringHosts>,
+    /// `rendered`: `goatbuilder federate allocate` renders the edge's and the
+    /// core's deployment halves from the declaration and the environment's site
+    /// values. `hand`: they are written by hand. Absent: rendered, unless the
+    /// peering already runs from hand-written files (`federate::switches`).
+    #[serde(default)]
+    pub deployment: Option<String>,
+    /// `rendered`: `goatbuilder federate allocate` generates this peering's
+    /// federation.toml from the environment's own federation.toml and the
+    /// allocated values. `hand`: written by hand. Absent: rendered, unless the
+    /// peering already runs from hand-written files (`federate::switches`).
+    #[serde(default)]
+    pub federation_toml: Option<String>,
+    /// `one` (absent) or `two`: whether a single machine drives this peering,
+    /// or an edge driver and a controller (docs/design/federation-two-drivers.md;
+    /// federate/handoff.rs reads it).
+    #[serde(default)]
+    pub drivers: Option<String>,
+    /// Present when a peering forwarder relays the partner to our edge (ADR 1218).
+    #[serde(default)]
+    #[allow(dead_code)] // read where the forwarder is rendered and applied
+    pub forwarder: Option<PeeringForwarder>,
 }
+
+/// Where the edge and the core are, as the inventory reaches them.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PeeringHosts {
+    pub edge: String,
+    pub core: String,
+    #[serde(default)]
+    pub user: Option<String>,
+}
+
+/// The peering forwarder in front of the edge (docs/design/peering-forwarder.md).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PeeringForwarder {
+    /// The forwarder's public host the partner and our edge dial.
+    pub endpoint: String,
+    /// The inventory group the forwarder is in (default `peering_forwarders`).
+    #[serde(default)]
+    pub group: Option<String>,
+    /// The forwarder's address as the inventory reaches it (for the rendered inventory).
+    #[serde(default)]
+    pub ansible_host: Option<String>,
+}
+
+/// Words `goatbuilder federate <word>` takes, or is reserved to take, as a
+/// subcommand, so a peering declared with one could never be run: the six
+/// federation verbs, clap's `help`, the stages of the one command (`status`,
+/// `plan`, `deploy`, `test`), `allocate`, `backout` (one peering backed
+/// out), `rotate` (one key of a peering replaced) and `import` (a two-driver
+/// peering's edge result taken in). The one list; ops/goatbuilder/validate.py's RESERVED_PEERING_NAMES
+/// mirrors it.
+pub const RESERVED_PEERING_NAMES: &[&str] = &[
+    "init", "lint", "compose", "diff", "verify", "apply", "help", "status", "plan", "deploy",
+    "test", "allocate", "backout", "rotate", "import",
+];
 
 /// Read a YAML config file into a JSON value (the form the schema validates).
 pub fn load_value(path: &Path) -> Result<Value> {
     let text = std::fs::read_to_string(path)
-        .with_context(|| format!("cannot read config {}", path.display()))?;
+        .map_err(|e| goat_errors::coded("GB-244", format!("cannot read config {}: {e}", path.display())))?;
     let yaml: serde_yaml::Value = serde_yaml::from_str(&text)
-        .with_context(|| format!("{} is not valid YAML", path.display()))?;
+        .map_err(|e| goat_errors::coded("GB-245", format!("{} is not valid YAML: {e}", path.display())))?;
     serde_json::to_value(yaml)
         .with_context(|| format!("{} does not convert to JSON", path.display()))
 }
@@ -217,7 +320,18 @@ pub fn problems(value: &Value) -> Result<Vec<String>> {
 
 /// `problems`, with the checkout's own config a lite file may take `repo` and
 /// `components` from.
+#[allow(dead_code)] // the record-free form, for callers without a config path
 pub fn problems_in(value: &Value, checkout: Option<&Value>) -> Result<Vec<String>> {
+    problems_at(value, checkout, None)
+}
+
+/// `problems_in`, reading the peering allocation record in `record_dir` (the
+/// config file's directory), so a pin on a recorded value is reported too.
+pub fn problems_at(
+    value: &Value,
+    checkout: Option<&Value>,
+    record_dir: Option<&Path>,
+) -> Result<Vec<String>> {
     let schema: Value = serde_json::from_str(SCHEMA_JSON).context("embedded schema is not JSON")?;
     let compiled = JSONSchema::options()
         .with_draft(Draft::Draft7)
@@ -248,7 +362,7 @@ pub fn problems_in(value: &Value, checkout: Option<&Value>) -> Result<Vec<String
     }
     let cfg: Config = serde_json::from_value(derive_lite(value, checkout))
         .context("config does not match the typed model")?;
-    out.extend(cross_field(&cfg));
+    out.extend(cross_field_at(&cfg, record_dir));
     Ok(out)
 }
 
@@ -352,7 +466,13 @@ pub fn derive_lite(value: &Value, checkout: Option<&Value>) -> Value {
 }
 
 /// The rules JSON Schema cannot express — identical in intent to validate.py's.
+#[allow(dead_code)] // the record-free form, kept for callers without a config path
 pub fn cross_field(cfg: &Config) -> Vec<String> {
+    cross_field_at(cfg, None)
+}
+
+/// `cross_field`, with the peering allocation record read from `record_dir`.
+pub fn cross_field_at(cfg: &Config, record_dir: Option<&Path>) -> Vec<String> {
     let mut out = Vec::new();
     let names: Vec<&str> = cfg.environments.iter().map(|e| e.name.as_str()).collect();
     let mut dupes: Vec<&str> = names
@@ -433,6 +553,15 @@ pub fn cross_field(cfg: &Config) -> Vec<String> {
             ));
         }
     }
+    // Reserved names and the offer's shape (docs/design/goatbuilder.md, "The
+    // peering declaration").
+    out.extend(crate::federate::declaration::problems(cfg));
+    // Pins that are malformed or collide, and partners declared twice
+    // (docs/design/goatbuilder.md, "Per-peering values").
+    out.extend(match record_dir {
+        Some(d) => crate::federate::alloc::declaration_problems_in(cfg, d),
+        None => crate::federate::alloc::declaration_problems(cfg),
+    });
     out
 }
 
@@ -454,21 +583,24 @@ pub fn op_account(repo: &Path) -> Option<String> {
 pub fn load(path: &Path) -> Result<Config> {
     let value = load_value(path)?;
     let checkout = checkout_for(path);
-    let problems = problems_in(&value, checkout.as_ref())?;
+    let problems = problems_at(&value, checkout.as_ref(), path.parent())?;
     if !problems.is_empty() {
-        return Err(anyhow!(
-            "{} does not validate:\n  {}",
-            path.display(),
-            problems.join("\n  ")
-        ));
+        return Err(goat_errors::coded(
+            REFUSED_CODE,
+            format!("{} does not validate:\n  {}", path.display(), problems.join("\n  ")),
+        )
+        .into());
     }
     serde_json::from_value(derive_lite(&value, checkout.as_ref())).context("config does not match the typed model")
 }
 
+/// The catalog code of a config that does not validate (ops/errors/catalog.yaml).
+pub const REFUSED_CODE: &str = "GB-025";
+
 /// The `validate` verb's report: one check per problem, or one passing check.
 pub fn validate_report(path: &Path) -> Result<Report> {
     let value = load_value(path)?;
-    let problems = problems_in(&value, checkout_for(path).as_ref())?;
+    let problems = problems_at(&value, checkout_for(path).as_ref(), path.parent())?;
     let checks = if problems.is_empty() {
         vec![Check {
             name: "config".into(),
@@ -477,12 +609,14 @@ pub fn validate_report(path: &Path) -> Result<Report> {
             fix: None,
         }]
     } else {
+        // Each row names the catalog code, so `goatbuilder explain GB-025` and a
+        // program reading `-o json` both find the refusal (C5).
         problems
             .into_iter()
             .map(|p| Check {
                 name: "config".into(),
                 ok: false,
-                detail: p,
+                detail: format!("{REFUSED_CODE}: {p}"),
                 fix: None,
             })
             .collect()
@@ -518,6 +652,33 @@ pub(crate) fn checkout_declares_a_deployment() -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A refusal names the catalog code its documents give it (GB-025), on every
+    /// failing row, so a person can `goatbuilder explain` it and a program can read it
+    /// (docs/reference/goatbuilder/03-configuration.md: "A config that does not validate is GB-025").
+    #[test]
+    fn a_refused_config_names_gb_025_on_every_failing_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("goatbuilder.yaml");
+        std::fs::write(&path, "schema: goatbuilder/v1\nflavour: vanilla\n").unwrap();
+        let r = validate_report(&path).unwrap();
+        assert!(!r.ok);
+        assert!(
+            r.checks
+                .iter()
+                .all(|c| !c.ok && c.detail.starts_with("GB-025: ")),
+            "{:?}",
+            r.checks
+        );
+        let ok = dir.path().join("ok.yaml");
+        std::fs::write(&ok, serde_yaml::to_string(&minimal()).unwrap()).unwrap();
+        let r = validate_report(&ok).unwrap();
+        assert!(
+            r.ok && !r.checks[0].detail.contains("GB-025"),
+            "{:?}",
+            r.checks
+        );
+    }
 
     fn minimal() -> Value {
         json!({
@@ -628,6 +789,23 @@ mod tests {
         let mut v = with_sites();
         v["peerings"] = json!([{"with": "velmara", "environment": "dev", "site": "alpha", "edge_class": "router"}]);
         rejected(&v, "edge_class 'router'");
+    }
+
+    /// Every federation verb `goatbuilder federate` runs is in the one reserved
+    /// list, so a partner named like one is refused where it is declared (GB-120).
+    #[test]
+    fn a_peering_named_like_a_federate_subcommand_is_refused() {
+        for name in ["lint", "apply", "help", "backout"] {
+            let mut v = with_sites();
+            v["peerings"] = json!([{"with": name, "environment": "dev", "site": "alpha", "edge_class": "edge"}]);
+            rejected(&v, "(GB-120)");
+        }
+        for verb in goat_federation::verbs::VERB_NAMES {
+            assert!(RESERVED_PEERING_NAMES.contains(verb), "{verb} is a verb and must be reserved");
+        }
+        assert!(RESERVED_PEERING_NAMES.contains(&crate::federate::backout::VERB), "backout is a subcommand and must be reserved");
+        assert!(RESERVED_PEERING_NAMES.contains(&crate::federate::rotation::VERB), "rotate is a subcommand and must be reserved");
+        assert!(RESERVED_PEERING_NAMES.contains(&"import"), "import is a subcommand and must be reserved");
     }
 
     #[test]
@@ -753,8 +931,7 @@ mod tests {
         assert_eq!(cfg.repo.unwrap().source, "example-org/goatnet-from-scratch");
         assert_eq!(cfg.components.len(), 1);
         // The four-fact file at a checkout root loads through `load`, finding the checkout config beside it.
-        let root = std::env::temp_dir().join(format!("gb-lite-root-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::testdir::path("gb-lite-root-");
         std::fs::create_dir_all(root.join("ops/goatbuilder")).unwrap();
         std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/goatbuilder.yaml"), root.join("ops/goatbuilder/goatbuilder.yaml")).unwrap();
         std::fs::write(root.join("goatlite.yaml"), "schema: goatbuilder/v1\npreset: lite\nlite:\n  name: pasture\n  host: 192.0.2.50\n  ssh_user: ubuntu\n  admin: me@example.org\n").unwrap();
@@ -833,4 +1010,18 @@ mod tests {
         let names: Vec<&str> = cfg.promotion.path.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["dev", "preprod", "prod"]);
     }
+
+    /// The administrator address keeps the shape it has always validated with.
+    #[test]
+    fn an_admin_address_that_validated_before_still_validates() {
+        for a in ["admin@example.org", "me@pasture", "o$wner@example.org", "o'brien@example.org", "a$(x)@example.org", "a`b`c@example.org", "a\"b@example.org", "a\\b@example.org"] {
+            let mut v = goatlite();
+            v["lite"]["admin"] = json!(a);
+            assert_eq!(problems(&v).unwrap(), Vec::<String>::new(), "lite.admin {a} validates");
+            let mut v = goatlite();
+            v["lite"]["internet"] = json!({"zone": "pasture.example.org", "acme_email": a});
+            assert!(!problems(&v).unwrap().iter().any(|p| p.contains("acme_email")), "lite.internet.acme_email {a} validates");
+        }
+    }
+
 }

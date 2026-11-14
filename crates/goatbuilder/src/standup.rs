@@ -21,9 +21,11 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
-use anyhow::{anyhow, Context, Result};
+use crate::runner::Cmd;
+
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::config;
@@ -75,38 +77,38 @@ enum Event {
 
 /// What the script reads from the site's group_vars before any phase, and the
 /// derived names every command string carries.
-struct Site {
-    repo: String,
-    site: String,
-    group: String,
-    upper: String,
-    obs_group: String,
-    state_dir: String,
-    ansible_pre: String,
-    inv: &'static str,
-    profile: String,
-    joiner: bool,
-    join_founder_site: String,
-    join_founder_group: String,
-    acl_site: String,
-    mgmt_fqdn: String,
-    intra_pair: bool,
-    obs: bool,
-    obs_why: String,
-    group_vars_exists: bool,
+pub(crate) struct Site {
+    pub(crate) repo: String,
+    pub(crate) site: String,
+    pub(crate) group: String,
+    pub(crate) upper: String,
+    pub(crate) obs_group: String,
+    pub(crate) state_dir: String,
+    pub(crate) ansible_pre: String,
+    pub(crate) inv: &'static str,
+    pub(crate) profile: String,
+    pub(crate) joiner: bool,
+    pub(crate) join_founder_site: String,
+    pub(crate) join_founder_group: String,
+    pub(crate) acl_site: String,
+    pub(crate) mgmt_fqdn: String,
+    pub(crate) intra_pair: bool,
+    pub(crate) obs: bool,
+    pub(crate) obs_why: String,
+    pub(crate) group_vars_exists: bool,
     /// Who the bootstrap belongs to: a goatlite's declared `lite.admin`, else
     /// `$OWNER_EMAIL` for the phase's own shell to expand as it always has.
-    owner_email: String,
+    pub(crate) owner_email: String,
     /// A goatlite run (ADR 1213): `<repo>/goatlite.yaml` is `preset: lite` and
     /// names this site. Phase 1 renders the config surface first, phase 4 mints
     /// the CA when the manifest's root is missing, the profile is LAN, no obs host.
-    lite: bool,
+    pub(crate) lite: bool,
     /// `<UPPER>_NB_API_TOKEN` is available under the declared secrets posture,
     /// so a LAN site needs no phase-11 first-login step.
-    nb_token_available: bool,
+    pub(crate) nb_token_available: bool,
 }
 
-const INV: &str = "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini";
+pub(crate) const INV: &str = "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini";
 
 /// The site a standup runs for: `--site` when given; otherwise, on a goatlite
 /// run, the lite goatnet's own name — from the `--mock` fixture's config when
@@ -127,12 +129,16 @@ pub fn site_for(repo: &Path, fixture: Option<&config::Config>, env: &str, site: 
     let root = repo.join("goatlite.yaml");
     if fixture.is_none() && root.is_file() {
         // A file that does not load is the cause; a missing --site would be a wrong answer.
-        let c = config::load(&root).map_err(|e| anyhow!("{e:#}\n\n(the site is derived from goatlite.yaml when --site is left out, so fix that file or pass --site)"))?;
+        // The config's own code when it carries one, else GB-025 (it does not validate).
+        let c = config::load(&root).map_err(|e| {
+            let code = e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone()).unwrap_or_else(|| "GB-025".into());
+            goat_errors::coded(&code, format!("{e:#}\n\n(the site is derived from goatlite.yaml when --site is left out, so fix that file or pass --site)"))
+        })?;
         if lite_name(&c) {
             return Ok(c.lite.expect("checked").name);
         }
     }
-    Err(anyhow!("the following required arguments were not provided:\n  --site <SITE>\n\n(--site may be omitted only on a goatlite run: {} with preset lite and lite.name {env})", if fixture.is_some() { "the fixture's goatbuilder.yaml" } else { "goatlite.yaml at the checkout root" }))
+    Err(goat_errors::coded("GB-243", format!("the following required arguments were not provided:\n  --site <SITE>\n\n(--site may be omitted only on a goatlite run: {} with preset lite and lite.name {env})", if fixture.is_some() { "the fixture's goatbuilder.yaml" } else { "goatlite.yaml at the checkout root" })).into())
 }
 
 /// The goatlite config for a run (ADR 1213): `<repo>/goatlite.yaml`, when it
@@ -157,7 +163,7 @@ pub fn resolve_lite(repo: &Path, site: &str) -> Result<Option<config::Config>> {
 }
 
 /// `grep -qE '^[[:space:]]*<key>:[[:space:]]*<value>'` over a file.
-fn gv_matches(file: &Path, key: &str, value: &str) -> bool {
+pub(crate) fn gv_matches(file: &Path, key: &str, value: &str) -> bool {
     std::fs::read_to_string(file)
         .map(|t| t.lines().any(|l| gv_line_value(l, key).map(|v| v.starts_with(value)).unwrap_or(false)))
         .unwrap_or(false)
@@ -181,7 +187,7 @@ fn gv_line_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 
 /// `gv_value` in the script: one group_vars value read as YAML, folded
 /// scalars included, whitespace collapsed; None when the key is absent.
-fn gv_value(file: &Path, key: &str) -> Option<String> {
+pub(crate) fn gv_value(file: &Path, key: &str) -> Option<String> {
     let text = std::fs::read_to_string(file).ok()?;
     let doc: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
     let v = doc.get(key)?;
@@ -196,8 +202,8 @@ fn gv_value(file: &Path, key: &str) -> Option<String> {
 }
 
 /// `python3 ops/scripts/inventory-hosts.py <groups...> [--ssh-target]`, one line per host.
-fn inventory_hosts(repo: &Path, groups: &[&str], ssh_target: bool) -> Vec<String> {
-    let mut c = Command::new("python3");
+pub(crate) fn inventory_hosts(repo: &Path, groups: &[&str], ssh_target: bool) -> Vec<String> {
+    let mut c = Cmd::new("python3");
     c.arg(repo.join("ops/scripts/inventory-hosts.py")).args(groups);
     if ssh_target {
         c.arg("--ssh-target")
@@ -218,7 +224,47 @@ pub(crate) fn obs_play_missing(repo: &Path) -> Option<String> {
     Some("has_obs_host: true, but ops/ansible/utility-host-bootstrap.yml is not in this tree, so the obs leg cannot run.".to_string())
 }
 
-fn read_site(repo: &Path, o: &Options) -> Result<Site> {
+/// A declared value as one POSIX shell word, always single-quoted: each `'` is
+/// written as `'\''`, so the shell passes the value on exactly as written. For a
+/// value with no `'` this is the plain `'value'` the plans have always carried.
+pub(crate) fn sh_quote(v: &str) -> String {
+    format!("'{}'", v.replace('\'', "'\\''"))
+}
+
+/// A declared value as one shell word, quoted only when it needs to be: a value of
+/// letters, digits and `_ . / : = @ % + , -` stands as it is, a leading `~/` keeps
+/// meaning the home directory, and anything else is `sh_quote`d. Today's values
+/// (`default`, `~/.goat/state/...`) therefore read exactly as they always have.
+pub(crate) fn sh_word(v: &str) -> String {
+    let plain = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "_./:=@%+,-".contains(c));
+    match v.strip_prefix("~/") {
+        Some(rest) if plain(rest) => v.to_string(),
+        Some(rest) => format!("~/{}", sh_quote(rest)),
+        None if plain(v) => v.to_string(),
+        None => sh_quote(v),
+    }
+}
+
+/// What reading a site takes from this process's environment, passed in so a
+/// test can fix it rather than read what another test is changing.
+struct SiteEnv {
+    /// `GOAT_AWS_PROFILE`, when set and not empty.
+    aws_profile: Option<String>,
+    /// The home directory a declared `~/` state directory is under.
+    home: String,
+}
+
+impl SiteEnv {
+    fn process() -> Self {
+        SiteEnv { aws_profile: std::env::var("GOAT_AWS_PROFILE").ok().filter(|s| !s.is_empty()), home: std::env::var("HOME").unwrap_or_default() }
+    }
+}
+
+pub(crate) fn read_site(repo: &Path, o: &Options) -> Result<Site> {
+    read_site_in(repo, o, &SiteEnv::process())
+}
+
+fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
     let site = o.site.to_string();
     let site_us = site.replace('-', "_");
     let group = format!("{site_us}_hosts");
@@ -233,9 +279,10 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
     let lite_internet_aws = lite_cfg.as_ref().and_then(|c| c.lite.as_ref()).and_then(|l| {
         l.internet.as_ref().map(|i| i.aws_profile.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| l.name.clone()))
     });
-    let aws = std::env::var("GOAT_AWS_PROFILE").ok().filter(|s| !s.is_empty())
+    let aws = env.aws_profile.clone()
         .or_else(|| lite_internet_aws.clone())
-        .unwrap_or_else(|| crate::settings::aws_profile(repo));
+        .or_else(|| crate::settings::declared_aws_profile(repo))
+        .unwrap_or_else(|| "default".to_string());
     // A goatlite declares its administrator (lite.admin), so the run uses that
     // rather than an OWNER_EMAIL the person must remember to export: phase 5
     // expanded "$OWNER_EMAIL" in its arguments and died before Ansible, and
@@ -257,12 +304,12 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
         (true, String::new())
     };
     if o.obs_only && !obs {
-        return Err(anyhow!("--obs-only: no obs leg to run — {obs_why}"));
+        return Err(goat_errors::coded("GB-248", format!("--obs-only: no obs leg to run — {obs_why}")).into());
     }
     // Refuse here rather than at phase 2, after the core leg has started beside it.
     if obs {
         if let Some(missing) = obs_play_missing(repo) {
-            return Err(anyhow!("{missing} Re-run with --skip-obs to stand up the site without its obs host."));
+            return Err(goat_errors::coded("GB-248", format!("{missing} Re-run with --skip-obs to stand up the site without its obs host.")).into());
         }
     }
 
@@ -272,7 +319,7 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
         None => if gv_matches(&gv, "dashboard_cert_delivery_mode", "acme") { "internet".to_string() } else { "lan".to_string() },
     };
     if profile != "lan" && profile != "internet" {
-        return Err(anyhow!("bad --profile '{profile}' (want lan|internet)"));
+        return Err(goat_errors::coded("GB-242", format!("bad --profile '{profile}' (want lan|internet)")).into());
     }
     // A LAN site pauses for the first login (phase 11) only while the bootstrap
     // NetBird token is not available under the declared posture (ADR 1204).
@@ -281,6 +328,14 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
     let join_founder_site = if joiner { gv_first(&gv, "join_founder_site") } else { String::new() };
     let join_founder_group = if join_founder_site.is_empty() { String::new() } else { format!("{}_hosts", join_founder_site.replace('-', "_")) };
     let acl_site = if joiner { join_founder_site.clone() } else { site.clone() };
+    // The ACL site names the token variable phase 12 reads (<SITE>_NB_API_TOKEN),
+    // so a founder site that cannot make a variable name is refused here.
+    let upper_acl = acl_site.replace('-', "_").to_uppercase();
+    if !acl_site.is_empty() && !upper_acl.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+        // A joiner's ACL site is its founder's (join_founder_site); a founder's is itself.
+        let source = if joiner { format!("join_founder_site {acl_site:?} in group_vars/{group}/vars.yml") } else { format!("the site {acl_site:?}") };
+        return Err(goat_errors::coded("GB-263", format!("{source} is not a site id: phase 12 reads the token variable {upper_acl}_NB_API_TOKEN named after it, so it may hold only letters, digits, - and _")).into());
+    }
     Ok(Site {
         repo: repo.display().to_string(),
         group_vars_exists: repo.join("ops/ansible/group_vars").join(&group).is_dir(),
@@ -289,14 +344,14 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
         group,
         upper,
         obs_group,
-        state_dir: crate::settings::state_dir_abs(repo),
+        state_dir: crate::settings::expand_under(&crate::settings::state_dir(repo), &env.home),
         // A LAN goatlite reaches its one box directly at its inventory address and
         // declares no cloud, so no play needs AWS. with-aws defaults to
         // aws-vault whenever aws-vault is installed (ADR 1204), so without this
         // every play asked the operator's keychain, once per play. On the internet
         // profile the relay plays reach AWS (SSM, Secrets Manager), so it stays.
-        ansible_pre: format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES {}../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh",
-                             if lite && profile == "lan" { "GOAT_AWS_MODE=none " } else { "" }),
+        ansible_pre: format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES {}../scripts/with-aws {} -- ../scripts/ansible-preflight.sh",
+                             if lite && profile == "lan" { "GOAT_AWS_MODE=none " } else { "" }, sh_word(&aws)),
         inv: INV,
         profile,
         joiner,
@@ -382,7 +437,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     // Up to the manual step only: phase 11 issues the service token phase 12
     // reads, so scanning all fourteen phases here refused every first run.
     ev.push(p(1, "GATE", "every input the phases before the manual step will reach is set (one static scan of the plays; changes nothing)".into(), format!("python3 '{r}/ops/scripts/standup-required-inputs.py' {site} --profile {} --to 11", s.profile)));
-    ev.push(p(1, "GATE", format!("the NetBird ACL for {} is declared, with no Default All->All (ADR 1185)", or_q(&s.acl_site)), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' '{}' --declared", s.acl_site)));
+    ev.push(p(1, "GATE", format!("the NetBird ACL for {} is declared, with no Default All->All (ADR 1185)", or_q(&s.acl_site)), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --declared", sh_quote(&s.acl_site))));
     ev.push(p(1, "GATE", "establish the env-door (off-profile transport)".into(), format!("python3 '{r}/ops/scripts/generate-door-inventory.py' {site}")));
     let obs_grp = if s.obs { og.as_str() } else { "" };
     // What the preflight is told about this run: phase 2 still ahead (its sysctls,
@@ -414,11 +469,14 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let mint_ca = if s.lite { " --mint-ca-if-missing" } else { "" };
     ev.push(p(4, "T", "mint leaf certs".into(), format!("'{r}/ops/scripts/mint-site-certs.sh' {site}{mint_ca}")));
     let state = crate::settings::state_dir(repo);
-    let audit = crate::settings::ca_audit_log(repo);
+    let ca_key = sh_word(&format!("{state}/{site}-ca/ca.key.age"));
+    let no_key = sh_quote(&format!("name_snapshot: no {state}/{site}-ca/ca.key.age — generate ran, SIGN manually with ops/enrollment/cmd/name-snapshot-sign"));
+    let audit = sh_word(&crate::settings::ca_audit_log(repo));
     ev.push(p(4, "T", "name-fallback snapshot (generate + sign)".into(), format!(
-        "if grep -qE 'name_snapshot_enabled:[[:space:]]*true' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null; then      python3 '{r}/ops/dns/generate-mesh-hosts.py';      if [ -f {state}/{site}-ca/ca.key.age ]; then        ( cd '{r}/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '{r}/ops/dns/{site}/name-snapshot.json' --root-key {state}/{site}-ca/ca.key.age --age-identity ~/.config/age/keys.txt --audit-log {audit} );      else echo 'name_snapshot: no {state}/{site}-ca/ca.key.age — generate ran, SIGN manually with ops/enrollment/cmd/name-snapshot-sign'; fi;    else echo 'name_snapshot_enabled not true for {g} — skipping (ADR 1082)'; fi")));
+        "if grep -qE 'name_snapshot_enabled:[[:space:]]*true' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null; then      python3 '{r}/ops/dns/generate-mesh-hosts.py';      if [ -f {ca_key} ]; then        ( cd '{r}/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '{r}/ops/dns/{site}/name-snapshot.json' --root-key {ca_key} --age-identity ~/.config/age/keys.txt --audit-log {audit} );      else echo {no_key}; fi;    else echo 'name_snapshot_enabled not true for {g} — skipping (ADR 1082)'; fi")));
 
-    let ev_secrets = format!("-e bootstrap_owner_email=\"{oe}\" -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\" -e netbird_encryption_key=\"$(printenv {u}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"$(printenv {u}_BKP_KEY)\"");
+    let owner_arg = owner_word(oe);
+    let ev_secrets = format!("-e bootstrap_owner_email={owner_arg} -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\" -e netbird_encryption_key=\"$(printenv {u}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"$(printenv {u}_BKP_KEY)\"");
     // A joiner's bootstrap carries site_id as a play variable (bootstrap_play):
     // as an extra var it would reach every host and the Spock roles would find
     // no peer. A founder keeps the plain form.
@@ -450,11 +508,13 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(6, "A", "ory (kratos/hydra/ui)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {g} -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
     let jfs = &s.join_founder_site;
     let jfg = &s.join_founder_group;
+    // The founder a joiner joins, as one shell word each place it is used.
+    let (jfs_q, jfg_q) = (sh_quote(jfs), sh_quote(jfg));
     if s.joiner {
         // site-seed-from-peer.yml is the generic play; a site that keeps its
         // own <site>-seed-from-peer.yml gets that one instead.
         let seed_play = site_play(repo, site, "seed-from-peer.yml");
-        ev.push(p(6, "A", format!("[joiner] seed-from-peer (pass 2 — data-only copy from founder {}; guarded)", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfs}' ] || {{ echo 'joiner: group_vars/{g}/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }}; }} && {pre} {inv} {seed_play} -e site_id={site}")));
+        ev.push(p(6, "A", format!("[joiner] seed-from-peer (pass 2 — data-only copy from founder {}; guarded)", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n {jfs_q} ] || {{ echo 'joiner: group_vars/{g}/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }}; }} && {pre} {inv} {seed_play} -e site_id={site}")));
     }
     // The rest of site-bootstrap, now that Ory is up: the seed's schema wait is
     // bounded (netbird_schema_wait_seconds) and names its cause. A joiner runs
@@ -466,7 +526,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(6, "A", "the rest of site-bootstrap: wait for the netbird schema, seed the account, print + save the setup key".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} {sb} {ev_bootstrap} --skip-tags stack")));
     }
     if s.joiner {
-        ev.push(p(6, "A", format!("[joiner] founder-side mirror (spock-mesh-wire on {}, peer={site} only — both-direction subscriptions)", or_q(jfg)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfg}' ] || {{ echo 'joiner: join_founder_site not set in group_vars/{g}/vars.yml'; exit 1; }}; }} && {pre} {inv} spock-mesh-wire.yml --limit {jfg} -e '{{\"inter_site_spock_peers\":[\"{site}\"],\"ory_spock_reconcile_history\":false}}'")));
+        ev.push(p(6, "A", format!("[joiner] founder-side mirror (spock-mesh-wire on {}, peer={site} only — both-direction subscriptions)", or_q(jfg)), format!("cd '{r}/ops/ansible' && {{ [ -n {jfg_q} ] || {{ echo 'joiner: join_founder_site not set in group_vars/{g}/vars.yml'; exit 1; }}; }} && {pre} {inv} spock-mesh-wire.yml --limit {} -e '{{\"inter_site_spock_peers\":[\"{site}\"],\"ory_spock_reconcile_history\":false}}'", sh_word(jfg))));
         ev.push(p(6, "A", "[joiner] the joiner's Spock wiring again, now that the founder's half exists (Ory subscription + history reconcile)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {g}")));
     }
     if internet {
@@ -474,14 +534,18 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(7, "T", "[internet] generate relay inventory from terraform".into(), format!("'{r}/ops/ansible/inventory/generate-relays.sh' {site} terraform-{site}")));
         ev.push(p(7, "A", "[internet] relay tier (coturn + rathole + TLS renewal)".into(), format!("cd '{r}/ops/ansible' && umask 077 && VF=$(mktemp -t goat-relay-vars.XXXXXX) && printf 'nb_relay_auth_secret: \"%s\"\\nrelay_secret: \"%s\"\\ncloudflare_api_token: \"%s\"\\n' \"$(printenv {u}_RELAY_SECRET)\" \"$(printenv {u}_RELAY_SECRET)\" \"$(printenv CLOUDFLARE_API_TOKEN_{u})\" > \"$VF\" && {pre} -i inventory/hosts-{site}.ini relay-server.yml -e @\"$VF\"; rc=$?; rm -f \"$VF\"; exit $rc")));
         if s.joiner {
-            ev.push(p(7, "A", format!("[joiner] wire {site} into the founder ({}) relay ingress + re-render", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfs}' ] || {{ echo 'joiner: join_founder_site not set in group_vars/{g}/vars.yml'; exit 1; }}; }} && {{ ls inventory/hosts-{jfs}.ini >/dev/null 2>&1 || {{ echo 'founder relay inventory inventory/hosts-{jfs}.ini missing — generate it first: inventory/generate-relays.sh {jfs} terraform-{jfs}'; exit 1; }}; }} && {pre} -i inventory/hosts-{jfs}.ini -i inventory/{jfs}-goat-relay-alias.ini {inv} relay-ingress-add-site.yml -e target=goat_relay_hosts -e founder_site={jfs} -e join_site={site}")));
+            ev.push(p(7, "A", format!("[joiner] wire {site} into the founder ({}) relay ingress + re-render", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n {jfs_q} ] || {{ echo 'joiner: join_founder_site not set in group_vars/{g}/vars.yml'; exit 1; }}; }} && {{ ls {hosts} >/dev/null 2>&1 || {{ echo {missing}; exit 1; }}; }} && {pre} -i {hosts} -i {alias} {inv} relay-ingress-add-site.yml -e target=goat_relay_hosts -e {founder} -e join_site={site}",
+                hosts = sh_word(&format!("inventory/hosts-{jfs}.ini")),
+                missing = sh_quote(&format!("founder relay inventory inventory/hosts-{jfs}.ini missing — generate it first: inventory/generate-relays.sh {jfs} terraform-{jfs}")),
+                alias = sh_word(&format!("inventory/{jfs}-goat-relay-alias.ini")),
+                founder = sh_word(&format!("founder_site={jfs}")))));
         }
         // Phase 8, scripted (goatbuilder-speed.md): enrol with a single-use key
         // against the declared mesh_enrollment_url, then record the mesh IPs and
         // re-mint the router pair. A host already enrolled mints nothing.
         let mesh_ips = format!("{}/standup-{site}-mesh-ips.json", s.state_dir);
-        ev.push(p(8, "A", "[internet] mesh-enroll the hosts (a single-use key each, the declared enrolment URL)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out='{mesh_ips}'")));
-        ev.push(p(8, "T", "[internet] record the mesh IPs (group_vars, mesh inventory, cert manifest) and re-mint the router cert".into(), format!("python3 '{r}/ops/scripts/standup-mesh-record.py' {site} --ips '{mesh_ips}'")));
+        ev.push(p(8, "A", "[internet] mesh-enroll the hosts (a single-use key each, the declared enrolment URL)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", sh_quote(&mesh_ips))));
+        ev.push(p(8, "T", "[internet] record the mesh IPs (group_vars, mesh inventory, cert manifest) and re-mint the router cert".into(), format!("python3 '{r}/ops/scripts/standup-mesh-record.py' {site} --ips {}", sh_quote(&mesh_ips))));
     }
     ev.push(p(9, "A", "zenoh router".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={g}")));
     ev.push(p(9, "A", "SPIRE server on the founder (workload identity)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} spire-deploy.yml -e target={g} -l 'mgmt-{site}-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
@@ -511,10 +575,10 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         // One ansible-playbook run of the two plays, in order: groups, then the
         // cutover in enforce mode, which creates every declared policy before it
         // applies the Default-policy action (goatlite.md §11 measure 3).
-        ev.push(p(12, "A", "declared NetBird ACL: groups, then policies, then enforce (one play run)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site={site} -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://{fqdn}")));
+        ev.push(p(12, "A", "declared NetBird ACL: groups, then policies, then enforce (one play run)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site={site} -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
     }
     let acl_upper = s.acl_site.replace('-', "_").to_uppercase();
-    ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' '{}' --url https://{fqdn} --token-env {acl_upper}_NB_API_TOKEN", s.acl_site)));
+    ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {}", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")), sh_word(&format!("{acl_upper}_NB_API_TOKEN")))));
     ev.push(p(12, "T", "mint the NetBird service identities this goatnet needs (creates only what is missing)".into(), format!("python3 '{r}/ops/scripts/netbird-service-identities.py' {site} --group {g} --mint")));
     ev.push(p(12, "GATE", "every required NetBird service identity is present and verified".into(), format!("python3 '{r}/ops/scripts/netbird-service-identities.py' {site} --group {g} --live")));
     if !s.joiner {
@@ -536,8 +600,8 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
             "goatcore ships no Forgejo role; to turn the mirror on, run a Forgejo for this goatnet and declare it (ops/ansible/roles/pubsub-state-repo/README.md)".into()] });
     }
     if s.obs && forge {
-        let obs_ssh = inventory_hosts(repo, &[og], true).into_iter().next().unwrap_or_default();
-        ev.push(Event::Phase(Phase { n: 12, kind: "T", label: "mint the pubsub-state mirror bot on the obs host's Forgejo (once; skipped when FORGEJO_PUBSUB_TOKEN is set)".into(), cmd: format!("if [ -n \"${{FORGEJO_PUBSUB_TOKEN:-}}\" ]; then echo '    FORGEJO_PUBSUB_TOKEN already set — bot minted; skipping';    else '{r}/ops/scripts/forgejo-mint-pubsub-bot.sh' '{obs_ssh}'      && eval \"$('{r}/ops/scripts/envrc-var.sh' FORGEJO_PUBSUB_TOKEN)\"      && '{r}/ops/scripts/standup-keep-secret' FORGEJO_PUBSUB_TOKEN      && echo '    token loaded from the operator envrc; the run continues'; fi"), stop_after: true }));
+        let obs_ssh = sh_quote(&inventory_hosts(repo, &[og], true).into_iter().next().unwrap_or_default());
+        ev.push(Event::Phase(Phase { n: 12, kind: "T", label: "mint the pubsub-state mirror bot on the obs host's Forgejo (once; skipped when FORGEJO_PUBSUB_TOKEN is set)".into(), cmd: format!("if [ -n \"${{FORGEJO_PUBSUB_TOKEN:-}}\" ]; then echo '    FORGEJO_PUBSUB_TOKEN already set — bot minted; skipping';    else '{r}/ops/scripts/forgejo-mint-pubsub-bot.sh' {obs_ssh}      && eval \"$('{r}/ops/scripts/envrc-var.sh' FORGEJO_PUBSUB_TOKEN)\"      && '{r}/ops/scripts/standup-keep-secret' FORGEJO_PUBSUB_TOKEN      && echo '    token loaded from the operator envrc; the run continues'; fi"), stop_after: true }));
     }
     ev.push(p(12, "GATE", "every input the phases after the manual step will reach is set (the NetBird service token phase 11 issues)".into(), format!("python3 '{r}/ops/scripts/standup-required-inputs.py' {site} --profile {} --from 12", s.profile)));
     ev.push(p(12, "A", "pubsub-state Repl mirror (Block 86)".into(), format!("cd '{r}/ops/ansible' && if ls group_vars/{g}/pubsub-state.yml >/dev/null 2>&1; then {pre} {inv} pubsub-state-mirror-deploy.yml -e target={g}; else echo 'no group_vars/{g}/pubsub-state.yml — the pub/sub state mirror is not configured for this goatnet; skipping. It needs a Forgejo you run for this goatnet (goatcore ships no Forgejo role): see ops/ansible/roles/pubsub-state-repo/README.md, then re-run --from 12'; fi")));
@@ -600,6 +664,21 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(14, "A", "join the cross-goatnet surfaces (relay-health overview on every box)".into(), format!("'{r}/ops/goatnets/cross-env-apply.sh' --require {site}")));
     }
     ev
+}
+
+/// Every command the plan runs, in order: each phase that is not a manual
+/// step (whose text is instructions for a person), each leg and the image
+/// pull. What `goatbuilder inputs standup` must give a source for.
+#[cfg(test)]
+pub(crate) fn plan_commands(repo: &Path, s: &Site, o: &Options) -> Vec<String> {
+    plan(repo, s, o, "goatbuilder standup")
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::Phase(p) if p.kind != "MANUAL" && in_range(p.n, o) => Some(p.cmd),
+            Event::LegStart { cmd, .. } | Event::PullStart { cmd, .. } => Some(cmd),
+            _ => None,
+        })
+        .collect()
 }
 
 /// One row per executed phase in `<state_dir>/standup-<site>-timings.tsv`, the
@@ -707,7 +786,8 @@ fn flush_waves(repo: &Path, s: &Site, q: &mut Vec<Queued>, checks: &mut Vec<Chec
         for i in &idx {
             let log = format!("{}/standup-{}-12-{}.log", s.state_dir, s.site, q[*i].id);
             let f = std::fs::File::create(&log)?;
-            let child = phase_command(repo, &q[*i].cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
+            crate::runner::phase("12", &q[*i].label, "");
+            let child = site_phase_command(repo, s, &q[*i].cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().context("bash")?;
             kids.push((*i, child, std::time::Instant::now(), log));
         }
         let mut failed = Vec::new();
@@ -737,7 +817,7 @@ fn flush_waves(repo: &Path, s: &Site, q: &mut Vec<Queued>, checks: &mut Vec<Chec
 /// The value of `export NAME="…"` as ops/scripts/envrc-var.sh prints it from the
 /// operator envrc, or None.
 fn envrc_export(repo: &Path, name: &str) -> Option<String> {
-    let out = Command::new(repo.join("ops/scripts/envrc-var.sh")).arg(name).output().ok()?;
+    let out = Cmd::new(repo.join("ops/scripts/envrc-var.sh")).arg(name).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -782,10 +862,48 @@ fn in_range(n: u32, o: &Options) -> bool {
 /// One planned standup line, run the way goat-standup.sh runs it: through
 /// ops/scripts/standup-phase-run, which refuses an empty `$(printenv NAME)`,
 /// naming it, and under a value store reads the store afresh for each phase.
-fn phase_command(repo: &Path, cmd: &str) -> Command {
-    let mut c = Command::new(repo.join("ops/scripts/standup-phase-run"));
+fn phase_command(repo: &Path, cmd: &str) -> Cmd {
+    let mut c = Cmd::new(repo.join("ops/scripts/standup-phase-run"));
     c.arg(cmd);
+    if let Some(p) = crate::secrets::test_lite_config() {
+        c.env("GOAT_LITE_CONFIG", p);
+    }
     c
+}
+
+/// `phase_command` with the site's phase environment (`phase_env`).
+fn site_phase_command(repo: &Path, s: &Site, cmd: &str) -> Cmd {
+    let mut c = phase_command(repo, cmd);
+    c.envs(phase_env(s));
+    c
+}
+
+/// The variable a declared administrator address reaches the bootstrap phases
+/// in. The command line reads it inside double quotes, so the phase's shell
+/// expands it once and never parses the address itself.
+pub(crate) const OWNER_VAR: &str = "GOAT_BOOTSTRAP_OWNER_EMAIL";
+
+/// The bootstrap owner's word on a phase's command line: `"$OWNER_EMAIL"` when no
+/// administrator is declared, for that shell to expand as it always has;
+/// otherwise `"$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)"`, the variable `phase_env`
+/// sets. That is still data inside double quotes, and ops/scripts/standup-phase-run
+/// refuses it by name when it is empty (a command copied by hand without it).
+fn owner_word(owner: &str) -> String {
+    if owner == "$OWNER_EMAIL" {
+        "\"$OWNER_EMAIL\"".to_string()
+    } else {
+        format!("\"$(printenv {OWNER_VAR})\"")
+    }
+}
+
+/// The values a site's phases read from their environment rather than from
+/// their command line: a declared administrator address, as data.
+fn phase_env(s: &Site) -> Vec<(&'static str, String)> {
+    if s.owner_email == "$OWNER_EMAIL" {
+        Vec::new()
+    } else {
+        vec![(OWNER_VAR, s.owner_email.clone())]
+    }
 }
 
 /// `standup` on real hosts: the plan, printed; executed unless `--dry-run`.
@@ -800,10 +918,10 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     let Some(env) = env else {
         let mut declared: Vec<&str> = cfg.iter().flat_map(|c| c.environments.iter()).map(|e| e.name.as_str()).collect();
         declared.extend(lite_cfg.iter().flat_map(|c| c.environments.iter().map(|e| e.name.as_str())));
-        return Err(anyhow!("unknown environment \"{}\"; declared: {declared:?}", o.env));
+        return Err(goat_errors::coded("GB-241", format!("unknown environment \"{}\"; declared: {declared:?}", o.env)).into());
     };
     if !env.sites.is_empty() && !env.sites.iter().any(|s| s.name == o.site) {
-        return Err(anyhow!("site '{}' is not declared for environment '{}' (declared: {})", o.site, o.env, env.sites.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")));
+        return Err(goat_errors::coded("GB-247", format!("site '{}' is not declared for environment '{}' (declared: {})", o.site, o.env, env.sites.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "))).into());
     }
     let s = read_site(repo, o)?;
     let resume = format!("goatbuilder standup {} --site {}", o.env, s.site);
@@ -822,6 +940,15 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     // Fresh source (C3): once, before phase 1 touches a host. Every play then goes
     // through ansible-preflight.sh judged against the same trunk commit, so a merge
     // landing during a long standup does not stop it half way.
+    // A dry run names its probes: the secrets posture, which on a LAN site it
+    // ran itself in read_site (its answer decides the phase-11 pause), and the
+    // fresh-source check, which only a real run starts.
+    if o.dry_run {
+        if s.profile == "lan" {
+            checks.push(row("probe-ran", crate::secrets::posture_cmd(repo, &["available"]).line()));
+        }
+        checks.push(row("probe", crate::fresh::command(repo).line()));
+    }
     if !o.dry_run {
         let f = crate::fresh::check(repo)?;
         let refused = f.refused();
@@ -870,7 +997,8 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     std::fs::create_dir_all(d)?;
                 }
                 let f = std::fs::File::create(log)?;
-                let child = phase_command(repo, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
+                crate::runner::phase(&format!("observability-leg-{leg}"), label, "");
+                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
                 legs.insert(leg, (child, log.clone()));
             }
             Event::PullStart { label, cmd, log } => {
@@ -884,7 +1012,8 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     std::fs::create_dir_all(d)?;
                 }
                 let f = std::fs::File::create(log)?;
-                let child = phase_command(repo, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
+                crate::runner::phase("image-pull", label, "");
+                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
                 pulling = Some((child, log.clone()));
             }
             Event::PullJoin { at } => {
@@ -949,7 +1078,8 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     break 'run;
                 }
                 let t0 = std::time::Instant::now();
-                let status = phase_command(repo, &ph.cmd).current_dir(repo).status().context("bash")?;
+                crate::runner::phase(&ph.n.to_string(), &ph.label, "");
+                let status = site_phase_command(repo, &s, &ph.cmd).current_dir(repo).status().context("bash")?;
                 let secs = t0.elapsed().as_secs();
                 let rc_now = status.code().unwrap_or(1);
                 checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
@@ -1095,33 +1225,33 @@ pub fn mock(fixture: &mut Fixture, env: &str, site: &str, actor: &str, run: Mock
     let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section (goatbuilder-conformance.md §\"Rehearsing a standup on the fixture\")")?;
     let m = script.standup;
     if m.env != env {
-        return Err(anyhow!("the fixture rehearses environment '{}', not '{env}'", m.env));
+        return Err(goat_errors::coded("GB-249", format!("the fixture rehearses environment '{}', not '{env}'", m.env)).into());
     }
     if m.site != site {
-        return Err(anyhow!("the fixture rehearses site '{}', not '{site}'", m.site));
+        return Err(goat_errors::coded("GB-249", format!("the fixture rehearses site '{}', not '{site}'", m.site)).into());
     }
     let declared_site = fixture.config.environments.iter().find(|e| e.name == env).and_then(|e| e.sites.iter().find(|s| s.name == site));
     let Some(declared_site) = declared_site else {
-        return Err(anyhow!("site '{site}' is not declared for environment '{env}' in goatbuilder.yaml"));
+        return Err(goat_errors::coded("GB-247", format!("site '{site}' is not declared for environment '{env}' in goatbuilder.yaml")).into());
     };
     let env_sites = &fixture.config.environments.iter().find(|e| e.name == env).expect("found above").sites;
     for ph in &m.phases {
         if let Some((other, class)) = ph.class.split_once('/') {
             // Another site's class: only the founder this joiner attaches to.
             if declared_site.joins.as_deref() != Some(other) {
-                return Err(anyhow!("phase {}: class '{}' names site '{other}', but '{site}' joins {} — a standup may touch only the founder it attaches to", ph.phase, ph.class, declared_site.joins.as_deref().map(|j| format!("'{j}'")).unwrap_or_else(|| "no site".into())));
+                return Err(goat_errors::coded("GB-249", format!("phase {}: class '{}' names site '{other}', but '{site}' joins {} — a standup may touch only the founder it attaches to", ph.phase, ph.class, declared_site.joins.as_deref().map(|j| format!("'{j}'")).unwrap_or_else(|| "no site".into()))).into());
             }
             let Some(founder) = env_sites.iter().find(|s| s.name == other) else {
-                return Err(anyhow!("phase {}: site '{other}' is not declared for environment '{env}'", ph.phase));
+                return Err(goat_errors::coded("GB-247", format!("phase {}: site '{other}' is not declared for environment '{env}'", ph.phase)).into());
             };
             if !founder.classes.contains_key(class) {
-                return Err(anyhow!("phase {}: class '{class}' is not declared at site '{other}' in goatbuilder.yaml", ph.phase));
+                return Err(goat_errors::coded("GB-247", format!("phase {}: class '{class}' is not declared at site '{other}' in goatbuilder.yaml", ph.phase)).into());
             }
         } else if !declared_site.classes.contains_key(&ph.class) {
-            return Err(anyhow!("phase {}: class '{}' is not declared at site '{site}' in goatbuilder.yaml", ph.phase, ph.class));
+            return Err(goat_errors::coded("GB-247", format!("phase {}: class '{}' is not declared at site '{site}' in goatbuilder.yaml", ph.phase, ph.class)).into());
         }
         if !m.classes.contains_key(&ph.class) {
-            return Err(anyhow!("phase {}: class '{}' has no machines in converger.yaml standup.classes", ph.phase, ph.class));
+            return Err(goat_errors::coded("GB-249", format!("phase {}: class '{}' has no machines in converger.yaml standup.classes", ph.phase, ph.class)).into());
         }
     }
     // A dry run records nothing, so it needs no actor.
@@ -1203,7 +1333,7 @@ pub fn teardown_mock(fixture: &mut Fixture, env: &str, site: &str, run: MockRun)
     let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section")?;
     let m = script.standup;
     if m.env != env || m.site != site {
-        return Err(anyhow!("the fixture rehearses {}/{}, not {env}/{site}", m.env, m.site));
+        return Err(goat_errors::coded("GB-249", format!("the fixture rehearses {}/{}, not {env}/{site}", m.env, m.site)).into());
     }
     let started = std::time::Instant::now();
     let mut checks = Vec::new();
@@ -1394,7 +1524,7 @@ pub fn teardown(repo: &Path, o: &Options, services: bool) -> Result<Report> {
     }
     for (component, cmd) in &cmds {
         let t0 = std::time::Instant::now();
-        let status = Command::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
+        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
         let rc = status.code().unwrap_or(1);
         checks.push(row("time", format!("teardown {component} took {}s (exit {rc})", t0.elapsed().as_secs())));
         if !status.success() {
@@ -1410,6 +1540,7 @@ pub fn teardown(repo: &Path, o: &Options, services: bool) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     /// Both drivers run a planned line through the one runner that refuses an empty
     /// `$(printenv NAME)` (tests/test_standup_phase_run.py tests its refusal).
@@ -1525,8 +1656,8 @@ mod tests {
         }
         // The phase runner reads the checkout's secrets posture; a learner's
         // goatlite.yaml at the root would turn it into a value store (ADR 1213 D4).
-        std::env::set_var("GOAT_LITE_CONFIG", "/nonexistent/goatlite.yaml");
-        let t = std::env::temp_dir().join(format!("gb-waves-{}", std::process::id()));
+        crate::secrets::set_test_lite_config("/nonexistent/goatlite.yaml");
+        let t = crate::testdir::path("gb-waves-");
         std::fs::create_dir_all(&t).unwrap();
         let site = Site {
             repo: String::new(), site: "zagros".into(), group: "zagros_hosts".into(), upper: "ZAGROS".into(), obs_group: String::new(),
@@ -1617,7 +1748,7 @@ mod tests {
         assert!(!seed[0].2.contains("missing "), "no refusal for an absent per-site play: {}", seed[0].2);
         let f = phase_lines(&test_site(false), &o);
         assert!(!f.iter().any(|l| l.2.contains("seed-from-peer")), "a founder never seeds");
-        let t = std::env::temp_dir().join(format!("gb-seed-play-{}", std::process::id()));
+        let t = crate::testdir::path("gb-seed-play-");
         std::fs::create_dir_all(t.join("ops/ansible")).unwrap();
         assert_eq!(site_play(&t, "zagros", "seed-from-peer.yml"), "site-seed-from-peer.yml");
         std::fs::write(t.join("ops/ansible/zagros-seed-from-peer.yml"), "---\n").unwrap();
@@ -1757,12 +1888,12 @@ mod tests {
         }
     }
 
-    fn fixture(tag: &str) -> Fixture {
+    fn fixture(tag: &str) -> crate::testdir::Held<Fixture> {
         let src = repo().join("ops/goatbuilder/fixtures/standup");
-        let dst = std::env::temp_dir().join(format!("goatbuilder-standup-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dst);
+        let dst = crate::testdir::path(&format!("goatbuilder-standup-{tag}-"));
         copy_dir(&src, &dst);
-        Fixture::open(&dst).unwrap()
+        let f = Fixture::open(&dst).unwrap();
+        crate::testdir::Held::with(dst, f)
     }
 
     /// The rehearsal: every class in phase order, every record verified, exit 0,
@@ -1846,8 +1977,7 @@ mod tests {
     /// An obs leg whose play is absent is named before anything runs.
     #[test]
     fn a_missing_obs_play_is_named() {
-        let dir = std::env::temp_dir().join(format!("goatbuilder-obs-play-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::testdir::path("goatbuilder-obs-play-");
         std::fs::create_dir_all(dir.join("ops/ansible")).unwrap();
         let why = obs_play_missing(&dir).expect("an absent play is reported");
         assert!(why.contains("utility-host-bootstrap.yml"), "{why}");
@@ -1887,12 +2017,12 @@ mod tests {
         assert!(standup(&repo(), &o).is_err());
     }
 
-    fn goatnet_from_scratch(step: &str, tag: &str) -> Fixture {
+    fn goatnet_from_scratch(step: &str, tag: &str) -> crate::testdir::Held<Fixture> {
         let src = repo().join("ops/goatbuilder/fixtures/goatnet-from-scratch").join(step);
-        let dst = std::env::temp_dir().join(format!("goatbuilder-hello-galaxy-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dst);
+        let dst = crate::testdir::path(&format!("goatbuilder-hello-galaxy-{tag}-"));
         copy_dir(&src, &dst);
-        Fixture::open(&dst).unwrap()
+        let f = Fixture::open(&dst).unwrap();
+        crate::testdir::Held::with(dst, f)
     }
 
     /// A site as read_site would build it for a LAN run, lite or not, with no
@@ -1941,6 +2071,220 @@ mod tests {
         let ns: Vec<u32> = ph.iter().map(|p| p.n).collect();
         assert!(ns.windows(2).all(|w| w[0] <= w[1]), "phases stay in order: {ns:?}");
         assert!(!ph.iter().any(|p| p.label.starts_with("[internet]")), "a lite site is a LAN site");
+    }
+
+    /// Declared values a phase's command line carries (the state directory, the
+    /// CA audit log beside it, the AWS profile) reach the phase's shell as one word
+    /// each, passed on as declared: `~/` still means the home directory, and
+    /// nothing else in the value is interpreted.
+    #[test]
+    fn declared_paths_and_profiles_reach_the_phases_without_shell_interpolation() {
+        let state = "~/a b$(x)'q`y`\"z/state";
+        let profile = "p$(x) 'q\"r";
+        let dir = crate::testdir::path("gb-declared-words-");
+        std::fs::create_dir_all(dir.join("ops/goatbuilder")).unwrap();
+        let cfg = format!(
+            "schema: goatbuilder/v1\nrepo: {{source: example-org/x, image_namespace: ghcr.io/example-org}}\ncomponents: {{svc: {{declared_in: ops/pins/fleet-pins.yaml}}}}\n\
+             environments: [{{name: dev, converger: push-ansible, sites: [{{name: alpha, role: founder, classes: {{core: {{}}}}}}]}}]\n\
+             promotion: {{path: [{{name: dev, kind: rung, environment: dev}}]}}\ndeploy: {{state_dir: {}, aws_profile: {}}}\n",
+            serde_json::to_string(state).unwrap(),
+            serde_json::to_string(profile).unwrap()
+        );
+        std::fs::write(dir.join("ops/goatbuilder/goatbuilder.yaml"), cfg).unwrap();
+        // Fixed here, not read from the process: other tests change its environment.
+        let home = "/home/a-test-user".to_string();
+        let env = SiteEnv { aws_profile: None, home: home.clone() };
+        let abs = |p: &str| p.strip_prefix("~/").map(|r| format!("{home}/{r}")).unwrap_or_else(|| p.to_string());
+        let eval = |w: &str| {
+            let out = Command::new("bash").args(["-euo", "pipefail", "-c", &format!("printf '%s' {w}")]).env("HOME", &home).output().unwrap();
+            assert!(out.status.success(), "the shell takes {w} as one word");
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let between = |cmd: &str, a: &str, b: &str| -> Option<String> { Some(cmd.split_once(a)?.1.split_once(b)?.0.to_string()) };
+        let mut seen = 0;
+        for profile_name in ["lan", "internet"] {
+            let o = Options { env: "dev", site: "alpha", profile: Some(profile_name), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+            let site = read_site_in(&dir, &o, &env).unwrap();
+            for ph in phases_of(&plan(&dir, &site, &o, "R")) {
+                let c = &ph.cmd;
+                if let Some(w) = between(c, "../scripts/with-aws ", " -- ") {
+                    assert_eq!(eval(&w), profile, "{}", ph.label);
+                    seen |= 1;
+                }
+                if let Some(w) = between(c, "--root-key ", " --age-identity") {
+                    assert_eq!(eval(&w), abs(&format!("{state}/alpha-ca/ca.key.age")));
+                    seen |= 2;
+                }
+                if let Some(w) = between(c, "--audit-log ", " )") {
+                    assert_eq!(eval(&w), abs("~/a b$(x)'q`y`\"z/ca-audit.jsonl"));
+                    seen |= 4;
+                }
+                if let Some((_, w)) = c.split_once("mesh_ips_out=") {
+                    assert_eq!(eval(w), abs(&format!("{state}/standup-alpha-mesh-ips.json")));
+                    seen |= 8;
+                }
+                if let Some(w) = between(c, "model alpha > ", " && ") {
+                    assert_eq!(eval(&w), abs(&format!("{state}/endstate-alpha.json")));
+                    seen |= 16;
+                }
+            }
+        }
+        assert_eq!(seen, 31, "every declared word was found in the plan");
+    }
+
+    /// The administrator's address reaches the bootstrap phases as data: each
+    /// planned bootstrap command, run through the shared phase runner with the
+    /// site's phase environment, hands Ansible the address exactly as declared,
+    /// whatever it contains. An undeclared owner is still `"$OWNER_EMAIL"`.
+    #[test]
+    fn the_admin_address_reaches_the_phases_without_shell_interpolation() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let owner_word = |cmd: &str| {
+            let rest = cmd.split_once("-e bootstrap_owner_email=").expect("the bootstrap phase passes the owner").1;
+            rest.split_once(" -e postgres_superuser_password=").expect("the next argument").0.to_string()
+        };
+        let out = crate::testdir::path("gb-owner-word-");
+        for raw in ["a.learner@example.org", "me@pasture", "o'brien@example.org", "a$b@example.org", "a$(x)@example.org", "a`b`c@example.org", "a\"b@example.org", "a\\b@example.org"] {
+            let mut site = lan_site(true, false);
+            site.owner_email = raw.to_string();
+            let cmds: Vec<String> = phases_of(&plan(Path::new("/r"), &site, &o, "R")).iter().filter(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).collect();
+            assert!(!cmds.is_empty());
+            for c in &cmds {
+                let file = out.join("owner");
+                let probe = format!("printf '%s' {} > '{}'", owner_word(c), file.display());
+                let mut run = site_phase_command(&repo, &site, &probe);
+                run.current_dir(&repo).env_remove("OWNER_EMAIL").env("GOAT_SECRET_STORE", "env");
+                let st = run.status().unwrap();
+                assert!(st.success(), "the runner ran the probe for {raw:?}");
+                assert_eq!(std::fs::read_to_string(&file).unwrap(), raw, "the phase receives the address as declared");
+            }
+        }
+        let cmds: Vec<String> = phases_of(&plan(Path::new("/r"), &lan_site(false, false), &o, "R")).iter().filter(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).collect();
+        assert!(!cmds.is_empty() && cmds.iter().all(|c| owner_word(c) == "\"$OWNER_EMAIL\""), "an undeclared owner is unchanged");
+        assert!(phase_env(&lan_site(false, false)).is_empty(), "and adds nothing to the environment");
+    }
+
+    /// A bootstrap command run without the owner variable (copied by hand from a
+    /// dry run) is refused by the runner, naming the variable, before it runs.
+    #[test]
+    fn a_bootstrap_command_without_the_owner_variable_is_refused_by_name() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let site = lan_site(true, false);
+        let cmd = phases_of(&plan(Path::new("/r"), &site, &o, "R")).iter().find(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).unwrap();
+        let word = cmd.split_once("-e bootstrap_owner_email=").unwrap().1.split_once(" -e postgres_superuser_password=").unwrap().0.to_string();
+        assert_eq!(word, "\"$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)\"");
+        let out = phase_command(&repo, &format!("printf '%s' {word}")).current_dir(&repo).env_remove(OWNER_VAR).env("GOAT_SECRET_STORE", "env").output().unwrap();
+        assert_eq!(out.status.code(), Some(3), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(String::from_utf8_lossy(&out.stderr).contains(OWNER_VAR), "the refusal names the variable");
+    }
+
+    /// Values a site's group_vars and inventory declare (the founder a joiner
+    /// joins and its group, the ACL site, the public management name, the obs
+    /// host's SSH target) reach the phases' shell as one word each, as declared.
+    #[test]
+    fn group_vars_values_reach_the_phases_without_shell_interpolation() {
+        let bad = "a$(x)`y`;z";
+        let eval = |w: &str| {
+            let out = Command::new("bash").args(["-euo", "pipefail", "-c", &format!("printf '%s' {w}")]).output().unwrap();
+            assert!(out.status.success(), "the shell takes {w} as one word");
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let between = |c: &str, a: &str, b: &str| -> Option<String> { Some(c.split_once(a)?.1.split_once(b)?.0.to_string()) };
+        // A checkout with an obs host whose inventory entry carries the value too.
+        let repo = crate::testdir::path("gb-gv-words-");
+        for d in ["ops/scripts", "ops/ansible/inventory", "ops/ansible/group_vars/pasture_hosts"] {
+            std::fs::create_dir_all(repo.join(d)).unwrap();
+        }
+        let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts/inventory-hosts.py");
+        std::fs::copy(real, repo.join("ops/scripts/inventory-hosts.py")).unwrap();
+        std::fs::write(repo.join("ops/ansible/inventory/mgmt-hosts.ini"), format!("[pasture_obs_hosts]\nobs-1 ansible_host=192.0.2.9 ansible_user={bad}\n")).unwrap();
+        std::fs::write(repo.join("ops/ansible/inventory/mgmt-hosts-mesh.ini"), "").unwrap();
+        std::fs::write(repo.join("ops/ansible/group_vars/pasture_hosts/pubsub-state.yml"), "pubsub_state_repo: x\n").unwrap();
+
+        let mut seen = std::collections::BTreeSet::new();
+        for (joiner, profile) in [(true, "internet"), (true, "lan"), (false, "lan")] {
+            let mut site = lan_site(false, false);
+            site.profile = profile.into();
+            site.joiner = joiner;
+            site.obs = true;
+            site.mgmt_fqdn = bad.into();
+            site.acl_site = bad.into();
+            if joiner {
+                site.join_founder_site = bad.into();
+                site.join_founder_group = format!("{bad}_hosts");
+            }
+            let o = Options { env: "pasture", site: "pasture", profile: Some(profile), from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+            for ph in phases_of(&plan(&repo, &site, &o, "R")) {
+                let c = ph.cmd.as_str();
+                let mut check = |name: &str, w: Option<String>, want: String| {
+                    if let Some(w) = w {
+                        assert_eq!(eval(&w), want, "{name} in {}", ph.label);
+                        seen.insert(name.to_string());
+                    }
+                };
+                check("acl --declared", between(c, "netbird-policy-posture.py' ", " --declared"), bad.into());
+                check("acl --url", between(c, "netbird-policy-posture.py' ", " --url"), bad.into());
+                check("--url", between(c, " --url ", " --token-env"), format!("https://{bad}"));
+                check("netbird_mgmt_url", c.split_once("-e netbird_mgmt_url=").map(|x| x.1.to_string()), format!("https://{bad}"));
+                check("--token-env", c.split_once(" --token-env ").map(|x| x.1.to_string()), format!("{}_NB_API_TOKEN", bad.replace('-', "_").to_uppercase()));
+                if joiner {
+                    check("[ -n founder ]", between(c, "{ [ -n ", " ] ||"), if ph.label.contains("spock-mesh-wire") { format!("{bad}_hosts") } else { bad.into() });
+                    check("--limit", between(c, "spock-mesh-wire.yml --limit ", " -e "), format!("{bad}_hosts"));
+                    check("ls hosts", between(c, "{ ls ", " >/dev/null"), format!("inventory/hosts-{bad}.ini"));
+                    // The two relay inventories are the two words before the site inventories.
+                    let relay_words = c.contains("relay-ingress-add-site").then(|| c.split_once(" -i inventory/mgmt-hosts.ini").unwrap().0.rsplitn(3, " -i ").map(String::from).collect::<Vec<_>>());
+                    check("-i hosts", relay_words.as_ref().map(|w| w[1].clone()), format!("inventory/hosts-{bad}.ini"));
+                    check("-i alias", relay_words.as_ref().map(|w| w[0].clone()), format!("inventory/{bad}-goat-relay-alias.ini"));
+                    check("founder_site", between(c, "-e target=goat_relay_hosts -e ", " -e join_site").filter(|_| c.contains("relay-ingress-add-site")), format!("founder_site={bad}"));
+                    check("relay echo", between(c, "2>&1 || { echo ", "; exit 1; }; } && ").filter(|w| w.contains("founder relay inventory")), format!("founder relay inventory inventory/hosts-{bad}.ini missing — generate it first: inventory/generate-relays.sh {bad} terraform-{bad}"));
+                }
+                check("obs ssh", between(c, "forgejo-mint-pubsub-bot.sh' ", "      &&"), format!("{bad}@192.0.2.9"));
+            }
+        }
+        let want = ["acl --declared", "acl --url", "--url", "--token-env", "netbird_mgmt_url", "[ -n founder ]", "--limit", "ls hosts", "-i hosts", "-i alias", "founder_site", "relay echo", "obs ssh"];
+        assert_eq!(seen, want.iter().map(|s| s.to_string()).collect(), "every value was found in a plan");
+    }
+
+    /// The ACL site names an environment variable (`<SITE>_NB_API_TOKEN`), so a
+    /// joiner whose join_founder_site cannot make a variable name is refused by
+    /// name before anything is planned; an ordinary one is read as before.
+    #[test]
+    fn a_join_founder_site_that_cannot_name_a_variable_is_refused() {
+        for (jfs, ok) in [("alpha", true), ("alpha-b", true), ("a$(x)", false), ("a;b", false), ("a`b`", false)] {
+            let repo = crate::testdir::path("gb-acl-site-");
+            std::fs::create_dir_all(repo.join("ops/ansible/group_vars/pasture_hosts")).unwrap();
+            std::fs::write(repo.join("ops/ansible/group_vars/pasture_hosts/vars.yml"), format!("goatnet_founder: false\njoin_founder_site: {jfs}\n")).unwrap();
+            let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+            match (read_site(&repo, &o), ok) {
+                (Ok(s), true) => assert_eq!(s.acl_site, jfs),
+                (Err(e), false) => {
+                    assert!(e.to_string().contains("join_founder_site") && e.to_string().contains(jfs), "{e}");
+                    assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-263"), "{jfs}: {e}");
+                }
+                (r, _) => panic!("{jfs}: {:?}", r.map(|s| s.acl_site)),
+            }
+        }
+    }
+
+    /// For a founder the ACL site is the site itself, so a site name that cannot
+    /// make a variable name is refused naming the site, not join_founder_site.
+    #[test]
+    fn a_founder_site_that_cannot_name_a_variable_is_refused_naming_the_site() {
+        for (site, ok) in [("pasture", true), ("pasture-b", true), ("a;b", false), ("a$(x)", false)] {
+            let repo = crate::testdir::path("gb-acl-founder-");
+            let o = Options { env: "pasture", site, profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+            match (read_site(&repo, &o), ok) {
+                (Ok(s), true) => assert_eq!(s.acl_site, site),
+                (Err(e), false) => {
+                    assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-263"), "{site}: {e}");
+                    let e = e.to_string();
+                    assert!(e.contains(&format!("the site {site:?}")) && !e.contains("join_founder_site"), "{e}");
+                }
+                (r, _) => panic!("{site}: {:?}", r.map(|s| s.acl_site)),
+            }
+        }
     }
 
     /// Not lite: no render gate, phase 4 as before; a LAN site pauses at 11 only

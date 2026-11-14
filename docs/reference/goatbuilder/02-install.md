@@ -24,7 +24,7 @@ Hosting is described in [goatbuilder-distribution.md](../../design/goatbuilder-d
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 cosign verify-blob --bundle SHA256SUMS.cosign-bundle \
-  --certificate-identity-regexp '^https://github.com/usareur-af/goatcore/' \
+  --certificate-identity-regexp '^https://github\.com/USAREUR-AF/goatcore/\.github/workflows/_release-binary\.yml@refs/tags/goatbuilder/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS     # macOS: shasum -a 256 -c
 install -m 0755 "goatbuilder-$OS-$ARCH" ~/.local/bin/goatbuilder
@@ -58,7 +58,7 @@ goatbuilder update                           # later: the surface the last updat
 | surface | `GOATBUILDER_UPDATE_URL`, else `--site` (from `ops/ansible/group_vars/<site>_hosts/`: `site_id`, `site_dns_zone`, `goat_get_goatbuilder_enabled`), else `~/.goatbuilder/update-check.json` |
 | version | `version.json`; current or newer prints one row and exits 0, `--force` reinstalls |
 | checksum | the asset's `.sha256` equals its line in `SHA256SUMS`, and the download hashes to it |
-| signature | with `cosign` on PATH, `SHA256SUMS.cosign-bundle` verified against the release workflow's identity; without it the row says not checked |
+| signature | `SHA256SUMS.cosign-bundle` verified by goatbuilder itself, offline, with no cosign needed. It checks the Sigstore certificate chain, Rekor's timestamp, and the release workflow `goatbuilder-release.yml` of the repository `goatbuilder.yaml` names, at the served version's tag. Not verified, or not served: GB-261, nothing installed. After a Sigstore key rotation, set `GOATBUILDER_UPDATE_TRUSTED_ROOT` to a trusted_root.json that holds the new key |
 | install | a temp file beside the binary, renamed over it: the old binary or the new one, never a partial |
 
 The binary download stops after 30 seconds without a byte
@@ -88,9 +88,19 @@ A repository administrator tags a commit on `main`. The tag is the whole
 nomination. `.github/workflows/goatbuilder-release.yml` refuses a tag pushed by
 anyone else or on a commit that is not on `main`.
 
-First bump `version` in `crates/goatbuilder/Cargo.toml` and add the release's
-entry to `crates/goatbuilder/CHANGELOG.md`. The current release is
-`goatbuilder/v0.4.1`.
+First, in the version pull request:
+
+1. Bump `version` in `crates/goatbuilder/Cargo.toml` and `crates/Cargo.lock`.
+2. Fold the changelog's entries into the release's section, which removes
+   the entry files from `crates/goatbuilder/changelog.d/`:
+
+   ```bash
+   python3 ops/release/changelog.py release <version> <date>   # for example: release 0.7.0 2026-11-20
+   ```
+
+3. Add the release's opening summary under its new heading in
+   `crates/goatbuilder/CHANGELOG.md`, and its paragraph to
+   `.github/release-notes/goatbuilder.md`.
 
 ```bash
 git tag -s goatbuilder/v<semver> <sha on main> && git push origin goatbuilder/v<semver>

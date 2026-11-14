@@ -1,0 +1,22 @@
+# The three rollout facts per component (ADR 1211). The same fields live on each
+# component in ops/pins/fleet-pins.yaml. `mystery` is deliberately absent — an
+# undeclared component fails closed to stateful / rollback none, graded not-clean.
+netvis:
+  owns_state: false
+  rollback: pin-revert
+id-console:
+  artifact_type: data
+  owns_state: true
+  rollback: restore-required
+  restore_from:
+    pointer: "SQLite archive /var/lib/goat/id-console/pre-pg"
+    retention_days: 28
+    as_of: "2026-10-29"
+console:
+  owns_state: false
+  rollback: pin-revert
+  coupled_with: [health]
+health:
+  owns_state: false
+  rollback: pin-revert
+  coupled_with: [console]

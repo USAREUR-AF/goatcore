@@ -1,12 +1,59 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>goat — Smoke Test</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>goat — Smoke Test</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div>
+        <h1 class="title">goat Smoke Test</h1>
+        <p class="subtitle">Infrastructure health dashboard<span id="last-run"></span></p>
+      </div>
+      <div class="runner">
+        <div class="toggle" role="group" aria-label="Run mode">
+          <button type="button" class="toggle-opt active" data-mode="quick" aria-pressed="true">Quick</button>
+          <button type="button" class="toggle-opt" data-mode="full" aria-pressed="false">Full</button>
+        </div>
+        <button type="button" id="run-btn" class="button">Run Smoke Test</button>
+        <span id="run-elapsed" class="dim small" hidden></span>
+        <span id="run-error" class="error small" hidden></span>
+      </div>
+    </header>
+
+    <div id="summary" class="summary" hidden></div>
+
+    <section class="section">
+      <h2 class="section-title">Run History</h2>
+      <div id="history"></div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Results <span id="viewing" class="viewing" hidden></span></h2>
+      <div id="results"></div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Relay Latency</h2>
+      <div id="latency"></div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Service Health</h2>
+      <div id="services"></div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Mesh Peers</h2>
+      <div id="peers"></div>
+    </section>
+  </div>
+
+  <div id="overlay" class="overlay" hidden></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
 </html>

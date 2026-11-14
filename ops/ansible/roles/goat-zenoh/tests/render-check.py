@@ -362,16 +362,36 @@ check('id: "partner-r-' not in pv, "blocks are inert on a per-vendor goatnet (no
 
 check(brace_balanced(out), "brace/bracket balanced with pre-cut partner blocks")
 
+# Two peerings on one core: each reads its own sets, interest on the whole wire name.
+peers = [dict(sovereign="aaa", cn="fed.aaa.bbb.01", release_key_exprs=["from/bbb/all/**", "from/bbb/aaa/**"],
+              release_interest_key_exprs=["from/bbb/**"]),
+         dict(sovereign="zag-ros", cn="fed.zag-ros.bbb.01", release_key_exprs=["from/bbb/all/**", "from/bbb/zag-ros/**"],
+              release_interest_key_exprs=["from/bbb/**"])]
+print("== sovereign reads: data per set, interest on the wire name ==")
+cfg = render(zenoh_sovereign_peerings=peers, zenoh_from_retention_days=3, zenoh_slot_pool_size=2)
+for peer in peers:
+    s = peer["sovereign"]
+    for rid, want in [(f"sovereign-{s}-r", f'"from/bbb/{s}/**"'), (f"sovereign-{s}-r-interest", '"from/bbb/**"')]:
+        m = re.search(r'id: "' + re.escape(rid) + r'",.*?key_exprs: \[([^\]]*)\]', cfg, re.S)
+        check(m is not None and want in m.group(1), f"{rid} carries {want}")
+    other = [p["sovereign"] for p in peers if p["sovereign"] != s][0]
+    m = re.search(r'id: "sovereign-' + re.escape(s) + r'-r",.*?key_exprs: \[([^\]]*)\]', cfg, re.S)
+    check(m is not None and f"from/bbb/{other}/" not in m.group(1), f"sovereign-{s}-r never names {other}'s set")
+one = render(zenoh_sovereign_peerings=[dict(sovereign="aaa", cn="fed.aaa.bbb.01", release_key_exprs=["from/bbb/**"])], zenoh_from_retention_days=3, zenoh_slot_pool_size=2)
+m = re.search(r'id: "sovereign-aaa-r-interest",.*?key_exprs: \[([^\]]*)\]', one, re.S)
+check(m is not None and m.group(1).strip() == '"from/bbb/**"', "no interest list: interest follows release_key_exprs (unchanged)")
+
 print("== federation ingress storage ==")
 check("sovereign_from:" not in render(), "no peer means no federation store")
-peers = [dict(sovereign="aaa", cn="fed.aaa.bbb.01", release_key_exprs=["from/bbb/**"]),
-         dict(sovereign="zag-ros", cn="fed.zag-ros.bbb.01", release_key_exprs=["from/bbb/**"])]
 for identity in ["per-vendor", "per-uuid-slot-pool"]:
     for count in [1, 2]:
         cfg = render(zenoh_identity_model=identity, zenoh_sovereign_peerings=peers[:count],
                      zenoh_from_retention_days=3, zenoh_slot_pool_size=2)
-        check('dir: "/var/lib/zagros-zenoh/rocksdb/sovereign_from",' in cfg,
-              f"{identity}/{count}: existing store path retained")
+        # ADR 1234: a partner's data lives in its own store only. No store
+        # on from/** holds every partner's samples a second time.
+        check("sovereign_from:" not in cfg and 'key_expr: "from/**"' not in cfg
+              and 'rocksdb/sovereign_from"' not in cfg,
+              f"{identity}/{count}: no shared from/** store")
         for peer in peers[:count]:
             name = "sovereign_from_" + peer["sovereign"]
             match = re.search(r'"' + name + r'": \{(.*?)\n        \},', cfg, re.S)

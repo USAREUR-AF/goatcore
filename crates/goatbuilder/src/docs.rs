@@ -48,14 +48,15 @@ pub fn reference() -> String {
     out.push_str(
         "_Generated from the `goatbuilder` command tree — always in sync with what the binary does. Regenerate with `goatbuilder docs --markdown`._\n\n",
     );
-    render(&cmd, "goatbuilder", &mut out, true);
+    render(&cmd, "goatbuilder", &mut out, None);
     out
 }
 
 /// Recursively emit one command (and its visible subcommands) as Markdown.
-/// Hidden commands/flags (the easter eggs, `_complete`) are skipped; global
-/// flags are documented once on the root, not repeated per command.
-fn render(cmd: &clap::Command, path: &str, out: &mut String, is_root: bool) {
+/// Hidden commands/flags (the easter eggs, `_complete`) are skipped; a global
+/// flag is documented once, on the command that declares it (the root's on the
+/// root, `federate`'s measure flags on `federate`), not repeated per command.
+fn render(cmd: &clap::Command, path: &str, out: &mut String, parent: Option<&clap::Command>) {
     let _ = writeln!(out, "## `{path}`\n");
 
     if let Some(about) = cmd.get_long_about().or_else(|| cmd.get_about()) {
@@ -66,8 +67,8 @@ fn render(cmd: &clap::Command, path: &str, out: &mut String, is_root: bool) {
         .get_arguments()
         .filter(|a| !a.is_hide_set())
         .filter(|a| !matches!(a.get_id().as_str(), "help" | "version"))
-        // Global flags are documented once, on the root.
-        .filter(|a| is_root || !a.is_global_set())
+        // A global flag the parent carries is the parent's: documented there.
+        .filter(|a| !a.is_global_set() || parent.is_none_or(|p| p.get_arguments().all(|pa| pa.get_id() != a.get_id())))
         .collect();
 
     let positionals: Vec<&&clap::Arg> = args.iter().filter(|a| a.is_positional()).collect();
@@ -127,7 +128,7 @@ fn render(cmd: &clap::Command, path: &str, out: &mut String, is_root: bool) {
     }
 
     for c in &subs {
-        render(c, &format!("{path} {}", c.get_name()), out, false);
+        render(c, &format!("{path} {}", c.get_name()), out, Some(cmd));
     }
 }
 
@@ -158,6 +159,27 @@ mod tests {
         assert!(out.contains("--color"));
         assert!(out.contains("--verbose"));
         assert!(out.contains("--timeout"));
+    }
+
+    /// A global flag is documented on the command that declares it, once: the
+    /// root's on the root, and federate's measure flags (declared global on
+    /// `federate`, so every federate verb takes them) on `federate`.
+    #[test]
+    fn a_global_flag_is_documented_where_it_is_declared() {
+        let out = reference();
+        let section = |heading: &str| -> String {
+            let start = out.find(&format!("## `{heading}`\n")).unwrap_or_else(|| panic!("no section {heading}"));
+            let rest = &out[start + 1..];
+            rest[..rest.find("\n## `").unwrap_or(rest.len())].to_string()
+        };
+        let federate = section("goatbuilder federate");
+        for flag in ["--side", "--half-out", "--edge-half", "--over-ssh", "--router-container"] {
+            assert!(federate.contains(&format!("`{flag} ")), "{flag} is not documented on goatbuilder federate");
+            assert_eq!(out.matches(&format!("| `{flag} ")).count(), 1, "{flag} is documented more than once");
+        }
+        for flag in ["--color", "--verbose", "--timeout"] {
+            assert_eq!(out.matches(&format!("| `{flag}")).count(), 1, "{flag} is documented more than once");
+        }
     }
 
     #[test]

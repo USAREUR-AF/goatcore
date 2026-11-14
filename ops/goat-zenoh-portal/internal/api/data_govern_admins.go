@@ -119,7 +119,7 @@ func (s *Server) mayGovernOrg(r *http.Request, org string) bool {
 	if p.Vendor == "" || s.cfg.RosterPath == "" {
 		return false
 	}
-	dr, err := access.LoadDataRoster(s.cfg.RosterPath)
+	dr, err := s.rosters.Load(s.cfg.RosterPath)
 	if err != nil {
 		return false
 	}
@@ -235,7 +235,7 @@ func (s *Server) handleNominateGovernAdmin(w http.ResponseWriter, r *http.Reques
 			"declared registry (roster path) not configured — membership cannot be verified")
 		return
 	}
-	dr, err := access.LoadDataRoster(s.cfg.RosterPath)
+	dr, err := s.rosters.Load(s.cfg.RosterPath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "registry", "could not load the declared registry")
 		return

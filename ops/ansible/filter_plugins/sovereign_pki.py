@@ -9,7 +9,7 @@ nginx maps.
   {{ registry | sovereign_pki_select(ids) }}   the live profiles named in ids; raises on an
                                                 unknown or sketch id (fail closed)
 
-Run the test directly: python3 ops/ansible/filter_plugins/test_sovereign_pki.py
+Run the test directly: python3 tests/ansible_filter_plugins/test_sovereign_pki.py
 """
 import importlib.util
 from pathlib import Path

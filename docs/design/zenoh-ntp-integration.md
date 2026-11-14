@@ -92,6 +92,8 @@ The 5-byte attachment carries only the NTP dimension. When non-NTP attestation d
 
 ## 4. Router NTP interceptor
 
+> A router with `drop_future_timestamp: false` already replaces a timestamp more than 500 ms ahead of its own clock and logs the rejection. Reading those rejections per peer, and telling the peer's owner, is [`peer-fault-handling.md`](peer-fault-handling.md) (ADR 1232; designed, not built).
+
 A compiled Rust interceptor `.so` in the Zenoh router chain. Per `zenoh-cds-data-conditioning.md`, the router supports an ordered interceptor chain; this is one entry.
 
 ### Producer-side (attach `ntp_class`)

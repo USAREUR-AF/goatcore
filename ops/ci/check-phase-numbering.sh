@@ -148,7 +148,8 @@ while IFS='|' read -r label jn_env jn_site jn_class; do
 done < <(ext_entries .joinnode)
 
 # A lettered phase id written anywhere a driver prints a phase header.
-if grep -nE '=== Phase [0-9]+[a-z]' "$REPO/ops/scripts/goat-standup.sh" "$REPO/ops/scripts/peering-standup.sh" "$REPO"/crates/goatbuilder/src/*.rs; then
+# Every .rs file under crates/goatbuilder/src, nested modules included (bash 3.2 has no globstar).
+if find "$REPO/crates/goatbuilder/src" -name '*.rs' -print0 | xargs -0 grep -nE '=== Phase [0-9]+[a-z]' "$REPO/ops/scripts/goat-standup.sh" "$REPO/ops/scripts/peering-standup.sh"; then
   echo "FAIL a phase header carries a letter (above)"; fail=1
 fi
 

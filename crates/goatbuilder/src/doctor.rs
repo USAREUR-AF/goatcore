@@ -5,16 +5,16 @@
 //! meshed), and — F-587's class — that every component's deploy playbook
 //! resolves, through any alias, to a play with a definite target mode.
 
+use crate::runner::Cmd;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result};
 
 use crate::config::{self, Component};
 use crate::{Check, Report, EXIT_REFUSED};
 
-pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool) -> Result<Report> {
+pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool, browser_tests: bool) -> Result<Report> {
     let mut checks = Vec::new();
 
     // 1. The config itself.
@@ -132,7 +132,7 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
             }
         }
         if tool == "ansible-playbook" && which(tool) {
-            checks.push(ansible_row(Command::new(tool).arg("--version").output()));
+            checks.push(ansible_row(Cmd::new(tool).arg("--version").output()));
             continue;
         }
         if which(tool) {
@@ -198,7 +198,9 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
     // 2c. The live acceptance rows run the console's Playwright suite from
     // this laptop (ops/scripts/onboard-intake-smoke.sh); without its
     // toolchain a release reads as failed on the goatnet when it failed here.
-    checks.push(if lite_cfg.is_some() { live_rows_skipped() } else { live_rows_check(repo) });
+    // Only a release runs them, so a missing toolchain is a note unless the run
+    // asks for it (--browser-tests).
+    checks.push(if lite_cfg.is_some() { live_rows_skipped() } else { live_rows_check(repo, browser_tests) });
     if lite_cfg.is_some() {
         checks.push(image_token_row(std::env::var("GHCR_READ_TOKEN").ok().filter(|v| !v.is_empty()).is_some() || crate::secrets::available(repo).contains("GHCR_READ_TOKEN")));
     }
@@ -217,7 +219,8 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
         checks.extend(goat_contexts_check(repo));
     }
 
-    // 3. The checkout: on main/master, and current with origin (C3).
+    // 3. The checkout: on main/master, and current with origin (C3); or an
+    // assembled tree, which its .goat-assembled marker names.
     checks.push(checkout_check(repo, frozen));
 
     // 3b. The declared secrets posture and whether its store can serve (ADR 1204).
@@ -308,6 +311,20 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
 }
 
 fn checkout_check(repo: &Path, frozen: bool) -> Check {
+    // An assembled tree (goatcore at the overlay's goatcore.ref with the overlay
+    // copied over it) is on a detached HEAD by construction, and only its marker
+    // says so. Without the marker a detached HEAD is the F-586 case below.
+    match crate::fresh::marker(repo) {
+        Ok(Some(m)) => return assembled_check(repo, &m),
+        Ok(None) => {}
+        Err(e) => {
+            return refused(
+                "checkout",
+                format!("{e:#}: this tree carries {} but it does not say what the tree was built from", crate::fresh::MARKER),
+                "re-assemble the tree from the overlay (its assemble step writes the marker)",
+            )
+        }
+    }
     let branch = git(repo, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_default();
     if branch != "main" && branch != "master" {
         return refused(
@@ -341,6 +358,71 @@ fn checkout_check(repo: &Path, frozen: bool) -> Check {
         "checkout",
         format!("on {branch}, current with origin/{branch}"),
     )
+}
+
+/// The checkout row for an assembled tree: what the marker says it was built
+/// from. The marker is trusted as rc.sh and `release` trust it. Its currency
+/// against the overlay is judged by the deploy's own fresh-source check
+/// (ops/scripts/lib/source_of_record.py), not here; the refusals below are the
+/// ones that check, `release` or rc.sh would make from the marker alone.
+fn assembled_check(repo: &Path, m: &crate::fresh::Marker) -> Check {
+    const REASSEMBLE: &str = "re-assemble the tree from the overlay (its assemble step writes the marker)";
+    if m.goatcore_ref == "local" {
+        return refused(
+            "checkout",
+            format!("{} was assembled from local directories (goatcore_ref=local), which no deploy accepts", repo.display()),
+            "re-assemble the tree from the pinned refs",
+        );
+    }
+    // source_of_record.py refuses it at deploy time (GB-064): no commit records
+    // what the tree deploys.
+    if m.overlay_commit.ends_with("-dirty") {
+        return refused(
+            "checkout",
+            format!(
+                "{} was assembled from uncommitted overlay changes (overlay_commit={}), so no commit records what this tree deploys",
+                repo.display(),
+                m.overlay_commit
+            ),
+            &format!("commit the overlay change, then {REASSEMBLE}"),
+        );
+    }
+    let head = git(repo, &["rev-parse", "HEAD"]).map(|s| s.trim().to_string()).unwrap_or_default();
+    if head != m.goatcore_ref {
+        return refused(
+            "checkout",
+            format!(
+                "{} carries {} naming goatcore {}, but its HEAD is {}: the tree is not what the marker says it was built from",
+                repo.display(),
+                crate::fresh::MARKER,
+                m.goatcore_ref,
+                if head.is_empty() { "unreadable" } else { &head }
+            ),
+            REASSEMBLE,
+        );
+    }
+    let built = format!(
+        "assembled tree ({}): built from {} (overlay commit {}); its detached HEAD is by construction, and the deploy's fresh-source check judges it against the overlay (C3)",
+        crate::fresh::MARKER,
+        m.describe(),
+        m.overlay_commit
+    );
+    // release and rc.sh refuse (GB-009) a marker that names no overlay checkout
+    // with an assemble.sh. A deploy does not: its preflight finds the overlay
+    // through GOAT_OVERLAY_DIR. So this is a note, not a failure.
+    let ovp = m.overlay_path.clone().unwrap_or_default();
+    if ovp.is_empty() || !Path::new(&ovp).join("assemble.sh").is_file() {
+        return Check {
+            name: "checkout".to_string(),
+            ok: true,
+            detail: format!(
+                "{built}; but the marker names no overlay checkout with an assemble.sh (overlay_path={}), so `release` and rc.sh refuse this tree (GB-009); a deploy finds the overlay through GOAT_OVERLAY_DIR",
+                if ovp.is_empty() { "<none>" } else { &ovp }
+            ),
+            fix: Some(format!("{REASSEMBLE} so it records overlay_path=, or set GOAT_OVERLAY_DIR=<overlay checkout> for a deploy")),
+        };
+    }
+    ok("checkout", built)
 }
 
 /// Who can deploy to a push environment, read from the files that decide it:
@@ -1164,12 +1246,12 @@ pub fn reach(inventory: &Path, doors: &Path, env: &str) -> Result<Reach> {
                     .any(|l| !l.starts_with('#') && l.contains("ansible_host="))
         }
         Err(e) if e.kind() == NotFound => false,
-        Err(e) => return Err(anyhow!("{}: {e}", inventory.display())),
+        Err(e) => return Err(anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", inventory.display())))),
     };
     let door = match std::fs::read_to_string(doors) {
         Ok(text) => {
             let v: serde_yaml::Value = serde_yaml::from_str(&text)
-                .map_err(|e| anyhow!("{}: {e}", doors.display()))?;
+                .map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", doors.display()))))?;
             let key = env.replace('_', "-");
             v.get("doors")
                 .and_then(|d| d.get(key.as_str()).or_else(|| d.get(env)))
@@ -1178,7 +1260,7 @@ pub fn reach(inventory: &Path, doors: &Path, env: &str) -> Result<Reach> {
                 .map(str::to_string)
         }
         Err(e) if e.kind() == NotFound => None,
-        Err(e) => return Err(anyhow!("{}: {e}", doors.display())),
+        Err(e) => return Err(anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", doors.display())))),
     };
     Ok(Reach { mesh_row, door })
 }
@@ -1255,7 +1337,7 @@ pub fn resolve_target_mode(ansible: &Path, start: &Path) -> Result<TargetMode> {
     let mut play = start.to_path_buf();
     for _ in 0..3 {
         let text =
-            std::fs::read_to_string(&play).map_err(|e| anyhow!("{}: {e}", play.display()))?;
+            std::fs::read_to_string(&play).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", play.display()))))?;
         if let Some(hosts) = text
             .lines()
             .map(str::trim)
@@ -1279,21 +1361,21 @@ pub fn resolve_target_mode(ansible: &Path, start: &Path) -> Result<TargetMode> {
             .lines()
             .find_map(|l| l.find(KEY).map(|i| l[i + KEY.len()..].trim().to_string()))
         else {
-            anyhow::bail!(
+            return Err(anyhow::Error::from(goat_errors::coded("GB-256", format!(
                 "no hosts: line and no import_playbook in {}",
                 play.display()
-            );
+            ))));
         };
         play = play.parent().unwrap_or(ansible).join(imp);
     }
-    anyhow::bail!(
+    Err(anyhow::Error::from(goat_errors::coded("GB-256", format!(
         "more than three import_playbook hops from {}",
         start.display()
-    )
+    ))))
 }
 
 fn which(tool: &str) -> bool {
-    Command::new("sh")
+    Cmd::new("sh")
         .args(["-c", &format!("command -v {tool} >/dev/null 2>&1")])
         .status()
         .map(|s| s.success())
@@ -1303,12 +1385,12 @@ fn which(tool: &str) -> bool {
 fn python_has(modules: &[&str]) -> Result<bool> {
     let code = format!("import {}", modules.join(", "));
     // Quiet: the python:deps row reports a missing module, not a traceback.
-    let status = Command::new("python3").args(["-c", &code]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;
+    let status = Cmd::new("python3").args(["-c", &code]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;
     Ok(status.success())
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
+    let out = Cmd::new("git")
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -1419,7 +1501,22 @@ fn image_token_row(set: bool) -> Check {
 /// The toolchain the live rows need on this machine: the console e2e suite's
 /// node_modules, a Playwright that answers, and a chromium under its
 /// browsers directory. The fix is the smoke script's own install line.
-fn live_rows_check(repo: &Path) -> Check {
+/// Only a release runs the live rows, so unless `required` (doctor
+/// `--browser-tests`) a missing piece is a note: the row passes and carries
+/// its fix.
+fn live_rows_check(repo: &Path, required: bool) -> Check {
+    let c = live_rows_toolchain(repo);
+    if c.ok || required {
+        return c;
+    }
+    Check {
+        ok: true,
+        detail: format!("{}; optional unless a release runs the live rows (`goatbuilder doctor --browser-tests` makes this a failure)", c.detail),
+        ..c
+    }
+}
+
+fn live_rows_toolchain(repo: &Path) -> Check {
     let e2e = repo.join("ops/goat-id-console/web/e2e");
     let fix = format!("(cd {} && npm ci && npx playwright install chromium)", e2e.display());
     if !e2e.join("node_modules").is_dir() {
@@ -1429,7 +1526,7 @@ fn live_rows_check(repo: &Path) -> Check {
             &fix,
         );
     }
-    let version = Command::new("npx")
+    let version = Cmd::new("npx")
         .args(["--no-install", "playwright", "--version"])
         .current_dir(&e2e)
         .output()
@@ -1456,7 +1553,7 @@ fn live_rows_check(repo: &Path) -> Check {
 /// Run a command with a deadline, so a tool that waits on a keychain or a
 /// browser prompt (aws-vault, op) cannot hang doctor. Returns (success, stdout+stderr).
 fn run_with_deadline(cmd: &str, args: &[&str], secs: u64) -> (bool, String) {
-    let child = Command::new(cmd)
+    let child = Cmd::new(cmd)
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -1668,6 +1765,12 @@ fn crane_check() -> Check {
 /// to exist under ~/.goat/contexts with an onboard_endpoint, or the onboarding
 /// calls go to the portal (HTTP 405).
 fn goat_contexts_check(repo: &Path) -> Vec<Check> {
+    goat_contexts_check_in(repo, std::env::var_os("GOAT_PROFILE_DIR").map(PathBuf::from))
+}
+
+/// `goat_contexts_check` with the goat profile directory given (`GOAT_PROFILE_DIR`,
+/// else `~/.goat` when `None`), so a test passes its own instead of setting it.
+fn goat_contexts_check_in(repo: &Path, profile_dir: Option<PathBuf>) -> Vec<Check> {
     let path = repo.join("ops/validation/goatnet-runners.yaml");
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -1678,7 +1781,7 @@ fn goat_contexts_check(repo: &Path) -> Vec<Check> {
         Err(e) => return vec![refused("tool:goat-contexts", format!("{}: {e}", rel(repo, &path)), "fix the yaml")],
     };
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    let contexts = std::env::var_os("GOAT_PROFILE_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".goat")).join("contexts");
+    let contexts = profile_dir.unwrap_or_else(|| home.join(".goat")).join("contexts");
     let mut out = Vec::new();
     let Some(goatnets) = doc.get("goatnets").and_then(|g| g.as_mapping()) else {
         return vec![refused("tool:goat-contexts", format!("{} has no goatnets:", rel(repo, &path)), "fix the yaml")];
@@ -1746,7 +1849,7 @@ fn chromium_installed() -> bool {
 /// phase-0 gate): one FAIL row per missing input or unset secret, all at once.
 pub fn site_inputs(repo: &Path, site: &str) -> Vec<Check> {
     let script = repo.join("ops/scripts/standup-required-inputs.py");
-    let out = Command::new("python3").arg(&script).arg(site).arg("--json").current_dir(repo).output();
+    let out = Cmd::new("python3").arg(&script).arg(site).arg("--json").current_dir(repo).output();
     let out = match out {
         Ok(o) => o,
         Err(e) => return vec![refused("inputs", format!("cannot run {}: {e}", rel(repo, &script)), "install python3 with PyYAML")],
@@ -2154,6 +2257,7 @@ fn refused(name: &str, detail: String, fix: &str) -> Check {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn write(root: &Path, rel: &str, text: &str) {
         let p = root.join(rel);
@@ -2365,7 +2469,7 @@ mod tests {
 
     #[test]
     fn goat_contexts_check_names_missing_and_endpointless_contexts() {
-        let t = std::env::temp_dir().join(format!("gb-contexts-{}", std::process::id()));
+        let t = crate::testdir::path("gb-contexts-");
         std::fs::create_dir_all(t.join("ops/validation")).unwrap();
         std::fs::write(t.join("ops/validation/goatnet-runners.yaml"), "schema: goatnet-runners/v0\ngoatnets:\n  a:\n    goat_via: \"\"\n    values: va.yaml\n  c:\n    goat_via: \"\"\n    values: vc.yaml\n  b:\n    goat_via: user@host\n    values: vb.yaml\n").unwrap();
         std::fs::write(t.join("va.yaml"), "goat_context: a\ngoat_sponsor_context: acceptance\n").unwrap();
@@ -2373,9 +2477,7 @@ mod tests {
         let profiles = t.join("goat");
         std::fs::create_dir_all(profiles.join("contexts/acceptance")).unwrap();
         std::fs::write(profiles.join("contexts/acceptance/profile.toml"), "portal = \"x\"\n").unwrap();
-        std::env::set_var("GOAT_PROFILE_DIR", &profiles);
-        let rows = goat_contexts_check(&t);
-        std::env::remove_var("GOAT_PROFILE_DIR");
+        let rows = goat_contexts_check_in(&t, Some(profiles.clone()));
         let a = rows.iter().find(|r| r.name == "tool:goat-contexts:a").unwrap();
         assert!(!a.ok);
         assert!(a.detail.contains("context acceptance has no onboard_endpoint"), "{}", a.detail);
@@ -2456,12 +2558,116 @@ mod tests {
 
     #[test]
     fn live_rows_check_names_the_install_line_when_node_modules_is_absent() {
-        let t = std::env::temp_dir().join(format!("gb-live-rows-{}", std::process::id()));
+        let t = crate::testdir::path("gb-live-rows-");
         std::fs::create_dir_all(t.join("ops/goat-id-console/web/e2e")).unwrap();
-        let c = live_rows_check(&t);
+        let c = live_rows_check(&t, true);
         assert!(!c.ok);
         assert!(c.detail.contains("has no node_modules"), "{}", c.detail);
         assert!(c.fix.as_deref().unwrap_or("").contains("npm ci && npx playwright install chromium"));
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// Not asked for (no --browser-tests), the missing toolchain is a note: the
+    /// row passes, keeps its fix, and the page prints it under "Note:".
+    #[test]
+    fn absent_node_modules_is_a_note_unless_browser_tests_is_asked_for() {
+        let t = crate::testdir::path("gb-live-rows-note-");
+        std::fs::create_dir_all(t.join("ops/goat-id-console/web/e2e")).unwrap();
+        let c = live_rows_check(&t, false);
+        assert!(c.ok, "{c:?}");
+        assert!(c.detail.contains("has no node_modules") && c.detail.contains("--browser-tests"), "{}", c.detail);
+        assert!(c.fix.as_deref().unwrap_or("").contains("npm ci && npx playwright install chromium"));
+        let r = crate::Report::new("doctor", vec![c], crate::EXIT_REFUSED);
+        let p = summary(&r, &t, None, None, false);
+        assert!(p.contains("All 1 checks passed."), "{p}");
+        assert!(p.contains("Note: ops/goat-id-console/web/e2e has no node_modules"), "{p}");
+        let r = crate::Report::new("doctor", vec![live_rows_check(&t, false)], crate::EXIT_REFUSED);
+        assert_eq!(r.exit, 0);
+        let r = crate::Report::new("doctor", vec![live_rows_check(&t, true)], crate::EXIT_REFUSED);
+        assert_eq!(r.exit, crate::EXIT_REFUSED);
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        let o = Command::new("git").args(args).current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@example.org")
+            .env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@example.org")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+            .output().unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    /// A checkout on a detached HEAD at its one commit; returns (dir, commit).
+    fn detached_checkout(tag: &str) -> (crate::testdir::Held<PathBuf>, String) {
+        let t = crate::testdir::path(&format!("gb-doctor-{tag}-"));
+        std::fs::create_dir_all(&t).unwrap();
+        git_in(&t, &["init", "-q", "-b", "main"]);
+        std::fs::write(t.join("x"), "1").unwrap();
+        git_in(&t, &["add", "x"]);
+        git_in(&t, &["commit", "-q", "-m", "base"]);
+        let head = git_in(&t, &["rev-parse", "HEAD"]);
+        git_in(&t, &["checkout", "-q", "--detach"]);
+        (t, head)
+    }
+
+    #[test]
+    fn an_assembled_tree_on_its_detached_head_passes_and_names_its_source() {
+        let (t, head) = detached_checkout("assembled");
+        let overlay = "0123456789abcdef0123456789abcdef01234567";
+        let ov = t.join("overlay");
+        std::fs::create_dir_all(&ov).unwrap();
+        std::fs::write(ov.join("assemble.sh"), "#!/bin/sh\n").unwrap();
+        std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={overlay}\noverlay_path={}\n", ov.display())).unwrap();
+        let c = checkout_check(&t, false);
+        assert!(c.ok && c.fix.is_none(), "{c:?}");
+        assert!(c.detail.contains("assembled tree"), "{}", c.detail);
+        assert!(c.detail.contains(&format!("goatcore {}", &head[..9])) && c.detail.contains(&format!("overlay commit {overlay}")), "{}", c.detail);
+        assert_eq!(crate::Report::new("doctor", vec![c], crate::EXIT_REFUSED).exit, 0);
+        // No overlay checkout with an assemble.sh: release and rc.sh would refuse
+        // (GB-009) but a deploy would not, so the row passes with a note.
+        std::fs::remove_file(ov.join("assemble.sh")).unwrap();
+        for marker in [format!("goatcore_ref={head}\noverlay_commit={overlay}\noverlay_path={}\n", ov.display()), format!("goatcore_ref={head}\noverlay_commit={overlay}\n")] {
+            std::fs::write(t.join(crate::fresh::MARKER), marker).unwrap();
+            let c = checkout_check(&t, false);
+            assert!(c.ok, "{c:?}");
+            assert!(c.detail.contains("GB-009") && c.detail.contains("GOAT_OVERLAY_DIR"), "{}", c.detail);
+            assert!(c.fix.as_deref().unwrap_or("").contains("overlay_path="), "{c:?}");
+            assert_eq!(crate::Report::new("doctor", vec![c], crate::EXIT_REFUSED).exit, 0);
+        }
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn an_assembled_tree_whose_head_is_not_the_marked_commit_or_is_local_refuses() {
+        let (t, head) = detached_checkout("assembled-moved");
+        let dirty = "0123456789abcdef0123456789abcdef01234567-dirty";
+        std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={dirty}\n")).unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains(&format!("overlay_commit={dirty}")), "{c:?}");
+        assert!(c.fix.as_deref().unwrap_or("").contains("re-assemble"), "{c:?}");
+        let other = "fedcba9876543210fedcba9876543210fedcba98";
+        std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={other}\noverlay_commit=abc\n")).unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains("not what the marker says"), "{c:?}");
+        std::fs::write(t.join(crate::fresh::MARKER), "goatcore_ref=local\noverlay_commit=abc\n").unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains("goatcore_ref=local"), "{c:?}");
+        std::fs::write(t.join(crate::fresh::MARKER), "overlay_commit=abc\n").unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains("no goatcore_ref= line"), "{c:?}");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// F-586 keeps its teeth: a plain checkout on a detached HEAD, with no
+    /// marker, is refused with the same wording as before.
+    #[test]
+    fn a_plain_checkout_on_a_detached_head_still_refuses() {
+        let (t, _) = detached_checkout("plain-detached");
+        let c = checkout_check(&t, false);
+        assert!(!c.ok, "{c:?}");
+        assert!(c.detail.contains("is on 'a detached HEAD': releases run from a main checkout") && c.detail.contains("F-586"), "{}", c.detail);
+        assert_eq!(c.fix.as_deref(), Some("git checkout main && git pull --ff-only origin main"));
         let _ = std::fs::remove_dir_all(&t);
     }
 
@@ -2522,11 +2728,8 @@ mod tests {
     }
 
     /// A throwaway repository holding only the two files `reach` reads.
-    fn reach_repo(tag: &str, ini: Option<&str>, doors: Option<&str>) -> PathBuf {
-        let repo = std::env::temp_dir().join(format!(
-            "goatbuilder-reach-{tag}-{}",
-            std::process::id()
-        ));
+    fn reach_repo(tag: &str, ini: Option<&str>, doors: Option<&str>) -> crate::testdir::Held<PathBuf> {
+        let repo = crate::testdir::path(&format!("goatbuilder-reach-{tag}-"));
         let inv = repo.join("ops/ansible/inventory");
         std::fs::create_dir_all(&inv).unwrap();
         for f in ["mgmt-hosts-mesh.ini", "doors.yaml"] {
@@ -2549,6 +2752,8 @@ mod tests {
             inventory: None,
             groups: vec![],
             sites: vec![],
+            peering_edge_reserved_udp: None,
+            peering_directory: None,
         }
     }
 
@@ -2803,7 +3008,7 @@ mod summary_tests {
 
     #[test]
     fn only_the_names_in_local_secret_files_are_read() {
-        let d = std::env::temp_dir().join(format!("goatbuilder-doctor-names-{}", std::process::id()));
+        let d = crate::testdir::path("goatbuilder-doctor-names-");
         let local = d.join(".envrc.local.d");
         std::fs::create_dir_all(&local).unwrap();
         std::fs::write(local.join("a.refs"), "# comment\nONE=op://v/i/f\nexport TWO=\"op://v/i/g\"\nFIVE=\nexport SIX=\"${SIX:-$OTHER}\"\n").unwrap();
@@ -2887,14 +3092,12 @@ mod summary_tests {
         assert!(script.contains("/goat-credentials/contents/refs/goat.refs"), "{script}");
         assert_eq!(steps[4], "eval $(op signin)");
         // Run it: a failed fetch leaves the refs file alone; a good one lands 0600.
-        let t = std::env::temp_dir().join(format!("goatbuilder-refs-fix-{}", std::process::id()));
+        let t = crate::testdir::path("goatbuilder-refs-fix-");
         let bin = t.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let run = |gh: &str| {
             let stub = bin.join("gh");
-            std::fs::write(&stub, gh).unwrap();
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::test_support::executable(&stub, gh);
             std::process::Command::new("sh").arg("-c").arg(&script).current_dir(&t)
                 .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap())).status().unwrap().success()
         };

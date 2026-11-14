@@ -27,8 +27,9 @@
 #   cd ops/ansible
 #   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES \
 #     ansible-playbook -i inventory/hosts.ini -i inventory/mgmt-hosts.ini \
-#       -l <mgmt-host> ory-deploy.yml \
-#       -e postgres_superuser_password="$PG_PASS"
+#       -l <mgmt-host> ory-deploy.yml
+#   The Postgres superuser password is read from <SITE>_PG_PASS in the deploy
+#   environment; -e postgres_superuser_password="..." overrides it.
 #
 # Cross-refs:
 # - ADR 0411 — Ory IdP MVP (Accepted final)
@@ -64,6 +65,12 @@
   # leave router_role unset → default 'A' → the sole host runs, unchanged.
   vars:
     _ory_is_primary: "{{ (router_role | default('A') | upper) == 'A' }}"
+    # The Postgres superuser password, read from the deployer's environment under
+    # the goatnet's own name (<SITE>_PG_PASS) when the caller passes none. A caller's
+    # `-e postgres_superuser_password=...` still wins: extra vars outrank play vars.
+    # ops/scripts/deploy-component.sh passes no -e for it, so without this the ory
+    # role stopped partway at its first psql task with the variable undefined.
+    postgres_superuser_password: "{{ lookup('env', (site_id | upper | replace('-', '_')) ~ '_PG_PASS') }}"
 
   pre_tasks:
     - name: "Skip Ory on non-primary (router_role != A) — B's Ory stays stopped until failover"
@@ -73,6 +80,20 @@
           Ory is single-active (ADR 1010 D1). Nothing to do here — Kratos/Hydra
           run only on the primary. Its Postgres is a read-only standby.
       when: not (_ory_is_primary | bool)
+
+    # First task that can fail, before anything is copied or rendered: a run that
+    # cannot reach Postgres as the superuser leaves the host exactly as it found it.
+    - name: The Postgres superuser password is set (pass -e postgres_superuser_password, or export <SITE>_PG_PASS)
+      ansible.builtin.assert:
+        that:
+          - postgres_superuser_password | default('') | length > 0
+        fail_msg: >-
+          postgres_superuser_password is empty: {{ (site_id | upper | replace('-', '_')) ~ '_PG_PASS' }}
+          is not in the deploy environment and no -e postgres_superuser_password was passed.
+          Run through ops/scripts/with-secrets (ADR 1186). Nothing on the host was changed.
+        quiet: true
+      no_log: true
+      when: _ory_is_primary | bool
 
     - name: Verify mgmt-host base stack is up (postgres-a)
       ansible.builtin.command:

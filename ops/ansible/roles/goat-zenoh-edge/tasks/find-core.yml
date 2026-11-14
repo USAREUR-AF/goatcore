@@ -1,0 +1,46 @@
+---
+# Find our core router where it runs, for every check that reads it: on this
+# host first (discover-core.yml), then on the one host of inventory group
+# goat_zenoh_edge_core_group (<partner>_core, the group the driver deploys the
+# republisher to), because the deployed shape has the edge and the core on
+# separate hosts. Runs once per host; main.yml includes it before the checks,
+# and a check included on its own includes it itself.
+#
+# Sets: _edge_core_container (name or ID, or "" when none was found),
+#   _edge_core_host (the inventory host it runs on; "" for this host),
+#   _edge_core_group_name, and _edge_core_not_found (why none was found, or "").
+- name: edge | find the local core router
+  ansible.builtin.include_tasks: discover-core.yml
+  when: _edge_core_container is not defined
+
+- name: edge | the core host the inventory names, when the core router is not on this host
+  vars:
+    _group: "{{ goat_zenoh_edge_core_group | default((goat_zenoh_edge_partner_id | default('')) ~ '_core') }}"
+    _hosts: "{{ groups[_group] | default([]) }}"
+  ansible.builtin.set_fact:
+    _edge_core_group_name: "{{ _group }}"
+    _edge_core_group_hosts: "{{ _hosts }}"
+    _edge_core_local_problem: "on {{ inventory_hostname }}: {{ _edge_core_problem }}"
+    _edge_core_host: >-
+      {{ (_hosts | first) if (_edge_core_container | length == 0 and _hosts | length == 1
+                              and (_hosts | first) != inventory_hostname) else '' }}
+
+- name: edge | find the core router on the core host
+  ansible.builtin.include_tasks: discover-core.yml
+  vars:
+    _edge_core_on: "{{ _edge_core_host }}"
+  when: _edge_core_host | length > 0
+
+- name: edge | why no core router was found
+  ansible.builtin.set_fact:
+    _edge_core_found: true
+    _edge_core_not_found: >-
+      {%- if _edge_core_container | length > 0 -%}
+      {%- else -%}
+      {{ _edge_core_local_problem }};
+      {%- if _edge_core_host | length > 0 %} on {{ _edge_core_host }}: {{ _edge_core_problem }}
+      {%- elif _edge_core_group_hosts | length == 0 %} no host in inventory group {{ _edge_core_group_name }}
+      {%- elif _edge_core_group_hosts | length > 1 %} inventory group {{ _edge_core_group_name }} holds several hosts: {{ _edge_core_group_hosts | join(', ') }}
+      {%- else %} inventory group {{ _edge_core_group_name }} names only this host
+      {%- endif -%}
+      {%- endif -%}

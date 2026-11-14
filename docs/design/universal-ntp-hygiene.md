@@ -208,6 +208,8 @@ divergence_detected = abs(median_offset) > 100ms OR range(offsets) > 500ms
 
 `divergence_detected` flows into H's own verdict (§4.3).
 
+**A host that publishes no attestation.** A machine we do not own runs no `ntp-health-agent`. The router it connects to observes its clock from the timestamps it sends, and that observed offset is one more pairwise offset for this comparison ([`peer-fault-handling.md`](peer-fault-handling.md), ADR 1232; designed, not built).
+
 ### 5.3 Why this breaks the paradox
 
 - Host X's verdict now depends on signals FROM OTHER HOSTS, not only from X itself.

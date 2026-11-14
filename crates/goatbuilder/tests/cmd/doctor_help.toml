@@ -23,6 +23,9 @@ Options:
                          prompt, or a wait on a passphrase), so a plain run reads only what is
                          declared on this machine and prompts for nothing
       --frozen           Refuse any run that would need to fast-forward the checkout (strict C3)
+      --browser-tests    Require the browser tests' toolchain (the console's Playwright suite the
+                         release's live rows run). Without this flag a missing toolchain is a note,
+                         not a failure
       --offline          An islanded site: do not fetch the trunk; judge the checkout against the
                          cached one, and record the run as offline (C3; ops/scripts/fresh-source.sh)
       --mock <DIR>       Run against a fixture directory instead of hosts: no registry, no

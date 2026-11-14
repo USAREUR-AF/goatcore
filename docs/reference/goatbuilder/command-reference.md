@@ -42,6 +42,8 @@ Build and ship a goat environment: declare, converge, verify — under one deplo
 - [`goatbuilder secrets`](#goatbuilder-secrets) — The declared secrets posture (ADR 1204): which store is in force (1password, openbao, sops, git-crypt, env-file, env), what is available, how to supply what is missing, and the store's own checks. `init --env <goatnet>` writes the zero-SaaS quickstart's env file: a strong random value for every variable the goatnet's plays template, 0600, gitignored, never rotating a value already there. Same module as ops/scripts/with-secrets
 - [`goatbuilder verify`](#goatbuilder-verify) — Read every host's newest deploy-ledger row for one component and say whether it names the ref main declares (C7). Reads only; exit 3 while any host is pending or unknown. The same check `deploy --verify-only` runs
 - [`goatbuilder diff`](#goatbuilder-diff) — What is different from main right now (C8): main's declared ref against each host's newest ledger row, for one component or, without one, every component of the environment, read in one pass per member group. Reads only; exit 3 on any drift or unreadable host
+- [`goatbuilder runs`](#goatbuilder-runs) — The runs this machine recorded, newest first: one row per run, with its id, verb, exit code, number of commands and arguments. Each run of a verb that drives hosts leaves a record at <state>/runs/<id>/run.json, kept until you remove it. Reads only
+- [`goatbuilder show`](#goatbuilder-show) — One recorded run, phase by phase and command by command, each with its exit code and log, then its inputs with their sources. `-o json` prints the record itself. Reads only
 - [`goatbuilder history`](#goatbuilder-history) — The deploy ledger as a timeline, newest first, on every host of the environment (C8): one row per record, with the machine, the time, the action (deploy or rollback) and the version. Each record's prior version and the operator who ran it are in `-o json`. Reads only
 - [`goatbuilder plan`](#goatbuilder-plan) — Write what a declarative verb would do to a plan file for review: the declared refs, the play and target, the ledger, main's commit, the transport (deploy); the artifact type and the target ref (rollback). Touches no host's state. Run it as reviewed with `apply`
 - [`goatbuilder apply`](#goatbuilder-apply) — Run exactly a reviewed plan. Refuses (exit 1, naming what moved) when main's declaration, the pins commit, the play or the rollback target moved since the plan was written; a changed transport is reported, not refused
@@ -75,6 +77,7 @@ Probe what a run needs before anything is cut: deps, checkout freshness, each en
 | `--site <SITE>` | Also scan every input a standup of this site will reach (role asserts, `\| mandatory`, the secrets its plays template) and list each one that is missing, all at once, before any host is touched |  |
 | `--all` | Print every check, not only the problems. `-o json` always has them all |  |
 | `--credentials` | Check the stored credentials as well: the AWS profile, and whether a 1Password session is open. Either can prompt you (a Keychain or biometric prompt, or a wait on a passphrase), so a plain run reads only what is declared on this machine and prompts for nothing |  |
+| `--browser-tests` | Require the browser tests' toolchain (the console's Playwright suite the release's live rows run). Without this flag a missing toolchain is a note, not a failure |  |
 
 ## `goatbuilder status`
 
@@ -253,7 +256,217 @@ One more machine of a class at a live site, declared → converged → verified:
 
 ## `goatbuilder federate`
 
-A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step
+A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step.
+
+At a terminal, `goatbuilder federate <partner>` is the whole procedure: it asks for the partner's key and CA fingerprint and the agreement digest, makes the plan and asks to approve it, shows what our core will admit and asks again, then carries on through acceptance. A run that stops resumes where it stopped. Values come from the deployment's declarations; a FED_* variable set in the environment overrides one.
+
+Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner>`, `status [<partner>]`. `allocate [<peering>]` writes a peering's values and files for review; `backout <partner>` backs one peering out and leaves the others as they were. `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<WITH>` | The peering name (the counterparty, as declared), or a stage run alone: `status [<partner>]`, `deploy <partner>`, `test <partner>`, `allocate [<peering>]` |
+| `<PARTNER>` | The partner, after a stage word; after `allocate`, the one peering to allocate and render, beside peerings that are still hand-written |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--context-dir <CONTEXT_DIR>` | The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it) |  |
+| `--cert <CERT>` | The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory) |  |
+| `--ca-roots <CA_ROOTS>` | The six verbs: the CA roots (default: ca-roots.pem in the context directory) |  |
+| `--context <CONTEXT>` | The six verbs: the goat context to read, as `goat --context` (default: $GOAT_CONTEXT, else current_context in the profile's config.toml, else default) |  |
+| `--profile-dir <PROFILE_DIR>` | The six verbs: the goat profile directory, as `goat --profile-dir` (default: $GOAT_PROFILE_DIR, else ~/.goat) |  |
+| `--over-ssh <OVER_SSH>` | init: measure this peering's edge and core over SSH from this machine, reaching the hosts of inventory groups <PEERING>_edge and <PEERING>_core in ops/ansible/inventory/peering-edges.ini as the plays reach them. Only read-only commands run there; nothing is copied to either host |  |
+| `--ssh-edge-group <SSH_EDGE_GROUP>` | init --over-ssh: the edge's inventory group (default <PEERING>_edge) |  |
+| `--ssh-core-group <SSH_CORE_GROUP>` | init --over-ssh: the core's inventory group (default <PEERING>_core) |  |
+| `--edge-host <EDGE_HOST>` | init --over-ssh: the edge host to measure, when its group has several |  |
+| `--core-host <CORE_HOST>` | init --over-ssh: the core host to measure, when its group has several |  |
+| `--router-container <ROUTER_CONTAINER>` | init --over-ssh: the core router container, by hand (default: the name the core host's variables give, else the one discovery finds there) |  |
+| `--side <SIDE>` | init --over-ssh: measure one half of phase 3 on this machine, for a peering no one machine reaches both hosts of (docs/design/federation-router-discovery.md): `edge` measures only the edge and writes the result to --half-out; `core` measures only the core, joins the edge half read from --edge-half, and builds the package. Without it, both hosts are measured here, as always. On a peering run, `--side edge` is the edge driver's run of a two-driver peering (`drivers: two`): not built yet, and refused with GB-267 (docs/design/federation-two-drivers.md) |  |
+| `--half-out <HALF_OUT>` | init --over-ssh --side edge: the file the edge half is written to |  |
+| `--edge-half <EDGE_HALF>` | init --over-ssh --side core: the edge half the edge driver wrote |  |
+| `--edge-half-sha256 <EDGE_HALF_SHA256>` | init --over-ssh --side core: the edge half's sha256 as the edge driver printed it, read from there and confirmed here (the full digest, or its first 32 hex digits; spaces and dashes are ignored) |  |
+| `--expect-commit <EXPECT_COMMIT>` | With --side edge: the commit the edge driver's checkout must be at, as a hand-off object names it. The edge driver's run is not built yet: refused with GB-267 (docs/design/federation-two-drivers.md) |  |
+| `--plan <PLAN>` | deploy: the plan to execute (default <work>/plan.json) |  |
+| `--approve-plan <APPROVE_PLAN>` | deploy: approve exactly this plan hash, after reading the plan. --yes never approves a plan |  |
+| `--confirm` | Phases 5, 6 and 10: confirm the keys, the agreement digest and the admission here, at this terminal, instead of stopping for them by hand. The default when both stdin and stderr are a terminal |  |
+| `--no-confirm` | Stop at phases 5 and 10 for the steps by hand even at a terminal, as before confirming at the terminal was the default |  |
+| `--partner-key <PARTNER_KEY>` | Phase 5: the partner's verifying key, as read aloud on the call |  |
+| `--partner-ca-fingerprint <PARTNER_CA_FINGERPRINT>` | Phase 5: the partner's CA fingerprint, as read aloud on the call |  |
+| `--agreement-digest <AGREEMENT_DIGEST>` | Phase 6: the agreement digest, as compared with the partner |  |
+| `--place-pointer-package <PLACE_POINTER_PACKAGE>` | Phase 5: place the package the partner's single pointer named and the directory held back, after confirming on the call that it is the package for this peering (its digest, as the stop shows it) |  |
+| `--approve-admission <APPROVE_ADMISSION>` | Phase 10: approve exactly this admission digest, after reading what our core will admit. --yes never approves it |  |
+| `--review-in-pr` | Phase 10: write what our core would admit for review in a pull request, and stop |  |
+| `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
+| `--as <AS_PARTY>` | Which party we are (default: read from the declaration) |  |
+| `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <peering>_edge) |  |
+| `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<peering>) |  |
+| `--from <FROM>` | Resume from this phase | `1` |
+| `--to <TO>` | Stop after this phase | `99` |
+| `--dry-run` | Print every phase and command; run nothing |  |
+| `--resume` | Skip the phases the run journal (<work>/state.json) shows passed, whose inputs and local outputs are unchanged now; checks and plays always run again. This is the default; the flag is kept so scripts that pass it keep working |  |
+| `--no-resume` | Run every phase in range, even ones the run journal shows passed with unchanged inputs (the behavior before resuming was the default) |  |
+
+**Subcommands**
+
+- [`goatbuilder federate init`](#goatbuilder-federate-init) — Generate our half of a federation, read from the running system
+- [`goatbuilder federate lint`](#goatbuilder-federate-lint) — Check one package: is it well-formed, and does it agree with itself?
+- [`goatbuilder federate compose`](#goatbuilder-federate-compose) — Combine two packages into one agreement and print its digest
+- [`goatbuilder federate diff`](#goatbuilder-federate-diff) — Two digests disagree? Run this. It names the field
+- [`goatbuilder federate verify`](#goatbuilder-federate-verify) — Could we actually deliver this agreement? Dry-run it here
+- [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
+- [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
+- [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
+- [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it. Not built yet: refuses with GB-267 (docs/design/federation-two-drivers.md)
+
+## `goatbuilder federate init`
+
+Generate our half of a federation, read from the running system.
+
+Every capability in the package is MEASURED here, not typed: what transports are installed and configured, what image the router is actually running, what version the fabric is. A capability an operator types is a claim, and a wrong claim stays wrong until the link fails in front of a partner.
+
+Where a value cannot be derived this fails and names it. It never prompts and never fills one in — a silent default is how a link ends up with no rate limit.
+
+Exit 23 means something could not be derived; the list is the output.
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--with-transport` | Also derive `transport_offer` — that we are willing to connect |  |
+| `--with-data` | Also derive `data_offer` — that we are willing to exchange |  |
+| `--signing-key <SIGNING_KEY>` | Our Ed25519 signing key: 64 hex characters (the RFC 8032 seed) or 44 base64 characters. Without it this prints the exact bytes to sign and stops — it will not invent a key |  |
+| `--out <OUT>` | Write the package's canonical bytes here |  |
+| `--json` | One JSON object instead of the glyph lines |  |
+| `--declaration <DECLARATION>` | Read the declaration from this file instead of federation.toml in the context directory: a peering's own federation.toml, which goatbuilder generates from the environment's. Identity is still read from the context directory |  |
+
+## `goatbuilder federate lint`
+
+Check one package: is it well-formed, and does it agree with itself?
+
+Runs the structural rules on a single file — required members, integers that are really integers, no duplicate member names, complete blocks, a signature of the right shape. It does NOT verify the signature: the verifying key is bound to a party over a channel authenticated independently of this link, so a lone package cannot be authenticated by looking at it. `compose` does that.
+
+Reads one file and nothing else. No network, no credentials.
+
+Exit 21 means the package is refused, and the finding names the rule.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<PACKAGE>` | The package to check |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate compose`
+
+Combine two packages into one agreement and print its digest.
+
+Both parties compose independently and compare the digest. Equal digests prove both sides hold the identical agreement — that is the whole point of the format, and the comparison may travel by any channel at all, including one nobody trusts.
+
+A refusal is an outcome, not a failure: it is the mechanism working. Exit 20, with the rule that fired.
+
+Reads two files and the keys you pass. No network, no credentials, no host access — this runs in an empty container, which is what lets a partner trust it with their package.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<FIRST>` | One party's package |
+| `<SECOND>` | The other party's package. Order does not matter: the agreement has no "us" and "them", so both sides compute the same bytes whichever way round they pass the files |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--key <KEYS>` | A verifying key bound to a party, as `<sovereign_id>=<44 base64 characters>`. Repeat for each party |  |
+| `--keyring <KEYRING>` | A JSON file of bound keys, `{"<sovereign_id>": "<base64>"}`. Convenient for several partners; it establishes nothing that --key does not |  |
+| `--now <NOW>` | The evaluation date, `YYYY-MM-DD`. Defaults to today in UTC — never the local date, which would let two parties either side of local midnight reach different verdicts on the day a package falls due |  |
+| `--out <OUT>` | Write the agreement's canonical bytes here — no trailing newline, no byte-order mark, because that is the digest input |  |
+| `--print` | Print the agreement's canonical form on stdout |  |
+| `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate diff`
+
+Two digests disagree? Run this. It names the field.
+
+This is the verb for the one loud failure this design has. Two parties compose the same pair, compare digests, and they differ — so each side prints its agreement and this diffs them, and the offending field names itself. Loud in the first hour instead of silent for three weeks.
+
+It also answers the case that reads as impossible: the digests differ and the two agreements are identical. There is then no field to show, and the instinct is to re-run everything. The answer is one measurement — a trailing newline, a byte-order mark, or an encoding difference — and this prints which of the three it is.
+
+Exit 22 when they differ, 0 when they match.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<OURS>` | The agreement we composed — the exact bytes we hashed |
+| `<THEIRS>` | The agreement they composed |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate verify`
+
+Could we actually deliver this agreement? Dry-run it here.
+
+Agreeing is not the same as being able to deliver. This runs the agreement through our own configuration generator WITHOUT applying it and asserts the output would be valid on this system, then prints the conformance attestation to publish: one line over the digest, signed with the same key that signed our package.
+
+Reads local state. Changes nothing.
+
+Exit 24 means we could not deliver it, and the failing check says why.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<AGREEMENT>` | The composed agreement, as the bytes that were hashed |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--as <AS_PARTY>` | Which party we are. Read from the declaration file when omitted |  |
+| `--signing-key <SIGNING_KEY>` | Sign the attestation with this Ed25519 key — the same key that signed our package (§10). Without it the line is printed unsigned and says so |  |
+| `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate apply`
+
+Render the access rules and configuration this agreement implies.
+
+The only verb here that writes. The agreement is the sole input, so the release set we forward and the prefix the far side admits cannot drift apart by being typed twice.
+
+Prints what it would write and stops. Pass --confirm to write.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<AGREEMENT>` | The composed agreement |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--as <AS_PARTY>` | Which party we are. Read from the declaration file when omitted |  |
+| `--out <OUT>` | Where to write. Files land under this directory, mirroring the repo paths they belong at |  |
+| `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in. The generated group_vars land at `group_vars/<GROUP>/`, and `--limit <GROUP>` is what deploys them |  |
+| `--partner-audience <PARTNER_AUDIENCE>` | Release-sets this partner holds an audience slot in, so the edge grants it a READ of `keys/<set>/**` and it can obtain a data key (ADR 1169 decision 3). Repeatable |  |
+| `--confirm` | Write. Without this, the rendering is printed and nothing is touched |  |
+| `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate plan`
+
+The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
 
 **Arguments**
 
@@ -265,13 +478,50 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 
 | Flag | Description | Default |
 |---|---|---|
-| `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
-| `--as <AS_PARTY>` | Which party we are (default: read from the declaration) |  |
+| `--env <ENV>` | The environment the peering is declared on |  |
+| `--as <AS_PARTY>` | Which party we are |  |
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <peering>_edge) |  |
 | `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<peering>) |  |
-| `--from <FROM>` | Resume from this phase | `1` |
-| `--to <TO>` | Stop after this phase | `99` |
-| `--dry-run` | Print every phase and command; run nothing |  |
+| `--no-live` | Skip phase 1's live reads of the hosts; each is reported SKIP |  |
+| `--recheck` | Recheck the saved plan instead of writing one: refused when the file was altered, an input changed, or a live prerequisite fails |  |
+
+## `goatbuilder federate backout`
+
+Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<PARTNER>` | The partner whose one peering is removed (its sovereign id, as declared) |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
+| `--as <AS_PARTY>` | Which party we are (default: read from the agreement in the working directory) |  |
+| `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |
+| `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<partner>) |  |
+| `--dry-run` | Survey the peering's hosts read-only and print every resource the back-out would remove, per host; change nothing |  |
+
+## `goatbuilder federate import`
+
+A two-driver peering's import of an edge result, as a hand-off object names it. Not built yet: refuses with GB-267 (docs/design/federation-two-drivers.md)
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<WITH>` | The peering name (the counterparty, as declared) |
+| `<PHASE>` | The phase whose edge result this is |
+| `<RESULT>` | The result file the edge driver wrote |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--sha256 <SHA256>` | The confirm code the edge driver printed (the result's sha256, or its first digits) |  |
 
 ## `goatbuilder pins`
 
@@ -297,7 +547,7 @@ Guide and observe release graduation across the goatnet ladder (ADR 1120, 1125):
 - [`goatbuilder promote review`](#goatbuilder-promote-review) — The start-of-day / end-of-day review: every open record sorted by what a person must DO. Read-only
 - [`goatbuilder promote readiness`](#goatbuilder-promote-readiness) — The `release-readiness-v1` document. Read-only, derived, no verdict of its own
 - [`goatbuilder promote abandon`](#goatbuilder-promote-abandon) — Mark a record abandoned WITH a machine-readable reason (C8)
-- [`goatbuilder promote check`](#goatbuilder-promote-check) — CI invariants C1–C9 (fail-closed, current-tree). Exit 0/1
+- [`goatbuilder promote check`](#goatbuilder-promote-check) — CI invariants C1–C10 (fail-closed, current-tree). Exit 0/1
 
 ## `goatbuilder promote status`
 
@@ -341,6 +591,7 @@ Verify the hop gates, mark the record graduated, print the fold-to-fleet edit
 | Flag | Description | Default |
 |---|---|---|
 | `--ack <ACK>` |  |  |
+| `--override-runtime-health <OVERRIDE_RUNTIME_HEALTH>` | Graduate although the runtime-health gate fails; REASON and the --ack name are written into the record |  |
 
 ## `goatbuilder promote graduate-set`
 
@@ -425,7 +676,7 @@ Mark a record abandoned WITH a machine-readable reason (C8)
 
 ## `goatbuilder promote check`
 
-CI invariants C1–C9 (fail-closed, current-tree). Exit 0/1
+CI invariants C1–C10 (fail-closed, current-tree). Exit 0/1
 
 ## `goatbuilder explain`
 
@@ -507,6 +758,42 @@ What is different from main right now (C8): main's declared ref against each hos
 |---|---|---|
 | `--env <ENV>` | The environment (the pins' goatnet key) |  |
 | `--all` | Every component the environment runs (the default without a component) |  |
+
+## `goatbuilder runs`
+
+The runs this machine recorded, newest first: one row per run, with its id, verb, exit code, number of commands and arguments. Each run of a verb that drives hosts leaves a record at <state>/runs/<id>/run.json, kept until you remove it. Reads only
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--verb <VERB>` | Only the runs of this verb (standup, join-node, deploy, federate, ...) |  |
+| `--last <LAST>` | How many runs to list | `20` |
+
+**Subcommands**
+
+- [`goatbuilder runs diff`](#goatbuilder-runs-diff) — Compare two recorded runs: their arguments, their inputs (value and source), their commands in order, and each phase's exit code. Reads only
+
+## `goatbuilder runs diff`
+
+Compare two recorded runs: their arguments, their inputs (value and source), their commands in order, and each phase's exit code. Reads only
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<A>` | The first run: an id, a unique prefix of one, or `last` |
+| `<B>` | The second run |
+
+## `goatbuilder show`
+
+One recorded run, phase by phase and command by command, each with its exit code and log, then its inputs with their sources. `-o json` prints the record itself. Reads only
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<RUN>` | The run: its id, a unique prefix of it, or `last` |
 
 ## `goatbuilder history`
 

@@ -349,7 +349,7 @@ impl Converger for Scripted {
         let text = match std::fs::read_to_string(&p) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(anyhow!("{}: {e}", p.display())),
+            Err(e) => return Err(anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", p.display())))),
         };
         let last = text
             .lines()

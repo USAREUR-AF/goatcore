@@ -101,6 +101,12 @@
              if (oci_t2_sync_offset_hours | length > 0)
              else (inventory_hostname | hash('sha256') | int(base=16) % (oci_t2_sync_interval_hours | int)) }}
 
+    - name: cron is installed (the entry below is a crontab entry; a minimal image has no cron)
+      ansible.builtin.apt:
+        name: cron
+        state: present
+        cache_valid_time: 3600
+
     - name: oci-substrate-t2-sync | install cron entry
       ansible.builtin.cron:
         name: "oci-goat-sync"

@@ -1,0 +1,101 @@
+---
+# peering-backout.yml — back ONE peering out, and leave every other peering and the
+# core as they were (docs/design/goatbuilder.md, "federate backout").
+#
+#   Driver:  goatbuilder federate backout <partner> [--dry-run]
+#   Runbook: docs/operations/sovereign-federation-runbook.md, Step 9 (this play is
+#            that step's order, done by the roles)
+#
+# Every resource is found by the peering id (the partner's sovereign id) and the
+# values this peering's own group and rendered agreement name; nothing is matched
+# by a pattern another peering could also match. Each role's tasks/absent.yml
+# holds the rules for its resources and refuses to touch one that another peering
+# can be shown to hold.
+#
+# Five switches, all off by default, so a run with none of them changes nothing
+# on any host and only reports what exists:
+#   peering_backout_id           the partner (required)
+#   peering_backout_apply        remove the edge, tunnel, SPIRE, republisher and
+#                                forwarder resources the survey found
+#   peering_backout_core_apply   install the candidate core configuration and
+#                                restart the core router; needs
+#                                peering_backout_core_expect, the candidate digest
+#                                the survey printed, so the core gets exactly what
+#                                was reviewed
+#   peering_backout_core_leaf_remove  with peering_backout_core_tls_dir: the router leaf
+#                                admission placed where nothing was goes; its copy on the
+#                                core host is deleted where it is this peering's, byte for byte
+#   peering_backout_core_by_driver  the core's admission was placed from the driver
+#                                (FED_CORE_*): the driver backs it out, and the core
+#                                tasks write one row and run nothing on the core host
+#
+# Run by hand with the same -e the driver passes:
+#   cd ops/ansible
+#   ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini \
+#     --limit '<peering>_edge:<peering>_core:peering_forwarders' \
+#     -e peering_backout_id=<partner> -e fed_work=<work> -e fed_edge_group=<peering>_edge \
+#     peering-backout.yml
+#
+# The roles' absent tasks are included by path, not with include_role, so no role's
+# meta dependency (the rollback ledger) runs and nothing is written to a host while it
+# is only surveyed.
+#
+# Each host's findings land on the controller in <work>/backout/<stage>/<host>.json,
+# one row per resource: component, resource, state (present, absent, not-ours,
+# unknown) and action (remove, removed, kept, none).
+#
+# Rollback: there is no undo for a removal. Standing the peering up again is
+# `goatbuilder federate <partner>` from phase 2; the agreement in <work> is kept.
+
+- name: Back out one peering — the edge host
+  hosts: peering_edges
+  gather_facts: false
+  become: true
+  pre_tasks:
+    - name: Start this host's record
+      ansible.builtin.include_tasks: tasks/peering-backout-begin.yml
+  tasks:
+    # Runbook Step 9 order: the tunnel first (it cuts open sessions at once), then
+    # the partner's trust domain before anything that would let a refresh re-add it,
+    # then the edge router.
+    - name: The WireGuard tunnel
+      ansible.builtin.include_tasks: roles/goat-peering-wg/tasks/absent.yml
+    - name: The IPsec tunnel
+      ansible.builtin.include_tasks: roles/goat-peering-edge/tasks/absent.yml
+    - name: SPIRE federation and the bundle forwards
+      ansible.builtin.include_tasks: roles/goat-peering-spire/tasks/absent.yml
+    - name: The edge router
+      ansible.builtin.include_tasks: roles/goat-zenoh-edge/tasks/absent.yml
+  post_tasks:
+    - name: Write this host's record
+      ansible.builtin.include_tasks: tasks/peering-backout-end.yml
+
+- name: Back out one peering — the core host
+  hosts: peering_cores
+  gather_facts: false
+  become: true
+  pre_tasks:
+    - name: Start this host's record
+      ansible.builtin.include_tasks: tasks/peering-backout-begin.yml
+  tasks:
+    - name: The outbound republisher
+      ansible.builtin.include_tasks: roles/goat-fed-republisher/tasks/absent.yml
+    - name: The core admission (ACL subjects, rules and policies)
+      ansible.builtin.include_tasks: roles/goat-zenoh/tasks/federation-absent.yml
+  post_tasks:
+    - name: Write this host's record
+      ansible.builtin.include_tasks: tasks/peering-backout-end.yml
+
+- name: Back out one peering — the forwarder
+  hosts: peering_forwarders
+  gather_facts: true
+  become: true
+  pre_tasks:
+    - name: Start this host's record
+      ansible.builtin.include_tasks: tasks/peering-backout-begin.yml
+  tasks:
+    - name: The forwarder's mapping for this peering
+      ansible.builtin.include_tasks: roles/goat-peering-forwarder/tasks/absent.yml
+  post_tasks:
+    - name: Write this host's record
+      ansible.builtin.include_tasks: tasks/peering-backout-end.yml

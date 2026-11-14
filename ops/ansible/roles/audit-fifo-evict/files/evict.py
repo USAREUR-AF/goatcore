@@ -157,12 +157,13 @@ def oldest_groups(rows, trail_prefix):
     return sorted(groups.values(), key=lambda group: (group["stamp"], group["prefix"]))
 
 
-def metrics(config, used, prefixes, freed, result, total):
+def metrics(config, used, prefixes, freed, result, total, over_high=0):
     directory = Path(config["textfile_dir"])
     if not directory.is_dir():
         raise Failure("node exporter textfile directory is missing")
     values = {
         "bucket_used_bytes": ("gauge", used), "quota_bytes": ("gauge", config["quota_gib"] * 2**30),
+        "over_high_water": ("gauge", over_high),
         "objects_total": ("gauge", prefixes), "bytes_total": ("gauge", freed),
         "hour_prefixes_total": ("counter", total),
         "last_run_timestamp_seconds": ("gauge", int(time.time())),
@@ -195,14 +196,25 @@ def run(config, backend, evict=False):
     if type(total) is not int or total < 0:
         raise Failure("invalid persisted eviction count")
     target = config["alias"] + "/" + config["bucket"]
+    quota = config["quota_gib"] * 2**30
     used, prefixes, freed, result = 0, 0, 0, 1
     journal = None
+    over = lambda: 1 if used >= quota * config["high_pct"] // 100 else 0
     try:
         used = backend.used(target)
         result = 3
         if not evict:
-            result = 0
-            metrics(config, used, 0, 0, 0, total)
+            # The finally block publishes `result`, so it carries this pass's
+            # outcome: 4 over high-water, 0 below it.
+            result = 4 if over() else 0
+            if result == 4:
+                # Observation of a breached threshold is not a success: the
+                # bucket is at or past high-water, eviction is disabled, and
+                # uploads will be refused at the quota. Exit non-zero so the
+                # timer unit fails loudly instead of printing result=0.
+                print("audit-fifo-evict: WARNING used is at or over the "
+                      "high-water mark and eviction is DISABLED (measure-only)")
+                return 4
             return 0
         # A previous pass must be auditable before a new destructive pass.
         # A journal surviving a crash records both confirmed and pending actions.
@@ -212,10 +224,8 @@ def run(config, backend, evict=False):
                 raise Failure("pending trail target is outside the configured trail")
             backend.trail(pending, target + "/" + previous["trail_key"])
             pending.unlink()
-        quota = config["quota_gib"] * 2**30
         if used < quota * config["high_pct"] // 100:
             result = 0
-            metrics(config, used, 0, 0, 0, total)
             return 0
         budget = used * config["max_pass_pct"] // 100
         limit = max(quota * config["low_pct"] // 100, used - budget)
@@ -267,9 +277,16 @@ def run(config, backend, evict=False):
                     result = 0 if used <= config["quota_gib"] * 2**30 * config["low_pct"] // 100 else 2
         except Failure:
             result = 3
-            metrics(config, used, prefixes, freed, result, total)
+            metrics(config, used, prefixes, freed, result, total, over_high=over())
             raise
-        metrics(config, used, prefixes, freed, result, total)
+        try:
+            metrics(config, used, prefixes, freed, result, total, over_high=over())
+        except (OSError, Failure):
+            # If publication recovers, expose the failed operation rather than
+            # the measurement outcome. A persistent failure leaves the prior
+            # timestamp intact so the stale-metrics alert can detect it.
+            metrics(config, used, prefixes, freed, 3, total, over_high=over())
+            raise
     return result
 
 

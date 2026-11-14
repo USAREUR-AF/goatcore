@@ -1,0 +1,133 @@
+{
+  "schema": "goatbuilder.federate.status/v1",
+  "peerings": [
+    {
+      "peering": "hello-ally",
+      "environment": "zagros",
+      "site": "alpha",
+      "work": "ops/goatbuilder/compat/documents/fixtures/journal/later",
+      "journal": "ok",
+      "last_run": {
+        "id": "run-20261112T191053Z-97459",
+        "stage": "federate",
+        "started": "2026-11-12T19:10:53Z",
+        "ended": "2026-11-12T19:10:53Z",
+        "outcome": "deferred",
+        "from": 11,
+        "to": 99,
+        "resume": false
+      },
+      "phases": [
+        {
+          "phase": 1,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191052Z-96025",
+          "attempts": 1
+        },
+        {
+          "phase": 2,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191052Z-96025",
+          "attempts": 1
+        },
+        {
+          "phase": 3,
+          "outcome": "deferred",
+          "note": "written by a later goatbuilder",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191052Z-96025",
+          "attempts": 1
+        },
+        {
+          "phase": 4,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191052Z-96025",
+          "attempts": 1
+        },
+        {
+          "phase": 5,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191053Z-96717",
+          "attempts": 2,
+          "detail": "done by hand, declared with --from 6"
+        },
+        {
+          "phase": 6,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191053Z-96717",
+          "attempts": 1
+        },
+        {
+          "phase": 7,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191053Z-96717",
+          "attempts": 1
+        },
+        {
+          "phase": 8,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191053Z-96717",
+          "attempts": 1
+        },
+        {
+          "phase": 9,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191053Z-96717",
+          "attempts": 1
+        },
+        {
+          "phase": 10,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191053Z-97459",
+          "attempts": 2,
+          "detail": "done by hand, declared with --from 11"
+        },
+        {
+          "phase": 11,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191053Z-97459",
+          "attempts": 1
+        },
+        {
+          "phase": 12,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191053Z-97459",
+          "attempts": 1
+        },
+        {
+          "phase": 13,
+          "outcome": "passed",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191053Z-97459",
+          "attempts": 1
+        },
+        {
+          "phase": 14,
+          "outcome": "deferred",
+          "note": "written by a later goatbuilder",
+          "at": "2026-11-12T19:10:53Z",
+          "run": "run-20261112T191053Z-97459",
+          "attempts": 1,
+          "detail": "GB-199: waiting for xab's half of acceptance"
+        }
+      ],
+      "confirmations": [
+        "operator-step at phase 5 (flag, 2026-11-12T19:10:53Z)",
+        "operator-step at phase 10 (flag, 2026-11-12T19:10:53Z)"
+      ],
+      "owned": [],
+      "next": "goatbuilder federate hello-ally --work ops/goatbuilder/compat/documents/fixtures/journal/later --from 15"
+    }
+  ]
+}

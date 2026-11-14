@@ -37,7 +37,8 @@
     cloudflare_api_token: "{{ lookup('env', 'CLOUDFLARE_API_TOKEN') | default('') }}"
     admin_write_surface: "goat-zenoh-portal (registry.db — slot pool + custody registry)"
   pre_tasks:
-    # The portal is single-homed BY INTENT (ADR 1084 §D3). An A/B group holds two
+    # The portal is single-homed until ADR 1165 lifts its write class (ADR 1084
+    # §D3; the intended placement is every site). An A/B group holds two
     # hosts, so a group-targeted run over a transport reaching both would install a
     # second portal with its OWN registry.db — a second slot pool and custody
     # registry beside the authoritative one.
