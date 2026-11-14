@@ -72,6 +72,7 @@ class Faults:
         self.silent_probes = set()         # probe kinds our edge records nothing for in this run
         self.existing_down = set()         # existing partners that no longer receive anything from us
         self.leak_to_existing = set()      # existing partners that receive every set we lift
+        self.refuse_put = set()            # sides whose REST surface answers every PUT with HTTP 403
 
 
 class Core:
@@ -159,9 +160,13 @@ class Fabric:
 
     # --- what a PUT on a core sets in motion -----------------------------------
     def put(self, side, key, value):
+        # A core has no store on the staging name `release/**` (roles/goat-zenoh declares
+        # none): a sample staged there goes to the republisher's subscription and is
+        # never read back from the core that staged it.
         core = self.cores[side]
-        with core.lock:
-            core.store[key] = value
+        if not key.startswith("release/"):
+            with core.lock:
+                core.store[key] = value
         if key.startswith("release/") and side == self.us and self.existing:
             self.put_existing(key, value)
         if key.startswith("release/") and side not in self.faults.republisher_down:
@@ -293,7 +298,13 @@ class Fabric:
 
             def do_PUT(self):
                 n = int(self.headers.get("Content-Length") or 0)
-                on_put(self.path.lstrip("/"), self.rfile.read(n))
+                body = self.rfile.read(n)
+                if side in faults.refuse_put:
+                    self.send_response(403)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                on_put(self.path.lstrip("/"), body)
                 self.send_response(200)
                 self.send_header("Content-Length", "0")
                 self.end_headers()

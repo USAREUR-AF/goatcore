@@ -545,6 +545,27 @@ class AcceptanceRun(unittest.TestCase):
         # its refusal and SPIRE rows are BLOCKED or SKIPPED and the bilateral scope is open.
         self.assertEqual((co.returncode, combined["verdict"]), (3, "INCOMPLETE"), co.stdout)
 
+    def test_a_session_sample_is_staged_when_our_core_accepts_it_and_refused_when_it_does_not(self):
+        # A core declares no store on the staging name release/** (the fake fabric
+        # models that), so the runner cannot read its own sample back there: the sample
+        # is staged when our core's REST surface accepts the PUT, and only the partner's
+        # runner observes it arriving.
+        path = os.path.join(self.tmp, "agreement.json")
+        with open(path, "w") as f:
+            json.dump(self.ag, f)
+        manifest = os.path.join(self.tmp, "session.json")
+        subprocess.run(["python3", str(HERE / "acceptance_session.py"), "new", "--agreement", path, "--us", "xaa",
+                        "--out", manifest], check=True, capture_output=True)
+        rc, out, a = self.run_side("xaa", manifest, os.path.join(self.tmp, "ev-ok"))
+        row = {c["name"]: c for c in a["checks"]}["publish/outbound/release/all"]
+        self.assertEqual(row["verdict"], "PASS", out)
+        self.assertEqual(row["observations"].get("http_status"), "200", row)
+        self.fabric.faults.refuse_put.add("xaa")
+        rc, out, a = self.run_side("xaa", manifest, os.path.join(self.tmp, "ev-refused"))
+        row = {c["name"]: c for c in a["checks"]}["publish/outbound/release/all"]
+        self.assertEqual(row["verdict"], "FAIL", out)
+        self.assertIn("403", out)
+
     def test_two_operators_each_on_their_own_systems_reach_a_bilateral_pass(self):
         path = os.path.join(self.tmp, "agreement.json")
         with open(path, "w") as f:
