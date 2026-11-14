@@ -66,7 +66,7 @@ The table gives the parts that differ. "Gap" means a window in which data does n
 | K8 directory key | As K1. The directory requires an update to be signed by the key it replaces (`federation-package-spec.md:612-616`); the client must sign the first write under the new key with the old one as well | Nothing beyond K1 | As K1 | Needed: the old seed signs the hand-over | Not applicable |
 | K7 SPIRE | Nothing: SPIRE rotates its own CA | Nothing, while our bundle endpoint is reachable through the tunnel | 13 and 14 on a rerun only | **Built** by SPIRE: the bundle carries the old and new authorities through `ca_ttl` | If our bundle port is closed, the partner's SPIRE keeps our old bundle and rejects our new SVIDs |
 | K2 our CA | Phase 8 re-issues every leaf under the new CA; our edge trusts the new CA for the core (`our-ca.pem`); phase 3 measures the new `ca_fingerprint` | Confirmation 1 again with `--partner-ca-fingerprint`; the new CA placed as their `partner-ca.pem`; their phase 10 and 12 | Both sides from 3, through a new agreement | **Not possible today.** Every check accepts exactly one CA per party: admission (`admit.rs:606-614`), the edge role ([federation-certificate-lifecycle.md](federation-certificate-lifecycle.md) lines 165-169), and phase 5's single fingerprint (`confirm.rs:362-379`). See §4 | The partner's edge refuses every leaf we issue under the new CA |
-| K6 IPsec | By hand, through the offline ceremony | By hand | 11, 14 | Not designed here: the IPsec CA file is per peering, so rotating it is also how a leaf is retired (`roles/goat-peering-edge/defaults/main.yml:140-158`) | The IPsec SA fails to re-key |
+| K6 IPsec | `rotate … ipsec-leaf` or `rotate … ipsec-ca`, from material the offline ceremony issued and an operator staged on the edge (§8) | For `ipsec-ca`: places our new CA beside the old one, then removes the old one (§8.3); for `ipsec-leaf`: nothing | 11, 14 | **For `ipsec-ca`, yes:** the partner trusts both of our CAs from the announce to the retire, so the switch has no gap beyond the IKE re-authentication. `ipsec-leaf` needs none: the CA is unchanged | `ipsec-leaf`: nothing breaks. `ipsec-ca`: the switch is refused until the partner has read back our new CA's fingerprint (§8.3) |
 
 ### Retiring the old material
 
@@ -153,4 +153,92 @@ Each piece is one pull request, with its test written first. The Files column na
 | 6 | Check that phase 13's `bundle set` from the exchanged file does not replace a newer bundle fetched from the partner's endpoint, and fix it if it does. **Checked and fixed:** it did replace it, on every phase 13, because `bundle set` overwrites the held bundle. The older copy then dropped the partner's new authorities until the next refresh, and that refresh authenticates the endpoint with the held bundle. Phase 13 now reads the bundle held (`bundle list -id`) and imports the file only when none is held, or both carry a `spiffe_sequence` and the file's is greater; `peering_spire_bundle_replace: true` imports it over any held bundle, for a partner whose SPIRE server was rebuilt (`roles/goat-peering-spire/tasks/bundle-import.yml`, `tests/test-bundle-import.sh` with a stand-in `docker`). Not run against SPIRE: whether `bundle list -format spiffe` prints a federated bundle's `spiffe_sequence` on the pinned SPIRE 1.11.2 is not measured; without it the held bundle is always kept, which is the import-once the design intends | `roles/goat-peering-spire` |
 | 7 | The scenario of §6, with the numbered once-a-second publisher and the arrival-recording reader on each side. **Built, not measured**: the publisher and reader (`lib/flow.sh`, `lib/samples.py`), and in `units/rotation.sh` the checks `rerun-after-<key>-<side>`, `old-retired-<key>` (WireGuard and carrier; the old leaf's exposure reads BLOCKED) and `samples-<key>`, judged by `samples.py check` (unit-tested in `tests/test_harness.py`). A key the goatbuilder under test refuses (GB-189, GB-282) has its checks marked BLOCKED with the refusal's words, and the unit goes on to the next key. Not driven yet: the forced SPIRE CA rotation (`spire-ca-rotation`, BLOCKED). Not run in the federation test environment; the rotation steps need `rotate` on the command line | `ops/federation-e2e/` |
 | 8 | The CA overlap of §4: the ADR superseding §5.1's single fingerprint, then the package and agreement fields, admission, the edge role and phase 5 | `docs/adr/`, `crates/goat-federation`, `crates/goatbuilder/src/federate/admit.rs`, `confirm.rs`, `roles/goat-zenoh-edge` |
-| 9 | IPsec credential rotation (K6) | `roles/goat-peering-edge` |
+| 9 | IPsec credential rotation (K6), §8: the role's staged-material checks, set-aside and switch with roll-back, the second partner CA during an overlap, the `ipsec-leaf` and `ipsec-ca` stage keys, and the tests of §8.6. Designed, not built | `roles/goat-peering-edge`, `crates/goatbuilder/src/federate/` |
+
+## 8. IPsec credential rotation (K6)
+
+Designed, not built. This section covers a peering whose agreement chose `ipsec-fips`, which phase 11 stands up with `peering-edge.yml` and `roles/goat-peering-edge`. A `rotate … ipsec-leaf` or `rotate … ipsec-ca` on any other peering is refused before anything runs.
+
+### 8.1 What is rotated
+
+The IPsec transport authenticates with certificates, not with anything the package or the agreement carries. Three items belong to one peering:
+
+| Item | Where it lives on our edge | Who makes it | Who else holds it |
+|---|---|---|---|
+| **Our IPsec leaf**, certificate and private key, Subject CN = `peering_edge_local_id` | `/etc/swanctl/x509/<name>-cert.pem` and `/etc/swanctl/private/<name>-key.pem` (`roles/goat-peering-edge/defaults/main.yml:165-166`), presented as `local.certs` (`templates/swanctl.conf.j2:43`) | The offline CA ceremony | Nobody: the partner checks it against our CA |
+| **Our per-peering IPsec CA**, the certificate only | Not on our edge today | The offline CA ceremony | The partner, as their `<name>-partner-ca.pem` |
+| **The partner's per-peering IPsec CA** | `/etc/swanctl/x509ca/<name>-partner-ca.pem` (`defaults/main.yml:167`), the only CA the connection accepts (`templates/swanctl.conf.j2:52`) | The partner | The partner |
+
+The role treats the partner CA file as the revocation instrument: nothing on the path checks a CRL or OCSP, so a replaced leaf stays valid until its `notAfter`, and only removing the CA that issued it retires it (`defaults/main.yml:140-158`). Rotation therefore has two kinds:
+
+- **`ipsec-leaf`**: a new leaf from the same CA. Only our side acts. The old leaf is **not** retired; it still authenticates until its `notAfter`. This is renewal before expiry, not a response to a leaked key.
+- **`ipsec-ca`**: a new CA and a new leaf issued by it. Both sides act. When the partner removes our old CA, our old leaf stops authenticating at once. This is the response to a leaked key, and the only rotation that retires anything.
+
+Receiving the partner's new CA, when the partner rotates theirs, is the same procedure with the sides swapped (§8.3, "When the partner rotates").
+
+### 8.2 Who runs it, and where the material comes from
+
+The role writes no secret material and refuses without it (`roles/goat-peering-edge/tasks/main.yml:304-323`), and rotation keeps that rule. The ceremony issues the new material. An operator stages it on the edge beside the live files, under the names the role reads with `.next` before the extension (`<name>-cert.next.pem`, `<name>-key.next.pem` at mode 0600, and for `ipsec-ca` the new CA certificate as `/etc/swanctl/x509ca/<name>-local-ca.next.pem`). The operator then runs:
+
+```text
+goatbuilder federate rotate <partner> ipsec-leaf
+goatbuilder federate rotate <partner> ipsec-ca  --partner-holds-ipsec-ca <sha256>
+```
+
+The command never mints, copies or prints a private key. It checks the staged material on the edge, sets the live material aside, switches, re-authenticates and runs phase 14. For both kinds, a new role variable, `peering_edge_local_ca_path`, names our current IPsec CA certificate on the edge (public material) so the role can check the chain. Without it, a rotation is refused (GB-K6a).
+
+Generating the new key on the edge, with only a signing request leaving it, would remove the step in which a private key travels to the edge. That changes the role's rule that it writes no secret, so it is left for a later decision and is not part of this design.
+
+### 8.3 The order, and the overlap
+
+**`ipsec-leaf`**, our side only:
+
+1. **Check what is staged**, on the edge and before anything moves: the key matches the certificate; the certificate chains to `peering_edge_local_ca_path`; its Subject CN is `peering_edge_local_id`; its key is ECDSA P-384, which `peering_edge_ike_proposals` requires (`defaults/main.yml:112`); it is valid now and for at least `peering_edge_min_valid_days` more (default 30). Any failure is refused (GB-K6a for missing or unreadable files, GB-K6b for the rest) and nothing is moved.
+2. **Set the live pair aside** into `/etc/swanctl/.previous-<id>/` (0700), once per rotation id, as `roles/goat-peering-wg/tasks/carrier-key.yml` does for the carrier key.
+3. **Switch**: move the staged pair over the live names, run `swanctl --load-creds`, then `swanctl --rekey --ike <name> --reauth`. A rekey without `--reauth` keeps the authentication of the old IKE SA, so the new certificate would not be presented until the next re-authentication.
+4. **Confirm**: wait up to `peering_edge_dpd_timeout` (150 s by default, `defaults/main.yml:124`) for an established IKE SA and an installed CHILD SA (`swanctl --list-sas --ike <name>`). If neither appears, **roll back**: move the set-aside pair back, load it, re-authenticate, and stop with GB-K6e. During `ipsec-leaf` the old leaf is still valid under an unchanged CA, so the roll-back restores the link.
+5. Phase 14.
+
+**`ipsec-ca`**, three steps, both sides. The overlap runs from step 1 to step 3: during it, the partner accepts leaves under our old and our new CA.
+
+1. **Announce.** We deliver our new CA certificate to the partner, as the old one was delivered, and both sides read its sha256 fingerprint aloud on the call, as confirmation 1 does for keys. The partner places it with a new role variable, `peering_edge_remote_ca_next_path`. When that variable is set, the role renders `remote.cacerts` as the current file and the next one, comma-separated, which strongSwan accepts as a list. The partner runs `goatbuilder federate <us> --from 11` and reads back the fingerprint of the file they placed.
+2. **Switch.** We run `rotate <partner> ipsec-ca --partner-holds-ipsec-ca <sha256>`. Without the flag, or with a fingerprint other than our staged CA's, the switch is refused (GB-K6c) before anything moves: we have no way to read the partner's trust store, so the read-back is the only evidence that they will accept the new leaf. The staged checks are those of `ipsec-leaf`, except that the leaf must chain to the staged new CA. Then steps 2 to 5 of `ipsec-leaf` run. The roll-back works here too, because the partner still trusts the old CA. The new CA then becomes our `peering_edge_local_ca_path`.
+3. **Retire.** After phase 14 passes on both sides on the new leaf, the partner moves our new CA over their current file, unsets `peering_edge_remote_ca_next_path` and runs `--from 11` again. Our old leaf now fails at their edge: that is the revocation. Our next run of the command removes the set-aside private key and keeps the set-aside certificate, so a retired key does not stay on the edge.
+
+**Compromise.** When our old leaf's key is believed leaked, the overlap is itself the exposure. `--no-overlap` skips step 1: the partner replaces our CA directly, the link is down from their phase 11 until our switch, and the switch checks the read-back as before. The roll-back is then impossible, because the partner no longer trusts the old CA, and the command says so before it switches.
+
+**When the partner rotates.** We are the partner side. Their new CA goes into `peering_edge_remote_ca_next_path` and we run the ordinary command from 11, then read the fingerprint back to them. At their retire, we move it over `peering_edge_remote_ca_path`, unset the variable and run from 11 again. No new verb is needed.
+
+### 8.4 How a killed run finishes
+
+Each rotation writes `<work>/ipsec-rotation.json` on the controller before anything moves on the edge: the kind, the rotation id, the sha256 of the staged certificate (and of the staged CA for `ipsec-ca`), the partner's read-back fingerprint, and the last step that completed (`checked`, `set-aside`, `switched`, `confirmed`, `retired`). The set-aside directory `.previous-<id>/` on the edge is the second marker. A resumed run takes the peering's lock, reads the journal, and redoes each step only when its effect is missing:
+
+- **Set aside**: only when `.previous-<id>/` does not exist, so a second run never sets aside the new pair as if it were the old one.
+- **Switch**: only when the live certificate's sha256 is not the journal's. A run killed after the move but before `--load-creds` finds the files switched, and charon still holding the old credentials in memory. It loads and re-authenticates without moving anything.
+- **Re-authenticate and confirm**: always repeated, which is harmless.
+- **Roll back**: a run killed during the roll-back finishes it. The set-aside pair is the target, and a live file whose sha256 matches the set-aside one is already done.
+
+A journal whose staged sha256 differs from the `.next` files now on the edge (someone staged other material during a stopped rotation) is refused (GB-K6d). The operator either restores the files the journal names, or finishes the rotation with `--abandon <id>`, which moves the set-aside pair back if it is not live and removes the journal. No path deletes the set-aside pair before the retire step.
+
+### 8.5 Refusal codes
+
+Five codes, numbers to be assigned (written here as GB-K6a to GB-K6e). Each prints the host, the file and the fix:
+
+| Code | Refused when |
+|---|---|
+| GB-K6a | A staged file, or `peering_edge_local_ca_path`, is missing or unreadable, or the staged key is not mode 0600 |
+| GB-K6b | The staged certificate does not match its key, does not chain to the CA it must chain to, names another CN, uses another key type than the proposals require, or is not valid now and for the minimum days |
+| GB-K6c | `ipsec-ca` without `--partner-holds-ipsec-ca`, or with a fingerprint other than the staged CA's |
+| GB-K6d | A resumed rotation whose journal names material other than what is staged, or another rotation of this peering is unfinished |
+| GB-K6e | The IKE SA did not come up on the new leaf within `peering_edge_dpd_timeout`; the old pair was restored (or, with `--no-overlap`, could not be) |
+
+A `rotate … ipsec-*` on a peering whose agreement is not `ipsec-fips` is refused with the stage's existing usage code, GB-189.
+
+### 8.6 Tests
+
+Written before the code, as for the other keys:
+
+- **Role, with a stand-in `swanctl` and test certificates made at test time** (as `roles/goat-peering-wg/tests/test-rotation.sh` makes its keys): a key that does not match its certificate, a wrong CN, a certificate from another CA, an RSA key, and one expiring within the minimum days are each refused, and nothing on disk changes. A good pair is set aside once per id, and a second run with the same id moves nothing. A run stopped after the set-aside, and one stopped after the move, each finish without a second move and with exactly one `--load-creds` and one `--reauth` after the resume. A stand-in that never reports an established SA makes the run restore the old pair and exit with GB-K6e. The retire step removes the set-aside key and keeps the certificate.
+- **Template**: without `peering_edge_remote_ca_next_path`, `swanctl.conf` renders byte for byte as today; with it, `remote.cacerts` lists the current file and then the next.
+- **goatbuilder unit and binary tests**: the stage keys parse, and are refused for a WireGuard agreement with GB-189. `ipsec-ca` is refused without the read-back and with a wrong one (GB-K6c). The journal resumes at the right step, and a mismatched journal is GB-K6d. A peering with no rotation renders phase 11 exactly as before.
+- **Not covered by this design's tests**: the federation test environment has no `ipsec-fips` unit (§6 uses the `forwarder` unit), and strongSwan in a container needs the `xfrm` interface and privileges the environment does not grant. So the samples-throughout check for K6 needs a new unit, which is not designed here. Not measured on the pinned strongSwan: whether `--reauth` makes the new IKE SA before the old one is deleted (strongSwan's `make_before_break`), which decides whether the switch has any gap at all.
