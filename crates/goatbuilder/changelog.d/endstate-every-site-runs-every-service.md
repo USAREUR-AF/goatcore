@@ -10,7 +10,8 @@ the Kratos self-service UI), the NetBird dashboard, the portal, the id console,
 the onboarding engine and mesh DNS. No catalog row is founder-only. What a
 joining site does not run yet is graded `GAP`, "declared, not yet built at
 this site", with the gate row that closes it: I1 and I4 for the admin
-surfaces, I3 for mesh DNS. A `GAP` is counted and printed and does not by
+surfaces. Mesh DNS carries no gap, because `join-node` runs it at a joining
+site (ADR 1235). A `GAP` is counted and printed and does not by
 itself make the site red. Acceptance run with `--endstate` reports a row such a
 service owns as `SKIPPED` with the same text instead of N/A. `goatbuilder
 join-node` lists the gaps under "What <site> does not run yet", from the
