@@ -121,6 +121,9 @@ pub fn summary(p: &Plan, path: &Path) -> String {
             s.push_str(&format!("  readiness:  {} {}: {}\n", r.check, r.outcome, r.detail));
         }
     }
+    for a in &p.accepted {
+        s.push_str(&format!("  accepted:   {} SKIP, as it read when accepted: {}\n", a.check, a.detail));
+    }
     if !p.conflicts.is_empty() {
         s.push_str(&format!(
             "  conflicts with other peerings: {}\n",
@@ -217,7 +220,7 @@ pub fn recheck(a: &Approved) -> Result<String> {
             r.live
                 .iter()
                 .filter(|l| !r.holds(l))
-                .map(|l| format!("{} {}", l.check, l.outcome)),
+                .map(|l| r.why_not(l)),
         );
         for c in fplan::LIVE_CHECKS {
             if !r.live.iter().any(|l| l.check == *c) {

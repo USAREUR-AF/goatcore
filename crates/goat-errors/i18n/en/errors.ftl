@@ -800,6 +800,7 @@ gb-188-what = Immediately before anything changes, deploy runs the planner's liv
 gb-188-cause-1 = the agreement was composed again (a new package from either side)
 gb-188-cause-2 = apply rendered the files again, or one was edited by hand
 gb-188-cause-3 = the plan recorded a SKIP of a check deploy does not run again (host-allocation): the inventory names no host for this peering, or a value of another peering on a machine this peering shares does not resolve. The message says which, and what clears it
+gb-188-cause-4 = a SKIP the plan accepted (plan --accept) reads differently now: the message names what it reads now and what was accepted
 gb-189-title = a stage of `goatbuilder federate` was asked for the wrong way
 gb-189-what = The stages `status`, `deploy` and `test` take the partner after them and run their own phases; `--plan` and `--approve-plan` belong to `deploy`, whose start is phase 10 or, once the admission is done by hand, 11. Nothing ran.
 gb-189-cause-1 = the partner was left out, or given after a peering name instead of a stage word

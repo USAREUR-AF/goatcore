@@ -484,6 +484,7 @@ The bounded plan of one peering before anything changes: versions, agreement dig
 | `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<peering>) |  |
 | `--no-live` | Skip phase 1's live reads of the hosts; each is reported SKIP |  |
 | `--recheck` | Recheck the saved plan instead of writing one: refused when the file was altered, an input changed, or a live prerequisite fails |  |
+| `--accept <ACCEPT>` | Accept this check's SKIP, as it reads now, into the plan and its hash: deploy then goes ahead while it reads exactly the same, and refuses when it reads otherwise. Only host-allocation, a check deploy does not run again. Repeatable |  |
 
 ## `goatbuilder federate backout`
 

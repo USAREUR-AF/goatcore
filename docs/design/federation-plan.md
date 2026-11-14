@@ -107,9 +107,19 @@ refusal and the run record carry the detail, because making a new plan alone
 records the same SKIP (built: `hostalloc.rs` `readiness`, `plan.rs` `unready_at`,
 `deploy.rs` `summary`; tests `a_skip_says_which_case_and_the_route_to_pass`,
 `a_skip_row_carries_its_detail_into_the_refusal_and_the_view` and
-`a_host_allocation_skip_names_its_case_and_route_in_the_refusal`). An explicit,
-recorded acceptance of a SKIP the operator has judged is designed, not built
-(#742). Only the conflicts this peering is part of go into
+`a_host_allocation_skip_names_its_case_and_route_in_the_refusal`). A SKIP the
+operator has judged can be accepted explicitly:
+`goatbuilder federate plan <partner> --accept host-allocation` records the check
+and its exact detail in the plan's `accepted` list, which is inside the hash, so
+the approval covers it. The plan view shows it at approval. Deploy's recheck
+then lets that check through while it reads exactly as accepted. When it reads
+otherwise, deploy refuses with GB-188, naming what it reads now and what was
+accepted. Only a check deploy does not run again can be accepted, and only when
+it is SKIP. A plan with no acceptance has no `accepted` member, so its hash is
+unchanged (built: `plan.rs` `accept` and `Recheck::holds`; tests
+`an_accepted_skip_is_bound_into_the_hash_and_honoured_only_for_its_detail` and
+`an_accepted_host_allocation_skip_deploys_and_a_changed_one_does_not`). Only the
+conflicts this peering is part of go into
 its plan, so a conflict between two other peerings does not change this plan's
 hash. Ports held by something that is not a declared peering (NetBird on UDP
 51820, any other service) are phase 1's live port check.
