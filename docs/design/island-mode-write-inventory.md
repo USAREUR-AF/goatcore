@@ -469,6 +469,7 @@ issued to two subjects.
 | `kratos-c2-reset-2fa-owner-only` | C46 | The non-owner reset is refused |
 | `kratos-c2-hub-edit-carried-out-by-owner` | ADR 1205 D3 | The hub's edit, issued while cut off, is carried out by the owner after heal and is the value at both sites |
 | `kratos-c2-transfer-owner-by-hub` | ADR 1205 D5 | The hub's `transfer_owner` is carried out by the current owner; both sites then hold the new `owner_site`, the login identifier still resolves, and the new owner's edit is the value at both |
+| `kratos-c2-platform-admin-grant-hub-only` | ADR 1205 D10 | A grant of `PLATFORM-ADMIN` (in `metadata_public.groups`) made at B is refused there; grants B writes anyway, by UPDATE and by INSERT, arrive at the hub without the group, the other groups kept, and are logged in `goat_ceiling_refused` with the groups as received and B's commit timestamp; the hub's own grant reaches B, except while B forwards origins, when B strips and logs it too |
 | `hub-directive-from-non-hub-refused` | ADR 1205 D2 | A directive committed at a non-hub site is refused at every site; nothing severed, nothing edited |
 | `hub-sever-site-stops-its-writes` | ADR 1205 D4 | After the sever nothing the severed site writes reaches the hub; after re-seed and `restore_site` replication resumes without replaying the severed writes |
 | `kratos-c3-deactivate-at-a-edit-at-b` | C44, K4, K11 | PR #1538 identity `late` |

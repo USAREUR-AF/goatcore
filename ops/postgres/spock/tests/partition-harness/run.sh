@@ -222,6 +222,20 @@ wire kratos  ory_narrow   "$REPO/ops/postgres/spock/revocation-guard/kratos.sql"
 wire hydra   ory_narrow
 ts_wait_replicating "${DBS[@]}"
 echo "  replicating: ${DBS[*]}"
+# Each site's own configuration names the hub (ADR 1205 D8), as the server
+# setting goat.hub_site, written as ory-narrow-repset writes it from
+# goatnet_hub_site; never a replicated row. Set after the subscriptions, so
+# the scenarios also show that running apply workers read it after a reload.
+for s in a b; do
+  printf '%s\n' "SET goat.hub_site = '';" "ALTER SYSTEM SET goat.hub_site = 'site_a';" "SELECT pg_reload_conf();" \
+    | docker exec -i "$PFX-$s" psql -U postgres -d kratos -v ON_ERROR_STOP=1 -q >/dev/null
+done
+sleep 1
+for s in a b; do
+  [[ "$(q "$s" kratos "SELECT current_setting('goat.hub_site', true);")" == site_a ]] \
+    || { echo "::error::$PFX-$s does not read goat.hub_site"; exit 1; }
+done
+echo "  goat.hub_site = site_a at both sites"
 
 # Every site's slots have confirmed the other's current WAL, twice: once for
 # the writes, once for what the guard's re-apply triggers wrote on arrival.
@@ -265,12 +279,16 @@ kapi() { # kapi <site> <METHOD> <path> [json]
 hapi() { # hapi <METHOD> <path> [json]   (Hydra runs at the hub only)
   curl -fsS -X "$1" "http://127.0.0.1:$HYDRA_ADMIN$2" -H 'Content-Type: application/json' ${3:+-d "$3"}
 }
-kratos_create() { # kratos_create <site> <email> <name>  -> prints the identity id; the creating site owns it (ADR 1205 D5)
-  kapi "$1" POST /admin/identities "$(jq -cn --arg e "$2" --arg n "$3" --arg o "site_$1" \
+kratos_create() { # kratos_create <site> <email> <name> [metadata_public json]  -> prints the identity id; the creating site owns it (ADR 1205 D5)
+  kapi "$1" POST /admin/identities "$(jq -cn --arg e "$2" --arg n "$3" --arg o "site_$1" --argjson m "${4:-null}" \
     '{schema_id:"default", traits:{email:$e, name:$n}, metadata_admin:{owner_site:$o},
-      credentials:{password:{config:{password:"harness-Passw0rd-not-secret"}}}}')" | jq -r .id
+      credentials:{password:{config:{password:"harness-Passw0rd-not-secret"}}}} + (if $m then {metadata_public:$m} else {} end)')" | jq -r .id
 }
 kname() { kr "$1" "SELECT traits->>'name' FROM identities WHERE id='$2';"; }
+pa_admin() { # pa_admin <site> <identity id>  -> yes|no: metadata_public.groups holds PLATFORM-ADMIN
+  kr "$1" "SELECT CASE WHEN coalesce(metadata_public->'groups', '[]'::jsonb) ? 'PLATFORM-ADMIN' THEN 'yes' ELSE 'no' END
+             FROM identities WHERE id = '$2';"
+}
 
 # Hub directives (ADR 1205). Site A is the hub. The applier is the script the
 # spock-hub-directives role installs, run here against one site.
