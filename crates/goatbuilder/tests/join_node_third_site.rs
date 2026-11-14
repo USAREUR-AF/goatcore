@@ -82,6 +82,11 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
     std::fs::remove_file(checkout.join("README.md")).unwrap();
     // The real gates, the real mesh record and the real secrets injector.
     std::fs::create_dir_all(checkout.join("ops/scripts")).unwrap();
+    // The end-state model, which says which health publishers the site declares.
+    copy_tree(
+        &r.join("ops/goatbuilder/endstate"),
+        &checkout.join("ops/goatbuilder/endstate"),
+    );
     std::fs::create_dir_all(checkout.join("ops/secrets")).unwrap();
     for s in [
         "ops/scripts/standup-config-preflight.py",
@@ -91,6 +96,14 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         "ops/scripts/with-secrets",
         "ops/scripts/seed-ssh-key.sh",
         "ops/secrets/posture.py",
+        // Every health publisher's play: a play in the checkout is not a
+        // reason to run it, the site's declaration is.
+        "ops/ansible/fabric-health-deploy.yml",
+        "ops/ansible/mesh-health-deploy.yml",
+        "ops/ansible/presence-health-deploy.yml",
+        "ops/ansible/time-health-deploy.yml",
+        "ops/ansible/consistency-health-deploy.yml",
+        "ops/ansible/fabric-crawler-deploy.yml",
     ] {
         std::fs::copy(r.join(s), checkout.join(s)).unwrap();
     }
@@ -573,5 +586,34 @@ fn a_joiners_core_node_mints_and_stages_its_leaves_before_the_router() {
     assert!(
         st.contains(r#"{"leaf_only": ["fabric-health", "mesh-health"]}"#),
         "only the service leaves the manifest carries: {st}"
+    );
+}
+
+/// Gate row I3, the health publishers: a joining site's core node runs the
+/// publishers the site declares, as the end-state model reads its pin table
+/// (gamma: fabric-health and mesh-health; time-health absent). Each one's
+/// play runs for the site's core group, limited to the node, after the data
+/// router; a publisher the site does not declare does not run.
+#[test]
+fn a_joiners_core_node_runs_the_health_publishers_the_site_declares() {
+    let s = site();
+    let (out, _) = join_node(&s, Some("2"));
+    assert!(out.status.success(), "{}", says(&out));
+    let log = std::fs::read_to_string(&s.log).unwrap();
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    let router = plays
+        .iter()
+        .position(|l| l.contains("zenoh-deploy.yml"))
+        .unwrap();
+    for p in ["fabric-health-deploy.yml", "mesh-health-deploy.yml"] {
+        let at = plays
+            .iter()
+            .position(|l| l.contains(&format!("{p} -e target=gamma_hosts -l gamma-core-1")))
+            .unwrap_or_else(|| panic!("{p} did not run for the joiner: {plays:#?}"));
+        assert!(router < at, "{p} after the router: {plays:#?}");
+    }
+    assert!(
+        !plays.iter().any(|l| l.contains("time-health-deploy.yml")),
+        "a publisher the site does not declare does not run: {plays:#?}"
     );
 }

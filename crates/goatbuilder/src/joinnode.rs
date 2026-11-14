@@ -319,6 +319,23 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             // depend on reaching the founder's. The play's pre-flight refuses
             // a node without its router leaf certificate.
             ev.push(p(13, "A", "[data router] the site's own Zenoh router (zenoh-deploy.yml), limited to the node: the site's fabric runs on its own router, not the founder's", format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={site_group} -l {node}")));
+            // The health publishers the site declares (gate row I3), on the
+            // router, with the service leaves staged above.
+            match declared_publishers(repo, site)? {
+                Ok(pubs) if pubs.is_empty() => {
+                    let why = format!("[health publishers] none deployed: the end-state model marks no health publisher present at {site}");
+                    ev.push(p(13, "SKIP", &why, format!("echo {}", sh_quote(&format!(">> {why}")))));
+                }
+                Ok(pubs) => {
+                    for (name, play) in pubs {
+                        ev.push(p(13, "A", &format!("[health publishers] {name} ({play}), limited to the node: the end-state model marks it present at {site}"), format!("cd '{r}/ops/ansible' && {pre} {inv} {play} -e target={site_group} -l {node}")));
+                    }
+                }
+                Err(why) => {
+                    let label = format!("[health publishers] not deployed: the end-state model was not read ({why}), so which publishers {site} declares is not known; fix that and resume with --from 13");
+                    ev.push(p(13, "SKIP", &label, format!("echo {}", sh_quote(&format!(">> {label}")))));
+                }
+            }
         }
         "core" => {
             ev.push(p(13, "A", &format!("[core, founder site] site-bootstrap on the node{}", if intra_pair { " (intra_site_pair: the A→B streaming standby is phase 6A of the play)" } else { "" }), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
@@ -403,6 +420,59 @@ pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
 /// The end-state model's script, relative to the checkout.
 const MODEL: &str = "ops/goatbuilder/endstate/endstate.py";
 
+/// The end-state model's services at `site` (`endstate.py model <site>`),
+/// or why the model could not be read: the script is not in the checkout,
+/// would not start, failed, or printed no services.
+fn model_services(repo: &Path, site: &str) -> std::result::Result<serde_json::Map<String, serde_json::Value>, String> {
+    let shown = format!("{MODEL} model {site}");
+    let script = repo.join(MODEL);
+    if !script.is_file() {
+        return Err(format!("{MODEL} is not in this checkout"));
+    }
+    let python = crate::endstate::python();
+    let out = Cmd::new(&python).arg(&script).args(["model", site, "--root"]).arg(repo).current_dir(repo).output().map_err(|e| format!("cannot run {python} for {shown}: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+        let how = out.status.code().map_or("it was killed".to_string(), |c| format!("exit {c}"));
+        return Err(format!("{shown} failed ({how}){}", if last.is_empty() { String::new() } else { format!(": {last}") }));
+    }
+    let model = serde_json::from_slice::<serde_json::Value>(&out.stdout).map_err(|_| format!("{shown} printed no model"))?;
+    match model.get("services").and_then(|s| s.as_object()) {
+        Some(services) => Ok(services.clone()),
+        None => Err(format!("{shown} printed no services")),
+    }
+}
+
+/// The health publishers join-node deploys at a joining site's core node, in
+/// the order it runs them, each with its play. The service names are the
+/// end-state catalog's (ops/goatbuilder/endstate/catalog.yaml).
+const PUBLISHERS: [(&str, &str); 6] = [
+    ("fabric-health", "fabric-health-deploy.yml"),
+    ("mesh-health", "mesh-health-deploy.yml"),
+    ("presence-health", "presence-health-deploy.yml"),
+    ("time-health", "time-health-deploy.yml"),
+    ("consistency-health", "consistency-health-deploy.yml"),
+    ("fabric-crawler", "fabric-crawler-deploy.yml"),
+];
+
+/// The health publishers a joining site declares (gate row I3): each one the
+/// end-state model marks present at the site, never one marked absent or left
+/// undecided. A present one whose play is not in the checkout is refused here
+/// (GB-288). `Ok(Err(why))` is a model that could not be read.
+fn declared_publishers(repo: &Path, site: &str) -> Result<std::result::Result<Vec<(&'static str, &'static str)>, String>> {
+    let services = match model_services(repo, site) {
+        Ok(s) => s,
+        Err(why) => return Ok(Err(why)),
+    };
+    let present: Vec<(&str, &str)> = PUBLISHERS.iter().copied().filter(|(name, _)| services.get(*name).and_then(|s| s.get("present")) == Some(&serde_json::Value::Bool(true))).collect();
+    let missing: Vec<String> = present.iter().filter(|(_, play)| !repo.join("ops/ansible").join(play).is_file()).map(|(name, play)| format!("{name} (ops/ansible/{play})")).collect();
+    if !missing.is_empty() {
+        return Err(goat_errors::coded("GB-288", format!("the end-state model marks {} present at {site}, and this checkout has no play for {}: join-node deploys each health publisher the site declares. Bring the play into the checkout, or declare the publisher absent at {site} in ops/pins/fleet-pins.yaml with its reason", missing.join(", "), if missing.len() == 1 { "it" } else { "them" })).into());
+    }
+    Ok(Ok(present))
+}
+
 /// One service the site does not run, as the plan prints it.
 fn not_run_line(service: &str, reason: &str) -> String {
     format!("{service} \u{2014} {reason}")
@@ -417,37 +487,15 @@ fn not_run_line(service: &str, reason: &str) -> String {
 fn not_run(repo: &Path, site: &str) -> Vec<Check> {
     let shown = format!("{MODEL} model {site}");
     let mut rows = vec![row("not-run-heading", format!("What {site} does not run: every catalog service the end-state model marks absent here, with its reason ({shown})"))];
-    let not_read = |why: String| row("not-run", format!("not read: {why}; this list of what the site does not run is left out"));
-    let script = repo.join(MODEL);
-    if !script.is_file() {
-        rows.push(not_read(format!("{MODEL} is not in this checkout")));
-        return rows;
-    }
-    let python = crate::endstate::python();
-    let out = match Cmd::new(&python).arg(&script).args(["model", site, "--root"]).arg(repo).current_dir(repo).output() {
-        Ok(o) => o,
-        Err(e) => {
-            rows.push(not_read(format!("cannot run {python} for {shown}: {e}")));
+    let services = match model_services(repo, site) {
+        Ok(s) => s,
+        Err(why) => {
+            rows.push(row("not-run", format!("not read: {why}; this list of what the site does not run is left out")));
             return rows;
         }
     };
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
-        let how = out.status.code().map_or("it was killed".to_string(), |c| format!("exit {c}"));
-        rows.push(not_read(format!("{shown} failed ({how}){}", if last.is_empty() { String::new() } else { format!(": {last}") })));
-        return rows;
-    }
-    let Ok(model) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
-        rows.push(not_read(format!("{shown} printed no model")));
-        return rows;
-    };
-    let Some(services) = model.get("services").and_then(|s| s.as_object()) else {
-        rows.push(not_read(format!("{shown} printed no services")));
-        return rows;
-    };
     let before = rows.len();
-    for (name, s) in services {
+    for (name, s) in &services {
         if s.get("present") != Some(&serde_json::Value::Bool(false)) {
             continue;
         }
@@ -929,6 +977,48 @@ mod tests {
         assert!(core[3].label.contains("pass 3") && !core[3].cmd.contains("--skip-tags"), "{}", core[3].cmd);
     }
 
+    /// A stand-in for the end-state model: prints `services` (JSON) as the
+    /// model's services, whatever site it is asked about.
+    fn fake_model(repo: &Path, services: &str) {
+        let d = repo.join("ops/goatbuilder/endstate");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("endstate.py"), format!("import json\nprint(json.dumps({{\"services\": json.loads(r'''{services}''')}}))\n")).unwrap();
+    }
+
+    /// Gate row I3, the health publishers: after the data router, a joiner's
+    /// core node runs each health publisher the end-state model marks present
+    /// at the site, in a fixed order, for the site's core group limited to the
+    /// node; one marked absent or undecided does not run. A publisher marked
+    /// present whose play is not in the checkout is refused at plan time
+    /// (GB-288). With no model to read, the plan says so on a SKIP line.
+    #[test]
+    fn a_joiners_core_node_runs_the_publishers_the_model_marks_present() {
+        let t = joiner_checkout();
+        // No model: a SKIP line says the publishers are not deployed, and why.
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let skip = ph.iter().find(|p| p.label.starts_with("[health publishers]")).expect("a line for the publishers");
+        assert_eq!(skip.kind, "SKIP");
+        assert!(skip.label.contains("not read"), "{}", skip.label);
+        // The model marks fabric-crawler and fabric-health present, mesh-health absent, time-health undecided.
+        fake_model(t.path(), r#"{"fabric-crawler": {"present": true}, "fabric-health": {"present": true}, "mesh-health": {"present": false}, "time-health": {"present": null}}"#);
+        for play in ["fabric-health-deploy.yml", "fabric-crawler-deploy.yml"] {
+            std::fs::write(t.path().join("ops/ansible").join(play), "---\n").unwrap();
+        }
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let pubs: Vec<&Phase> = ph.iter().filter(|p| p.label.starts_with("[health publishers]")).collect();
+        assert_eq!(pubs.len(), 2, "{:?}", pubs.iter().map(|p| &p.label).collect::<Vec<_>>());
+        assert!(pubs[0].cmd.ends_with("fabric-health-deploy.yml -e target=zagros_b_hosts -l node-x"), "{}", pubs[0].cmd);
+        assert!(pubs[1].cmd.ends_with("fabric-crawler-deploy.yml -e target=zagros_b_hosts -l node-x"), "{}", pubs[1].cmd);
+        assert!(pubs.iter().all(|p| p.n == 13 && p.kind == "A"));
+        let router = ph.iter().position(|p| p.cmd.contains("zenoh-deploy.yml")).unwrap();
+        assert!(ph.iter().position(|p| p.cmd.contains("fabric-health-deploy.yml")).unwrap() > router);
+        // Present, and no play in the checkout: refused when the plan is made.
+        std::fs::remove_file(t.path().join("ops/ansible/fabric-crawler-deploy.yml")).unwrap();
+        let e = plan(t.path(), &opts("zagros-b", "core", "zagros")).err().expect("refused");
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-288"), "{e}");
+        assert!(e.to_string().contains("fabric-crawler"), "{e}");
+    }
+
     /// STAGED_SERVICES is stage-service-leaves.yml's service_leaf_map.
     #[test]
     fn the_staged_services_are_the_staging_plays() {
@@ -940,6 +1030,19 @@ mod tests {
         keys.sort_unstable();
         ours.sort_unstable();
         assert_eq!(keys, ours);
+    }
+
+    /// Each publisher join-node deploys is an end-state catalog service whose
+    /// leaf the staging play stages, and its play is in this repository.
+    #[test]
+    fn each_publisher_is_a_catalog_service_with_its_play() {
+        let text = std::fs::read_to_string(repo().join("ops/goatbuilder/endstate/catalog.yaml")).unwrap();
+        let catalog: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+        for (name, play) in PUBLISHERS {
+            assert!(catalog["services"].get(name).is_some(), "{name} is not an end-state catalog service");
+            assert!(STAGED_SERVICES.contains(&name), "{name}'s leaf is not staged");
+            assert!(repo().join("ops/ansible").join(play).is_file(), "no ops/ansible/{play}");
+        }
     }
 
     /// Gate row I3, the certificates: before the data router, a joiner's core

@@ -3356,6 +3356,22 @@ entries:
     matches:
       - "^GB-287: "
 
+  - code: GB-288
+    tool: goatbuilder
+    title: a health publisher a joining site declares has no play in the checkout
+    what: "join-node deploys each health publisher the end-state model marks present at a joining site (endstate.py model <site>, from the pin table) after the site's data router, by running the publisher's play limited to the node. The model marks a publisher present whose play (ops/ansible/<publisher>-deploy.yml) is not in this checkout, so the plan was refused before any phase ran."
+    causes:
+      - "the checkout is an older or partial tree that does not carry the publisher's play"
+      - "the pin table declares a publisher at the site that the site does not mean to run"
+    fixes:
+      - "run join-node from a checkout that carries ops/ansible/<publisher>-deploy.yml"
+      - "declare the publisher absent at the site in ops/pins/fleet-pins.yaml, with its reason: components: <publisher>: deviations: <site>_hosts: {absent: true}"
+      - "goatbuilder endstate <env> shows what the model marks present at each site"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-288: "
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable
