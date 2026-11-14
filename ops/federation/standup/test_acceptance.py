@@ -574,6 +574,108 @@ class AcceptanceRun(unittest.TestCase):
             self.assertEqual((co.returncode, combined["verdict"]), (0, "PASS"),
                              (us, combined["open"], combined["failed"]))
 
+    # --- a derived session: no manifest file, each result signed (§6.2, §6.3) ----
+    def derived_env(self, side, evidence, full=False, wait="20", extra=None):
+        fab = self.fabric.start()
+        env = {k: v for k, v in os.environ.items() if k not in SCRUB}
+        if full:
+            env.update(self.fabric.env_for(side))
+        keys = Path(HERE).parents[1] / "federation/vectors/testkeys"
+        double = "python3 %s" % (HERE / "acceptance_sig_double.py")
+        env.update({"FED_OURS_REST": fab["FED_OURS_REST"] if side == "xaa" else fab["FED_THEIRS_REST"],
+                    "FED_ACCEPTANCE_ATTEMPT": "1", "FED_EVIDENCE_DIR": evidence, "FED_SESSION_WAIT": wait,
+                    "FED_ACCEPTANCE_WAIT": "0.3", "FED_ACCEPTANCE_GAP": "0", "FED_ACCEPTANCE_RT_TIMEOUT": "3",
+                    "FED_ACCEPTANCE_SIGNER": double + " sign", "FED_ACCEPTANCE_VERIFIER": double + " verify",
+                    "FED_TEST_SIG_SEED": str(keys / ("%s.seed.hex" % side)),
+                    "FED_TEST_SIG_KEYS": ",".join("%s=%s" % (s, (keys / ("%s.public.b64" % s)).read_text().strip())
+                                                  for s in ("xaa", "xab"))})
+        env.update(extra or {})
+        return env
+
+    def derived_side(self, side, evidence, **kw):
+        path = os.path.join(self.tmp, "agreement.json")
+        if not os.path.exists(path):
+            with open(path, "w") as f:
+                json.dump(self.ag, f)
+        return subprocess.Popen(["bash", str(SCRIPT), path, "--as", side], env=self.derived_env(side, evidence, **kw),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    def both_derived(self, delay=1.5, **kw):
+        """Both sides' phase 14, the second started `delay` seconds after the first,
+        each on its own systems only: they overlap, as the rule in §6.2 asks."""
+        import time
+        second = dict(kw, **kw.pop("second", {})) if "second" in kw else kw
+        ev = {"xaa": os.path.join(self.tmp, "ev-xaa"), "xab": os.path.join(self.tmp, "ev-xab")}
+        a = self.derived_side("xaa", ev["xaa"], full=True, **kw)
+        time.sleep(delay)
+        b = self.derived_side("xab", ev["xab"], full=True, **second)
+        out_b = b.communicate(timeout=240)[0]
+        out_a = a.communicate(timeout=240)[0]
+        return ev, (a.returncode, out_a), (b.returncode, out_b)
+
+    def bilateral(self, evidence):
+        d = os.path.join(evidence, "bilateral")
+        files = [f for f in os.listdir(d) if f.endswith(".json")] if os.path.isdir(d) else []
+        self.assertEqual(len(files), 1, files)
+        with open(os.path.join(d, files[0])) as f:
+            return json.load(f)
+
+    def test_derived_both_sides_publish_sign_and_verify_each_others_result(self):
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived()
+        for side, rc, out, them in (("xaa", rc_a, out_a, "xab"), ("xab", rc_b, out_b, "xaa")):
+            combined = self.bilateral(ev[side])
+            self.assertEqual((rc, combined["verdict"]), (0, "PASS"), (side, out, combined["open"], combined["failed"]))
+            self.assertTrue(combined["authenticated"], out)
+            pub = (Path(HERE).parents[1] / "federation/vectors/testkeys" / ("%s.public.b64" % them)).read_text().strip()
+            self.assertEqual(combined["peer_key"]["b64"], pub)
+            import base64, hashlib
+            self.assertEqual(combined["peer_key"]["sha256"], hashlib.sha256(base64.b64decode(pub)).hexdigest())
+            self.assertNotIn("FED_ACCEPTANCE_SESSION", out)
+
+    def test_derived_a_partner_that_never_runs_stays_blocked_exit_3(self):
+        p = self.derived_side("xaa", os.path.join(self.tmp, "ev-xaa"), wait="3")
+        out = p.communicate(timeout=120)[0]
+        self.assertEqual(p.returncode, 3, out)
+        self.assertIn("waiting for xab's phase 14", out)
+        self.assertFalse(os.path.isdir(os.path.join(self.tmp, "ev-xaa", "bilateral")), out)
+
+    def test_derived_each_run_draws_a_new_challenge_and_a_stale_partner_result_is_refused(self):
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived()
+        self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
+        with open(os.path.join(ev["xaa"], "result.json")) as f:
+            first = json.load(f)["session"]["challenge"]
+        # xaa again, alone, in the same session: a new challenge, so xab's result,
+        # still on xaa's core and echoing the first, is refused as stale and the run
+        # waits, then stays open.
+        p = self.derived_side("xaa", ev["xaa"], full=True, wait="3")
+        out = p.communicate(timeout=120)[0]
+        with open(os.path.join(ev["xaa"], "result.json")) as f:
+            second = json.load(f)["session"]
+        self.assertRegex(second["challenge"], r"^[0-9a-f]{32}$")
+        self.assertNotEqual(second["challenge"], first)
+        self.assertEqual(second["id"], json.load(open(os.path.join(ev["xab"], "result.json")))["session"]["id"])
+        self.assertEqual(p.returncode, 3, out)
+        self.assertIn("GB-273", out)
+
+    def test_derived_a_result_whose_signature_covers_other_bytes_is_refused_gb_272(self):
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(second={"extra": {"FED_TEST_SIG_TAMPER": "1"}})
+        self.assertEqual(rc_a, 2, out_a)
+        self.assertIn("GB-272", out_a)
+        self.assertFalse(os.path.isdir(os.path.join(ev["xaa"], "bilateral")), out_a)
+
+    def test_derived_mode_refuses_without_a_signer_or_a_verifier(self):
+        for missing in ("FED_ACCEPTANCE_SIGNER", "FED_ACCEPTANCE_VERIFIER"):
+            path = os.path.join(self.tmp, "agreement.json")
+            with open(path, "w") as f:
+                json.dump(self.ag, f)
+            env = self.derived_env("xaa", os.path.join(self.tmp, "ev-" + missing))
+            env.pop(missing)
+            p = subprocess.run(["bash", str(SCRIPT), path, "--as", "xaa"], env=env, capture_output=True, text=True,
+                               timeout=60)
+            self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+            self.assertIn(missing, p.stderr)
+            self.assertIn("no result is published unsigned", p.stderr)
+
     def test_a_manifest_for_another_agreement_stops_the_run(self):
         other = os.path.join(self.tmp, "other.json")
         with open(other, "w") as f:
