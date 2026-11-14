@@ -41,6 +41,7 @@ pub const LIVE_CHECKS: &[&str] = &[
     "slot-anchors",
     "core-router",
     "ingress-stores",
+    "clock",
 ];
 
 pub struct PlanOptions<'a> {

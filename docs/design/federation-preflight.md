@@ -6,8 +6,11 @@
 `preflight_live.py`, run by both avenues (`goatbuilder federate` and
 `ops/scripts/peering-standup.sh`) as the same phase-1 command; the read-only
 probe play `ops/ansible/peering-preflight.yml`; input derivation in
-`crates/goatbuilder/src/federate/preflight.rs`; codes GB-130 to GB-149 in
-`ops/errors/catalog.yaml`. Unit tests cover each check with fakes.
+`crates/goatbuilder/src/federate/preflight.rs`; codes GB-130 to GB-149 and
+GB-268 in `ops/errors/catalog.yaml`. Unit tests cover each check with fakes.
+**Built, not yet run against a live peering:** the `clock` check (GB-268;
+ADR 1232, in review);
+its probe reads were run once on a single machine, not on a peering's hosts.
 **Not built:** the allocated per-peering values are not yet passed in (the
 caller passes `None` until allocation lands, and preflight.py reads the group's
 own vars and then the roles' port defaults); the phase-10 restart step that calls
@@ -27,6 +30,7 @@ first driven runs hit late is checked here first, and each check names its fix:
 | `inputs` | every input the later phases need is present; each missing one is listed with where to declare it | GB-130 |
 | `edge-ports` | the tunnel listen port (UDP) and the edge router listen port (TCP, by address) are free on the edge; NetBird holds UDP 51820 on a mesh host | GB-131, GB-133 |
 | `core-ports` | the republisher metrics port is free on the core (only when we offer a release set) | GB-132, GB-133 |
+| `clock` | each edge and core host's clock is synchronized to an outside reference and within the offset budget of UTC (`FED_CLOCK_BUDGET_MS`, default 250 ms) | GB-268 |
 | `slot-anchors` | the committed slot list equals the registry (`sync-slot-anchors.py --check`) | GB-134, GB-135 |
 | `core-router` | the core router container is found, by the selection phase 3 uses | GB-138, GB-139 |
 | `ingress-stores` | once the core admits the peering, it has a receive store equal to each scope the edge admits (only when we accept data; before admission, NOT APPLICABLE) | GB-136, GB-137 |
@@ -143,6 +147,34 @@ Nothing on a host is changed.
   another peering's router on its own link address is reported, not refused.
   Overlapping link subnets are the federation plan's host-level check. The tunnel's UDP port is still
   judged by port alone: a WireGuard interface listens on every address.
+- **Clocks.** A Zenoh router refuses a timestamp more than 500 ms ahead of
+  its own clock. The partner's fabric is synchronized separately, and before
+  the tunnel exists neither side can read the other's clock, so each side
+  checks its own hosts against UTC
+  (ADR 1232 and `docs/design/peer-fault-handling.md`, both in review). The same probe
+  play reads each host's time service: `chronyc -c tracking` (reference,
+  stratum, system time offset, leap status) and `timedatectl show -p
+  NTPSynchronized -p TimeUSec`. Both use what the host already runs; neither
+  installs a package or opens a port. Python prefers chrony's report, and
+  reads systemd's flag when chronyd does not answer.
+
+  A host passes when it is synchronized to an outside reference (chrony: leap
+  status Normal, or a leap second pending, and a reference that is neither
+  none nor chrony's own local clock; systemd: `NTPSynchronized=yes`) and,
+  where chrony reports an offset, its absolute system time offset is at most
+  the budget. The budget is half the router limit, because the other side may
+  be off as far in the other direction; `FED_CLOCK_BUDGET_MS` sets it, from 1
+  to 500, and another value is a missing input (GB-130) that blocks the check.
+  systemd reports no offset, so a host read that way passes on its flag alone,
+  and the detail says the offset was not reported. The PASS detail prints each
+  host's offset; a FAIL (GB-268) prints the host, its offset or "not
+  synchronized", the budget and the router limit. A host the probe did not
+  answer for, or whose time service answered neither command, is SKIP
+  (GB-268), never a pass; a FAIL on another host wins. An inventory group with
+  no host is SKIP for that side, so a deployment with no core group is not
+  refused for it; both groups empty is BLOCKED. The result's `facts` record,
+  per host, the method, whether the reading was grounded (synchronized to a
+  reference outside the host), and the offset when one was reported.
 - **Core router.** The same selection as `goat federate init`
   ([federation-router-discovery.md](federation-router-discovery.md)), against the
   same daemon: `FED_ROUTER_DOCKER_HOST`, else an ambient `DOCKER_HOST`, else the
@@ -210,7 +242,7 @@ where no one machine reaches both hosts. Each live check has a side in `prefligh
 |---|---|---|
 | edge | `edge-ports` | the edge inventory (phases 2 and 11 to 13 run the edge's plays there) |
 | core | `core-ports`, `slot-anchors`, `core-router`, `ingress-stores`, `signing-ca` | the profile certificate and CA roots, the signing key, the peering directory, the republisher inventory, the core certificate's names (`FED_CORE_SAN`) |
-| both | `inputs` | the declaration, the working directory, one inventory name per peering, declared first, the local `docker compose` |
+| both | `inputs`, `clock` (each side reads the clocks of its own group's hosts) | the declaration, the working directory, one inventory name per peering, declared first, the local `docker compose` |
 
 Each side asks only for the inputs its own checks need: the edge side never asks for the CA,
 the signing key or the core certificate's names, and the core side never asks for the edge's

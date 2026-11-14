@@ -7,9 +7,9 @@ measures the running system and refuses, by name, for anything it cannot derive
 would drift. This checks what init cannot: the inputs that must exist BEFORE
 init is worth running, and the deployment surface that phases 8-12 will need long
 after init has passed -- the ports the tunnel, the edge router and the
-republisher will bind, the core router and its receive stores, the committed slot
-list, and the CA phase 8 signs with. Every failure the first driven runs hit late
-is checked here first (docs/design/federation-preflight.md).
+republisher will bind, each host's clock, the core router and its receive stores,
+the committed slot list, and the CA phase 8 signs with. Every failure the first
+driven runs hit late is checked here first (docs/design/federation-preflight.md).
 
 Fail-closed: every missing thing is named with where to declare it. Nothing is
 defaulted that belongs to a deployment, and nothing on a host is changed: the
@@ -34,6 +34,8 @@ sets them by hand. An explicitly set variable always wins.
                          the machine that reaches the edge, core on the one that
                          reaches the core and holds the CA key. Each side probes
                          only its own hosts and asks only for its own inputs.
+  FED_CLOCK_BUDGET_MS=N    the clock check's offset budget in ms (default 250,
+                           half the 500 ms a Zenoh router allows)
   FED_PREFLIGHT_NO_LIVE=1  skip the live reads (each reported SKIP)
   FED_PREFLIGHT_STRICT=1   a SKIP refuses too
 
@@ -545,6 +547,10 @@ def main(argv=None):
                         f"group_vars/all/, peerings[].hosts.core in goatbuilder.yaml, or the ansible_host of the "
                         f"one host of [{core}] in the peering inventory; none of them declares one"))
 
+    budget_ms, budget_bad = live.clock_budget(env)
+    if want("clock") and budget_bad:
+        missing.append(("FED_CLOCK_BUDGET_MS", budget_bad))
+
     if want("inputs"):
         record(live.check_inputs(missing))
 
@@ -558,26 +564,40 @@ def main(argv=None):
     core_na = "core-ports" in port_checks and not offers
     if core_na:
         port_checks.remove("core-ports")
-    if port_checks and no_live:
+    port_label = {"edge-ports": "edge ports free", "core-ports": "core metrics port free"}
+    # The clock is read on each side's own hosts by the same probe.
+    clock_groups = ([("edge", group, edge_hosts)] if on("edge") else []) + \
+                   ([("core", core, core_hosts)] if on("core") else [])
+    clock_on = want("clock")
+    if no_live:
         for c in port_checks:
-            skipped(c, "edge ports free" if c == "edge-ports" else "core metrics port free")
-    elif port_checks:
+            skipped(c, port_label[c])
+        if clock_on:
+            skipped("clock", "clock synchronized")
+    else:
+        ports_run = bool(port_checks)
         blocked = [n for n in need_ports if n in unusable]
-        if blocked:
+        if port_checks and blocked:
             for c in port_checks:
-                record(Result(c, "edge ports free" if c == "edge-ports" else "core metrics port free", BLOCKED,
+                record(Result(c, port_label[c], BLOCKED,
                               "no usable " + ", ".join(blocked) + " (see required inputs)", "GB-130"))
-        elif not inv.is_file():
+            ports_run = False
+        elif port_checks and not inv.is_file():
             for c in port_checks:
-                record(Result(c, "edge ports free" if c == "edge-ports" else "core metrics port free", BLOCKED,
-                              f"no inventory at {inv}", "GB-143"))
-        else:
+                record(Result(c, port_label[c], BLOCKED, f"no inventory at {inv}", "GB-143"))
+            ports_run = False
+        clock_run = clock_on and not budget_bad and inv.is_file()
+        facts = {}
+        # The edge group is probed for the ports unless only the core side runs;
+        # for the clock, each side's group that lists a host.
+        probe_edge = (ports_run and a.side != "core") or (clock_run and on("edge") and bool(edge_hosts))
+        probe_core = (ports_run and "core-ports" in port_checks) or (clock_run and on("core") and bool(core_hosts))
+        groups = ([group] if probe_edge else []) + ([core] if probe_core else [])
+        if groups:
             out_dir = Path(a.work) / "preflight" / "probe"
             out_dir.mkdir(parents=True, exist_ok=True)
             for old in out_dir.glob("*.json"):
                 old.unlink()  # a previous run's answer is not this run's evidence
-            # The edge group is probed unless only the core side runs.
-            groups = ([group] if a.side != "core" else []) + ([core] if "core-ports" in port_checks else [])
             argv = live.probe_command(a.repo, f"inventory/{inv.name}", ":".join(groups), out_dir,
                                       env.get("GOAT_AWS_PROFILE", "") or "default")
             print(f"     probing {', '.join(groups)} read-only: ansible-playbook ... peering-preflight.yml")
@@ -587,18 +607,25 @@ def main(argv=None):
             if rc != 0 and not facts:
                 tail = (live.text(out) + live.text(err)).strip().splitlines()[-3:]
                 print("     probe: " + " / ".join(tail))
-            if "edge-ports" in port_checks:
-                bind, _ = live.edge_bind_address(a.repo, a.work, group, env)
-                record(live.check_edge_ports(
-                    facts, edge_hosts, int(ports["FED_WG_LISTEN_PORT"][0]), ports["FED_WG_INTERFACE"][0],
-                    int(ports["FED_EDGE_LISTEN_PORT"][0]),
-                    str(live.group_var(a.repo, group, "goat_zenoh_edge_stack") or f"goat-zenoh-edge-{counterparty}"),
-                    group, bind))
-            if "core-ports" in port_checks:
-                record(live.check_core_ports(
-                    facts, core_hosts, int(ports["FED_REPUBLISHER_METRICS_PORT"][0]),
-                    str(live.group_var(a.repo, core, "goat_fed_republisher_stack") or f"goat-fed-republisher-{counterparty}"),
-                    core))
+        if ports_run and "edge-ports" in port_checks:
+            bind, _ = live.edge_bind_address(a.repo, a.work, group, env)
+            record(live.check_edge_ports(
+                facts, edge_hosts, int(ports["FED_WG_LISTEN_PORT"][0]), ports["FED_WG_INTERFACE"][0],
+                int(ports["FED_EDGE_LISTEN_PORT"][0]),
+                str(live.group_var(a.repo, group, "goat_zenoh_edge_stack") or f"goat-zenoh-edge-{counterparty}"),
+                group, bind))
+        if ports_run and "core-ports" in port_checks:
+            record(live.check_core_ports(
+                facts, core_hosts, int(ports["FED_REPUBLISHER_METRICS_PORT"][0]),
+                str(live.group_var(a.repo, core, "goat_fed_republisher_stack") or f"goat-fed-republisher-{counterparty}"),
+                core))
+        if clock_on and budget_bad:
+            record(Result("clock", "clock synchronized", BLOCKED,
+                          "no usable FED_CLOCK_BUDGET_MS (see required inputs)", "GB-130"))
+        elif clock_on and not inv.is_file():
+            record(Result("clock", "clock synchronized", BLOCKED, f"no inventory at {inv}", "GB-143"))
+        elif clock_on:
+            record(live.check_clock(facts, clock_groups, budget_ms))
 
     if core_na:
         record(Result("core-ports", "core metrics port free", NA,
