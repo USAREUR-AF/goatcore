@@ -26,7 +26,8 @@
 -- goatnet_hub_site with ALTER SYSTEM (ADR 1205 D8), never from a replicated
 -- row. goatnet_hub_site is the hub's Spock node name as spock-mesh-peering
 -- names it; ory-narrow-repset names the same site's node in this database
--- <name>_<database>, so either name is the hub here.
+-- <name>_<database>, so either name, exactly, is the hub here
+-- (goat_is_hub_node).
 --
 -- The sending node of a replicated row: inside Spock's apply, the backend's
 -- pg_stat_activity.backend_type is "spock apply <database oid>:<subscription
@@ -110,6 +111,16 @@ BEGIN
   RETURN node;
 END $$;
 
+-- True when node is the hub as this site's goat.hub_site names it: exactly
+-- the hub's name, or exactly <hub>_<this database>. Equality only, never a
+-- pattern, prefix or suffix, so <hub>_other or a name holding <hub> is not
+-- the hub. False when goat.hub_site is unset.
+CREATE OR REPLACE FUNCTION goat_is_hub_node(node text) RETURNS boolean
+LANGUAGE sql STABLE AS $$
+  SELECT coalesce(node = h OR node = h || '_' || current_database(), false)
+    FROM (SELECT nullif(current_setting('goat.hub_site', true), '') AS h) s;
+$$;
+
 -- True when any subscription at this site forwards origins.
 CREATE OR REPLACE FUNCTION goat_forwards_origins() RETURNS boolean
 LANGUAGE plpgsql STABLE AS $$
@@ -149,7 +160,7 @@ BEGIN
       RAISE EXCEPTION 'platform admin refused at %: goat.hub_site is not set at this site; set goatnet_hub_site and run the ory-narrow-repset role, which writes goat.hub_site', me
         USING ERRCODE = 'insufficient_privilege';
     END IF;
-    IF me IN (hub, hub || '_' || current_database()) THEN
+    IF goat_is_hub_node(me) THEN
       RETURN NEW;
     END IF;
     RAISE EXCEPTION 'platform admin refused at %: only the hub (%) makes a platform admin', me, hub
@@ -160,7 +171,7 @@ BEGIN
     why := 'no_hub';
   ELSIF goat_forwards_origins() THEN
     why := 'forwarding';
-  ELSIF sender IN (hub, hub || '_' || current_database()) THEN
+  ELSIF goat_is_hub_node(sender) THEN
     RETURN NEW;
   ELSE
     why := 'not_hub';
