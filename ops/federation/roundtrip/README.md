@@ -30,9 +30,39 @@ The check rides entirely on the two grants the agreement already makes:
 No new ACL rule, no new subject, no widening. If the check cannot pass, the agreement's own lanes
 are not working — which is exactly what it exists to report.
 
+## It needs a store on each side
+
+Both halves find what crossed by a REST `GET`: `responder.py` reads
+`from/<them>/**/fedcheck/*`, and `fedcheck.sh` reads `from/<them>/**/fedcheck-ack/<nonce>`. A
+REST `GET` is a zenoh query, and a query is answered only from a storage (or a queryable). It
+never sees a sample that was delivered live and not stored. So each core needs a store covering
+`from/<them>/**`, the landing prefix of the partner it peers with:
+
+| Side | Reads | Needs a store on |
+|---|---|---|
+| receiving, `responder.py` | the probes | `from/<publisher>/**` on the receiving core |
+| publishing, `fedcheck.sh` | the acks | `from/<responder>/**` on the publishing core |
+
+A peering declared in `zenoh_sovereign_peerings` gets that store: the goat-zenoh role renders
+`sovereign_from_<partner>` on `from/<partner>/**` (ADR 1234). A peering wired by hand, or one whose
+core was rendered without that entry, has no store. Then the probes arrive and live
+subscribers (a dashboard, `goat sub 'from/<them>/**'`) see them, but every `GET` answers `[]`:
+the responder never acknowledges, and `fedcheck.sh` times out. The fault is in the store, not in
+the peering.
+
+To tell the two apart on the receiving core, while the publisher sends:
+
+```bash
+curl -s 'http://127.0.0.1:8000/from/<them>/**/fedcheck/*'   # [] while a live subscriber sees probes: no store
+```
+
+Phase 14 reports this state before it reaches the round trip: its `persistence/<dir>/<set>` check
+(`docs/design/federation-acceptance.md`) fails when no store of the receiving core subscribes to
+the key.
+
 ## Running it
 
-On the receiving sovereign, once:
+On the receiving sovereign, once, with its store on `from/<them>/**` in place (above):
 
 ```bash
 python3 responder.py from/<them> release/<one of our sets>   # e.g. from/zagros release/weather
