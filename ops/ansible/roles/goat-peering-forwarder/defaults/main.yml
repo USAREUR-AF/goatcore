@@ -65,3 +65,10 @@ peering_forwarder_mesh_services:
   - netbird.service
 peering_forwarder_edge_dirs:
   - /etc/goat-peering-wg
+
+# A carrier key rotation (`goatbuilder federate rotate <partner> carrier`): its id,
+# and the name of the peering whose carrier it rotates. That carrier's key is set
+# aside once in .previous-<id>/ and a new one made (tasks/carrier-key.yml). Empty:
+# no rotation.
+peering_forwarder_carrier_rotation: ""
+peering_forwarder_carrier_rotation_name: ""

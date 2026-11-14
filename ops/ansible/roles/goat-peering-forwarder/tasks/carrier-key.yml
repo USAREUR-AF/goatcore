@@ -1,0 +1,59 @@
+---
+# Each carrier's private key: made here, it never leaves this host. It
+# authenticates the carrier, not the peering, and is never taken from a variable.
+# Included by tasks/main.yml; goat-peering-wg's tests/test-rotation.sh runs it
+# alone.
+#
+# A rotation of one peering's carrier (docs/design/federation-key-rotation.md §3,
+# K5) passes its id in peering_forwarder_carrier_rotation and the peering's entry
+# name in peering_forwarder_carrier_rotation_name. That entry's key is moved, once,
+# to .previous-<id>/ in the config directory (0700), and the generation below
+# makes a new one; every other carrier keeps its key. A rerun with the same id
+# moves nothing.
+
+- name: peering-forwarder | the rotation names one entry, by a plain id
+  ansible.builtin.assert:
+    that:
+      - peering_forwarder_carrier_rotation is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+      - _pf_peerings | selectattr('name', 'equalto', peering_forwarder_carrier_rotation_name) | list | length == 1
+    fail_msg: >-
+      The carrier rotation '{{ peering_forwarder_carrier_rotation }}' for
+      '{{ peering_forwarder_carrier_rotation_name }}' is refused:
+      {{ 'it is not a rotation id (letters, digits, - and _)'
+         if peering_forwarder_carrier_rotation is not match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+         else 'it names no entry of peering_forwarder_peerings (' ~ (_pf_peerings | map(attribute='name') | join(', ')) ~ ')' }}.
+      Nothing was moved.
+    quiet: true
+  when: peering_forwarder_carrier_rotation | length > 0
+
+- name: peering-forwarder | set the rotated carrier's key aside, once
+  when: peering_forwarder_carrier_rotation | length > 0
+  vars:
+    _pf_aside: "{{ peering_forwarder_config_dir }}/.previous-{{ peering_forwarder_carrier_rotation }}"
+    _pf_rotated: "{{ (_pf_peerings | selectattr('name', 'equalto', peering_forwarder_carrier_rotation_name) | first).interface }}"
+  block:
+    - name: peering-forwarder | whether this rotation already set the key aside
+      ansible.builtin.stat:
+        path: "{{ _pf_aside }}"
+      register: _pf_aside_stat
+
+    - name: peering-forwarder | the rotation's directory
+      ansible.builtin.file:
+        path: "{{ _pf_aside }}"
+        state: directory
+        mode: "0700"
+      when: not _pf_aside_stat.stat.exists
+
+    - name: peering-forwarder | move the rotated carrier's key aside
+      ansible.builtin.command:
+        argv: [mv, "--", "{{ peering_forwarder_config_dir }}/{{ _pf_rotated }}.key", "{{ _pf_aside }}/"]
+        removes: "{{ peering_forwarder_config_dir }}/{{ _pf_rotated }}.key"
+      when: not _pf_aside_stat.stat.exists
+
+- name: peering-forwarder | make each carrier's private key if there is none
+  ansible.builtin.shell:
+    cmd: "umask 077; wg genkey > {{ peering_forwarder_config_dir }}/{{ item.interface }}.key"
+    creates: "{{ peering_forwarder_config_dir }}/{{ item.interface }}.key"
+  loop: "{{ _pf_peerings }}"
+  loop_control:
+    label: "{{ item.interface }}"

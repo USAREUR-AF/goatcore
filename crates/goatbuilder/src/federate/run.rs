@@ -83,6 +83,9 @@ pub struct Surface {
     pub handed_off: bool,
     /// `rotate <partner> leaves`: phase 8 replaces every leaf (rotation.rs).
     pub rotate_leaves: bool,
+    /// `rotate <partner> carrier`: phase 2 sets each carrier key aside once and
+    /// makes a new one (rotation.rs, [`super::rotation::Carrier`]).
+    pub rotate_carrier: Option<super::rotation::Carrier>,
 }
 
 impl Surface {
