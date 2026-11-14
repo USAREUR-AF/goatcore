@@ -127,6 +127,35 @@ fn gv_first(file: &Path, key: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The services stage-service-leaves.yml stages a leaf for (its
+/// `service_leaf_map`). A test holds this list in step with the play.
+const STAGED_SERVICES: [&str; 7] = ["fabric-health", "mesh-health", "presence-health", "time-health", "consistency-health", "fabric-crawler", "goat-topology"];
+
+/// A joining site's leaves, from its manifest
+/// (`ops/enrollment/manifests/<site>-certs.yaml`): where mint-site-certs.sh
+/// writes them (the manifest's `out_dir`, else `<state dir>/<site>-leaves`),
+/// and the service leaves it carries that the staging play knows, in the
+/// manifest's order.
+pub(crate) struct Leaves {
+    pub(crate) out_dir: String,
+    pub(crate) staged: Vec<String>,
+}
+
+pub(crate) fn leaves(repo: &Path, site: &str) -> Result<Leaves> {
+    let rel = format!("ops/enrollment/manifests/{site}-certs.yaml");
+    let Ok(text) = std::fs::read_to_string(repo.join(&rel)) else {
+        return Err(goat_errors::coded("GB-286", format!("{site} has no leaf-cert manifest at {rel}: join-node mints the site's router and service leaves from it before the data router. Copy ops/enrollment/manifests/TEMPLATE-certs.yaml to {rel} and re-thread every value for {site} (its URI SANs name this goatnet)")).into());
+    };
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-286", format!("{rel} is not readable YAML: {e}")))?;
+    let names: Vec<String> = doc.get("leaves").and_then(|l| l.as_sequence()).map(|l| l.iter().filter_map(|x| x.get("name")?.as_str().map(String::from)).collect()).unwrap_or_default();
+    if !names.iter().any(|n| n == "router") {
+        return Err(goat_errors::coded("GB-287", format!("{rel} has no router leaf: the data router's play (zenoh-deploy.yml) reads it. Add a leaf named router, as ops/enrollment/manifests/TEMPLATE-certs.yaml shows")).into());
+    }
+    let out_dir = doc.get("out_dir").and_then(|v| v.as_str()).map(String::from).unwrap_or_else(|| format!("{}/{site}-leaves", crate::settings::state_dir_abs(repo)));
+    let staged = names.into_iter().filter(|n| STAGED_SERVICES.contains(&n.as_str())).collect();
+    Ok(Leaves { out_dir, staged })
+}
+
 /// Phase 13's signal-federation steps for a joiner's core node, after the Spock
 /// wiring (ADR 1085 Amendment 1). A peer is present on exactly one signal
 /// server, so a second management node that can take signal load needs its
@@ -278,6 +307,14 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (the same change, not a follow-up): netbird + Ory node, repset, subscription"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {} -e '{{\"inter_site_spock_peers\":[\"{site}\"],\"ory_spock_reconcile_history\":false}}'", sh_word(&founder_group))));
             ev.push(p(13, "A", "[core, joiner] the joiner's Spock wiring again, now that the founder's half exists: Ory subscription + history reconcile", format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {node}")));
             signal_federation(&mut ev, repo, &gv, site, &founder_site, &pre, inv);
+            // The site's router and service leaves (gate row I3), before the
+            // router, whose play reads the router leaf.
+            let l = leaves(repo, site)?;
+            ev.push(p(13, "T", &format!("[certificates] mint the site's leaves from ops/enrollment/manifests/{site}-certs.yaml (idempotent: a leaf already minted is kept)"), format!("'{r}/ops/scripts/mint-site-certs.sh' {}", sh_word(site))));
+            if !l.staged.is_empty() {
+                let only = format!("{{\"leaf_only\": [{}]}}", l.staged.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", "));
+                ev.push(p(13, "A", &format!("[certificates] stage the service leaves the manifest carries onto the node ({})", l.staged.join(", ")), format!("cd '{r}/ops/ansible' && {pre} {inv} stage-service-leaves.yml -e target={site_group} -l {node} -e leaf_src_dir={} -e {}", sh_word(&l.out_dir), sh_quote(&only))));
+            }
             // The site's own data router (gate row I3): its fabric does not
             // depend on reaching the founder's. The play's pre-flight refuses
             // a node without its router leaf certificate.
@@ -655,6 +692,10 @@ mod tests {
             exe(&repo.join(s));
         }
         std::fs::write(repo.join("ops/preflight-enrollment.sh"), "true\n").unwrap();
+        // The site's leaf-cert manifest, which the certificate steps read.
+        std::fs::create_dir_all(repo.join("ops/enrollment/manifests")).unwrap();
+        std::fs::write(repo.join("ops/enrollment/manifests/zagros-b-certs.yaml"), "site_id: zagros-b\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n").unwrap();
+        exe(&repo.join("ops/scripts/mint-site-certs.sh"));
         std::fs::create_dir_all(repo.join("ops/ansible/inventory")).unwrap();
         let path = format!("{}:/usr/bin:/bin", bin.display());
         let mut ran = 0;
@@ -886,6 +927,19 @@ mod tests {
         assert!(core[0].label.contains("pass 1") && core[0].cmd.ends_with(" --skip-tags after-ory"), "{}", core[0].cmd);
         assert!(core[1].cmd.contains("ory-deploy.yml"), "Ory follows pass 1: {}", core[1].cmd);
         assert!(core[3].label.contains("pass 3") && !core[3].cmd.contains("--skip-tags"), "{}", core[3].cmd);
+    }
+
+    /// STAGED_SERVICES is stage-service-leaves.yml's service_leaf_map.
+    #[test]
+    fn the_staged_services_are_the_staging_plays() {
+        let text = std::fs::read_to_string(repo().join("ops/ansible/stage-service-leaves.yml")).unwrap();
+        let plays: Vec<serde_yaml::Value> = serde_yaml::from_str(&text).unwrap();
+        let map = plays[0]["vars"]["service_leaf_map"].as_mapping().unwrap();
+        let mut keys: Vec<&str> = map.keys().filter_map(|k| k.as_str()).collect();
+        let mut ours = STAGED_SERVICES.to_vec();
+        keys.sort_unstable();
+        ours.sort_unstable();
+        assert_eq!(keys, ours);
     }
 
     /// Gate row I3, the certificates: before the data router, a joiner's core
