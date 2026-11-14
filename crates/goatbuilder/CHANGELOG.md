@@ -132,6 +132,20 @@ date. A rung that already declares the candidate now keeps its deviation as
 it stands, reason and date included (#622). The script avenue,
 `ops/scripts/rc.sh`, does the same (#621).
 
+#### Fixed: rollback reaches a goatnet through its door, as deploy does
+
+`goatbuilder rollback --site <goatnet>`, on a site whose map is one host,
+tries the host directly. When it does not answer, rollback goes through the
+env door that `deploy` uses for that site (the netbird profile, the mesh
+host on tcp/22, then the door registry). The connection still goes to the
+ledger's own host and checks that host's key: the door only carries it,
+so a door that lands on another host can never stand in for it. A door that
+does not open falls back to direct ssh. Without `--site`, or for a site of
+several hosts, nothing goes through a door. `ops/scripts/rollback.sh` now
+reaches the ledger's host the same way, where it used to reach whatever
+host the door landed on, and the live canary passes `--site` to both
+rollback avenues and to `rollback --list` (#644).
+
 ### For someone contributing
 
 #### Fixed: CI runs on main to the end, and several checks say why they fail
@@ -162,6 +176,16 @@ which the upgrade tests own and the check only reads, and it holds
 v0.6.0's binaries. v0.6.0's configuration files are kept for gate row A2
 beside those of the earlier releases (#566, #617, #562, #563, #631, #634,
 #616).
+
+#### Fixed: the federation test environment's other clones own their objects
+
+The watcher's preview and reverts and the upgrade unit made `--shared`
+clones, which read every object from the source and lose a commit once the
+source prunes it. They now use `src_clone_ref` in
+`ops/federation-e2e/lib/srctree.sh`: a plain local clone at a branch, tag
+or sha, which keeps its objects and refuses a shallow source or an empty
+argument before anything is removed. No harness script makes a `--shared`
+clone any more (#643).
 
 #### Fixed: the federation test environment's source clone holds every object of the commit under test
 
