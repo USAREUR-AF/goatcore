@@ -114,9 +114,16 @@ The router is the only vantage point we control for a machine we do not own.
 | Connects and drops in a loop | Admission events per peer | Connects per minute |
 | Publishes above its envelope | Per-peer message and byte rates | Rate against the declared envelope ([`qos-throughput-envelopes.md`](qos-throughput-envelopes.md)) |
 
-The second row needs the network as evidence. A router at `RUST_LOG=info` logs nothing when a client ends
-the TLS handshake, so the detector compares the sources of new connections to the router port with the
-sources in the router's session list.
+The second row, measured on Zenoh 1.9.0 (2026-11-14): when a client ends the TLS handshake because it does
+not trust the router's root, the router logs one line from `zenoh_link_tls::unicast` that ends
+`received fatal alert: UnknownCA`. Stock Zenoh logs it as a warning at the default level. A router build
+with a patched accept loop logs it only at debug, so that router needs
+`goat_zenoh_rust_log: "info,zenoh_link_tls::unicast=debug"` (role `goat-zenoh`) for the line to exist. The
+line never carries the client's address or Zenoh ID, at any log level. The detector therefore counts the
+lines, and names as candidates the declared peers that hold no session; it cannot name the client from
+the log. Naming it for certain needs the network as evidence: the sources of new connections to the
+router port compared with the sources in the router's session list. The feed keeps the line (built); the
+detector in the reader and the network comparison are not built.
 
 ## Stage 2: attribute the peer to an owner
 

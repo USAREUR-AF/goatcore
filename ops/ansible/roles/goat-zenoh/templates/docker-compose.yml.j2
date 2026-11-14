@@ -47,7 +47,13 @@ services:
       - --config
       - /etc/zenoh/config.json5
     environment:
-      RUST_LOG: "info"
+      # goat_zenoh_rust_log (group_vars; "info" when unset). The peer fault
+      # reader's second detector (ADR 1232) counts TLS handshakes a client
+      # ended; a router build that logs those only at debug needs
+      # "info,zenoh_link_tls::unicast=debug", which adds one line per accepted
+      # connection and one per refused handshake. A changed value recreates
+      # the router container on the next render.
+      RUST_LOG: "{{ goat_zenoh_rust_log | default('info') }}"
       # rx worker threads — the ONLY way to set them is this env var (RON
       # syntax, parsed once at process start; zenoh-runtime/src/lib.rs). The
       # default is 2, and a non-droppable message to a stuck peer parks one of

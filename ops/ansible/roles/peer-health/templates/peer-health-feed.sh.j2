@@ -3,12 +3,14 @@
 #
 # Feed for the goat-peer-health reader (ADR 1232). Runs on the host as
 # peer-health-feed.service. Three jobs, each a loop:
-#   1. follow the router container's log and append the timestamp-rejection
-#      lines to {{ peer_health_feed_dir }}/router.log
+#   1. follow the router container's log and append two kinds of line to
+#      {{ peer_health_feed_dir }}/router.log: a timestamp the router rejected,
+#      and a TLS handshake a client ended with a fatal alert
 #   2. append a heartbeat line, so the reader can tell "no rejections" from
 #      "the feed stopped"
-#   3. write the router's current session list to sessions.json and the
-#      router's own Zenoh ID to router.zid
+#   3. write the router's current session list (each session's Zenoh ID and
+#      the far address of its links) to sessions.json and the router's own
+#      Zenoh ID to router.zid
 # The reader container mounts the directory read-only.
 set -u
 DIR="{{ peer_health_feed_dir }}"
@@ -45,6 +47,7 @@ sessions() {
 import json, os, sys
 src, dst = sys.argv[1], sys.argv[2]
 zids = []
+addrs = []
 router = ""
 for entry in json.load(open(src)):
     parts = (entry.get("key") or "").split("/")
@@ -54,8 +57,16 @@ for entry in json.load(open(src)):
         z = s.get("peer")
         if z and z not in zids:
             zids.append(z)
+        # The far end of each link of the session: "tls/<host>:<port>". The
+        # reader reads an entry that is not a Zenoh ID as a source address, so
+        # a declared peer known only by address can be judged present or absent.
+        for link in s.get("links") or []:
+            far = (link.get("dst") if isinstance(link, dict) else "") or ""
+            host = far.split("/")[-1].rsplit(":", 1)[0].strip("[]")
+            if host and host not in addrs:
+                addrs.append(host)
 tmp = dst + ".tmp"
-json.dump(sorted(zids), open(tmp, "w"))
+json.dump(sorted(zids) + sorted(addrs), open(tmp, "w"))
 os.replace(tmp, dst)
 if router:
     ztmp = os.path.join(os.path.dirname(dst), ".router.zid.tmp")
@@ -71,7 +82,8 @@ follow() {
   # The loop restarts the follow when the router container is recreated.
   while :; do
     docker logs --since 1m -f "$ROUTER" 2>&1 \
-      | grep --line-buffered -F 'uhlc: incoming timestamp' >> "$LOG"
+      | grep --line-buffered -F -e 'uhlc: incoming timestamp' \
+          -e 'received fatal alert: ' >> "$LOG"
     sleep 5
   done
 }
