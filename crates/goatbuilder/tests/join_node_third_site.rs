@@ -88,8 +88,12 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         &checkout.join("ops/goatbuilder/endstate"),
     );
     std::fs::create_dir_all(checkout.join("ops/secrets")).unwrap();
+    std::fs::create_dir_all(checkout.join("ops/federation/standup")).unwrap();
     for s in [
         "ops/scripts/standup-config-preflight.py",
+        // Phase 3's clock check and the federation clock code it shares.
+        "ops/scripts/join-node-clock-check.py",
+        "ops/federation/standup/preflight_live.py",
         "ops/scripts/signal-federation-check.py",
         "ops/scripts/standup-mesh-record.py",
         "ops/scripts/inventory-hosts.py",

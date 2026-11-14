@@ -165,7 +165,9 @@ returns reopens the same entry with its history.
   host's own time service and fails a host that is unsynchronized or more than the budget from UTC
   (`FED_CLOCK_BUDGET_MS`, default 250 ms, half of the router's 500 ms limit). Built, not yet run against a
   live peering ([`federation-preflight.md`](federation-preflight.md)).
-- **Join preflight gains the same check** for a machine joining a goatnet. Not built.
+- **Join preflight gains the same check** for a machine joining a goatnet. `goatbuilder join-node` phase 3
+  reads the node's own time service before anything on the node changes and refuses an unsynchronized node
+  or one over the budget (GB-297), by the rule of check `clock`. Built, not yet run against a live node.
 - **A reader can see a replaced timestamp.** A sample the router re-stamped is marked as such when the
   per-sample time class of [`zenoh-ntp-integration.md`](zenoh-ntp-integration.md) §3 ships. Designed.
 
@@ -187,4 +189,5 @@ Each step is one revertible change.
    as peers at fault; `--json` carries `trust_verdict`, `tls_alerts`, `declared_peers_absent` and each
    row's `source_address` and `absent_since_unix_ms`; the `goat top` PEER chip shows the site grade,
    which the trust reading can turn amber or unmetered, never green.
-6. **The clock check in join and federation preflight.** Built for federation; not built for join.
+6. **The clock check in join and federation preflight.** Built for federation and for join; neither yet run
+   against a live peering or node.
