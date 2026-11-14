@@ -328,7 +328,7 @@ A site added with `join-node` should run every service it declares, with no step
 | Postgres with Spock, NetBird management, signal, Ory (Kratos, Hydra), seed from the founder, the Spock subscriptions on both sides | phase 13, passes 1 to 3 and the founder-side mirror (**built**) | |
 | Signal federation, and the front door's certificate and routes (`traefik-acme.yml`) | phase 13, but only when the site declares signal federation on (**built**) | a site that declares federation off gets no front door |
 | Service certificates | **not built** | `ops/scripts/mint-site-certs.sh <site>`, then `stage-service-leaves.yml` |
-| Data router (`zenoh-deploy.yml`) | **not built** | the play, limited to the node |
+| Data router (`zenoh-deploy.yml`) | phase 13 at a joining site's core node, after signal federation, for the site's core group limited to the node. **Built** on the fixture (`a_joiners_core_node_runs_its_data_router`), **not measured** on a joined site. The play refuses a node without its router leaf certificate, which `join-node` does not stage yet (the service certificates row) | |
 | Health publishers and the crawler (`fabric-health`, `mesh-health`, `presence-health`, `time-health`, `consistency-health`, `fabric-crawler`) | **not built** | each one's deploy play, limited to the node |
 | The standalone node exporter | **not built** | nothing deploys it on the join path |
 | The site's secrets (database, backup, replication and enrolment values) | **not built** | written by hand before phase 13. The replication and NetBird encryption values must name the founder's, so a generator that mints fresh ones is wrong for a joiner |
