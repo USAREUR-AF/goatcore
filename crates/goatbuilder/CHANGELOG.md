@@ -25,6 +25,24 @@ and is listed in `.undeclared-stores` until you dispose of it. The federation
 partner bundle changed with the specification; partners holding the previous
 bundle need the new one (#629).
 
+#### Fixed: a back-out stops on a probe that cannot tell, and takes back what admission placed
+
+`goatbuilder federate backout` reads a thing as absent only on the exact
+"not found" line its tool prints for that name (docker, podman, `wg`, `ip`,
+`nft` and SPIRE). A probe that failed any other way, such as a folder it
+could not list or a system bus it could not reach, reads `unknown`, and an
+`unknown` row stops the back-out instead of counting as absent.
+**Behaviour change:** a back-out that used to pass over such a probe now
+stops on it.
+
+The back-out also takes back what admission placed, by the route admission
+took. A core fragment the driver placed (`FED_CORE_*`) is removed the same
+way. On a core deployed by the goat-zenoh role, the core router's
+certificate and key are deleted only where they are byte for byte this
+peering's leaf, and our core router's leaf is restored from the earliest
+admission that touched it. An IPsec link's MSS clamp rules are removed by
+their own handles (#554).
+
 #### Fixed: federate status resumes from the first phase it cannot show passed
 
 `goatbuilder federate status` named the next command from the phase the last
@@ -33,47 +51,6 @@ recorded as an outcome this build does not know (for example `deferred`), it
 advised a `--from` past those phases, although such an outcome never counts as
 passed. It now advises `--from` the first phase the journal does not show
 passed. After a failure or an operator step, the advice is unchanged (#632).
-
-#### Fixed: join-node adds a node at a third site, phases 1 to 15
-
-Three refusals stopped `goatbuilder join-node` for a node not yet enrolled at
-a goatnet that already has a joiner. Phases 3 and 7 refused the mesh-address
-placeholder that phase 12 fills: they now run the config preflight with
-`--before-enrolment`, which warns on that one placeholder and still fails on
-any other. Pass 1 of phase 13 waited for a management service that needs
-the Ory deployed by the next step: it now runs the stack plays only, as
-`standup` does. A third site that declares signal federation off, with its
-reason, was refused because its founder federates with another site: it now
-passes, unless the founder's federation names it.
-
-#### Fixed: the command reference lists federate's own flags
-
-`goatbuilder docs --markdown` and `docs/reference/goatbuilder/command-reference.md`
-documented a global flag only on the root command. The flags `federate`
-declares for all its verbs (`--over-ssh`, `--side`, `--half-out`,
-`--edge-half`, `--edge-half-sha`, the host, group and router-container flags,
-and the goat context flags) appeared on no command. They are now documented
-once, on `goatbuilder federate`, so the compatibility check also holds them
-against the last release (#633).
-
-#### Fixed: a release re-run on a later day opens no dev-pin PR
-
-`goatbuilder release` declares a candidate on the dev rung with a reason that
-carries the day. Re-running a dev step that had already landed, on a later
-day, rewrote that reason and landed a pin PR that changed nothing but the
-date. A rung that already declares the candidate now keeps its deviation as
-it stands, reason and date included (#622).
-
-<!-- END generated: changelog unreleased -->
-
-## 0.6.1 — 2026-11-13
-
-The fix for 0.6.0's known issue: a `goatbuilder federate` run killed in phase
-11 now resumes and brings the WireGuard link up. It also carries the first
-piece of the two-driver run (gate row B10), which changes `--side edge` on a
-peering run and reserves the peering name `import`; see below.
-
-### For someone deploying
 
 #### Added: `join-node` names what the site does not run, and why
 
@@ -87,7 +64,121 @@ NetBird dashboard, the portal, the id console and the onboarding engine read
 it for this class", followed by the declaration that keeps each one off.
 `goatbuilder endstate` gives an absent service the same reason, so the plan
 and the grade cannot disagree. When the model cannot be read, the section
-says so in one line and lists nothing; the run is not stopped.
+says so in one line and lists nothing; the run is not stopped. (#612)
+
+#### Fixed: join-node adds a node at a third site, phases 1 to 15
+
+Three refusals stopped `goatbuilder join-node` for a node not yet enrolled at
+a goatnet that already has a joiner. Phases 3 and 7 refused the mesh-address
+placeholder that phase 12 fills: they now run the config preflight with
+`--before-enrolment`, which warns on that one placeholder and still fails on
+any other. Pass 1 of phase 13 waited for a management service that needs
+the Ory deployed by the next step: it now runs the stack plays only, as
+`standup` does. A third site that declares signal federation off, with its
+reason, was refused because its founder federates with another site: it now
+passes, unless the founder's federation names it (#613).
+
+#### Changed: container memory limits and Postgres memory are settable, and cron is installed
+
+Every container memory limit and reservation in the roles and compose files
+is now a variable whose default is the value it had, so a small host can
+lower them in its group_vars. Postgres `shared_buffers` and
+`max_connections` keep the image's values unless
+`mgmt_postgres_shared_buffers` or `mgmt_postgres_max_connections` is set;
+`mgmt-host.yml` refuses an `mgmt_postgres_max_connections` that differs
+from `postgres_max_connections`. The roles that schedule jobs with cron
+(`apt-cacher-ng`, `docker-registry-mirror`, `oci-substrate-t2-sync`,
+`isitup`, `operator-idp-postgres` and the observability play) now install
+`cron` first, so a minimal Debian host runs those jobs (#615).
+
+#### Fixed: the command reference lists federate's own flags
+
+`goatbuilder docs --markdown` and `docs/reference/goatbuilder/command-reference.md`
+documented a global flag only on the root command. The flags `federate`
+declares for all its verbs (`--over-ssh`, `--side`, `--half-out`,
+`--edge-half`, `--edge-half-sha`, the host, group and router-container flags,
+and the goat context flags) appeared on no command. They are now documented
+once, on `goatbuilder federate`, so the compatibility check also holds them
+against the last release (#633).
+
+#### Changed: a refusal names its error code
+
+A refusal from `standup`, `join-node`, `release`, `rollback`, `pins`,
+`doctor`, `promote`, `fastlane`, the fresh-source check, the converger,
+`inspect` and the configuration loader now prints its `GB-nnn` code, so
+`goatbuilder explain <code>` gives its causes and fixes. The error catalog gains
+GB-238 to GB-260, GB-263 and GB-264 for refusals that had no code. A
+refused `release` step ends its row with the code instead of dropping it,
+and GB-008 names every verb that asks for `--yes`. A few refusals of the
+command line itself and two of `federate`'s still print no code; they get
+theirs in a later change (#560).
+
+#### Fixed: a release re-run on a later day opens no dev-pin PR
+
+`goatbuilder release` declares a candidate on the dev rung with a reason that
+carries the day. Re-running a dev step that had already landed, on a later
+day, rewrote that reason and landed a pin PR that changed nothing but the
+date. A rung that already declares the candidate now keeps its deviation as
+it stands, reason and date included (#622). The script avenue,
+`ops/scripts/rc.sh`, does the same (#621).
+
+### For someone contributing
+
+#### Fixed: CI runs on main to the end, and several checks say why they fail
+
+- A run on `main` is no longer cancelled by the next push to `main`, so the
+  commit a release is tagged on keeps its own complete run (#618).
+- The playbook syntax step prints each failing playbook's error, and an
+  Ansible collection that a timed-out install left half written is
+  installed again (#625).
+- `.envrc.example` is regenerated, and a check holds it to the environment
+  variables the repository reads (#627).
+- The filter plugin tests moved out of `ops/ansible/filter_plugins`, so
+  Ansible no longer imports them on every playbook run (#626).
+- The hermetic deploy job's release re-run and soak cases pass on a run
+  that crosses midnight UTC (#621).
+
+#### Changed: the compatibility check holds more of the last release, now goatbuilder/v0.6.0
+
+`ops/ci/check-goatbuilder-compat.sh` compares each build with the last
+published release, now `goatbuilder/v0.6.0`. It keeps `-o json` documents
+for the verbs that change state (`deploy`, `rollback`, `plan`, `standup`,
+`teardown`) and for run journals, and holds a field that only some entries
+of a list carry from a reviewed list (`conditional.yaml`). A kept command's
+exit code changes only with a reason in `exit_changed`, and a value a flag
+accepted in the last release is still accepted. The published binaries'
+checksums are one list, `crates/goatbuilder/tests/upgrade/releases.sha256`,
+which the upgrade tests own and the check only reads, and it holds
+v0.6.0's binaries. v0.6.0's configuration files are kept for gate row A2
+beside those of the earlier releases (#566, #617, #562, #563, #631, #634,
+#616).
+
+#### Changed: the federation test environment's kill-resume aims phase 11's kill
+
+The kill-resume scenario kills phase 11 once the WireGuard role has written
+the link's files and before its handler restarts the link, instead of a
+fixed delay after the phase starts. The gap that 0.6.1 fixed (#597) is now
+found on every run, not by chance (#620).
+
+#### Changed: a changelog entry is a file of its own, and a new ADR's index row is rendered
+
+A pull request adds its goatbuilder changelog entry as a file in
+`crates/goatbuilder/changelog.d/` instead of editing `CHANGELOG.md`;
+`ops/release/changelog.py` renders the Unreleased section and folds the
+entries into a release. The index row of an ADR above 1234 is
+rendered from the ADR's own header by `ops/release/adr_index.py`, so adding
+an ADR edits no shared file. `docs-guards` checks both (#623, #636).
+
+<!-- END generated: changelog unreleased -->
+
+## 0.6.1 — 2026-11-13
+
+The fix for 0.6.0's known issue: a `goatbuilder federate` run killed in phase
+11 now resumes and brings the WireGuard link up. It also carries the first
+piece of the two-driver run (gate row B10), which changes `--side edge` on a
+peering run and reserves the peering name `import`; see below.
+
+### For someone deploying
 
 #### Fixed: a federate run killed in phase 11 resumes and brings the link up
 

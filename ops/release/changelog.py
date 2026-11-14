@@ -295,8 +295,11 @@ def self_test(repo: Path) -> int:
         expect("a new entry, before `write`, is refused", check(r) != [])
         write(r)
         expect("after `write`, the check passes", check(r) == [])
-        expect("`write` renders the new entry under its heading",
-               "### For someone contributing\n\n#### Added: a check\n\nIt checks." in (r / CHANGELOG).read_text(encoding="utf-8"))
+        text = (r / CHANGELOG).read_text(encoding="utf-8")
+        unreleased = text[text.index(BEGIN):text.index(END)]
+        under = unreleased.split("### For someone contributing\n", 1)[-1].split("\n### ", 1)[0]
+        expect("`write` renders the new entry under its heading, whatever entries the repository holds",
+               "### For someone contributing\n" in unreleased and "#### Added: a check\n\nIt checks." in under)
 
         before = (r / CHANGELOG).read_text(encoding="utf-8")
         released_before = before[before.index(END) + len(END):]

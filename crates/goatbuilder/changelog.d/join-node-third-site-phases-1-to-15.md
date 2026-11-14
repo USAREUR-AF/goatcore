@@ -11,4 +11,4 @@ any other. Pass 1 of phase 13 waited for a management service that needs
 the Ory deployed by the next step: it now runs the stack plays only, as
 `standup` does. A third site that declares signal federation off, with its
 reason, was refused because its founder federates with another site: it now
-passes, unless the founder's federation names it.
+passes, unless the founder's federation names it (#613).
