@@ -1,0 +1,21 @@
+# delta: a phone site. Its one node is of the machine class `phone`, so this
+# file states none of what the class declares (ops/ansible/group_vars/
+# class_phone.yml): no LAN address, no public ingress, no disk encryption, no
+# memory limit, no observability host. The node is not enrolled yet, so its
+# mesh address is the placeholder phase 12 fills.
+goatnet_founder: false
+join_founder_site: alpha
+mesh_ip_a: TBD_DELTA_MESH_IP_A
+has_breakglass_node: false
+breakglass_absent_reason: the phone is in the operator's hand, on a USB cable
+has_network_jump_node: false
+network_jump_absent_reason: the site has no switch or router of its own
+mgmt_container_host_port: 8081
+signal_proto: https
+auth_issuer: https://auth.zagros.example.org/
+auth_audience: netbird
+auth_oidc_config_endpoint: https://auth.zagros.example.org/.well-known/openid-configuration
+kratos_secrets_cookie_env: ZAGROS_KRATOS_COOKIE
+site_enrollment_dns: netbird.zagros.example.org
+mesh_enrollment_url: https://netbird.zagros.example.org:443
+signal_federation_absent_reason: delta takes no public ingress, so no peer signals through it

@@ -9,6 +9,7 @@ Run it after editing group_vars, before the first ansible-playbook:
 table). Run it after editing group_vars, before the first ansible-playbook:
 
     ops/scripts/standup-config-preflight.py site_a_hosts [--obs site_a_obs_hosts]
+    ops/scripts/standup-config-preflight.py site_c_hosts --class phone
 
 Exit 0 = all checks pass. Non-zero = numbered FAIL lines, each naming the
 group_vars key to fix and the failure it prevents. Offline — reads only
@@ -291,6 +292,96 @@ def check_tbd_sentinels(raw, before_enrolment=False):
                  "join-node phase 12 fails on it once the node has enrolled")
         else:
             fail(f"TBD sentinel still present: {m}")
+
+
+# --- machine class -----------------------------------------------------------
+# A machine class declares, once, what every node of the class differs in
+# (docs/design/phone-node.md; gate row H5). Its declarations are the variables
+# of the Ansible group class_<name>, in group_vars/class_<name>.yml; a node is
+# in the class when inventory/mgmt-hosts.ini lists it under [class_<name>].
+# The one key `machine_class` describes the class to this check and is not a
+# value a site could repeat.
+CLASS_FAILS = []
+CLASS_META_KEY = "machine_class"
+
+
+def class_fail(msg):
+    CLASS_FAILS.append(msg)
+    fail(msg)
+
+
+def _inventory_section(inv, section):
+    """{host: its line} for one bare section of an inventory, in order; None
+    when the file or the section is absent."""
+    if not inv.is_file():
+        return None
+    out, inside, seen = {}, False, False
+    for line in inv.read_text().splitlines():
+        st = line.split("#", 1)[0].split(";", 1)[0].strip()
+        if st.startswith("["):
+            inside = st == f"[{section}]"
+            seen = seen or inside
+            continue
+        if inside and st:
+            out[st.split()[0]] = st
+    return out if seen else None
+
+
+def apply_machine_class(name, group, v):
+    """--class <name>: the site's values with the class's declarations under
+    them, after checking the site holds what the class declares.
+
+      * the class has its file, group_vars/class_<name>.yml;
+      * every host of the site's group is in [class_<name>] in
+        inventory/mgmt-hosts.ini, or no play would give it the class's values;
+      * the site's own group_vars set none of the class's keys to another
+        value (the same value is a WARN: it is written twice);
+      * the site sets no key the class rules out (`site_must_not_set`);
+      * a class with `lan_address: none` has no ansible_host on its hosts'
+        lines in inventory/mgmt-hosts.ini.
+
+    Each failure is a FAIL line, and one GB-301 line follows them."""
+    tag = f"[class {name}]"
+    path = GV / f"class_{name}.yml"
+    if not path.is_file():
+        class_fail(f"{tag} no declarations for the machine class: {path.relative_to(REPO)} "
+                   "is not in this checkout")
+        return v
+    try:
+        declared = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as e:
+        sys.exit(f"unparseable {path}: {e}")
+    meta = declared.pop(CLASS_META_KEY, None) or {}
+    where = f"group_vars/{group}/"
+    for key, want in declared.items():
+        if key not in v:
+            continue
+        if v[key] != want:
+            class_fail(f"{tag} {where} sets {key}: {v[key]!r}, and the class declares "
+                       f"{want!r} ({path.relative_to(REPO)}). Remove {key} from {where}; "
+                       "a node that needs another value is not of this class")
+        else:
+            warn(f"{tag} {where} repeats {key}, which the class declares "
+                 f"({path.relative_to(REPO)}); remove it from {where}")
+    for prefix in meta.get("site_must_not_set") or []:
+        for key in sorted(k for k in v if k.startswith(str(prefix))):
+            class_fail(f"{tag} {where} sets {key}, and a {name} node takes none of "
+                       f"{prefix}* ({path.relative_to(REPO)}, machine_class.site_must_not_set)")
+    inv = REPO / "ops" / "ansible" / "inventory" / "mgmt-hosts.ini"
+    hosts = _inventory_section(inv, group)
+    members = _inventory_section(inv, f"class_{name}")
+    if not hosts:
+        class_fail(f"{tag} inventory/mgmt-hosts.ini lists no host under [{group}]")
+    for host, line in (hosts or {}).items():
+        if host not in (members or {}):
+            class_fail(f"{tag} {host} is not under [class_{name}] in inventory/mgmt-hosts.ini, "
+                       "so no play gives it the class's values. Add the section and the "
+                       f"line `{host}`")
+        if str(meta.get("lan_address", "")) == "none" and re.search(r"\bansible_host=", line):
+            class_fail(f"{tag} {host} has an ansible_host in inventory/mgmt-hosts.ini, and a "
+                       f"{name} node has no LAN address. Leave the line as the name alone; "
+                       "its mesh address goes in inventory/mgmt-hosts-mesh.ini")
+    return {**declared, **v}
 
 
 def load_group(group):
@@ -597,6 +688,11 @@ def main():
                     help="the node has not enrolled yet: a mesh-address "
                          "placeholder (TBD_..MESH_IP..) is a warning, not a "
                          "failure (join-node phases 3 and 7)")
+    ap.add_argument("--class", dest="machine_class", metavar="NAME",
+                    help="the machine class of the site's node (join-node "
+                         "--class phone): check the site against "
+                         "group_vars/class_<NAME>.yml and judge it with the "
+                         "class's declarations under its own")
     ap.add_argument("--force", action="store_true",
                     help="overwrite files that already exist")
     ap.add_argument("--scaffold-plan", action="store_true",
@@ -611,6 +707,10 @@ def main():
         sys.exit(scaffold_plan(args.group, args.scaffold_from))
 
     v, raw = load_group(args.group)
+
+    # [H5] the machine class's declarations stand under the site's own
+    if args.machine_class:
+        v = apply_machine_class(args.machine_class, args.group, v)
 
     # [30/32] the config surface is a FILE SET, not one vars.yml
     check_file_inventory(args.group)
@@ -745,6 +845,10 @@ def main():
     if FAILS:
         for f_ in FAILS:
             print(f"  FAIL: {f_}")
+        if CLASS_FAILS:
+            print(f"GB-301: {args.group} does not hold what the machine class "
+                  f"{args.machine_class} declares: {len(CLASS_FAILS)} [class "
+                  f"{args.machine_class}] line(s) above")
         print(f"{len(FAILS)} check(s) failed — fix group_vars before the "
               "first play; each failure above cost a live retry on 2026-08-04.")
         return 1

@@ -1,0 +1,21 @@
+# delta's leaf-cert manifest, for the join-node fixture: the router and two
+# health publishers. Subjects and SANs only; no secrets.
+site_id: delta
+ca:
+  root_cert: ops/enrollment/ca/delta/root-cert.pem
+  root_key: ~/.goat/state/delta-ca/ca.key.age
+  age_identity: ~/.config/age/keys.txt
+  ca_id: dev-delta-ca-ecdsa-2026-11-14
+leaves:
+  - name: router
+    cn: goat-zenoh-router
+    eku: serverAuth,clientAuth
+    sans: [goat-zenoh-router, 127.0.0.1]
+  - name: fabric-health
+    cn: fabric-health-trial-peer
+    sans: [fabric-health-trial-peer]
+    uri_sans: ["urn:goat:delta:infra:fabric-health"]
+  - name: mesh-health
+    cn: goat-mesh-health-trial-peer
+    sans: [goat-mesh-health-trial-peer]
+    uri_sans: ["urn:goat:delta:infra:mesh-health"]
