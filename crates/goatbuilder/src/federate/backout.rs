@@ -370,8 +370,9 @@ enum Leaf {
     /// Another's bytes at the path (or this peering's leaf cannot be read to
     /// compare): left alone.
     Foreign,
-    /// This peering's, and another peering's working folder holds the same
-    /// leaf: kept, because that peering uses it too.
+    /// This peering's, and another peering uses it too: its working folder
+    /// holds the same leaf, or that peering is still set up from this machine
+    /// and our core serves one leaf to every peering. Kept, with why.
     Shared(String),
     /// This peering's: put back to what was there before its first
     /// admission, from this backup.
@@ -581,8 +582,21 @@ impl CoreLeaf {
                 .filter(|p| *p != self.work)
                 .find(|p| std::fs::read(p.join("pki").join(name)).is_ok_and(|b| b == mine));
             if let Some(p) = shared {
-                return Leaf::Shared(p.display().to_string());
+                return Leaf::Shared(format!(
+                    "the same leaf is in {}, another peering's",
+                    p.display()
+                ));
             }
+        }
+        // Our core router serves this one leaf to every peering. While another
+        // peering is still set up from here, its edge reaches our core through
+        // the leaf the core serves now; putting back what was there before
+        // this peering, or removing it, could leave that peering without one.
+        if let Some(p) = self.other_peering() {
+            return Leaf::Shared(format!(
+                "our core serves one leaf to every peering, and {} holds another peering's agreement: kept so that peering keeps its leaf",
+                p.display()
+            ));
         }
         // What was there before the peering: what the earliest admission that
         // touched this path found there. A later run's backup is this
@@ -603,6 +617,28 @@ impl CoreLeaf {
             )),
             Err(e) => Leaf::Unknown(e),
         }
+    }
+
+    /// Another peering's working folder beside this one (the default
+    /// `/var/lib/goat-federation/<partner>` layout) that holds its agreement:
+    /// that peering is set up from this machine and may still reach our core.
+    fn other_peering(&self) -> Option<PathBuf> {
+        let parent = self.work.parent()?;
+        let mut found: Vec<PathBuf> = std::fs::read_dir(parent)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| *p != self.work)
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|f| f.to_str())
+                    .is_some_and(is_sovereign_id)
+            })
+            .filter(|p| p.join("agreement.json").is_file())
+            .collect();
+        found.sort();
+        found.into_iter().next()
     }
 
     /// Each path's plan, with the certificate and key taken as one unit: if
@@ -668,11 +704,7 @@ impl CoreLeaf {
                     "kept",
                     format!("does not hold {}", ours.display()),
                 ),
-                Leaf::Shared(p) => row(
-                    "present",
-                    "kept",
-                    format!("the same leaf is in {p}, another peering's"),
-                ),
+                Leaf::Shared(why) => row("present", "kept", why),
                 Leaf::Restore(..) => row(
                     "present",
                     "remove",
@@ -686,7 +718,7 @@ impl CoreLeaf {
                 Leaf::Unknown(why) => row(
                     "unknown",
                     "kept",
-                    format!("{why}; nothing is changed: decide by hand"),
+                    format!("{why}; nothing is changed: decide by hand whether to put back what was there before this peering or remove it, then run the back-out again"),
                 ),
             });
         }
@@ -1001,6 +1033,10 @@ pub struct Summary {
     pub absent: usize,
     pub kept: Vec<String>,
     pub refused: Vec<String>,
+    /// Our core router's leaf paths that hold this peering's leaf, where
+    /// nothing records what was there before (GB-293): the back-out stops,
+    /// and a person decides whether to put something back or remove it.
+    pub undecided: Vec<String>,
     /// The core candidate digest when the core will restart.
     pub core_candidate: Option<String>,
     /// The partner is still admitted by the deployment's configuration.
@@ -1014,6 +1050,11 @@ pub fn summarize(recs: &[HostRecord], partner: &str) -> Summary {
             match (row.state.as_str(), row.action.as_str()) {
                 ("not-ours" | "refused", _) => s
                     .refused
+                    .push(format!("{}: {} ({})", rec.host, row.resource, row.note)),
+                // Our core's leaf where nothing records what was there before:
+                // a stop of its own, which a person decides (GB-293).
+                ("unknown", _) if row.component == "core leaf" => s
+                    .undecided
                     .push(format!("{}: {} ({})", rec.host, row.resource, row.note)),
                 // A row a host could not read is not one that is absent: the
                 // resource may still be there (the core may still admit the
@@ -1065,6 +1106,7 @@ pub fn plan_view(t: &Target, recs: &[HostRecord], extra: &[(String, String)]) ->
             for r in rows {
                 let verb = match (r.state.as_str(), r.action.as_str()) {
                     ("not-ours" | "refused", _) => "REFUSED",
+                    ("unknown", _) => "unknown",
                     (_, "remove") => "remove",
                     (_, "restart") => "restart",
                     (_, "removed") => "removed",
@@ -1704,18 +1746,35 @@ pub fn backout_with(
         return Ok(r);
     }
 
-    if !s.refused.is_empty() {
+    if !s.refused.is_empty() || !s.undecided.is_empty() {
         if o.table {
             print!("{view}");
         }
-        checks.push(row(
-            "survey",
-            false,
-            format!("refused (GB-221): {}", s.refused.join("; ")),
-            Some(
-                "nothing was changed; fix what each line names, then run the back-out again".into(),
-            ),
-        ));
+        if !s.refused.is_empty() {
+            checks.push(row(
+                "survey",
+                false,
+                format!("refused (GB-221): {}", s.refused.join("; ")),
+                Some(
+                    "nothing was changed; fix what each line names, then run the back-out again"
+                        .into(),
+                ),
+            ));
+        }
+        if !s.undecided.is_empty() {
+            checks.push(row(
+                "core leaf",
+                false,
+                format!(
+                    "our core router's leaf holds this peering's, and nothing records what was there before it (GB-293): {}",
+                    s.undecided.join("; ")
+                ),
+                Some(format!(
+                    "nothing was changed; put back what each path held before this peering, or remove it when nothing did, then goatbuilder federate backout {} --dry-run",
+                    t.partner
+                )),
+            ));
+        }
         let mut r = Report::new("federate-backout", checks, EXIT_REFUSED);
         r.printed = o.table;
         r.view_rows = Some(view_rows);
@@ -2709,6 +2768,98 @@ mod tests {
         );
     }
 
+    /// Our core router's leaf, holding this peering's leaf with no admission
+    /// record of what was there before (placed by hand, say), stops the
+    /// back-out with its own code after the plan view: the plan shows the
+    /// leaf as undecided, never as absent, and the row says what to decide.
+    /// Nothing is removed.
+    #[test]
+    fn a_core_leaf_with_no_record_of_what_was_there_stops_with_gb_293() {
+        let d = tempfile::tempdir().unwrap();
+        let (repo, work) = stand_in(d.path());
+        std::fs::remove_file(
+            repo.join("ops/ansible/group_vars/zagros_hosts/zenoh-lazy-storage.yml"),
+        )
+        .unwrap();
+        let w = work.clone();
+        let ran = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = ran.clone();
+        let mut exec = move |_: &Path, cmd: &str| -> Result<bool> {
+            seen.borrow_mut().push(cmd.to_string());
+            let survey = Path::new(&w).join("backout/survey");
+            std::fs::create_dir_all(&survey).unwrap();
+            std::fs::write(
+                survey.join("core-x.json"),
+                r#"{"host":"core-x","peering":"hello-ally","rows":[
+                  {"component":"edge router","resource":"container goat-zenoh-edge-hello-ally","state":"present","action":"remove","note":""},
+                  {"component":"core leaf","resource":"/state/zagros-leaves/router-cert.pem","state":"unknown","action":"kept","note":"holds this peering's leaf, and no admission run in /w/admission recorded what was there before; nothing is changed: decide by hand"}]}"#,
+            )
+            .unwrap();
+            Ok(true)
+        };
+        let o = Options {
+            partner: "hello-ally",
+            env: None,
+            r#as: None,
+            edge_group: None,
+            work: Some(&work),
+            mock: None,
+            dry_run: false,
+            yes: true,
+            table: true,
+        };
+        let r = backout_with(&repo, &o, &mut exec).unwrap();
+        assert_eq!(r.exit, EXIT_REFUSED, "{:?}", r.checks);
+        let shown = after_the_view(&r);
+        assert!(shown.contains("GB-293"), "{shown}");
+        assert!(!shown.contains("GB-221"), "not another peering's: {shown}");
+        assert!(
+            shown.contains("/state/zagros-leaves/router-cert.pem"),
+            "the leaf it names: {shown}"
+        );
+        assert!(
+            shown.contains("put back") && shown.contains("remove"),
+            "what to decide: {shown}"
+        );
+        assert_eq!(
+            ran.borrow().len(),
+            1,
+            "only the survey ran: {:?}",
+            ran.borrow()
+        );
+    }
+
+    /// A row the survey could not decide reads as undecided in the plan a
+    /// person reads, never as absent.
+    #[test]
+    fn an_undecided_row_is_shown_as_unknown_in_the_plan() {
+        let t = Target {
+            partner: "hello-ally".into(),
+            work: "/w".into(),
+            edge_group: "hello-ally_edge".into(),
+            core_group: "hello-ally_core".into(),
+            core_files: Vec::new(),
+        };
+        let recs = vec![HostRecord {
+            host: "driver".into(),
+            peering: "hello-ally".into(),
+            rows: vec![Row {
+                component: "core leaf".into(),
+                resource: "/state/zagros-leaves/router-cert.pem".into(),
+                state: "unknown".into(),
+                action: "kept".into(),
+                note: "decide by hand".into(),
+            }],
+        }];
+        let view = plan_view(&t, &recs, &[]);
+        let line = view
+            .lines()
+            .find(|l| l.contains("router-cert.pem"))
+            .unwrap_or_else(|| panic!("{view}"));
+        assert!(line.trim_start().starts_with("unknown"), "{line}");
+        assert!(!line.contains("absent"), "{line}");
+    }
+
     #[test]
     fn the_back_out_reads_the_same_inventories_as_the_forward_path() {
         // A nothing-hand-written site: allocate rendered peering-<edge group>.ini
@@ -3632,9 +3783,11 @@ mod tests {
                 peering: "xab".into(),
                 rows: rows.into_values().collect(),
             }];
+            // A stop of its own (GB-293), not another peering's resource.
+            let s = summarize(&recs, "xab");
             assert!(
-                !summarize(&recs, "xab").refused.is_empty(),
-                "{why}: the back-out stops"
+                s.refused.is_empty() && s.undecided.len() == 2,
+                "{why}: the back-out stops: {s:?}"
             );
         };
         // No record at all: admission's placing was not recorded.
@@ -3909,6 +4062,115 @@ mod tests {
             std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
             b"A-LATER-KEY"
         );
+    }
+
+    /// Our core serves one leaf to every peering. While another peering is
+    /// still set up from this machine (its working folder beside ours holds
+    /// its agreement), the leaf it reaches our core through is never taken
+    /// back by this peering's back-out: not removed on an absent record, not
+    /// put back from a backup, and not a stop when nothing recorded what was
+    /// there. The back-out goes on and the plan says why the leaf is kept.
+    #[test]
+    fn a_leaf_another_peering_still_set_up_here_reaches_us_through_is_kept() {
+        let set_up_beside = |c: &RouteCase| {
+            let other = c.dir.path().join("peerings/xac");
+            std::fs::create_dir_all(&other).unwrap();
+            std::fs::write(other.join("agreement.json"), "{}").unwrap();
+        };
+        let kept_row = |c: &RouteCase| {
+            let var = |k: &str| c.vars.get(k).cloned();
+            let core = driver_core(&c.repo, "xab", "zagros", &c.work(), var)
+                .unwrap()
+                .unwrap();
+            let rec = driver_survey(&core, "xab", &c.dir.path().join("probe")).unwrap();
+            let rows: Vec<Row> = rec
+                .rows
+                .into_iter()
+                .filter(|r| r.component == "core leaf")
+                .collect();
+            assert_eq!(rows.len(), 2, "{rows:?}");
+            for r in &rows {
+                assert_eq!(
+                    (r.state.as_str(), r.action.as_str()),
+                    ("present", "kept"),
+                    "{r:?}"
+                );
+                assert!(
+                    r.note.contains("peerings/xac"),
+                    "names the other peering: {r:?}"
+                );
+            }
+        };
+        // Placed where nothing was (an absent record): kept, not removed.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        set_up_beside(&c);
+        kept_row(&c);
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"KEY-OF-XAB"
+        );
+        // Placed over an earlier leaf (a backup): kept, not put back.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, Some(b"EARLIER"));
+        set_up_beside(&c);
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        // Placed by hand, so no admission run recorded what was there (the
+        // shape of two peerings admitted by hand): kept, and not a stop.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        std::fs::remove_dir_all(c.work().join("admission")).unwrap();
+        set_up_beside(&c);
+        kept_row(&c);
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"KEY-OF-XAB"
+        );
+    }
+
+    /// The same leaf with nothing that records what was there, and no other
+    /// peering set up here: a stop of its own (GB-293), not GB-221, and the
+    /// summary keeps it apart from another peering's resources.
+    #[test]
+    fn an_undecided_core_leaf_is_its_own_stop() {
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        std::fs::remove_dir_all(c.work().join("admission")).unwrap();
+        let var = |k: &str| c.vars.get(k).cloned();
+        let core = driver_core(&c.repo, "xab", "zagros", &c.work(), var)
+            .unwrap()
+            .unwrap();
+        let rec = driver_survey(&core, "xab", &c.dir.path().join("probe")).unwrap();
+        let s = summarize(&[rec], "xab");
+        assert!(s.refused.is_empty(), "{s:?}");
+        assert_eq!(s.undecided.len(), 2, "{s:?}");
+        assert!(s.undecided[0].contains("router-cert.pem"), "{s:?}");
     }
 
     #[test]
