@@ -168,7 +168,8 @@ Nothing on a host is changed.
   systemd reports no offset, so a host read that way passes on its flag alone,
   and the detail says the offset was not reported. `goatbuilder join-node`
   phase 3 judges a joining node by this same rule and the same code
-  (`ops/scripts/join-node-clock-check.py` reads the node over ssh and calls
+  (`ops/scripts/join-node-clock-check.py` reads the node over ssh, through the
+  SSH configuration the run wrote for a phone reached over USB, and calls
   this module), with its own budget variable, `JOIN_NODE_CLOCK_BUDGET_MS`, and
   its own refusal, GB-297; a node it could not read is reported not verified
   and the run goes on. The PASS detail prints each

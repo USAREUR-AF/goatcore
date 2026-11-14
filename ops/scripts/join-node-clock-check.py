@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """join-node-clock-check.py: is a joining node's clock fit to join a goatnet?
 
-    join-node-clock-check.py <node> <user>@<address>
+    join-node-clock-check.py [-F <ssh-config>] <node> <user>@<address>
 
 goatbuilder join-node runs this in phase 3, before anything on the node
 changes (ADR 1232, docs/design/peer-fault-handling.md). A Zenoh router refuses
 a timestamp more than 500 ms ahead of its own clock, and nothing tells the
 machine's owner, so a node with a wrong clock is stopped before it connects.
+
+`-F` names the ssh configuration to connect with: join-node passes the one it
+wrote for a phone reached over USB (`--via usb`), as every other connection to
+that node before phase 12 does.
 
 It reads the node's own time service over one ssh session, read-only:
 `chronyc -c tracking`, and `timedatectl show -p NTPSynchronized -p TimeUSec`
@@ -108,8 +112,11 @@ def judge(live, node, reading, budget_ms):
 
 
 def main(argv, environ=os.environ, run=subprocess.run):
+    config = []
+    if len(argv) == 4 and argv[0] == "-F":
+        config, argv = ["-F", argv[1]], argv[2:]
     if len(argv) != 2:
-        print("usage: join-node-clock-check.py <node> <user>@<address>", file=sys.stderr)
+        print("usage: join-node-clock-check.py [-F <ssh-config>] <node> <user>@<address>", file=sys.stderr)
         return 2
     node, target = argv
     live = _live()
@@ -118,7 +125,7 @@ def main(argv, environ=os.environ, run=subprocess.run):
         print(f"!! {BUDGET_VAR}: {bad}")
         return 2
     try:
-        p = run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target,
+        p = run(["ssh", *config, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target,
                  remote_command(live.CLOCK_COMMANDS)], capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"!! clock: could not reach {node} over ssh ({target}): {exc}")

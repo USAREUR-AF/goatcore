@@ -381,6 +381,8 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // node is reached at its mesh address, as every other node.
     let base = usb_base(repo, site, node);
     let node_ssh = if usb { format!("ssh -F {} {user_w}@{node}", sh_quote(&format!("{base}.ssh"))) } else { format!("ssh {user_w}@{addr}") };
+    // The clock check (phase 3) connects as the other steps before phase 12 do.
+    let clock_to = if usb { format!("-F {} {} {user_w}@{node}", sh_quote(&format!("{base}.ssh")), sh_word(node)) } else { format!("{} {user_w}@{addr}", sh_word(node)) };
     let inv_before = if usb { format!("{inv} -i {}", sh_quote(&format!("{base}.ini"))) } else { inv.to_string() };
     let pass_var = o.pass_var.map(String::from).unwrap_or_else(|| format!("{upper}_NODE_PASS"));
     let gv = repo.join("ops/ansible/group_vars").join(&site_group).join("vars.yml");
@@ -438,7 +440,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         p(3, "GATE", "repo work first: group, inventory, pins, exclusions — the config preflight passes (the mesh-address placeholder is allowed until phase 12)", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} --before-enrolment")),
         // Before phase 4 changes anything on the node: its clock, read-only
         // (ADR 1232). GB-297 refuses an unsynchronized node or one over budget.
-        p(3, "GATE", "the node's clock, read-only, before anything on it changes: synchronized to an outside reference and within the offset budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router's 500 ms limit)", format!("python3 '{r}/ops/scripts/join-node-clock-check.py' {} {user_w}@{addr}", sh_word(node))),
+        p(3, "GATE", "the node's clock, read-only, before anything on it changes: synchronized to an outside reference and within the offset budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router's 500 ms limit)", format!("python3 '{r}/ops/scripts/join-node-clock-check.py' {clock_to}")),
         p(4, "T", "quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14)", format!("{node_ssh} 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'")),
         p(5, "A", "host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves", format!("cd '{r}/ops/ansible' && {pre} {inv_before} mgmt-host-baseline.yml -e target={group} -e site_id={site} -l {node}")),
         p(6, "A", "WireGuard kernel modules, first pass — its wt0 check fails before enrolment (wt0 absent); expected, phase 11 re-runs it. Any other failure stops the run", format!("cd '{r}/ops/ansible' && log=$(mktemp) && if {pre} {inv_before} wireguard-kmod.yml -e target={group} -l {node} 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif {WT0_ABSENT_ONLY} \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi")),
