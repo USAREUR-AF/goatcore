@@ -455,7 +455,10 @@ mod tests {
             !is_phase_query(&s(&["release", "1"])),
             "release has no catalog entries"
         );
-        assert!(is_phase_query(&s(&["deploy", "verify"])), "deploy's steps are named");
+        assert!(
+            is_phase_query(&s(&["deploy", "verify"])),
+            "deploy's steps are named"
+        );
         assert!(!is_phase_query(&s(&[])));
     }
 
