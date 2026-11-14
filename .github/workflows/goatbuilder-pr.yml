@@ -123,8 +123,37 @@ defaults:
     working-directory: crates
 
 jobs:
+  # A pull request that changes only Markdown cannot change what the compiler or
+  # clippy see, and a document reads the same on macOS. For such a pull request
+  # the host job runs the tests alone (many of them read the documents) and the
+  # macOS job is skipped. Any other file in the pull request runs everything.
+  scope:
+    name: scope (documents only?)
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
+    timeout-minutes: 3
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - id: scope
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # Fail towards the full run: an empty or unreadable list is not "documents only".
+          docs_only=false
+          if files="$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')" && [ -n "$files" ]; then
+            if ! printf '%s\n' "$files" | grep -qvE '\.md$'; then docs_only=true; fi
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "documents only: $docs_only"
+
   host:
     name: check + clippy + test
+    needs: scope
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -160,8 +189,10 @@ jobs:
           python3 ops/ci/check-goatbuilder-portable.py --self-test
           python3 ops/ci/check-goatbuilder-portable.py
       - name: cargo check
+        if: needs.scope.outputs.docs_only != 'true'
         run: cargo check -p goatbuilder --all-targets
       - name: cargo clippy (deny warnings)
+        if: needs.scope.outputs.docs_only != 'true'
         run: cargo clippy -p goatbuilder -p goat-federation -p goat-fun -p goat-selfupdate --all-targets -- -D warnings
       - name: Install the Python the pins and promote flows render with
         run: pip install --quiet pyyaml jsonschema
@@ -324,6 +355,8 @@ jobs:
   # shipped for Windows (goat-cli-pr.yml's windows job has no counterpart here).
   macos:
     name: macOS test (unit, golden, flows)
+    needs: scope
+    if: needs.scope.outputs.docs_only != 'true'
     runs-on: macos-15
     timeout-minutes: 25
     steps:
