@@ -1,6 +1,6 @@
 ---
 heading: For someone deploying
-title: "Changed: every site's end state declares every service, and a joining site's missing ones are named gaps"
+title: Changed: every site's end state declares every service, and a joining site's missing ones are named gaps
 ---
 
 `goatbuilder endstate` and `ops/goatbuilder/endstate/endstate.py` now declare
@@ -14,4 +14,4 @@ surfaces, I3 for mesh DNS. A `GAP` is counted and printed and does not by
 itself make the site red. Acceptance run with `--endstate` reports a row such a
 service owns as `SKIPPED` with the same text instead of N/A. `goatbuilder
 join-node` lists the gaps under "What <site> does not run yet", from the
-catalog, before the services the site turns off (ADR 1233).
+catalog, before the services the site turns off (ADR 1233, #671).
