@@ -459,6 +459,7 @@ an ADR edits no shared file: write the ADR, then run
 
 | # | Title | Status | Notes |
 |---|---|---|---|
+| 1236 | [A site's SPIRE server is made redundant by two independent servers, adopted only after a gated trial](1236-a-sites-spire-server-is-made-redundant-by-two-independent-servers-after-a-gated-trial.md) | **Proposed.** Nothing in a running goatnet changes on merge. The decision is the direction and the gates; the build follows a trial that passes them | Amends 1164 |
 | 1237 | [A site is rebuilt from nothing and a combed extract of its identities](1237-a-site-is-rebuilt-from-nothing-and-a-combed-extract-of-its-identities.md) | Proposed | — |
 
 <!-- END generated: adr-index -->
