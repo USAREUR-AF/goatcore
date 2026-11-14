@@ -13,4 +13,4 @@ now says so after its plan, too.
 
 A run record (`<state>/runs/<id>/run.json`) of a run that stopped without an
 error now keeps the rows that stopped it, under `stop`, and
-`goatbuilder show <run>` prints them.
+`goatbuilder show <run>` prints them (#668).
