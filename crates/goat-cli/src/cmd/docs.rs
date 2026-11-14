@@ -17,8 +17,25 @@ pub struct DocsArgs {
     pub markdown: bool,
 }
 
-pub fn run(args: DocsArgs) -> anyhow::Result<()> {
+/// The committed English snapshot of the reference the book shows, relative to
+/// the repository root. A test holds it to the live render.
+pub const BOOK_REFERENCE_PATH: &str = "docs/goat-cli-book/src/reference.md";
+
+/// The full command reference as Markdown, from the active-locale command tree:
+/// what `goat docs --markdown` prints.
+pub fn reference() -> String {
     use clap::CommandFactory;
+    let cmd = crate::i18n::localize_command(crate::Cli::command());
+    let mut out = String::new();
+    out.push_str("# goat — command reference\n\n");
+    out.push_str(
+        "_Generated from the `goat` command tree — always in sync with what the binary does._\n\n",
+    );
+    render(&cmd, "goat", &mut out, true);
+    out
+}
+
+pub fn run(args: DocsArgs) -> anyhow::Result<()> {
     if !args.markdown {
         println!("goat docs — browsable, searchable docs for the goat CLI.");
         println!();
@@ -34,13 +51,7 @@ pub fn run(args: DocsArgs) -> anyhow::Result<()> {
     // --markdown` emits the French reference — reusing the already-translated
     // help catalogs so the hosted docs site gets a per-language reference for
     // free (docs/design/goat-cli-hosted-docs.md "localized reference").
-    let cmd = crate::i18n::localize_command(crate::Cli::command());
-    let mut out = String::new();
-    out.push_str("# goat — command reference\n\n");
-    out.push_str(
-        "_Generated from the `goat` command tree — always in sync with what the binary does._\n\n",
-    );
-    render(&cmd, "goat", &mut out, true);
+    let out = reference();
     // `print!` panics on a write failure (it has no error-return path) —
     // the common failure here is `goat docs --markdown | head` closing the
     // pipe early (BrokenPipe), which is a normal, expected shell action, not
@@ -196,5 +207,20 @@ mod tests {
         // `--lang` is global — it must appear exactly once (on the root),
         // not repeated under every subcommand's Options table.
         assert_eq!(out.matches("`--lang <LANG>`").count(), 1, "global flag repeated");
+    }
+
+    // The book's committed reference must be byte-identical to the live render,
+    // so the page a reader browses in the repository is what `goat --help` says.
+    // Regenerate with `goat docs --markdown > <BOOK_REFERENCE_PATH>`.
+    #[test]
+    fn the_book_reference_is_in_sync_with_the_command_tree() {
+        // CARGO_MANIFEST_DIR is crates/goat-cli; the page is repo-root-relative.
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let path = repo.join(BOOK_REFERENCE_PATH);
+        let committed = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        assert!(
+            committed == reference(),
+            "{BOOK_REFERENCE_PATH} is stale: regenerate it with `goat docs --markdown > {BOOK_REFERENCE_PATH}`"
+        );
     }
 }
