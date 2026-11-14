@@ -102,19 +102,18 @@ def validate(cert, key, ca, cn, expected_sans, min_seconds, trust_options):
     openssl('x509', '-in', cert, '-noout', '-checkend', min_seconds)
 
 
-# A leaf's key is 0600 and its certificate 0640: owner read-write, group read,
-# nothing for others. Everything that uses a pair runs as the owner of the
-# working directory or as root (the controller's goatbuilder and Ansible, which
-# copy the files to the edge with their own modes, and the lab's docker exec),
-# and anything that can use the key can already read it, so the certificate
-# needs no wider mode than its owner and group.
-KEY_MODE, CERT_MODE = 0o600, 0o640
+# Every leaf file on the controller, key and certificate alike, is 0600, as
+# our-ca.pem is (OUR_CA_MODE). Everything that uses a pair runs as the owner of
+# the working directory or as root (the controller's goatbuilder and Ansible,
+# which copy the files to a host with that host's own modes, and the lab's
+# docker exec), so no file here needs a group or other bit.
+LEAF_MODE = 0o600
 
 
 def mint(folder, name, cn, san, ca, ca_key, days):
     key, cert = folder / (name + '-key.pem'), folder / (name + '.pem')
     openssl('ecparam', '-name', 'prime256v1', '-genkey', '-noout', '-out', key)
-    key.chmod(KEY_MODE)
+    key.chmod(LEAF_MODE)
     csr, ext = folder / (name + '.csr'), folder / (name + '.ext')
     openssl('req', '-new', '-key', key, '-out', csr, '-subj', '/CN=' + cn)
     ext.write_text('subjectAltName=' + san + '\nbasicConstraints=CA:FALSE\n'
@@ -126,7 +125,7 @@ def mint(folder, name, cn, san, ca, ca_key, days):
     openssl('x509', '-req', '-in', csr, '-CA', ca, '-CAkey', ca_key,
             '-passin', 'pass:', '-set_serial', serial, '-out', cert,
             '-days', days, '-sha256', '-extfile', ext)
-    cert.chmod(CERT_MODE)
+    cert.chmod(LEAF_MODE)
 
 
 STAGING_PREFIX = '.mint-'
@@ -228,7 +227,7 @@ def restore_previous(out, pending, leaves):
                 stage = out / ('.' + file + '.restore')
                 stage.unlink(missing_ok=True)
                 shutil.copy2(kept, stage)
-                os.chmod(stage, KEY_MODE if file.endswith('-key.pem') else CERT_MODE)
+                os.chmod(stage, LEAF_MODE)
                 os.replace(stage, target)
             elif target.is_file() and not target.is_symlink():
                 target.unlink()
@@ -370,7 +369,7 @@ def main():
                 for path in existing:
                     kept = previous / path.name
                     shutil.copy2(path, kept)
-                    os.chmod(kept, KEY_MODE)
+                    os.chmod(kept, LEAF_MODE)
                 with (stage / JOURNAL).open('x') as record:
                     json.dump({'leaves': [list(leaf) for leaf in pending]}, record)
                     record.flush()
