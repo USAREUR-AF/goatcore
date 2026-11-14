@@ -1329,6 +1329,41 @@ mod tests {
         assert_eq!(view.lines().filter(is_row).count(), 14, "one table row per phase:\n{view}");
     }
 
+    /// Phase 10 stays a person's step in the plan's rows and the catalog (the
+    /// script avenue has no admission command, and the parity gate compares
+    /// the rows), but goatbuilder runs it: `plan`, then `deploy --approve-plan
+    /// --approve-admission`. The page's phase-10 section and the catalog's
+    /// `runs` name that command path before the steps by hand.
+    #[test]
+    fn phase_10_names_the_command_path_before_the_hand_step() {
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        for from in [1, 6] {
+            let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from, to: 14, dry_run: true, table: false };
+            let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
+            // The rows both avenues print, unchanged.
+            let p10 = phases.iter().find(|p| p.n == 10).unwrap();
+            assert_eq!(p10.kind, "MANUAL");
+            assert!(p10.label.starts_with("review what apply rendered"), "{}", p10.label);
+            assert!(p10.cmd.starts_with("Review "), "{}", p10.cmd);
+            let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases, &[]);
+            let row10 = view.lines().find(|l| l.split_whitespace().next() == Some("10")).unwrap_or_default();
+            assert_eq!(row10.split_whitespace().nth(1), Some("manual"), "{view}");
+            let runs = view.find("At phase 10, goatbuilder runs this for you:").unwrap_or_else(|| panic!("from {from}: {view}"));
+            let plan_at = view[runs..].find("goatbuilder federate plan velmara").map(|i| i + runs);
+            let deploy_at = view[runs..].find("goatbuilder federate deploy velmara").map(|i| i + runs);
+            let hand = view[runs..].find("By hand instead").map(|i| i + runs);
+            assert!(plan_at.is_some() && deploy_at.is_some() && hand.is_some(), "from {from}: {view}");
+            assert!(plan_at < hand && deploy_at < hand, "from {from}: {view}");
+            assert!(!view.contains("The run stops at phase 10 for you"), "from {from}: {view}");
+        }
+        let e = goat_errors::phases::explain_phase("federate", "10").expect("phase 10's entry");
+        assert_eq!(e.kind, "MANUAL");
+        assert!(e.runs.starts_with("goatbuilder runs it for you: goatbuilder federate plan <peering>, then goatbuilder federate deploy <peering> --approve-plan"), "{}", e.runs);
+        assert!(e.runs.contains("--approve-admission <digest>") && e.runs.contains("--from 11"), "{}", e.runs);
+        assert!(e.by_hand.contains("acl-assemble.py"), "the hand splice stays the fallback: {}", e.by_hand);
+    }
+
     /// An agreement that chose a transport with no play: the page says refused,
     /// and names the two transports that have one.
     #[test]
