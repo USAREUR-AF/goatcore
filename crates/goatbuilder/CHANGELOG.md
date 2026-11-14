@@ -42,7 +42,7 @@ GB-188's catalog entry gains this cause (#742).
 
 ### For someone contributing
 
-#### "Added: join-node's peer-groups query is measured against NetBird's own schema"
+#### Added: join-node's peer-groups query is measured against NetBird's own schema
 
 `ops/netbird/tests/peer-groups-query.sh` starts the pinned NetBird management
 on a disposable Postgres, enrols two real clients with keys from
