@@ -30,6 +30,7 @@ INV = REPO / "ops/ansible/inventory/mgmt-hosts.ini"
 # a laptop cannot reach, and the acceptance rows the daily review prescribes
 # must be able to SSH the host without a hand --var. Addresses here win when present.
 MESH_INV = REPO / "ops/ansible/inventory/mgmt-hosts-mesh.ini"
+PINS = REPO / "ops/pins/fleet-pins.yaml"
 
 # group_vars leaf keys the gate's value set needs, and their default when absent.
 SCALAR_KEYS = {
@@ -131,7 +132,43 @@ def _spock_node_name(site_id, intra_pair):
     return site_id.replace("-", "_") + ("_a" if intra_pair else "")
 
 
-def generate(env, gv_dir=None, inv_path=None):
+def _goatnet_of(group, pins_path=None):
+    """The goatnet key in ops/pins/fleet-pins.yaml whose members list `group`,
+    or None. goatbuilder names an environment by that key, and a goatnet's
+    second site is a member of it, not a goatnet of its own."""
+    f = Path(pins_path) if pins_path else PINS
+    if not f.is_file():
+        return None
+    goatnet, in_goatnets, in_members = None, False, False
+    for line in f.read_text().splitlines():
+        if re.match(r"^goatnets:", line):
+            in_goatnets = True
+            continue
+        if in_goatnets and re.match(r"^\S", line):
+            break
+        if not in_goatnets:
+            continue
+        m = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if m:
+            goatnet, in_members = m.group(1), False
+            continue
+        if re.match(r"^    members:", line):
+            in_members = True
+            inline = re.search(r"\[(.*)\]", line)
+            if inline and group in [x.strip() for x in inline.group(1).split(",")]:
+                return goatnet
+            continue
+        if in_members:
+            m = re.match(r"^      - ([A-Za-z0-9_-]+)\s*(#.*)?$", line)
+            if m:
+                if m.group(1) == group:
+                    return goatnet
+            elif line.strip() and not line.strip().startswith("#"):
+                in_members = False
+    return None
+
+
+def generate(env, gv_dir=None, inv_path=None, pins_path=None):
     group = env.replace("-", "_") + "_hosts"
     gv_dir = Path(gv_dir) if gv_dir else GV / group
     inv_path = Path(inv_path) if inv_path else INV
@@ -144,14 +181,15 @@ def generate(env, gv_dir=None, inv_path=None):
     # The goat CLI legs of the assay. The context that holds a fabric identity
     # for this goatnet is named after it by convention; the probe runs it on
     # this machine unless `--var goat_via=user@host` names one that holds it.
-    # goatbuilder reads the deploy ledgers by the inventory group's stem.
+    # goatbuilder reads the deploy ledgers by environment: the goatnet that
+    # lists this site's group in the pin table, else the group's stem.
     values["goat_context"] = env
     values["goat_via"] = "localhost"
     # The candidate-intake rows mint, vouch and withdraw as a dedicated
     # non-person sponsor identity capped at browse, never as an operator
     # (ADR 1207). Its context carries this name wherever the rows run goat.
     values["goat_sponsor_context"] = "acceptance"
-    values["goatbuilder_env"] = group[: -len("_hosts")]
+    values["goatbuilder_env"] = _goatnet_of(group, pins_path) or group[: -len("_hosts")]
     for key, default in SCALAR_KEYS.items():
         v = _extract(text, key)
         if v is None:
@@ -912,6 +950,21 @@ def self_test():
         problems.append(f"joiner: acl_scope should be the founder's goatnet (got {vj.get('acl_scope')})")
     if vj.get("goatnet_founder") is not False:
         problems.append("joiner: goatnet_founder should read false (founder-only rows N/A)")
+
+    # goatbuilder's environment is the goatnet that lists the site's group as
+    # a member; a site no goatnet lists keeps its group's stem.
+    pins3 = d3 / "fleet-pins.yaml"
+    pins3.write_text("goatnets:\n  orig:\n    description: x\n    members:\n"
+                     "      - orig_hosts\n      - join_hosts   # second site\n"
+                     "    ca_id_var: goat_ca_id\n  other:\n    members: [other_hosts]\n"
+                     "components: {}\n")
+    vp = generate("join", gv_dir=d3 / "join_hosts", inv_path=inv3, pins_path=pins3)
+    if vp.get("goatbuilder_env") != "orig":
+        problems.append(f"joiner: goatbuilder_env should be its goatnet (got {vp.get('goatbuilder_env')})")
+    if _goatnet_of("other_hosts", pins3) != "other" or _goatnet_of("absent_hosts", pins3) is not None:
+        problems.append("goatnet lookup: inline members list or an unlisted group")
+    if vj.get("goatbuilder_env") != "join":
+        problems.append(f"unlisted site: goatbuilder_env should be the group stem (got {vj.get('goatbuilder_env')})")
 
     # A single-site founder emits NONE of the joiner values (rows stay N/A).
     vf = generate("orig", gv_dir=d3 / "orig_hosts", inv_path=inv3)
