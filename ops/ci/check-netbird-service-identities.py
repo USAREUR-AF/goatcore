@@ -18,8 +18,10 @@ WHAT IT REFUSES
   1. a registry entry that is malformed: missing fields, a token_env without
      {SITE}, a required_when role that does not exist, not exactly one
      bootstrap identity;
-  2. a registered consumer role that does not include
+  2. a registered consumer role that does not exist here or does not include
      ops/ansible/tasks/require-netbird-service-identity.yml for that identity;
+     and an external consumer (a service whose role lives in another
+     repository) that does have a role here, since then step 2 must see it;
   3. an unregistered consumer: a role whose templates render a NetBird token
      variable (a name segment NB or NETBIRD followed by _TOKEN, e.g.
      ENROLL_WATCH_NB_TOKEN, NOVA_NB_API_TOKEN) but that no identity lists;
@@ -67,6 +69,7 @@ def check(root):
     if len(boots) != 1:
         problems.append(f"{reg_path}: exactly one identity must be bootstrap: true (found {boots})")
     consumer_of = {}
+    external_of = {}
     for key, ident in idents.items():
         for f in REQUIRED_FIELDS:
             if f not in ident:
@@ -83,6 +86,11 @@ def check(root):
                 problems.append(f"{reg_path}: identity {key} required_when role {rw['role']} does not exist")
         for role in ident.get("consumers") or []:
             consumer_of.setdefault(role, []).append(key)
+        for role in ident.get("external_consumers") or []:
+            external_of.setdefault(role, []).append(key)
+            if (roles_dir / role).is_dir():
+                problems.append(f"{reg_path}: external consumer {role} of '{key}' has a role in this repository; "
+                                f"list it under consumers so its require task is checked")
 
     # 2 — every registered consumer includes the require task for its identity
     for role, keys in sorted(consumer_of.items()):
@@ -102,7 +110,7 @@ def check(root):
         names = set()
         for t in (rdir / "templates").rglob("*.j2"):
             names.update(n for n in ENV_LINE.findall(t.read_text(errors="replace")) if TOKEN_NAME.match(n))
-        if names and rdir.name not in consumer_of:
+        if names and rdir.name not in consumer_of and rdir.name not in external_of:
             problems.append(f"ops/ansible/roles/{rdir.name}: renders {', '.join(sorted(names))} but is not a "
                             f"consumer of any identity in ops/netbird/service-identities.yaml")
 
@@ -154,9 +162,12 @@ def self_test():
                 t.write_text((t.read_text() if t.exists() else "") +
                              f"- ansible.builtin.include_tasks: \"{{{{ role_path }}}}/../../tasks/{INCLUDE}\"\n"
                              f"  vars:\n    nsi_identity: {key}\n")
-        # ... except: netvis skips the include (2), an unregistered role renders a token (3),
-        # and zagros_dev_hosts reads zagros's name (4)
-        (roles / "netvis/tasks/main.yml").write_text("- debug: {msg: no gate}\n")
+        # ... except: onboard-runner skips the include (2), an external consumer has a role
+        # here (2), an unregistered role renders a token (3), and zagros_dev_hosts reads
+        # zagros's name (4)
+        (roles / "onboard-runner/tasks/main.yml").write_text("- debug: {msg: no gate}\n")
+        external = next(r for i in spec["identities"].values() for r in i.get("external_consumers") or [])
+        (roles / external / "tasks").mkdir(parents=True)
         (roles / "rogue/templates").mkdir(parents=True)
         (roles / "rogue/templates/env.j2").write_text("ROGUE_NB_TOKEN={{ x }}\nGITHUB_ONBOARD_TOKEN={{ y }}\n")
         g = root / "ops/ansible/group_vars/zagros_dev_hosts"
@@ -168,8 +179,9 @@ def self_test():
                                     + ("warrant_membership_token_env: \"ZAGROS_DEV_WARRANT_NB_API_TOKEN\"\n"
                                        if "warrant-membership" in spec["identities"] else ""))
         got = check(root)
-        want = ["roles/netvis/tasks: consumer of 'netbird-infra'", "roles/rogue: renders ROGUE_NB_TOKEN",
-                "ZAGROS_NB_API_TOKEN on site_id zagros-dev"]
+        want = ["roles/onboard-runner/tasks: consumer of 'netbird-infra'", "roles/rogue: renders ROGUE_NB_TOKEN",
+                "ZAGROS_NB_API_TOKEN on site_id zagros-dev",
+                f"external consumer {external} of 'netbird-infra' has a role in this repository"]
         missing = [w for w in want if not any(w in p for p in got)]
         extra = [p for p in got if not any(w in p for w in want)]
         if missing or extra:
@@ -179,7 +191,8 @@ def self_test():
             for e in extra:
                 print("  unexpected:", e)
             return 2
-    print("self-test ok: refused the ungated consumer, the unregistered role and the cross-goatnet name; "
+    print("self-test ok: refused the ungated consumer, the external consumer with a role here, the "
+          "unregistered role and the cross-goatnet name; "
           "passed GITHUB_ONBOARD_TOKEN, the correctly named portal variable and the "
           "longer-suffix warrant variable")
     return 0

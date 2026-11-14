@@ -24,6 +24,11 @@
 #                                               group_vars env name that
 #                                               disagrees with token_env
 #
+# `consumers` are roles in this repository. `external_consumers` are services
+# whose roles live in another repository (goatstuff); they are listed so the
+# identity's readers are all in one place, and the check refuses one that
+# turns out to have a role here.
+#
 # Placeholders: {goatnet} is the group's site_id (zagros-dev); {SITE} is the same
 # uppercased with '-' -> '_' (ZAGROS_DEV).
 #
@@ -67,11 +72,14 @@ identities:
     required_when: always
     onepassword: {item: "{goatnet}-netbird", field: api_token}
     consumers:
+      - onboard-runner
+      - mesh-health
+    # Deployed from goatstuff, which holds their roles; this repository has no
+    # role for them, so the check here cannot see their require-task include.
+    external_consumers:
       - netvis
       - microscope
       - peerview
-      - onboard-runner
-      - mesh-health
 
   portal-mint:
     purpose: >-

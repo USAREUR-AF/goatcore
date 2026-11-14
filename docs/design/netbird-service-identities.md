@@ -38,11 +38,13 @@ Each identity declares:
 | `token_env` | the operator variable, `{SITE}_...` (`GALAXY_PORTAL_NB_SVC_TOKEN`) |
 | `required_when` | `always`, or `{var, role}`: the goatnet's `group_vars` value, else that role's default |
 | `onepassword` | item and field in the team vault (`<goatnet>-portal-nb-svc` / `token`) |
-| `consumers` | roles that read the token |
+| `consumers` | roles in this repository that read the token; each includes the require task |
+| `external_consumers` | services that read the token but whose roles live in another repository (goatstuff); the check refuses one that has a role here |
 | `bootstrap` | exactly one identity (`netbird-infra`) is minted by hand; it mints the rest |
 
-Five identities are declared: `netbird-infra`, `portal-mint`,
-`console-enrollwatch`, `provenance-guard`, `membership-reconcile`.
+Six identities are declared: `netbird-infra`, `portal-mint`,
+`console-enrollwatch`, `provenance-guard`, `membership-reconcile`,
+`warrant-membership`.
 
 **Adding a consumer or an identity is one registry edit plus one include in the
 role.** CI refuses the role until both exist.
