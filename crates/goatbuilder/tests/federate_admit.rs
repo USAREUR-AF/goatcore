@@ -598,6 +598,13 @@ fn without_a_terminal_the_stop_at_10_names_plan_and_deploy() {
         "{}",
         says(&out)
     );
+    // The command path first; admitting by hand and --from 11 only as the
+    // fallback, after it.
+    let notes = rows(&v, "note");
+    let command = notes.iter().position(|d| d.contains("goatbuilder federate deploy hello-ally") && d.contains("--approve-admission"));
+    let by_hand = notes.iter().position(|d| d.contains("OPERATOR STEP"));
+    assert!(command.is_some() && command < by_hand, "{}", says(&out));
+    assert!(notes[by_hand.unwrap()].contains("by hand instead") && notes[by_hand.unwrap()].contains("--from 11"), "{}", says(&out));
 }
 
 /// Not every peering declares `hosts:`: `goatbuilder federate allocate`
