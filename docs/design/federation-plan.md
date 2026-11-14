@@ -95,7 +95,21 @@ machine, the resource and each peering's value. The check is SKIP when this
 peering has no inventory host, when one of its own values does not resolve
 (unset or templated), or when another peering on a machine we share has a value
 that does not resolve or (once our agreement exists) no agreement to compare
-subnets with. Otherwise PASS. Only the conflicts this peering is part of go into
+subnets with. Otherwise PASS. A SKIP's detail says which of these it is and what
+clears it. For no host, it names the two groups and the two ways to declare their
+hosts: `goatbuilder federate allocate <partner>`, which renders
+`inventory/peering-<edge group>.ini`, or the groups in `peering-edges.ini`. For a
+value that does not resolve, it names each value, the key and where it was read,
+and says to set it in that group's vars or run `allocate` for that peering. For a
+missing agreement, it names the two paths looked at. Deploy does not run this
+check again, so a SKIP in the saved plan stops deploy (GB-188). The plan view, the
+refusal and the run record carry the detail, because making a new plan alone
+records the same SKIP (built: `hostalloc.rs` `readiness`, `plan.rs` `unready_at`,
+`deploy.rs` `summary`; tests `a_skip_says_which_case_and_the_route_to_pass`,
+`a_skip_row_carries_its_detail_into_the_refusal_and_the_view` and
+`a_host_allocation_skip_names_its_case_and_route_in_the_refusal`). An explicit,
+recorded acceptance of a SKIP the operator has judged is designed, not built
+(#742). Only the conflicts this peering is part of go into
 its plan, so a conflict between two other peerings does not change this plan's
 hash. Ports held by something that is not a declared peering (NetBird on UDP
 51820, any other service) are phase 1's live port check.

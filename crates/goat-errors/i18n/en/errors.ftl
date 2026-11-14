@@ -790,6 +790,7 @@ gb-188-title = the plan no longer holds
 gb-188-what = Immediately before anything changes, deploy runs the planner's live recheck: every live prerequisite is checked again and every input section is compared with a plan built now. Something did not hold (a section changed, a check was not PASS or NOT APPLICABLE or was not answered, or the plan was not READY), so the approved plan no longer describes the change, and a saved plan is not proof the environment stayed the same. Nothing changed.
 gb-188-cause-1 = the agreement was composed again (a new package from either side)
 gb-188-cause-2 = apply rendered the files again, or one was edited by hand
+gb-188-cause-3 = the plan recorded a SKIP of a check deploy does not run again (host-allocation): the inventory names no host for this peering, or a value of another peering on a machine this peering shares does not resolve. The message says which, and what clears it
 gb-189-title = a stage of `goatbuilder federate` was asked for the wrong way
 gb-189-what = The stages `status`, `deploy` and `test` take the partner after them and run their own phases; `--plan` and `--approve-plan` belong to `deploy`, whose start is phase 10 or, once the admission is done by hand, 11. Nothing ran.
 gb-189-cause-1 = the partner was left out, or given after a peering name instead of a stage word

@@ -607,6 +607,50 @@ fn without_a_terminal_the_stop_at_10_names_plan_and_deploy() {
     assert!(notes[by_hand.unwrap()].contains("by hand instead") && notes[by_hand.unwrap()].contains("--from 11"), "{}", says(&out));
 }
 
+/// A plan whose host-allocation row is SKIP cannot be deployed, and the
+/// refusal (GB-188) and the run record say which SKIP and how to clear it
+/// (#742): here the inventory names no host for this peering.
+#[test]
+fn a_host_allocation_skip_names_its_case_and_route_in_the_refusal() {
+    let w = world();
+    ready(&w, true);
+    // The inventory now names only another peering's hosts.
+    std::fs::write(
+        w.repo.join("ops/ansible/inventory/peering-edges.ini"),
+        "[velmara_edge]\nedge-9 ansible_host=192.0.2.90\n\n[velmara_core]\ncore-9 ansible_host=192.0.2.91\n",
+    )
+    .unwrap();
+    let (out, _) = w.run(&["plan", "hello-ally"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(w.work.join("plan.json")).unwrap()).unwrap();
+    assert_eq!(saved["verdict"], "READY, 1 check(s) not verified", "{saved}");
+    let plan = saved["hash"].as_str().unwrap().to_string();
+    let (out, _) = w.run(&["deploy", "hello-ally", "--approve-plan", &plan]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    for want in [
+        "GB-188",
+        "host-allocation was SKIP when the plan was made: the peering inventory names no host",
+        "goatbuilder federate allocate hello-ally",
+        "inventory/peering-hello-ally_edge.ini",
+    ] {
+        assert!(all.contains(want), "{want}: {all}");
+    }
+    let runs = w.root.path().join(".goat/state/runs");
+    let newest = std::fs::read_dir(&runs)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .max()
+        .unwrap();
+    let record = std::fs::read_to_string(newest.join("run.json")).unwrap();
+    assert!(
+        record.contains("goatbuilder federate allocate hello-ally"),
+        "the run record does not say how to clear it: {record}"
+    );
+}
+
 /// Not every peering declares `hosts:`: `goatbuilder federate allocate`
 /// renders this peering's groups into its own `peering-<edge group>.ini`
 /// beside the hand-written `peering-edges.ini`, which holds another peering.

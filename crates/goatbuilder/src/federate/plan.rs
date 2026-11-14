@@ -1500,7 +1500,8 @@ fn plan_max_age_hours() -> i64 {
 }
 
 /// Why a saved plan cannot be approved as it stands: a FAIL or BLOCKED in its
-/// readiness, a SKIP of a check the recheck does not rerun, or its age.
+/// readiness, a SKIP of a check the recheck does not rerun, or its age. Each
+/// row's reason carries the row's detail, which says what clears it.
 fn unready(saved: &Plan) -> Vec<String> {
     unready_at(saved, chrono::Utc::now(), plan_max_age_hours())
 }
@@ -1512,7 +1513,13 @@ fn unready_at(saved: &Plan, now: chrono::DateTime<chrono::Utc>, max_hours: i64) 
         .filter(|r| {
             blocks(&r.outcome) || (r.outcome == "SKIP" && !LIVE_CHECKS.contains(&r.check.as_str()))
         })
-        .map(|r| format!("{} was {} when the plan was made", r.check, r.outcome))
+        .map(|r| {
+            if r.detail.is_empty() {
+                format!("{} was {} when the plan was made", r.check, r.outcome)
+            } else {
+                format!("{} was {} when the plan was made: {}", r.check, r.outcome, r.detail)
+            }
+        })
         .collect();
     match chrono::DateTime::parse_from_rfc3339(&saved.created_at) {
         Ok(t) => {
@@ -2661,6 +2668,33 @@ mod tests {
         assert_eq!(
             unready_at(&p, made, 24),
             ["the plan has no creation time; make a new plan"]
+        );
+    }
+
+    /// A check the recheck does not rerun, recorded as SKIP, makes the plan
+    /// unready; the refusal and the plan view carry the row's detail, which
+    /// names the case and what to do (#742).
+    #[test]
+    fn a_skip_row_carries_its_detail_into_the_refusal_and_the_view() {
+        let r = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let mut p = planned(r.path(), &w.path().display().to_string());
+        let now = chrono::Utc::now();
+        p.created_at = now.to_rfc3339();
+        p.readiness = vec![Readiness {
+            check: "host-allocation".into(),
+            outcome: "SKIP".into(),
+            code: None,
+            detail: "not verified: the value named here".into(),
+        }];
+        assert_eq!(
+            unready_at(&p, now, 24),
+            ["host-allocation was SKIP when the plan was made: not verified: the value named here"]
+        );
+        let view = super::super::deploy::summary(&p, Path::new("/w/plan.json"));
+        assert!(
+            view.contains("readiness:  host-allocation SKIP: not verified: the value named here"),
+            "{view}"
         );
     }
 
