@@ -136,6 +136,22 @@ The phase catalog's tables are rendered the same way: one source, a
 generated region between marker lines, a check that the region equals the
 render, and `--write` to rewrite it (`ops/ci/check-phase-catalog.py`).
 
+**A pull request cut before a release.** Built
+(`ops/ci/check-changelog-base-current.py`, tests
+`ops/ci/test_check_changelog_base_current.py`, in `docs-guards`). A branch cut
+before a release carries its entry rendered in the old Unreleased section.
+Merged after the release, a three-way merge puts those lines inside the
+release and leaves the entry file behind, as two pull requests did after
+0.7.0. So a pull request that changes `CHANGELOG.md` or `changelog.d/`
+against its merge base is refused while the base's `CHANGELOG.md` has a
+`## X.Y.Z` section its own lacks: it is rebased, and `changelog.py write`
+renders its entry under the new Unreleased section. The check reads the merge
+GitHub made (its first parent is the base, its second the pull request's
+head) with the whole history checked out. Without a merge base it fails and
+says why. It cannot see a release that lands after its run; a merge made
+then is refused on `main` by `changelog.py check`, which names an entry
+already in a released section.
+
 ## The ADR index, one row per ADR file
 
 `docs/adr/INDEX.md` lists every ADR. A new ADR's row is rendered from the ADR

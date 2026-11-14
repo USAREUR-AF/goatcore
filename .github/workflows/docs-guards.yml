@@ -45,6 +45,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The whole history and the tags: the changelog checks below compare with a
+          # merge base and with each goatbuilder release (ops/release/changelog.py).
+          fetch-depth: 0
       - uses: actions/setup-python@v5
 
       # A single GraphQL request compares newly claimed ADR/finding IDs across
@@ -95,6 +99,14 @@ jobs:
         run: |
           python3 ops/release/changelog.py --self-test
           python3 ops/release/changelog.py check
+
+      # A pull request cut before a goatbuilder release that touches its changelog would
+      # merge its rendered entry into that release; it is rebased first. HEAD is the merge
+      # GitHub made: its first parent is the base, its second the pull request's head.
+      - name: a pull request that touches goatbuilder's changelog is on a base holding every release
+        run: |
+          python3 ops/ci/test_check_changelog_base_current.py
+          python3 ops/ci/check-changelog-base-current.py --base HEAD^1 --head HEAD^2
 
       # Not here: the skill-audience guard (ADR 1174) runs where the
       # .claude/skills tree lives, and the roster-handle guard reads a roster
