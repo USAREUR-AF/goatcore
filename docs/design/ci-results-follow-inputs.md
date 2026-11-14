@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | **Designed.** First instance: the two-sovereign end-to-end job (`.github/workflows/federation-e2e.yml`), in work. No workflow follows all three rules yet |
-| Related | [ci-redundant-rebuild-guard.md](ci-redundant-rebuild-guard.md) (the same idea for image builds, by changed paths) · [deployment-e2e.md](deployment-e2e.md) · [goatbuilder.md](goatbuilder.md), contract clause C1 (a deploy applies a content-addressed ref) |
+| Related | [ci-redundant-rebuild-guard.md](ci-redundant-rebuild-guard.md) (the same idea for image builds, by changed paths) · [ci-expected-workflows.md](ci-expected-workflows.md) (a pull request runs the workflows a pull request into main runs) · [deployment-e2e.md](deployment-e2e.md) · [goatbuilder.md](goatbuilder.md), contract clause C1 (a deploy applies a content-addressed ref) |
 | Audience | whoever writes or changes a CI workflow, and whoever decides whether a check may be skipped |
 
 ## What this is
