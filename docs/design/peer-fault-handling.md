@@ -1,6 +1,6 @@
 # Peer fault handling
 
-**Status:** Partly built, not deployed on any goatnet. The reader, its deploy role and the `peer` domain's rendering in panoscope are built; attribution to an owner, notices, tracking and closing are designed. Decided in [ADR 1232](../adr/1232-faults-on-peers-we-do-not-own-follow-one-five-stage-path.md).
+**Status:** Partly built, not deployed on any goatnet. The reader, its deploy role, the `peer` domain in `goat health`, `goat top` and panoscope, the neighbor-observed row in the `time` domain and the federation preflight's clock check are built; attribution to an owner, notices, tracking and closing are designed. Decided in [ADR 1232](../adr/1232-faults-on-peers-we-do-not-own-follow-one-five-stage-path.md).
 **Related:** [`environment-health-surface.md`](environment-health-surface.md) ([ADR 1036](../adr/1036-environment-health-surface.md)) · [`universal-ntp-hygiene.md`](universal-ntp-hygiene.md) · [`zenoh-ntp-integration.md`](zenoh-ntp-integration.md) · [`anomaly-probation-lifecycle.md`](anomaly-probation-lifecycle.md) ([ADR 1068](../adr/1068-anomaly-probation-lifecycle.md)) · [`zenoh-brokerless-consequences.md`](zenoh-brokerless-consequences.md)
 
 ## What this is
@@ -15,7 +15,7 @@ the measurement reads clean.
 |---|---|---|
 | 1. Measure | A reader beside the router turns evidence the router already produces into a number per peer | Built for the clock fault: the reader is goatstuff `ops/zenoh-trial-peers/peer-health`, deployed by `ops/ansible/peer-health-deploy.yml` (role `peer-health`). Not deployed |
 | 2. Attribute | The peer's Zenoh ID is joined to a machine and an owner | The reader fills name and owner from a file it is given (built); nothing generates that file (not built) |
-| 3. Tell | Admins, the owner and the peer itself each see the verdict | Pager built; the reader publishes the per-peer verdict key and panoscope renders the `peer` domain (built); notices not built |
+| 3. Tell | Admins, the owner and the peer itself each see the verdict | Pager built; the reader publishes the per-peer verdict key, `goat health --domain peer`, `goat top` and panoscope render the domain, and `goat health` on a peer prints the router's verdict on that machine (built); notices not built |
 | 4. Track | One probation entry of kind `peer` per fault, with a deadline | Probation list built for the identity kind; the `peer` kind is reserved, not built |
 | 5. Close | The entry closes when the same measurement reads clean for a set period | The reader reports a peer as cleared after a clean period (built); closing a tracked entry is not built |
 
@@ -53,7 +53,7 @@ least under our control, so the build targets it and treats the other two as the
 | How the owner is told | Health surface and pager | Notice to the person; the machine can read its own verdict on the fabric | Organization-to-organization notice, and one released key the partner subscribes to. Health keys do not cross the boundary: only `release/<set>/` does |
 | Who fixes it | Us | That organization | The partner. Our only actions are re-stamping and reporting |
 | Whose clock is right | Majority among the goatnet's own machines ([ADR 1037](../adr/1037-fabric-internal-time-synchronization-first.md)) | Same | Two separately synchronized fabrics meet. Neither majority applies to the other, so each side is compared against UTC and the verdict says which side was grounded |
-| Check before connecting | Join preflight | Machine enrollment | Federation preflight (`ops/federation/standup/preflight.py`), which has no clock row today |
+| Check before connecting | Join preflight | Machine enrollment | Federation preflight (`ops/federation/standup/preflight.py`), check `clock` |
 
 ## What the router names when the fast clock is behind a partner
 
@@ -98,7 +98,10 @@ The router is the only vantage point we control for a machine we do not own.
   domain without a new surface ([`environment-health-surface.md`](environment-health-surface.md) §4.4).
 - **The clock reading goes in the `time` domain**, on `ops/time/health/<site>`, as a row marked observed
   by a neighbor. It is one more pairwise offset for the majority comparison in
-  [`universal-ntp-hygiene.md`](universal-ntp-hygiene.md) §5.2.
+  [`universal-ntp-hygiene.md`](universal-ntp-hygiene.md) §5.2. Built: the time roll-up (goatstuff
+  `ops/zenoh-trial-peers/time-health`) reads its site's `peer` reading and adds the row with
+  `observed_by_neighbor` set. The row is outside the site's color and host count, which grade the site's
+  own clocks.
 - **The reading is graded before anyone is blamed.** If the router's own host clock is not synchronized,
   or most peers show an offset in the same direction, the verdict is "our clock". If the reader cannot
   measure, it reports unmeasured and never green.
@@ -150,9 +153,12 @@ returns reopens the same entry with its history.
 
 ## Stopping the fault before it connects
 
-- **Join and federation preflight gain a clock row.** The joining machine's offset against the router it
-  will connect to must be inside the 500 ms limit, and the preflight prints the measured offset when it is
-  not. Not built.
+- **Federation preflight checks the clock.** Two federated fabrics are synchronized separately, so neither
+  side can measure the other before the tunnel exists. Check `clock` (GB-268) reads each edge and core
+  host's own time service and fails a host that is unsynchronized or more than the budget from UTC
+  (`FED_CLOCK_BUDGET_MS`, default 250 ms, half of the router's 500 ms limit). Built, not yet run against a
+  live peering ([`federation-preflight.md`](federation-preflight.md)).
+- **Join preflight gains the same check** for a machine joining a goatnet. Not built.
 - **A reader can see a replaced timestamp.** A sample the router re-stamped is marked as such when the
   per-sample time class of [`zenoh-ntp-integration.md`](zenoh-ntp-integration.md) §3 ships. Designed.
 
@@ -163,9 +169,10 @@ Each step is one revertible change.
 1. **Measure the federated case.** Measured; see "What the router names when the fast clock is behind a partner".
 2. **The reader with the clock detector**, beside a per-partner edge router and beside the core router.
    Result: the clock fault shows on `goat health` and panoscope with the machine or the peering named.
-3. **The per-peer verdict key** and the `goat health` line on the peer's side.
+   Built, not deployed.
+3. **The per-peer verdict key** and the `goat health` line on the peer's side. Built.
 4. **Probation entries of kind `peer`** with owner, deadline, automatic close, the pager on escalation,
    and the owner notice template.
 5. **The second detector: a source that connects and holds no session.** Building a second detector on
    the same frame is the test that the method is general.
-6. **The clock row in join and federation preflight.**
+6. **The clock check in join and federation preflight.** Built for federation; not built for join.

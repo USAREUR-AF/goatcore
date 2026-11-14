@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted — decided by the operator on 2026-11-13. Nothing in it is built |
+| Status | Accepted — decided by the operator on 2026-11-13. Stage 1 (the reader) and the renderers of stage 3 are built, not deployed; stages 2, 4 and 5 are not built |
 | Date | 2026-11-13 |
 | Repo scope | Multi (`goatcore`; each goatnet's configuration repository declares where the reader runs) |
 | Supersedes | — |
