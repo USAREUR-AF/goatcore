@@ -308,6 +308,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 | `--dry-run` | Print every phase and command; run nothing |  |
 | `--resume` | Skip the phases the run journal (<work>/state.json) shows passed, whose inputs and local outputs are unchanged now; checks and plays always run again. This is the default; the flag is kept so scripts that pass it keep working |  |
 | `--no-resume` | Run every phase in range, even ones the run journal shows passed with unchanged inputs (the behavior before resuming was the default) |  |
+| `--bilateral <BILATERAL>` | `federate test` only: run phase 14 on a session both sides derive from the agreement, each side's result signed and the partner's verified under the key bound at phase 5 (default attempt 1). Both sides start phase 14 within FED_SESSION_WAIT of each other, normally on the same call. Without it, phase 14 is unchanged |  |
 
 **Subcommands**
 

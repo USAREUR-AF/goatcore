@@ -12,10 +12,6 @@
 //! A refusal prints `GB-272: …` or `GB-273: …` on stderr and exits 2, which is
 //! how acceptance.sh tells a stale result (keep waiting) from a bad one.
 
-// No command reaches this module until its two commands are wired; the
-// allowance goes with that wiring.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 
 use goat_federation::acceptance_sig::{Expect, Fields, Refusal, NOT_VERIFIED};
@@ -73,17 +69,31 @@ fn refuse(detail: impl Into<String>) -> Refusal {
     }
 }
 
+/// Our signing key unset, unreadable or not a seed: GB-142, as phase 3 refuses it.
+fn no_key(detail: impl std::fmt::Display) -> Refusal {
+    Refusal {
+        code: "GB-142",
+        detail: format!("{detail} (GB-142)"),
+    }
+}
+
 /// Our Ed25519 seed, 64 hex characters or 32 bytes base64, as FED_SIGNING_KEY
 /// holds it for the package (confirm.rs reads it the same way).
 fn read_seed(path: Option<&Path>) -> Result<[u8; 32], Refusal> {
     use base64::Engine as _;
     let Some(path) = path else {
-        return Err(refuse(
-            "no signing key: set FED_SIGNING_KEY, or secrets.federation.signing_key, to our Ed25519 seed",
+        return Err(no_key(
+            "our signing key is not set: set FED_SIGNING_KEY, or secrets.federation.signing_key, to the file holding our Ed25519 seed",
         ));
     };
-    let text =
-        std::fs::read_to_string(path).map_err(|e| refuse(format!("{}: {e}", path.display())))?;
+    let shown = path.display().to_string();
+    if shown.contains("://") {
+        return Err(no_key(format!(
+            "our signing key `{shown}` is an unresolved secret reference: run under ops/scripts/with-secrets, which resolves it"
+        )));
+    }
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| no_key(format!("our signing key {shown} cannot be read: {e}")))?;
     let t = text.trim();
     let bytes: Option<Vec<u8>> = if t.len() == 64 && t.bytes().all(|c| c.is_ascii_hexdigit()) {
         (0..32)
@@ -95,10 +105,9 @@ fn read_seed(path: Option<&Path>) -> Result<[u8; 32], Refusal> {
     bytes
         .and_then(|b| <[u8; 32]>::try_from(b).ok())
         .ok_or_else(|| {
-            refuse(format!(
-                "{}: not an Ed25519 seed (64 hex characters or 32 bytes base64)",
-                path.display()
-            ))
+            no_key(format!(
+            "our signing key {shown} is not an Ed25519 seed (64 hex characters or 32 bytes base64)"
+        ))
         })
 }
 
