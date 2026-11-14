@@ -32,7 +32,9 @@ python3 ops/release/changelog.py write
 ```
 
 CI runs `python3 ops/release/changelog.py check`, which fails when an entry
-is malformed or when the Unreleased section differs from its render. The
+is malformed, when an entry is already in a released section, when a
+released section is not as released, or when the Unreleased section differs
+from its render. The
 version pull request of a release runs `changelog.py release <version>
 <date>`, which moves every entry here into the release's section and removes
 the files. The design is in

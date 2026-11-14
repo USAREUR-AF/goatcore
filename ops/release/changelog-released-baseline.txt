@@ -1,0 +1,13 @@
+# Released sections of crates/goatbuilder/CHANGELOG.md accepted as edited after their
+# release (ops/release/changelog.py check; docs/design/community-and-stable-line.md,
+# "The changelog, one file per entry"). One line per section: <version> sha256:<hash of
+# the section as it now is>. A release-notes change edits a released section and adds
+# or updates its line here in the same change; a line whose section is as released is
+# refused as stale, so the list only shrinks.
+#
+# 0.5.3: an entry on the reserved name `rotate` sits inside 0.5.3, put there by the
+# 0.6.0 and 0.6.1 release changes (#589, #610).
+0.5.3 sha256:9787321bd675bf3e95331e5d58ef929d2457dae4808dab0b5022103c992327f8
+# 0.6.0: the known issue of a federate run killed in phase 11, added after the release
+# by its notes change (#598).
+0.6.0 sha256:cf31ee31d6a695d8d8cba6f02f518e2ca296c0a5f536019ae087f7b137afc5c6
