@@ -408,3 +408,60 @@ pub fn digest_of(bytes: &[u8]) -> String {
     h.update(bytes);
     format!("sha256:{:x}", h.finalize())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::acceptance_sig::{sign_result, Fields};
+    use crate::package::{decode_signature, decode_verifying_key, parse_package};
+
+    fn seed(hex: &str) -> [u8; 32] {
+        let h = hex.trim();
+        let mut b = [0u8; 32];
+        for (i, out) in b.iter_mut().enumerate() {
+            *out = u8::from_str_radix(&h[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        b
+    }
+
+    /// The reverse of acceptance_sig's test 4: a result signature, made by the
+    /// key bound to xab, put on xab's package does not verify as the package's.
+    #[test]
+    fn a_result_signature_is_not_a_package_signature() {
+        let mut pkg = parse_package(include_bytes!(
+            "../../../ops/federation/vectors/compose-full/package-xab.canonical.json"
+        ))
+        .unwrap();
+        let mut keys = KeyRing::default();
+        keys.insert(
+            "xab",
+            decode_verifying_key(include_str!(
+                "../../../ops/federation/vectors/testkeys/xab.public.b64"
+            ))
+            .unwrap(),
+        );
+        assert!(verify_signature(&pkg, &keys).is_none(), "the vector package verifies as it is");
+
+        let f = Fields {
+            agreement_sha256: "0".repeat(64),
+            session_id: "ses-xaa-xab-1".into(),
+            attempt: 1,
+            by: "xab".into(),
+            for_: "xaa".into(),
+            echoes: "6f1c2a9e4b7d03e5a8c1f2b3d4e5f607".into(),
+        };
+        // Sign the package's own signing input as a result: the bytes that
+        // would most help a forger, and still a statement, not a package.
+        let doc = sign_result(
+            &seed(include_str!("../../../ops/federation/vectors/testkeys/xab.seed.hex")),
+            &f,
+            pkg.signing_input().as_bytes(),
+        )
+        .unwrap();
+        let v = crate::json::parse_document(doc.as_bytes()).unwrap();
+        let sig = v.get("signature").and_then(JVal::as_str).unwrap();
+        pkg.signature_bytes = decode_signature(sig).unwrap();
+        let f = verify_signature(&pkg, &keys).expect("a result signature must not verify a package");
+        assert_eq!(f.rule, "C_SIGNATURE");
+    }
+}

@@ -32,6 +32,7 @@
 //   verbs                             the six federation verbs over the modules
 //                                     above, shared by every front end.
 
+pub mod acceptance_sig;
 pub mod anchor;
 pub mod compose;
 pub mod derive;
