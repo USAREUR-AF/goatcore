@@ -3,8 +3,9 @@
 #
 # Feed for the goat-peer-health reader (ADR 1232). Runs on the host as
 # peer-health-feed.service. Three jobs, each a loop:
-#   1. follow the router container's log and append the timestamp-rejection
-#      lines to {{ peer_health_feed_dir }}/router.log
+#   1. follow the router container's log and append two kinds of line to
+#      {{ peer_health_feed_dir }}/router.log: a timestamp the router rejected,
+#      and a TLS handshake a client ended with a fatal alert
 #   2. append a heartbeat line, so the reader can tell "no rejections" from
 #      "the feed stopped"
 #   3. write the router's current session list to sessions.json and the
@@ -71,7 +72,8 @@ follow() {
   # The loop restarts the follow when the router container is recreated.
   while :; do
     docker logs --since 1m -f "$ROUTER" 2>&1 \
-      | grep --line-buffered -F 'uhlc: incoming timestamp' >> "$LOG"
+      | grep --line-buffered -F -e 'uhlc: incoming timestamp' \
+          -e 'zenoh_link_tls::unicast: received fatal alert' >> "$LOG"
     sleep 5
   done
 }
