@@ -961,7 +961,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 .find(|c| c.phase.as_deref() == Some(phase_id.as_str()) && c.log.is_some())
                 .and_then(|c| c.log);
             let output = log.as_deref().and_then(|l| std::fs::read_to_string(l).ok()).unwrap_or_default();
-            if let Some(f) = crate::explain_phase::failed_phase("federate", ph.n, &output, log.as_deref()) {
+            if let Some(f) = crate::explain_phase::failed_phase("federate", &phase_id, &output, log.as_deref()) {
                 checks.push(Check { name: "interpreted".into(), ok: false, detail: f.detail(), fix: Some(f.fix.clone()) });
             }
             if let Some(r) = run.as_mut() {

@@ -265,7 +265,9 @@ pub fn dispatch(input: &[String], report: bool, format: OutputFormat) -> Option<
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FailedPhase {
     pub verb: String,
-    pub phase: u32,
+    /// The phase's key in the phase catalog: a number (`12`) or a name
+    /// (`image-pull`), as the catalog writes it.
+    pub phase: goat_errors::phases::PhaseKey,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
     /// Other catalogued errors the output also names (a wrapper's words, an
@@ -286,15 +288,17 @@ pub struct FailedPhase {
 /// its end, where the error that stopped it is.
 pub const TAIL_BYTES: usize = 64 * 1024;
 
-/// Interpret the output of `verb`'s failed `phase`. `None` when the phase
-/// catalog has no such phase.
+/// Interpret the output of `verb`'s failed `phase`, the key the runner recorded
+/// it under: a phase number (`"12"`) or a step's name (`"image-pull"`,
+/// `"observability-leg-host"`). `None` when the phase catalog has no such phase.
 pub fn failed_phase(
     verb: &str,
-    phase: u32,
+    phase: &str,
     output: &str,
     log: Option<&str>,
 ) -> Option<FailedPhase> {
-    let p = goat_errors::phases::explain_phase(verb, &phase.to_string())?;
+    let p = goat_errors::phases::explain_phase(verb, phase)?;
+    let phase = p.phase.clone();
     // The end of the output, cut at a character boundary.
     let mut start = output.len().saturating_sub(TAIL_BYTES);
     while !output.is_char_boundary(start) {
@@ -564,7 +568,7 @@ mod tests {
         let out = "PLAY [edge] ****\nTASK [goat-zenoh-edge : deploy] ****\nfatal: [edge-1]: UNREACHABLE! => {\"msg\": \"Failed to connect to the host via ssh: goat@192.0.2.10: Permission denied (publickey).\"}\n";
         let f = failed_phase(
             "federate",
-            12,
+            "12",
             out,
             Some("/var/lib/goat/runs/r1/logs/012-1.log"),
         )
@@ -604,7 +608,7 @@ mod tests {
     #[test]
     fn the_peering_wg_interface_read_back_names_the_link_not_a_secret() {
         let out = include_str!("../tests/fixtures/failed-phase/peering-wg-interface-readback.log");
-        let f = failed_phase("federate", 11, out, None).unwrap();
+        let f = failed_phase("federate", "11", out, None).unwrap();
         assert_eq!(f.code.as_deref(), Some("GB-271"), "{f:?}");
         let e = goat_errors::explain("GB-271").unwrap();
         assert_eq!(f.cause, e.causes[0]);
@@ -620,7 +624,7 @@ mod tests {
     /// never a lexical guess.
     #[test]
     fn a_failed_phase_with_no_known_error_gets_the_phase_s_own_guidance() {
-        let f = failed_phase("federate", 12, "something odd happened\nexit 2\n", None).unwrap();
+        let f = failed_phase("federate", "12", "something odd happened\nexit 2\n", None).unwrap();
         let p = goat_errors::phases::explain_phase("federate", "12").unwrap();
         assert_eq!(f.code, None, "{f:?}");
         assert_eq!(f.cause, p.failed_because);
@@ -630,7 +634,37 @@ mod tests {
             "{}",
             f.detail()
         );
-        assert!(failed_phase("federate", 99, "", None).is_none());
+        assert!(failed_phase("federate", "99", "", None).is_none());
+    }
+
+    /// A step is found by the key the runner recorded it under, a number or a
+    /// name, and keeps the catalog's key: a phase number stays a number in
+    /// JSON and in the row's text, as it was when phases were only numbers.
+    #[test]
+    fn a_failed_step_is_found_by_its_recorded_key_number_or_name() {
+        let f = failed_phase("standup", "image-pull", "exit 2\n", None).unwrap();
+        assert_eq!(
+            f.phase,
+            goat_errors::phases::PhaseKey::Name("image-pull".into())
+        );
+        assert!(
+            f.detail()
+                .ends_with("(goatbuilder explain standup image-pull)"),
+            "{}",
+            f.detail()
+        );
+        let f = failed_phase("federate", "12", "exit 2\n", None).unwrap();
+        assert_eq!(f.phase, goat_errors::phases::PhaseKey::Number(12));
+        assert_eq!(
+            serde_json::to_value(&f).unwrap()["phase"],
+            serde_json::json!(12)
+        );
+        assert!(
+            f.detail().ends_with("(goatbuilder explain federate 12)"),
+            "{}",
+            f.detail()
+        );
+        assert!(failed_phase("standup", "no-such-step", "", None).is_none());
     }
 
     /// The code goatbuilder itself printed inside the phase is the answer, and
@@ -639,7 +673,7 @@ mod tests {
     fn a_code_in_the_phase_s_output_is_taken_and_only_the_tail_is_read() {
         let f = failed_phase(
             "federate",
-            8,
+            "8",
             "noise\ngoatbuilder: refused (GB-194)\n",
             None,
         )
@@ -647,7 +681,7 @@ mod tests {
         assert_eq!(f.code.as_deref(), Some("GB-194"), "{f:?}");
         let mut long = "Permission denied (publickey).\n".to_string();
         long.push_str(&"x".repeat(TAIL_BYTES + 10));
-        let f = failed_phase("federate", 12, &long, None).unwrap();
+        let f = failed_phase("federate", "12", &long, None).unwrap();
         assert_eq!(
             f.code, None,
             "an error before the tail is not the one that stopped the phase: {f:?}"
