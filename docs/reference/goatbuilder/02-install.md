@@ -106,6 +106,29 @@ First, in the version pull request:
 git tag -s goatbuilder/v<semver> <sha on main> && git push origin goatbuilder/v<semver>
 ```
 
+The tag goes on the version pull request's merge commit once `main`'s own CI run on that
+commit is complete and green.
+
+### While a release is being cut
+
+Three rules hold from the version branch's cut-off until the tag:
+
+1. **Merges freeze.** From the cut-off until the tag is pushed, nothing merges to `main`
+   except the version pull request and the changes its text names as part of the release.
+   Anything else waits until after the tag, so the commit that is tagged is the commit that
+   was checked.
+2. **A cancelled run is run again once.** A CI run on `main` that was cancelled because a
+   later merge started a new one is not a failure. It is run again once, on the same
+   commit, and the rerun's result is the one that counts. Since #618 a run on `main` is no
+   longer cancelled by the next push; the rule covers runs from before that.
+3. **An engineering question does not hold the release.** When the release waits on a
+   maintainer's answer to an engineering question, and the question comes with a
+   recommended option, the release goes ahead with the recommendation if no answer has come
+   30 minutes after it was asked. The question, the recommendation and the time it was
+   taken are recorded in the version pull request. A question of policy, cost or people, or
+   about an action that cannot be undone, is not an engineering question: the release waits
+   for its answer.
+
 Serving a release inside a goatnet is the goat-get and goat-docs roles' bump:
 
 1. Set `goat_get_goatbuilder_release_tag` and `goat_docs_goatbuilder_release_tag`
