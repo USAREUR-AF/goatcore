@@ -12,11 +12,19 @@ and re-distributing every trust bundle by hand.
 
 ---
 
+## Which failure this covers
+
+| Failure | Answer | Status |
+|---|---|---|
+| The node holding the SPIRE server is lost | Promote a passive node with the staged CA key (this runbook). A person does it; workloads hold a one-hour SVID, so identity lapses if promotion takes longer | play and runbook written |
+| A site is cut off from the issuer | A SPIRE server and trust domain per site, recognised by federation ([ADR 1164](../adr/1164-per-site-spire-trust-domains.md)) | designed, not built |
+| The server is lost and nobody is there to promote | Not built. SPIRE's own high availability needs every server to see one consistent datastore; the `spire` database is one instance on one node, and a Spock-replicated copy would not qualify. [ADR 1236](../adr/1236-a-sites-spire-server-is-made-redundant-by-two-independent-servers-after-a-gated-trial.md) proposes two independent servers behind spire-ha-agent, gated on a trial | not built |
+
 ## What survives the loss, and what does not
 
 | SPIRE state | Where it lives | Survives? |
 |---|---|---|
-| Registration entries, attested nodes | `spire` database on `postgres-a` | **Yes** — same Postgres cluster as `netbird`, so pgBackRest's physical backup covers it. The stanza is merely *named* `<site>-netbird`. |
+| Registration entries, attested nodes | `spire` database on the lost node's `postgres-a` | **Not on the promoted node** — the `spire` database is deliberately in no Spock replication set ([`island-mode-multi-writer.md`](../design/island-mode-multi-writer.md)), so the passive node holds no copy. Promotion does not need one: the deploy in step 4 creates the database, re-creates the registration entries from the declared configuration and attests the agent with a fresh join token. The lost node's copy is also in its pgBackRest backup (the stanza is merely *named* `<site>-netbird`). |
 | **CA private key** | `/opt/spire/data/server/keys.json`, local disk | **No** — `KeyManager "disk"`, not in Postgres, not in the Spock set (`spock_mesh_database` is one database, `netbird`), not in any backup. |
 | CA public cert | `/opt/spire/data/server/spire-ca.pem` | Derived from the key |
 | Agent SVID | `/opt/spire/data/agent` | Regenerated via a fresh join token |

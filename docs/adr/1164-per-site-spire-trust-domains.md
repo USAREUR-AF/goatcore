@@ -100,6 +100,16 @@ Adding a second SPIRE server at the same site for availability is standard SPIRE
 a shared datastore. It needs no federation, no new trust domain, and it is not a partition
 answer. Keeping the two apart prevents an availability change being mistaken for an island-mode one.
 
+A shared datastore here means one database instance that every server reaches and sees
+identically. The `spire` database as deployed is one instance on one node, so two servers
+sharing it would still depend on that node. A copy replicated by Spock is not a shared
+datastore: replication is asynchronous with last-write-wins, which SPIRE does not expect
+(see Alternatives). The other shape, two independent servers with separate datastores in
+one trust domain behind
+[spire-ha-agent](https://spiffe.io/blog/2026-07-19-bottom-turtle-ha-architecture/), needs no
+shared datastore. [ADR 1236](1236-a-sites-spire-server-is-made-redundant-by-two-independent-servers-after-a-gated-trial.md)
+proposes it, gated on a trial; it is not built.
+
 ## Alternatives
 
 - **Keep one trust domain, replicate the `spire` datastore multi-master.** Rejected: SPIRE
