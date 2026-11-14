@@ -97,14 +97,18 @@ class Server(http.server.BaseHTTPRequestHandler):
         if doc.get("spec") == d.PACKAGE_SPEC and any(k in doc for k in d.OFFER_BLOCKS):
             return 422, b"a directory entry never carries an offer"
         key = self.headers["X-Saltlick-Key"]
-        if sid in Server.entries and Server.entries[sid][1] != key:
-            return 403, b"a different key is already bound"
         stmt = d.request_statement("PUT", sid, body, key)
-        if not d.verify(base64.b64decode(key), stmt, base64.b64decode(self.headers["X-Saltlick-Signature"])):
+        sig = base64.b64decode(self.headers["X-Saltlick-Signature"])
+        # saltlick's write rule: a different key is a rotation, authorised by a request
+        # signature under the key it replaces (internal/writeauth AuthorisePut).
+        rotated = sid in Server.entries and Server.entries[sid][1] != key
+        if rotated and not d.verify(base64.b64decode(Server.entries[sid][1]), stmt, sig):
+            return 403, b"a different key is already bound"
+        if not rotated and not d.verify(base64.b64decode(key), stmt, sig):
             return 403, b"bad request signature"
         first = sid not in Server.entries
         Server.entries[sid] = (body, key)
-        return 201, json.dumps({"first_use": first}).encode()
+        return 201, json.dumps({"first_use": first, "rotated": rotated}).encode()
 
     def do_GET(self):
         sid = self.path.rsplit("/", 1)[-1]
@@ -1355,3 +1359,138 @@ def test_the_directory_signer_never_signs_an_acceptance_result_statement():
     assert len(d.sign(seed, statement)) == 64
     with pytest.raises(ValueError, match="acceptance-result"):
         d.sign(seed, d.RESULT_DOMAIN + b"agreement sha256:00\n")
+
+
+# ---------------------------------------------------------------------------
+# A new signing key: the first write under it is authorised by the key it replaces
+# (federation-package-spec.md §5, saltlick's rotation rule; key-rotation design K8).
+# ---------------------------------------------------------------------------
+
+def new_seed(tmp_path, name="new"):
+    """A synthetic Ed25519 seed made for this test, as 64 hex characters in a file."""
+    p = tmp_path / f"{name}.seed.hex"
+    p.write_text(os.urandom(32).hex() + "\n")
+    return p
+
+
+def signed_by(tmp_path, seed_path, src=XAA):
+    """The conformance package for xaa, re-signed by the seed in seed_path."""
+    pkg = {k: v for k, v in json.loads(src.read_bytes()).items() if k != "signature"}
+    seed = d.load_seed(str(seed_path))
+    raw = d.canonical(dict(pkg, signature=d.b64(d.sign(seed, d.canonical(pkg)))))
+    p = tmp_path / "xaa.new.canonical.json"
+    p.write_bytes(raw)
+    return p
+
+
+def bind_old_key(server):
+    serve("xaa", XAA)
+    rc, out = run("--url", server, "--ours", XAA, "--package-url", f"{server}/packages/xaa.json", "--key", KEY["xaa"])
+    assert rc == 0 and Server.entries["xaa"][1] == PUB["xaa"], out
+
+
+@needs_ed25519
+def test_a_new_signing_key_is_handed_over_by_the_key_it_replaces(server, tmp_path):
+    bind_old_key(server)
+    seed = new_seed(tmp_path)
+    ours = signed_by(tmp_path, seed)
+    serve("xaa", ours)
+    new_pub = d.b64(d.public_key(d.load_seed(str(seed))))
+    rc, out = run("--url", server, "--ours", ours, "--package-url", f"{server}/packages/xaa.json",
+                  "--key", seed, "--previous-key", KEY["xaa"], "--work", tmp_path)
+    assert rc == 0, out
+    body, key = Server.entries["xaa"]
+    assert key == new_pub, "the directory now binds the new key"
+    entry = json.loads(body)
+    assert entry["package_sha256"] == d.sha256_of(ours.read_bytes())
+    unsigned = {k: v for k, v in entry.items() if k != "signature"}
+    assert d.verify(base64.b64decode(new_pub), d.canonical(unsigned), base64.b64decode(entry["signature"])), \
+        "the pointer itself is signed by the new key"
+    assert "rotated" in out
+    assert d.key_groups(PUB["xaa"]) in out and d.key_groups(new_pub) in out
+    for s_ in (d.load_seed(str(seed)), d.load_seed(str(KEY["xaa"]))):
+        assert s_.hex() not in out and d.b64(s_) not in out, "no seed is printed"
+    # Once the directory binds the new key, the previous one is not used again.
+    rc, out = run("--url", server, "--ours", ours, "--package-url", f"{server}/packages/xaa.json",
+                  "--key", seed, "--previous-key", KEY["xab"], "--work", tmp_path)
+    assert rc == 0 and Server.entries["xaa"][1] == new_pub, out
+    assert "GB-285" not in out and "refused" not in out, out
+
+
+@needs_ed25519
+@needs_openssl
+def test_a_hand_over_also_uploads_the_hosted_package_and_ca_under_the_new_key(server, tmp_path):
+    ca, fp = mint_ca(tmp_path, "xaa")
+    ours_old = package_with_ca(tmp_path, "xaa", fp)
+    rc, out = run("--url", server, "--ours", ours_old, "--key", KEY["xaa"], "--ca", tmp_path / "xaa.crt")
+    assert rc == 0 and Server.entries["xaa"][1] == PUB["xaa"], out
+    seed = new_seed(tmp_path)
+    pkg = {k: v for k, v in json.loads(ours_old.read_bytes()).items() if k != "signature"}
+    s_ = d.load_seed(str(seed))
+    ours = tmp_path / "xaa.new.canonical.json"
+    ours.write_bytes(d.canonical(dict(pkg, signature=d.b64(d.sign(s_, d.canonical(pkg))))))
+    rc, out = run("--url", server, "--ours", ours, "--key", seed, "--previous-key", KEY["xaa"],
+                  "--ca", tmp_path / "xaa.crt")
+    assert rc == 0, out
+    new_pub = d.b64(d.public_key(s_))
+    assert Server.entries["xaa"][1] == new_pub
+    assert Server.hosted["xaa/package"] == ours.read_bytes()
+    assert Server.signed["xaa/package"][0] == new_pub and Server.signed["xaa/ca"][0] == new_pub
+    assert "refused" not in out and "not uploaded" not in out, out
+
+
+@needs_ed25519
+def test_without_the_key_it_replaces_a_new_key_publishes_nothing_and_says_what_to_set(server, tmp_path, monkeypatch):
+    monkeypatch.delenv("FED_PREVIOUS_SIGNING_KEY", raising=False)
+    bind_old_key(server)
+    before = dict(Server.entries)
+    seed = new_seed(tmp_path)
+    ours = signed_by(tmp_path, seed)
+    serve("xaa", ours)
+    rc, out = run("--url", server, "--ours", ours, "--package-url", f"{server}/packages/xaa.json", "--key", seed)
+    assert rc == 0, out
+    assert Server.entries == before, "nothing was published"
+    assert "GB-285" in out and "FED_PREVIOUS_SIGNING_KEY" in out, out
+    assert d.key_groups(PUB["xaa"]) in out, "the key the directory binds is named"
+
+
+@needs_ed25519
+def test_a_previous_key_that_is_not_the_bound_one_publishes_nothing(server, tmp_path):
+    bind_old_key(server)
+    before = dict(Server.entries)
+    seed = new_seed(tmp_path)
+    ours = signed_by(tmp_path, seed)
+    serve("xaa", ours)
+    rc, out = run("--url", server, "--ours", ours, "--package-url", f"{server}/packages/xaa.json",
+                  "--key", seed, "--previous-key", KEY["xab"])
+    assert rc == 0, out
+    assert Server.entries == before
+    assert "GB-285" in out and d.key_groups(PUB["xab"]) in out, out
+
+
+@needs_ed25519
+def test_the_key_it_replaces_comes_from_the_environment(server, tmp_path, monkeypatch):
+    bind_old_key(server)
+    seed = new_seed(tmp_path)
+    ours = signed_by(tmp_path, seed)
+    serve("xaa", ours)
+    monkeypatch.setenv("FED_PREVIOUS_SIGNING_KEY", str(KEY["xaa"]))
+    rc, out = run("--url", server, "--ours", ours, "--package-url", f"{server}/packages/xaa.json", "--key", seed)
+    assert rc == 0, out
+    assert Server.entries["xaa"][1] == d.b64(d.public_key(d.load_seed(str(seed))))
+
+
+
+@needs_ed25519
+def test_a_hand_over_never_takes_another_peerings_pointer(server, tmp_path):
+    bind_old_key(server)
+    before = dict(Server.entries)
+    seed = new_seed(tmp_path)
+    ours = signed_by(tmp_path, seed)
+    Server.files["/packages/xaa-second.json"] = ours.read_bytes()
+    rc, out = run("--url", server, "--ours", ours, "--package-url", f"{server}/packages/xaa-second.json",
+                  "--key", seed, "--previous-key", KEY["xaa"], "--their-id", "xac", "--per-counterparty",
+                  "--work", tmp_path)
+    assert rc == 0, out
+    assert Server.entries == before, "the first peering's pointer and the old key are kept"
+    assert "GB-285" in out and "another peering's package" in out, out

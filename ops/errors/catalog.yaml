@@ -707,6 +707,23 @@ entries:
       - "^GB-275: "
     exit: 1
 
+  - code: GB-285
+    tool: goatbuilder
+    title: the directory binds our previous signing key, and the seed that hands it over is missing
+    what: "Phase 5's directory step publishes our pointer signed by the key that signed our package. The directory binds our sovereign_id to the first key that wrote it, and takes a new key only through the entry, when the request is signed by the key it replaces. The directory binds another key than ours: our signing key was rotated, and FED_PREVIOUS_SIGNING_KEY is not set, is not readable or holds the seed of a third key, or the pointer names another of our peerings' packages. Nothing was published; the directory still serves what it held. The step is advisory, so phase 5 goes on."
+    causes:
+      - "our signing key was rotated (FED_SIGNING_KEY names the new seed) and FED_PREVIOUS_SIGNING_KEY was not set"
+      - "FED_PREVIOUS_SIGNING_KEY names a seed other than the one the directory binds (the message names both keys)"
+      - "with one package per counterparty, the pointer names another peering's package, and the key is handed over only through the pointer"
+    fixes:
+      - "FED_PREVIOUS_SIGNING_KEY=<file of the seed that signed our last package> goatbuilder federate <partner> --from 5"
+      - "with several peerings, run phase 5 of the peering whose package the pointer names first; the others then publish under the new key"
+      - "if the previous seed is lost, the directory's operator clears the entry (saltlick clear), and the next write claims it again"
+    read: docs/design/federation-key-rotation.md
+    exit: 0
+    matches:
+      - "^GB-285: "
+
   - code: GB-261
     tool: goatbuilder
     title: the release's signature does not verify, so the update refuses

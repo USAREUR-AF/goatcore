@@ -93,7 +93,7 @@ took.
 | | |
 |---|---|
 | **Read** | `GET /v1/parties` and `GET /v1/parties/{sovereign_id}`, open to anyone. The entry is returned byte for byte as submitted |
-| **Write** | `PUT` / `DELETE` of an entry signed by the party, under trust-on-first-use: the first write claims the name, every later write must verify under the key bound by the first. A different key is refused (HTTP 403) |
+| **Write** | `PUT` / `DELETE` of an entry signed by the party, under trust-on-first-use: the first write claims the name, every later write must verify under the key bound by the first. A different key is refused (HTTP 403) unless the request is signed by the key it replaces: that is a rotation, and the directory then binds the new key. Phase 5's step signs that first write with the seed in `FED_PREVIOUS_SIGNING_KEY`, and without it publishes nothing and prints GB-285 ([federation-key-rotation.md](federation-key-rotation.md), K8) |
 | **Protected by** | Public TLS; a rate limit per source address, stricter for writes; a 64 KiB request body cap and server timeouts; HTTP 422 for an entry carrying `transport_offer`, `data_offer` or `cut`. There is no account and no sign-in, because nothing the directory serves is trusted |
 | **Never holds** | Offers, reachability details, release sets, accepted limits, contacts, private keys, accounts, or any statement that a party is who it claims |
 
