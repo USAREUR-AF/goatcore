@@ -12,27 +12,36 @@
 # row read back from the host.
 #
 # usage: ops/e2e/hermetic.sh [--work DIR] [--record DIR] [--goatbuilder BIN] [--no-hosts] [--keep]
+#                            [--host-distro ubuntu|debian]
 #   --no-hosts   no containers, no registry: the dry-run and refusal cases only
 #                (what a laptop without Docker can run; Linux + Docker for the rest)
 #   --keep       leave the work directory and containers for inspection
+#   --host-distro the management hosts' distribution: ubuntu (default, ops/e2e/host/Dockerfile)
+#                or debian (ops/e2e/host/Dockerfile.debian); the same cases run on either
 #
 # Exit 0 when every case passed or failed as expected (xfail); 1 otherwise.
 # The record: $RECORD/report.jsonl (ops/e2e/report.schema.json), one log per
 # case, ledgers.jsonl, and the stubs' call logs; ops/e2e/report.py renders it.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
-WORK=""; RECORD=""; GB=""; HOSTS=1; KEEP=0
+WORK=""; RECORD=""; GB=""; HOSTS=1; KEEP=0; DISTRO=ubuntu
 while [ $# -gt 0 ]; do
   case "$1" in
     --work) WORK="$2"; shift 2 ;;
     --record) RECORD="$2"; shift 2 ;;
     --goatbuilder) GB="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
     --no-hosts) HOSTS=0; shift ;;
+    --host-distro) DISTRO="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "hermetic: unknown argument $1" >&2; exit 2 ;;
   esac
 done
+case "$DISTRO" in
+  ubuntu) HOST_DOCKERFILE=Dockerfile ;;
+  debian) HOST_DOCKERFILE=Dockerfile.debian ;;
+  *) echo "hermetic: --host-distro is ubuntu or debian, not '$DISTRO'" >&2; exit 2 ;;
+esac
 [ -n "$WORK" ] || WORK="$(mktemp -d "${TMPDIR:-/tmp}/goat-e2e.XXXXXX")"
 mkdir -p "$WORK"; WORK="$(cd "$WORK" && pwd)"
 [ -n "$RECORD" ] || RECORD="$WORK/report"
@@ -139,7 +148,7 @@ if [ "$HOSTS" = 1 ]; then
   HOT_DIGEST="$(build_push sha-$HOT1 hotfix)"
   HOT2_DIGEST="$(build_push sha-$HOT2 hotfix2)"
   say "hosts: three containers that look like management hosts"
-  docker build -q -t e2e-host "$HERE/host" >/dev/null
+  docker build -q -f "$HERE/host/$HOST_DOCKERFILE" -t e2e-host "$HERE/host" >/dev/null
   for h in dev preprod prod; do
     docker run -d --name "e2e-$h-01" --hostname "e2e-$h-01" --network e2e-net --add-host ghcr.io:host-gateway \
       -v /var/run/docker.sock:/var/run/docker.sock -v "$SSH_KEY.pub:/pubkey:ro" e2e-host >/dev/null
@@ -170,6 +179,11 @@ trap cleanup EXIT
 ledger_row() { # $1 goatnet, $2 component -> the newest ledger row on that goatnet's host
   local ip; ip="$(awk -v g="[${1}_hosts]" '$0==g{f=1;next} /^\[/{f=0} f && /ansible_host=/{sub(/.*ansible_host=/,""); sub(/[[:space:]].*/,""); print; exit}' "$CLONE/ops/ansible/inventory/mgmt-hosts.ini")"
   ssh "goat@$ip" "sudo tail -n 1 /var/lib/goat/$2/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER"
+}
+host_os() { # $1 goatnet -> the ID in its host's /etc/os-release
+  local ip; ip="$(awk -v g="[${1}_hosts]" '$0==g{f=1;next} /^\[/{f=0} f && /ansible_host=/{sub(/.*ansible_host=/,""); sub(/[[:space:]].*/,""); print; exit}' "$CLONE/ops/ansible/inventory/mgmt-hosts.ini")"
+  # shellcheck disable=SC2016 # $ID is the host's, read there
+  ssh "goat@$ip" '. /etc/os-release && echo "$ID"'
 }
 ledger_rows() { # $1 goatnet, $2 component -> row count
   local ip; ip="$(awk -v g="[${1}_hosts]" '$0==g{f=1;next} /^\[/{f=0} f && /ansible_host=/{sub(/.*ansible_host=/,""); sub(/[[:space:]].*/,""); print; exit}' "$CLONE/ops/ansible/inventory/mgmt-hosts.ini")"
@@ -223,6 +237,11 @@ fi
 # =====================================================================================
 rec fastlane-dry-run --expect-in "new fleet ref" \
   -- "$SCR/fastlane.sh" e2e-canary --ref sha-$HOT1 --reason "hermetic" --ack "e2e harness" --dry-run
+
+say "cases: the hosts are the distribution asked for ($DISTRO)"
+# Every host's /etc/os-release names $DISTRO, so a pass below is a pass on it.
+rec hosts-run-the-requested-distribution --expect-in "e2e_prod $DISTRO" -- bash -c "$(declare -f host_os); for g in e2e_dev e2e_preprod e2e_prod; do
+    id=\$(host_os \$g); echo \"\$g \$id\"; [ \"\$id\" = '$DISTRO' ] || exit 1; done"
 
 say "cases: the push converger on real hosts, proved from the ledger"
 rec deploy-canary-dev --expect-in "converged on $CANARY_DIGEST" --expect-in "every host's ledger names the declared ref" \
