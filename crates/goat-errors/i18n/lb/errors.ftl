@@ -391,7 +391,6 @@ gb-062-cause-1 = d'Konditioun liest e Wäert, dee just bekannt ass, wann de Play
 gb-063-title = d'Host-Limit vun engem Standup-Schrëtt wielt keen Host aus
 gb-063-what = De Plang féiert dëse Play mat --limit <pattern> aus, an d'Pattern passt op keen Host vun der Zilgrupp am Inventaire, sou datt de Play op näischt leeft a Succès mellt.
 gb-063-cause-1 = d'Limit geet vun der Host-Benennung mgmt-<site>-01 aus an dëse Site nennt seng Hosten anescht
-gb-063-cause-2 = de Schrëtt ass nëmmen fir de Founder geduecht an dëse Site ass e Joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-042-title = d'Live-Rei kënnen net vun dëser Maschinn lafen — de Kandidat ass NET GETEST, net kaputt

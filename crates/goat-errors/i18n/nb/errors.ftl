@@ -415,7 +415,6 @@ gb-062-cause-1 = betingelsen leser en verdi som først er kjent når play-et kj�
 gb-063-title = vertsbegrensningen i et standup-steg velger ingen verter
 gb-063-what = Planen kjører dette play-et med --limit <pattern>, og mønsteret matcher ingen vert i målgruppen i inventaret, så play-et kjører på ingenting og melder suksess.
 gb-063-cause-1 = limit forutsetter vertsnavnene mgmt-<site>-01, og denne site-en navngir vertene sine annerledes
-gb-063-cause-2 = steget er kun ment for grunnleggeren, og denne site-en er en joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = de publiserte deklarasjonene er i feil rekkefølge eller endret

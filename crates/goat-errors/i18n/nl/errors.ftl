@@ -415,7 +415,6 @@ gb-062-cause-1 = de voorwaarde leest een waarde die pas bekend is wanneer de pla
 gb-063-title = de hostlimiet van een standup-stap selecteert geen enkele host
 gb-063-what = Het plan draait deze play met --limit <pattern>, en het patroon komt met geen enkele host van de doelgroep in de inventory overeen, dus de play draait op niets en meldt succes.
 gb-063-cause-1 = de limiet gaat uit van de hostnaamgeving mgmt-<site>-01 en deze site noemt haar hosts anders
-gb-063-cause-2 = de stap is alleen bedoeld voor de founder en deze site is een joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = de gepubliceerde declaraties staan in de verkeerde volgorde of zijn gewijzigd

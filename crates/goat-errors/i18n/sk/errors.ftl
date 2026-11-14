@@ -415,7 +415,6 @@ gb-062-cause-1 = podmienka číta hodnotu známu až pri behu playu
 gb-063-title = limit hostiteľov kroku standupu nevyberie žiadneho hostiteľa
 gb-063-what = Plán spúšťa tento play s --limit <pattern> a vzor nezodpovedá žiadnemu hostiteľovi cieľovej skupiny v inventári, takže play nebeží na ničom a ohlási úspech.
 gb-063-cause-1 = limit predpokladá pomenovanie hostiteľov mgmt-<site>-01, ale táto lokalita ich pomenúva inak
-gb-063-cause-2 = krok je určený len pre zakladateľa a táto lokalita je joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = publikované deklarácie sú v nesprávnom poradí alebo upravené

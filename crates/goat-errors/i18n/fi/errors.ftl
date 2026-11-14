@@ -415,7 +415,6 @@ gb-062-cause-1 = ehto lukee arvon, joka tiedetään vasta kun play ajetaan
 gb-063-title = pystytysaskeleen host limit ei valitse yhtään isäntää
 gb-063-what = Suunnitelma ajaa tämän playn valitsimella --limit <pattern>, eikä kuvio täsmää yhteenkään kohderyhmän isäntään inventaariossa, joten play ei aja missään ja raportoi onnistuneensa.
 gb-063-cause-1 = limit olettaa isäntien nimeämisen muodossa mgmt-<site>-01, ja tämä kohde nimeää isäntänsä toisin
-gb-063-cause-2 = askel on tarkoitettu vain perustajalle (founder), ja tämä kohde on liittyjä (joiner)
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = julkaistut julistukset ovat väärässä järjestyksessä tai muokattuja

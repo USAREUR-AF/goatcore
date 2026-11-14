@@ -413,7 +413,6 @@ gb-062-cause-1 = villkoret läser ett värde som bara är känt när playen kör
 gb-063-title = en standup-stegs värdbegränsning väljer ingen värd
 gb-063-what = Planen kör den här playen med --limit <pattern>, och mönstret matchar ingen värd i målgruppen i inventariet, så playen körs på ingenting och rapporterar lyckat resultat.
 gb-063-cause-1 = begränsningen utgår från värdnamnsschemat mgmt-<site>-01 och den här siten namnger sina värdar annorlunda
-gb-063-cause-2 = steget är endast avsett för grundaren och den här siten är en joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = de publicerade deklarationerna är i fel ordning eller ändrade

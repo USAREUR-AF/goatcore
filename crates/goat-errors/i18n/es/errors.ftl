@@ -415,7 +415,6 @@ gb-062-cause-1 = la condición lee un valor que solo se conoce cuando el play se
 gb-063-title = el límite de host de un paso del standup no selecciona ningún host
 gb-063-what = El plan ejecuta este play con --limit <pattern>, y el patrón no coincide con ningún host del grupo objetivo en el inventario, así que el play no corre en nada y reporta éxito.
 gb-063-cause-1 = el límite asume el nombre de host mgmt-<site>-01 y este sitio nombra sus hosts de otra forma
-gb-063-cause-2 = el paso es solo para el fundador y este sitio es un joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = las declaraciones publicadas están desordenadas o alteradas
