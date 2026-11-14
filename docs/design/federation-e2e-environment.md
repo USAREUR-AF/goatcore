@@ -40,6 +40,7 @@ Each sovereign is generated fresh for a run and shares nothing with another sove
 |---|---|
 | Certificate authority, signing key, operator profile | `gen_sovereign` in `lib/engine.sh`, new per run, P-256 and Ed25519 |
 | Its own repository | a clone of the ref under test, with `overlay.py` writing that sovereign's `goatbuilder.yaml`, inventory and group_vars |
+| Edge host firewall | each partner's edge group_vars switch the goat-host-firewall baseline on from the first commit (`edge_fw_declare` in `lib/hostfw.sh`, called by `gen_sovereign`), with the management sources the lab's sessions come from, including the play's own SSH session at 127.0.0.1, and one reasoned override for the probe sessions' REST ports. A tree without the role is left as it is. `units/nodesec.sh` turns it back to the role's default to measure that default's refusal (scenario `node-ports-declared`). Built |
 | Core host | a privileged container running systemd and its own dockerd: the core router (`<id>-zenoh-router`, label `org.goat.component=zenoh-core`), `spire-server`, and from phase 12 the republisher |
 | Edge host | a second privileged container: the edge router, the WireGuard interface, the driver |
 | Release producers | samples written under `release/<set>/` on the core, as a producer would write them |
@@ -206,6 +207,7 @@ The checks on the lab side are local observations. What the partner reports read
 | `ops/federation-e2e/env` | entry point |
 | `ops/federation-e2e/run.sh` | CI's two- and three-party run, on the same engine |
 | `ops/federation-e2e/lib/engine.sh` | hosts, sovereigns, phases, probes, snapshots |
+| `ops/federation-e2e/lib/hostfw.sh` | the goat-host-firewall baseline's values for a sovereign's edge and core |
 | `ops/federation-e2e/lib/unit.sh` | runs one unit in one lab |
 | `ops/federation-e2e/lib/verdict.py`, `lib/matrix.py`, `lib/watch.sh` | outcomes, the matrix page, the watcher |
 | `ops/federation-e2e/units/` | the units |

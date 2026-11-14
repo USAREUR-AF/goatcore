@@ -58,6 +58,9 @@ FE2E_PARTNER="${FE2E_PARTNER:-lab}"
 case "$FE2E_PARTNER" in lab|external) ;; *) echo "engine: FE2E_PARTNER must be lab or external, not '$FE2E_PARTNER'" >&2; exit 2 ;; esac
 case "$FE2E_CORE" in hand|role) ;; *) echo "engine: FE2E_CORE must be hand or role, not '$FE2E_CORE'" >&2; exit 2 ;; esac
 export SRC A B C D PARTIES HP NP NB LAB FE2E_CORE FE2E_DRIVER FE2E_PARTNER
+# The host firewall baseline's values (gen_sovereign, units/nodesec.sh).
+# shellcheck source=lib/hostfw.sh
+. "$HERE/lib/hostfw.sh"
 # The fleet image, by digest, and the SPIRE release the fleet pins: the `spire`
 # component's value of record in ops/pins/fleet-pins.yaml, which every checkout carries
 # (a public one declares no goatnet there, but keeps every component). Both pull
@@ -238,6 +241,8 @@ gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identi
     --core-addr "$(core_ip "$s")" --spire-listen "$(edge_ip "$s")" ${also[@]+"${also[@]}"} \
     $([ "$FE2E_DRIVER" = workspace ] && echo "--edge-addr $(edge_ip "$s")") $more
   if [ "$FE2E_CORE" = role ]; then core_role_overlay "$s" "$d/clone"; fi
+  # Each edge with the host firewall baseline on (lib/hostfw.sh).
+  edge_fw_declare "$s" "$d/clone"
   git -C "$d/clone" add -A
   git -C "$d/clone" commit -q -m "$s: this sovereign's declarations for the peering"
   git clone -q --bare "$d/clone" "$d/origin.git"
