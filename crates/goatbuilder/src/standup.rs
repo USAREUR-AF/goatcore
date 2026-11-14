@@ -2133,7 +2133,9 @@ mod tests {
     fn runs_names(runs: &str) -> Vec<String> {
         runs.split(", ")
             .filter_map(|part| part.split_whitespace().next())
-            .filter(|w| w.contains('/') || w.ends_with(".yml") || w.ends_with(".py") || w.ends_with(".sh"))
+            .filter(|w| {
+                w.contains('/') || w.ends_with(".yml") || w.ends_with(".py") || w.ends_with(".sh")
+            })
             .map(|w| w.rsplit('/').next().unwrap_or(w).to_string())
             .collect()
     }
@@ -2160,9 +2162,21 @@ mod tests {
     fn the_phase_catalog_describes_standups_plan() {
         let cat = goat_errors::phases::phases();
         let entries = cat.of("standup");
-        let mut planned: BTreeMap<String, (std::collections::BTreeSet<String>, Vec<String>)> = BTreeMap::new();
+        let mut planned: BTreeMap<String, (std::collections::BTreeSet<String>, Vec<String>)> =
+            BTreeMap::new();
         for (_, s, obs_only) in catalog_shapes() {
-            let o = Options { env: "dev", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only, dry_run: true, parallel: false, check: false };
+            let o = Options {
+                env: "dev",
+                site: "zagros",
+                profile: None,
+                from: 1,
+                to: 14,
+                skip_obs: false,
+                obs_only,
+                dry_run: true,
+                parallel: false,
+                check: false,
+            };
             for e in plan(&repo_root(), &s, &o, "RESUME") {
                 let key = catalog_key(&e).unwrap();
                 let slot = planned.entry(key).or_default();
@@ -2176,49 +2190,69 @@ mod tests {
                     Event::Skip { kind, .. } => {
                         slot.0.insert(kind.to_string());
                     }
-                    Event::LegStart { cmd, .. } | Event::PullStart { cmd, .. } => slot.1.push(cmd.clone()),
+                    Event::LegStart { cmd, .. } | Event::PullStart { cmd, .. } => {
+                        slot.1.push(cmd.clone())
+                    }
                     Event::LegJoin { .. } | Event::PullJoin { .. } => {}
                 }
             }
         }
-        let keys: std::collections::BTreeSet<String> = entries.iter().map(|e| e.phase.to_string()).collect();
+        let keys: std::collections::BTreeSet<String> =
+            entries.iter().map(|e| e.phase.to_string()).collect();
         let want: std::collections::BTreeSet<String> = planned.keys().cloned().collect();
-        assert_eq!(keys, want, "the catalog's standup entries are the steps the plan can hold");
+        assert_eq!(
+            keys, want,
+            "the catalog's standup entries are the steps the plan can hold"
+        );
         let source = include_str!("standup.rs");
         let mut wrong = Vec::new();
         for e in &entries {
             let key = e.phase.to_string();
             let (kinds, cmds) = &planned[&key];
             if e.phase.to_string().parse::<u32>().is_ok() {
-                let said: std::collections::BTreeSet<String> = e.kind.split(" + ").map(str::to_string).collect();
+                let said: std::collections::BTreeSet<String> =
+                    e.kind.split(" + ").map(str::to_string).collect();
                 if &said != kinds {
-                    wrong.push(format!("phase {key}: kind `{}`, the plan's steps are {kinds:?}", e.kind));
+                    wrong.push(format!(
+                        "phase {key}: kind `{}`, the plan's steps are {kinds:?}",
+                        e.kind
+                    ));
                 }
             }
             let names = runs_names(&e.runs);
             for c in cmds {
                 for n in command_runs(c) {
                     if !names.contains(&n) {
-                        wrong.push(format!("phase {key}: a planned step runs {n}, which its `runs` does not name"));
+                        wrong.push(format!(
+                            "phase {key}: a planned step runs {n}, which its `runs` does not name"
+                        ));
                     }
                 }
             }
             for n in &names {
                 if !cmds.iter().any(|c| c.contains(n.as_str())) && !source.contains(n.as_str()) {
-                    wrong.push(format!("phase {key}: `runs` names {n}, which no planned step runs"));
+                    wrong.push(format!(
+                        "phase {key}: `runs` names {n}, which no planned step runs"
+                    ));
                 }
             }
         }
-        assert!(wrong.is_empty(), "the catalog does not match standup's plan:\n  {}", wrong.join("\n  "));
+        assert!(
+            wrong.is_empty(),
+            "the catalog does not match standup's plan:\n  {}",
+            wrong.join("\n  ")
+        );
     }
 
     /// `explain standup <phase>` answers from the catalog, by number or id.
     #[test]
     fn explain_answers_for_a_standup_phase() {
-        let by_number = goat_errors::phases::explain_phase("standup", "12").expect("standup phase 12");
+        let by_number =
+            goat_errors::phases::explain_phase("standup", "12").expect("standup phase 12");
         let by_id = goat_errors::phases::explain_phase("standup", &by_number.id).unwrap();
         assert_eq!(by_number, by_id);
-        assert!(goat_errors::phases::render_text(by_number).contains("goatbuilder standup <env> --site <site> --from 12 --to 12 --dry-run"));
+        assert!(goat_errors::phases::render_text(by_number)
+            .contains("goatbuilder standup <env> --site <site> --from 12 --to 12 --dry-run"));
         assert!(goat_errors::phases::explain_phase("standup", "image-pull").is_some());
         assert!(goat_errors::phases::explain_phase("standup", "15").is_none());
     }
