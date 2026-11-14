@@ -456,9 +456,10 @@ mod tests {
         assert!(!is_phase_query(&s(&["GB-074"])));
         assert!(!is_phase_query(&s(&["federate", "8", "extra"])));
         assert!(
-            !is_phase_query(&s(&["deploy", "1"])),
-            "deploy has no catalog entries yet"
+            !is_phase_query(&s(&["release", "1"])),
+            "release has no catalog entries"
         );
+        assert!(is_phase_query(&s(&["deploy", "verify"])), "deploy's steps are named");
         assert!(!is_phase_query(&s(&[])));
     }
 
