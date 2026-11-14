@@ -78,6 +78,18 @@ checkout (GB-276, new); and a peering that is not declared (GB-149). The
 undeclared peering now exits 1, refused, as GB-149 says and as `federate
 allocate`'s same refusal already did; it exited 2 (gate row C5).
 
+#### Changed: what federate says about phase 10 names the command that runs it first
+
+Phase 10 admits the partner's edge on our core, and `goatbuilder federate
+deploy` runs it once you approve the plan and what our core admits. A dry run's
+plan page now says "At phase 10, goatbuilder runs this for you:" and names
+`goatbuilder federate plan`, `deploy` and `test` before the steps by hand. When a
+run stops at phase 10 without a terminal, it names `plan`, then `deploy
+--approve-plan <plan hash> --approve-admission <digest>`, then `test`, and gives
+admitting by hand, then `--from 11`, as the fallback, which still works.
+`goatbuilder explain federate 10` leads with the same commands. Phase 10 is
+still listed as a manual phase.
+
 #### Fixed: federate status resumes from the first phase it cannot show passed
 
 `goatbuilder federate status` named the next command from the phase the last

@@ -167,7 +167,7 @@ phases:
   what: splices the approved fragment into the core's access control, gives the core its peering certificate, restarts the core router and checks it came back
   why: The core has to admit the edge before phase 12's inward link can come up, and only this party can change this party's core; the change is the one the approved plan names.
   changes: 'On our core host: its access-control configuration (the approved fragment spliced in), its peering certificate, and a router restart. On the edge host: the partner CA, after its fingerprint is checked against the agreement.'
-  runs: goatbuilder federate deploy (after the approval of the plan's hash)
+  runs: 'goatbuilder runs it for you: goatbuilder federate plan <peering>, then goatbuilder federate deploy <peering> --approve-plan <plan hash> --approve-admission <digest> (at a terminal, deploy asks for both approvals); by hand instead, the steps under By hand, then --from 11'
   by_hand: review <work>/applied, check <work>/theirs-ca.pem against the agreement's fingerprint, splice <work>/applied/ops/federation/acl/<them>-fragment.json5 into the core's access control with roles/goat-zenoh/files/acl-assemble.py, give the core <work>/pki/core.pem and its key, and restart the core router
   read: docs/operations/sovereign-federation-runbook.md#deploy--carry-out-the-approved-plan
   failed_because: the router's dry run refused, or the core did not come back

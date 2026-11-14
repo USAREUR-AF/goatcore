@@ -437,6 +437,12 @@ fn purpose(n: u32) -> &'static str {
     }
 }
 
+/// Phase 10, admitting the edge on our core. It stays a person's step in the
+/// plan's rows (the script avenue has no admission command, and the parity gate
+/// compares the rows), but goatbuilder runs it: `plan`, then `deploy
+/// --approve-plan --approve-admission`. The page and the stop say that first.
+const ADMIT_PHASE: u32 = 10;
+
 /// How a dry run reads to a person, the way kubeadm prints its phases: a
 /// header, one aligned table of phases with this checkout's path and the home
 /// folder shortened, then each phase's command verbatim and unwrapped, so a
@@ -486,6 +492,10 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
         c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
     };
     let shown: Vec<&Phase> = phases.iter().filter(|p| p.n >= o.from && p.n <= o.to).collect();
+    // The first person's step on the page, other than phase 10, which has its
+    // own section below: goatbuilder runs it.
+    let admit = |ph: &Phase| ph.n == ADMIT_PHASE && ph.kind == "MANUAL";
+    let hand_step = shown.iter().copied().find(|p| p.kind == "MANUAL" && !admit(p));
     let color = std::io::IsTerminal::is_terminal(&std::io::stdout());
     let bold = |t: &str| if color { format!("\x1b[1m{t}\x1b[0m") } else { t.to_string() };
     let mut s = format!("{} federate {}\n", bold("Plan:"), o.with);
@@ -505,7 +515,7 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             s.push_str(&format!("\n{}  {}\n    {}\n", ph.n, step(ph), ph.cmd));
         }
     }
-    if let Some(ph) = shown.iter().find(|p| p.kind == "MANUAL") {
+    if let Some(ph) = hand_step {
         let found = |re: &str| regex::Regex::new(re).ok().and_then(|r| r.captures(&ph.cmd).map(|m| short(&m[1])));
         let (ours, theirs, keys) = (found(r"Send (\S+) (?:and|to)"), found(r"place (?:it|them) at:\s+(\S+)"), found(r"line, at:\s+(\S+)"));
         s.push_str(&format!("\n{}\n", bold(&format!("What a real run would leave to you, at phase {}:", ph.n))));
@@ -540,6 +550,23 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
                 }
             }
         }
+    }
+    if shown.iter().any(|p| admit(p)) {
+        s.push_str(&format!("\n{}\n", bold("At phase 10, goatbuilder runs this for you:")));
+        s.push_str(&format!(
+            "  goatbuilder federate plan {w}\n  goatbuilder federate deploy {w}\n  goatbuilder federate test {w}\n\n",
+            w = o.with
+        ));
+        s.push_str(&crate::tutor::fill(
+            "deploy asks you to approve the plan, then what our core admits, and runs phases 10 to 13. Without a terminal, pass what you approved: --approve-plan <plan hash> --approve-admission <digest>.",
+            "  ",
+            "  ",
+        ));
+        s.push_str(&crate::tutor::fill(
+            "By hand instead, the fallback: review what apply rendered, admit the edge on our core yourself (goatbuilder explain federate 10 lists the steps), then carry on with --from 11.",
+            "  ",
+            "  ",
+        ));
     }
     if shown.iter().any(|p| p.n == 1) {
         s.push_str(&format!("\n{}\n", bold("Phase 1 checks these before anything changes:")));
@@ -578,8 +605,9 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
     };
     let lines: Vec<String> = listed.iter().map(|i| short(&i.line())).collect();
     s.push_str(&crate::inputs::section(&lines, &bold));
-    let manual = shown.iter().find(|p| p.kind == "MANUAL").map(|p| p.n);
+    let manual = hand_step.map(|p| p.n);
     match manual {
+        None if shown.iter().any(|p| admit(p)) => s.push_str(&format!("\n{} remove --dry-run. At phase 10, at a terminal, the run hands over to\nplan and deploy, which ask you to approve the plan and what our core admits:\n\n{}\n", bold("To run it for real:"), bold(laid(again(o.from)).trim_end()))),
         Some(n) => s.push_str(&format!("\n{} remove --dry-run. The run stops at phase {n} for you. When you\nfinish those steps, carry on with:\n\n{}\n", bold("To run it for real:"), bold(laid(again(n + 1)).trim_end()))),
         None => s.push_str(&format!("\n{}\n\n{}\n", bold("To run it for real:"), bold(laid(again(o.from)).trim_end()))),
     }
@@ -915,7 +943,8 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             // approved plan. With a person at the terminal the run hands over
             // to plan, deploy (which asks to approve the plan, then what our
             // core admits) and test; without one, the stop names them.
-            if ph.n == 10 && s.plan.is_none() && s.only.is_none() {
+            let named_the_command = ph.n == ADMIT_PHASE && s.plan.is_none() && s.only.is_none();
+            if named_the_command {
                 if s.hand_off_at_10 {
                     checks.push(row("note", format!("phase 10 by the command: making the plan for {}, then deploy asks to approve it and what our core admits, and runs 10 to 13; then acceptance", o.with)));
                     if let Some(r) = run.as_mut() {
@@ -925,9 +954,13 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                     stopped = true;
                     break;
                 }
-                checks.push(row("note", format!("or by the command: goatbuilder federate plan {w}, then goatbuilder federate deploy {w} (it asks to approve the plan and what our core admits, at a terminal), then goatbuilder federate test {w}", w = o.with)));
+                checks.push(row("note", format!("goatbuilder runs phase 10 for you: goatbuilder federate plan {w}, then goatbuilder federate deploy {w} --approve-plan <plan hash> --approve-admission <digest> (at a terminal it asks for both), then goatbuilder federate test {w}", w = o.with)));
             }
-            checks.push(row("note", format!("^ OPERATOR STEP — do the above, then re-run with --from {}", ph.n + 1)));
+            if named_the_command {
+                checks.push(row("note", format!("^ OPERATOR STEP — or by hand instead, the fallback: do the above, then re-run with --from {}", ph.n + 1)));
+            } else {
+                checks.push(row("note", format!("^ OPERATOR STEP — do the above, then re-run with --from {}", ph.n + 1)));
+            }
             if let Some(again) = &s.again {
                 checks.push(row("note", format!("the command that carries on: {again} --from {}", ph.n + 1)));
             }
