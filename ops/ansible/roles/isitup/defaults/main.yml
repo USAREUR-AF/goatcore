@@ -94,7 +94,7 @@ isitup_envfile: /opt/mgmt-host/isitup.env
 # there alongside OAUTH2_PROXY_OIDC_HOST_ENTRY). Bumps require an
 # append to deploy-history.yml (CI checks via
 # .github/workflows/deploy-history-check.yml). Upstream nginx image.
-isitup_image: "nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+isitup_image: "nginx:1.30.6-alpine@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311"
 
 # Public FQDN for this isitup instance. Override per-site if the convention
 # changes; the default tracks the per-site mesh-internal naming pattern.
