@@ -1,10 +1,37 @@
 {
   "schema": "goatbuilder.error/v1",
   "error": "unknown environment \"nowhere\"; declared: [\"zagros\"]",
+  "code": "GB-241",
   "interpretation": {
     "schema": "goat-errors.interpretation/v1",
     "summary": "unknown environment \"nowhere\"; declared: [\"zagros\"]",
-    "hits": [],
-    "unrecognised": true
+    "hits": [
+      {
+        "code": "GB-241",
+        "layer": "code",
+        "evidence": "unknown environment \"nowhere\"; declared: [\"zagros\"]",
+        "at": 0,
+        "entry": {
+          "code": "GB-241",
+          "tool": "goatbuilder",
+          "title": "the environment named is not declared",
+          "what": "A verb was given an environment that goatbuilder.yaml (or goatlite.yaml) does not declare in environments:. Nothing runs against an environment nobody declared.",
+          "causes": [
+            "a misspelt environment name",
+            "the environment is declared in another checkout's goatbuilder.yaml"
+          ],
+          "fixes": [
+            "the names declared are listed in the message; pass one of them",
+            "add the environment to ops/goatbuilder/goatbuilder.yaml environments:"
+          ],
+          "read": "docs/design/goatbuilder.md",
+          "exit": 2,
+          "matches": [
+            "unknown environment \""
+          ]
+        }
+      }
+    ],
+    "unrecognised": false
   }
 }
