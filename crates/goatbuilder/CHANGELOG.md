@@ -101,6 +101,21 @@ from `postgres_max_connections`. The roles that schedule jobs with cron
 `isitup`, `operator-idp-postgres` and the observability play) now install
 `cron` first, so a minimal Debian host runs those jobs (#615).
 
+#### Fixed: a phase 11 link that did not come up is named as GB-271
+
+When phase 11 of `goatbuilder federate` fails because the peering's
+WireGuard interface does not hold the agreed peer and address, the failure's
+`interpreted` row now names GB-271 instead of X-ANSIBLE-003, which pointed
+at an empty secret and `deploy --dry-run`. The likely causes, most likely
+first: the link unit is still running as it was before phase 11 and was not
+restarted; the unit was restarted but its link script stopped partway; or
+something else changed the interface afterwards. The next step: restart
+`goat-peering-wg@<interface>.service` on the edge and check the interface
+again, read the unit's journal if it still does not match, then resume with
+`goatbuilder federate <peering> --from 11`. `goatbuilder explain GB-271`
+gives the same. Every other failed assertion still reads X-ANSIBLE-003
+(#646).
+
 #### Fixed: the command reference lists federate's own flags
 
 `goatbuilder docs --markdown` and `docs/reference/goatbuilder/command-reference.md`
@@ -177,6 +192,17 @@ v0.6.0's binaries. v0.6.0's configuration files are kept for gate row A2
 beside those of the earlier releases (#566, #617, #562, #563, #631, #634,
 #616).
 
+#### Added: contract clause C11, legibility, is written beside C1 to C10
+
+Clause C11 is now in the deploy contract, in `docs/design/goatbuilder.md`
+and the contract chapter (`docs/reference/goatbuilder/06-contract.md`):
+for every action the tool takes, its command, its inputs with their
+sources, and its reason can be read before, during and after the run. Both
+name its conformance test, `crates/goatbuilder/tests/legibility.rs`, and
+say what each of its four checks requires. C11 does not hold yet: the
+checks that fail today are listed in
+`crates/goatbuilder/tests/legibility-known-failing.txt` (#647).
+
 #### Fixed: the federation test environment's other clones own their objects
 
 The watcher's preview and reverts and the upgrade unit made `--shared`
@@ -229,6 +255,18 @@ A pull request adds its goatbuilder changelog entry as a file in
 entries into a release. The index row of an ADR above 1234 is
 rendered from the ADR's own header by `ops/release/adr_index.py`, so adding
 an ADR edits no shared file. `docs-guards` checks both (#623, #636).
+
+#### Fixed: standup passes the trunk and the mirror token to its phases as run state
+
+`goatbuilder standup` no longer writes `GOAT_FRESH_SOURCE_TRUNK` and the
+pub/sub-state mirror bot's token into its own process environment in the
+middle of a run. Both are run state, given to each phase's process as its
+own environment. The trunk goes to every phase, as before. The token goes
+only to the two phases that read it, the mint step and the mirror play, and
+is removed from every other phase's environment, even when the operator's
+own environment holds it: least privilege for child processes. A test
+allows a process-environment write only in `main`, before any thread
+starts (#642).
 
 #### Added: a test that backing out a role-admitted core gives its org fragment back
 
