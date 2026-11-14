@@ -22,6 +22,16 @@ the Ory deployed by the next step: it now runs the stack plays only, as
 reason, was refused because its founder federates with another site: it now
 passes, unless the founder's federation names it.
 
+#### Fixed: the command reference lists federate's own flags
+
+`goatbuilder docs --markdown` and `docs/reference/goatbuilder/command-reference.md`
+documented a global flag only on the root command. The flags `federate`
+declares for all its verbs (`--over-ssh`, `--side`, `--half-out`,
+`--edge-half`, `--edge-half-sha`, the host, group and router-container flags,
+and the goat context flags) appeared on no command. They are now documented
+once, on `goatbuilder federate`, so the compatibility check also holds them
+against the last release.
+
 #### Fixed: a release re-run on a later day opens no dev-pin PR
 
 `goatbuilder release` declares a candidate on the dev rung with a reason that
