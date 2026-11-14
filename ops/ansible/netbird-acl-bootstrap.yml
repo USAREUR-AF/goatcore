@@ -39,9 +39,13 @@
   # The API may serve a certificate from the goatnet's own CA (a LAN goatnet
   # does). When that CA's root is in the repository, verify against it; a
   # goatnet behind a public CA verifies as before. Never turn verification off.
+  # A goatnet can hold its own CA AND serve its mgmt API under a public ACME
+  # certificate (an internet site with a sovereign CA): netbird_mgmt_ca=public
+  # (-e, or NETBIRD_MGMT_CA in the environment, which goat-standup.sh exports on
+  # the internet profile) keeps the system trust store. Verification stays on.
   module_defaults:
     ansible.builtin.uri:
-      ca_path: "{{ omit if (netbird_api_ca | default('auto')) == 'public' else ((playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit) }}"
+      ca_path: "{{ omit if (netbird_api_ca | default(netbird_mgmt_ca | default(lookup('env', 'NETBIRD_MGMT_CA'), true), true)) == 'public' else ((playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit) }}"
   gather_facts: false
 
   vars:
@@ -81,6 +85,9 @@
 
     - name: "Expand exercise group-sets into site entries"
       ansible.builtin.include_tasks: tasks/netbird-exercise-expand.yml
+
+    - name: "A goatnet with no taxonomy stanza inherits _default"
+      ansible.builtin.include_tasks: tasks/netbird-taxonomy-default.yml
 
     - name: "Assert target_site is declared in the taxonomy"
       ansible.builtin.assert:
