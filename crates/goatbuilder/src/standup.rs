@@ -2091,6 +2091,138 @@ mod tests {
         }
     }
 
+    /// The site shapes the plan branches on: a LAN and an internet founder, each
+    /// with an obs host; a LAN and an internet joiner; a goatlite; and an
+    /// obs-only run.
+    fn catalog_shapes() -> Vec<(&'static str, Site, bool)> {
+        let obs = |mut s: Site| {
+            s.obs = true;
+            s.obs_group = "zagros_obs_hosts".into();
+            s
+        };
+        let internet = |mut s: Site| {
+            s.profile = "internet".into();
+            s
+        };
+        vec![
+            ("lan founder", obs(test_site(false)), false),
+            ("internet founder", obs(internet(test_site(false))), false),
+            ("lan joiner", test_site(true), false),
+            ("internet joiner", internet(test_site(true)), false),
+            ("goatlite", lan_site(true, false), false),
+            ("obs only", obs(test_site(false)), true),
+        ]
+    }
+
+    /// A planned step's catalog key, as its dry-run banner names it: a phase by
+    /// its number, every other step by the words of its banner
+    /// (tests/legibility.rs, `step_id`, reads the printed banners the same way).
+    fn catalog_key(e: &Event) -> Option<String> {
+        Some(match e {
+            Event::Phase(p) => p.n.to_string(),
+            Event::Skip { n, .. } => n.to_string(),
+            Event::LegStart { leg, .. } => format!("observability-leg-{leg}"),
+            Event::LegJoin { leg, at } => format!("join-observability-leg-{leg}-before-phase-{at}"),
+            Event::PullStart { .. } => "image-pull".to_string(),
+            Event::PullJoin { at } => format!("join-the-image-pull-before-phase-{at}"),
+        })
+    }
+
+    /// The scripts and plays an entry's `runs` names: each comma-separated part's
+    /// first word, by its file name.
+    fn runs_names(runs: &str) -> Vec<String> {
+        runs.split(", ")
+            .filter_map(|part| part.split_whitespace().next())
+            .filter(|w| w.contains('/') || w.ends_with(".yml") || w.ends_with(".py") || w.ends_with(".sh"))
+            .map(|w| w.rsplit('/').next().unwrap_or(w).to_string())
+            .collect()
+    }
+
+    /// The scripts and plays a planned command runs: every `*.yml`, `*.py` and
+    /// `*.sh` word it names, by file name, except the group_vars files a step
+    /// only reads (`group_vars/<g>/pubsub-state.yml`).
+    fn command_runs(cmd: &str) -> std::collections::BTreeSet<String> {
+        let re = regex::Regex::new(r"[A-Za-z0-9_./-]+\.(?:yml|py|sh)\b").unwrap();
+        re.find_iter(cmd)
+            .map(|m| m.as_str())
+            .filter(|w| !w.contains("group_vars/"))
+            .map(|w| w.rsplit('/').next().unwrap_or(w).to_string())
+            .collect()
+    }
+
+    /// The phase catalog (ops/phases/catalog.yaml) describes standup as its plan
+    /// is: every step any site shape plans has an entry, and every entry is a step
+    /// some shape plans; a phase's `kind` is the kinds of its steps; and its
+    /// `runs` names exactly the scripts and plays its steps run (each one in a
+    /// planned command, or, for a step only a declared node plans, named by this
+    /// file).
+    #[test]
+    fn the_phase_catalog_describes_standups_plan() {
+        let cat = goat_errors::phases::phases();
+        let entries = cat.of("standup");
+        let mut planned: BTreeMap<String, (std::collections::BTreeSet<String>, Vec<String>)> = BTreeMap::new();
+        for (_, s, obs_only) in catalog_shapes() {
+            let o = Options { env: "dev", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only, dry_run: true, parallel: false, check: false };
+            for e in plan(&repo_root(), &s, &o, "RESUME") {
+                let key = catalog_key(&e).unwrap();
+                let slot = planned.entry(key).or_default();
+                match &e {
+                    Event::Phase(p) => {
+                        slot.0.insert(p.kind.to_string());
+                        if p.kind != "MANUAL" {
+                            slot.1.push(p.cmd.clone());
+                        }
+                    }
+                    Event::Skip { kind, .. } => {
+                        slot.0.insert(kind.to_string());
+                    }
+                    Event::LegStart { cmd, .. } | Event::PullStart { cmd, .. } => slot.1.push(cmd.clone()),
+                    Event::LegJoin { .. } | Event::PullJoin { .. } => {}
+                }
+            }
+        }
+        let keys: std::collections::BTreeSet<String> = entries.iter().map(|e| e.phase.to_string()).collect();
+        let want: std::collections::BTreeSet<String> = planned.keys().cloned().collect();
+        assert_eq!(keys, want, "the catalog's standup entries are the steps the plan can hold");
+        let source = include_str!("standup.rs");
+        let mut wrong = Vec::new();
+        for e in &entries {
+            let key = e.phase.to_string();
+            let (kinds, cmds) = &planned[&key];
+            if e.phase.to_string().parse::<u32>().is_ok() {
+                let said: std::collections::BTreeSet<String> = e.kind.split(" + ").map(str::to_string).collect();
+                if &said != kinds {
+                    wrong.push(format!("phase {key}: kind `{}`, the plan's steps are {kinds:?}", e.kind));
+                }
+            }
+            let names = runs_names(&e.runs);
+            for c in cmds {
+                for n in command_runs(c) {
+                    if !names.contains(&n) {
+                        wrong.push(format!("phase {key}: a planned step runs {n}, which its `runs` does not name"));
+                    }
+                }
+            }
+            for n in &names {
+                if !cmds.iter().any(|c| c.contains(n.as_str())) && !source.contains(n.as_str()) {
+                    wrong.push(format!("phase {key}: `runs` names {n}, which no planned step runs"));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "the catalog does not match standup's plan:\n  {}", wrong.join("\n  "));
+    }
+
+    /// `explain standup <phase>` answers from the catalog, by number or id.
+    #[test]
+    fn explain_answers_for_a_standup_phase() {
+        let by_number = goat_errors::phases::explain_phase("standup", "12").expect("standup phase 12");
+        let by_id = goat_errors::phases::explain_phase("standup", &by_number.id).unwrap();
+        assert_eq!(by_number, by_id);
+        assert!(goat_errors::phases::render_text(by_number).contains("goatbuilder standup <env> --site <site> --from 12 --to 12 --dry-run"));
+        assert!(goat_errors::phases::explain_phase("standup", "image-pull").is_some());
+        assert!(goat_errors::phases::explain_phase("standup", "15").is_none());
+    }
+
     fn phases_of(ev: &[Event]) -> Vec<&Phase> {
         ev.iter().filter_map(|e| if let Event::Phase(p) = e { Some(p) } else { None }).collect()
     }

@@ -1,0 +1,33 @@
+# explain answers for a phase of standup from the phase catalog, by number.
+bin.name = "goatbuilder"
+args = ["explain", "standup", "3"]
+stdout = """
+standup phase 3 secrets [T]: generate per-instance secrets
+
+What it does:
+  Generates the site's per-instance secrets (about thirty values: database passwords, the NetBird encryption key, cipher passphrases) into the declared secrets store.
+
+Why it exists:
+  The plays from phase 5 on read these values; generating them once, before the first play, means every phase reads the same values.
+
+What it changes:
+  The site's secrets store (the operator's envrc or the declared value store); a value already present is kept.
+
+How to tell it worked:
+  the site's `<SITE>_` values are listed after `direnv allow` (or read from the declared store)
+
+It runs:
+  ops/scripts/newsite-secrets.sh
+
+By hand:
+  goatbuilder standup <env> --site <site> --from 3 --to 3 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
+
+If it failed:
+  the secrets store cannot be written
+
+Then:
+  fix the store's location or permissions, then resume with --from 3
+
+Read:
+  docs/operations/goatnet-standup.md#the-run
+"""
