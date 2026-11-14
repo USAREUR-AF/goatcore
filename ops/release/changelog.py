@@ -4,13 +4,18 @@
 An entry is a file in crates/goatbuilder/changelog.d/, so a pull request that
 adds one edits no shared file. CHANGELOG.md's "Unreleased" section is rendered
 from those files, between two marker lines. A release folds them into a dated
-section and removes them. A released section is never rendered again: after
-the release it is text like any other, and may be edited by hand.
+section and removes them. A released section is never rendered again, and is
+never edited after its release: the check holds it to its text at the tag
+goatbuilder/v<version>, or, before the tag exists, at the release commit (the
+newest `chore(release): goatbuilder <version>` commit on HEAD's first-parent
+history). A release-notes change is itself such a commit. A shallow clone, or a
+version with neither, is skipped with a note.
 
   changelog.py check                     exit 0 when every entry is well formed, none is
-                                         already in a released section, and the Unreleased
-                                         section equals its render; exit 1 with each reason
-                                         when not
+                                         already in a released section, every released
+                                         section is as it was at its release, and the
+                                         Unreleased section equals its render; exit 1 with
+                                         each reason when not
   changelog.py write                     rewrite the Unreleased section from the entries
   changelog.py release <version> <date>  fold the entries into "## <version> — <date>",
                                          remove them, and empty the Unreleased section
@@ -208,6 +213,88 @@ def already_released(entries: list[dict], lines: list[str], end: int) -> list[st
     return problems
 
 
+def _git_out(repo: Path, *args: str) -> str | None:
+    """git's output in repo, or None when git fails (not a checkout, no such object)."""
+    try:
+        r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _release_ref(repo: Path, version: str) -> tuple[str, str] | None:
+    """Where version's released text is: the tag goatbuilder/v<version>, or, before the
+    tag exists, the newest commit on HEAD's first-parent history whose subject begins
+    `chore(release): goatbuilder <version>` (the release, or a later release-notes
+    change, which uses the same subject). As (ref, how it is named), or None."""
+    tag = f"goatbuilder/v{version}"
+    if _git_out(repo, "rev-parse", "--verify", "-q", f"refs/tags/{tag}^{{commit}}"):
+        return tag, f"the tag {tag}"
+    log = _git_out(repo, "log", "--first-parent", "--format=%H %s", "HEAD") or ""
+    for line in log.splitlines():
+        sha, _, subject = line.partition(" ")
+        rest = subject[len(f"chore(release): goatbuilder {version}"):]
+        if subject.startswith(f"chore(release): goatbuilder {version}") and (not rest or not rest[0].isalnum() and rest[0] != "."):
+            return sha, f"the release commit {sha[:8]} (no tag {tag} here)"
+    return None
+
+
+def released_text(repo: Path, lines: list[str]) -> tuple[list[str], list[str]]:
+    """A released section is never edited after its release (outside a release-notes
+    change, which is itself a `chore(release)` commit or moves the tag): each is
+    compared with its text at its release. As (problems, notes); a version whose
+    release cannot be read is skipped with a note, never passed silently."""
+    problems: list[str] = []
+    notes: list[str] = []
+    try:
+        _, end = region(lines)
+    except Refused:
+        return problems, notes
+    sections = released_sections(lines, end)
+    if not sections:
+        return problems, notes
+    shallow = _git_out(repo, "rev-parse", "--is-shallow-repository")
+    if shallow is None:
+        notes.append("released sections not compared with their release: not a git checkout; skipped")
+        return problems, notes
+    shallow = shallow.strip() == "true"
+    for version, body in sections:
+        where = _release_ref(repo, version)
+        if where is None:
+            notes.append(f"{version}: no tag goatbuilder/v{version} and no `chore(release): goatbuilder {version}` "
+                         f"commit on this history" + (" (a shallow clone: its release may be cut off; CI checks "
+                                                       "out with fetch-depth: 0)" if shallow else "") + "; skipped")
+            continue
+        ref, named = where
+        then = _git_out(repo, "show", f"{ref}:{CHANGELOG}")
+        if then is None:
+            notes.append(f"{version}: {CHANGELOG} cannot be read at {named}; skipped")
+            continue
+        old = then.split("\n")
+        try:
+            _, old_end = region(old)
+        except Refused:
+            old_end = -1
+        released = dict(released_sections(old, old_end))
+        if version not in released:
+            notes.append(f"{version}: {named} has no `## {version}` section; skipped")
+            continue
+        if [l.rstrip() for l in body] != [l.rstrip() for l in released[version]] and \
+                [l for l in body if l.strip()] != [l for l in released[version] if l.strip()]:
+            added = [l for l in body if l.strip() and l not in released[version]]
+            gone = [l for l in released[version] if l.strip() and l not in body]
+            what = []
+            if added:
+                what.append("added: " + " | ".join(added[:3]) + (" …" if len(added) > 3 else ""))
+            if gone:
+                what.append("removed: " + " | ".join(gone[:3]) + (" …" if len(gone) > 3 else ""))
+            problems.append(f"{CHANGELOG}: the released section {version} differs from its text at {named} "
+                            f"({'; '.join(what) or 'lines moved'}). A released section is never edited after "
+                            f"its release; an entry merged after it belongs in {ENTRIES}/ (rebase onto main and "
+                            f"run `write`)")
+    return problems, notes
+
+
 def check(repo: Path) -> list[str]:
     """Every reason the changelog is not as rendered; empty when it is."""
     try:
@@ -216,7 +303,7 @@ def check(repo: Path) -> list[str]:
         b, e = region(lines)
     except Refused as r:
         return list(r.args[0])
-    problems = already_released(entries, lines, e)
+    problems = already_released(entries, lines, e) + released_text(repo, lines)[0]
     if lines[b:e + 1] != unreleased_lines(entries):
         problems.append(f"{CHANGELOG}: the Unreleased section differs from its render; "
                         f"run `python3 ops/release/changelog.py write` (a hand edit there is lost: edit {ENTRIES}/ instead)")
@@ -463,6 +550,11 @@ def main(argv: list[str]) -> int:
     try:
         if a.command in (None, "check"):
             problems = check(a.repo)
+            try:
+                for n in released_text(a.repo, (a.repo / CHANGELOG).read_text(encoding="utf-8").split("\n"))[1]:
+                    print(f"changelog: note: {n}")
+            except OSError:
+                pass
             for m in problems:
                 print(f"changelog: {m}", file=sys.stderr)
             if not problems:
