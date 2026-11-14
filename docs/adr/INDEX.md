@@ -461,7 +461,7 @@ an ADR edits no shared file: write the ADR, then run
 |---|---|---|---|
 | 1236 | [A site's SPIRE server is made redundant by two independent servers, adopted only after a gated trial](1236-a-sites-spire-server-is-made-redundant-by-two-independent-servers-after-a-gated-trial.md) | **Proposed.** Nothing in a running goatnet changes on merge. The decision is the direction and the gates; the build follows a trial that passes them | Amends 1164 |
 | 1237 | [A site is rebuilt from nothing and a combed extract of its identities](1237-a-site-is-rebuilt-from-nothing-and-a-combed-extract-of-its-identities.md) | Proposed | — |
-| 1238 | [The learning program is a ten-rung ladder and a lane beyond it, in use while it is proposed; the people learning decide what it becomes](1238-the-learning-program-is-a-ten-rung-ladder-and-a-lane-beyond-it-in-use-while-proposed.md) | Proposed — in use as the working program while it is proposed. It moves to Accepted on the conditions in decision 6 | — |
+| 1238 | [The learning program: ten rungs to sharing sealed data with another sovereign, then fourteen stages beyond](1238-the-learning-program-is-a-ten-rung-ladder-and-a-lane-beyond-it-in-use-while-proposed.md) | Proposed — in use now as the working program. It is the maintainers' best guess, and it is open for comment | — |
 
 <!-- END generated: adr-index -->
 
