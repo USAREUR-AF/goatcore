@@ -193,7 +193,7 @@ documents:
   args:
   - federate
   - -C
-  - .
+  - ops/goatbuilder/compat/documents/fixtures/journal/repo
   - no-such-peer
   - --dry-run
   exit: 2
@@ -345,7 +345,7 @@ documents:
   args:
   - join-node
   - -C
-  - .
+  - ops/goatbuilder/compat/documents/fixtures/journal/repo
   - nowhere
   - --site
   - zagros
