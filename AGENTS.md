@@ -94,4 +94,4 @@ The `security-reviewed` label records the review described in [CONTRIBUTING.md](
 
 ## Skills
 
-`.claude/skills/` holds task instructions for coding agents, each a `SKILL.md` with a `GUIDE.md` for people: [goat-cli](.claude/skills/goat-cli/SKILL.md) (driving a goatnet with the `goat` CLI) and [adr](.claude/skills/adr/SKILL.md) (proposing an ADR).
+`.claude/skills/` holds task instructions for coding agents, each a `SKILL.md` with a `GUIDE.md` for people: [goat-cli](.claude/skills/goat-cli/SKILL.md) (driving a goatnet with the `goat` CLI), [goatlite](.claude/skills/goatlite/SKILL.md) (standing up a goatnet on one host by following the goatlite tutorial) and [adr](.claude/skills/adr/SKILL.md) (proposing an ADR).

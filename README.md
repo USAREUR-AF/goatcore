@@ -69,6 +69,8 @@ The example environment, `zagros`, has one site with two core machines, one moni
 
 To run goat for real on a single machine with no cloud account, start with [goatlite](docs/tutorials/00-goatlite.md).
 
+To have a coding agent do it with you, give it this line with your own values: `Clone https://github.com/usareur-af/goatcore and follow .claude/skills/goatlite/SKILL.md to stand up a goatlite named <name> on <ssh-user>@<host>, with <your-email> as its administrator.`
+
 ## Documentation
 
 | | |
