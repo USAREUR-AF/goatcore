@@ -499,6 +499,11 @@ fn every_command_a_hand_off_names_parses_and_refuses_as_not_built() {
                     v["handoff"]["phase"], h["phase"],
                     "phase {phase} then: {all}"
                 );
+            } else if member == "import" && phase == "1" {
+                // Phase 1's import is built: a result file that is not there
+                // is refused as an edge result that cannot be imported.
+                assert!(!out.status.success(), "phase {phase} {member}: {all}");
+                assert!(all.contains("GB-277"), "phase {phase} {member}: {all}");
             } else {
                 assert!(!out.status.success(), "phase {phase} {member}: {all}");
                 assert!(
@@ -507,5 +512,258 @@ fn every_command_a_hand_off_names_parses_and_refuses_as_not_built() {
                 );
             }
         }
+    }
+}
+
+/// A phase 1 edge result as the edge driver's run writes it: preflight's
+/// result for the edge side's checks.
+fn edge_result(peering: &str, side: &str, ready: bool) -> String {
+    let outcome = if ready { "PASS" } else { "FAIL" };
+    serde_json::json!({
+        "schema": "goat-federation-preflight/v1",
+        "peering": peering,
+        "only": [],
+        "side": side,
+        "ready": ready,
+        "results": [
+            {"check": "inputs", "outcome": "PASS", "code": "", "detail": "edge inputs"},
+            {"check": "edge-ports", "outcome": outcome, "code": if ready { "" } else { "GB-131" }, "detail": "edge ports"}
+        ]
+    })
+    .to_string()
+}
+
+/// The confirm code an edge driver prints: the first 32 hex digits of the
+/// result's sha256, in groups of four.
+fn confirm_code(bytes: &[u8]) -> String {
+    let hex = sha256_hex(bytes);
+    let hex = hex.trim_start_matches("sha256:");
+    hex.as_bytes()[..32]
+        .chunks(4)
+        .map(|c| String::from_utf8_lossy(c).to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Gate row B10, slice 1: the controller imports phase 1's edge result with
+/// the confirm code, journals its sha256, and `--from 1` runs phase 1's core
+/// half against it, joins the two, and goes on to phase 2's hand-off.
+#[test]
+fn an_imported_phase_1_edge_result_carries_the_controller_to_phase_2() {
+    let w = world();
+    two_drivers(&w);
+    let (out, v) = w.run(&["hello-ally", "--from", "1", "--to", "1"]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(v["handoff"]["phase"], 1);
+    let carried = w.root.path().join("from-the-edge.json");
+    let text = edge_result("hello-ally", "edge", true);
+    std::fs::write(&carried, &text).unwrap();
+    let code = confirm_code(text.as_bytes());
+    let (out, v) = w.run(&[
+        "import",
+        "hello-ally",
+        "1",
+        carried.to_str().unwrap(),
+        "--sha256",
+        &code,
+    ]);
+    assert!(out.status.success(), "the import: {}", says(&out));
+    assert_eq!(v["exit"], 0, "{}", says(&out));
+    let placed = w.work.join("handoff/1/edge.json");
+    assert_eq!(
+        std::fs::read_to_string(&placed).unwrap(),
+        text,
+        "the import places the file as it was"
+    );
+    let full = sha256_hex(text.as_bytes());
+    let journal = w.state();
+    let confirmed = journal["confirmations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "operator-step" && c["phase"] == 1)
+        .cloned()
+        .unwrap_or_else(|| panic!("no import in the journal: {journal}"));
+    assert_eq!(confirmed["bound_to"], full.as_str(), "{confirmed}");
+    w.clear_log();
+    let (out, v) = w.run(&["hello-ally", "--from", "1"]);
+    assert!(out.status.success(), "then: {}", says(&out));
+    assert_eq!(
+        v["handoff"]["phase"],
+        2,
+        "then goes on to phase 2's hand-off: {}",
+        says(&out)
+    );
+    assert!(
+        w.log().contains("preflight") && w.log().contains("--side core"),
+        "phase 1's core half did not run: {}",
+        w.log()
+    );
+    assert_eq!(
+        w.state()["phases"]["1"]["outcome"],
+        "passed",
+        "{}",
+        w.state()
+    );
+    // The phase 1 result is the two sides joined: ready, and holding both.
+    let joined: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(w.work.join("preflight/result.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(joined["side"], "both", "{joined}");
+    assert_eq!(joined["ready"], true, "{joined}");
+    let checks: Vec<&str> = joined["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["check"].as_str())
+        .collect();
+    assert!(
+        checks.contains(&"edge-ports") && checks.contains(&"core-ports"),
+        "{joined}"
+    );
+}
+
+/// What the import refuses, each with GB-277 and nothing recorded: a code
+/// that is not the file's, a code too short to bind it, another peering's
+/// result, a result of the core side, and a peering not waiting on phase 1.
+#[test]
+fn an_edge_result_that_is_not_this_phases_is_not_imported() {
+    let w = world();
+    two_drivers(&w);
+    let carried = w.root.path().join("from-the-edge.json");
+    let good = edge_result("hello-ally", "edge", true);
+    std::fs::write(&carried, &good).unwrap();
+    let code = confirm_code(good.as_bytes());
+    let path = carried.to_str().unwrap().to_string();
+    // Nothing is waiting on phase 1 yet.
+    let (out, _) = w.run(&["import", "hello-ally", "1", &path, "--sha256", &code]);
+    assert!(
+        !out.status.success() && says(&out).contains("GB-277"),
+        "{}",
+        says(&out)
+    );
+    let (out, _) = w.run(&["hello-ally", "--from", "1", "--to", "1"]);
+    assert!(out.status.success(), "{}", says(&out));
+    for (what, text, code) in [
+        (
+            "another file's code",
+            good.clone(),
+            confirm_code(b"another file"),
+        ),
+        (
+            "a code too short to bind the file",
+            good.clone(),
+            sha256_hex(good.as_bytes()).trim_start_matches("sha256:")[..8].to_string(),
+        ),
+        (
+            "another peering's result",
+            edge_result("xab", "edge", true),
+            String::new(),
+        ),
+        (
+            "the core side's result",
+            edge_result("hello-ally", "core", true),
+            String::new(),
+        ),
+        (
+            "not a phase 1 result",
+            "{\"schema\":\"something-else/v1\"}".to_string(),
+            String::new(),
+        ),
+    ] {
+        std::fs::write(&carried, &text).unwrap();
+        let code = if code.is_empty() {
+            confirm_code(text.as_bytes())
+        } else {
+            code
+        };
+        let (out, _) = w.run(&["import", "hello-ally", "1", &path, "--sha256", &code]);
+        assert!(!out.status.success(), "{what}: imported: {}", says(&out));
+        assert!(says(&out).contains("GB-277"), "{what}: {}", says(&out));
+        assert!(
+            !w.work.join("handoff/1/edge.json").exists(),
+            "{what}: placed"
+        );
+        assert!(
+            !w.state()["confirmations"]
+                .as_array()
+                .map(|a| a
+                    .iter()
+                    .any(|c| c["kind"] == "operator-step" && c["phase"] == 1))
+                .unwrap_or(false),
+            "{what}: journaled"
+        );
+    }
+}
+
+/// `--from 1` hashes the imported file again before reading it: a file
+/// changed since its import stops the run with the hand-off code, before
+/// phase 1's core half runs. An edge result that is not ready fails phase 1
+/// before its core half runs.
+#[test]
+fn a_changed_or_unready_edge_result_stops_before_the_core_half() {
+    for ready in [true, false] {
+        let w = world();
+        two_drivers(&w);
+        let (out, _) = w.run(&["hello-ally", "--from", "1", "--to", "1"]);
+        assert!(out.status.success(), "{}", says(&out));
+        let carried = w.root.path().join("from-the-edge.json");
+        let text = edge_result("hello-ally", "edge", ready);
+        std::fs::write(&carried, &text).unwrap();
+        let (out, _) = w.run(&[
+            "import",
+            "hello-ally",
+            "1",
+            carried.to_str().unwrap(),
+            "--sha256",
+            &confirm_code(text.as_bytes()),
+        ]);
+        assert!(out.status.success(), "{}", says(&out));
+        if ready {
+            std::fs::write(
+                w.work.join("handoff/1/edge.json"),
+                edge_result("hello-ally", "edge", false),
+            )
+            .unwrap();
+        }
+        w.clear_log();
+        let (out, v) = w.run(&["hello-ally", "--from", "1"]);
+        assert!(
+            !w.log().contains("preflight"),
+            "ready={ready}: the core half ran: {}",
+            w.log()
+        );
+        if ready {
+            assert!(
+                says(&out).contains("GB-265"),
+                "a changed file: {}",
+                says(&out)
+            );
+            assert_eq!(
+                w.state()["phases"]["1"]["outcome"],
+                "stopped",
+                "{}",
+                w.state()
+            );
+        } else {
+            assert!(
+                !out.status.success(),
+                "an unready edge passed phase 1: {}",
+                says(&out)
+            );
+            assert!(
+                says(&out).contains("edge-ports") && says(&out).contains("GB-131"),
+                "{}",
+                says(&out)
+            );
+            assert_eq!(
+                w.state()["phases"]["1"]["outcome"],
+                "failed",
+                "{}",
+                w.state()
+            );
+        }
+        let _ = v;
     }
 }
