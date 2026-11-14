@@ -2252,6 +2252,7 @@ mod tests {
             changed,
             live,
             skipped_in_plan: Vec::new(),
+            accepted: Vec::new(),
         };
         assert!(r(vec![], vec![], all("PASS")).allows_change());
         assert!(r(vec![], vec![], all("NOT APPLICABLE")).allows_change());
@@ -2696,6 +2697,69 @@ mod tests {
             view.contains("readiness:  host-allocation SKIP: not verified: the value named here"),
             "{view}"
         );
+    }
+
+    /// `plan --accept host-allocation` (#742 part 3): the SKIP the operator
+    /// judged is recorded with its exact detail, inside the hash. The plan
+    /// is then not unready for it, the plan view shows it, and the recheck
+    /// lets the same SKIP through and no other. A plan with no acceptance
+    /// serializes as before, so its hash does not change.
+    #[test]
+    fn an_accepted_skip_is_bound_into_the_hash_and_honoured_only_for_its_detail() {
+        let r = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let mut p = planned(r.path(), &w.path().display().to_string());
+        let before = serde_json::to_value(&p).unwrap();
+        assert!(before.get("accepted").is_none(), "{before}");
+        let now = chrono::Utc::now();
+        p.created_at = now.to_rfc3339();
+        let skip = |detail: &str| Readiness {
+            check: "host-allocation".into(),
+            outcome: "SKIP".into(),
+            code: None,
+            detail: detail.into(),
+        };
+        p.readiness = vec![skip("not verified: X")];
+        // Only a check deploy does not run again can be accepted, and only
+        // when it is SKIP.
+        let e = accept(&mut p.clone(), &["slot-anchors".to_string()]).unwrap_err();
+        assert!(format!("{e:#}").contains("host-allocation"), "{e:#}");
+        let mut passing = p.clone();
+        passing.readiness[0].outcome = "PASS".into();
+        let e = accept(&mut passing, &["host-allocation".to_string()]).unwrap_err();
+        assert!(format!("{e:#}").contains("nothing to accept"), "{e:#}");
+
+        accept(&mut p, &["host-allocation".to_string()]).unwrap();
+        assert_eq!(
+            p.accepted,
+            [Accepted {
+                check: "host-allocation".into(),
+                detail: "not verified: X".into()
+            }]
+        );
+        assert!(unready_at(&p, now, 24).is_empty(), "{:?}", unready_at(&p, now, 24));
+        let h = plan_hash(&p);
+        assert_eq!(p.hash, h, "accept writes the new hash");
+        let mut other = p.clone();
+        other.accepted[0].detail = "not verified: Y".into();
+        assert_ne!(plan_hash(&other), h, "the accepted detail is hashed");
+        let view = super::super::deploy::summary(&p, Path::new("/w/plan.json"));
+        assert!(
+            view.contains("accepted:   host-allocation SKIP, as it read when accepted: not verified: X"),
+            "{view}"
+        );
+
+        let rc = |row: Readiness| Recheck {
+            peering: "velmara".into(),
+            plan_hash: h.clone(),
+            unready: Vec::new(),
+            changed: Vec::new(),
+            live: vec![row],
+            skipped_in_plan: vec!["host-allocation".into()],
+            accepted: p.accepted.clone(),
+        };
+        assert!(rc(skip("not verified: X")).holds(&skip("not verified: X")));
+        assert!(!rc(skip("not verified: Y")).holds(&skip("not verified: Y")));
     }
 
     /// Private keys under <work>/pki are not hashed into the plan; the

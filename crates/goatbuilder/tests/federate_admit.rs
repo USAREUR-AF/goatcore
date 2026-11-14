@@ -651,6 +651,72 @@ fn a_host_allocation_skip_names_its_case_and_route_in_the_refusal() {
     );
 }
 
+/// `plan --accept host-allocation` (#742 part 3): another declared peering
+/// shares this peering's edge and its interface is templated, so the check is
+/// SKIP. Accepted, the plan records the exact detail, and deploy goes ahead
+/// while the SKIP reads the same; when it reads differently, deploy refuses
+/// (GB-188) and names both.
+#[test]
+fn an_accepted_host_allocation_skip_deploys_and_a_changed_one_does_not() {
+    let w = world();
+    ready(&w, true);
+    // A host-allocation that passes has nothing to accept.
+    let (out, _) = w.run(&["plan", "hello-ally", "--accept", "host-allocation"]);
+    assert!(!out.status.success() && says(&out).contains("nothing to accept"), "{}", says(&out));
+    let cfg = w.repo.join("ops/goatbuilder/goatbuilder.yaml");
+    let text = std::fs::read_to_string(&cfg).unwrap();
+    std::fs::write(
+        &cfg,
+        text.replace(
+            "    edge_class: edge\n",
+            "    edge_class: edge\n  - with: velmara\n    environment: zagros\n    site: alpha\n    edge_class: edge\n",
+        ),
+    )
+    .unwrap();
+    let inv = w.repo.join("ops/ansible/inventory/peering-edges.ini");
+    let mut text = std::fs::read_to_string(&inv).unwrap();
+    text.push_str("\n[velmara_edge]\nedge-v ansible_host=192.0.2.10\n");
+    std::fs::write(&inv, text).unwrap();
+    let gv = w.repo.join("ops/ansible/group_vars/velmara_edge");
+    std::fs::create_dir_all(&gv).unwrap();
+    let templated = "peering_wg_interface: \"{{ velmara_if }}\"\n";
+    std::fs::write(gv.join("peering.yml"), templated).unwrap();
+
+    let (out, _) = w.run(&["plan", "hello-ally", "--accept", "host-allocation"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(w.work.join("plan.json")).unwrap()).unwrap();
+    let accepted = &saved["accepted"][0];
+    assert_eq!(accepted["check"], "host-allocation", "{saved}");
+    assert!(
+        accepted["detail"].as_str().unwrap().contains("wireguard interface of velmara/zagros"),
+        "{saved}"
+    );
+    let plan = saved["hash"].as_str().unwrap().to_string();
+
+    // The SKIP now reads differently: refused, naming both.
+    std::fs::write(gv.join("peering.yml"), "peering_wg_interface: [wg-a, wg-b]\n").unwrap();
+    let (out, _) = w.run(&["deploy", "hello-ally", "--approve-plan", &plan]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert!(all.contains("GB-188") && all.contains("not the SKIP the plan accepted"), "{all}");
+    assert!(all.contains("is not a single value") && all.contains("is templated"), "{all}");
+
+    // As accepted: deploy goes ahead.
+    std::fs::write(gv.join("peering.yml"), templated).unwrap();
+    let digest = reviewed_digest(&w, &plan);
+    let (out, v) = w.run(&[
+        "deploy",
+        "hello-ally",
+        "--approve-plan",
+        &plan,
+        "--approve-admission",
+        &digest,
+    ]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(phases_run(&v), [10, 11, 12, 13], "{}", says(&out));
+}
+
 /// Not every peering declares `hosts:`: `goatbuilder federate allocate`
 /// renders this peering's groups into its own `peering-<edge group>.ini`
 /// beside the hand-written `peering-edges.ini`, which holds another peering.
