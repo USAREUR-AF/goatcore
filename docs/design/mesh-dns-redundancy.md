@@ -43,6 +43,14 @@ The `mesh-coredns` role already deploys one CoreDNS; the work was to (a) drive i
 - **Validation:** asserts `mesh_dns_servers | length in [1, 3]` (netbird's limit) at playbook start, fail-closed with a clear message.
 - **No zone change:** `generate-mesh-hosts.py` + `dns-registry-sync` are unchanged; every replica mounts the same output.
 
+## One group per site that replicates (ADR 1235)
+
+Status: **built** on the fixture for `join-node`, **not measured** on a joined site. [ADR 1235](../adr/1235-per-site-mesh-dns-nameserver-groups.md) amends ADR 1056: every site that replicates runs a replica of the goatnet's zone, as its own nameserver group `<site>-mesh-dns`.
+
+- **The list.** `goat-coredns.yml` with `mesh_dns_peer_replica_group=<founder>_hosts` lists the targeted host first and the first host of that group second. Without it, the list is the targeted host alone, as before (`tests/test_coredns_peer_replica.py`).
+- **The distribution.** A new group goes to the NetBird groups `netbird_nameserver_distribution_groups` names, by default `All`. Every peer then asks every site's group for the zone. The NetBird client merges groups for the same domain and queries them in parallel, so a site cut off from its founder answers from its own replica. A name NetBird does not hold is refused before the group is created.
+- **The writer.** A joining site's group is registered through the founder's management API (`netbird_api`, `netbird_api_token_envvar`), the one writer. `join-node` phase 13 runs it for a joiner's core node.
+
 ## Non-goals / boundaries
 
 - **Not** anycast or a DNS load-balancer — netbird's resolver-side failover across the group is the mechanism; no new component.
