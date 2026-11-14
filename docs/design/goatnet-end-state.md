@@ -100,12 +100,18 @@ A service the model marks absent carries a `reason`: the declarations that say s
 
 ## Both avenues and CI
 
-`goatbuilder endstate` and `ops/scripts/goatnet-endstate.sh` run the same `endstate.py` (ADR 1201). CI (`goatbuilder-pr.yml`) runs:
+`goatbuilder endstate` and `ops/scripts/goatnet-endstate.sh` run the same `endstate.py` (ADR 1201). goatcore's CI (`goatbuilder-pr.yml`) runs:
 
 - `endstate.py --self-test`: the edge primitives on their own (the JSON5 reader on comments, unquoted keys and `//` inside strings; key-expression inclusion with `*`, `**`, `$*` and verbatim `@` chunks; the zenoh decision order; NetBird port ranges and bidirectional rules), then three fixtures: a single-host site in its end state (exit 0), a site with its own obs host and no Grafana or sandbox (exit 0, both absent, no orphans), and a site with orphans, a missing OIDC client, a contradiction, a dead container, an over-granted fabric publisher, a participant path to postgres and a missing secret (exit 3, each named);
-- `check-role-honours-presence-flag.py --self-test` and the check itself: every catalog flag is read by the code that deploys the service;
-- `endstate.py check`: every governed site models, every catalog row is well formed, and `baseline.txt` only shrinks (GB-067);
+- `check-role-honours-presence-flag.py --self-test`: the checker's own cases;
 - `parity-endstate.sh`: both avenues print the same lines and exit the same on every fixture;
 - the binary's unit and golden tests.
+
+Two checks need a deployment's configuration, so they run only on an assembled tree (goatcore at its pinned commit plus the deployment's overlay), in that overlay's own CI:
+
+- `endstate.py check`: every governed site models, every catalog row is well formed, and the overlay's `baseline.txt` only shrinks (GB-067);
+- `check-role-honours-presence-flag.py` on the whole catalog: every catalog flag is read by the code that deploys the service. The roles it reads are in the assembled tree.
+
+In goatcore alone, `ops/ansible/group_vars/` holds only `_examples` and `all.yml`, so `check` models the governed sites from role defaults and reports `baseline.txt` rows that hold only with the deployment's configuration. goatcore's CI running `check` against the example overlay is **not built**.
 
 The assay runner accepts the model: `run-acceptance.py --endstate <model.json>` grades a row N/A when every service it requires is declared absent on the site (the `endstate.py model` output is the file).
