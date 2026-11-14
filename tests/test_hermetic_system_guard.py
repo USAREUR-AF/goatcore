@@ -44,7 +44,7 @@ class Sandbox:
         p = self.bin / "sudo"
         p.write_text('#!/bin/sh\necho "sudo $*" >> "%s"\nexec "$@"\n' % self.log)
         p.chmod(0o755)
-        self.env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_ACTIONS", "E2E_SUDO")}
+        self.env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "E2E_SUDO")}
         self.env.update({"PATH": "%s:%s" % (self.bin, os.environ.get("PATH", "")),
                          "E2E_HOSTS_FILE": str(self.hosts), "E2E_CERTS_DIR": str(self.certs),
                          "HOME": str(self.tmp / "home")})
@@ -78,9 +78,13 @@ class RefusedOnASharedMachine(unittest.TestCase):
         self.assertFalse(work.exists(), "nothing is created before the refusal")
 
     def test_the_guard_passes_without_hosts_in_ci_and_with_the_flag(self):
-        for hosts, throwaway, extra, want in ((0, 0, {}, 0), (1, 0, {"GITHUB_ACTIONS": "true"}, 0),
+        hosted = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}
+        for hosts, throwaway, extra, want in ((0, 0, {}, 0), (1, 0, hosted, 0),
                                               (1, 1, {}, 0), (1, 0, {}, 2),
-                                              (1, 0, {"GITHUB_ACTIONS": "false"}, 2)):
+                                              (1, 0, {"GITHUB_ACTIONS": "false"}, 2),
+                                              # A self-hosted runner is often a shared machine.
+                                              (1, 0, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "self-hosted"}, 2),
+                                              (1, 0, {"GITHUB_ACTIONS": "true"}, 2)):
             r = self.s.bash("sys_guard %d %d" % (hosts, throwaway), **extra)
             self.assertEqual(r.returncode, want, (hosts, throwaway, extra, r.stderr))
         self.assertEqual(self.s.calls(), "")
