@@ -384,9 +384,7 @@ Before this design, phases 8 and 10 were manual. A person minted a setup key, an
    - The key is held under `no_log`. It is written to a 0600 file under `/run` on the node, handed to `netbird up --setup-key-file`, and the file is removed whatever the outcome.
    - The key never reaches the operator's machine. So it is not in the operator's secret store, not in any argument list, and not in any log.
 
-   The gate row says the key is minted *into the declared secret store*. This design does not do that, and the row's text needs a decision from its owner. A single-use, one-hour key gains nothing from being stored. Storing it would put a live credential on the operator's machine that the play never needs there. If a stored copy is required anyway:
-   - Under a value store (`env-file`, `sops`, `git-crypt`), `posture.py set --stdin-json` can store it without it appearing in an argument list.
-   - Under a reference store (`1password`, `openbao`, `vaultwarden`, `custom`), `posture.py` refuses to write values ([ADR 1186](../adr/1186-credentials-at-rest-are-references-only.md), [ADR 1204](../adr/1204-declared-secrets-posture-and-zero-saas-quickstart.md)). Writing one into such a store would need a new decision, and this design does not make it.
+   Gate row H2 says the same: join-node mints a single-use setup key where it is used and never stores it. A stored copy would be a credential value at rest, which [ADR 1186](../adr/1186-credentials-at-rest-are-references-only.md) rules out, and a single-use key that lives one hour has no reason to be kept.
 
 2. **The groups the key carries.** A key with no `--auto-groups` puts the peer in NetBird's implicit `All` group only, and that group grants no peers (`ops/mgmt-host-bootstrap/main.go`). `mesh-enroll-host.yml` mints without `--auto-groups` today. The manual phase 8 says "read the group off a live peer, do not guess", and the design keeps that rule:
    - The play reads, from the same database, the groups held by the peer of the minting host, leaving out `All`.

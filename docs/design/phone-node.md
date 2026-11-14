@@ -101,7 +101,7 @@ that removes it. Rows marked "every class" are not about phones.
 | 2 | Pass 1 of phase 13 ends with a check that the management service is up; that service waits for Hydra, which the next step deploys | every class | pass 1 runs the stack plays only, as `standup` already does with its play tags | H1 |
 | 3 | Phase 13's signal-federation gate treats federation as a pair and refuses a third site that declares it off | every class | a site that declares federation off, with its reason, passes | H1 |
 | 4 | Phase 9 passed the setup key's secret reference to the node unresolved | every class | the phase resolves references as the plays do | H2 |
-| 5 | Phases 8 and 10 are manual: mint a setup key, enrol the node | every class | the tool mints the key into the declared secret store and enrols the node from a key file | H2 |
+| 5 | Phases 8 and 10 are manual: mint a setup key, enrol the node | every class | the tool mints a single-use key where it is used, never stores it, and enrols the node from a key file | H2 |
 | 6 | The phone was prepared by a script run before `join-node`, and reached through a hand-written SSH alias | phone | `--via usb`, and a first phase that prepares the VM and refuses unless the integrity checks pass | H3, H4 |
 | 7 | The site's config repeated, in comments and by absence, that the node has no LAN address, no public ingress, no disk encryption of its own and 4 GB of memory | phone | a machine class `phone` that carries those declarations | H5 |
 | 8 | Docker's apt repository was written for Ubuntu; the minimal Debian image has no `cron` | every Debian host | the repository follows the distribution (merged); every role that writes a crontab entry installs `cron` first (built) | H6 |
