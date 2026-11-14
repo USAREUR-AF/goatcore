@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 967 variables, 134 of them secret-bearing by name.
+# 973 variables, 134 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -338,7 +338,7 @@ export POSTGRES_EXPORTER_PASSWORD=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.ory.yml, ops/compose/mgmt-host/docker-compose.phase2.yml …
 export POSTGRES_SUPERUSER_PASSWORD=""  # SECRET
 
-# ops/rpi-base-image/03b-headless-dropbear-unlock.sh
+# ops/rpi-base-image/03b-headless-dropbear-unlock.sh, ops/scripts/phone-node-guest-prepare.sh
 export PUBKEY=""  # SECRET
 
 # ops/ansible/group_vars/all.yml, ops/ansible/roles/oci-substrate-t2-sync/defaults/main.yml
@@ -436,7 +436,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 833 variables.
+# 839 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1555,6 +1555,9 @@ export HOSTNET_PING_COUNT=""
 # ops/relay/health/host-net-publish.sh
 export HOSTNET_PING_TARGET=""
 
+# ops/scripts/phone-node-guest-prepare.sh
+export HOST_NAME=""
+
 # ops/compose/mgmt-host/docker-compose.relay-health.yml, ops/compose/relay-health-standalone/docker-compose.public.yml …
 export HOST_NET_ALLOWED_NAMES=""
 
@@ -1821,6 +1824,9 @@ export MEMBERSHIP_GOATNET_PREFIX=""
 
 # ops/goat-id-console/internal/config/config.go
 export MEMBERSHIP_SCOPE_PATH=""
+
+# ops/scripts/phone-node-guest-prepare.sh
+export MEMORY_MIB=""
 
 # ops/federation-e2e/env
 export MERGED=""
@@ -2199,6 +2205,15 @@ export PG_CONTAINER=""
 
 # ops/ansible/roles/netbird-admin-reconcile/files/netbird-admin-reconcile.sh
 export PG_USER=""
+
+# ops/scripts/phone-node-integrity.sh
+export PHONE_NODE_GATE_MIB=""
+
+# ops/scripts/phone-node-guest-prepare.sh, ops/scripts/phone-node-integrity.sh
+export PHONE_NODE_GUEST_ROOT=""
+
+# ops/scripts/phone-node-provision.sh
+export PHONE_NODE_NAP=""
 
 # ops/loadtest/rca-throughput-decomposition.sh
 export PIPELINE_DEPTH=""
@@ -2772,6 +2787,9 @@ export USERDATA_OVERRIDE=""
 
 # ops/enrollment/cmd/wg-cp0/audit.go, ops/enrollment/cmd/wg-cp0/coverage_lift_test.go
 export USERNAME=""
+
+# ops/scripts/phone-node-guest-prepare.sh
+export USER_NAME=""
 
 # ops/scripts/secrets-session
 export VAULT_ADDR=""
