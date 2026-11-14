@@ -28,11 +28,13 @@ const DEBIAN_KERNEL: &str = "6.12.0-cloud-arm64";
 const PUBKEY: &str = "stand-in-key-type stand-in-key-material";
 
 /// The file a shell would run for `tool` on `path`: the first one of that name
-/// in the path's directories.
+/// in the path's directories that is a file with an execute bit set. A file of
+/// the name that is not executable is passed over, as the shell passes it.
 fn host_tool(path: &std::ffi::OsStr, tool: &str) -> Option<PathBuf> {
-    std::env::split_paths(path)
-        .map(|d| d.join(tool))
-        .find(|p| p.is_file())
+    use std::os::unix::fs::PermissionsExt;
+    std::env::split_paths(path).map(|d| d.join(tool)).find(|p| {
+        std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    })
 }
 
 fn repo_root() -> PathBuf {
