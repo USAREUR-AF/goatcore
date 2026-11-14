@@ -528,6 +528,30 @@ def _released_text_cases(expect) -> None:
                problems == [] and any("shallow" in n for n in notes))
 
 
+    # A release-notes change on a release with no tag yet: it uses the release's own
+    # subject and adds its baseline line. After it lands, the section is still held to
+    # the version commit, so the line is not stale and main stays green.
+    with tempfile.TemporaryDirectory() as tmp:
+        r = Path(tmp) / "repo"
+        (r / ENTRIES).mkdir(parents=True)
+        _git(r.parent, "init", "-q", "-b", "main", str(r))
+        cl = r / CHANGELOG
+        text = ("# Changelog\n\n" + UNRELEASED + "\n\n" + BEGIN + "\n" + END + "\n\n## 9.9.9 — 2099-01-02\n\n"
+                "### For someone deploying\n\n#### Fixed: a thing\n\nIt was fixed.\n")
+        cl.write_text(text, encoding="utf-8")
+        _git(r, "add", "-A")
+        _git(r, "commit", "-q", "-m", "chore(release): goatbuilder 9.9.9")
+        cl.write_text(text + "\n#### Known issue: a thing\n\nIt is known.\n", encoding="utf-8")
+        lines = cl.read_text(encoding="utf-8").split("\n")
+        (r / BASELINE).parent.mkdir(parents=True, exist_ok=True)
+        (r / BASELINE).write_text(f"9.9.9 {section_hash(dict(released_sections(lines, region(lines)[1]))['9.9.9'])}\n",
+                                  encoding="utf-8")
+        _git(r, "add", "-A")
+        _git(r, "commit", "-q", "-m", "chore(release): goatbuilder 9.9.9 known issue in the notes")
+        expect("a release-notes commit with the release's subject never becomes the reference: its line is not stale",
+               check(r) == [])
+
+
 def self_test(repo: Path) -> int:
     failures = []
 
@@ -592,6 +616,19 @@ def self_test(repo: Path) -> int:
                any("zz-twice.md: already released in 9.8.7" in m for m in problems))
         write(r)
         expect("and `write` does not make it pass", any("already released in 9.8.7" in m for m in check(r)))
+        # Titles were once written quoted in a released section (`#### "Added: x"`) and
+        # are unquoted now: a leftover entry is found either way.
+        r3 = fresh("quoted-title")
+        _entry(r3, "zz-quoted.md", "For someone deploying", "Added: a quoted thing", "It was added.")
+        write(r3)
+        release(r3, "9.8.6", "2099-01-01")
+        p3 = r3 / CHANGELOG
+        p3.write_text(p3.read_text(encoding="utf-8").replace("#### Added: a quoted thing", '#### "Added: a quoted thing"'),
+                      encoding="utf-8")
+        _entry(r3, "zz-quoted.md", "For someone deploying", "Added: a quoted thing", "It was added.")
+        expect("an entry whose title a released section holds quoted is still found there",
+               any("zz-quoted.md" in m and "9.8.6" in m for m in check(r3)))
+
         r2 = fresh("same-title")
         _entry(r2, "zz-twice.md", "For someone deploying", "Fixed: a thing released once", "It was fixed.\n\n- one\n- two")
         write(r2)
