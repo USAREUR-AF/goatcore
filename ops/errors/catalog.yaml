@@ -3679,6 +3679,22 @@ entries:
     exit: 2
     matches:
       - "goat-peering-edge refuses \\(GB-303\\)"
+      - "switches to a leaf of our new CA only once the partner trusts it"
+
+  - code: GB-298
+    tool: goatbuilder
+    title: an IPsec rotation under way is not the one asked for
+    what: "goatbuilder federate rotate <partner> ipsec-leaf|ipsec-ca records the rotation it starts in <work>/.rotation-ipsec (its id, its kind and, for ipsec-ca, the partner's read-back of our new CA) before phase 11 runs, and removes the record once phase 11 passed. A run that finds a record resumes that rotation with the same id, so goat-peering-edge sets nothing aside twice. This run asked for another kind, or another read-back, than the record names, so it was refused before anything ran."
+    causes:
+      - an earlier rotation stopped before phase 11 passed, and a rotation of the other kind was asked for
+      - the partner's read-back changed between the run that started the rotation and this one
+    fixes:
+      - "finish the rotation the record names with the command that started it (the message names its id and kind)"
+      - "or remove <work>/.rotation-ipsec to start again; the edge keeps the set-aside pair in /etc/swanctl/.previous-<id>/"
+    read: docs/design/federation-key-rotation.md
+    exit: 1
+    matches:
+      - "records the IPsec rotation"
 
   - code: GB-309
     tool: goatbuilder

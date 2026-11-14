@@ -816,6 +816,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     if let Some(t) = &s.rotate_transport {
         rotation::transport(&mut phases, t);
     }
+    if let Some(i) = &s.rotate_ipsec {
+        rotation::ipsec(&mut phases, i);
+    }
     let banner_mode = if o.dry_run {
         "(DRY RUN — nothing executes)"
     } else if o.mock.is_some() {
