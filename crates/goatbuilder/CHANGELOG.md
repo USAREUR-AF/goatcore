@@ -178,6 +178,18 @@ instead of going on to build nothing, and a sha that is not 40 lower-case
 hex characters is refused before anything is removed: an empty one would
 have named the directory of every cached tree (#638).
 
+#### Fixed: an in-process federation verb no longer writes the process environment
+
+When goatbuilder runs a federation verb in process, phase 3's `init` used
+to read `DOCKER_HOST` and `FED_ROUTER_CONTAINER` from the process
+environment, so goatbuilder wrote both into it with `std::env::set_var` for
+the verb's duration, which every thread shares. The values are now passed
+to the measurement (`derive::RouterEnv` in goat-federation), and
+`DOCKER_HOST` reaches the container runtime's commands as their own
+environment. `goat federate init` reads its environment as before. A test
+refuses any `set_var` or `remove_var` under `crates/goatbuilder/src/federate/`
+(#641).
+
 #### Changed: the federation test environment's kill-resume aims phase 11's kill
 
 The kill-resume scenario kills phase 11 once the WireGuard role has written
