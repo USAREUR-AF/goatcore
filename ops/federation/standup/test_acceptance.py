@@ -762,12 +762,22 @@ class AcceptanceRun(unittest.TestCase):
 
     def test_own_surfaces_no_staged_value_is_key_material(self):
         # The fake spire-server's `x509 mint` prints the workload's private key after its
-        # certificate, as the real one does: only the certificate may be staged.
+        # certificate, as the real one does: only the certificate may be staged. Every
+        # value either side put on a core is checked, raw and base64-decoded: no private
+        # key block, no signing seed, and none of the fake fabric's private keys.
         import base64, re
         ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(own=True)
         self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
-        staged = [(side, k, v) for side, k, v in self.fabric.puts if "/acceptance/" in k]
-        self.assertTrue(any(k.endswith("/spire-svid") for _, k, _ in staged), [k for _, k, _ in staged])
+        keys = [k for _, k, _ in self.fabric.puts]
+        for want in ("/probes", "/spire-bundle", "/spire-svid"):
+            self.assertTrue(any(k.endswith(want) for k in keys), (want, keys))
+        tk = Path(HERE).parents[1] / "federation/vectors/testkeys"
+        secrets = [(tk / ("%s.seed.hex" % s)).read_text().strip().encode() for s in ("xaa", "xab")]
+        spire = os.path.join(self.tmp, "spire")
+        for fn in os.listdir(spire):
+            if fn.endswith(".key"):
+                body = b"".join(l.strip() for l in open(os.path.join(spire, fn), "rb") if not l.startswith(b"-----"))
+                secrets.append(body[:40])
 
         def texts(v):
             yield v
@@ -776,11 +786,14 @@ class AcceptanceRun(unittest.TestCase):
                     yield base64.b64decode(tok + b"=" * (-len(tok) % 4), validate=True)
                 except Exception:
                     pass
-        for side, k, v in staged:
+        for side, k, v in self.fabric.puts:
             for t in texts(v):
                 self.assertNotIn(b"PRIVATE KEY", t, (side, k))
-            self.assertIsNone(re.search(rb"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", v), (side, k, v[:80]))
-            self.assertIsNone(re.search(rb"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{43}=(?![A-Za-z0-9+/=])", v), (side, k))
+                for sec in secrets:
+                    self.assertNotIn(sec, t, (side, k))
+            if k.endswith(("/probes", "/spire-bundle", "/spire-svid")):
+                # Ids and certificates only: no 32-byte value in hex or base64 beside them.
+                self.assertIsNone(re.search(rb"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", v), (side, k, v[:80]))
 
     def test_own_surfaces_without_the_partners_probes_our_refusal_rows_are_blocked_naming_them(self):
         ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(own=True, second={"own": False})
