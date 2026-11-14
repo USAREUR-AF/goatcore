@@ -127,7 +127,7 @@
         "operator-step at phase 10 (flag, 2026-11-12T19:10:53Z)"
       ],
       "owned": [],
-      "next": "goatbuilder federate hello-ally --work ops/goatbuilder/compat/documents/fixtures/journal/later --from 15"
+      "next": "goatbuilder federate hello-ally --work ops/goatbuilder/compat/documents/fixtures/journal/later --from 3"
     }
   ]
 }

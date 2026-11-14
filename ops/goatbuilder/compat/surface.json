@@ -304,20 +304,35 @@
    "--approve-admission": true,
    "--approve-plan": true,
    "--as": true,
+   "--ca-roots": true,
+   "--cert": true,
    "--confirm": false,
+   "--context": true,
+   "--context-dir": true,
+   "--core-host": true,
    "--dry-run": false,
    "--edge-group": true,
+   "--edge-half": true,
+   "--edge-half-sha256": true,
+   "--edge-host": true,
    "--env": true,
    "--expect-commit": true,
    "--from": true,
+   "--half-out": true,
    "--no-confirm": false,
    "--no-resume": false,
+   "--over-ssh": true,
    "--partner-ca-fingerprint": true,
    "--partner-key": true,
    "--place-pointer-package": true,
    "--plan": true,
+   "--profile-dir": true,
    "--resume": false,
    "--review-in-pr": false,
+   "--router-container": true,
+   "--side": true,
+   "--ssh-core-group": true,
+   "--ssh-edge-group": true,
    "--to": true,
    "--work": true
   },
@@ -484,7 +499,8 @@
    }
   ],
   "flags": {
-   "--sha256": true
+   "--sha256": true,
+   "--work": true
   },
   "values": {
    "--color": [
@@ -1243,6 +1259,30 @@
    "--check": false,
    "--force": false,
    "--site": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder update verify-release": {
+  "args": [
+   {
+    "name": "DIR",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--signer": true,
+   "--trusted-root": true
   },
   "values": {
    "--color": [
