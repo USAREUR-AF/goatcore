@@ -1238,6 +1238,20 @@ fn usage_exit(e: clap::Error) -> ! {
     std::process::exit(e.exit_code())
 }
 
+/// One stderr line per deprecated command, flag or value this run's command
+/// line uses. The list is compiled in, and a test reads it, so it always reads.
+fn warn_deprecated(matches: &clap::ArgMatches) {
+    let argv: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
+    match deprecation::shipped() {
+        Ok(deps) => {
+            for w in deprecation::warnings(&deps, &Cli::command(), matches, &argv, env!("CARGO_PKG_VERSION")) {
+                eprintln!("{w}");
+            }
+        }
+        Err(e) => eprintln!("goatbuilder: {e}"),
+    }
+}
+
 fn main() {
     // The language is chosen before clap builds the command, so the help clap
     // prints is already localized (goat's order, docs/design/goat-cli-i18n.md).
@@ -1259,6 +1273,10 @@ fn main() {
     let machine_surface = matches!(cli.cmd, Cmd::Completion { .. } | Cmd::Docs { .. } | Cmd::Complete { .. });
     if !machine_surface {
         i18n::warn_if_machine_translated();
+        // A deprecated command, flag or value still works and says so here,
+        // with what replaces it (ADR 1228, "Deprecation";
+        // ops/goatbuilder/compat/deprecations.yaml).
+        warn_deprecated(&matches);
     }
     // Verbs that need no repository: the eggs touch nothing (src/fun.rs); the
     // completion script and the reference are walked from the clap tree; the

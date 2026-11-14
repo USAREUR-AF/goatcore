@@ -3,8 +3,9 @@
 //! A command or flag that is to be removed is named in
 //! `ops/goatbuilder/compat/deprecations.yaml`, with its replacement and the
 //! release that first warns. Until the major release that removes it, it keeps
-//! working: a run that uses it is told so on stderr, with the replacement, and
-//! a program reading `-o json` finds the same entries in the run's document.
+//! working: a run that uses it is told so on stderr, with the replacement
+//! (`main.rs` calls [`warnings`]). The same entries in the run's `-o json`
+//! document (ADR 1228) are not built.
 //! The compatibility check (ops/ci/check-goatbuilder-compat.sh, row A3) lets a
 //! command or flag of the last release be missing only when this list names it.
 
@@ -20,9 +21,15 @@ const SHIPPED: &str = include_str!("../../../ops/goatbuilder/compat/deprecations
 pub struct Deprecation {
     /// The command, as the command reference heads it (`goatbuilder deploy`).
     pub command: String,
-    /// The flag (`--env`); absent when the whole command is deprecated.
+    /// The flag (`--env`), or a positional argument as the help names it
+    /// (`<COMPONENT>`, only with `value`); absent when the whole command is
+    /// deprecated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flag: Option<String>,
+    /// One value of the flag or argument; absent when the whole flag is
+    /// deprecated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
     /// What to use instead.
     pub replacement: String,
     /// The first release that warns (`goatbuilder/v0.6.0`).
@@ -40,9 +47,11 @@ impl Deprecation {
     /// what to use. `version` is this binary's (`CARGO_PKG_VERSION`): before 1.0
     /// no removal release is promised; from 1.0 removal waits for the next major.
     pub fn warning(&self, version: &str) -> String {
-        let what = match &self.flag {
-            Some(f) => format!("{} {f}", self.command),
-            None => self.command.clone(),
+        let what = match (&self.flag, &self.value) {
+            (Some(f), Some(v)) if f.starts_with('<') => format!("`{} {v}` ({f})", self.command),
+            (Some(f), Some(v)) => format!("`{} {f} {v}`", self.command),
+            (Some(f), None) => format!("`{} {f}`", self.command),
+            (None, _) => format!("`{}`", self.command),
         };
         let major: u64 = version
             .split('.')
@@ -55,7 +64,7 @@ impl Deprecation {
             format!("removed no earlier than goatbuilder {}.0.0", major + 1)
         };
         format!(
-            "warning: `{what}` is deprecated since {} and will be {removal}; use {} instead",
+            "warning: {what} is deprecated since {} and will be {removal}; use {} instead",
             self.deprecated_in, self.replacement
         )
     }
@@ -86,7 +95,25 @@ pub fn parse(yaml: &str) -> Result<Vec<Deprecation>, String> {
                 "deprecations.yaml entry {n}: `deprecated_in` must be goatbuilder/vX.Y.Z"
             ));
         }
-        if let Some(f) = &d.flag {
+        if let Some(v) = &d.value {
+            if d.flag.is_none() || v.trim().is_empty() {
+                return Err(format!(
+                    "deprecations.yaml entry {n}: `value` deprecates one value of a flag or argument; it needs the `flag` (or `<ARG>`) it belongs to"
+                ));
+            }
+        }
+        if let Some(arg) = d.flag.as_deref().and_then(|f| f.strip_prefix('<')) {
+            let whole = arg.strip_suffix('>').is_some_and(|a| {
+                !a.is_empty()
+                    && a.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            });
+            if !whole || d.value.is_none() {
+                return Err(format!(
+                    "deprecations.yaml entry {n}: a positional argument (`<NAME>`) is deprecated one value at a time; name it as the help does, with `value`"
+                ));
+            }
+        } else if let Some(f) = &d.flag {
             let name = f
                 .strip_prefix("--")
                 .or_else(|| f.strip_prefix('-'))
@@ -128,6 +155,7 @@ pub fn used<'a>(
 ) -> Vec<&'a Deprecation> {
     // (command path, the flags given to that command, as --long and -s forms)
     let mut levels: Vec<(String, Vec<String>)> = Vec::new();
+    let mut parsed: Vec<&ArgMatches> = Vec::new();
     let mut chain: Vec<&Command> = Vec::new();
     let mut path = root.get_name().to_string();
     let mut cmd = root;
@@ -148,6 +176,7 @@ pub fn used<'a>(
         }
         levels.push((path.clone(), given));
         chain.push(cmd);
+        parsed.push(m);
         match m.subcommand() {
             Some((name, sub)) => match cmd.find_subcommand(name) {
                 Some(c) => {
@@ -165,13 +194,71 @@ pub fn used<'a>(
     }
     let ran = &levels.last().expect("the root is always a level").0;
     deps.iter()
-        .filter(|d| match &d.flag {
-            None => ran == &d.command || ran.starts_with(&format!("{} ", d.command)),
-            Some(f) => levels
+        .filter(|d| match (&d.flag, &d.value) {
+            (None, _) => ran == &d.command || ran.starts_with(&format!("{} ", d.command)),
+            (Some(f), None) => levels
                 .iter()
                 .any(|(p, given)| p == &d.command && given.contains(f)),
+            (Some(f), Some(v)) => levels.iter().enumerate().any(|(i, (p, given))| {
+                p == &d.command
+                    && (f.starts_with('<') || given.contains(f))
+                    && given_values(chain[i], parsed[i], f).iter().any(|x| x == v)
+            }),
         })
         .collect()
+}
+
+/// The warnings a run prints on stderr: one line for each deprecated command,
+/// flag or value its command line uses. `version` is this binary's.
+pub fn warnings(
+    deps: &[Deprecation],
+    root: &Command,
+    matches: &ArgMatches,
+    argv: &[String],
+    version: &str,
+) -> Vec<String> {
+    used(deps, root, matches, argv)
+        .into_iter()
+        .map(|d| d.warning(version))
+        .collect()
+}
+
+/// The values given on the command line to the flag (`--env`, `-e`) or
+/// positional argument (`<COMPONENT>`, by its value name or its id) `f` names.
+fn given_values(cmd: &Command, m: &ArgMatches, f: &str) -> Vec<String> {
+    let named = |a: &&clap::Arg| -> bool {
+        if let Some(arg) = f.strip_prefix('<').and_then(|x| x.strip_suffix('>')) {
+            a.is_positional()
+                && (a
+                    .get_value_names()
+                    .into_iter()
+                    .flatten()
+                    .any(|n| n.as_str() == arg)
+                    || a.get_id().as_str().to_uppercase() == arg.to_uppercase())
+        } else if let Some(long) = f.strip_prefix("--") {
+            a.get_long() == Some(long)
+                || a.get_all_aliases().into_iter().flatten().any(|x| x == long)
+        } else {
+            let c = f.strip_prefix('-').and_then(|x| x.chars().next());
+            c.is_some()
+                && (a.get_short() == c
+                    || a.get_all_short_aliases()
+                        .into_iter()
+                        .flatten()
+                        .any(|x| Some(x) == c))
+        }
+    };
+    let Some(a) = cmd.get_arguments().find(named) else {
+        return Vec::new();
+    };
+    let id = a.get_id().as_str();
+    if m.value_source(id) != Some(ValueSource::CommandLine) {
+        return Vec::new();
+    }
+    match m.try_get_raw(id) {
+        Ok(Some(vals)) => vals.map(|v| v.to_string_lossy().into_owned()).collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Every flag spelling typed on the command line, with the level (an index
