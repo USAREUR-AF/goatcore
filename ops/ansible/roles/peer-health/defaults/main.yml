@@ -75,3 +75,7 @@ peer_health_ca_root_src: "/etc/{{ zenoh_stack | default('goat-zenoh') }}/tls/ca-
 peer_health_compose_dir: "/opt/peer-health"
 peer_health_feed_dir: "/var/lib/peer-health/feed"
 peer_health_rust_log: "goat_peer_health=info,zenoh=warn"
+
+# Container memory ceiling. Per-host values go in group_vars.
+# ops/ci/check-compose-memory-is-variable.sh refuses a literal in the template.
+peer_health_memory_limit: 256M  # the peer-health container

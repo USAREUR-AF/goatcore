@@ -13,7 +13,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: "{{ peer_health_memory_limit }}"
     restart: unless-stopped
     read_only: true
     cap_drop: ["ALL"]
