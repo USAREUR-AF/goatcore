@@ -12,19 +12,23 @@
 # row read back from the host.
 #
 # usage: ops/e2e/hermetic.sh [--work DIR] [--record DIR] [--goatbuilder BIN] [--no-hosts] [--keep]
-#                            [--host-distro ubuntu|debian]
+#                            [--host-distro ubuntu|debian] [--throwaway-machine]
 #   --no-hosts   no containers, no registry: the dry-run and refusal cases only
 #                (what a laptop without Docker can run; Linux + Docker for the rest)
 #   --keep       leave the work directory and containers for inspection
 #   --host-distro the management hosts' distribution: ubuntu (default, ops/e2e/host/Dockerfile)
 #                or debian (ops/e2e/host/Dockerfile.debian); the same cases run on either
+#   --throwaway-machine  run with hosts outside CI. With hosts the tier uses sudo to point
+#                ghcr.io at a local registry (/etc/hosts, /etc/docker/certs.d, a registry
+#                on :443), so it refuses to start unless GITHUB_ACTIONS=true or this is
+#                given (ops/e2e/system.sh); it undoes the two files on exit
 #
 # Exit 0 when every case passed or failed as expected (xfail); 1 otherwise.
 # The record: $RECORD/report.jsonl (ops/e2e/report.schema.json), one log per
 # case, ledgers.jsonl, and the stubs' call logs; ops/e2e/report.py renders it.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
-WORK=""; RECORD=""; GB=""; HOSTS=1; KEEP=0; DISTRO=ubuntu
+WORK=""; RECORD=""; GB=""; HOSTS=1; KEEP=0; DISTRO=ubuntu; THROWAWAY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --work) WORK="$2"; shift 2 ;;
@@ -33,7 +37,8 @@ while [ $# -gt 0 ]; do
     --no-hosts) HOSTS=0; shift ;;
     --host-distro) DISTRO="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    --throwaway-machine) THROWAWAY=1; shift ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) echo "hermetic: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -42,6 +47,10 @@ case "$DISTRO" in
   debian) HOST_DOCKERFILE=Dockerfile.debian ;;
   *) echo "hermetic: --host-distro is ubuntu or debian, not '$DISTRO'" >&2; exit 2 ;;
 esac
+# Before anything is created or invoked: a run with hosts changes this machine.
+# shellcheck source=ops/e2e/system.sh
+. "$HERE/system.sh"
+sys_guard "$HOSTS" "$THROWAWAY" || exit 2
 [ -n "$WORK" ] || WORK="$(mktemp -d "${TMPDIR:-/tmp}/goat-e2e.XXXXXX")"
 mkdir -p "$WORK"; WORK="$(cd "$WORK" && pwd)"
 [ -n "$RECORD" ] || RECORD="$WORK/report"
@@ -116,7 +125,9 @@ if [ "$HOSTS" = 1 ]; then
   CERTS="$WORK/certs"; mkdir -p "$CERTS"
   openssl req -x509 -newkey rsa:2048 -nodes -keyout "$CERTS/key.pem" -out "$CERTS/cert.pem" -days 2 -subj '/CN=ghcr.io' -addext 'subjectAltName=DNS:ghcr.io' >/dev/null 2>&1
   export E2E_REGISTRY_CA="$CERTS/cert.pem"
-  sudo mkdir -p /etc/docker/certs.d/ghcr.io && sudo cp "$CERTS/cert.pem" /etc/docker/certs.d/ghcr.io/ca.crt
+  # From here the machine is changed: put it back on any exit (ops/e2e/system.sh).
+  sys_arm_undo
+  sys_trust_registry "$CERTS/cert.pem"
   # Pulled by digest before ghcr.io is re-pointed (the Dockerfiles pin the same digests).
   REGISTRY_IMAGE="registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
   for img in busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092 "$REGISTRY_IMAGE" \
@@ -129,7 +140,7 @@ if [ "$HOSTS" = 1 ]; then
   docker network inspect e2e-net >/dev/null 2>&1 || docker network create e2e-net >/dev/null
   docker run -d --name e2e-registry -p 443:443 -v "$CERTS:/certs:ro" \
     -e REGISTRY_HTTP_ADDR=0.0.0.0:443 -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/cert.pem -e REGISTRY_HTTP_TLS_KEY=/certs/key.pem "$REGISTRY_IMAGE" >/dev/null
-  grep -q ' ghcr.io$' /etc/hosts || echo "127.0.0.1 ghcr.io" | sudo tee -a /etc/hosts >/dev/null
+  sys_point_ghcr
   for _i in $(seq 1 30); do curl -s --cacert "$CERTS/cert.pem" https://ghcr.io/v2/ >/dev/null 2>&1 && break; sleep 1; done
   curl -s --cacert "$CERTS/cert.pem" https://ghcr.io/v2/ >/dev/null || die "the hermetic registry did not come up as ghcr.io"
   # dockerd is a Go program: its resolver caches /etc/hosts for up to 5 s, so a
@@ -172,6 +183,9 @@ export CLONE   # the ledger probes run in child shells (bash -c) and read the cl
 cleanup() {
   if [ "$KEEP" = 0 ] && [ "$HOSTS" = 1 ]; then docker rm -f e2e-registry e2e-dev-01 e2e-preprod-01 e2e-prod-01 >/dev/null 2>&1 || true; docker ps -aq --filter name=e2e-canary- | xargs -r docker rm -f >/dev/null 2>&1 || true; fi
   [ "$KEEP" = 0 ] && rm -rf "$WORK/goat-wt-rc-"* 2>/dev/null || true
+  # The machine is put back even with --keep: --keep leaves the containers, never
+  # ghcr.io pointed at this machine.
+  sys_undo
 }
 trap cleanup EXIT
 
