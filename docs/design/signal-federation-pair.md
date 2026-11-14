@@ -138,6 +138,8 @@ only joiner → founder is provable. The play passes on transport both ways, one
 proven direction, and no FAILED probe. The other direction becomes provable when peers home on
 the joiner, by balanced weight or a signal home pin (ADR 1085).
 
+The end state grades the proxy too, which is **built**: `federation-proxy` has a row in `ops/goatbuilder/endstate/catalog.yaml`. The row is present where a site declares `signal_federation_proxy_enabled: true`, and absent, with that flag as its reason, where it does not. It is deployed by `signal-federation-transport.yml`, and both that play and `mgmt-host.yml` read the flag. `goatbuilder endstate` then checks that its container runs on a site that turns it on. `tests/test_endstate_federation_proxy.py` tests the row, its presence for each value of the flag, and its play. Before the row, the model graded it neither way, though two joined sites of a standing goatnet run it.
+
 While the joiner holds no peers, every forward from the founder misses; the
 negative cache (`signal_negative_cache_ttl`) bounds the repeats per offline
 recipient, and the mesh leg carries them, not the relays, while the mesh is up.
