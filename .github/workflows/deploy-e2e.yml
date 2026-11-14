@@ -5,7 +5,9 @@ name: deploy-e2e
 #   hermetic   the real drivers against three container hosts, a local bare
 #              remote and a local registry the runner resolves as ghcr.io; the
 #              ledger read back from each host is the only proof. On every PR
-#              that touches the drivers, nightly in full.
+#              that touches the drivers, nightly in full. Once with Ubuntu
+#              hosts and once with Debian hosts (ops/e2e/host/Dockerfile and
+#              Dockerfile.debian, gate row H6): the same cases on each.
 #   gates      secrets-coverage (warning-only here: the references live in the
 #              private goat-credentials repository, whose CI judges them) and
 #              deps-named (every tool the release path invokes is named up front).
@@ -70,8 +72,12 @@ jobs:
         run: python3 ops/ci/check-secrets-coverage.py
 
   hermetic:
-    name: hermetic — the real drivers on container hosts, proved from the ledger
+    name: hermetic (${{ matrix.host_distro }} hosts) — the real drivers on container hosts, proved from the ledger
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        host_distro: [ubuntu, debian]
     permissions:
       contents: read
       packages: read
@@ -119,12 +125,12 @@ jobs:
         working-directory: crates
         run: cargo build -p goatbuilder
       - name: The hermetic tier
-        run: ops/e2e/hermetic.sh --goatbuilder crates/target/debug/goatbuilder --record "$RUNNER_TEMP/e2e-report"
+        run: ops/e2e/hermetic.sh --host-distro "${{ matrix.host_distro }}" --goatbuilder crates/target/debug/goatbuilder --record "$RUNNER_TEMP/e2e-report"
       - name: Upload the run record
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: deploy-e2e-hermetic-record
+          name: deploy-e2e-hermetic-record-${{ matrix.host_distro }}
           path: ${{ runner.temp }}/e2e-report
           if-no-files-found: warn
 
