@@ -290,6 +290,27 @@ def self_test(repo: Path) -> int:
         expect("an entry whose file name is not a slug is refused",
                any("Bad_Name.md: the file name" in m for m in check(r)))
 
+        # An entry whose text is already in a released section: a branch cut before a
+        # release, merged after it, leaves its rendered lines inside the release and its
+        # entry file behind (both #753 and #671 did so on 14 Nov, after 0.7.0's fold).
+        r = fresh("released-twice")
+        _entry(r, "zz-twice.md", "For someone deploying", "Fixed: a thing released once", "It was fixed.\n\n- one\n- two")
+        write(r)
+        release(r, "9.8.7", "2099-01-01")
+        _entry(r, "zz-twice.md", "For someone deploying", "Fixed: a thing released once", "It was fixed.\n\n- one\n- two")
+        problems = check(r)
+        expect("an entry whose text is already in a released section is refused, naming the release",
+               any("zz-twice.md: already released in 9.8.7" in m for m in problems))
+        write(r)
+        expect("and `write` does not make it pass", any("already released in 9.8.7" in m for m in check(r)))
+        r2 = fresh("same-title")
+        _entry(r2, "zz-twice.md", "For someone deploying", "Fixed: a thing released once", "It was fixed.\n\n- one\n- two")
+        write(r2)
+        release(r2, "9.8.7", "2099-01-01")
+        _entry(r2, "zz-again.md", "For someone deploying", "Fixed: a thing released once", "Fixed again, differently.")
+        write(r2)
+        expect("an entry with a released title but another body is not refused", check(r2) == [])
+
         r = fresh("added")
         _entry(r, "zz-added.md", "For someone contributing", "Added: a check", "It checks.")
         expect("a new entry, before `write`, is refused", check(r) != [])
