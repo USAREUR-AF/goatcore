@@ -163,6 +163,21 @@ v0.6.0's binaries. v0.6.0's configuration files are kept for gate row A2
 beside those of the earlier releases (#566, #617, #562, #563, #631, #634,
 #616).
 
+#### Fixed: the federation test environment's source clone holds every object of the commit under test
+
+The federation test environment builds each commit under test from its own
+clone. From a shallow source repository, that clone could miss a commit
+that no ref held, so the checkout failed with `fatal: unable to read tree`
+and the build found no `crates/` directory. The clone
+(`ops/federation-e2e/lib/srctree.sh`, used for goatcore and for the
+saltlick directory) is now a plain clone, and fetches the commit by sha
+when it cannot read its tree, so it holds the commit's objects itself. A
+clone from an earlier run is reused only when it is checked out at that
+commit and can read its tree. A failure stops with `no tree for <sha>`
+instead of going on to build nothing, and a sha that is not 40 lower-case
+hex characters is refused before anything is removed: an empty one would
+have named the directory of every cached tree (#638).
+
 #### Changed: the federation test environment's kill-resume aims phase 11's kill
 
 The kill-resume scenario kills phase 11 once the WireGuard role has written
