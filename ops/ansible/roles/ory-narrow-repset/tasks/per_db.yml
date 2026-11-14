@@ -107,6 +107,80 @@
     - ory_spock_revocation_guard | bool
     - ory_spock_db in ory_spock_revocation_guard_sql
 
+# ADR 1205 D8, D10: this site's own name for the hub, as the server setting
+# goat.hub_site that the platform-admin ceiling reads. Cluster-wide, written to
+# postgresql.auto.conf and reloaded, so running apply workers read the new value.
+# The SET first makes goat.hub_site a known name in the session, which ALTER
+# SYSTEM requires of a setting no extension defines.
+- name: "ory-narrow-repset[{{ ory_spock_db }}] | write goat.hub_site from goatnet_hub_site"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -i
+      - -u
+      - postgres
+      - "{{ ory_spock_postgres_container }}"
+      - psql
+      - -U
+      - postgres
+      - -d
+      - "{{ ory_spock_db }}"
+      - -v
+      - "ON_ERROR_STOP=1"
+      - -v
+      - "hub={{ goatnet_hub_site | default('') }}"
+      - -q
+    stdin: |
+      SET goat.hub_site = '';
+      {% if (goatnet_hub_site | default('')) | length > 0 %}
+      ALTER SYSTEM SET goat.hub_site = :'hub';
+      {% else %}
+      ALTER SYSTEM RESET goat.hub_site;
+      {% endif %}
+      SELECT pg_reload_conf();
+  changed_when: true
+  when:
+    - ory_spock_platform_admin_ceiling | bool
+    - ory_spock_db == 'kratos'
+
+- name: "ory-narrow-repset[{{ ory_spock_db }}] | report a Spock site that names no hub"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} sets no goatnet_hub_site, so goat.hub_site is
+      unset and the platform-admin ceiling refuses every platform-admin grant
+      at this site (ADR 1205 D10) until goatnet_hub_site is set and this role
+      is run again.
+  when:
+    - ory_spock_platform_admin_ceiling | bool
+    - ory_spock_db == 'kratos'
+    - (goatnet_hub_site | default('')) | length == 0
+
+# ADR 1205 D10: only the hub makes a platform admin. After the revocation
+# guard; the table it logs to, goat_ceiling_refused, is in no repset.
+- name: "ory-narrow-repset[{{ ory_spock_db }}] | install the platform-admin ceiling"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -i
+      - -u
+      - postgres
+      - "{{ ory_spock_postgres_container }}"
+      - psql
+      - -U
+      - postgres
+      - -d
+      - "{{ ory_spock_db }}"
+      - -v
+      - "ON_ERROR_STOP=1"
+      - -q
+    stdin: "{{ lookup('ansible.builtin.file', ory_spock_platform_admin_ceiling_sql) }}"
+  changed_when: true
+  when:
+    - ory_spock_platform_admin_ceiling | bool
+    - ory_spock_db == 'kratos'
+
 - name: "ory-narrow-repset[{{ ory_spock_db }}] | create ory_narrow repset + populate inclusion list + assert exclusions"
   ansible.builtin.shell:
     cmd: |
