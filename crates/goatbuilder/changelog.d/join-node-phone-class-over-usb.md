@@ -5,7 +5,7 @@ title: "Added: join-node builds a node on a phone with --class phone --via usb"
 
 `goatbuilder join-node <environment> --site <site> --node <node> --class phone
 --via usb` joins the Linux VM on an Android phone as a `core` joiner
-(docs/design/phone-node.md). Built on a fixture; Unmeasured on a phone.
+(docs/design/phone-node.md). Built on a fixture; not measured on a phone.
 
 - `--via usb` reaches the node over the Android debug bridge until it is
   enrolled. The run writes the SSH configuration and the Ansible inventory
@@ -26,4 +26,4 @@ title: "Added: join-node builds a node on a phone with --class phone --via usb"
   preflight takes `--class phone` and refuses a site that contradicts them
   (GB-301).
 
-Every other class and transport plans and runs as before. (#747)
+Every other class and transport plans and runs as before (#747).

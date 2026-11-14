@@ -35,6 +35,29 @@ service owns as `SKIPPED` with the same text instead of N/A. `goatbuilder
 join-node` lists the gaps under "What <site> does not run yet", from the
 catalog, before the services the site turns off (ADR 1233, #671).
 
+#### Fixed: acceptance on a derived session ignores a partner sample left by an earlier run
+
+Phase 14's acceptance script, run on a derived session
+(`ops/federation/standup/acceptance.sh` with `FED_ACCEPTANCE_ATTEMPT`),
+learns the partner's challenge from the partner's sample on our core.
+Samples stay on the cores between runs, so a sample left by the partner's
+earlier run taught that run's challenge: our signed result echoed a stale
+one, the partner refused it (GB-273), and the two sides could end with
+different verdicts until both ran again. Each run now stages the time it
+started beside its samples, and a reader ignores a partner sample whose
+start time is more than `FED_SESSION_WAIT` before its own, says so, and
+keeps waiting for this run's. With only an earlier run's samples there, those
+rows are BLOCKED and the run ends open (exit 3). A partner whose runner
+stages no start time is read as before.
+
+Limits: this rests on both sides' clocks agreeing within `FED_SESSION_WAIT`,
+and phase 1 does not check the clocks yet, so keep each host's clock
+synchronized. A partner's earlier run that started within `FED_SESSION_WAIT`
+of ours is not told apart; its result is still refused (GB-273), so the
+verdicts can differ until a rerun, but a stale result never passes.
+`goatbuilder federate` does not run a derived session yet. Tested on the
+in-process fabric only, not on hosts (#786).
+
 #### Fixed: backing out one of two peerings keeps the core leaf the other still uses
 
 Our core router serves one leaf to every peering. `goatbuilder federate
@@ -74,7 +97,7 @@ is made (GB-280). See ADR 1235 (#678).
 
 `goatbuilder join-node <environment> --site <site> --node <node> --class phone
 --via usb` joins the Linux VM on an Android phone as a `core` joiner
-(docs/design/phone-node.md). Built on a fixture; Unmeasured on a phone.
+(docs/design/phone-node.md). Built on a fixture; not measured on a phone.
 
 - `--via usb` reaches the node over the Android debug bridge until it is
   enrolled. The run writes the SSH configuration and the Ansible inventory
@@ -95,7 +118,7 @@ is made (GB-280). See ADR 1235 (#678).
   preflight takes `--class phone` and refuses a site that contradicts them
   (GB-301).
 
-Every other class and transport plans and runs as before. (#747)
+Every other class and transport plans and runs as before (#747).
 
 #### Fixed: a host-allocation SKIP says which case it is and what clears it
 
@@ -121,7 +144,7 @@ so a title written YAML-style, `title: "Added: …"`, rendered as a heading
 with its quotes, and a quoted heading was refused as not one of the three.
 A value wrapped in one matching pair of `"` or `'` is now read without that
 pair; quotes inside a title are kept. The entries directory's README says a
-title needs no quotes for its colon.
+title needs no quotes for its colon (#764).
 
 #### Changed: the compatibility check is held to goatbuilder/v0.7.0
 
@@ -139,7 +162,7 @@ gain a fourth: the release check in the federation test environment starts on th
 commit at the cut-off, before the version pull request is opened. The tag goes on that pull
 request's merge commit. Before the tag, a diff between the checked commit and the merge
 commit must name nothing under `crates/`, `ops/ansible/` or `ops/federation-e2e/`, or each
-stage those paths feed runs again on the merge commit.
+stage those paths feed runs again on the merge commit (#772).
 
 <!-- END generated: changelog unreleased -->
 
