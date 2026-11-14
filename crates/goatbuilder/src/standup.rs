@@ -1144,6 +1144,19 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
                     checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the site is left partway through phase {}. Read the error above; docs/operations/goatnet-standup.md \"The run\" table has this phase's \"Worked when\" and the Troubleshooting table lists the common failures by symptom + fix.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}{prof}", ph.n)) });
+                    // F5: the failed phase's output, matched against the error catalog
+                    // (explain_phase::failed_phase), as federate does; the runner kept it
+                    // in a log. No row when standup's phase catalog has no such phase.
+                    let phase_id = ph.n.to_string();
+                    let log = crate::runner::commands()
+                        .into_iter()
+                        .rev()
+                        .find(|c| c.phase.as_deref() == Some(phase_id.as_str()) && c.log.is_some())
+                        .and_then(|c| c.log);
+                    let output = log.as_deref().and_then(|l| std::fs::read_to_string(l).ok()).unwrap_or_default();
+                    if let Some(f) = crate::explain_phase::failed_phase("standup", ph.n, &output, log.as_deref()) {
+                        checks.push(Check { name: "interpreted".into(), ok: false, detail: f.detail(), fix: Some(f.fix.clone()) });
+                    }
                     exit = EXIT_REFUSED;
                     break 'run;
                 }
