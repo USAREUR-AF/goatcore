@@ -4003,6 +4003,115 @@ mod tests {
         );
     }
 
+    /// Our core serves one leaf to every peering. While another peering is
+    /// still set up from this machine (its working folder beside ours holds
+    /// its agreement), the leaf it reaches our core through is never taken
+    /// back by this peering's back-out: not removed on an absent record, not
+    /// put back from a backup, and not a stop when nothing recorded what was
+    /// there. The back-out goes on and the plan says why the leaf is kept.
+    #[test]
+    fn a_leaf_another_peering_still_set_up_here_reaches_us_through_is_kept() {
+        let set_up_beside = |c: &RouteCase| {
+            let other = c.dir.path().join("peerings/xac");
+            std::fs::create_dir_all(&other).unwrap();
+            std::fs::write(other.join("agreement.json"), "{}").unwrap();
+        };
+        let kept_row = |c: &RouteCase| {
+            let var = |k: &str| c.vars.get(k).cloned();
+            let core = driver_core(&c.repo, "xab", "zagros", &c.work(), var)
+                .unwrap()
+                .unwrap();
+            let rec = driver_survey(&core, "xab", &c.dir.path().join("probe")).unwrap();
+            let rows: Vec<Row> = rec
+                .rows
+                .into_iter()
+                .filter(|r| r.component == "core leaf")
+                .collect();
+            assert_eq!(rows.len(), 2, "{rows:?}");
+            for r in &rows {
+                assert_eq!(
+                    (r.state.as_str(), r.action.as_str()),
+                    ("present", "kept"),
+                    "{r:?}"
+                );
+                assert!(
+                    r.note.contains("peerings/xac"),
+                    "names the other peering: {r:?}"
+                );
+            }
+        };
+        // Placed where nothing was (an absent record): kept, not removed.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        set_up_beside(&c);
+        kept_row(&c);
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"KEY-OF-XAB"
+        );
+        // Placed over an earlier leaf (a backup): kept, not put back.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, Some(b"EARLIER"));
+        set_up_beside(&c);
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        // Placed by hand, so no admission run recorded what was there (the
+        // shape of two peerings admitted by hand): kept, and not a stop.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        std::fs::remove_dir_all(c.work().join("admission")).unwrap();
+        set_up_beside(&c);
+        kept_row(&c);
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"KEY-OF-XAB"
+        );
+    }
+
+    /// The same leaf with nothing that records what was there, and no other
+    /// peering set up here: a stop of its own (GB-293), not GB-221, and the
+    /// summary keeps it apart from another peering's resources.
+    #[test]
+    fn an_undecided_core_leaf_is_its_own_stop() {
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        std::fs::remove_dir_all(c.work().join("admission")).unwrap();
+        let var = |k: &str| c.vars.get(k).cloned();
+        let core = driver_core(&c.repo, "xab", "zagros", &c.work(), var)
+            .unwrap()
+            .unwrap();
+        let rec = driver_survey(&core, "xab", &c.dir.path().join("probe")).unwrap();
+        let s = summarize(&[rec], "xab");
+        assert!(s.refused.is_empty(), "{s:?}");
+        assert_eq!(s.undecided.len(), 2, "{s:?}");
+        assert!(s.undecided[0].contains("router-cert.pem"), "{s:?}");
+    }
+
     #[test]
     fn a_leaf_half_of_which_now_holds_another_s_bytes_is_left_as_it_is() {
         // The certificate is still ours, with a backup to put back; the key
