@@ -1125,8 +1125,10 @@ fi
 #      reached by mesh IP (its cert carries the IP SAN, not a DNS name). Running
 #      mesh CoreDNS there rendered a Corefile and then died in the drift-guard's
 #      awk on the never-generated zone file. Skip it when no zone exists.
+#      That fallback to the founder's DNS is today's gap, not the target: every
+#      site is to run its own resolver (ADR 1233, gate row I3).
 if [ "$PROFILE" = internet ]; then
-step 12 A "[internet] mesh CoreDNS (only if this site has a mesh zone; joiners use the founder's DNS)" \
+step 12 A "[internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233)" \
   "cd '$REPO' && python3 ops/dns/generate-mesh-hosts.py && { if [ -f ops/dns/$SITE/mesh-hosts ]; then cd ops/ansible && $ANSIBLE_PRE ${INV[*]} goat-coredns.yml --limit $GROUP; else echo '    no ops/dns/$SITE/mesh-hosts — this site declares no mesh zone (a joiner on the founder DNS plane); skipping mesh CoreDNS'; fi; }"
 fi
 
