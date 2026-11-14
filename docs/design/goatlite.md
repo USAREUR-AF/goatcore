@@ -173,7 +173,7 @@ goatlite is rung 4 of a ten-rung ladder from "I have a welcome package" to "I sh
 
 Rung 6 is on the ladder because the one-week troubleshooting path is the bar's hardest test (complexity-budget-and-encapsulation.md, "The bar").
 
-Beyond the ladder is a separate gym lane, `beyond-the-ladder` ([ops/gym/gym.yaml](https://github.com/usareur-af/goatstuff/blob/main/ops/gym/gym.yaml)), for someone who has climbed the ten rungs and runs a goatnet; nothing in it is needed to finish the ladder. Its stages come under three headings: Run it well, Prove its value, and The frontier. The frontier stages are the ones whose tooling is not built yet.
+Beyond the ladder is a separate gym lane, `beyond-the-ladder` ([ops/gym/gym.yaml](https://github.com/usareur-af/goatstuff/blob/main/ops/gym/gym.yaml)), for someone who has climbed the ten rungs and runs a goatnet; nothing in it is needed to finish the ladder. Its stages come under three headings: Run it well, Prove its value, and The frontier. The frontier stages are the ones whose tooling is not built yet. ADR 1238 ([#681](https://github.com/usareur-af/goatcore/pull/681)) records this learning program, the ladder and the lane beyond it; the program is in use while the ADR is Proposed.
 
 ## 9. Acceptance
 
