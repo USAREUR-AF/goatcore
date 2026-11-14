@@ -324,7 +324,7 @@ oc_accept() { # $1 us, $2 them
     -e "FED_SPIRE_THEIRS=ssh goat@$(core_ip "$them") docker exec spire-server /opt/spire/bin/spire-server" \
     -e FED_PROBE_LAUNCHER=/usr/local/sbin/fe2e-probe-launcher \
     -e "FE2E_PL_SSH=goat@$(edge_ip "$them")" -e "FE2E_PL_REST_IP=$(edge_ip "$them")" -e "FE2E_PL_FAR_IP=$far" \
-    -e FE2E_PL_DIR=/root/fe2e-launcher -e FE2E_PL_PORT=8201 -e FE2E_PL_TEMPLATE=/root/fe2e-launcher/probe.json5 -e "FE2E_PL_IMAGE=$ZENOH_IMAGE" \
+    -e FE2E_PL_DIR=/root/fe2e-launcher -e "FE2E_PL_PORT=$PL_PORT" -e FE2E_PL_TEMPLATE=/root/fe2e-launcher/probe.json5 -e "FE2E_PL_IMAGE=$ZENOH_IMAGE" \
     -w /opt/goat "$h" goatbuilder -C /opt/goat --yes federate "${stage[@]}" $(oc_as "$s") || rc=$?
   for t in "$HP-$them-core" "$HP-$them-edge"; do
     docker exec "$t" sh -c "grep -vxF '$pub' /home/goat/.ssh/authorized_keys > /home/goat/.ssh/ak.tmp; cat /home/goat/.ssh/ak.tmp > /home/goat/.ssh/authorized_keys; rm -f /home/goat/.ssh/ak.tmp" || true

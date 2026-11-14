@@ -56,7 +56,7 @@ fw_profile_vars() {
     done
     echo "goat_host_firewall_override:"
     echo "  other-tcp:"
-    echo "    ports: [$probes]"
+    echo "    ports: [$probes, $PL_PORT, $((PL_PORT + 1)), $((PL_PORT + 2))]"
     echo "    sources: [\"$gw/32\"$(for t in $reach; do printf ', "%s/32"' "$t"; done)]"
     echo "    reason: \"drill only: the federation test reads the probe sessions' REST ports from the docker host and from a partner's drill reach\""
     if [ "$tight" = 1 ]; then
@@ -84,6 +84,12 @@ fw_profile_vars() {
     echo "    reason: \"drill only: the federation test reads the core router's REST port from the docker host\""
   } > "$4"
 }
+
+# The first REST port of the probe sessions a partner's phase 14 starts on this edge through
+# lib/probe-launcher.sh (agreed, forged, impersonate take +0, +1, +2). One value, read by the
+# units that start the launcher (FE2E_PL_PORT in units/onecmd.sh, units/nohand-loop.sh) and by
+# fw_profile_vars, which admits those ports on the edge, so the two cannot drift apart.
+PL_PORT=8201
 
 # drill_reach_ip: the address a partner's driver host takes on this sovereign's network when a
 # unit gives it the drill's reach for phase 14 (units/onecmd.sh, units/nohand-loop.sh). It is

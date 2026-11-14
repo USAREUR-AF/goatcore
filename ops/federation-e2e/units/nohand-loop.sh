@@ -178,7 +178,7 @@ oc_env_more() { # $1 us, $2 them
     -e "FED_SPIRE_THEIRS=ssh goat@$(core_ip "$them") docker exec spire-server /opt/spire/bin/spire-server"
     -e FED_PROBE_LAUNCHER=/usr/local/sbin/fe2e-probe-launcher
     -e "FE2E_PL_SSH=goat@$(edge_ip "$them")" -e "FE2E_PL_REST_IP=$(edge_ip "$them")" -e "FE2E_PL_FAR_IP=$far"
-    -e FE2E_PL_DIR=/root/fe2e-launcher -e FE2E_PL_PORT=8201 -e FE2E_PL_TEMPLATE=/root/fe2e-launcher/probe.json5 -e "FE2E_PL_IMAGE=$ZENOH_IMAGE")
+    -e FE2E_PL_DIR=/root/fe2e-launcher -e "FE2E_PL_PORT=$PL_PORT" -e FE2E_PL_TEMPLATE=/root/fe2e-launcher/probe.json5 -e "FE2E_PL_IMAGE=$ZENOH_IMAGE")
 }
 loop_reach_on() { # $1 us, $2 them: the probes' identities and the reach, as oc_accept gives them
   local s="$1" them="$2" h pl pub; h="$(drv_host "$s")"; pl="$WORK/$s/launcher-$them"; mkdir -p "$pl"
