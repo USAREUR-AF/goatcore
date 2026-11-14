@@ -45,6 +45,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The whole history and the tags: the changelog checks below compare with a
+          # merge base and with each goatbuilder release (ops/release/changelog.py).
+          fetch-depth: 0
       - uses: actions/setup-python@v5
 
       # A single GraphQL request compares newly claimed ADR/finding IDs across

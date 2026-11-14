@@ -8,8 +8,11 @@ section and removes them. A released section is never rendered again, and is
 never edited after its release: the check holds it to its text at the tag
 goatbuilder/v<version>, or, before the tag exists, at the release commit (the
 newest `chore(release): goatbuilder <version>` commit on HEAD's first-parent
-history). A release-notes change is itself such a commit. A shallow clone, or a
-version with neither, is skipped with a note.
+history). A release-notes change, which edits a released section on purpose, adds or
+updates that section's line in ops/release/changelog-released-baseline.txt in the
+same change; a line for a section that is as released is refused as stale. A version
+whose release cannot be read here (no tag and no release commit, or cut off in a
+shallow clone) is skipped with a note.
 
   changelog.py check                     exit 0 when every entry is well formed, none is
                                          already in a released section, every released
@@ -44,6 +47,7 @@ Python's standard library only.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import shutil
 import subprocess
@@ -52,6 +56,10 @@ import tempfile
 from pathlib import Path
 
 CHANGELOG = "crates/goatbuilder/CHANGELOG.md"
+# Released sections accepted as edited after their release: one line per section,
+# "<version> sha256:<hash of the section>" (section_hash). A release-notes change
+# edits a released section and its line here in the same change.
+BASELINE = "ops/release/changelog-released-baseline.txt"
 ENTRIES = "crates/goatbuilder/changelog.d"
 HEADINGS = ("For someone deploying", "For someone contributing", "To be removed")
 NOTHING = "Nothing."
@@ -295,6 +303,36 @@ def _release_texts(repo: Path, lines: list[str]) -> tuple[dict[str, tuple[str, s
     return at, notes
 
 
+def section_hash(body: list[str]) -> str:
+    """The hash a baseline line gives a released section: sha256 over its lines (those
+    after its `## ` line), trailing blank lines left out."""
+    lines = list(body)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "sha256:" + hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+
+
+def read_baseline(repo: Path) -> tuple[dict[str, str], list[str]]:
+    """The baseline's {version: hash}, and a reason for each malformed line."""
+    path = repo / BASELINE
+    out: dict[str, str] = {}
+    errors: list[str] = []
+    if not path.is_file():
+        return out, errors
+    for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) != 2 or not VERSION.match(parts[0]) or not re.fullmatch(r"sha256:[0-9a-f]{64}", parts[1]):
+            errors.append(f"{BASELINE}:{n}: not `<version> sha256:<64 hex>`")
+        elif parts[0] in out:
+            errors.append(f"{BASELINE}:{n}: {parts[0]} is listed twice")
+        else:
+            out[parts[0]] = parts[1]
+    return out, errors
+
+
 def released_text(repo: Path, lines: list[str],
                   at_notes: tuple[dict, list[str]] | None = None) -> tuple[list[str], list[str]]:
     """A released section is never edited after its release (a release-notes change is
@@ -303,28 +341,46 @@ def released_text(repo: Path, lines: list[str],
     (problems, notes); a version whose release cannot be read is skipped with a note,
     never passed silently."""
     at, notes = at_notes if at_notes is not None else _release_texts(repo, lines)
-    problems: list[str] = []
+    baseline, problems = read_baseline(repo)
     try:
         _, end = region(lines)
     except Refused:
         return problems, notes
-    for version, body in released_sections(lines, end):
+    present = dict(released_sections(lines, end))
+    for version in baseline:
+        if version not in present:
+            problems.append(f"{BASELINE}: {version} has no released section in {CHANGELOG}; remove its line")
+    for version, body in present.items():
         if version not in at:
             continue
         ref, named, then = at[version]
-        if [l.rstrip() for l in body] != [l.rstrip() for l in then] and \
-                [l for l in body if l.strip()] != [l for l in then if l.strip()]:
-            added = [l for l in body if l.strip() and l not in then]
-            gone = [l for l in then if l.strip() and l not in body]
-            what = []
-            if added:
-                what.append("added: " + " | ".join(added[:3]) + (" …" if len(added) > 3 else ""))
-            if gone:
-                what.append("removed: " + " | ".join(gone[:3]) + (" …" if len(gone) > 3 else ""))
-            problems.append(f"{CHANGELOG}: the released section {version} differs from its text at {named} "
-                            f"({'; '.join(what) or 'lines moved'}). A released section is never edited after its "
-                            f"release: restore it from `git show {_short(ref)}:{CHANGELOG}`; an entry merged after the "
-                            f"release stays in {ENTRIES}/ and `write` renders it under Unreleased")
+        same = [l.rstrip() for l in body] == [l.rstrip() for l in then] or \
+            [l for l in body if l.strip()] == [l for l in then if l.strip()]
+        if same:
+            if version in baseline:
+                problems.append(f"{BASELINE}: {version} is as released at {named}, so its line is stale; remove it "
+                                f"(the baseline only shrinks)")
+            continue
+        if version in baseline:
+            if baseline[version] == section_hash(body):
+                continue
+            problems.append(f"{CHANGELOG}: the released section {version} is not the one {BASELINE} accepts (its "
+                            f"hash is {section_hash(body)}, the line says {baseline[version]}): edited again. A "
+                            f"release-notes change updates its line in the same change; anything else restores "
+                            f"the section")
+            continue
+        added = [l for l in body if l.strip() and l not in then]
+        gone = [l for l in then if l.strip() and l not in body]
+        what = []
+        if added:
+            what.append("added: " + " | ".join(added[:3]) + (" …" if len(added) > 3 else ""))
+        if gone:
+            what.append("removed: " + " | ".join(gone[:3]) + (" …" if len(gone) > 3 else ""))
+        problems.append(f"{CHANGELOG}: the released section {version} differs from its text at {named} "
+                        f"({'; '.join(what) or 'lines moved'}). A released section is never edited after its "
+                        f"release: restore it from `git show {_short(ref)}:{CHANGELOG}`; an entry merged after the "
+                        f"release stays in {ENTRIES}/ and `write` renders it under Unreleased. A release-notes "
+                        f"change adds `{version} {section_hash(body)}` to {BASELINE} in the same change")
     return problems, notes
 
 
@@ -619,7 +675,8 @@ def main(argv: list[str]) -> int:
             for m in problems:
                 print(f"changelog: {m}", file=sys.stderr)
             if not problems:
-                print(f"changelog: ok, the Unreleased section equals its render from {ENTRIES}/")
+                print(f"changelog: ok, the Unreleased section equals its render from {ENTRIES}/, no entry is "
+                      f"already released, and every released section read here is as released or in {BASELINE}")
             return 1 if problems else 0
         if a.command == "write":
             write(a.repo)

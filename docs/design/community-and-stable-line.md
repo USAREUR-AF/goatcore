@@ -119,9 +119,17 @@ body, in file-name order. A heading with no entry is left out.
 **The check.** `ops/release/changelog.py check` fails when an entry is
 malformed, when the text between the markers differs from the render, or
 when there is text between `## Unreleased` and the first marker or between
-the last marker and the newest release. It runs in the `docs-guards`
-workflow after its own self-test (`--self-test`), which proves each refusal
-and the release step on a copy.
+the last marker and the newest release. It also fails when an entry's whole
+rendered block (its title line, a blank line and its body; a title alone can
+repeat between releases) is inside a released section. When that section at
+its release does not hold the block, the entry landed there after the
+release, and the check says to restore the section and keep the entry; when
+it does, the entry was released and its file was left behind, and the check
+says to remove the file. These reasons come before the generic one, because
+`write` alone would render such an entry a second time. It runs in the
+`docs-guards` workflow, with the whole history checked out, after its own
+self-test (`--self-test`), which proves each refusal and the release step on
+a copy and on a git history of its own.
 
 **A release.** The version pull request runs `ops/release/changelog.py
 release <version> <date>`. It writes `## <version> — <date>` above the
@@ -129,8 +137,18 @@ newest release, with all three headings, and "Nothing." under a heading with
 no entry; it removes the entry files and empties the Unreleased section. The
 release's opening summary, and any grouping such as "Not in <version>", are
 then added by hand in the same pull request. A released section is never
-rendered again: after its release it is ordinary text, and the check reads
-only the Unreleased section.
+rendered again, and is never edited after its release: the check holds it to
+its text at the tag `goatbuilder/v<version>`, or, before the tag exists, at
+the release commit as it was committed (the newest `chore(release):
+goatbuilder <version>` commit on the first-parent history), never to a
+re-render. A release-notes change, the one route for editing a released
+section, adds or updates that section's line in
+`ops/release/changelog-released-baseline.txt` (`<version> sha256:<hash of
+the section>`) in the same change. A line for a section that is as released
+is refused as stale, so the list only shrinks; it starts with 0.5.3 and
+0.6.0, both edited after their release. A version whose release cannot be
+read (no tag and no release commit, or cut off in a shallow clone) is skipped
+with a note, never passed silently.
 
 The phase catalog's tables are rendered the same way: one source, a
 generated region between marker lines, a check that the region equals the
