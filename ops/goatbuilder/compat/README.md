@@ -24,7 +24,7 @@ crate, the schema, the catalog or this directory.
 
 ## The last release
 
-`baseline.yaml` names it: `goatbuilder/v0.6.0`, commit `1a77b725`, with the
+`baseline.yaml` names it: `goatbuilder/v0.6.1`, commit `8f96b39f`, with the
 SHA-256 of the released `goatbuilder-linux-amd64` binary the baseline was
 recorded from and of the `SHA256SUMS` that listed it. That binary's SHA-256 must
 also be its line in `crates/goatbuilder/tests/upgrade/releases.sha256`, the one
@@ -95,7 +95,7 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
   `documents/manifest.yaml` in the same pull request and give the reason in
   `exit_changed:`. `release_exit` keeps what the release did, and `check`
   refuses an `exit` that differs from it without a reason. The next refresh
-  records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.6.0's exit 2 for this purpose.
+  records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.6.1's exit 2 for this purpose.
 - **A kept document whose shape must change.** It cannot within one version:
   add the new field beside the old one, or publish a new document version.
 - **A field a format carries only on some entries** (conditional fields). The

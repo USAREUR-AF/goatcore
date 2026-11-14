@@ -308,6 +308,7 @@
    "--dry-run": false,
    "--edge-group": true,
    "--env": true,
+   "--expect-commit": true,
    "--from": true,
    "--no-confirm": false,
    "--no-resume": false,
@@ -449,6 +450,41 @@
   ],
   "flags": {
    "--json": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate import": {
+  "args": [
+   {
+    "name": "WITH",
+    "required": true
+   },
+   {
+    "name": "PHASE",
+    "required": true
+   },
+   {
+    "name": "RESULT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--sha256": true
   },
   "values": {
    "--color": [
