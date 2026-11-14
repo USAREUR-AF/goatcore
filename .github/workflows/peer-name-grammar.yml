@@ -15,7 +15,6 @@ name: peer-name-grammar
 
 on:
   pull_request:
-    branches: [main]
     paths:
       - 'ops/identity/peer-name-grammar.yaml'
       - 'ops/identity/generate-peer-name.py'

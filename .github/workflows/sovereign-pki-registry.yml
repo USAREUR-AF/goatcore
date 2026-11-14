@@ -16,7 +16,6 @@ permissions:
 
 on:
   pull_request:
-    branches: [main]
     paths:
       - 'ops/identity/sovereign-pkis.yaml'
       - 'ops/identity/sovereign_pkis.py'

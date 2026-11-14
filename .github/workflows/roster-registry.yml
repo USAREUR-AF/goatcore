@@ -40,7 +40,6 @@ permissions:
 
 on:
   pull_request:
-    branches: [main]
     paths:
       - 'docs/operators/roster.json'
       - 'docs/operators/*/roster.json'

@@ -45,7 +45,6 @@ on:
   # is known. This guard does not run on a direct push to main.
   # Publishers keep push: on purpose — the merge commit is the artifact.
   pull_request:
-    branches: [main]
     paths:
       - '**/Cargo.lock'
       - '**/Cargo.toml'

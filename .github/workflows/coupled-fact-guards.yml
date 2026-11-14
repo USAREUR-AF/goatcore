@@ -127,6 +127,7 @@ on:
       - 'ops/ci/check-rust-toolchain-pinned.sh'
       # Reusable-workflow permission guard: a called workflow asks no more than its caller grants.
       - 'ops/ci/check-reusable-workflow-permissions.py'
+      - 'ops/ci/check-expected-workflows-ran.py'
       - 'ops/ci/check-no-floating-image-pins.sh'
       - 'ops/ci/check-image-refs-pinned.py'
       - 'ops/ci/floating-image-pins.allow'
@@ -307,6 +308,14 @@ jobs:
       # callers, so the gap shows only when a tag is pushed.
       - name: check-reusable-workflow-permissions
         run: python3 ops/ci/check-reusable-workflow-permissions.py
+
+      - name: check-expected-workflows-ran --self-test
+        run: python3 ops/ci/check-expected-workflows-ran.py --self-test
+      # A pull_request trigger limited to main by `branches` never runs for a pull
+      # request based on another branch, and a retarget to main does not start it
+      # (#741). The per-pull-request verdict runs before merge, not here.
+      - name: check-expected-workflows-ran --tree
+        run: python3 ops/ci/check-expected-workflows-ran.py --tree
 
       - name: check-no-floating-image-pins --self-test
         run: ops/ci/check-no-floating-image-pins.sh --self-test

@@ -9,7 +9,6 @@ name: mermaid-renders
 
 on:
   pull_request:
-    branches: [main]
     paths:
       - '**/*.md'
       - 'ops/ci/check-mermaid-renders.sh'
