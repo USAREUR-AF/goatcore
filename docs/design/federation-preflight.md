@@ -166,7 +166,12 @@ Nothing on a host is changed.
   be off as far in the other direction; `FED_CLOCK_BUDGET_MS` sets it, from 1
   to 500, and another value is a missing input (GB-130) that blocks the check.
   systemd reports no offset, so a host read that way passes on its flag alone,
-  and the detail says the offset was not reported. The PASS detail prints each
+  and the detail says the offset was not reported. `goatbuilder join-node`
+  phase 3 judges a joining node by this same rule and the same code
+  (`ops/scripts/join-node-clock-check.py` reads the node over ssh and calls
+  this module), with its own budget variable, `JOIN_NODE_CLOCK_BUDGET_MS`, and
+  its own refusal, GB-297; a node it could not read is reported not verified
+  and the run goes on. The PASS detail prints each
   host's offset; a FAIL (GB-268) prints the host, its offset or "not
   synchronized", the budget and the router limit. A host the probe did not
   answer for, or whose time service answered neither command, is SKIP

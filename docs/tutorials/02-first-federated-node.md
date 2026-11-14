@@ -149,6 +149,14 @@ mesh inventory as well, and the plan's first line opens the door
 Phase 2 seeds the SSH key only when the box needs it: it first tries
 `ssh -o BatchMode=yes <user>@<address> sudo -n true`, and a box installed
 unattended with your key and passwordless sudo passes that and skips the seed.
+Phase 3, after the repository checks and before anything on the box changes,
+reads the box's clock over ssh, read-only: `chronyc -c tracking`, else
+`timedatectl show`. A Zenoh router refuses a timestamp more than 500 ms ahead
+of its own clock, so a box that is not synchronized to an outside time source,
+or is more than 250 ms off (`JOIN_NODE_CLOCK_BUDGET_MS` changes the budget), is
+refused with GB-297; repair its time synchronization and resume with
+`--from 3`. A box whose time service answers neither command is reported as
+not verified, never as passed, and the run goes on.
 Phase 6, the first WireGuard pass, is expected to fail on one check before
 enrolment, the one that looks for `wt0`; any other failure stops the run.
 

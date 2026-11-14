@@ -265,6 +265,12 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
     for i in fixed(site) {
         push(&mut v, i);
     }
+    // Phase 3's clock budget (join-node-clock-check.py reads it).
+    let budget = "JOIN_NODE_CLOCK_BUDGET_MS";
+    v.push(match set(env, budget) {
+        Some(b) => Input::new(budget, b, Source::env(budget)),
+        None => Input::new(budget, "250", Source::default(format!("phase 3's clock offset budget in ms, half the router's 500 ms limit; export {budget} (1 to 500) to change it"))),
+    });
 
     // What the phases read from their environment.
     let store = crate::secrets::available(repo);
