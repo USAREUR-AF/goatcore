@@ -152,9 +152,9 @@ const MAIN_ONLY: &[(&str, &str, &str)] = &[
 /// goatbuilder runs threads once a verb starts (the runner's output copies, survey),
 /// and `set_var` while another thread runs is unsound. So outside `main`'s first
 /// lines, product code passes a value to the child that reads it (`Cmd::env`,
-/// run state) and never writes the process environment. `src/federate/` has its
-/// own test (`federate_never_writes_the_process_environment`, with the in-process
-/// init change) and is left to it.
+/// run state) and never writes the process environment. This covers
+/// `src/federate/` too, which also has its own, stricter test
+/// (`federate_never_writes_the_process_environment`).
 #[test]
 fn product_code_writes_the_process_environment_only_in_main_before_threads() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -164,9 +164,6 @@ fn product_code_writes_the_process_environment_only_in_main_before_threads() {
     let mut found = Vec::new();
     for f in &files {
         let rel = f.strip_prefix(root).unwrap().display().to_string();
-        if rel.starts_with("src/federate/") {
-            continue;
-        }
         for (n, l) in std::fs::read_to_string(f).unwrap().lines().enumerate() {
             if writes_env(l)
                 && !MAIN_ONLY
