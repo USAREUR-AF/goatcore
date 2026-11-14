@@ -173,6 +173,8 @@ goatlite is rung 4 of a ten-rung ladder from "I have a welcome package" to "I sh
 
 Rung 6 is on the ladder because the one-week troubleshooting path is the bar's hardest test (complexity-budget-and-encapsulation.md, "The bar").
 
+Beyond the ladder is a separate gym lane, `beyond-the-ladder` ([ops/gym/gym.yaml](https://github.com/usareur-af/goatstuff/blob/main/ops/gym/gym.yaml)), for someone who has climbed the ten rungs and runs a goatnet; nothing in it is needed to finish the ladder. Its stages come under three headings: Run it well, Prove its value, and The frontier. The frontier stages are the ones whose tooling is not built yet. ADR 1238 ([#681](https://github.com/usareur-af/goatcore/pull/681)) records this learning program, the ladder and the lane beyond it; the program is in use while the ADR is Proposed.
+
 ## 9. Acceptance
 
 goatlite is done when a person who did not write it, with no AI and only `docs/tutorials/00-goatlite.md`, takes a fresh Ubuntu VM to a green `goatbuilder assay` and a round-trip publish, and every other document they had to open is recorded. That is a cold-read drill applied to the lite preset, and the 5-minute and 30-minute paths of ADR 1016 walked for real.
