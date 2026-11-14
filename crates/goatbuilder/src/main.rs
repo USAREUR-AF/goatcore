@@ -16,6 +16,7 @@ mod awake;
 mod complete;
 mod config;
 mod converger;
+mod deprecation;
 mod docs;
 mod doctor;
 mod endstate;
@@ -1798,3 +1799,36 @@ mod ack_tests {
         assert_eq!(parse_ack("").unwrap(), "");
     }
 }
+
+#[cfg(test)]
+mod deprecation_tests {
+    use super::Cli;
+    use clap::CommandFactory;
+
+    fn warnings_for(list: &str, argv: &[&str]) -> Vec<String> {
+        let deps = crate::deprecation::parse(list).unwrap();
+        let m = Cli::command().try_get_matches_from(argv).unwrap();
+        let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        crate::deprecation::warnings(&deps, &Cli::command(), &m, &argv, "0.7.0")
+    }
+
+    const STATUS_COMPONENT: &str = "deprecations:\n  - {command: goatbuilder status, flag: --component, replacement: --only, deprecated_in: goatbuilder/v0.7.0}\n";
+
+    /// The command tree main parses with is the one the list is read against:
+    /// a real command and flag of this build, named in a list, warn when used.
+    #[test]
+    fn a_listed_flag_of_this_build_warns_when_used_and_only_then() {
+        assert_eq!(
+            warnings_for(STATUS_COMPONENT, &["goatbuilder", "status", "--env", "dev", "--component", "netbird"]),
+            vec!["warning: `goatbuilder status --component` is deprecated since goatbuilder/v0.7.0 and will be removed in a later release; use --only instead".to_string()]
+        );
+        assert!(warnings_for(STATUS_COMPONENT, &["goatbuilder", "status", "--env", "dev"]).is_empty());
+    }
+
+    /// The list this build ships reads, so main never runs without it.
+    #[test]
+    fn the_shipped_list_reads() {
+        crate::deprecation::shipped().unwrap();
+    }
+}
+

@@ -275,3 +275,88 @@ fn every_value_of_a_many_valued_flag_is_skipped() {
         1
     );
 }
+
+/// One value of a flag, or of a positional argument (`<COMPONENT>`), may be
+/// deprecated on its own (`value:`, as the A3 check reads it). The warning is
+/// printed only when that value is given.
+const VALUES: &str = r#"
+deprecations:
+  - command: goatbuilder deploy
+    flag: --env
+    value: door
+    replacement: --env hall
+    deprecated_in: goatbuilder/v0.6.0
+  - command: goatbuilder promote graduate
+    flag: <COMPONENT>
+    value: oldname
+    replacement: newname
+    deprecated_in: goatbuilder/v0.6.0
+"#;
+
+fn run_values(argv: &[&str]) -> Vec<Deprecation> {
+    let deps = parse(VALUES).unwrap();
+    let m = tree().try_get_matches_from(argv).unwrap();
+    let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    used(&deps, &tree(), &m, &argv)
+        .into_iter()
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn a_deprecated_value_of_a_flag_is_reported_only_when_given() {
+    let u = run_values(&["goatbuilder", "deploy", "--env", "door"]);
+    assert_eq!(u.len(), 1, "{u:?}");
+    let w = u[0].warning("0.7.0");
+    assert!(
+        w.starts_with("warning: `goatbuilder deploy --env door` is deprecated since goatbuilder/v0.6.0"),
+        "{w}"
+    );
+    assert!(w.ends_with("; use --env hall instead"), "{w}");
+    assert_eq!(run_values(&["goatbuilder", "deploy", "--env=door"]).len(), 1);
+    assert_eq!(run_values(&["goatbuilder", "deploy", "-e", "door"]).len(), 1);
+    assert!(run_values(&["goatbuilder", "deploy", "--env", "hall"]).is_empty());
+    assert!(run_values(&["goatbuilder", "deploy", "--environment", "door"]).is_empty());
+}
+
+#[test]
+fn a_deprecated_value_of_a_positional_argument_is_reported_only_when_given() {
+    let u = run_values(&["goatbuilder", "promote", "graduate", "oldname"]);
+    assert_eq!(u.len(), 1, "{u:?}");
+    let w = u[0].warning("0.7.0");
+    assert!(
+        w.starts_with("warning: `goatbuilder promote graduate oldname` (<COMPONENT>) is deprecated"),
+        "{w}"
+    );
+    assert!(run_values(&["goatbuilder", "promote", "graduate", "newname"]).is_empty());
+}
+
+#[test]
+fn a_value_entry_needs_its_flag_and_an_argument_entry_needs_its_value() {
+    for bad in [
+        "deprecations:\n  - {command: goatbuilder deploy, value: door, replacement: x, deprecated_in: goatbuilder/v0.6.0}\n",
+        "deprecations:\n  - {command: goatbuilder deploy, flag: --env, value: '', replacement: x, deprecated_in: goatbuilder/v0.6.0}\n",
+        "deprecations:\n  - {command: goatbuilder deploy, flag: <ENV>, replacement: x, deprecated_in: goatbuilder/v0.6.0}\n",
+        "deprecations:\n  - {command: goatbuilder deploy, flag: '<env x>', value: a, replacement: x, deprecated_in: goatbuilder/v0.6.0}\n",
+    ] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+    assert_eq!(parse(VALUES).unwrap()[0].value.as_deref(), Some("door"));
+}
+
+#[test]
+fn the_warnings_are_one_line_each_for_what_the_run_used() {
+    let deps = parse(LIST).unwrap();
+    let argv = ["goatbuilder", "promote", "graduate", "x"];
+    let m = tree().try_get_matches_from(argv).unwrap();
+    let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    let w = deprecation::warnings(&deps, &tree(), &m, &argv, "1.2.0");
+    assert_eq!(
+        w,
+        vec!["warning: `goatbuilder promote graduate` is deprecated since goatbuilder/v0.6.0 and will be removed no earlier than goatbuilder 2.0.0; use goatbuilder promote hop instead".to_string()]
+    );
+    let argv = ["goatbuilder", "deploy", "--environment", "dev"];
+    let m = tree().try_get_matches_from(argv).unwrap();
+    let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    assert!(deprecation::warnings(&deps, &tree(), &m, &argv, "1.2.0").is_empty());
+}
