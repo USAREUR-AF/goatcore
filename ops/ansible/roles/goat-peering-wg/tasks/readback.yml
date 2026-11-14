@@ -1,0 +1,72 @@
+---
+# The read-back after the link converges: what the interface and the carrier hold,
+# checked against the agreement. Included by tasks/main.yml; tests/test-readback.sh
+# runs it alone, against a stand-in wg and ip.
+#
+# Each read asks wg for the columns it checks and nothing more: `allowed-ips`
+# gives one line per peer, its public key and its allowed addresses, and
+# `latest-handshakes` its public key and the time of its last handshake, so a
+# result, a log or a failure message holds only public keys and addresses.
+
+- name: peering-wg | read the interface's peers back
+  ansible.builtin.command: "wg show {{ peering_wg_interface }} allowed-ips"
+  register: _pw_peers
+  changed_when: false
+
+- name: peering-wg | read the link address back
+  ansible.builtin.command: "ip -o -4 addr show dev {{ peering_wg_interface }}"
+  register: _pw_addr
+  changed_when: false
+
+- name: peering-wg | the interface holds the agreed peer and the agreed address
+  ansible.builtin.assert:
+    that:
+      - _pw_peer_key in _pw_peers.stdout
+      - (peering_wg_remote_link_ip ~ '/32') in _pw_peers.stdout
+      - (peering_wg_local_link_ip ~ '/' ~ peering_wg_link_prefix_len) in _pw_addr.stdout
+    fail_msg: >-
+      The interface does not hold what the agreement says: peer {{ _pw_peer_key }},
+      allowed {{ peering_wg_remote_link_ip }}/32, address
+      {{ peering_wg_local_link_ip }}/{{ peering_wg_link_prefix_len }}. Its peers
+      (public key, allowed addresses): {{ _pw_peers.stdout_lines }}; its addresses:
+      {{ _pw_addr.stdout_lines }}
+
+- name: peering-wg | read the carrier's peers back
+  ansible.builtin.command: "wg show {{ peering_wg_carrier_interface }} allowed-ips"
+  register: _pw_carrier_peers
+  changed_when: false
+  when: peering_wg_via_forwarder | bool
+
+- name: peering-wg | the carrier holds the forwarder and nothing else
+  ansible.builtin.assert:
+    that:
+      - _pw_carrier_peers.stdout_lines | length == 1
+      - peering_wg_forwarder_carrier_public_key in _pw_carrier_peers.stdout_lines[0]
+      - (peering_wg_carrier_remote_ip ~ '/32') in _pw_carrier_peers.stdout_lines[0]
+    fail_msg: >-
+      {{ peering_wg_carrier_interface }} does not hold one peer
+      {{ peering_wg_forwarder_carrier_public_key }} allowed
+      {{ peering_wg_carrier_remote_ip }}/32. Its peers (public key, allowed
+      addresses): {{ _pw_carrier_peers.stdout_lines }}
+  when: peering_wg_via_forwarder | bool
+
+- name: peering-wg | read the carrier's latest handshake
+  ansible.builtin.command: "wg show {{ peering_wg_carrier_interface }} latest-handshakes"
+  register: _pw_carrier_hs
+  changed_when: false
+  when: peering_wg_via_forwarder | bool
+
+# The second column is the latest handshake, seconds since the epoch, 0 = never.
+# Three keepalive intervals without one means the carrier is down, and the peering is
+# unreachable from outside whatever its own state shows.
+- name: peering-wg | the carrier's latest handshake
+  ansible.builtin.debug:
+    msg: >-
+      {{ peering_wg_carrier_interface }} to {{ peering_wg_forwarder_endpoint }}:
+      {{ 'no handshake yet' if (_pw_hs | int) == 0 else ('last handshake ' ~ ((_pw_now | int) - (_pw_hs | int)) ~ ' s ago') }}
+      {{- '' if ((_pw_hs | int) > 0 and ((_pw_now | int) - (_pw_hs | int)) <= 3 * (peering_wg_carrier_keepalive | int))
+          else '. CARRIER DOWN: check the forwarder is up and holds the carrier key of this edge.' }}
+  vars:
+    _pw_hs: "{{ ((_pw_carrier_hs.stdout_lines | first | default('')).split()[1] | default(0)) | int }}"
+    _pw_now: "{{ ansible_date_time.epoch | int }}"
+  when: peering_wg_via_forwarder | bool

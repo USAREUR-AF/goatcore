@@ -613,11 +613,19 @@ mod tests {
         let e = goat_errors::explain("GB-271").unwrap();
         assert_eq!(f.cause, e.causes[0]);
         assert!(!f.cause.contains("secret"), "{f:?}");
-        assert!(f.fix.contains("systemctl restart goat-peering-wg@"), "{f:?}");
+        assert!(
+            f.fix.contains("systemctl restart goat-peering-wg@"),
+            "{f:?}"
+        );
         assert!(f.fix.contains("--from 11"), "{f:?}");
         let d = f.detail();
         assert!(d.contains("goatbuilder explain GB-271"), "{d}");
         assert!(!d.contains("GB-007"), "{d}");
+        // The message as the role now prints it: each peer's public key and
+        // allowed addresses, then the interface's addresses.
+        let now = "fatal: [edge-1]: FAILED! => {\n    \"assertion\": \"_pw_peer_key in _pw_peers.stdout\",\n    \"changed\": false,\n    \"evaluated_to\": false,\n    \"msg\": \"The interface does not hold what the agreement says: peer SyntheticKeyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=, allowed 169.254.77.1/32, address 169.254.77.0/31. Its peers (public key, allowed addresses): []; its addresses: []\"\n}\n";
+        let f = failed_phase("federate", "11", now, None).unwrap();
+        assert_eq!(f.code.as_deref(), Some("GB-271"), "{f:?}");
     }
 
     /// Output that names no known error gets the phase catalog's own guidance,
