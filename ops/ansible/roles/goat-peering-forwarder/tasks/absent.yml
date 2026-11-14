@@ -94,7 +94,8 @@
               {%- for f in _pbf_files.results -%}
               {%-   set _ = out.append({'component': 'forwarder', 'resource': 'file ' ~ f.stat.path | default(_pbf_dir ~ '/' ~ m.interface ~ '.' ~ f.item), 'state': ('present' if f.stat.exists else 'absent'), 'action': (act if f.stat.exists else 'none'), 'note': ''}) -%}
               {%- endfor -%}
-              {%- set table = _pbf_rules | backout_probe_state('nft', 'goat_peering_forwarder') -%}
+              {#- The table's name is read from the probe that ran, so no expression names it. -#}
+              {%- set table = _pbf_rules | backout_probe_state('nft', _pbf_rules.cmd | default([''], true) | last) -%}
               {%- set n = (_pbf_rules.stdout_lines | default([])
                            | select('search', '"' ~ (m.interface | regex_escape) ~ '"|[^0-9.]' ~ (m.carrier_remote_ip | regex_escape) ~ '([^0-9]|$)')
                            | list | length) if table.state == 'present' else 0 -%}
