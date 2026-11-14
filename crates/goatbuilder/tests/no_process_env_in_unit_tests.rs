@@ -137,8 +137,16 @@ fn federate_never_writes_the_process_environment() {
 /// thread starts, where `set_var` is sound. Each line names the file, the text on
 /// the line, and what reads the value.
 const MAIN_ONLY: &[(&str, &str, &str)] = &[
-    ("src/main.rs", "set_var(\"GOAT_DEPLOY_OFFLINE\"", "--offline: the plays and scripts every child runs read it"),
-    ("src/awake.rs", "set_var(MARKER", "the keep-awake marker a nested goatbuilder reads, so it holds no second assertion"),
+    (
+        "src/main.rs",
+        "set_var(\"GOAT_DEPLOY_OFFLINE\"",
+        "--offline: the plays and scripts every child runs read it",
+    ),
+    (
+        "src/awake.rs",
+        "set_var(MARKER",
+        "the keep-awake marker a nested goatbuilder reads, so it holds no second assertion",
+    ),
 ];
 
 /// goatbuilder runs threads once a verb starts (the runner's output copies, survey),
@@ -160,7 +168,11 @@ fn product_code_writes_the_process_environment_only_in_main_before_threads() {
             continue;
         }
         for (n, l) in std::fs::read_to_string(f).unwrap().lines().enumerate() {
-            if writes_env(l) && !MAIN_ONLY.iter().any(|(file, needle, _)| rel == *file && l.contains(needle)) {
+            if writes_env(l)
+                && !MAIN_ONLY
+                    .iter()
+                    .any(|(file, needle, _)| rel == *file && l.contains(needle))
+            {
                 found.push(format!("{rel}:{}: {}", n + 1, l.trim()));
             }
         }
@@ -169,6 +181,9 @@ fn product_code_writes_the_process_environment_only_in_main_before_threads() {
     // Each allowed site is still there: an entry that matches nothing is removed.
     for (file, needle, _) in MAIN_ONLY {
         let text = std::fs::read_to_string(root.join(file)).unwrap();
-        assert!(text.lines().any(|l| writes_env(l) && l.contains(needle)), "{file}: no `{needle}` left; remove it from MAIN_ONLY");
+        assert!(
+            text.lines().any(|l| writes_env(l) && l.contains(needle)),
+            "{file}: no `{needle}` left; remove it from MAIN_ONLY"
+        );
     }
 }

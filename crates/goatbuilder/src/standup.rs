@@ -770,7 +770,7 @@ struct Queued {
 
 /// Run the queued phase-12 steps wave by wave. Returns the ids that failed in the
 /// first failing wave (empty when every wave passed).
-fn flush_waves(repo: &Path, s: &Site, q: &mut Vec<Queued>, checks: &mut Vec<Check>, timings: &mut Vec<(u32, String, u64)>) -> Result<Vec<String>> {
+fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks: &mut Vec<Check>, timings: &mut Vec<(u32, String, u64)>) -> Result<Vec<String>> {
     if q.is_empty() {
         return Ok(Vec::new());
     }
@@ -787,7 +787,7 @@ fn flush_waves(repo: &Path, s: &Site, q: &mut Vec<Queued>, checks: &mut Vec<Chec
             let log = format!("{}/standup-{}-12-{}.log", s.state_dir, s.site, q[*i].id);
             let f = std::fs::File::create(&log)?;
             crate::runner::phase("12", &q[*i].label, "");
-            let child = site_phase_command(repo, s, &q[*i].cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().context("bash")?;
+            let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().context("bash")?;
             kids.push((*i, child, std::time::Instant::now(), log));
         }
         let mut failed = Vec::new();
@@ -871,10 +871,58 @@ fn phase_command(repo: &Path, cmd: &str) -> Cmd {
     c
 }
 
-/// `phase_command` with the site's phase environment (`phase_env`).
-fn site_phase_command(repo: &Path, s: &Site, cmd: &str) -> Cmd {
+/// The mirror bot's Forgejo token, and the phases that read it: the step that
+/// mints it (and skips when it is set), and the mirror play, which can run the
+/// checkout play. No other phase child is given it: least privilege for child
+/// processes.
+const PUBSUB_TOKEN: &str = "FORGEJO_PUBSUB_TOKEN";
+const PUBSUB_TOKEN_READERS: &[&str] = &[
+    "forgejo-mint-pubsub-bot.sh",
+    "pubsub-state-mirror-deploy.yml",
+    "pubsub-state-checkout-deploy.yml",
+];
+
+/// Whether a phase's command runs one of [`PUBSUB_TOKEN_READERS`].
+fn reads_pubsub_token(cmd: &str) -> bool {
+    PUBSUB_TOKEN_READERS.iter().any(|r| cmd.contains(r))
+}
+
+/// What a real run learns as it goes and hands its phase children: the trunk
+/// commit the fresh-source check pinned (every play is judged against it), and
+/// the mirror bot's token once it is known. Kept here and passed to each child
+/// with `Cmd::env`; the process environment, which every thread shares, is never
+/// written.
+#[derive(Debug, Default, Clone, PartialEq)]
+struct RunState {
+    trunk: Option<String>,
+    pubsub_token: Option<String>,
+}
+
+impl RunState {
+    /// A run's state before its first phase: the token, when the operator's
+    /// environment already holds it.
+    fn from_operator() -> Self {
+        RunState {
+            trunk: None,
+            pubsub_token: std::env::var(PUBSUB_TOKEN).ok().filter(|v| !v.is_empty()),
+        }
+    }
+}
+
+/// `phase_command` with the site's phase environment (`phase_env`) and the run's
+/// state: the pinned trunk for every phase, and the mirror bot's token for a
+/// phase that reads it, removed from every other phase's environment.
+fn site_phase_command(repo: &Path, s: &Site, cmd: &str, rs: &RunState) -> Cmd {
     let mut c = phase_command(repo, cmd);
     c.envs(phase_env(s));
+    if let Some(t) = &rs.trunk {
+        c.envs([(crate::fresh::TRUNK_ENV, t.as_str())]);
+    }
+    if !reads_pubsub_token(cmd) {
+        c.env_remove(PUBSUB_TOKEN);
+    } else if let Some(t) = &rs.pubsub_token {
+        c.envs([(PUBSUB_TOKEN, t.as_str())]);
+    }
     c
 }
 
@@ -949,11 +997,12 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
         }
         checks.push(row("probe", crate::fresh::command(repo).line()));
     }
+    let mut rs = RunState::from_operator();
     if !o.dry_run {
         let f = crate::fresh::check(repo)?;
         let refused = f.refused();
         if !f.trunk.is_empty() {
-            std::env::set_var(crate::fresh::TRUNK_ENV, &f.trunk);
+            rs.trunk = Some(f.trunk.clone());
         }
         checks.push(f.check);
         if refused {
@@ -971,7 +1020,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     'run: for ev in &events {
         let leaving_12 = !matches!(ev, Event::Phase(ph) if ph.n == 12);
         if leaving_12 && !queue.is_empty() {
-            let failed = flush_waves(repo, &s, &mut queue, &mut checks, &mut timings)?;
+            let failed = flush_waves(repo, &s, &rs, &mut queue, &mut checks, &mut timings)?;
             if !failed.is_empty() {
                 let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
                 checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase 12 FAILED: {}. Steps in that wave that passed stay done; no later wave has run.", failed.join(", ")), fix: Some(format!("every phase-12 step is idempotent: fix each failure named above, then resume: {resume} --from 12 --parallel{prof}")) });
@@ -998,7 +1047,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let f = std::fs::File::create(log)?;
                 crate::runner::phase(&format!("observability-leg-{leg}"), label, "");
-                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
                 legs.insert(leg, (child, log.clone()));
             }
             Event::PullStart { label, cmd, log } => {
@@ -1013,7 +1062,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let f = std::fs::File::create(log)?;
                 crate::runner::phase("image-pull", label, "");
-                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
                 pulling = Some((child, log.clone()));
             }
             Event::PullJoin { at } => {
@@ -1079,7 +1128,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let t0 = std::time::Instant::now();
                 crate::runner::phase(&ph.n.to_string(), &ph.label, "");
-                let status = site_phase_command(repo, &s, &ph.cmd).current_dir(repo).status().context("bash")?;
+                let status = site_phase_command(repo, &s, &ph.cmd, &rs).current_dir(repo).status().context("bash")?;
                 let secs = t0.elapsed().as_secs();
                 let rc_now = status.code().unwrap_or(1);
                 checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
@@ -1094,12 +1143,10 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 // The bot step loaded its token into its own shell; this process runs every
                 // later phase in a fresh one, so load the same one variable here and go on.
-                if ph.stop_after && std::env::var("FORGEJO_PUBSUB_TOKEN").map(|v| v.is_empty()).unwrap_or(true) {
-                    if let Some(v) = envrc_export(repo, "FORGEJO_PUBSUB_TOKEN") {
-                        std::env::set_var("FORGEJO_PUBSUB_TOKEN", v);
-                    }
+                if ph.stop_after && rs.pubsub_token.is_none() {
+                    rs.pubsub_token = envrc_export(repo, PUBSUB_TOKEN);
                 }
-                if ph.stop_after && std::env::var("FORGEJO_PUBSUB_TOKEN").map(|v| v.is_empty()).unwrap_or(true) {
+                if ph.stop_after && rs.pubsub_token.is_none() {
                     checks.push(row("note", format!("stopped after this phase on purpose: reload the environment it wrote, then resume: {resume} --from {}", ph.n)));
                     break 'run;
                 }
@@ -1107,7 +1154,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
         }
     }
     if exit == EXIT_OK && !queue.is_empty() {
-        let failed = flush_waves(repo, &s, &mut queue, &mut checks, &mut timings)?;
+        let failed = flush_waves(repo, &s, &rs, &mut queue, &mut checks, &mut timings)?;
         if !failed.is_empty() {
             checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase 12 FAILED: {}.", failed.join(", ")), fix: Some(format!("fix each failure named above, then resume: {resume} --from 12 --parallel")) });
             exit = EXIT_REFUSED;
@@ -1672,13 +1719,13 @@ mod tests {
         let mut q = vec![mk("a", &[], "sleep 2"), mk("b", &[], "sleep 2"), mk("c", &["a", "b"], "true")];
         let (mut checks, mut timings) = (Vec::new(), Vec::new());
         let t0 = std::time::Instant::now();
-        let failed = flush_waves(&root, &site, &mut q, &mut checks, &mut timings).unwrap();
+        let failed = flush_waves(&root, &site, &RunState::default(), &mut q, &mut checks, &mut timings).unwrap();
         assert!(failed.is_empty(), "{failed:?}");
         // Serial would take 4 s; each step also starts the shared runner, a few hundred ms on a loaded machine.
         assert!(t0.elapsed().as_millis() < 3600, "a and b ran together: {:?}", t0.elapsed());
         assert_eq!(timings.len(), 3);
         let mut q = vec![mk("a", &[], "exit 3"), mk("b", &[], "true"), mk("c", &["a"], "true")];
-        let failed = flush_waves(&root, &site, &mut q, &mut checks, &mut Vec::new()).unwrap();
+        let failed = flush_waves(&root, &site, &RunState::default(), &mut q, &mut checks, &mut Vec::new()).unwrap();
         assert_eq!(failed, vec!["a (wave 1 of 2)".to_string()]);
         let _ = std::fs::remove_dir_all(&t);
     }
@@ -2153,7 +2200,7 @@ mod tests {
             for c in &cmds {
                 let file = out.join("owner");
                 let probe = format!("printf '%s' {} > '{}'", owner_word(c), file.display());
-                let mut run = site_phase_command(&repo, &site, &probe);
+                let mut run = site_phase_command(&repo, &site, &probe, &RunState::default());
                 run.current_dir(&repo).env_remove("OWNER_EMAIL").env("GOAT_SECRET_STORE", "env");
                 let st = run.status().unwrap();
                 assert!(st.success(), "the runner ran the probe for {raw:?}");
@@ -2163,6 +2210,77 @@ mod tests {
         let cmds: Vec<String> = phases_of(&plan(Path::new("/r"), &lan_site(false, false), &o, "R")).iter().filter(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).collect();
         assert!(!cmds.is_empty() && cmds.iter().all(|c| owner_word(c) == "\"$OWNER_EMAIL\""), "an undeclared owner is unchanged");
         assert!(phase_env(&lan_site(false, false)).is_empty(), "and adds nothing to the environment");
+    }
+
+    /// The run's state reaches its phase children as their own environment: the
+    /// pinned trunk every phase, and the mirror bot's token only a phase that
+    /// reads it (the mint step and the mirror play). Every other phase child is
+    /// started without the token, even when the operator's environment holds it.
+    /// Least privilege for child processes; the process environment is not
+    /// written.
+    #[test]
+    fn the_pubsub_token_reaches_only_the_phases_that_read_it() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let site = lan_site(false, false);
+        let out = crate::testdir::path("gb-run-state-");
+        let rs = RunState {
+            trunk: Some("0123abcd".into()),
+            pubsub_token: Some("t0ken".into()),
+        };
+        let seen = |cmd_prefix: &str, rs: &RunState| {
+            let file = out.join("seen");
+            let probe = format!(
+                "{cmd_prefix}printf '%s|%s' \"${{{PUBSUB_TOKEN}:-}}\" \"${{{}:-}}\" > '{}'",
+                crate::fresh::TRUNK_ENV,
+                file.display()
+            );
+            let mut run = site_phase_command(&repo, &site, &probe, rs);
+            run.current_dir(&repo).env("GOAT_SECRET_STORE", "env");
+            assert!(run.status().unwrap().success(), "the runner ran the probe");
+            std::fs::read_to_string(&file).unwrap()
+        };
+        // A phase that is not a reader: the trunk, no token.
+        assert_eq!(seen("", &rs), "|0123abcd");
+        // The readers: the token and the trunk.
+        for reader in PUBSUB_TOKEN_READERS {
+            assert_eq!(
+                seen(&format!(": {reader}; "), &rs),
+                "t0ken|0123abcd",
+                "{reader}"
+            );
+        }
+        // Before the token is known, a reader gets none; nothing is written to the process.
+        assert_eq!(
+            seen(": pubsub-state-mirror-deploy.yml; ", &RunState::default()),
+            "|"
+        );
+        assert_ne!(std::env::var(PUBSUB_TOKEN).ok().as_deref(), Some("t0ken"));
+        assert_ne!(
+            std::env::var(crate::fresh::TRUNK_ENV).ok().as_deref(),
+            Some("0123abcd")
+        );
+    }
+
+    /// Of the planned phases, exactly the mint step and the mirror play read the
+    /// token: the plays that never use it are not on the list.
+    #[test]
+    fn only_the_mint_step_and_the_mirror_play_are_token_readers() {
+        assert!(reads_pubsub_token(
+            "'/r/ops/scripts/forgejo-mint-pubsub-bot.sh' obs-1"
+        ));
+        assert!(reads_pubsub_token(
+            "cd /r/ops/ansible && x pubsub-state-mirror-deploy.yml -e target=g"
+        ));
+        for other in [
+            "cd /r/ops/ansible && x onboard-intake-deploy.yml -e target=g",
+            "cd /r/ops/ansible && x grant-keyd-deploy.yml",
+            "python3 /r/ops/scripts/standup-required-inputs.py zagros",
+        ] {
+            assert!(!reads_pubsub_token(other), "{other}");
+        }
     }
 
     /// A bootstrap command run without the owner variable (copied by hand from a

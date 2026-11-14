@@ -1194,6 +1194,8 @@ fn main() {
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     if cli.offline {
         // The plays and the ledger row read it from the environment, as from the script avenue.
+        // main only, before any thread starts, so set_var is sound here; nowhere else in
+        // goatbuilder writes the process environment (tests/no_process_env_in_unit_tests.rs).
         std::env::set_var("GOAT_DEPLOY_OFFLINE", "1");
     }
     // `-v` (or RUST_LOG) raises goatbuilder's own events to stderr; off by default.
