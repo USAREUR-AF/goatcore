@@ -413,7 +413,6 @@ gb-062-cause-1 = koşul yalnızca play çalışırken bilinen bir değeri okuyor
 gb-063-title = bir standup adımının host limiti hiçbir ana makineyi seçmiyor
 gb-063-what = Plan bu play'i --limit <pattern> ile çalıştırıyor ve desen envanterdeki hedef grubun hiçbir ana makinesiyle eşleşmiyor; play hiçbir şey üzerinde çalışmıyor ve başarı bildiriyor.
 gb-063-cause-1 = limit mgmt-<site>-01 ana makine adlandırmasını varsayıyor ve bu site ana makinelerini farklı adlandırıyor
-gb-063-cause-2 = adım yalnızca kurucu (founder) için tasarlanmış ve bu site bir joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = yayımlanan bildirimler sıra dışı veya değiştirilmiş

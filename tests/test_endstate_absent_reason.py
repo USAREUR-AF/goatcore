@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""The end-state model words why a service is absent at a site.
+"""The end-state model words why a service is absent at a site, and names a gap as a gap.
 
-`goatbuilder join-node` prints, for a joining site, every catalog service the
-model marks absent, with this reason (docs/design/goatbuilder.md, `join-node`
-part (d)); the grade's N/A row reads the same field, so the plan and the grade
-cannot disagree. A service the site turns off reads its flag. An admin surface
-at a joiner reads as single-homed at the founder under ADR 1084 §D3, with the
-declaration that keeps it off. The same surface at a founder reads its flag
-only: the single-homing is not a rule of the machine class."""
+`goatbuilder join-node` prints, for a joining site, each gap the model names
+and each service the site turns off (docs/design/goatbuilder.md, `join-node`
+part (d)); the grade reads the same fields, so the plan and the grade cannot
+disagree. A service the site turns off reads its flag. Every site is declared to
+run every service (ADR 1165, gate group I): an admin surface a joining site
+does not run yet is a gap, "declared, not yet built at this site", with the
+gate rows that close it, never an absence by design. The same surface turned
+off at a founder reads its flag only."""
 import importlib.util
 import sys
 import tempfile
@@ -19,7 +20,8 @@ spec = importlib.util.spec_from_file_location("endstate", ROOT / "ops/goatbuilde
 ENDSTATE = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ENDSTATE)
 
-D3 = "single-homed at the founder (ADR 1084 §D3); every site once ADR 1165 lifts it for this class"
+ADMIN_GAP = {"row": "I1, I4", "why": "an admin surface cannot be turned on at a second site before its store is at the multi-writer schema and its write class is switched on there"}
+ADMIN_GAP_TEXT = "declared, not yet built at this site: " + ADMIN_GAP["why"] + " (gate row I1, I4)"
 
 
 def model(vars_text):
@@ -40,13 +42,19 @@ class AbsentReason(unittest.TestCase):
         self.assertIs(s["present"], False)
         self.assertEqual(s["reason"], "`isitup_enabled` is false in group_vars")
 
-    def test_an_admin_surface_at_a_joiner_reads_d3_and_its_declaration(self):
+    def test_an_admin_surface_at_a_joiner_is_a_named_gap(self):
         m = model(JOINER)["services"]
-        self.assertEqual(m["id-admin-console"]["reason"], f"{D3} (declared by: `id_admin_console_enabled` is false in group_vars)")
-        self.assertEqual(
-            m["netbird-dashboard"]["reason"],
-            f"{D3} (declared by: founder-only service; this site joins a goatnet (goatnet_founder: false))",
-        )
+        for svc in ("id-admin-console", "netbird-dashboard"):
+            self.assertIs(m[svc]["present"], True, svc)
+            self.assertEqual(m[svc]["gap"], ADMIN_GAP, svc)
+            self.assertIsNone(m[svc]["reason"], svc)
+
+    def test_the_grade_reads_a_gap_as_a_gap_never_na(self):
+        g = ENDSTATE.grade(model(JOINER), {"hosts": {}}, None)
+        row = next(r for r in g["services"] if r["service"] == "id-admin-console")
+        self.assertEqual(row["presence"]["status"], "GAP")
+        self.assertEqual(row["presence"]["why"], ADMIN_GAP_TEXT)
+        self.assertNotIn("active", row, "a gap has nothing built to check")
 
     def test_a_founder_that_turns_an_admin_surface_off_reads_the_flag_only(self):
         s = model("isitup_enabled: false\nid_admin_console_enabled: false\n")["services"]["id-admin-console"]

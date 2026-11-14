@@ -417,7 +417,6 @@ gb-062-cause-1 = η συνθήκη διαβάζει τιμή που γίνετα
 gb-063-title = το όριο host ενός βήματος standup δεν επιλέγει κανένα host
 gb-063-what = Το plan τρέχει αυτό το play με --limit <pattern>, και το pattern δεν ταιριάζει σε κανένα host της ομάδας-στόχου στο inventory, οπότε το play τρέχει πουθενά και αναφέρει επιτυχία.
 gb-063-cause-1 = το όριο υποθέτει την ονοματοδοσία host mgmt-<site>-01 και αυτό το site ονομάζει τα hosts διαφορετικά
-gb-063-cause-2 = το βήμα προορίζεται μόνο για τον founder και αυτό το site είναι joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = οι δημοσιευμένες δηλώσεις είναι εκτός σειράς ή έχουν αλλοιωθεί

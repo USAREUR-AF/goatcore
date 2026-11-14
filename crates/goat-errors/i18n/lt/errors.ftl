@@ -415,7 +415,6 @@ gb-062-cause-1 = sąlyga skaito reikšmę, žinomą tik vykstant play
 gb-063-title = standup žingsnio host riba nepasirenka nė vieno hosto
 gb-063-what = Planas paleidžia šį play su --limit <pattern>, o šablonas neatitinka nė vieno tikslinės grupės hosto inventoriuje, todėl play nevykdomas niekur ir vis tiek praneša apie sėkmę.
 gb-063-cause-1 = riba tariasi, kad hostai vadinami mgmt-<site>-01, o šioje svetainėje jie vadinami kitaip
-gb-063-cause-2 = žingsnis skirtas tik įkūrėjui (founder), o ši svetainė yra prisijungusi (joiner)
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = paskelbtos deklaracijos sumaišytos arba pakeistos

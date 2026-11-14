@@ -415,7 +415,6 @@ gb-062-cause-1 = podmínka čte hodnotu, která je známa až při běhu playe
 gb-063-title = limit hostů kroku standupu nevybere žádný host
 gb-063-what = Plán spouští tento play s --limit <pattern> a vzor neodpovídá žádnému hostu cílové skupiny v inventáři, takže play neběží na ničem a hlásí úspěch.
 gb-063-cause-1 = limit předpokládá pojmenování hostů mgmt-<site>-01, ale tento web své hosty pojmenovává jinak
-gb-063-cause-2 = krok je určen jen pro zakladatele a tento web je joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = zveřejněné deklarace jsou ve špatném pořadí nebo pozměněné

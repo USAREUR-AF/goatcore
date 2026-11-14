@@ -415,7 +415,6 @@ gb-062-cause-1 = pogoj bere vrednost, ki je znana šele med izvajanjem playa
 gb-063-title = omejitev gostiteljev koraka standupa ne izbere nobenega gostitelja
 gb-063-what = Načrt požene ta play z --limit <pattern>, vzorec pa ne ustreza nobenemu gostitelju ciljne skupine v inventarju, zato play ne teče nikjer in javi uspeh.
 gb-063-cause-1 = omejitev predpostavlja poimenovanje gostiteljev mgmt-<site>-01, to mesto pa svoje gostitelje poimenuje drugače
-gb-063-cause-2 = korak je namenjen samo ustanovitelju, to mesto pa je pridruženo
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = objavljene deklaracije so v napačnem vrstnem redu ali spremenjene

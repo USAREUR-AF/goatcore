@@ -413,7 +413,6 @@ gb-062-cause-1 = kushti lexon një vlerë që njihet vetëm kur ekzekutohet play
 gb-063-title = kufiri i hostit të një hapi standup nuk zgjedh asnjë host
 gb-063-what = Plani e ekzekuton këtë play me --limit <pattern>, dhe pattern-i nuk përputhet me asnjë host të grupit target në inventar, ndaj play-i ekzekutohet mbi asgjë dhe raporton sukses.
 gb-063-cause-1 = kufiri supozon emërtimin e hosteve mgmt-<site>-01 dhe ky site i emërton hostet ndryshe
-gb-063-cause-2 = hapi është menduar vetëm për themeluesin dhe ky site është joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = deklaratat e publikuara janë jashtë rendit ose të ndryshuara

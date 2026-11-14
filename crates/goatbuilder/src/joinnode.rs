@@ -489,28 +489,50 @@ fn declared_publishers(repo: &Path, site: &str) -> Result<std::result::Result<Ve
     Ok(Ok(present))
 }
 
-/// One service the site does not run, as the plan prints it.
+/// One service the site does not run yet, as the plan prints it.
 fn not_run_line(service: &str, reason: &str) -> String {
     format!("{service} \u{2014} {reason}")
 }
 
-/// What the site does not run (docs/design/goatbuilder.md, `join-node` (d)):
-/// every catalog service the end-state model marks absent here, each with the
-/// model's own reason, under one heading. The model is read, never re-derived,
-/// so this list and `goatbuilder endstate`'s N/A rows cannot disagree. A model
-/// that cannot be read is one `not read` line naming what is missing; the run
-/// does not stop for it, and no list is guessed.
+/// What the site does not run yet (docs/design/goatbuilder.md, `join-node`
+/// (d)), under one heading: each gap the end-state model names here ("declared,
+/// not yet built at this site", with the gate row that closes it), then each
+/// service the site turns off, with the model's reason. Every site is declared
+/// to run every service (ADR 1165, gate group I), so a service a joining site
+/// does not run yet is a gap, never a design. The model is read, never
+/// re-derived, so this list and `goatbuilder endstate`'s GAP and N/A rows
+/// cannot disagree. A model that cannot be read is one `not read` line naming
+/// what is missing; the run does not stop for it, and no list is guessed.
 fn not_run(repo: &Path, site: &str) -> Vec<Check> {
     let shown = format!("{MODEL} model {site}");
-    let mut rows = vec![row("not-run-heading", format!("What {site} does not run: every catalog service the end-state model marks absent here, with its reason ({shown})"))];
+    let mut rows = vec![row("not-run-heading", format!("What {site} does not run yet: each gap the end-state model names, with the gate row that closes it, and each service the site turns off ({shown})"))];
     let services = match model_services(repo, site) {
         Ok(s) => s,
         Err(why) => {
-            rows.push(row("not-run", format!("not read: {why}; this list of what the site does not run is left out")));
+            rows.push(row("not-run", format!("not read: {why}; this list of what the site does not run yet is left out")));
             return rows;
         }
     };
     let before = rows.len();
+    // The gaps first: declared here, not yet built at this site.
+    for (name, s) in &services {
+        let Some(g) = s.get("gap").filter(|g| g.is_object()) else {
+            continue;
+        };
+        let field = |k: &str| g.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        rows.push(row(
+            "not-run",
+            not_run_line(
+                name,
+                &format!(
+                    "declared, not yet built at this site: {} (gate row {})",
+                    field("why"),
+                    field("row")
+                ),
+            ),
+        ));
+    }
+    // Then what the site turns off itself.
     for (name, s) in &services {
         if s.get("present") != Some(&serde_json::Value::Bool(false)) {
             continue;
@@ -523,7 +545,7 @@ fn not_run(repo: &Path, site: &str) -> Vec<Check> {
         rows.push(row("not-run", not_run_line(name, &reason)));
     }
     if rows.len() == before {
-        rows.push(row("not-run", "nothing: the model marks no catalog service absent here".into()));
+        rows.push(row("not-run", "nothing: the model names no gap here, and the site turns nothing off".into()));
     }
     rows
 }
@@ -602,7 +624,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
             break;
         }
     }
-    // What the site does not run, in the plan and in a real run's summary alike.
+    // What the site does not run yet, in the plan and in a real run's summary alike.
     checks.extend(not_run(repo, o.site));
     if o.dry_run {
         checks.extend(crate::inputs::rows(&listed));
@@ -785,7 +807,7 @@ mod tests {
         assert!(argv.lines().any(|l| l == founder), "the founder reaches the gate as written:\n{argv}");
     }
 
-    /// One line per service the site does not run: its name, a dash, and the
+    /// One line per service the site does not run yet: its name, a dash, and the
     /// model's reason verbatim. A checkout with no model gets one `not read`
     /// line under the heading, naming the missing script, and no list.
     #[test]
@@ -798,9 +820,9 @@ mod tests {
         let rows = not_run(t.path(), "zagros-b");
         assert_eq!(rows.len(), 2, "{:?}", rows.iter().map(|r| &r.detail).collect::<Vec<_>>());
         assert_eq!(rows[0].name, "not-run-heading");
-        assert!(rows[0].detail.starts_with("What zagros-b does not run:") && rows[0].detail.contains("ops/goatbuilder/endstate/endstate.py model zagros-b"), "{}", rows[0].detail);
+        assert!(rows[0].detail.starts_with("What zagros-b does not run yet:") && rows[0].detail.contains("ops/goatbuilder/endstate/endstate.py model zagros-b"), "{}", rows[0].detail);
         assert_eq!(rows[1].name, "not-run");
-        assert_eq!(rows[1].detail, "not read: ops/goatbuilder/endstate/endstate.py is not in this checkout; this list of what the site does not run is left out");
+        assert_eq!(rows[1].detail, "not read: ops/goatbuilder/endstate/endstate.py is not in this checkout; this list of what the site does not run yet is left out");
         assert!(rows.iter().all(|r| r.ok), "a missing list is a stated line, not a refusal");
     }
 

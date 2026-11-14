@@ -415,7 +415,6 @@ gb-062-cause-1 = betingelsen læser en værdi, der først kendes, når playet k�
 gb-063-title = et standup-trins host-limit vælger ingen host
 gb-063-what = Planen kører dette play med --limit <pattern>, og mønsteret matcher ingen host i målgruppen i inventory, så playet kører på ingenting og melder succes.
 gb-063-cause-1 = limit'en forudsætter hostnavngivningen mgmt-<site>-01, og dette site navngiver sine hosts anderledes
-gb-063-cause-2 = trinnet er kun til grundlæggeren, og dette site er en joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = de publicerede deklarationer er i forkert rækkefølge eller ændret

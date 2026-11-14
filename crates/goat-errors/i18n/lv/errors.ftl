@@ -415,7 +415,6 @@ gb-062-cause-1 = nosacījums nolasa vērtību, kas kļūst zināma tikai play iz
 gb-063-title = standup soļa hostu ierobežojums neatlasa nevienu hostu
 gb-063-what = Plāns palaiž šo play ar --limit <pattern>, un šablons neatbilst nevienam mērķa grupas hostam inventārā, tāpēc play neizpildās nevienā hostā un ziņo par sekmīgu izpildi.
 gb-063-cause-1 = ierobežojums pieņem mgmt-<site>-01 hostu nosaukumus, bet šī vietne savus hostus nosauc citādi
-gb-063-cause-2 = solis paredzēts tikai dibinātājam, bet šī vietne ir joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = publicētās deklarācijas ir nepareizā secībā vai mainītas

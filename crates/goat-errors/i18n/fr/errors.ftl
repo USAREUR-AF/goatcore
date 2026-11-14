@@ -415,7 +415,6 @@ gb-062-cause-1 = la condition lit une valeur connue seulement à l'exécution du
 gb-063-title = la limite d'hôte d'une étape de standup ne sélectionne aucun hôte
 gb-063-what = Le plan exécute ce play avec --limit <pattern>, et le motif ne correspond à aucun hôte du groupe cible dans l'inventaire : le play ne tourne sur rien et signale un succès.
 gb-063-cause-1 = la limite suppose le nommage d'hôtes mgmt-<site>-01 et ce site nomme ses hôtes autrement
-gb-063-cause-2 = l'étape est réservée au fondateur et ce site est un joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = les déclarations publiées sont dans le désordre ou ont été modifiées

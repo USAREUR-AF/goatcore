@@ -1444,9 +1444,9 @@ entries:
     what: "The plan runs this play with --limit <pattern>, and the pattern matches no host of the target group in the inventory, so the play runs on nothing and reports success."
     causes:
       - the limit assumes the mgmt-<site>-01 host naming and this site names its hosts differently
-      - the step is meant for the founder only and this site is a joiner
+      - the step installs a service this joining site does not run yet, which its end state names as a gap with the gate row that closes it
     fixes:
-      - "check whether the step should run on this site (a joiner runs no admin surface, ADR 1084 D3)"
+      - "goatbuilder endstate <site> names each gap with its gate row (I1, I4 for an admin surface, I3 for mesh DNS); a gap is work still to build, not a reason to skip the step"
       - "if it should, fix the limit in goat-standup.sh and goatbuilder standup together"
     read: docs/design/goatbuilder-speed.md
     matches:

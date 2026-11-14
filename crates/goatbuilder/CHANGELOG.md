@@ -89,6 +89,21 @@ leave containerd on an empty root after its next restart, so `docker exec` and
 every healthcheck answered `NotFound` while the services kept running. The
 data-root migration runbook gives the check by hand (#664).
 
+#### Changed: every site's end state declares every service, and a joining site's missing ones are named gaps
+
+`goatbuilder endstate` and `ops/goatbuilder/endstate/endstate.py` now declare
+every service a site cut off from the others needs at every site that
+replicates: the replication core (Traefik, NetBird management, signal, Ory,
+the Kratos self-service UI), the NetBird dashboard, the portal, the id console,
+the onboarding engine and mesh DNS. No catalog row is founder-only. What a
+joining site does not run yet is graded `GAP`, "declared, not yet built at
+this site", with the gate row that closes it: I1 and I4 for the admin
+surfaces, I3 for mesh DNS. A `GAP` is counted and printed and does not by
+itself make the site red. Acceptance run with `--endstate` reports a row such a
+service owns as `SKIPPED` with the same text instead of N/A. `goatbuilder
+join-node` lists the gaps under "What <site> does not run yet", from the
+catalog, before the services the site turns off (ADR 1233, #671).
+
 #### Added: the end state grades federation-proxy where a site turns it on
 
 `goatbuilder endstate` now has a row for `federation-proxy`, the node-local

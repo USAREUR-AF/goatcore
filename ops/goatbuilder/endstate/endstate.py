@@ -3,9 +3,11 @@
 
 The end state is DERIVED, never hand-kept per goatnet: `catalog.yaml` says what each
 service is (its containers, class, edges); the site's own declarations say whether it
-runs it (group_vars flags, the fleet pin table's `absent:` deviations, the founder
-flag) and where (has_obs_host and the inventory: a site with no obs host runs the obs
-class on its one management machine). Five grades per present service — deployed,
+runs it (group_vars flags, the fleet pin table's `absent:` deviations) and where
+(has_obs_host and the inventory: a site with no obs host runs the obs class on its one
+management machine). Every site that replicates is declared to run every service a
+site cut off from the others needs (ADR 1165, gate group I); what a joining site does
+not run yet is a named gap with the gate row that closes it, never an absence. Five grades per present service — deployed,
 active, healthy, functional, plus its zero-trust edges — and the negative side:
 anything running that the end state does not declare is an orphan.
 
@@ -52,6 +54,9 @@ PASS, FAIL, UNKNOWN, NA = "PASS", "FAIL", "UNKNOWN", "N/A"
 # Nothing declared can observe it (no health signal, no acceptance row): a coverage
 # gap, counted and listed apart from sync and health (ADR 1125), never a PASS.
 UNOBSERVED = "UNOBSERVED"
+# Declared in the end state, not yet built at this site, with the gate row that
+# closes it. Counted and printed; it does not by itself make the site red.
+GAP = "GAP"
 
 
 # ---------------------------------------------------------------------------
@@ -219,9 +224,6 @@ def catalog(root):
 def presence(root, svc, spec, v, group, pins):
     """(present: True/False/None, contradiction: bool, declarations: [...])."""
     decls = []
-    founder = truthy(v.get("goatnet_founder", True))
-    if spec.get("founder") and founder is False:
-        return False, False, [{"kind": "founder", "says": False, "why": "founder-only service; this site joins a goatnet (goatnet_founder: false)"}]
     if "pin" in spec:
         says, why = pin_says(pins, group, spec["pin"])
         if says is not None:
@@ -253,8 +255,12 @@ def presence(root, svc, spec, v, group, pins):
             if d["kind"] == "pin" and d["says"] is True:
                 d["says"] = None
                 d["why"] += " (a version, not a presence vote: the flag decides)"
-    if spec.get("founder") and not decls:
-        return True, False, [{"kind": "founder", "says": True, "why": "every founder runs it"}]
+    # Every site that replicates runs it, a founder and a joiner alike: every site is
+    # fully island-mode capable (ADR 1165, gate group I; ADR 1233). A pin or flag
+    # that answers still decides.
+    if spec.get("every_site") and not any(d["says"] is not None for d in decls):
+        return True, False, decls + [{"kind": "every_site", "says": True,
+                                      "why": "every site that replicates runs it (ADR 1165, gate group I)"}]
     answers = {d["says"] for d in decls if d["says"] is not None}
     if not answers:
         return None, False, decls
@@ -310,14 +316,29 @@ def deploy_play(root, name, spec, pins):
     return None
 
 
-# The admin mutation surfaces ADR 1084 §D3 single-homes at the site that holds the
-# writer: the NetBird dashboard, the portal, the id console and the onboarding engine.
-# ADR 1165 lifts that one write class at a time, by a change to group_vars, and the
-# lift reaches this model through the same flags and pins it already reads. This
-# list only words the reason a joiner's model marks one absent; it never decides
-# presence, so nothing here makes an admin surface impossible at any site.
-D3_ADMIN_SURFACES = ("netbird-dashboard", "portal", "id-admin-console", "onboard-runner")
-D3_REASON = "single-homed at the founder (ADR 1084 §D3); every site once ADR 1165 lifts it for this class"
+# A service the end state declares at every site that a joining site does not run
+# yet carries `gap: {row, why}` in the catalog. At a joining site it is graded as
+# that gap, "declared, not yet built at this site", with the gate rows that close
+# it (goatbuilder-v1-gate.md, group I), never as an absence: every site is fully
+# island-mode capable (ADR 1165). The site's own flag turning the service on closes
+# the gap; a pin only names a version and does not.
+GAP_PREFIX = "declared, not yet built at this site: "
+
+
+def gap_text(gap):
+    """A gap as the grade, acceptance and the join-node plan print it."""
+    return f"{GAP_PREFIX}{gap['why']} (gate row {gap['row']})"
+
+
+def gap_at(spec, decls, joiner):
+    """The catalog's gap for this row at this site, or None: a joining site whose
+    own flag does not turn the service on."""
+    g = spec.get("gap")
+    if not g or not joiner:
+        return None
+    if any(d["kind"] == "var" and d["says"] is True for d in decls):
+        return None
+    return {"row": str(g["row"]), "why": str(g["why"])}
 
 
 def declaration_reason(d):
@@ -332,15 +353,12 @@ def declaration_reason(d):
     return d["why"]
 
 
-def absent_reason(svc, decls, founder):
-    """Why the model marks `svc` absent at this site: the declarations that say so,
-    and for an admin surface at a joiner, the single-homing they carry out. The
-    plan of `goatbuilder join-node` prints this, and the grade's N/A row reads it,
-    so the two cannot disagree."""
-    said = "; ".join(declaration_reason(d) for d in decls if d.get("says") is False) or "no declaration says present"
-    if svc in D3_ADMIN_SURFACES and not founder:
-        return f"{D3_REASON} (declared by: {said})"
-    return said
+def absent_reason(svc, decls):
+    """Why the model marks `svc` absent at this site: the declarations that say so
+    (a site that turns an add-on off). The plan of `goatbuilder join-node` prints
+    this, and the grade's N/A row reads it, so the two cannot disagree. A gap is
+    not an absence and has no reason here: see `gap_at`."""
+    return "; ".join(declaration_reason(d) for d in decls if d.get("says") is False) or "no declaration says present"
 
 
 def model(site, root=REPO):
@@ -381,13 +399,18 @@ def model(site, root=REPO):
     claimed_surfaces = set()
     for name, spec in (cat.get("services") or {}).items():
         present, contradiction, decls = presence(root, name, spec.get("present") or {}, v, group, pins)
+        gap = None if contradiction else gap_at(spec, decls, truthy(v.get("goatnet_founder", True)) is False)
+        if gap:
+            present = True
         cls = spec.get("class", "mgmt")
         row = {
             "present": present,
             "contradiction": contradiction,
             "declarations": decls,
             # why it is absent here, in the words the join-node plan prints; None unless absent
-            "reason": absent_reason(name, decls, truthy(v.get("goatnet_founder", True)) is not False) if present is False else None,
+            "reason": absent_reason(name, decls) if present is False else None,
+            # declared here, not yet built at this site: the catalog's gap and its gate rows
+            "gap": gap,
             "class": cls,
             "hosts": hosts["obs" if cls == "obs" else "mgmt"],
             "containers": [render(c, v) for c in (spec.get("containers") or [])],
@@ -834,6 +857,12 @@ def grade(m, facts, assay_rows=None, strict=False):
             present_pats += s["containers"] + s["oneshot"]  # undecided, so not an orphan either
             rows.append(res)
             continue
+        if s.get("gap"):
+            # Declared here, not yet built at this site: a named gap, never N/A.
+            res["presence"] = _grade(GAP, gap_text(s["gap"]))
+            present_pats += s["containers"] + s["oneshot"]  # what runs early is not an orphan
+            rows.append(res)
+            continue
         if s["present"] is None:
             res["presence"] = _grade(UNKNOWN, "presence undeclared: " + ("; ".join(d["why"] for d in s["declarations"]) or "no declaration"))
             present_pats += s["containers"] + s["oneshot"]  # whatever runs is not an orphan of an undeclared service
@@ -1008,7 +1037,7 @@ def grade(m, facts, assay_rows=None, strict=False):
         if not (p.startswith("/agent/") or p.startswith("/spire/")) and p not in claimed_paths:
             orphans.append({"kind": "spiffe-entry", "name": p, "why": "a SPIRE entry no present service declares: it can still mint an SVID"})
 
-    counts = {PASS: 0, FAIL: 0, UNKNOWN: 0, NA: 0, UNOBSERVED: 0}
+    counts = {PASS: 0, FAIL: 0, UNKNOWN: 0, NA: 0, UNOBSERVED: 0, GAP: 0}
     for r in rows:
         for k in ("presence", "active", "deployed", "healthy", "functional"):
             if k in r:
@@ -1051,13 +1080,18 @@ def print_grade(g, out=sys.stdout):
     absent = [r["service"] for r in g["services"] if r["presence"]["status"] == NA]
     if absent:
         print(f"  declared absent ({len(absent)}): {', '.join(absent)}", file=out)
+    gaps = [r for r in g["services"] if r["presence"]["status"] == GAP]
+    if gaps:
+        print(f"  gaps, declared and not yet built at this site ({len(gaps)}):", file=out)
+        for r in gaps:
+            print(f"      {r['service']}: {r['presence']['why']}", file=out)
     if g["orphans"]:
         print(f"  orphans ({len(g['orphans'])}):", file=out)
         for o in g["orphans"]:
             print(f"      {o['kind']} {o['name']}: {o['why']}", file=out)
     if g["unreachable"]:
         print(f"  unreachable: {', '.join(g['unreachable'])}", file=out)
-    print(f"  PASS {c[PASS]} · FAIL {c[FAIL]} · UNKNOWN {c[UNKNOWN]} · UNOBSERVED {c[UNOBSERVED]} · N/A {c[NA]} · orphans {len(g['orphans'])}", file=out)
+    print(f"  PASS {c[PASS]} · FAIL {c[FAIL]} · UNKNOWN {c[UNKNOWN]} · UNOBSERVED {c[UNOBSERVED]} · GAP {c[GAP]} · N/A {c[NA]} · orphans {len(g['orphans'])}", file=out)
     verdict = "in its declared end state" if g["exit"] == 0 else "NOT in its declared end state"
     print(f"  {g['site']} is {verdict}" + (f"; {c[UNOBSERVED]} grade(s) have no signal to read (coverage)" if c[UNOBSERVED] else ""), file=out)
 
@@ -1097,8 +1131,13 @@ def check(root=REPO):
             tokens |= set(t.get("requires") or [])
     for name, spec in (cat.get("services") or {}).items():
         p = spec.get("present") or {}
-        if not ({"founder", "pin", "var"} & set(p)):
-            errs.append(f"catalog: {name} has no presence declaration (founder/pin/var)")
+        if not ({"every_site", "pin", "var"} & set(p)):
+            errs.append(f"catalog: {name} has no presence declaration (every_site/pin/var)")
+        if "founder" in p or "replication_core" in p or "admin_surface" in spec:
+            errs.append(f"catalog: {name} declares a founder-only or admin-surface rule; every site runs every service (ADR 1165, gate group I), and a joining site's absence is a `gap`")
+        g = spec.get("gap")
+        if g is not None and not (isinstance(g, dict) and g.get("row") and g.get("why")):
+            errs.append(f"catalog: {name}'s gap needs a row (the gate row that closes it) and a why")
         if p.get("pin") and p["pin"] not in comps:
             errs.append(f"catalog: {name} names pin `{p['pin']}`, which is not a component in ops/pins/fleet-pins.yaml")
         if spec.get("class", "mgmt") not in ("mgmt", "obs"):

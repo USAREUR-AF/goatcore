@@ -707,7 +707,7 @@ fn plan_page(report: &Report, color: bool) -> Option<String> {
     let mut how: Vec<String> = Vec::new();
     // Each phase's command, as the run executes it (step 3 of the legibility work).
     let mut runs: Vec<(String, String, String)> = Vec::new();
-    // What the site does not run: the heading, then one line per service.
+    // What the site does not run yet: the heading, then one line per service.
     let mut not_run: Vec<String> = Vec::new();
     // Every value the run uses, with its source (gate row F2). An input nothing
     // gave a value to is a row that is not ok, and the page still shows it.
@@ -1379,7 +1379,7 @@ fn phased(report: &Report, color: bool) -> String {
             "measured" => {
                 out.push_str(&format!("\n{}\n", fill(&format!("Measured: {detail}"), "", "  ").trim_end()));
             }
-            // What the site does not run: its own heading, then a line per service.
+            // What the site does not run yet: its own heading, then a line per service.
             "not-run-heading" => {
                 out.push_str(&format!("\n{}\n", bold(c.detail.trim())));
             }
@@ -1889,12 +1889,12 @@ mod tests {
         assert!(!page.contains('\u{2717}'), "a plan owes nothing, so it marks nothing: {page}");
         // Each phase's command, verbatim, under the table; the manual one is spelled out above.
         assert!(page.contains("What each phase runs:\n\n2  seed the SSH key\n    '/long/path/seed-ssh-key.sh' goat@<address>\n\n5  host baseline\n    cd x && ansible-playbook y\n"), "{page}");
-        // What the site does not run: its own heading after the commands, a line per service.
+        // What the site does not run yet: its own heading after the commands, a line per service.
         let mut with = rows.clone();
-        with.insert(with.len() - 1, row("not-run-heading", "What s does not run: every catalog service the end-state model marks absent here"));
+        with.insert(with.len() - 1, row("not-run-heading", "What s does not run yet: each gap the end-state model names, with the gate row that closes it, and each service the site turns off"));
         with.insert(with.len() - 1, row("not-run", "isitup \u{2014} `isitup_enabled` is false in group_vars"));
         let page = plan_page(&Report::new("join-node", with, EXIT_OK), false).unwrap();
-        assert!(page.contains("\nWhat s does not run: every catalog service the end-state model marks absent here\n  isitup \u{2014} `isitup_enabled` is false in group_vars\n"), "{page}");
+        assert!(page.contains("\nWhat s does not run yet: each gap the end-state model names, with the gate row that closes it, and each service the site turns off\n  isitup \u{2014} `isitup_enabled` is false in group_vars\n"), "{page}");
         rows[0] = row("banner", "join-node: real run");
         assert!(plan_page(&Report::new("join-node", rows, EXIT_OK), false).is_none());
     }

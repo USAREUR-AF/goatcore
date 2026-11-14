@@ -415,7 +415,6 @@ gb-062-cause-1 = skilyrðið les gildi sem er aðeins þekkt þegar playið keyr
 gb-063-title = hýsilmörk skrefs í uppsetningu velja engan hýsil
 gb-063-what = Áætlunin keyrir þetta play með --limit <pattern>, og mynstrið passar við engan hýsil í markhópnum í birgðaskránni, svo playið keyrir á engu og tilkynnir velgengni.
 gb-063-cause-1 = mörkin gera ráð fyrir hýsilnöfnum af gerðinni mgmt-<site>-01 en þetta svæði nefnir hýsla sína öðruvísi
-gb-063-cause-2 = skrefið er einungis ætlað stofnandanum og þetta svæði er joiner
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = yfirlýsingarnar sem birtar voru eru í rangri röð eða hafa verið breyttar

@@ -415,7 +415,6 @@ gb-062-cause-1 = a feltétel olyan értéket olvas, amely csak a play futásakor
 gb-063-title = a standup egyik lépésének host limitje egy hostot sem választ ki
 gb-063-what = A terv ezt a playt --limit <pattern> kapcsolóval futtatja, és a minta az inventoryban a célcsoport egyetlen hostjára sem illik, így a play semmin nem fut le, mégis sikert jelent.
 gb-063-cause-1 = a limit az mgmt-<site>-01 hostnévsémát feltételezi, ez a site viszont másképp nevezi el a hostjait
-gb-063-cause-2 = a lépés csak az alapítónak szól, ez a site pedig csatlakozó
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = a közzétett deklarációk sorrendje hibás, vagy módosították őket

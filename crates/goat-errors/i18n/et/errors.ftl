@@ -415,7 +415,6 @@ gb-062-cause-1 = tingimus loeb väärtust, mis selgub alles play käitamisel
 gb-063-title = standup-sammu hosti piirang ei vali ühtegi hosti
 gb-063-what = Plaan käitab seda play'd valikuga --limit <pattern> ja muster ei vasta ühelegi inventari sihtgrupi hostile, nii et play ei käi mitte millelgi ja teatab õnnestumisest.
 gb-063-cause-1 = piirang eeldab hostide nimetamist kujul mgmt-<site>-01, aga see sait nimetab hostid teisiti
-gb-063-cause-2 = samm on mõeldud ainult asutajale ja see sait on liituja
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-045-title = avaldatud deklaratsioonid on vales järjekorras või muudetud

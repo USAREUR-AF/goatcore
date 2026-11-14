@@ -183,9 +183,10 @@ def run(argv=None):
         deployed.discard(None)
 
     absent = declared_absent(args.endstate)
+    gaps = declared_gaps(args.endstate)
 
     if args.plan:
-        return plan(args, tests, values, absent)
+        return plan(args, tests, values, absent, gaps)
 
     results = []
     # TWO PASSES, POSITIVES FIRST. A `must_refuse` row asserts that something is
@@ -238,6 +239,12 @@ def run(argv=None):
         gone = sorted(set(t.get("requires", [])) & absent)
         if gone:
             results.append((vid, probes.Verdict(probes.NA, f"declared absent on this site: {', '.join(gone)}", probe_type), t))
+            continue
+        # a service the end state declares here that this site does not run yet: the
+        # gap and its gate row, never N/A (ADR 1165, gate group I)
+        gapped = sorted(set(t.get("requires", [])) & set(gaps))
+        if gapped:
+            results.append((vid, probes.Verdict(probes.SKIPPED, "; ".join(sorted({gaps[g] for g in gapped})), probe_type), t))
             continue
         if not truthy_applies(t.get("applies_when"), values):
             results.append((vid, probes.Verdict(probes.NA, "applies_when false", probe_type), t))
@@ -296,6 +303,24 @@ def declared_absent(path):
     return gone - kept
 
 
+def declared_gaps(path):
+    """The acceptance tokens owned only by services the site's end state declares
+    here but that this site does not run yet, each with its gap: "declared, not
+    yet built at this site: <why> (gate row <row>)"."""
+    if not path:
+        return {}
+    m = json.loads(Path(path).read_text())
+    gaps, kept = {}, set()
+    for s in (m.get("services") or {}).values():
+        g = s.get("gap")
+        if g:
+            for t in s.get("assay") or []:
+                gaps[t] = f"declared, not yet built at this site: {g['why']} (gate row {g['row']})"
+        elif s.get("present") is not False:
+            kept.update(s.get("assay") or [])
+    return {t: why for t, why in gaps.items() if t not in kept}
+
+
 def layer_of(t):
     """The layer a row belongs to: its aspect's first segment (host, mesh,
     fabric, identity, federation, deploy …)."""
@@ -313,21 +338,25 @@ def print_by_layer(results):
         print(f"  {layer:15s} " + "  ".join(f"{table[layer][k]:>7}" for k in order))
 
 
-def plan(args, tests, values, absent=frozenset()):
+def plan(args, tests, values, absent=frozenset(), gaps=None):
     """--plan: what the assay would run on this goatnet, by layer, probing
     nothing. Deterministic for a given value set, so a rehearsal can keep it
     as a checkpoint. A row whose `requires` names a service the end state
     declares absent is N/A here too, as it is when the rows run (ADR 1206)."""
-    applicable, na = {}, []
+    applicable, na, gapped = {}, [], []
+    gaps = gaps or {}
     for t in tests:
         if set(t.get("requires", [])) & absent:
             na.append(t["id"])
+        elif set(t.get("requires", [])) & set(gaps):
+            gapped.append(t["id"])
         elif truthy_applies(t.get("applies_when"), values):
             applicable.setdefault(layer_of(t), []).append(t)
         else:
             na.append(t["id"])
     total = sum(len(v) for v in applicable.values())
-    print(f"assay plan: env={args.env}  {total} applicable rows, {len(na)} N/A")
+    print(f"assay plan: env={args.env}  {total} applicable rows, {len(na)} N/A"
+          + (f", {len(gapped)} gap(s): declared, not yet built at this site" if gapped else ""))
     for layer in sorted(applicable):
         rows = applicable[layer]
         print(f"\n  {layer} ({len(rows)})")
@@ -336,6 +365,8 @@ def plan(args, tests, values, absent=frozenset()):
             print(f"    {kind} {t['id']:44s} {t.get('probe', '')}")
     if na:
         print(f"\n  N/A here: {', '.join(sorted(na))}")
+    if gapped:
+        print(f"\n  gaps here, declared and not yet built at this site: {', '.join(sorted(gapped))}")
     return 0
 
 
