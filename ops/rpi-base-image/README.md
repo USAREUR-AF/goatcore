@@ -97,7 +97,7 @@ graph TB
 
 | # | Layer | What's enabled | File / location |
 |---|---|---|---|
-| 1 | Kernel | `fips=1` boot param activates FIPS-mode crypto API + POST self-tests | `/boot/firmware/cmdline.txt` |
+| 1 | Kernel | `fips=1` is present but ignored by stock `linux-raspi`, which lacks `CONFIG_CRYPTO_FIPS`; no kernel POST self-tests run | `/boot/firmware/cmdline.txt` |
 | 2a | OpenSSL provider | FIPS module binary (`fips.so`) | `/usr/lib/aarch64-linux-gnu/ossl-modules/fips.so` |
 | 2b | OpenSSL self-tests | Integrity HMAC + KAT results from `openssl fipsinstall` | `/usr/lib/ssl/fipsmodule.cnf` |
 | 2c | OpenSSL activation | `fips_sect` provider loaded, `default_properties = fips=yes` | `/usr/lib/ssl/openssl.cnf` |
@@ -152,6 +152,9 @@ If checks 1, 2, and 3 come back with FIPS-approved values, the userspace chain i
 |---|---|---|---|
 | `brew install nmap pv xz` | `sudo apt-get install -y nmap pv xz-utils curl` | `sudo dnf install -y nmap pv xz curl` | `sudo pacman -S --needed nmap pv xz curl` |
 
+Image verification also requires one SHA-256 implementation: `sha256sum`
+(coreutils), `shasum` (included with macOS), or `openssl`.
+
 On Linux, `01-flash.sh` also uses `lsblk`, `findmnt` and `mount` (util-linux,
 always present) and `partprobe` (package `parted`; it falls back to `blockdev`).
 
@@ -177,6 +180,17 @@ On macOS it installs missing tools with Homebrew. On Linux it names the
 missing tools and the `apt-get` / `dnf` / `pacman` command that installs them,
 and runs that command only if you answer `y`.
 
+The script selects the exact Ubuntu image filename configured in
+`00-prerequisites.sh`, downloads the matching release `SHA256SUMS`, and requires
+one valid, unambiguous entry before accepting either a cached or newly
+downloaded image. A new image is moved into the cache only after its SHA-256
+matches. This detects corrupt or mismatched bytes against the downloaded
+manifest; it does **not** authenticate Ubuntu as the publisher because the
+manifest's digital signature is not verified.
+
+The script retrieves `SHA256SUMS` on every run, including when the exact image
+is already cached, so checksum verification requires network access.
+
 ### 2. Edit cloud-init configs
 
 ```bash
@@ -191,8 +205,13 @@ vim cloud-init-configs/network-config     # set WiFi SSID + password (optional)
 | | macOS | Linux |
 |---|---|---|
 | Find the SD card | `diskutil list` → `/dev/diskN` | `lsblk -d -o NAME,SIZE,RM,TRAN,MODEL` → `/dev/sdX` (USB reader) or `/dev/mmcblkN` (built-in reader) |
-| Check the target, write nothing | `./01-flash.sh --dry-run /dev/diskN <image>` | `./01-flash.sh --dry-run /dev/sdX <image>` |
-| Flash | `./01-flash.sh /dev/diskN ~/Downloads/ubuntu-*-preinstalled-server-arm64+raspi.img.xz` | `./01-flash.sh /dev/sdX ~/Downloads/ubuntu-*-preinstalled-server-arm64+raspi.img.xz` |
+| Check the target, write nothing | `./01-flash.sh --dry-run /dev/diskN "/exact/verified/image/path"` | `./01-flash.sh --dry-run /dev/sdX "/exact/verified/image/path"` |
+| Flash | `./01-flash.sh /dev/diskN "/exact/verified/image/path"` | `./01-flash.sh /dev/sdX "/exact/verified/image/path"` |
+
+Replace `/exact/verified/image/path` with the complete image path printed by
+`00-prerequisites.sh`, preserving the quotes so it remains one argument. Use
+that printed path whether the selected cache is `IMAGES_DIR`, a repository
+cache, the legacy cache, or `~/Downloads`; do not substitute a wildcard.
 
 Pass the whole disk, not a partition (`/dev/sdX`, not `/dev/sdX1`).
 `01-flash.sh` refuses before writing when the target is not removable, USB or
@@ -457,11 +476,11 @@ Each application repo lives separately and only adds its own binaries / configs 
 
 **ext4 errors / I/O errors during `05-enable-fips.sh`**: DRAM-less NVMe drives (WD SN770M etc.) saturate under `make -j$(nproc)` and trigger NVMe controller resets that cascade into filesystem errors. The script defaults to `make -j2` to avoid this. If you still see errors, drop further to `make -j1` or move the build to tmpfs (`WORK_DIR=/dev/shm`).
 
-**`Unable to find a source package for openssl`**: apt's source index files are 0 bytes (cache glitch). Fix: `sudo rm -rf /var/lib/apt/lists/* && sudo apt-get update`. Then re-run 06.
+**`Unable to find a source package for openssl`**: apt's source index files are 0 bytes (cache glitch). Fix: `sudo rm -rf /var/lib/apt/lists/* && sudo apt-get update`. Then re-run `05-enable-fips.sh`.
 
 **`dpkg was interrupted`** (after a force power-cycle during a build): `sudo dpkg --configure -a && sudo apt-get -f install`. Then re-run whichever script aborted.
 
-**`/run/netplan/eth0.yaml` keeps regenerating + dual IP conflict**: `03-prepare-encryption.sh` adds `IP=...:::eth0:off` to `initramfs.conf` for dropbear. When initramfs hands off to userspace, netplan inherits this and writes a static eth0 config that fights with WiFi for the same IP. Fix: cloud-init network regen is now disabled by default in user-data (writes `/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg`). For an existing build, also strip the IP= line: `sudo sed -i '/^IP=/d' /etc/initramfs-tools/initramfs.conf && sudo update-initramfs -u`.
+**`/run/netplan/eth0.yaml` keeps regenerating + dual IP conflict**: `03b-headless-dropbear-unlock.sh` adds `IP=...:::eth0:off` to `initramfs.conf` for dropbear; `03-prepare-encryption.sh` removes any existing `IP=` line. When initramfs hands off to userspace, netplan can inherit the static address and write an eth0 config that fights with WiFi for the same IP. `05-enable-fips.sh` removes the line when invoked with `FIPS_PURGE_DROPBEAR=1`. For an existing build that no longer uses initramfs networking, strip it with: `sudo sed -i '/^IP=/d' /etc/initramfs-tools/initramfs.conf && sudo update-initramfs -u`.
 
 **LUKS slot rejects passphrase you "definitely set"**: caps lock was on when you typed it during `cryptsetup reencrypt`. Initramfs busybox doesn't show a caps-lock indicator. Try the caps-inverted version of what you intended — that's almost certainly what's actually in slot 0.
 
