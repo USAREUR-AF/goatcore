@@ -22,13 +22,15 @@ The goatnet's decision of record is that every site is fully island-mode capable
 
 Two facts shape the fix:
 - A goatnet's NetBird groups are per environment, with role suffixes (`ops/ansible/netbird_acl_taxonomy.yml`). No group means "this site's peers", so a nameserver group cannot yet be aimed at one site's peers only.
-- The NetBird client merges every nameserver group that targets the same domain into one handler, and queries the groups in parallel (`client/internal/dns/server.go`, `buildMergedDomainHandler`). So two groups for the goatnet's zone, both given to every peer, both get asked, and either one answering is enough.
+- The NetBird client merges every nameserver group that targets the same domain into one handler, and queries the groups in parallel (`client/internal/dns/server.go`, `buildMergedDomainHandler`, read in a NetBird client source tree at commit `eedc0771` of 2026-07-17, not a tagged release). So when two groups for the goatnet's zone are both given to every peer, both get asked, and either one answering is enough.
 
 ## Decision
 
 - **Every site that replicates runs a mesh DNS replica** on its core node. The replica serves the goatnet's whole generated zone, the same file every replica serves. `join-node` deploys it in phase 13 for a joining site's core node, after the replication passes and signal federation. `standup` deploys it for a joining site at phase 12, as it does for the founder. A site with no zone file to serve is refused when the plan is made (GB-280).
 - **Each site has its own nameserver group,** `<site>-mesh-dns`, for the goatnet's zone. It lists the site's own replica first and the founder's second (`goat-coredns.yml`, `mesh_dns_peer_replica_group`). The founder's group is unchanged.
-- **Distribution is declared.** A group is distributed to the groups named in `netbird_nameserver_distribution_groups`, by default `All`, today's behaviour. With both groups on `All`, every peer asks both, and a site cut off from the founder answers from its own replica. A goatnet that later creates per-site peer groups names them there, with no code change.
+- **Distribution is declared.** A group is distributed to the groups named in `netbird_nameserver_distribution_groups`, by default `All`, today's behaviour. With both groups on `All`, every peer asks both, and a site cut off from the founder answers from its own replica.
+- **The island property rests on the client's merge.** It holds only while the NetBird client merges same-domain nameserver groups and queries them in parallel, as above. A client change there, for example taking one group per domain or querying groups in turn, would undo it: a peer could then wait on, or only ask, an unreachable site's replica. The live read checks it on the deployed client.
+- **Preferring a site's own replica is not decided here.** With every group on `All`, a peer asks every site's replica and takes the first answer. Letting each site prefer its own needs a per-site peer group in the NetBird ACL taxonomy, which is a later and bigger change with its own decision. `netbird_nameserver_distribution_groups` is where such groups would be named.
 - **One writer.** The group is registered through the founder's management API, with the founder's token (`<FOUNDER>_NB_API_TOKEN`), as standup registers the founder's group today. A second site writes no NetBird configuration of its own. The token resolves through `with-secrets`, and an unset or unresolved token is refused before the step runs (GB-281). Moving this write to each site belongs to the admin-surface class switch of ADR 1165 (gate row I4), not to this decision.
 - **When cut off, a replica keeps every record.** The founder's names still resolve, and connections to them fail at the address, so reconnecting needs no DNS change. The role's no-drop guard already refuses to push a zone that removes live records.
 
@@ -51,7 +53,7 @@ This amends ADR 1056 in one point: a goatnet has one nameserver group per site t
 **Negative.**
 - Every peer asks every site's group for the goatnet's zone, so lookups go to more than one replica. CoreDNS's cache and the client's merge keep this small, but it grows with the number of sites until per-site distribution exists.
 - A joining site's mesh DNS depends on the founder's API token being stored for the operator who joins it.
-- The merge of same-domain groups is the NetBird client's behaviour, not a documented contract. A client that does not merge would use one group and lose the island property. The live read checks it on the deployed client.
+- The merge of same-domain groups is the NetBird client's behaviour, not a documented contract (see the Decision). The live read checks it on the deployed client, for success and for time: with one site's replica unreachable, a lookup must answer within the client's normal timeout, not after a stall while it waits on the unreachable replica.
 - A joining site's own service names enter the zone only when the generator renders more than one site into one zone file. Today it renders one site per zone, so a replica at a joined site serves the founder's names. Its own names are reached through NetBird's peer DNS and their mesh addresses.
 - A replica binds the site's `mesh_ip_a`, so a second core node at a site would bind the first node's address. That is the role's existing limit, not new.
 
@@ -61,7 +63,8 @@ The resolver stays on the mesh only: it binds loopback and mesh addresses, never
 
 ## Trigger conditions for revisit
 
-- When per-site peer groups exist in the NetBird ACL taxonomy: distribute each site's group only to its peers.
+- When per-site peer groups exist in the NetBird ACL taxonomy, a decision not made here: distribute each site's group only to its own peers, so each site prefers its own replica.
+- When the live read finds a lookup, with one site's replica unreachable, answering only after a stall longer than the client's normal timeout.
 - When ADR 1165's admin-surface class switch (gate row I4) moves NetBird configuration writes to each site: register each site's group through its own management.
 - When a NetBird client release stops merging nameserver groups that target the same domain.
 - When the zone generator renders more than one site into one zone, so each site's own names are in the zone it serves.
