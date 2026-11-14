@@ -622,15 +622,19 @@ fn runs_by_hand(repo: &Path, edge_group: &str) -> bool {
 /// group's hand group_vars, else the hand inventory naming the group), or
 /// `None` when it does not.
 pub(super) fn hand_run_reason(repo: &Path, edge_group: &str) -> Option<String> {
-    // A file that only turns on goat-zenoh-edge's certificate install is a
-    // setting for the peering to come, not evidence that it runs.
+    // A file that only turns on goat-zenoh-edge's certificate install, or only
+    // sets the host firewall baseline the peering plays require on an edge
+    // (GB-279), is a setting for the peering to come, not evidence that it runs.
     let evidence: Vec<String> = hand_group_files(repo, edge_group)
         .iter()
         .filter(|f| {
             let keys = std::fs::read_to_string(f)
                 .map(|t| yaml_keys(&t))
                 .unwrap_or_default();
-            keys.is_empty() || keys.iter().any(|k| k != "goat_zenoh_edge_install_certs")
+            keys.is_empty()
+                || keys.iter().any(|k| {
+                    k != "goat_zenoh_edge_install_certs" && !k.starts_with("goat_host_firewall_")
+                })
         })
         .map(|f| f.strip_prefix(repo).unwrap_or(f).display().to_string())
         .collect();
@@ -1928,6 +1932,35 @@ mod tests {
         )
         .unwrap();
         assert!(!installs_certs(d.path(), "xab_edge"));
+    }
+
+    /// The host firewall baseline the peering plays require on an edge (GB-279)
+    /// is written into the edge group before its peering is allocated. A hand
+    /// file that holds only goat_host_firewall_* keys is that setting, not
+    /// evidence the peering runs; one that also sets a peering value still is.
+    #[test]
+    fn a_host_firewall_file_alone_is_not_a_running_peering() {
+        let d = repo_with(json!([p("xab", false)]));
+        let g = d.path().join("ops/ansible/group_vars/xab_edge");
+        std::fs::create_dir_all(&g).unwrap();
+        std::fs::write(
+            g.join("host-firewall.yml"),
+            "goat_host_firewall_baseline: true\n\
+             goat_host_firewall_management_sources:\n  - \"192.0.2.30/32\"\n\
+             goat_host_firewall_override:\n  other-tcp:\n    ports: [8101]\n    sources: [\"192.0.2.1/32\"]\n    reason: \"x\"\n",
+        )
+        .unwrap();
+        assert_eq!(hand_run_reason(d.path(), "xab_edge"), None);
+        let c = config::load(&d.path().join("ops/goatbuilder/goatbuilder.yaml")).unwrap();
+        let vs = alloc::allocate_all(&c, &AllocContext::default()).unwrap();
+        assert!(adoption_check(d.path(), &c, &vs, &AllocContext::default(), &[]).is_ok());
+        std::fs::write(
+            g.join("host-firewall.yml"),
+            "goat_host_firewall_baseline: true\npeering_wg_listen_port: 51820\n",
+        )
+        .unwrap();
+        let why = hand_run_reason(d.path(), "xab_edge").expect("a peering value is evidence");
+        assert!(why.contains("host-firewall.yml"), "{why}");
     }
 
     /// A repository with one peering still hand-written (xac) and one to adopt

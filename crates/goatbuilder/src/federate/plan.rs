@@ -1201,9 +1201,11 @@ fn inputs_part(
             "goat_fed_republisher_image",
         ),
     ];
-    // The baseline host firewall is opt-in per host (`goat_host_firewall_baseline`,
-    // default false). Off: NOT APPLICABLE, nothing rendered. On: the ruleset and
-    // hash from the role's own renderer, or BLOCKED naming why it cannot be shown.
+    // The baseline host firewall (`goat_host_firewall_baseline`, default false) is
+    // required on an edge and opt-in on a core. Off: BLOCKED with GB-279 on an
+    // edge, as the edge plays refuse it; NOT APPLICABLE on a core, nothing
+    // rendered. On: the ruleset and hash from the role's own renderer, or BLOCKED
+    // naming why it cannot be shown.
     let our_package = crate::federate::runenv::var("FED_COUNTERPARTY")
         .ok()
         .filter(|v| !v.is_empty())
@@ -2345,8 +2347,9 @@ mod tests {
         assert_eq!(iface.value.as_deref(), Some("wg-fed0"));
     }
 
-    /// Each host of the edge and core groups has a host firewall entry, NOT
-    /// APPLICABLE while no baseline is declared.
+    /// Each host of the edge and core groups has a host firewall entry. With no
+    /// baseline declared, the core is NOT APPLICABLE and the edge is BLOCKED
+    /// (GB-279): the peering plays require the baseline on an edge.
     #[test]
     fn every_host_has_a_host_firewall_entry() {
         let r = tempfile::tempdir().unwrap();
@@ -2356,6 +2359,10 @@ mod tests {
             "[velmara_edge]\nedge-a ansible_host=192.0.2.10\n\n[velmara_core]\ncore-a ansible_host=192.0.2.20 ansible_user=ops\n",
         )
         .unwrap();
+        // The checkout's edge plays require the baseline (GB-279).
+        let req = r.path().join(hostfw::REQUIRE);
+        std::fs::create_dir_all(req.parent().unwrap()).unwrap();
+        std::fs::write(&req, "---\n").unwrap();
         assert_eq!(
             inventory_hosts(r.path(), "velmara_core"),
             [("core-a".to_string(), "192.0.2.20".to_string())]
@@ -2370,7 +2377,7 @@ mod tests {
         assert_eq!(
             hosts,
             [
-                ("edge-a", "192.0.2.10", "NOT APPLICABLE"),
+                ("edge-a", "192.0.2.10", "BLOCKED"),
                 ("core-a", "192.0.2.20", "NOT APPLICABLE")
             ]
         );
@@ -2542,10 +2549,11 @@ mod tests {
         assert_eq!(get("certificate directory"), Some(format!("{ws}/pki")));
     }
 
-    /// With the baseline host firewall off, each host is NOT APPLICABLE; with
-    /// it on and no ruleset to show (here the checkout has no renderer and no
-    /// management source), the host and the plan are BLOCKED rather than
-    /// silently passing.
+    /// With the baseline host firewall off, an edge is BLOCKED with GB-279,
+    /// as the edge plays refuse it (NOT APPLICABLE on a checkout whose plays
+    /// do not carry that requirement); with it on and no ruleset to show (here
+    /// the checkout has no renderer and no management source), the host and
+    /// the plan are BLOCKED rather than silently passing.
     #[test]
     fn a_host_firewall_baseline_that_cannot_render_blocks_the_plan() {
         let r = tempfile::tempdir().unwrap();
@@ -2557,12 +2565,25 @@ mod tests {
         .unwrap();
         let w = tempfile::tempdir().unwrap();
         let ws = w.path().display().to_string();
+        // A checkout whose edge plays do not carry the requirement: NOT APPLICABLE.
         let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering(), &cfg_of(peering())).unwrap();
         assert_eq!(p.host_firewall[0].outcome, "NOT APPLICABLE");
+        assert!(rows.iter().all(|x| x.check != "host-firewall"));
+        // The checkout's edge plays require the baseline (GB-279).
+        let req = r.path().join(hostfw::REQUIRE);
+        std::fs::create_dir_all(req.parent().unwrap()).unwrap();
+        std::fs::write(&req, "---\n").unwrap();
+        let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering(), &cfg_of(peering())).unwrap();
+        assert_eq!(p.host_firewall[0].outcome, "BLOCKED");
         assert!(p.host_firewall[0]
             .detail
             .starts_with("host firewall baseline: off"));
-        assert!(rows.iter().all(|x| x.check != "host-firewall"));
+        assert!(
+            rows.iter().any(|x| x.check == "host-firewall"
+                && x.outcome == "BLOCKED"
+                && x.code.as_deref() == Some("GB-279")),
+            "{rows:?}"
+        );
         let gv = r.path().join("ops/ansible/group_vars/peering_edges");
         std::fs::create_dir_all(&gv).unwrap();
         std::fs::write(gv.join("fw.yml"), "goat_host_firewall_baseline: true\n").unwrap();

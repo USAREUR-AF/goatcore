@@ -305,10 +305,12 @@ jobs:
       - name: deps
         timeout-minutes: 5
         run: |
-          python3 -m pip install -q pyyaml pytest
+          python3 -m pip install -q pyyaml pytest ansible-core
           sudo apt-get install -y -q nftables
       - name: the baseline renders, and the override contract refuses what it must
         run: python3 -m pytest -q ops/ansible/roles/goat-host-firewall/tests/test_render.py ops/ansible/roles/goat-host-firewall/tests/test_play_vars.py
+      - name: the peering plays refuse an edge without the baseline (GB-279), and go on with it
+        run: python3 -m pytest -q ops/ansible/roles/goat-host-firewall/tests/test_edge_requires_baseline.py
       - name: each rendered baseline, loaded in a network namespace, answers on exactly its ports
         timeout-minutes: 5
         run: bash ops/ansible/roles/goat-host-firewall/tests/netns-behavior.sh

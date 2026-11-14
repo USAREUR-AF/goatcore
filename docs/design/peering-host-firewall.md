@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built, opt-in, off by default.** Role `roles/goat-host-firewall`, included by `ops/ansible/peering-wg.yml` and `peering-edge.yml` (profile edge, phase 11) and `peering-republisher.yml` (profile core, phase 12) when `goat_host_firewall_baseline` is true. Renderer `roles/goat-host-firewall/files/goat-host-firewall-render.py`. **Measured** in network namespaces (`tests/netns-behavior.sh`) and over SSH in containers (`ops/ci/test-host-firewall-role.sh`). Not yet run on two real environments. The planner's report of the ruleset (§7): not built in this branch; the planner records the render command as its plan stage 6.4 |
+| Status | **Built: required on an edge, opt-in on a core, off by default.** Role `roles/goat-host-firewall`, included by `ops/ansible/peering-wg.yml` and `peering-edge.yml` (profile edge, phase 11) and `peering-republisher.yml` (profile core, phase 12) when `goat_host_firewall_baseline` is true. The edge plays (phases 2, 11 and 12) refuse an edge with it off (**GB-279**, §6): built, unit-tested by running the plays (`roles/goat-host-firewall/tests/test_edge_requires_baseline.py`), not yet measured in the federation test environment. Renderer `roles/goat-host-firewall/files/goat-host-firewall-render.py`. **Measured** in network namespaces (`tests/netns-behavior.sh`) and over SSH in containers (`ops/ci/test-host-firewall-role.sh`). Not yet run on two real environments. The planner's report of the ruleset (§7): not built in this branch; the planner records the render command as its plan stage 6.4 |
 | Decision | [ADR 1219](../adr/1219-peering-edge-on-the-mesh-reaches-only-the-core-router.md) (what the edge may reach on the mesh), [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md) (the edge and its tunnel), [ADR 1218](../adr/1218-peering-forwarder-when-neither-edge-accepts-inbound.md) (the forwarder carrier) |
 | Companions | [`peering-forwarder.md`](peering-forwarder.md), [`goatbuilder.md`](goatbuilder.md) §"Founders, joiners, host-site nodes and sovereign peering", `roles/goat-peering-wg`, `roles/goat-peering-edge` |
 | Audience | Operators of a peering, and whoever accredits the edge and core hosts |
@@ -178,12 +178,29 @@ goat_host_firewall_override:
 
 ## 6. Off by default
 
-`goat_host_firewall_baseline: false`. The plays include the role only when it is true, so an
-existing deployment sees no change. Switching it on by default is a separate later change.
+`goat_host_firewall_baseline: false` is the role's default, and it does not change. The plays
+include the role only when it is true.
+
+**The peering plays require the host firewall baseline on an edge.** Every play a peering
+standup runs on an edge (`peering-prepare.yml` in phase 2, `peering-wg.yml` or
+`peering-edge.yml` in phase 11, `peering-zenoh-edge.yml` in phase 12) runs
+`roles/goat-host-firewall/tasks/require.yml` as its first task, before anything on the host
+changes. With `goat_host_firewall_baseline` not true for the edge, it refuses (**GB-279**),
+naming the host, the setting and the fix: set `goat_host_firewall_baseline: true` and
+`goat_host_firewall_management_sources` in the edge's group_vars
+(`group_vars/<edge group>/host-firewall.yml`, from
+`group_vars/_examples/peering-host-firewall.example.yml`), then run the peering again. Phase
+11's play applies the baseline; there is no separate play for it. `goatbuilder federate plan`
+shows such an edge as BLOCKED with GB-279 ([federation-plan.md](federation-plan.md), "Host
+firewall"). A core host keeps the baseline opt-in. The back-out (`peering-backout.yml`) does not
+check it, so a peering can always be taken down.
+
+An existing deployment whose edges have the baseline off is refused at its next peering run
+until the edge's group_vars switch it on.
 
 Turning the switch back to false does not unload a baseline a host carries: its table stays,
-and `goat-host-firewall.service` reloads it at boot. So with the switch false, the peering plays
-read `/etc/goat-host-firewall/profile` (one read-only task) and refuse (**GB-210**) while it
+and `goat-host-firewall.service` reloads it at boot. On an edge the switch cannot be false for a
+peering run (GB-279). On a core, with the switch false, the core play reads `/etc/goat-host-firewall/profile` (one read-only task) and refuse (**GB-210**) while it
 exists, naming the command. To take the baseline off a host:
 `systemctl disable --now goat-host-firewall` (its stop removes the table), then
 `rm -rf /etc/goat-host-firewall`, then run with the switch false.
