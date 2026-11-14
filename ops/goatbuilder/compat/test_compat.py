@@ -306,9 +306,25 @@ class A4ConditionalFields(unittest.TestCase):
     """A field a format carries only on some entries (conditional.yaml) may be absent
     from the others, and must stay on every entry its condition names."""
 
+    @staticmethod
+    def _lexical(code: str, at: int, score: float) -> dict:
+        entry = {"code": code, "tool": "goatbuilder", "title": "t", "what": "w", "causes": ["c"], "fixes": ["f"], "read": "r", "exit": 1, "matches": ["m"]}
+        return {"code": code, "layer": "lexical", "evidence": f"3 shared words, score {score:.2f}", "at": at, "score": score, "entry": entry}
+
     def setUp(self):
-        with open(os.path.join(HERE, "documents", "error-federate-undeclared.json")) as f:
-            self.base = json.load(f)
+        # A refusal with no code of its own, as an earlier release printed it: its
+        # interpretation holds lexical guesses, each with its score. The tests own
+        # this sample, so a refresh of a kept document cannot change what they test.
+        self.base = {
+            "schema": "goatbuilder.error/v1",
+            "error": "the peering is not declared",
+            "interpretation": {
+                "schema": "goat-errors.interpretation/v1",
+                "summary": "the peering is not declared",
+                "hits": [self._lexical("GB-066", 0, 0.56), self._lexical("GB-025", 1, 0.50)],
+                "unrecognised": True,
+            },
+        }
         self.cond = compat.Baseline(HERE).conditional()
 
     def _coded(self, doc):
