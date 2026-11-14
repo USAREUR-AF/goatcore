@@ -160,6 +160,27 @@ mod tests {
         assert!(out.contains("--timeout"));
     }
 
+    /// A global flag is documented on the command that declares it, once: the
+    /// root's on the root, and federate's measure flags (declared global on
+    /// `federate`, so every federate verb takes them) on `federate`.
+    #[test]
+    fn a_global_flag_is_documented_where_it_is_declared() {
+        let out = reference();
+        let section = |heading: &str| -> String {
+            let start = out.find(&format!("## `{heading}`\n")).unwrap_or_else(|| panic!("no section {heading}"));
+            let rest = &out[start + 1..];
+            rest[..rest.find("\n## `").unwrap_or(rest.len())].to_string()
+        };
+        let federate = section("goatbuilder federate");
+        for flag in ["--side", "--half-out", "--edge-half", "--over-ssh", "--router-container"] {
+            assert!(federate.contains(&format!("`{flag} ")), "{flag} is not documented on goatbuilder federate");
+            assert_eq!(out.matches(&format!("| `{flag} ")).count(), 1, "{flag} is documented more than once");
+        }
+        for flag in ["--color", "--verbose", "--timeout"] {
+            assert_eq!(out.matches(&format!("| `{flag}")).count(), 1, "{flag} is documented more than once");
+        }
+    }
+
     #[test]
     fn hidden_surfaces_never_appear() {
         let out = reference();
