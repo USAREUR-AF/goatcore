@@ -307,6 +307,41 @@ mod tests {
         assert!(sign(&a).unwrap_err().detail.contains("not an Ed25519 seed"));
     }
 
+    /// The key comes from the keyring only: a result naming a key the keyring
+    /// does not bind to the partner is refused, even though it names one.
+    #[test]
+    fn a_result_naming_a_key_outside_the_keyring_is_refused_gb_272() {
+        let w = World::new(&["xaa", "xab"]);
+        // Signed with xaa's seed, claiming to be xab's, naming xaa's key.
+        let mut a = w.sign_args();
+        a.signing_key = Some(PathBuf::from(format!("{KEYS}/xaa.seed.hex")));
+        std::fs::write(w.p("signature.json"), sign(&a).unwrap()).unwrap();
+        let e = verify(&w.verify_args()).unwrap_err();
+        assert_eq!(e.code, "GB-272", "{}", e.detail);
+        assert!(e.detail.contains("the key bound to `xab`"), "{}", e.detail);
+    }
+
+    /// Our key unset, unreadable, or still an unresolved secret reference (run
+    /// outside ops/scripts/with-secrets) is refused with GB-142, as phase 3 does.
+    #[test]
+    fn an_unresolved_signing_key_is_refused_gb_142() {
+        let w = World::new(&["xaa", "xab"]);
+        let mut a = w.sign_args();
+        for key in [
+            None,
+            Some(PathBuf::from("op://federation/signing-key")),
+            Some(w.p("missing")),
+        ] {
+            a.signing_key = key.clone();
+            let e = sign(&a).unwrap_err();
+            assert_eq!(e.code, "GB-142", "{key:?}: {}", e.detail);
+            assert!(e.detail.contains("signing key"), "{}", e.detail);
+            assert!(e.detail.ends_with("(GB-142)"), "{}", e.detail);
+        }
+        a.signing_key = Some(PathBuf::from("op://federation/signing-key"));
+        assert!(sign(&a).unwrap_err().detail.contains("with-secrets"));
+    }
+
     #[test]
     fn a_refusal_is_printed_as_its_code_and_exits_2() {
         assert_eq!(print(Ok("{}".into())), 0);
