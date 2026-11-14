@@ -40,6 +40,21 @@ struct HostMap {
     host_shown: String,
     container_shown: String,
     site: String,
+    /// The `--site` goatnet's door, for the one host of a `--site` map: tried
+    /// when the host does not answer directly (see [`load_reached`], [`ssh_args`]).
+    door: Option<DoorWay>,
+}
+
+/// How one host is reached when it does not answer directly. Both answers are
+/// decided once, on first use, as rollback.sh decides them per run.
+#[derive(Debug, Clone)]
+struct DoorWay {
+    repo: std::path::PathBuf,
+    site: String,
+    members: Vec<String>,
+    direct: std::cell::OnceCell<bool>,
+    /// `(door user, local port)`, or `None` when no door opens.
+    jump: std::cell::OnceCell<Option<(String, u16)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +116,7 @@ fn load_ledger_at(repo: &Path, component: &str, site: Option<&str>) -> Result<(V
                     host_shown: shown(h.get("host")),
                     container_shown: shown(h.get("container_name")),
                     site: s(h.get("site")),
+                    door: None,
                 })
                 .collect()
         })
@@ -141,11 +157,104 @@ fn ledger_path(component: &str) -> String {
     format!("/var/lib/goat/{component}/deploy-history.jsonl")
 }
 
-fn ssh(user: &str, host: &str, cmd: &str) -> Option<String> {
-    let out = Cmd::new("ssh")
-        .args(["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=4", "-o", "BatchMode=yes", &format!("{user}@{host}"), cmd])
-        .output()
-        .ok()?;
+/// The ledger narrowed to `site`. With a `site` whose map is one host, that host
+/// is reached as rollback.sh reaches it (ADR 1201): direct ssh first; when that
+/// does not answer, through the goatnet's env door, decided by `deploy`'s own
+/// transport ([`crate::push::transport`]: the netbird profile, the mesh host on
+/// tcp/22, then the door registry, opening the door). A door that does not open
+/// falls through to direct ssh, which then reads as unreachable: `--list` takes
+/// the in-repo history and a roll skips the host, in both avenues. A multi-host
+/// map never goes through a door; with no `site` the hosts are reached directly.
+fn load_reached(repo: &Path, component: &str, site: Option<&str>) -> Result<(Vec<HostMap>, Vec<History>)> {
+    let (mut hosts, history) = load_ledger_at(repo, component, site)?;
+    if let (Some(site), 1) = (site, hosts.len()) {
+        // The member groups only feed the mesh probe; a component the pins do
+        // not declare on this goatnet is decided on the profile and the door alone.
+        let members = crate::push::declared(repo, component, &site.replace('-', "_"), None).map(|d| d.members).unwrap_or_default();
+        hosts[0].door = Some(DoorWay { repo: repo.to_path_buf(), site: site.to_string(), members, direct: Default::default(), jump: Default::default() });
+    }
+    Ok((hosts, history))
+}
+
+/// The door `deploy` would use for `site`, `(door user, local port)`, or `None`
+/// when deploy's transport is not the door or the door does not open.
+fn resolve_jump(repo: &Path, site: &str, members: &[String]) -> Option<(String, u16)> {
+    match crate::push::transport(repo, site, members, false) {
+        Ok(t) if t.kind == "door" => door_jump(repo, site),
+        _ => None,
+    }
+}
+
+/// The door's user and local port, from `env-door.sh <site> --ssh-target`
+/// (`user@127.0.0.1:<port>`), the one place the door's facts are decided.
+fn door_jump(repo: &Path, site: &str) -> Option<(String, u16)> {
+    let out = Cmd::new("bash").arg(repo.join("ops/scripts/env-door.sh")).args([site, "--ssh-target"]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let (u, p) = text.trim().rsplit_once("@127.0.0.1:")?;
+    if u.is_empty() {
+        return None;
+    }
+    Some((u.to_string(), p.parse().ok()?))
+}
+
+/// Where an ssh to this host goes, as the dry run prints it.
+fn ssh_dest(h: &HostMap) -> String {
+    match h.door.as_ref().and_then(|w| w.jump.get().cloned().flatten()) {
+        Some((u, p)) => format!("{}@{} (through the door, jump {u}@127.0.0.1:{p})", h.user, h.host),
+        None => format!("{}@{}", h.user, h.host),
+    }
+}
+
+/// The ssh arguments that reach a host, as rollback.sh's `rssh` orders them:
+/// direct when the host answers (or has no door to try), else through the door.
+/// With `say`, a door in use is named on stderr in the script's words. The
+/// script's reads send rssh's stderr to /dev/null, so only its flip shows the
+/// note; the binary says it on the flip alone too, and the read modes print
+/// exactly what the script prints.
+fn ssh_args(h: &HostMap, say: bool) -> Vec<String> {
+    let Some(w) = &h.door else { return direct_args(h) };
+    if *w.direct.get_or_init(|| Cmd::new("ssh").args(direct_args(h)).arg("true").output().map(|o| o.status.success()).unwrap_or(false)) {
+        return direct_args(h);
+    }
+    match w.jump.get_or_init(|| resolve_jump(&w.repo, &w.site, &w.members)) {
+        Some((u, p)) => {
+            if say {
+                eprintln!("goatbuilder: {} is not reachable directly; jumping through the {} door ({u}@127.0.0.1:{p})", h.host, w.site);
+            }
+            jump_args(h, u, *p)
+        }
+        None => direct_args(h),
+    }
+}
+
+fn direct_args(h: &HostMap) -> Vec<String> {
+    ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=4", "-o", "BatchMode=yes"].iter().map(|x| x.to_string()).chain([format!("{}@{}", h.user, h.host)]).collect()
+}
+
+/// Through a door the ssh still goes to `user@<the host's address>`; a
+/// ProxyCommand carries it over the door's tunnel port (`-W %h:%p`), as
+/// ops/validation/probes.py `_ssh_jump` does. Only that hop, whose key changes
+/// with the tunnel, skips the host-key check; the host's own key is checked
+/// (`accept-new`), so a door that lands elsewhere can never stand in for it.
+fn jump_args(h: &HostMap, door_user: &str, port: u16) -> Vec<String> {
+    vec![
+        "-o".into(),
+        "ConnectTimeout=4".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        "StrictHostKeyChecking=accept-new".into(),
+        "-o".into(),
+        format!("ProxyCommand=ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p {port} -W %h:%p {door_user}@127.0.0.1"),
+        format!("{}@{}", h.user, h.host),
+    ]
+}
+
+fn ssh(h: &HostMap, cmd: &str) -> Option<String> {
+    let out = Cmd::new("ssh").args(ssh_args(h, false)).arg(cmd).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -153,7 +262,7 @@ fn ssh(user: &str, host: &str, cmd: &str) -> Option<String> {
 }
 
 fn host_rows_newest_first(h: &HostMap, component: &str) -> Vec<serde_json::Value> {
-    ssh(&h.user, &h.host, &format!("sudo tac {} 2>/dev/null", ledger_path(component)))
+    ssh(h, &format!("sudo tac {} 2>/dev/null", ledger_path(component)))
         .unwrap_or_default()
         .lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
@@ -178,7 +287,7 @@ struct ArtifactMeta {
 
 fn artifact_meta(hosts: &[HostMap], component: &str) -> ArtifactMeta {
     for h in hosts {
-        let Some(row) = ssh(&h.user, &h.host, &format!("sudo tail -n 1 {} 2>/dev/null", ledger_path(component))) else { continue };
+        let Some(row) = ssh(h, &format!("sudo tail -n 1 {} 2>/dev/null", ledger_path(component))) else { continue };
         let Ok(v) = serde_json::from_str::<serde_json::Value>(row.trim()) else { continue };
         return ArtifactMeta {
             kind: v.get("artifact_type").and_then(|x| x.as_str()).unwrap_or("image").to_string(),
@@ -221,7 +330,7 @@ pub(crate) fn in_repo_lines(repo: &Path, component: &str) -> Result<Vec<String>>
 }
 
 pub fn list(repo: &Path, component: &str, site: Option<&str>) -> Result<Report> {
-    let (hosts, _) = load_ledger_at(repo, component, site)?;
+    let (hosts, _) = load_reached(repo, component, site)?;
     let mut checks = vec![line(format!("deploy history for {component} (newest first):"))];
     for h in &hosts {
         let rows = host_rows_newest_first(h, component);
@@ -251,11 +360,11 @@ pub fn list(repo: &Path, component: &str, site: Option<&str>) -> Result<Report> 
 }
 
 pub fn status(repo: &Path, component: &str, site: Option<&str>) -> Result<Report> {
-    let (hosts, _) = load_ledger_at(repo, component, site)?;
+    let (hosts, _) = load_reached(repo, component, site)?;
     let m = artifact_meta(&hosts, component);
     let mut checks = vec![line(format!("{component} — artifact_type={} reversible={} (from {})", m.kind, m.reversible, m.source))];
     for h in &hosts {
-        let current = ssh(&h.user, &h.host, &format!("sudo docker inspect {} --format '{{{{.Config.Image}}}}'", h.container)).map(|x| x.trim().to_string()).unwrap_or_else(|| "<unreachable>".into());
+        let current = ssh(h, &format!("sudo docker inspect {} --format '{{{{.Config.Image}}}}'", h.container)).map(|x| x.trim().to_string()).unwrap_or_else(|| "<unreachable>".into());
         // `yq -r` prints a missing container_name as `null`, as the script shows it.
         checks.push(line(format!("  {} @ {}: {current}", h.container_shown, h.host_shown)));
     }
@@ -390,7 +499,7 @@ pub(crate) fn decide(repo: &Path, component: &str, n: u32, site: Option<&str>) -
     if !(1..=7).contains(&n) {
         return Err(anyhow::Error::from(goat_errors::coded("GB-246", format!("N must be 1..7 (got: {n})"))));
     }
-    let (hosts, history) = load_ledger_at(repo, component, site)?;
+    let (hosts, history) = load_reached(repo, component, site)?;
     require_site_when_multi_goatnet(component, site, &hosts)?;
     let m = artifact_meta(&hosts, component);
     let (target, src, _) = pick_target(&hosts, &history, component, n)?;
@@ -417,7 +526,7 @@ pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&s
             return Ok(r);
         }
     }
-    let (hosts, history) = load_ledger_at(repo, component, site)?;
+    let (hosts, history) = load_reached(repo, component, site)?;
     require_site_when_multi_goatnet(component, site, &hosts)?;
     let m = artifact_meta(&hosts, component);
     let mut checks: Vec<Check> = fresh.map(|f| f.check).into_iter().collect();
@@ -483,7 +592,7 @@ pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&s
         let prev = if dry_run {
             "<running image>".to_string()
         } else {
-            ssh(&h.user, &h.host, &format!("sudo docker inspect {} --format '{{{{.Config.Image}}}}'", h.container)).map(|x| x.trim().to_string()).unwrap_or_default()
+            ssh(h, &format!("sudo docker inspect {} --format '{{{{.Config.Image}}}}'", h.container)).map(|x| x.trim().to_string()).unwrap_or_default()
         };
         if prev.is_empty() {
             checks.push(line(format!("    unreachable or no '{}' container — skipping this host.", h.container)));
@@ -509,10 +618,11 @@ pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&s
         }
         let script = flip_script(shape, h, component, &prev, &target, &ts, &target_pr);
         if dry_run {
-            checks.push(line(format!("    DRY: ssh {}@{} <<'SH'\n{script}SH", h.user, h.host)));
+            checks.push(line(format!("    DRY: ssh {} <<'SH'\n{script}SH", ssh_dest(h))));
         } else {
             let st = Cmd::new("ssh")
-                .args(["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=4", "-o", "BatchMode=yes", &format!("{}@{}", h.user, h.host), &script])
+                .args(ssh_args(h, true))
+                .arg(&script)
                 .status()
                 .with_context(|| format!("ssh {}", h.host))?;
             if !st.success() {
@@ -562,7 +672,7 @@ mod tests {
     /// The three flip shapes pick as the script picks: compose_files, then env_file, then the compose file.
     #[test]
     fn flip_shape_follows_the_scripts_order() {
-        let base = HostMap { host: "h".into(), user: "u".into(), container: "c".into(), compose: "/opt/c/docker-compose.yml".into(), env_file: String::new(), env_var: String::new(), compose_files: vec![], host_shown: "h".into(), container_shown: "c".into(), site: String::new() };
+        let base = HostMap { host: "h".into(), user: "u".into(), container: "c".into(), compose: "/opt/c/docker-compose.yml".into(), env_file: String::new(), env_var: String::new(), compose_files: vec![], host_shown: "h".into(), container_shown: "c".into(), site: String::new(), door: None };
         assert_eq!(shape_for(&base), "compose");
         let env = HostMap { env_file: "/opt/c/.env".into(), env_var: "C_IMAGE".into(), ..base.clone() };
         assert_eq!(shape_for(&env), "env_file");
@@ -653,6 +763,118 @@ mod more_tests {
         }
     }
 
+    /// A checkout whose goatnet zagros-dev is reached through an ssm door that
+    /// lands on 100.127.0.9: the door registry, the real env-door.sh and
+    /// generate-door-inventory.py that read it, a door-open.sh that reports the
+    /// door open, and a role whose ledger maps one host on that site at
+    /// `ledger_host`. No fleet-pins.yaml, so no mesh probe.
+    fn door_checkout(tag: &str, door: bool, ledger_host: &str) -> std::path::PathBuf {
+        let t = std::env::temp_dir().join(format!("gb-rollback-door-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        std::fs::create_dir_all(t.join("ops/scripts")).unwrap();
+        std::fs::create_dir_all(t.join("ops/ansible/inventory")).unwrap();
+        std::fs::create_dir_all(t.join("ops/ansible/roles/e2e-canary")).unwrap();
+        for f in ["env-door.sh", "generate-door-inventory.py"] {
+            std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts").join(f), t.join("ops/scripts").join(f)).unwrap();
+        }
+        let opener = t.join("ops/scripts/door-open.sh");
+        std::fs::write(&opener, "#!/bin/sh\nexit 0\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let reg = if door {
+            "doors:\n  zagros-dev:\n    type: ssm\n    instance: i-abc\n    region: zz-test-1\n    port: 12203\n    user: doorkeeper\n    mgmt:\n      - {name: mgmt-zagros-dev-01, mesh_ip: 100.127.0.9, gv_group: zagros_dev_hosts, landed: true}\n"
+        } else {
+            "doors:\n"
+        };
+        std::fs::write(t.join("ops/ansible/inventory/doors.yaml"), reg).unwrap();
+        std::fs::write(
+            t.join("ops/ansible/roles/e2e-canary/deploy-history.yml"),
+            format!("hosts:\n  - host: {ledger_host}\n    ssh_user: ops\n    container_name: e2e-canary\n    compose_path: /opt/e2e-canary/docker-compose.yml\n    site: zagros-dev\n  - host: 100.127.0.10\n    ssh_user: ops\n    container_name: e2e-canary\n    compose_path: /opt/e2e-canary/docker-compose.yml\n    site: zagros\nhistory: []\n"),
+        )
+        .unwrap();
+        t
+    }
+
+    const JUMP: &str = "ProxyCommand=ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p 12203 -W %h:%p doorkeeper@127.0.0.1";
+
+    #[test]
+    fn a_site_behind_its_door_is_reached_through_the_door_deploy_uses() {
+        let t = door_checkout("door", true, "100.127.0.9");
+        // deploy's transport for this goatnet: the door, through the door inventory.
+        let deploy = crate::push::transport(&t, "zagros-dev", &[], false).unwrap();
+        assert_eq!(deploy.kind, "door", "{deploy:?}");
+        assert!(deploy.inventories.iter().any(|i| i == "inventory/doors-groupvars.ini"), "{deploy:?}");
+        // rollback --site gives the one host of the site its door; the door
+        // rollback falls back to is the one deploy decides, at env-door.sh's port.
+        let (hosts, _) = load_reached(&t, "e2e-canary", Some("zagros-dev")).unwrap();
+        assert_eq!(hosts.len(), 1);
+        let w = hosts[0].door.as_ref().unwrap();
+        assert_eq!(resolve_jump(&t, &w.site, &w.members), Some(("doorkeeper".to_string(), 12203)));
+        // Through the door: the host's own address, its key checked; only the
+        // tunnel hop skips the check.
+        let a = jump_args(&hosts[0], "doorkeeper", 12203);
+        assert_eq!(a.last().unwrap(), "ops@100.127.0.9", "{a:?}");
+        assert!(a.iter().any(|x| x == JUMP) && a.iter().any(|x| x == "StrictHostKeyChecking=accept-new"), "{a:?}");
+        assert!(!a.iter().any(|x| x == "UserKnownHostsFile=/dev/null" || x == "StrictHostKeyChecking=no"), "{a:?}");
+        // The dry run names the door only once it is in use.
+        assert_eq!(ssh_dest(&hosts[0]), "ops@100.127.0.9");
+        w.jump.set(Some(("doorkeeper".into(), 12203))).unwrap();
+        assert_eq!(ssh_dest(&hosts[0]), "ops@100.127.0.9 (through the door, jump doorkeeper@127.0.0.1:12203)");
+        // A host that answers directly is reached directly, door or not.
+        w.direct.set(true).unwrap();
+        assert_eq!(ssh_args(&hosts[0], false), direct_args(&hosts[0]));
+        // With no --site there is no door to try.
+        let (hosts, _) = load_reached(&t, "e2e-canary", None).unwrap();
+        assert!(hosts.iter().all(|h| h.door.is_none()));
+        assert_eq!(ssh_args(&hosts[0], false).last().unwrap(), "ops@100.127.0.9");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn a_host_the_door_does_not_land_on_is_still_the_destination() {
+        // The door lands on 100.127.0.9; the ledger's host is 100.127.0.20 (a
+        // joiner riding its founder's door, say). The ssh still goes to
+        // 100.127.0.20 and its key; the door only carries the TCP connection.
+        let t = door_checkout("joiner", true, "100.127.0.20");
+        let (hosts, _) = load_reached(&t, "e2e-canary", Some("zagros-dev")).unwrap();
+        let w = hosts[0].door.as_ref().unwrap();
+        w.direct.set(false).unwrap();
+        w.jump.set(Some(("doorkeeper".into(), 12203))).unwrap();
+        let a = ssh_args(&hosts[0], false);
+        assert_eq!(a.last().unwrap(), "ops@100.127.0.20", "{a:?}");
+        assert!(a.iter().any(|x| x == JUMP), "{a:?}");
+        assert!(!a.iter().any(|x| x != JUMP && (x.contains("127.0.0.1") || x == "-p")), "the door is never the destination: {a:?}");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn a_site_with_no_door_has_nothing_to_fall_back_to() {
+        let t = door_checkout("direct", false, "100.127.0.9");
+        assert_eq!(crate::push::transport(&t, "zagros-dev", &[], false).unwrap().kind, "direct");
+        let (hosts, _) = load_reached(&t, "e2e-canary", Some("zagros-dev")).unwrap();
+        let w = hosts[0].door.as_ref().unwrap();
+        assert_eq!(resolve_jump(&t, &w.site, &w.members), None);
+        w.direct.set(false).unwrap();
+        assert_eq!(ssh_args(&hosts[0], false), direct_args(&hosts[0]));
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn a_door_that_does_not_open_falls_through_to_direct_as_the_script_does() {
+        let t = door_checkout("shut", true, "100.127.0.9");
+        std::fs::write(t.join("ops/scripts/door-open.sh"), "#!/bin/sh\nexit 1\n").unwrap();
+        // No error for any mode: the door is simply not there, and the host is
+        // tried directly (unreachable: --list reads the in-repo history and a
+        // roll skips the host), as rollback.sh's rssh does.
+        let (hosts, _) = load_reached(&t, "e2e-canary", Some("zagros-dev")).unwrap();
+        let w = hosts[0].door.as_ref().unwrap();
+        assert_eq!(resolve_jump(&t, &w.site, &w.members), None);
+        w.direct.set(false).unwrap();
+        w.jump.set(None).unwrap();
+        assert_eq!(ssh_args(&hosts[0], false), direct_args(&hosts[0]));
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
     fn host(compose_files: &[&str], env_file: &str, env_var: &str) -> HostMap {
         HostMap {
             host: "100.127.0.9".into(),
@@ -665,6 +887,7 @@ mod more_tests {
             host_shown: "100.127.0.9".into(),
             container_shown: "netvis".into(),
             site: String::new(),
+            door: None,
         }
     }
 
