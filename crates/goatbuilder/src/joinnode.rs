@@ -746,6 +746,40 @@ mod tests {
         assert!(core[3].label.contains("pass 3") && !core[3].cmd.contains("--skip-tags"), "{}", core[3].cmd);
     }
 
+    /// Gate row I3, the data router: a joiner's core node runs zenoh-deploy.yml
+    /// for its site's core group, limited to the node, in phase 13 after the
+    /// Spock wiring and signal federation (on, or declared off). A founder's
+    /// core node and the other classes run no router step of join-node's.
+    #[test]
+    fn a_joiners_core_node_deploys_its_data_router_after_signal_federation() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let router: Vec<&Phase> = ph.iter().filter(|p| p.cmd.contains("zenoh-deploy.yml")).collect();
+        assert_eq!(router.len(), 1, "{:?}", router.iter().map(|p| &p.label).collect::<Vec<_>>());
+        assert_eq!((router[0].n, router[0].kind), (13, "A"));
+        assert!(router[0].cmd.ends_with("zenoh-deploy.yml -e target=zagros_b_hosts -l node-x"), "{}", router[0].cmd);
+        let at = |needle: &str| ph.iter().position(|p| p.cmd.contains(needle)).unwrap();
+        assert!(at("signal-federation-verify.yml") < at("zenoh-deploy.yml"), "after the federation proof");
+        assert!(ph[at("zenoh-deploy.yml") + 1..].iter().all(|p| p.n > 13 || !p.cmd.contains("signal-federation")));
+        // Federation declared off: the router still runs, after the SKIP.
+        let gv = t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml");
+        let mut text = std::fs::read_to_string(&gv).unwrap();
+        text.push_str("signal_federation_absent_reason: one node holds every peer\n");
+        std::fs::write(&gv, text).unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let skip = ph.iter().position(|p| p.kind == "SKIP" && p.label.starts_with("[signal federation]")).unwrap();
+        let router = ph.iter().position(|p| p.cmd.contains("zenoh-deploy.yml")).expect("the router runs with federation off");
+        assert!(skip < router);
+        // Other classes, and a founder's core node, run no router step of join-node's.
+        for class in ["obs", "breakglass", "network-jump"] {
+            assert!(plan(t.path(), &opts("zagros-b", class, "zagros")).unwrap().iter().all(|p| !p.cmd.contains("zenoh-deploy.yml")), "{class}");
+        }
+        let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvf).unwrap();
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\n").unwrap();
+        assert!(plan(t.path(), &opts("zagros", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("zenoh-deploy.yml")));
+    }
+
     /// After the Spock wiring, a joiner's core node runs signal federation:
     /// the repo gate first, then the joiner's token and proxy before the
     /// founder's, the routers, the joiner's tunnel, the founder's relay pins,
