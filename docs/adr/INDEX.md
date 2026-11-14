@@ -456,6 +456,11 @@ an ADR edits no shared file: write the ADR, then run
 `python3 ops/release/adr_index.py write`.
 
 <!-- BEGIN generated: adr-index, ADRs above 1234 from their own files; run python3 ops/release/adr_index.py write -->
+
+| # | Title | Status | Notes |
+|---|---|---|---|
+| 1237 | [A site is rebuilt from nothing and a combed extract of its identities](1237-a-site-is-rebuilt-from-nothing-and-a-combed-extract-of-its-identities.md) | Proposed | — |
+
 <!-- END generated: adr-index -->
 
 ---
