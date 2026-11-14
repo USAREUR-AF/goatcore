@@ -5,7 +5,7 @@ stdout = """
 join-node: 15 phases. goatbuilder explain join-node <phase> answers for one, by number or id.
 
   1  reach              MANUAL               reach the box on the site LAN
-  2  seed-key           T                    seed the SSH key
+  2  seed-key           T + GATE             seed the SSH key
   3  repo-work          GATE                 repo work first: group, inventory, pins, exclusions
   4  quiet-apt          T                    quiet apt on the node
   5  baseline           A                    host baseline, narrowed to the node

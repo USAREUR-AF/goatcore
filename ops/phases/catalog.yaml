@@ -517,10 +517,10 @@ phases:
   id: reach
   kind: MANUAL
   title: reach the box on the site LAN
-  what: 'A person''s step: find the box''s real LAN address and reach it over ssh, then pass that address as --address. On a Jetson the address first handed over may be the USB device-mode bridge, not the LAN.'
+  what: 'A person''s step: find the box''s real LAN address and reach it over ssh, then pass that address as --address. On a Jetson the address first handed over may be the USB device-mode bridge, not the LAN. A phone node (--class phone --via usb) has no LAN address: the step is attaching the phone by USB, allowing USB debugging on it and unlocking it, and no --address is passed.'
   why: Every later phase reaches the node at this address; a wrong one makes the baseline and enrolment act on another machine or none.
   changes: Nothing; a person reaches the box.
-  verify: '`ssh <user>@<address>` reaches the box on the site LAN'
+  verify: '`ssh <user>@<address>` reaches the box on the site LAN; for a phone node, `adb devices` lists the phone as `device`'
   runs: 'nothing: a step for a person, with the instructions the run prints'
   by_hand: ssh <user>@<the node's LAN address>, then run goatbuilder join-node again with --address <that address>
   read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
@@ -529,17 +529,17 @@ phases:
 - verb: join-node
   phase: 2
   id: seed-key
-  kind: T
+  kind: T + GATE
   title: seed the SSH key
-  what: Probes whether the node already takes key auth and passwordless sudo; when it does not, seeds the operator's key and NOPASSWD sudo with the first-login password, read from its environment variable (<SITE>_NODE_PASS by default), never from the command line.
-  why: Every play after it reaches the node with key auth and sudo; a password prompt would stop them.
-  changes: The node's authorized_keys and sudoers, when the probe fails; nothing when it passes.
-  verify: it prints that key auth and NOPASSWD sudo already work, or the seed ends without error
-  runs: ops/scripts/seed-ssh-key.sh
+  what: 'Probes whether the node already takes key auth and passwordless sudo; when it does not, seeds the operator''s key and NOPASSWD sudo with the first-login password, read from its environment variable (<SITE>_NODE_PASS by default), never from the command line. For a phone node (--class phone) the phase prepares the phone''s Linux VM over the Android debug bridge instead: Debian''s kernel with its boot settings, Docker Engine, and the deploy user with key auth and passwordless sudo; a VM already prepared is left as it is. A gate then runs the integrity checks in the VM, and a check that fails stops the run (GB-300).'
+  why: Every play after it reaches the node with key auth and sudo; a password prompt would stop them. A phone's VM that returns wrong file data must not have a node built on it.
+  changes: 'The node''s authorized_keys and sudoers, when the probe fails; nothing when it passes. On a phone node not yet prepared: the kernel the VM boots, its boot settings, Docker Engine, the deploy user and the hostname, and the VM is restarted.'
+  verify: 'it prints that key auth and NOPASSWD sudo already work, or the seed ends without error; for a phone node, the integrity checks print `integrity: ok`'
+  runs: ops/scripts/seed-ssh-key.sh, ops/scripts/phone-node-provision.sh (a phone node)
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 2 --to 2 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#before-the-real-run
-  failed_because: the first-login password is wrong or its variable is empty
-  then: set the password variable (--pass-var names it), then resume with --from 2
+  failed_because: the first-login password is wrong or its variable is empty; for a phone node, no phone answers over the Android debug bridge (GB-299) or its VM failed an integrity check (GB-300)
+  then: set the password variable (--pass-var names it), or for a phone node do what the code's entry says (goatbuilder explain GB-299, GB-300), then resume with --from 2
 - verb: join-node
   phase: 3
   id: repo-work
@@ -699,11 +699,11 @@ phases:
   id: unmask-apt
   kind: T
   title: unmask the apt timers
-  what: Unmasks the apt-daily timers on the node over ssh, now that the node is finished.
+  what: Unmasks the apt-daily timers on the node over ssh, now that the node is finished. A node that joined over USB (--via usb) is reached at the mesh address phase 10 recorded in the mesh inventory.
   why: Phase 4 masked them only for the run; a finished node takes its updates again.
   changes: The node's apt-daily timers, unmasked.
   verify: the ssh command exits 0
-  runs: 'nothing from the repository: an ssh command on the node (systemctl unmask)'
+  runs: 'an ssh command on the node (systemctl unmask), ops/scripts/inventory-hosts.py (--via usb: the node''s mesh address)'
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 14 --to 14 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
   failed_because: the node is not reachable over ssh

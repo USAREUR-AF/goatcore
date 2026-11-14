@@ -16,3 +16,18 @@ phase 1 to 15.
 publishers go: the end-state model, which the test also copies, reads it and
 marks fabric-health and mesh-health present at `gamma` and time-health absent.
 join-node deploys the publishers the model marks present.
+
+## The phone site (gate rows H3, H4, H5)
+
+A fourth site, `delta`, is a phone site: its one node `delta-phone-1` is of
+the machine class `phone`. It is listed under `[class_phone]` in
+`ops/ansible/inventory/mgmt-hosts.ini`, has no LAN address there, and
+`group_vars/delta_hosts/vars.yml` states none of what the class declares
+(`ops/ansible/group_vars/class_phone.yml`, which the test copies in).
+
+`crates/goatbuilder/tests/join_node_phone.rs` runs
+`join-node zagros --site delta --node delta-phone-1 --class phone --via usb`
+on a copy of this tree. A stand-in `adb` answers for the phone, and a stand-in
+`ssh` carries each connection through the proxy command the tool wrote and
+runs what is piped to the VM against a directory that stands for the VM's
+filesystem.

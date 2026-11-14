@@ -407,10 +407,11 @@ pub enum Cmd {
         /// The node's inventory name.
         #[arg(long)]
         node: String,
-        /// The machine class: core | obs | breakglass | network-jump.
+        /// The machine class: core | obs | breakglass | network-jump | phone.
         #[arg(long)]
         class: String,
         /// The node's LAN address (required to run; phase 1 says how to find it).
+        /// Not taken with `--via usb`.
         #[arg(long)]
         address: Option<String>,
         /// The env var holding the node's first-login password (default <SITE>_NODE_PASS).
@@ -418,7 +419,9 @@ pub enum Cmd {
         pass_var: Option<String>,
         /// How this machine reaches the goatnet's hosts: `mesh` (this machine is on
         /// its mesh) or `door` (through its env door; the plan opens it first).
-        #[arg(long, default_value = "mesh", value_parser = ["mesh", "door"])]
+        /// `usb`, with `--class phone`: the node over the Android debug bridge
+        /// until it is enrolled, the goatnet's other hosts over the mesh.
+        #[arg(long, default_value = "mesh", value_parser = ["mesh", "door", "usb"])]
         via: String,
         /// Resume from this phase.
         #[arg(long, default_value_t = 1)]

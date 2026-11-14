@@ -246,10 +246,10 @@ One more machine of a class at a live site, declared → converged → verified:
 |---|---|---|
 | `--site <SITE>` | The site the node joins |  |
 | `--node <NODE>` | The node's inventory name |  |
-| `--class <CLASS>` | The machine class: core \| obs \| breakglass \| network-jump |  |
-| `--address <ADDRESS>` | The node's LAN address (required to run; phase 1 says how to find it) |  |
+| `--class <CLASS>` | The machine class: core \| obs \| breakglass \| network-jump \| phone |  |
+| `--address <ADDRESS>` | The node's LAN address (required to run; phase 1 says how to find it). Not taken with `--via usb` |  |
 | `--pass-var <PASS_VAR>` | The env var holding the node's first-login password (default <SITE>_NODE_PASS) |  |
-| `--via <VIA>` | How this machine reaches the goatnet's hosts: `mesh` (this machine is on its mesh) or `door` (through its env door; the plan opens it first) | `mesh` |
+| `--via <VIA>` | How this machine reaches the goatnet's hosts: `mesh` (this machine is on its mesh) or `door` (through its env door; the plan opens it first). `usb`, with `--class phone`: the node over the Android debug bridge until it is enrolled, the goatnet's other hosts over the mesh | `mesh` |
 | `--from <FROM>` | Resume from this phase | `1` |
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |

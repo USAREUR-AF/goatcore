@@ -1,0 +1,66 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# class_phone — what the machine class `phone` declares, once, for every phone
+# node of every goatnet. docs/design/phone-node.md; gate row H5 of
+# docs/design/goatbuilder-v1-gate.md.
+#
+# A phone node is the Linux VM on an Android phone. It converges as a `core`
+# joiner (`goatbuilder join-node ... --class phone --via usb`) and differs
+# from a node on a small computer in the five ways below.
+#
+# HOW IT REACHES A PLAY. This file is the variables of the Ansible group
+# `class_phone`. A site puts its phone node in that group, in
+# inventory/mgmt-hosts.ini:
+#
+#     [class_phone]
+#     <node>
+#
+# and writes none of these values in group_vars/<site>_hosts/. The config
+# preflight (ops/scripts/standup-config-preflight.py <site>_hosts --class
+# phone) checks both, and refuses a site whose own group_vars set one of
+# these keys to another value (GB-301).
+#
+# Status: Built; Unmeasured on hardware as a class.
+
+# What the class is. Read by the config preflight and by a play that needs to
+# know the class; no play changes a host from it.
+machine_class:
+  name: phone
+  # A phone node converges what a core joiner converges.
+  converges_as: core
+  # 1. No LAN address. The VM sits behind the phone's own address translation.
+  #    The node's line in inventory/mgmt-hosts.ini carries no ansible_host;
+  #    join-node reaches it over USB (--via usb) until it has a mesh address,
+  #    and takes no --address.
+  lan_address: none
+  # 2. No public ingress. The node registers no tunnel with the relays and has
+  #    no public name. A site's group_vars may set no key that starts with one
+  #    of these.
+  public_ingress: none
+  site_must_not_set:
+    - rathole_client_
+
+# 2. No public ingress, continued: no signal-federation listener or proxy.
+signal_federation_ingress_enabled: false
+signal_federation_proxy_enabled: false
+
+# 3. No disk encryption inside the VM: no LUKS volume is declared. Docker's
+#    data is on the VM's one root filesystem.
+luks_volumes_mgmt_host: []
+require_docker_data_separate_mount: false
+
+# 4. Memory limits for a 4 GB host (3,923 MiB in the VM). The first four are
+#    the limits the first phone's site declared (docs/design/phone-node.md,
+#    "What it runs, and what it costs"). The last three had no variable then;
+#    their values here are Unmeasured.
+mgmt_traefik_memory: "512M"
+mgmt_management_memory: "384M"
+mgmt_signal_memory: "256M"
+goat_zenoh_memory: "1G"
+mgmt_postgres_memory: "1G"
+mgmt_postgres_shared_buffers: "256MB"
+fabric_crawler_memory_limit: "512M"
+
+# 5. No observability host.
+has_obs_host: false
