@@ -7,10 +7,11 @@ ADR 1231). A release folds the entries into a dated section and removes their fi
 A branch cut before a release carries its entry rendered in the old Unreleased
 section; merged after the release, a three-way merge puts those lines inside the
 release and leaves the entry file behind. So when a pull request changes
-crates/goatbuilder/CHANGELOG.md or crates/goatbuilder/changelog.d/ (against its merge
-base with the base branch), every `## X.Y.Z` section the base's CHANGELOG.md has must
-also be in the pull request's: otherwise it is rebased first, and `changelog.py write`
-renders its entry under the new Unreleased section.
+crates/goatbuilder/CHANGELOG.md or an entry in crates/goatbuilder/changelog.d/ (its
+README is not an entry), against its merge base with the base branch, every
+`## X.Y.Z` section the base's CHANGELOG.md has must also be in the pull request's:
+otherwise it is rebased first, and `changelog.py write` renders its entry under the
+new Unreleased section.
 
 Usage:
   check-changelog-base-current.py --base <ref> --head <ref> [--repo DIR]
@@ -29,6 +30,10 @@ from pathlib import Path
 
 CHANGELOG = "crates/goatbuilder/CHANGELOG.md"
 ENTRIES = "crates/goatbuilder/changelog.d"
+# Files in ENTRIES that are not entries, as ops/release/changelog.py's NOT_ENTRIES: a
+# release keeps them and `write` never renders them, so changing one alone is not a
+# changelog change.
+NOT_ENTRIES = ("README.md",)
 RELEASE = re.compile(r"^## (\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\s|$)")
 
 
@@ -60,7 +65,8 @@ def main(argv):
               + (" (a shallow checkout: fetch the whole history, fetch-depth: 0)" if shallow else "")
               + "; cannot tell what the pull request changes", file=sys.stderr)
         return 2
-    touched = (git(a.repo, "diff", "--name-only", mb.strip(), a.head, "--", CHANGELOG, ENTRIES) or "").split()
+    touched = [p for p in (git(a.repo, "diff", "--name-only", mb.strip(), a.head, "--", CHANGELOG, ENTRIES) or "").split()
+               if p not in {f"{ENTRIES}/{n}" for n in NOT_ENTRIES}]
     if not touched:
         print("check-changelog-base-current: ok, the pull request does not touch goatbuilder's changelog")
         return 0

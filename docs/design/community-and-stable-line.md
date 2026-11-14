@@ -142,8 +142,9 @@ render, and `--write` to rewrite it (`ops/ci/check-phase-catalog.py`).
 before a release carries its entry rendered in the old Unreleased section.
 Merged after the release, a three-way merge puts those lines inside the
 release and leaves the entry file behind, as two pull requests did after
-0.7.0. So a pull request that changes `CHANGELOG.md` or `changelog.d/`
-against its merge base is refused while the base's `CHANGELOG.md` has a
+0.7.0. So a pull request that changes `CHANGELOG.md` or an entry in
+`changelog.d/` (its `README.md` is not an entry, and editing it alone is not
+a changelog change) against its merge base is refused while the base's `CHANGELOG.md` has a
 `## X.Y.Z` section its own lacks: it is rebased, and `changelog.py write`
 renders its entry under the new Unreleased section. The check reads the merge
 GitHub made (its first parent is the base, its second the pull request's
