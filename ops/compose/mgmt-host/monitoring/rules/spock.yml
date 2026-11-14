@@ -163,7 +163,8 @@ groups:
     rules:
 
       # Any conflict resolved. Metric comes from the spock_resolutions custom
-      # query (COUNT over spock.resolutions; needs spock.save_resolutions=on).
+      # query (COUNT over spock.resolutions; needs spock.save_resolutions=on),
+      # one series per replicated database (`datname`: netbird, kratos, ...).
       # After a partition this is expected, and each row is one write that
       # lost the merge; with the revocation guard (ADR 1193) a revocation
       # cannot be one of them. Review with the post-partition runbook.
@@ -173,19 +174,20 @@ groups:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock resolved conflict(s) at {{ $labels.site }} in last 5m"
+          summary: "Spock resolved conflict(s) at {{ $labels.site }} in {{ $labels.datname }} in last 5m"
           description: "New rows in spock.resolutions: a replicated write lost to a later write at another site (last-writer-wins, per row). Outside a partition this means two sites changed the same row; after a rejoin it is expected. Review the rows (post-partition runbook §3) and confirm nothing that should have won was dropped."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
       # A remote change could not be applied and was skipped. The sites now
-      # differ on that row until someone reconciles it.
+      # differ on that row until someone reconciles it. One series per
+      # replicated database (`datname`), as above.
       - alert: SpockApplyExceptionLogged
         expr: increase(spock_exceptions_total[5m]) > 0
         labels:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock skipped remote change(s) at {{ $labels.site }} in last 5m"
+          summary: "Spock skipped remote change(s) at {{ $labels.site }} in {{ $labels.datname }} in last 5m"
           description: "New rows in spock.exception_log: a change from another site failed to apply here and was skipped (spock.exception_behaviour = discard). The usual cause after a partition is an update to a row this site deleted, which is correct to skip. Anything else means the sites now disagree on that row. Review with the post-partition runbook §3."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 

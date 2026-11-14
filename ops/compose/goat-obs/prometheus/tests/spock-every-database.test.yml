@@ -1,0 +1,52 @@
+# The mgmt host's Spock conflict alerts see every replicated database.
+# postgres-exporter counts spock.resolutions and spock.exception_log in each
+# database Spock replicates, one series per database (`datname`). A conflict
+# in kratos fires SpockConflictLogged for kratos, and a flat netbird does not
+# fire; the same for a change skipped on apply.
+rule_files:
+- ../../../mgmt-host/monitoring/rules/spock.yml
+evaluation_interval: 30s
+tests:
+- interval: 1m
+  input_series:
+  - series: spock_resolutions_total{datname="kratos",server="postgres-a:5432",site="fixture"}
+    values: 0 0 0 1 1 1 1 1
+  - series: spock_resolutions_total{datname="netbird",server="postgres-a:5432",site="fixture"}
+    values: 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - alertname: SpockConflictLogged
+    eval_time: 2m
+    exp_alerts: []
+  - alertname: SpockConflictLogged
+    eval_time: 5m
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        component: spock
+        datname: kratos
+        server: postgres-a:5432
+        site: fixture
+      exp_annotations:
+        summary: "Spock resolved conflict(s) at fixture in kratos in last 5m"
+        description: "New rows in spock.resolutions: a replicated write lost to a later write at another site (last-writer-wins, per row). Outside a partition this means two sites changed the same row; after a rejoin it is expected. Review the rows (post-partition runbook §3) and confirm nothing that should have won was dropped."
+        runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+- interval: 1m
+  input_series:
+  - series: spock_exceptions_total{datname="hydra",server="postgres-a:5432",site="fixture"}
+    values: 0 0 2 2 2 2
+  - series: spock_exceptions_total{datname="netbird",server="postgres-a:5432",site="fixture"}
+    values: 0 0 0 0 0 0
+  alert_rule_test:
+  - alertname: SpockApplyExceptionLogged
+    eval_time: 4m
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        component: spock
+        datname: hydra
+        server: postgres-a:5432
+        site: fixture
+      exp_annotations:
+        summary: "Spock skipped remote change(s) at fixture in hydra in last 5m"
+        description: "New rows in spock.exception_log: a change from another site failed to apply here and was skipped (spock.exception_behaviour = discard). The usual cause after a partition is an update to a row this site deleted, which is correct to skip. Anything else means the sites now disagree on that row. Review with the post-partition runbook §3."
+        runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
