@@ -5,8 +5,8 @@
 # Compiled into both binaries at build time (crates/goat-errors), so
 # `goat explain` and `goatbuilder explain` work offline. The CI gate
 # ops/ci/check-error-catalog.py keeps this file, the Rust code that cites it,
-# docs/design/goat-cli-error-codes.md and the generated docs/reference/errors.md
-# in step.
+# docs/design/goat-cli-error-codes.md, the generated docs/reference/errors.md and
+# the generated page of each code, docs/reference/errors/<CODE>.md, in step.
 #
 # An entry:
 #   code     stable; `E_*` = goat's own codes (crates/goat-cli/src/errors.rs),

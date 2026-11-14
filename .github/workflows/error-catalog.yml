@@ -21,6 +21,7 @@ on:
       - 'crates/goat-cli/src/errors.rs'
       - 'crates/goat-cli/src/cmd/explain.rs'
       - 'docs/reference/errors.md'
+      - 'docs/reference/errors/**'
       - 'docs/design/goat-cli-error-codes.md'
       - 'ops/ci/check-error-catalog.py'
       - 'ops/ci/check-error-codes-kept.py'
