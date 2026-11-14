@@ -260,7 +260,7 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 
 At a terminal, `goatbuilder federate <partner>` is the whole procedure: it asks for the partner's key and CA fingerprint and the agreement digest, makes the plan and asks to approve it, shows what our core will admit and asks again, then carries on through acceptance. A run that stops resumes where it stopped. Values come from the deployment's declarations; a FED_* variable set in the environment overrides one.
 
-Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner>`, `status [<partner>]`. `allocate [<peering>]` writes a peering's values and files for review; `backout <partner>` backs one peering out and leaves the others as they were. `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`.
+Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner>`, `status [<partner>]`. `allocate [<peering>]` writes a peering's values and files for review; `backout <partner>` backs one peering out and leaves the others as they were; `rotate <partner> <key>` replaces one key of a running peering. `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`.
 
 **Arguments**
 
@@ -319,6 +319,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 - [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
 - [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
 - [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
+- [`goatbuilder federate rotate`](#goatbuilder-federate-rotate) — Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14) or `rotate <partner> carrier` (phases 2 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
 - [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phase 1; a later phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
 
 ## `goatbuilder federate init`
@@ -504,6 +505,28 @@ Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federa
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |
 | `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<partner>) |  |
 | `--dry-run` | Survey the peering's hosts read-only and print every resource the back-out would remove, per host; change nothing |  |
+
+## `goatbuilder federate rotate`
+
+Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14) or `rotate <partner> carrier` (phases 2 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<PARTNER>` | The partner whose peering's key is replaced (the peering name, as declared) |
+| `<KEY>` | The key: leaves, carrier, transport, signing or ca. This build rotates leaves and carrier |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--env <ENV>` | The environment the peering is declared on |  |
+| `--as <AS_PARTY>` | Which party we are |  |
+| `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |
+| `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<partner>) |  |
+| `--from <FROM>` | Start at this phase instead of the key's first; a start after that phase replaces nothing | `1` |
+| `--dry-run` | Print the phases and commands; change nothing |  |
 
 ## `goatbuilder federate import`
 
