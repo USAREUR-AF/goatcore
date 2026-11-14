@@ -35,12 +35,12 @@ D3 pins all admin writes, NetBird and Ory included, to one site per goatnet.
 
 | Store | Engine | Replicated | Declared in |
 |---|---|---|---|
-| NetBird management | Postgres `netbird` | 20 tables, repset `netbird_mgmt` | `roles/spock-mesh-peering/defaults/main.yml` |
-| Kratos + Hydra | Postgres `kratos`, `hydra` | 10 tables, repset `ory_narrow` | `roles/ory-narrow-repset/defaults/main.yml:65-78` |
-| Portal registry | SQLite `/opt/goat-zenoh-portal/registry.db`, 20 tables | no | `roles/goat-zenoh-portal/defaults/main.yml:257` (`portal_db_path`) |
-| Console onboarding | SQLite `/var/lib/goat-id-console/onboard.db`, 6 tables | no | `roles/id-admin-console/defaults/main.yml:149` (`ONBOARD_DB_PATH`) |
-| Console orgs | SQLite `/var/lib/goat-id-console/orgs.db`, 4 tables | no | `roles/id-admin-console/defaults/main.yml:167` (`ORG_DB_PATH`) |
-| Console invites | process memory (`internal/store/invites.go`) | no; lost on restart | `cmd/console/main.go:79` |
+| NetBird management | Postgres `netbird` | 22 tables, repset `netbird_mgmt`: 20 NetBird tables, `goat_revocations` and `goat_hub_directives` | `roles/spock-mesh-peering/defaults/main.yml` |
+| Kratos + Hydra | Postgres `kratos`, `hydra` | 11 tables, repset `ory_narrow`: 10 Ory tables and `goat_revocations` | `roles/ory-narrow-repset/defaults/main.yml:79-92` |
+| Portal registry | SQLite `/opt/goat-zenoh-portal/registry.db`, 20 tables | no | `roles/goat-zenoh-portal/defaults/main.yml:20` (`portal_db_path`) |
+| Console onboarding | SQLite `/var/lib/goat-id-console/onboard.db`, 6 tables | no | `roles/id-admin-console/defaults/main.yml:153` (`id_admin_console_onboard_db_path`, rendered as `ONBOARD_DB_PATH`) |
+| Console orgs | SQLite `/var/lib/goat-id-console/orgs.db`, 4 tables | no | `roles/id-admin-console/defaults/main.yml:170` (`id_admin_console_org_db_path`, rendered as `ORG_DB_PATH`) |
+| Console invites | process memory (`internal/store/invites.go`) | no; lost on restart | `cmd/console/main.go:78` |
 | Peerview hold records | JSONL | no | `roles/peerview/defaults/main.yml:58` |
 | SPIRE | Postgres `spire` | no, by design | per-site trust domain, [ADR 1164](../adr/1164-per-site-spire-trust-domains.md) |
 
@@ -193,7 +193,7 @@ is the way back.
 4. Bundles and schema files into `bytea` rows, so another site has them without file
    replication.
 5. After 28 days on all three goatnets: delete the archives, remove `modernc.org/sqlite`
-   from both `go.mod` files, repoint the 10 scripts.
+   from both `go.mod` files, repoint the 11 scripts (§2.1).
 
 ---
 
