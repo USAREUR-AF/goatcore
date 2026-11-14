@@ -149,7 +149,9 @@ fn absolute(p: &Path) -> PathBuf {
     std::env::current_dir().map(|d| d.join(p)).unwrap_or_else(|_| p.to_path_buf())
 }
 
-const GOOD: &[&str] = &["PASS", "N/A", "UNOBSERVED"];
+/// Grades that do not make a site red: a GAP is declared and not yet built at
+/// this site, with the gate row that closes it (endstate.py, `gap_text`).
+const GOOD: &[&str] = &["PASS", "N/A", "UNOBSERVED", "GAP"];
 
 /// The grades as a person reads them: one row per service, then each distinct
 /// reason once. The script's own text stays what a pipe and the gate see.

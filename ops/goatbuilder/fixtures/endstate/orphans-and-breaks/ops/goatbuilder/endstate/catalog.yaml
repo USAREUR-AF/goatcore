@@ -3,7 +3,7 @@ schema: goatnet-endstate-catalog/v1
 services:
   core:
     class: mgmt
-    present: {founder: true}
+    present: {every_site: true}
     containers: [core, oauth2-proxy-core]
     ledger: core
     surfaces: [core]
@@ -34,7 +34,7 @@ services:
     ledger: null
   pub:
     class: mgmt
-    present: {founder: true}
+    present: {every_site: true}
     containers: [pub]
     ledger: null
     zenoh: {put: ["ops/pub/health/{site}"]}

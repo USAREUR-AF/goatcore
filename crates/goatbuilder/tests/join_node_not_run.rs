@@ -159,9 +159,18 @@ fn a_joiners_dry_run_lists_what_it_does_not_run_with_the_models_reasons() {
             .unwrap_or_else(|| panic!("{svc} not listed: {listed:#?}"))
     };
     // Each admin surface, and mesh DNS, is a named gap with its gate row.
-    assert_eq!(line("netbird-dashboard"), format!("netbird-dashboard \u{2014} {ADMIN_GAP}"));
-    assert_eq!(line("id-admin-console"), format!("id-admin-console \u{2014} {ADMIN_GAP}"));
-    assert_eq!(line("mesh-coredns"), format!("mesh-coredns \u{2014} {MESH_DNS_GAP}"));
+    assert_eq!(
+        line("netbird-dashboard"),
+        format!("netbird-dashboard \u{2014} {ADMIN_GAP}")
+    );
+    assert_eq!(
+        line("id-admin-console"),
+        format!("id-admin-console \u{2014} {ADMIN_GAP}")
+    );
+    assert_eq!(
+        line("mesh-coredns"),
+        format!("mesh-coredns \u{2014} {MESH_DNS_GAP}")
+    );
     // Nothing reads as a design to leave a service out.
     for d in &listed {
         for wrong in ["founder-only", "single-homed", "by design", "\u{a7}D3"] {

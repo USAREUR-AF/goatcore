@@ -16,11 +16,10 @@
 #                                        # mgmt host when the site declares
 #                                        # has_obs_host: false (a single machine)
 #       present:                         # the declarations to consult; each one
-#         founder: true                  #   the founder site only (goatnet_founder,
-#                                        #   default true); a joiner reads absent
-#         replication_core: true         #   every site that runs the replication core,
-#                                        #   founder or joiner (ADR 1233 rule 1); a pin
-#                                        #   or flag that answers still decides
+#         every_site: true               #   every site that replicates, founder or
+#                                        #   joiner: every site is fully island-mode
+#                                        #   capable (ADR 1165, gate group I; ADR 1233).
+#                                        #   A pin or flag that answers still decides
 #         pin: <fleet-pins component>    #   rendered for the member, not `absent: true`
 #         var: <group_vars key>          #   truthy in the site's group_vars, else
 #         default: true|false            #   the role default, else this default;
@@ -28,13 +27,13 @@
 #                                        #   UNDECLARED (a coverage gap, never a guess)
 #                                        # Every consulted declaration must agree; two
 #                                        # that disagree are reported as a contradiction.
-#       admin_surface: true              # an ADR 1084 §D3 admin mutation surface: present at
-#                                        # the site that holds the admin writer (today the
-#                                        # founder), and at every site once ADR 1165's lift
-#                                        # for its class is declared in group_vars. The
-#                                        # mark words the reason a joiner's model gives
-#                                        # when the row is absent; its own flag, pin or
-#                                        # founder mark still decides (ADR 1233 rule 3)
+#       gap:                             # a service the end state declares at every site
+#         row: <gate rows>               # that a joining site does not run yet: there it is
+#         why: <text>                    # graded "declared, not yet built at this site",
+#                                        # with these gate rows (goatbuilder-v1-gate.md,
+#                                        # group I), never as absent. The site's own flag
+#                                        # turning it on closes the gap; a pin, which only
+#                                        # names a version, does not
 #       containers: [<name or glob>]     # every one must be running; {site} and
 #                                        # {zenoh_stack} expand from group_vars
 #       oneshot: [<glob>]                # run-to-completion containers; exited 0 is right
@@ -65,27 +64,27 @@
 schema: goatnet-endstate-catalog/v1
 
 services:
-  # --- the replication core: every site that replicates runs these (ADR 1233) --
+  # --- the replication core: every site that replicates runs these (ADR 1233) ---
   # Measured 2026-11-13: the management hosts of two joined sites of a standing
   # goatnet run traefik, NetBird management, signal, Kratos, Hydra and the
   # self-service UI, as the founder does.
   traefik:
     class: mgmt
     play: traefik-acme.yml
-    present: {replication_core: true}
+    present: {every_site: true}
     containers: [traefik]
     ledger: traefik
     assay: [traefik]
   netbird-mgmt:
     class: mgmt
-    present: {replication_core: true, pin: netbird-mgmt}
+    present: {every_site: true, pin: netbird-mgmt}
     containers: ["management-*"]
     ledger: null
     surfaces: [mgmt, mgmt-read, mgmt-admin]
     assay: [netbird-mgmt]
   signal-server:
     class: mgmt
-    present: {replication_core: true, pin: signal-server}
+    present: {every_site: true, pin: signal-server}
     containers: ["signal-*"]
     ledger: null
     assay: [signal-server]
@@ -100,19 +99,21 @@ services:
     containers: [federation-proxy]
     ledger: signal-federation-transport
     guard: [ops/ansible/signal-federation-transport.yml, ops/ansible/mgmt-host.yml]
-  # The NetBird dashboard is an admin surface (ADR 1233 rule 2): it stays at the
-  # founder until ADR 1165 lifts ADR 1084 §D3 for its class.
+  # The NetBird dashboard is an admin surface: declared at every site; a joining
+  # site does not run it yet (gate rows I1, I4).
   netbird-dashboard:
     class: mgmt
-    present: {founder: true}
-    admin_surface: true
+    present: {every_site: true}
+    gap:
+      row: "I1, I4"
+      why: an admin surface cannot be turned on at a second site before its store is at the multi-writer schema and its write class is switched on there
     containers: [dashboard, dashboard-admin, oauth2-proxy-dashboard, oauth2-proxy-dashboard-admin]
     ledger: netbird-dashboard
     surfaces: [dashboard, admin-dashboard]
     oidc_clients: [netbird-dashboard, oauth2-proxy-dashboard, oauth2-proxy-dashboard-admin]
   ory:
     class: mgmt
-    present: {replication_core: true}
+    present: {every_site: true}
     containers: ["*-kratos-1", "*-hydra-1"]
     oneshot: ["*-kratos-migrate-1", "*-hydra-migrate-1"]
     ledger: ory
@@ -120,7 +121,7 @@ services:
     assay: [kratos, hydra]
   kratos-selfservice-ui:
     class: mgmt
-    present: {replication_core: true, pin: kratos-selfservice-ui}
+    present: {every_site: true, pin: kratos-selfservice-ui}
     containers: [selfservice-ui]
     ledger: ory
     surfaces: [auth]
@@ -151,12 +152,17 @@ services:
     mesh: {reach: [tcp/7447, udp/7448], from: [PLATFORM-ADMIN, OBSERVER]}
     surfaces: [zenoh-router]
     assay: [zenoh-router, goat-zenoh]
-  # Founder-only: the 2026-11-13 read of two joined sites of a standing goatnet
-  # found no mesh-dns container on either joiner (ADR 1233 item 4).
+  # Declared at every site: a site cut off from the others needs its own resolver.
+  # The 2026-11-13 read of two joined sites of a standing goatnet found no
+  # mesh-dns container on either joiner: a defect, closed when join-node deploys
+  # it (gate row I3).
   mesh-coredns:
     class: mgmt
     play: goat-coredns.yml
-    present: {founder: true}
+    present: {every_site: true}
+    gap:
+      row: I3
+      why: join-node does not deploy mesh DNS yet, and a site cut off from the others needs its own resolver
     containers: [mesh-dns]
     ledger: mesh-coredns
     mesh: {reach: [udp/53, tcp/53, udp/5353], from: [PLATFORM-ADMIN, OBSERVER]}
@@ -181,8 +187,10 @@ services:
     ledger: null
   portal:
     class: mgmt
-    present: {pin: portal}
-    admin_surface: true
+    present: {every_site: true, pin: portal}
+    gap:
+      row: "I1, I4"
+      why: an admin surface cannot be turned on at a second site before its store is at the multi-writer schema and its write class is switched on there
     containers: [goat-zenoh-portal]
     ledger: goat-zenoh-portal
     surfaces: [zenoh-portal]
@@ -198,8 +206,10 @@ services:
   # --- identity and onboarding ---------------------------------------------
   id-admin-console:
     class: mgmt
-    present: {pin: id-admin-console, var: id_admin_console_enabled}
-    admin_surface: true
+    present: {every_site: true, pin: id-admin-console, var: id_admin_console_enabled}
+    gap:
+      row: "I1, I4"
+      why: an admin surface cannot be turned on at a second site before its store is at the multi-writer schema and its write class is switched on there
     containers: [goat-id-console, goat-id-console-spiffe-helper, oauth2-proxy-id-console]
     ledger: id-admin-console
     surfaces: [id-admin-console, onboarding-guide, onboard-api]
@@ -220,8 +230,10 @@ services:
     ledger: intake-mesh-advisory
   onboard-runner:
     class: mgmt
-    present: {pin: onboard-runner, var: onboard_runner_enabled}
-    admin_surface: true
+    present: {every_site: true, pin: onboard-runner, var: onboard_runner_enabled}
+    gap:
+      row: "I1, I4"
+      why: an admin surface cannot be turned on at a second site before its store is at the multi-writer schema and its write class is switched on there
     containers: [onboard-runner, onboard-runner-spiffe-helper]
     ledger: onboard-runner
     spiffe: [/onboard-runner]
