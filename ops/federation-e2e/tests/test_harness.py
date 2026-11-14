@@ -26,6 +26,13 @@
    commit's loose objects; it checks out a tag; a shallow source, whose history the merges
    and reverts read, is refused before anything is removed. No script of the harness makes a
    --shared clone.
+6. lib/samples.py, the reader of the key-rotation scenario (federation-key-rotation.md §6):
+   its recorder keeps each event's key under the flow's prefix and skips everything else; its check passes a step
+   where every number arrived on time, fails a missing number and a refused release, fails
+   a late number in a step with no gap, and with --gap passes a step whose numbers all
+   arrived late, naming the gap, and fails one with a number lost, naming the gap's length.
+   Every check units/rotation.sh marks for a refused key (rot_checks) is a check of the
+   key-rotation scenario, so a refusal can never mark a check the catalog does not hold.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -397,12 +404,66 @@ def srcclone_checks():
     check(not shared, f"srcclone: these make a --shared clone, which reads its objects from the source: {shared}")
 
 
+def samples_checks():
+    """lib/samples.py: the numbered samples a reader recorded, judged per step (§6)."""
+    lib = os.path.join(ROOT, "lib", "samples.py")
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "arrived")
+        stream = ("event: PUT\ndata: {\"key\": \"from/xaa/all/fla2b100n1\", \"value\": \"x\"}\n\n"
+                  ": keep-alive\ndata: not json\ndata: {\"value\": \"no key\"}\n"
+                  "data: {\"key\": \"from/xaa/all/fla2b101n2\"}\n"
+                  "data: {\"key\": \"from/xaa/all/round-trip-n7\"}\n")
+        p = subprocess.run([sys.executable, lib, "record", out, "--prefix", "fla2b"], input=stream, capture_output=True, text=True)
+        rows = [r.split("\t") for r in open(out, encoding="utf-8").read().splitlines()]
+        check(p.returncode == 0 and [r[1] for r in rows] == ["fla2b100n1", "fla2b101n2"],
+              f"samples record: kept {[r[1:] for r in rows]}, rc {p.returncode}")
+
+        def flow(sent, arrived):
+            fs, fa = os.path.join(d, "sent"), os.path.join(d, "arr")
+            write_text(fs, "".join(f"{t}\tfla2b{int(t)}n{n}\t{code}\n" for t, n, code in sent))
+            write_text(fa, "".join(f"{t}\tfla2b{int(t)}n{n}\n" for t, n in arrived))
+            return fs, fa
+
+        def run(sent, arrived, *extra):
+            fs, fa = flow(sent, arrived)
+            p = subprocess.run([sys.executable, lib, "check", "--sent", fs, "--arrived", fa, "--from", "100", "--to", "110", *extra],
+                               capture_output=True, text=True)
+            return p.returncode, p.stdout.strip().splitlines()[-1] if p.stdout.strip() else p.stderr
+
+        sent = [(100 + i, i + 1, "200") for i in range(10)]
+        on_time = [(t + 0.2, n) for t, n, _ in sent]
+        rc, last = run(sent, on_time)
+        check(rc == 0 and "every number arrived on time" in last, f"samples: an on-time step is not a PASS: {rc} {last}")
+        rc, last = run(sent, [a for a in on_time if a[1] != 4])
+        check(rc == 1 and "1 number(s) never reached the reader" in last, f"samples: a missing number is not a FAIL: {rc} {last}")
+        rc, last = run([(t, n, "503" if n == 2 else c) for t, n, c in sent], on_time)
+        check(rc == 1 and "did not accept 1 release" in last, f"samples: a refused release is not a FAIL: {rc} {last}")
+        late = [(t + (12 if 4 <= n <= 6 else 0.2), n) for t, n, _ in sent]
+        rc, last = run(sent, late)
+        check(rc == 1 and "late, in a step that has no gap" in last, f"samples: a late number in a step with no gap is not a FAIL: {rc} {last}")
+        rc, last = run(sent, late, "--gap")
+        check(rc == 0 and "re-delivered after a gap of 4.0 s" in last, f"samples --gap: late but complete is not a PASS naming the gap: {rc} {last}")
+        rc, last = run(sent, [a for a in late if a[1] != 5], "--gap")
+        check(rc == 1 and "across a gap of 4.0 s" in last, f"samples --gap: a lost number is not a FAIL naming the gap: {rc} {last}")
+        rc, last = run([(t + 50, n, c) for t, n, c in sent], [])
+        check(rc == 1 and "no sample was released inside the window" in last, f"samples: an empty window is not a FAIL: {rc} {last}")
+    cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
+    ids = {c["id"] for sc in cat["scenarios"] if sc["id"] == "key-rotation" for c in sc.get("checks", [])}
+    script = ('eval "$(sed -n \'/^rot_checks()/,/^}/p\' units/rotation.sh)"; '
+              'for k in leaves carrier transport signing; do for o in first second; do rot_checks $k $o; done; done')
+    p = subprocess.run(["bash", "-c", script], cwd=ROOT, capture_output=True, text=True)
+    marked = set(p.stdout.split())
+    check(p.returncode == 0 and len(marked) > 40, f"rotation: rot_checks printed {len(marked)} checks, rc {p.returncode}: {p.stderr.strip()}")
+    check(marked <= ids, f"rotation: rot_checks names checks the catalog does not hold: {sorted(marked - ids)}")
+
+
 catalog_checks()
 srctree_checks()
 srcclone_checks()
 verdict_checks()
 fwdeclared_checks()
 handoff_checks()
+samples_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")
