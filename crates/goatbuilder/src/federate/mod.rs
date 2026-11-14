@@ -67,6 +67,7 @@ mod admit;
 mod admit_leaf;
 mod admit_role;
 mod confirm;
+pub mod acceptance;
 pub mod deploy;
 pub mod handoff;
 pub mod site_values;
