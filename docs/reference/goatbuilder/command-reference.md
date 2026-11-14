@@ -319,7 +319,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 - [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
 - [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
 - [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
-- [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it. Not built yet: refuses with GB-267 (docs/design/federation-two-drivers.md)
+- [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phase 1; a later phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
 
 ## `goatbuilder federate init`
 
@@ -507,7 +507,7 @@ Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federa
 
 ## `goatbuilder federate import`
 
-A two-driver peering's import of an edge result, as a hand-off object names it. Not built yet: refuses with GB-267 (docs/design/federation-two-drivers.md)
+A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phase 1; a later phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
 
 **Arguments**
 
@@ -522,6 +522,7 @@ A two-driver peering's import of an edge result, as a hand-off object names it. 
 | Flag | Description | Default |
 |---|---|---|
 | `--sha256 <SHA256>` | The confirm code the edge driver printed (the result's sha256, or its first digits) |  |
+| `--work <WORK>` | The working directory (default `$FED_WORK`, else /var/lib/goat-federation/<peering>) |  |
 
 ## `goatbuilder pins`
 
