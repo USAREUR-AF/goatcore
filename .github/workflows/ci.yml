@@ -281,6 +281,9 @@ jobs:
       - name: the forwarder play, run on a systemd host, converges and refuses
         timeout-minutes: 10
         run: bash ops/ci/test-peering-forwarder-role.sh
+      - name: the forwarder's carrier read-back lists only public keys, addresses and ports (stand-in wg)
+        timeout-minutes: 5
+        run: bash ops/ansible/roles/goat-peering-forwarder/tests/test-readback.sh
 
   peering-host-firewall:
     needs: changes
