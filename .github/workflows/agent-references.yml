@@ -86,9 +86,16 @@ on:
 permissions:
   contents: read
 
+# One group per pull request, and one per pushed commit. On pull_request_target
+# github.ref is the BASE branch (refs/heads/main), so a group keyed on it put
+# every open pull request in one group, and GitHub keeps one pending run per
+# group: a pull request's check was cancelled when another queued behind it.
+# A pull request's newer head cancels its own older run. A push to main never
+# cancels and is never cancelled: each pushed commit is its own group, so the
+# backstop scans every pushed range.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   agent-references:
