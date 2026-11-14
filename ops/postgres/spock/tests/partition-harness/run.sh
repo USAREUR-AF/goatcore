@@ -35,6 +35,9 @@
 #   (partition-harness-net), and the host ports HARNESS_PORT_PG_A (55432),
 #   HARNESS_PORT_PG_B (55433), HARNESS_PORT_KRATOS_A (54434),
 #   HARNESS_PORT_KRATOS_B (54534), HARNESS_PORT_HYDRA (54445).
+#   A host port held by a client connection (open, or in TIME-WAIT) is waited
+#   for, up to TS_PORT_WAIT seconds (default 120); see ts_run_published in
+#   ../lib/two-site.sh.
 
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -254,11 +257,11 @@ sync_all() {
 echo "== Kratos at both sites, Hydra at the hub (A)"
 for s in a b; do
   port="KRATOS_ADMIN_$s"
-  docker run -d --name "$PFX-kratos-$s" --network "$NET" -p "127.0.0.1:${!port}:4434" \
+  ts_run_published "${!port}" docker run -d --name "$PFX-kratos-$s" --network "$NET" -p "127.0.0.1:${!port}:4434" \
     -e DSN="postgres://postgres:$PW@$PFX-$s:5432/kratos?sslmode=disable" \
     -v "$WORK/ory:/etc/config:ro" "$KRATOS_IMAGE" serve -c /etc/config/kratos.yaml --dev >/dev/null
 done
-docker run -d --name "$PFX-hydra-a" --network "$NET" -p "127.0.0.1:$HYDRA_ADMIN:4445" \
+ts_run_published "$HYDRA_ADMIN" docker run -d --name "$PFX-hydra-a" --network "$NET" -p "127.0.0.1:$HYDRA_ADMIN:4445" \
   -e DSN="postgres://postgres:$PW@$PFX-a:5432/hydra?sslmode=disable" \
   -v "$WORK/ory:/etc/config:ro" "$HYDRA_IMAGE" serve -c /etc/config/hydra.yaml all --dev >/dev/null
 for url in "http://127.0.0.1:$KRATOS_ADMIN_a/admin/health/ready" "http://127.0.0.1:$KRATOS_ADMIN_b/admin/health/ready" \

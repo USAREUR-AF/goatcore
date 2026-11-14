@@ -56,6 +56,10 @@ jobs:
         env:
           IMAGE: postgres-spock:harness
         run: ops/postgres/spock/tests/hub-authority/unit.sh
+      - name: A held host port is waited for (two-site.sh ts_run_published)
+        env:
+          IMAGE: postgres-spock:harness
+        run: ops/postgres/spock/tests/lib/test-port-wait.sh
       - name: Partition harness
         env:
           IMAGE: postgres-spock:harness
