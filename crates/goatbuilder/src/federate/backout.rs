@@ -2709,6 +2709,98 @@ mod tests {
         );
     }
 
+    /// Our core router's leaf, holding this peering's leaf with no admission
+    /// record of what was there before (placed by hand, say), stops the
+    /// back-out with its own code after the plan view: the plan shows the
+    /// leaf as undecided, never as absent, and the row says what to decide.
+    /// Nothing is removed.
+    #[test]
+    fn a_core_leaf_with_no_record_of_what_was_there_stops_with_gb_293() {
+        let d = tempfile::tempdir().unwrap();
+        let (repo, work) = stand_in(d.path());
+        std::fs::remove_file(
+            repo.join("ops/ansible/group_vars/zagros_hosts/zenoh-lazy-storage.yml"),
+        )
+        .unwrap();
+        let w = work.clone();
+        let ran = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = ran.clone();
+        let mut exec = move |_: &Path, cmd: &str| -> Result<bool> {
+            seen.borrow_mut().push(cmd.to_string());
+            let survey = Path::new(&w).join("backout/survey");
+            std::fs::create_dir_all(&survey).unwrap();
+            std::fs::write(
+                survey.join("core-x.json"),
+                r#"{"host":"core-x","peering":"hello-ally","rows":[
+                  {"component":"edge router","resource":"container goat-zenoh-edge-hello-ally","state":"present","action":"remove","note":""},
+                  {"component":"core leaf","resource":"/state/zagros-leaves/router-cert.pem","state":"unknown","action":"kept","note":"holds this peering's leaf, and no admission run in /w/admission recorded what was there before; nothing is changed: decide by hand"}]}"#,
+            )
+            .unwrap();
+            Ok(true)
+        };
+        let o = Options {
+            partner: "hello-ally",
+            env: None,
+            r#as: None,
+            edge_group: None,
+            work: Some(&work),
+            mock: None,
+            dry_run: false,
+            yes: true,
+            table: true,
+        };
+        let r = backout_with(&repo, &o, &mut exec).unwrap();
+        assert_eq!(r.exit, EXIT_REFUSED, "{:?}", r.checks);
+        let shown = after_the_view(&r);
+        assert!(shown.contains("GB-293"), "{shown}");
+        assert!(!shown.contains("GB-221"), "not another peering's: {shown}");
+        assert!(
+            shown.contains("/state/zagros-leaves/router-cert.pem"),
+            "the leaf it names: {shown}"
+        );
+        assert!(
+            shown.contains("put back") && shown.contains("remove"),
+            "what to decide: {shown}"
+        );
+        assert_eq!(
+            ran.borrow().len(),
+            1,
+            "only the survey ran: {:?}",
+            ran.borrow()
+        );
+    }
+
+    /// A row the survey could not decide reads as undecided in the plan a
+    /// person reads, never as absent.
+    #[test]
+    fn an_undecided_row_is_shown_as_unknown_in_the_plan() {
+        let t = Target {
+            partner: "hello-ally".into(),
+            work: "/w".into(),
+            edge_group: "hello-ally_edge".into(),
+            core_group: "hello-ally_core".into(),
+            core_files: Vec::new(),
+        };
+        let recs = vec![HostRecord {
+            host: "driver".into(),
+            peering: "hello-ally".into(),
+            rows: vec![Row {
+                component: "core leaf".into(),
+                resource: "/state/zagros-leaves/router-cert.pem".into(),
+                state: "unknown".into(),
+                action: "kept".into(),
+                note: "decide by hand".into(),
+            }],
+        }];
+        let view = plan_view(&t, &recs, &[]);
+        let line = view
+            .lines()
+            .find(|l| l.contains("router-cert.pem"))
+            .unwrap_or_else(|| panic!("{view}"));
+        assert!(line.trim_start().starts_with("unknown"), "{line}");
+        assert!(!line.contains("absent"), "{line}");
+    }
+
     #[test]
     fn the_back_out_reads_the_same_inventories_as_the_forward_path() {
         // A nothing-hand-written site: allocate rendered peering-<edge group>.ini
