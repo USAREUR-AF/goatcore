@@ -468,3 +468,74 @@ jobs:
           else
             bash ops/ci/check-no-identity-spillage.sh
           fi
+
+  # Always runs: the ops/ci guards that judge the tree as it stands and need
+  # nothing but a checkout. check-ci-scripts-wired.py refuses an ops/ci script
+  # that nothing runs, and check-workflow-discipline.py keeps every workflow to
+  # the rules in docs/design/ci-discipline.md. A guard that needs a live host,
+  # a token or a goatnet's environment is listed, with why, in
+  # ops/ci/ci-scripts-wired-allowlist.txt instead.
+  ops-ci-guards:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: deps
+        timeout-minutes: 5
+        run: python3 -m pip install -q pyyaml jinja2
+      - name: check-ci-scripts-wired --self-test
+        run: python3 ops/ci/check-ci-scripts-wired.py --self-test
+      - name: every ops/ci script is run by something
+        run: python3 ops/ci/check-ci-scripts-wired.py
+      - name: check-workflow-discipline --self-test
+        run: python3 ops/ci/check-workflow-discipline.py --self-test
+      - name: every workflow keeps the CI discipline rules
+        run: python3 ops/ci/check-workflow-discipline.py
+      - name: tree guards (each runs; every failure is named)
+        run: |
+          set +e  # the step shell is bash -e; run every guard and name each failure
+          failed=""
+          for guard in \
+            ops/ci/check-bare-portal-http-guards.sh \
+            ops/ci/check-compose-memory-limits.sh \
+            ops/ci/check-compose-overlay-safety.sh \
+            ops/ci/check-edge-profile-isolation.sh \
+            ops/ci/check-federation-e2e-follows-inputs.sh \
+            ops/ci/check-goatmap-groups-header.py \
+            ops/ci/check-goatmap-no-hardcoded-site.sh \
+            ops/ci/check-goatnet-ca-hygiene.py \
+            ops/ci/check-netbird-url-container-pin.py \
+            ops/ci/check-no-bare-portal-key-lookup.sh \
+            ops/ci/check-no-docker-bridge-ip-pins.sh \
+            ops/ci/check-no-goatnet-defaults.sh \
+            ops/ci/check-no-live-secret-shape-test.sh \
+            ops/ci/check-no-region-based-authz.sh \
+            ops/ci/check-no-socket-network-online.sh \
+            ops/ci/check-no-spendable-credential-links.sh \
+            ops/ci/check-offboardable-status-parity.py \
+            ops/ci/check-prometheus-template-renders.sh \
+            ops/ci/check-relay-peer-bound-tokens-gate.sh \
+            ops/ci/check-retired-group-names.sh \
+            ops/ci/check-service-config-parity.py \
+            ops/ci/check-ssh-scope-one-door.sh \
+            ops/ci/check-standup-golden-path.py \
+            ops/ci/check-table-header-alignment.py \
+            ops/ci/check-zenoh-trust-anchors.sh \
+            ops/ci/check-zid-derivation-leading-zero.sh \
+            ops/ci/test-warrant-narrowing.py
+          do
+            echo "::group::$guard"
+            case "$guard" in
+              *.py) python3 "$guard" </dev/null; rc=$? ;;
+              *) bash "$guard" </dev/null; rc=$? ;;
+            esac
+            echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::$guard exited $rc"
+              failed="$failed $guard"
+            fi
+          done
+          [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }

@@ -13,16 +13,19 @@ unreferenced file. This is the shrink-only ratchet that notices.
 WHAT IT CHECKS. Every `ops/ci/check-*`, `ops/ci/test-*` and `ops/ci/test_*`
 file must have its basename referenced somewhere that can run it:
 .github/workflows/, ops/git-hooks/, .claude/hooks/, .claude/settings.json,
-Makefile, ops/scripts/, or ops/ansible/roles/. A reference inside ops/ci
+Makefile, ops/scripts/, ops/ansible/roles/, or tests/ (ci.yml runs
+`bats tests/` and pytest over tests/, so a suite there that calls a script
+runs it). A reference inside ops/ci
 itself does not count (a script mentioning a sibling in a comment is how the
 2026-09-08 set stayed invisible).
 
 THE ALLOWLIST. ops/ci/ci-scripts-wired-allowlist.txt names the files that are
-known-unwired today. It is shrink-only: a file on the list that becomes wired
-makes its line stale and this guard refuses until the line is removed, and a
-new unwired file fails on its own PR. Live-state guards that need a host or an
-API token belong on a mgmt-host timer, not here; they stay listed until the
-timer role ships them.
+known-unwired today, grouped by why: a guard that needs a live host, an API
+token or a goatnet's environment repository; a guard whose subject is not in
+this repository; a guard that fails on main and is fixed before it is wired.
+It is shrink-only: a file on the list that becomes wired makes its line stale
+and this guard refuses until the line is removed, and a new unwired file fails
+on its own PR. docs/design/ci-discipline.md has the rule.
 
 Usage:
   ops/ci/check-ci-scripts-wired.py            # verdict, exit 1 on failure
@@ -38,7 +41,7 @@ import sys
 import tempfile
 
 ALLOWLIST = "ops/ci/ci-scripts-wired-allowlist.txt"
-CALLER_DIRS = [".github/workflows", "ops/git-hooks", ".claude/hooks", "ops/scripts", "ops/ansible/roles"]
+CALLER_DIRS = [".github/workflows", "ops/git-hooks", ".claude/hooks", "ops/scripts", "ops/ansible/roles", "tests"]
 CALLER_FILES = ["Makefile", ".claude/settings.json"]
 PATTERN = re.compile(r"^(check-.*|test-.*|test_.*)$")
 
@@ -101,12 +104,14 @@ def verdict(root: str, report: bool = False) -> int:
         for n in new:
             print(f"  ops/ci/{n}")
         print("Wire each one into a workflow, hook, Makefile target or role in this PR,")
-        print(f"or delete it. Listing it in {ALLOWLIST} is for live-state guards awaiting a timer.")
+        print(f"or delete it. Listing it in {ALLOWLIST} is for a guard that cannot run in this")
+        print("repository's CI, with the reason; see docs/design/ci-discipline.md.")
     if stale:
         rc = 1
-        print(f"REFUSED: {len(stale)} allowlist entr{'y is' if len(stale)==1 else 'ies are'} stale (now wired; remove the line):")
+        present = set(candidates(root))
+        print(f"REFUSED: {len(stale)} allowlist entr{'y is' if len(stale)==1 else 'ies are'} stale (remove the line):")
         for n in stale:
-            print(f"  {n}")
+            print(f"  {n}  ({'now wired' if n in present else 'no such file in ops/ci'})")
     if rc == 0:
         print(f"ok: {len(candidates(root)) - len(unwired)} ops/ci scripts wired; {len(unwired)} on the shrink-only allowlist.")
     return rc
@@ -126,6 +131,10 @@ def self_test() -> int:
             source_file.write("#!/bin/sh\n")
         with open(os.path.join(t, ".github/workflows/x.yml"), "w") as source_file:
             source_file.write("run: ops/ci/check-wired.sh\n")
+        with open(os.path.join(t, "ops/ci/check-from-tests.sh"), "w") as source_file:
+            source_file.write("#!/bin/sh\n")
+        with open(os.path.join(t, "tests/x.bats"), "w") as source_file:
+            source_file.write('run "$REPO/ops/ci/check-from-tests.sh"\n')
         with open(os.path.join(t, ALLOWLIST), "w") as source_file:
             source_file.write("check-listed.sh\n")
         fails = 0
@@ -138,6 +147,10 @@ def self_test() -> int:
             print("  ok    refuses a planted unwired script and accepts the listed one")
         else:
             fails += 1; print("  FAIL  did not refuse the planted unwired script\n" + out)
+        if "check-from-tests.sh" not in out:
+            print("  ok    a script a tests/ suite calls counts as wired")
+        else:
+            fails += 1; print("  FAIL  a script called from tests/ was reported unwired\n" + out)
         # stale entry: list a wired script
         with open(os.path.join(t, ALLOWLIST), "w") as source_file:
             source_file.write("check-listed.sh\ncheck-wired.sh\n")
@@ -145,11 +158,20 @@ def self_test() -> int:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = verdict(t)
-        if rc == 1 and "stale" in buf.getvalue():
+        if rc == 1 and "check-wired.sh  (now wired)" in buf.getvalue():
             print("  ok    refuses a stale allowlist entry")
         else:
             fails += 1; print("  FAIL  accepted a stale allowlist entry\n" + buf.getvalue())
-        print(f"  {2 - fails} passed, {fails} failed")
+        with open(os.path.join(t, ALLOWLIST), "w") as source_file:
+            source_file.write("check-listed.sh\ncheck-gone.sh\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = verdict(t)
+        if rc == 1 and "check-gone.sh  (no such file in ops/ci)" in buf.getvalue():
+            print("  ok    names a listed file that no longer exists")
+        else:
+            fails += 1; print("  FAIL  a listed missing file was not named as missing\n" + buf.getvalue())
+        print(f"  {4 - fails} passed, {fails} failed")
         return 1 if fails else 0
 
 

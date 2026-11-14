@@ -1,7 +1,42 @@
 # check-ci-scripts-wired.py allowlist: ops/ci files invoked by nothing today.
-# Shrink-only. Each of these needs a live host or a NetBird API token and
-# belongs on a mgmt-host timer role (guard-cull review, item 8); remove the
-# line when that role ships it.
+# Shrink-only: wiring a file makes its line stale and the check refuses until
+# the line goes. One name per line; the reason is the section it sits in.
+# docs/design/ci-discipline.md has the rule.
+
+# Needs a live host or a NetBird API token: belongs on a mgmt-host timer role
+# (guard-cull review, item 8); remove the line when that role ships it.
 check-mesh-reach-overgrant.sh
-check-running-matches-pins.sh
 check-scope-self-sufficiency.py
+# reads the NetBird management API's policy list on stdin
+check-no-all-any-port-policies.py
+
+# Runs against a goatnet's environment repository (its group_vars, doors,
+# Terraform roots or assembled tree), which this repository never holds; on
+# this tree each refuses as vacuous rather than pass. They belong in the
+# environment repository's CI, not here.
+check-console-door-declared.sh
+check-env-coverage.sh
+check-goatnet-addresses.py
+check-newsite-secrets-coverage.py
+check-site-config-bleed.sh
+
+# Checks the operator's locally loaded live secret values; it skips when none
+# are loaded, so in CI it would pass without checking anything. Run before a
+# push (CONTRIBUTING.md, gates).
+check-no-live-secret.sh
+
+# Needs a base and a head revision. test-warrant-narrowing.py (wired) runs it
+# on fixtures; a run on each pull request's own diff is not wired yet.
+check-warrant-narrowing.py
+
+# Its subject is not in this repository (the inspection tools live in
+# goatstuff); it fails here for that reason, not on a defect in this tree.
+check-netbird-service-identities.py
+check-netvis-client.js
+
+# Fails on main today. Each is fixed before it is wired, and its line goes in
+# the same change.
+check-netbird-user-sql.sh
+check-no-default-allow.sh
+check-warrant-registry.py
+test-warrant-registry.py
