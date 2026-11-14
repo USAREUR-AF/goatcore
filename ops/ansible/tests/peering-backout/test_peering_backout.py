@@ -175,7 +175,7 @@ class TwoPeeringsOneHost(unittest.TestCase):
         for name, body in NETWORK_NOT_FOUND.items():
             with open(f"{bindir}/{name}", "w", encoding="utf-8") as f:
                 f.write("#!/bin/sh\n" + body + "\n")
-            os.chmod(f"{bindir}/{name}", 0o755)
+            os.chmod(f"{bindir}/{name}", 0o700)
         r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_edge:xac_core:peering_forwarders",
                  str(ANSIBLE / "peering-backout.yml"),
                  "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
