@@ -1,0 +1,33 @@
+# explain answers for a step of deploy from the phase catalog, by name.
+bin.name = "goatbuilder"
+args = ["explain", "deploy", "verify"]
+stdout = """
+deploy phase verify verify [GATE]: every host of the group names the declared ref
+
+What it does:
+  Per member group: reads the newest deploy ledger row back from every host and calls the group done only when it names the declared digest and says the deploy finished.
+
+Why it exists:
+  A play that exits 0 has not proven the host runs the declared ref; the ledger row is the proof.
+
+What it changes:
+  Nothing.
+
+How to tell it worked:
+  every host's newest row names the declared digest with `action: deploy`; exit 3 while one does not
+
+It runs:
+  ops/scripts/with-aws (ansible -m shell reading /var/lib/goat/<ledger>/deploy-history.jsonl)
+
+By hand:
+  goatbuilder deploy --env <env> --component <component> [--group <group>] --verify-only reads the ledgers back without running the play
+
+If it failed:
+  a host's newest row names another ref, or the deploy did not finish
+
+Then:
+  read that host's ledger; deploy again, or roll back
+
+Read:
+  docs/operations/goatbuilder-first-run.md#a-deploy-with-its-proof
+"""

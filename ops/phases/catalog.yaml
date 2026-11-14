@@ -722,3 +722,87 @@ phases:
   read: docs/tutorials/02-first-federated-node.md#done-means-proven-not-deployed
   failed_because: an applicable row is not PASS
   then: read the report for the failing rows, fix them, then resume with --from 15
+- verb: deploy
+  phase: prep
+  id: prep
+  kind: GATE
+  title: the rollout facts and the ack gate
+  what: 'Prints the component''s three rollout facts before anything is cut: State (stateless or stateful), Rollback (pin-revert, restore-required or none) and Scope (single or coupled), read from its declaration in the pins. A rollout that is not cleanly reversible proceeds only with --ack, whose accepted risk is written into the deploy ledger row.'
+  why: Whether a deploy can be undone by flipping a pin must be known, and accepted, before it runs; a stateful cutover stays possible, but knowingly.
+  changes: Nothing; with --ack, the accepted risk goes into the ledger row the play writes.
+  verify: it prints `State:`, `Rollback:` and `Scope:`; a not-cleanly-reversible rollout without --ack is refused
+  runs: 'nothing it starts: it reads the component''s rollout facts from ops/pins/fleet-pins.yaml'
+  by_hand: goatbuilder preflight <component> --env <env> prints the same three facts
+  read: docs/design/goatbuilder-rollout-preflight.md
+  failed_because: the rollout is restore-required or none, and no --ack was given
+  then: read the facts; to go ahead knowingly, re-run with --ack "<your name>"
+- verb: deploy
+  phase: fresh-source
+  id: fresh-source
+  kind: GATE
+  title: the checkout is current with the trunk
+  what: 'Runs the fresh-source check once, before the transport opens: a checkout behind the trunk in ops/ansible or ops/pins is refused with the commits it lacks; every play of the run is then judged against the same trunk commit.'
+  why: A deploy from a stale checkout would push an old play or an old pin.
+  changes: Nothing.
+  verify: the check passes, or warns for a checkout ahead of the trunk
+  runs: ops/scripts/fresh-source.sh
+  by_hand: goatbuilder deploy --env <env> --component <component> [--group <group>] --dry-run prints the probe as `ops/scripts/fresh-source.sh --repo <repository>`; run it from the repository root
+  read: docs/design/goatbuilder-conformance.md
+  failed_because: the checkout is behind the trunk, or the trunk cannot be fetched
+  then: fast-forward or rebase as it names; an islanded site runs with --offline
+- verb: deploy
+  phase: transport
+  id: transport
+  kind: T
+  title: the secrets, and how the hosts are reached
+  what: 'Names every secret the play templates and refuses on a real run when one is not set; then decides how the hosts are reached: the mesh when this machine is on the goatnet''s mesh, the env door when the registry has one, the base inventory otherwise.'
+  why: A play that reaches a host and then finds a secret missing leaves it half done; checking both first means it either can run or touches nothing.
+  changes: Nothing; through a door, it opens the door for the run.
+  verify: it prints the groups and the transport (`groups [...] via ...`); a missing secret is named with how to supply it
+  runs: ops/secrets/posture.py, ops/scripts/door-open.sh, netbird status
+  by_hand: goatbuilder deploy --env <env> --component <component> [--group <group>] --dry-run prints the secrets probe and the mesh probe it ran
+  read: docs/design/env-doors.md
+  failed_because: a secret the play templates is not set
+  then: supply it in the declared secrets store, as the refusal names
+- verb: deploy
+  phase: playbook
+  id: playbook
+  kind: T
+  title: the play and its target mode
+  what: Resolves the component's play, through any import_playbook alias, its target mode (an -e variable or -l) and the ledger component it writes; this is a row of the plan, not a step that runs a command.
+  why: The deploy and the verify read the same play and ledger; deciding them once keeps both on one answer.
+  changes: Nothing.
+  verify: it prints `<play> <target flag><group>; ledger component <ledger>`
+  runs: 'nothing it starts: it reads the play from ops/pins/fleet-pins.yaml (deploy_playbook, else <component>-deploy.yml)'
+  by_hand: goatbuilder deploy --env <env> --component <component> [--group <group>] --dry-run prints the play and its target mode
+  read: docs/operations/goatbuilder-first-run.md#a-deploy-with-its-proof
+  failed_because: the component declares no play or no var in the pins
+  then: declare it in ops/pins/fleet-pins.yaml
+- verb: deploy
+  phase: deploy
+  id: deploy
+  kind: A
+  title: the play on each group
+  what: 'Per member group: reads each host''s ledger row as it stands, then runs the component''s play through ansible-preflight.sh under with-aws, with the pinned trunk, writing its log beside the run. A group with no host in the loaded inventories is skipped as declared, not built.'
+  why: The play converges the declared ref; reading the ledger first is how the verify can tell a row this run wrote from one it found.
+  changes: The component on each host of the group, and its deploy ledger row.
+  verify: the play's recap shows `failed=0` for every host
+  runs: ops/scripts/with-aws, ops/scripts/ansible-preflight.sh
+  by_hand: goatbuilder deploy --env <env> --component <component> [--group <group>] --dry-run prints each group's ledger read and its play line, built from the argv a real run starts, in the directory it starts in
+  read: docs/operations/goatbuilder-first-run.md#a-deploy-with-its-proof
+  failed_because: the play failed on a host
+  then: read the play's log (the path the run names), fix it, then deploy again; the play is idempotent
+- verb: deploy
+  phase: verify
+  id: verify
+  kind: GATE
+  title: every host of the group names the declared ref
+  what: 'Per member group: reads the newest deploy ledger row back from every host and calls the group done only when it names the declared digest and says the deploy finished.'
+  why: A play that exits 0 has not proven the host runs the declared ref; the ledger row is the proof.
+  changes: Nothing.
+  verify: 'every host''s newest row names the declared digest with `action: deploy`; exit 3 while one does not'
+  runs: ops/scripts/with-aws (ansible -m shell reading /var/lib/goat/<ledger>/deploy-history.jsonl)
+  by_hand: goatbuilder deploy --env <env> --component <component> [--group <group>] --verify-only reads the ledgers back without running the play
+  read: docs/operations/goatbuilder-first-run.md#a-deploy-with-its-proof
+  failed_because: a host's newest row names another ref, or the deploy did not finish
+  then: read that host's ledger; deploy again, or roll back
