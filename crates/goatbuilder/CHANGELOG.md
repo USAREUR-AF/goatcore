@@ -56,6 +56,18 @@ peering's leaf, and our core router's leaf is restored from the earliest
 admission that touched it. An IPsec link's MSS clamp rules are removed by
 their own handles (#554).
 
+#### Fixed: the docker-engine role checks the root the running containerd uses
+
+The `docker-engine` role reads the root directory the running containerd uses
+before it writes `/etc/containerd/config.toml`. When the two differ and
+containers are running, the play fails and writes nothing; with no container
+running, the role writes the file and restarts containerd in the same play.
+A final check compares the running daemon's root with
+`docker_engine_containerd_root`. Before, a restart the handler missed could
+leave containerd on an empty root after its next restart, so `docker exec` and
+every healthcheck answered `NotFound` while the services kept running. The
+data-root migration runbook gives the check by hand (#664).
+
 #### Added: the end state grades federation-proxy where a site turns it on
 
 `goatbuilder endstate` now has a row for `federation-proxy`, the node-local
@@ -334,9 +346,9 @@ exit code changes only with a reason in `exit_changed`, and a value a flag
 accepted in the last release is still accepted. The published binaries'
 checksums are one list, `crates/goatbuilder/tests/upgrade/releases.sha256`,
 which the upgrade tests own and the check only reads, and it holds
-v0.6.0's binaries. v0.6.0's configuration files are kept for gate row A2
-beside those of the earlier releases (#566, #617, #562, #563, #631, #634,
-#616).
+v0.6.0's and v0.6.1's binaries. The configuration files of both are kept
+for gate row A2 beside those of the earlier releases (#566, #617, #562,
+#563, #631, #634, #616, #674, #675).
 
 #### Added: contract clause C11, legibility, is written beside C1 to C10
 
@@ -348,6 +360,14 @@ name its conformance test, `crates/goatbuilder/tests/legibility.rs`, and
 say what each of its four checks requires. C11 does not hold yet: the
 checks that fail today are listed in
 `crates/goatbuilder/tests/legibility-known-failing.txt` (#647).
+
+#### Changed: a documents-only pull request runs only the documents' configuration examples
+
+`goatbuilder-pr` decides from the pull request's own diff whether it changes
+documents only (`ops/ci/goatbuilder-pr-scope.sh`). A documents-only pull
+request then runs the check that every whole configuration example in the
+documents validates, and not the whole build, test and macOS jobs; a change
+to the tutorials or to anything else still runs everything (#685).
 
 #### Fixed: the federation test environment's other clones own their objects
 
@@ -417,6 +437,17 @@ The pull request template no longer carries a checklist line about
 co-author trailers added by tooling. The rule is unchanged: ADR 0109 still
 states it, and `pr-readiness` still refuses such a trailer in a commit
 message (#315).
+
+#### Added: the rules that hold while a release is cut
+
+The release procedure (`docs/reference/goatbuilder/02-install.md`) now says
+when the tag goes on, and three rules from the version branch's cut-off to
+the tag: merges freeze except for the version pull request and the changes it
+names; a run on `main` cancelled by a later merge is run again once and is not
+a failure; and an engineering question that comes with a recommended option
+does not hold the release once 30 minutes pass without an answer, while a
+question of policy, cost or people, or about an act that cannot be undone,
+waits (#673).
 
 #### Fixed: standup passes the trunk and the mirror token to its phases as run state
 
