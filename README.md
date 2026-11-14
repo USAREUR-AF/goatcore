@@ -48,26 +48,48 @@ On top of those, this repository provides two command-line tools: `goatbuilder` 
 
 ## Try it
 
-The fastest way to see goat is a rehearsal: `goatbuilder` stands up a complete example environment against a simulated set of machines, on your laptop, in seconds. Nothing touches a network. Download `goatbuilder` for Linux or macOS from the [releases](https://github.com/usareur-af/goatcore/releases) and run it from a clone of this repository:
+Rehearse a complete goat environment on your laptop in a few seconds. `goatbuilder` stands it up against a set of simulated machines, so nothing touches a network.
+
+<a href="https://github.com/usareur-af/goatcore/releases?q=goatbuilder&expanded=true"><img src="https://img.shields.io/github/v/release/usareur-af/goatcore?filter=goatbuilder%2F*&label=goatbuilder%20release" alt="Latest goatbuilder release"></a>
+
+**1. Get the code and `goatbuilder`** (Linux or macOS, amd64 or arm64)
 
 ```bash
 git clone https://github.com/usareur-af/goatcore && cd goatcore
 
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"; ARCH="$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')"
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')"
 curl -fsSL -o goatbuilder "https://github.com/usareur-af/goatcore/releases/download/goatbuilder/v0.6.1/goatbuilder-$OS-$ARCH"
 chmod +x goatbuilder
+```
 
+The command downloads [goatbuilder v0.6.1](https://github.com/usareur-af/goatcore/releases/tag/goatbuilder/v0.6.1). The badge above links to every goatbuilder release.
+
+**2. Stand up the example environment and look at it**
+
+```bash
 WORK="$(mktemp -d)/zagros"
 cp -R ops/goatbuilder/fixtures/goatnet-from-scratch/01-founder "$WORK"
 ./goatbuilder standup zagros --site alpha --mock "$WORK" --ack "you" --yes
 ./goatbuilder status --env zagros --mock "$WORK"
 ```
 
-Each release lists a SHA-256 checksum per binary in `SHA256SUMS`, signed with cosign. To build it yourself instead, `cd crates && cargo build --release -p goatbuilder` puts it in `crates/target/release/`; the first build often takes half an hour.
+The example environment, `zagros`, has one site with two core machines, one monitoring machine and one recovery machine.
 
-The example environment, `zagros`, has one site with two core machines, one monitoring machine and one recovery machine. [Tutorial 1](docs/tutorials/01-new-goatnet.md) explains each step and carries on to real hardware.
+**3. Go further**
 
-To run goat for real on a single machine with no cloud account, start with [goatlite](docs/tutorials/00-goatlite.md).
+| To | Read |
+|---|---|
+| Follow each step, then repeat it on real hardware | [Tutorial 1: a new environment](docs/tutorials/01-new-goatnet.md) |
+| Run goat for real on one machine, with no cloud account | [goatlite](docs/tutorials/00-goatlite.md) |
+
+<details>
+<summary>Verify the download, or build from source</summary>
+
+- **Verify:** each release carries `SHA256SUMS`, a SHA-256 checksum for every binary, signed with cosign (`SHA256SUMS.cosign-bundle`).
+- **Build:** `cd crates && cargo build --release -p goatbuilder` writes the binary to `crates/target/release/goatbuilder`. The first build often takes half an hour.
+
+</details>
 
 To have a coding agent do it with you, give it this line with your own values: `Clone https://github.com/usareur-af/goatcore and follow .claude/skills/goatlite/SKILL.md to stand up a goatlite named <name> on <ssh-user>@<host>, with <your-email> as its administrator.`
 
