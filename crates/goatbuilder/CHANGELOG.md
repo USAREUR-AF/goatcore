@@ -104,7 +104,7 @@ verifies it under the key confirmed at phase 5; the combined result in
 on the same call. It is opt-in: without `--bilateral`, phase 14 runs as before
 and its exit is unchanged. A partner result that does not verify is GB-272,
 one from another session or run GB-273, and an unset or unresolved signing key
-GB-142.
+GB-142. (#720)
 
 #### Added: join-node refuses a node whose clock is off, before changing it
 
