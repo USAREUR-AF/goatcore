@@ -132,6 +132,8 @@ fn site(prepared: bool) -> Site {
         "ops/scripts/inventory-hosts.py",
         "ops/scripts/with-secrets",
         "ops/secrets/posture.py",
+        // The gate before a joiner's mesh DNS step (phase 13).
+        "ops/scripts/require-secret.sh",
         "ops/ansible/fabric-health-deploy.yml",
         "ops/ansible/mesh-health-deploy.yml",
         "ops/ansible/presence-health-deploy.yml",
@@ -453,6 +455,8 @@ fn goatbuilder(s: &Site, args: &[&str]) -> (Output, serde_json::Value) {
         .env("GOAT_SECRET_STORE", "env")
         .env("OWNER_EMAIL", "owner@example.org")
         .env("DELTA_PG_PASS", "pg-stand-in")
+        // The founder's management API token, which the mesh DNS step reads.
+        .env("ALPHA_NB_API_TOKEN", "api-token-stand-in")
         .env("GOAT_NO_FUN", "1")
         // The phone script's waits, which are for a real phone.
         .env("PHONE_NODE_NAP", "0")

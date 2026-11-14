@@ -259,7 +259,7 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
         }
     }
     // Phase 13's mesh DNS step for a joiner's core node (ADR 1235).
-    if joiner && o.class == "core" && !founder.is_empty() {
+    if joiner && (o.class == "core" || phone) && !founder.is_empty() {
         if let Ok(m) = joinnode::mesh_dns_values(repo, &gv_path, site, &founder) {
             let zone_rule = || Source::derived(
                 format!("site_dns_zone {} (this site's, else the founder's)", m.zone),
