@@ -14,6 +14,7 @@ The federation e2e environment runs synthetic sovereign environments on one Linu
 | Core router deployed by the `goat-zenoh` role | Built: `FE2E_CORE=role` (unit `pair-role`, scenarios `core-by-role`, `preflight-slot-list`); the default stays the hand-run router until the other units pass under it |
 | Running the same scenarios on real hosts through `live-host.sh` | Designed, not built (§Real hosts) |
 | `goatbuilder-only-both-sides` and `nothing-hand-written`, the one command on a terminal (`units/onecmd.sh`, `units/nohand.sh`) | Built and measured (§The one command, and nothing hand-written) |
+| `bilateral-acceptance`, each side's acceptance holding the partner's signed result (`units/bilateral.sh`, gate row B2) | Built, not run (§The partner's half of acceptance) |
 
 ## Run one scenario on your own machine
 
@@ -145,6 +146,24 @@ What a person still had to write is the list `RECORD/hand-written.txt`. It may h
 | `goat_fed_republisher_image` | the lab builds the republisher image locally; a deployment pins its own |
 | `peering_wg_fips_waived_reason` | the lab hosts are stock Ubuntu without a FIPS module; a deployment records its own waiver |
 | phase 14's counterparty surfaces (`FED_THEIRS_REST`, `FED_SPIRE_THEIRS`, the probe launcher, a network reach into the partner) | only a drill owns both sides; a production operator holds only its own, so phase 14 exits 3 until the partner's half is proven (`federation-acceptance.md`) |
+
+## The partner's half of acceptance
+
+**Built, not run** (unit `bilateral`, scenario `bilateral-acceptance`, `runs_where: local`). It is the scenario gate row B2 asks for: each side's acceptance report includes the other side's signed result, with no step outside the command.
+
+The unit runs `nothing-hand-written` first. Then both operators run `goatbuilder federate test <partner> --bilateral` at the same time, each on its own driver, with only the values that run was given in `nothing-hand-written`: no counterparty surface (`FED_THEIRS_REST`, `FED_SSH_THEIRS`, `FED_SPIRE_THEIRS`, the probe launcher) and no reach into the partner's network. Each side's phase 14 derives the session from the agreement, publishes its signed result on its own core, and verifies the partner's under the key bound at phase 5 (`federation-acceptance.md` §6.3).
+
+The checks read each side's evidence directory afterwards (`/var/lib/goat-federation/<partner>/evidence/acceptance` on the driver):
+
+| Check | Passes when |
+|---|---|
+| `run` | the run is not refused (exit 2) and says it published its signed result |
+| `own-surfaces` | the run's `result.json` records no counterparty surface in `inputs` (`theirs_rest`, `ssh_theirs`, `probe_launcher`) |
+| `holds-signed-result` | the newest combined result under `bilateral/` is `authenticated: true`, its `peer_key` is the key the run's keyring (`keys.txt`) holds for the partner, and the partner's result is kept under `peer/<partner>/` |
+| `verdicts-agree` | the two sides' combined verdicts are equal |
+| `verdict-pass` | recorded, not required: the combined verdict is PASS |
+
+A combined PASS is not required because the refusal rows need probes that hold the partner's agreed identity, and the SPIRE rows need the partner's `spire-server` command. The unit gives neither, so with `FED_ACCEPTANCE_STRICT=1` those rows cannot pass, and a combined PASS is not expected from it. A tree without `federate test --bilateral` marks every check BLOCKED, and so does a run in which phase 13 did not pass on both sides.
 
 ## Solo party (an outside partner)
 
