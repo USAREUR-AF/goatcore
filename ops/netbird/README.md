@@ -152,12 +152,20 @@ executes:
 3. `touch /opt/netbird/migrations.allow` on the **designated migrator** node only.
 4. Start the migrator node — entrypoint sees marker → AutoMigrate runs → schema
    updated locally.
-5. Verify schema parity via Spock replication health checks
-   (`pg_stat_replication`, `spock.resolutions` and `spock.exception_log` should be quiet).
+5. Verify Spock replication health on the migrator
+   (`spock.sub_show_status()`; no recent `CONFLICT:` lines in the Postgres log).
 6. `rm /opt/netbird/migrations.allow` on the migrator node.
-7. Start the remaining sites — entrypoint does **not** see marker → exports
-   `NETBIRD_SKIP_MIGRATIONS=true` → AutoMigrate suppressed → they use the
-   migrated schema as-is.
+7. Migrate and start the remaining sites, **one at a time**: on each, touch the
+   marker, start management (entrypoint sees marker → AutoMigrate migrates that
+   site's own database), wait until it accepts connections, remove the marker,
+   and wait until its Spock subscriptions replicate again before the next site
+   starts. Spock replicates rows, not schema changes, so the coordinated
+   upgrade migrates each site's database in turn before starting its services,
+   so a schema change reaches every site and replication resumes. AutoMigrate
+   is idempotent: a site whose schema is already current changes nothing.
+
+Any start without the marker, outside this playbook, still exports
+`NETBIRD_SKIP_MIGRATIONS=true`.
 
 ## When to drop the local patch
 

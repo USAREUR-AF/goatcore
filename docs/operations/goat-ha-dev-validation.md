@@ -240,7 +240,7 @@ Expected phases:
 - Phase 2: image pulled everywhere; `NETBIRD_MGMT_IMAGE` set in each site's `.env`.
 - Phase 3: marker touched on `mgmt-host-hadev-amd64`; it starts on the patched image; the server accepts TCP on :8080 (its readiness signal — no HTTP /health endpoint exists).
 - Phase 4: `spock.sub_show_status()` shows all subscriptions `replicating`; `docker logs postgres-a | grep CONFLICT:` returns 0 for the last 5 min.
-- Phase 5: `mgmt-host-hadev-arm64` starts with `NETBIRD_SKIP_MIGRATIONS=true`; no schema changes.
+- Phase 5: the second site's marker is touched; the second site starts and migrates its own database (AutoMigrate changes nothing when the schema is already current); marker removed; its `spock.sub_show_status()` shows no subscription `down` or in error.
 - Phase 6: final verification; no recent `CONFLICT:` lines in the postgres log.
 
 **Red flag:** any Phase fails; conflicts appear in the postgres log during/after; replication stops.

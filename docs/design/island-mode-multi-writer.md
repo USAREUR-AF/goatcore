@@ -46,7 +46,10 @@ D3 pins all admin writes, NetBird and Ory included, to one site per goatnet.
 
 Conflict rule: Spock 5 default, `track_commit_timestamp=on`
 (`ops/postgres/spock/conf/postgresql.conf:46`). Exception logging: not configured.
-DDL: not replicated; `ops/ansible/coordinated-upgrade.yml`.
+DDL: not replicated. `ops/ansible/coordinated-upgrade.yml` migrates the migrator site
+first, then each other site's database in turn before starting its services, so a schema
+change reaches every site and replication resumes (built; not measured on an upgrade that
+adds a column).
 
 ### 2.1 Portal and console stores, re-measured
 
