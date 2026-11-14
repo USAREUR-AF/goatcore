@@ -114,7 +114,7 @@ Three behaviors of a lite plan were decided by the preset rather than by a decla
 | The bootstrap owner is the declared administrator | `deploy.owner`, from `lite.admin` (`ops/goatbuilder/schema/goatbuilder-v1.schema.json:171`) | `crates/goatbuilder/src/settings.rs:53`, `crates/goatbuilder/src/standup.rs:267` |
 | Phase 14 does not reach other goatnets' relay-health boxes | `deploy.cross_goatnet: false` (`ops/goatbuilder/schema/goatbuilder-v1.schema.json:172`) | `crates/goatbuilder/src/settings.rs:60`, `crates/goatbuilder/src/standup.rs:627` |
 
-A configuration that declares none of the three plans exactly as before. `crates/goatbuilder/tests/full_plans_unchanged.rs` holds this for every fixture site without a `lite:` block.
+A configuration that declares none of the three plans exactly as before. `crates/goatbuilder/tests/full_plans_unchanged.rs` holds this for every fixture site without a `lite:` block. A pull request that changes the record (`crates/goatbuilder/tests/fixtures/full-plans.golden.json`) on a base older than the newest change on `main` to `crates/goatbuilder/src/standup.rs`, `ops/goatbuilder/fixtures/` or the record itself is refused by `ops/ci/check-golden-base-current.py` (docs-guards) until it is rebased and the record regenerated (built).
 
 A grown goatlite is stood up with `goatbuilder`. `ops/scripts/goat-standup.sh` does not read these three fields, and the script route is not supported for a grown goatlite.
 

@@ -27,6 +27,7 @@ on:
       - '.github/release-notes/**'
       - 'crates/goatbuilder/CHANGELOG.md'
       - 'crates/goatbuilder/changelog.d/**'
+      - 'crates/goatbuilder/tests/fixtures/full-plans.golden.json'
       - 'ops/release/changelog.py'
       - '.github/workflows/_release-binary.yml'
       - '.github/workflows/*-release.yml'
@@ -45,6 +46,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The whole history and the tags: the changelog checks below compare with a
+          # merge base and with each goatbuilder release (ops/release/changelog.py).
+          fetch-depth: 0
       - uses: actions/setup-python@v5
 
       # A single GraphQL request compares newly claimed ADR/finding IDs across
@@ -90,6 +95,14 @@ jobs:
           pip install --quiet pyyaml
           python3 ops/ci/check-doc-signer-identity.py --self-test
           python3 ops/ci/check-doc-signer-identity.py
+
+      # A pull request that records the full standup plans on a base older than a change
+      # to what they are made from turns main red once merged (14 Nov); it is rebased and
+      # the record regenerated. HEAD is GitHub's merge: base first, the head second.
+      - name: a pull request that changes the full-plans record is on a base holding what it records
+        run: |
+          python3 ops/ci/test_check_golden_base_current.py
+          python3 ops/ci/check-golden-base-current.py --base HEAD^1 --head HEAD^2
 
       - name: goatbuilder's changelog Unreleased section equals its render from changelog.d
         run: |
