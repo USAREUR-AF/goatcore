@@ -15,7 +15,7 @@
 #     this Dockerfile twice — on ubuntu-24.04 (amd64) and ubuntu-24.04-arm
 #     (arm64) — and manifest-combines the resulting images into a single
 #     multi-arch tag. See .github/workflows/netbird-mgmt.yml.
-#   - Final stage is ubuntu:24.04 (glibc) rather than alpine (musl),
+#   - Final stage is ubuntu:26.04 (glibc) rather than alpine (musl),
 #     because CGO=1 produces a glibc-linked binary.
 #
 # See docs/design/ha-multi-site.md §5.8.1 for the skip-migrations patch context.
@@ -23,7 +23,7 @@
 ARG NETBIRD_REF=0358be23136da50e829ba99a83e54ef555071a7f  # upstream v0.71.4
 
 # --- Stage 1: build the patched binary natively ---
-FROM golang:1.26-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS builder
+FROM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS builder
 ARG NETBIRD_REF
 
 RUN apt-get update \
@@ -64,8 +64,13 @@ RUN CGO_ENABLED=1 GOOS=linux \
 
 # --- Stage 2: minimal runtime (matches upstream management/Dockerfile) ---
 FROM ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c
+# Same-release security fixes; preserve the application and its module graph.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates \
+       apt=3.2.1ubuntu0.1 \
+       libapt-pkg7.0=3.2.1ubuntu0.1 \
+       libpcre2-8-0=10.46-1ubuntu0.1 \
     && rm -rf /var/lib/apt/lists/*
 
 # No deployment CA is baked into this image: each goatnet supplies its own
