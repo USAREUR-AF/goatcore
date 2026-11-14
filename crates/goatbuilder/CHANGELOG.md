@@ -150,6 +150,17 @@ for the site's core group, limited to the node. It was a hand step after
 the command. The play still needs the node's router leaf certificate,
 which join-node does not stage yet.
 
+#### "Added: join-node mints and stages a joining site's leaves"
+
+`goatbuilder join-node` now mints a joining site's router and service leaves
+and stages them, in phase 13 before the data router. It runs
+`mint-site-certs.sh <site>` from the site's manifest
+(`ops/enrollment/manifests/<site>-certs.yaml`), which keeps any leaf already
+minted, then `stage-service-leaves.yml` for the service leaves the manifest
+carries, limited to the node. Both were hand steps after the command. A
+site with no manifest is refused when the plan is made (GB-286), and so is a
+manifest with no router leaf (GB-287).
+
 #### Added: `join-node` names what the site does not run, and why
 
 The dry-run plan and the summary of a real `join-node` run end with a section
@@ -211,6 +222,14 @@ allowed-ips` and `listen-port`, and a back-out checks that a carrier exists with
 `listen-port`. When a carrier does not hold what the declaration says, the failure
 message lists each peer's public key and allowed address, then the port the
 carrier listens on (#663).
+
+#### Changed: the WireGuard read-back of phase 11 reads each peer's public key and allowed address
+
+`goat-peering-wg` reads the interface back after phase 11 with `wg show
+<interface> allowed-ips`, and the carrier's with `allowed-ips` and
+`latest-handshakes`. When the interface does not hold what the agreement says,
+the failure message lists each peer's public key and allowed address, then the
+interface's addresses. GB-271's explanation describes the message as it is now.
 
 #### Fixed: a phase 11 link that did not come up is named as GB-271
 
@@ -493,6 +512,18 @@ a failure; and an engineering question that comes with a recommended option
 does not hold the release once 30 minutes pass without an answer, while a
 question of policy, cost or people, or about an act that cannot be undone,
 waits (#673).
+
+#### Added: rotating the WireGuard peering key, as a library and in the role, not yet on the command line
+
+`rotation::transport_run` rotates a peering's WireGuard key (`wg-fed0`). It
+writes `<work>/rotation.json` naming the rotation once, keeps the rotation's
+id in `<work>/.rotation-transport` until phase 2 passes, and runs from phase
+2. `goat-peering-wg`'s `tasks/transport-key.yml` then sets the key aside once,
+in a `.previous-<id>/` directory, and makes a new one, and
+`tasks/transport-live.yml` restarts the link while the interface holds a key
+other than the one on disk. Without a rotation id, phase 2 never rotates the
+key. The `rotate` verb does not call it yet, and the partner taking the new
+package is not built (#680).
 
 #### Fixed: standup passes the trunk and the mirror token to its phases as run state
 

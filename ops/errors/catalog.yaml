@@ -615,7 +615,7 @@ entries:
   - code: GB-271
     tool: goatbuilder
     title: the peering's WireGuard interface does not hold the agreed peer and address
-    what: "Phase 11 writes the agreement's link values (the counterparty's public key, its allowed address and our link address) to the link's environment file, restarts goat-peering-wg@<interface>.service and reads the interface back with `wg show <interface> dump` and `ip -4 addr show dev <interface>`. The read-back did not find them, so the link the agreement describes is not up on this edge. The `Read:` at the end of the message is what the interface holds: an interface line and no peer line, with no address, is the interface as it is before phase 11, which names only the interface and its key."
+    what: "Phase 11 writes the agreement's link values (the counterparty's public key, its allowed address and our link address) to the link's environment file, restarts goat-peering-wg@<interface>.service and reads the interface back with `wg show <interface> allowed-ips` and `ip -4 addr show dev <interface>`. The read-back did not find them, so the link the agreement describes is not up on this edge. The end of the message lists what the interface holds: each peer's public key and allowed addresses, then its addresses. No peer and no address is the interface as it is before phase 11."
     causes:
       - "the link unit is still running with the environment it had before phase 11: the agreement's peer and address were written to the link's environment file, but goat-peering-wg@<interface>.service was not restarted to read them (a phase 11 cut off between writing the file and the restart, or run by a role from before the restart-on-read check)"
       - "the unit was restarted and goat-peering-wg-link up stopped partway: its journal says where"
@@ -3327,6 +3327,34 @@ entries:
     exit: 1
     matches:
       - "\\(GB-277\\)"
+
+  - code: GB-286
+    tool: goatbuilder
+    title: a joining site has no leaf-cert manifest join-node can read
+    what: "join-node mints a joining site's router and service leaves from the site's manifest (ops/enrollment/manifests/<site>-certs.yaml, with mint-site-certs.sh) and stages them onto the node before the data router. The manifest is missing, or is not readable YAML, so the plan was refused before any phase ran."
+    causes:
+      - "the site's manifest was never written"
+      - "the manifest has a YAML error"
+    fixes:
+      - "cp ops/enrollment/manifests/TEMPLATE-certs.yaml ops/enrollment/manifests/<site>-certs.yaml, then re-thread every value for the site: its URI SANs name this goatnet"
+      - "ops/scripts/mint-site-certs.sh <site> --dry-run prints what the manifest mints, and names a YAML error"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-286: "
+
+  - code: GB-287
+    tool: goatbuilder
+    title: a joining site's leaf-cert manifest has no router leaf
+    what: "join-node deploys a joining site's data router (zenoh-deploy.yml), whose play reads the router leaf that mint-site-certs.sh mints from the site's manifest. The manifest names no leaf called router, so the plan was refused before any phase ran."
+    causes:
+      - "the manifest was written without the router entry ops/enrollment/manifests/TEMPLATE-certs.yaml carries"
+    fixes:
+      - "add a leaf named router to ops/enrollment/manifests/<site>-certs.yaml, as the template shows, with the site's own SANs"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-287: "
 
   - code: X-ANSIBLE-001
     tool: ansible

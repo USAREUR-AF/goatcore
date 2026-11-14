@@ -60,6 +60,13 @@ fn checkout(with_model: bool) -> tempfile::TempDir {
         "goatnet_founder: false\njoin_founder_site: zagros\nsite_enrollment_dns: netbird.example.org\nisitup_enabled: false\nid_admin_console_enabled: false\n",
     )
     .unwrap();
+    // The site's leaf-cert manifest, which join-node's certificate steps read.
+    std::fs::create_dir_all(r.join("ops/enrollment/manifests")).unwrap();
+    std::fs::write(
+        r.join("ops/enrollment/manifests/alpha-certs.yaml"),
+        "site_id: alpha\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n",
+    )
+    .unwrap();
     if with_model {
         #[cfg(unix)]
         std::os::unix::fs::symlink(

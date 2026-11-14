@@ -1,0 +1,24 @@
+---
+# Runs the peering key's tasks of tasks/prepare.yml (tasks/transport-key.yml before
+# the interface is brought up, tasks/transport-live.yml after) on localhost against
+# the stand-in wg that test-rotation.sh puts first on PATH. The link's restart is a
+# stand-in handler of the same name that writes a marker file.
+- name: goat-peering-wg peering key, against a stand-in wg
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  environment:
+    PATH: "{{ stand_in_bin }}:{{ lookup('env', 'PATH') }}"
+  tasks:
+    - name: The peering key
+      ansible.builtin.include_tasks: ../tasks/transport-key.yml
+    - name: The interface holds the key on disk
+      ansible.builtin.include_tasks: ../tasks/transport-live.yml
+  handlers:
+    - name: Restart goat peering wg
+      ansible.builtin.copy:
+        dest: "{{ restart_marker }}"
+        content: "restarted\n"
+        mode: "0600"

@@ -754,6 +754,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     if let Some(c) = &s.rotate_carrier {
         rotation::carrier(&mut phases, c, o.with);
     }
+    if let Some(t) = &s.rotate_transport {
+        rotation::transport(&mut phases, t);
+    }
     let banner_mode = if o.dry_run {
         "(DRY RUN — nothing executes)"
     } else if o.mock.is_some() {
@@ -1266,6 +1269,28 @@ mod tests {
         assert!(s4.again.is_some());
         rotation::after_phase(&mut s4, 8);
         assert!(s4.again.is_none() && !s4.rotate_leaves);
+    }
+
+    /// `rotate <partner> transport` (docs/design/federation-key-rotation.md
+    /// §5, K4): on the plan the command runs, only phase 2's command changes,
+    /// and it carries the rotation's id to goat-peering-wg.
+    #[test]
+    fn rotating_the_peering_key_changes_phase_2_of_the_real_plan_and_nothing_else() {
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        let before = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
+        let mut after = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
+        let t = rotation::Pending { id: "transport-1".into(), file: work.path().join(rotation::TRANSPORT_FILE) };
+        rotation::transport(&mut after, &t);
+        for (a, b) in before.iter().zip(after.iter()) {
+            if a.n == 2 {
+                assert_eq!(b.cmd, a.cmd.replace(" -e fed_work='", " -e peering_wg_transport_rotation='transport-1' -e fed_work='"));
+                assert!(b.cmd.contains("peering_wg_transport_rotation='transport-1'"), "{}", b.cmd);
+            } else {
+                assert_eq!(a.cmd, b.cmd, "phase {}", a.n);
+            }
+        }
     }
 
     /// Conformance check (d), for federate: every phase the plan can hold, for

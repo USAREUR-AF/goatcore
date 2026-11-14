@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# test-rotation.sh — a carrier key is rotated by setting it aside once, under the
-# rotation's id, and making a new one (docs/design/federation-key-rotation.md §3,
-# K5). Runs tasks/carrier-key.yml of goat-peering-wg and of goat-peering-forwarder
-# on localhost against a stand-in wg that writes a fresh random key each time.
+# test-rotation.sh — a carrier key (K5) or the peering key (K4) is rotated by
+# setting it aside once, under the rotation's id, and making a new one
+# (docs/design/federation-key-rotation.md §3). Runs tasks/carrier-key.yml of
+# goat-peering-wg and of goat-peering-forwarder, and goat-peering-wg's
+# tasks/transport-key.yml and tasks/transport-live.yml, on localhost against a
+# stand-in wg that writes a fresh random key each time.
 #
 #   - with no rotation id the key is made once and a rerun keeps it;
 #   - with a rotation id the key moves to .previous-<id>/ (0700) and a new one is
 #     made; a rerun with the same id changes nothing;
 #   - on the forwarder, only the named peering's carrier is set aside;
-#   - an id that is not a plain word is refused before anything moves.
+#   - an id that is not a plain word is refused before anything moves;
+#   - after a peering key rotation the link is restarted while the interface holds
+#     a key other than the one on disk, and not once it holds the new one.
 #
 # Usage:  ops/ansible/roles/goat-peering-wg/tests/test-rotation.sh
 # Exit:   0 = pass (or SKIP when ansible-playbook is missing); 1 = fail.
@@ -28,13 +32,16 @@ pass() { echo "  PASS  $1"; }
 fail() { echo "  FAIL  $1"; FAILS=$((FAILS + 1)); }
 mode_of() { if stat -c %a "$1" >/dev/null 2>&1; then stat -c %a "$1"; else stat -f %Lp "$1"; fi; }
 
-# The stand-in wg: `wg genkey` prints a fresh random value, `wg pubkey` a digest of stdin.
+# The stand-in wg: `wg genkey` prints a fresh random value, `wg pubkey` a digest of
+# stdin, and `wg show <if> public-key` what the test wrote to live.pub, the public
+# key the interface holds.
 mkdir -p "$T/bin"
-cat > "$T/bin/wg" <<'SH'
+cat > "$T/bin/wg" <<SH
 #!/bin/sh
-case "$1" in
+case "\$1" in
   genkey) head -c 32 /dev/urandom | base64 ;;
   pubkey) cksum | cut -d' ' -f1 ;;
+  show) cat "$T/live.pub" ;;
   *) exit 1 ;;
 esac
 SH
@@ -53,6 +60,13 @@ forwarder() { # rest: extra arguments
     -e '{"_pf_peerings": [{"name": "xab", "interface": "wg-carry0"}, {"name": "xac", "interface": "wg-carry1"}]}' \
     "$@" > "$LOG" 2>&1
 }
+peering() { # rest: extra arguments
+  rm -f "$T/restarted"
+  ANSIBLE_NOCOLOR=1 ANSIBLE_RETRY_FILES_ENABLED=0 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
+    ansible-playbook -i localhost, "$HERE/transport-key.yml" -e "stand_in_bin=$T/bin" \
+    -e "peering_wg_key_path=$T/edge/wg-fed0.key" -e "restart_marker=$T/restarted" "$@" > "$LOG" 2>&1
+}
+live_is() { { cksum < "$1" | cut -d' ' -f1 > "$T/live.pub"; } 2>/dev/null || true; } # the interface holds this key file
 changed() { sed -n 's/.*changed=\([0-9]*\).*/\1/p' "$LOG" | head -1; }
 
 echo "goat-peering-wg test-rotation"
@@ -110,6 +124,45 @@ elif grep -qF "names no entry of peering_forwarder_peerings" "$LOG"; then
   pass "forwarder: a rotation naming no entry is refused"
 else
   fail "forwarder: wrong refusal for a rotation naming no entry"; grep -E 'fatal' -A3 "$LOG" | head -6 || true
+fi
+
+P="$T/edge/wg-fed0.key"
+if peering && [ -s "$P" ] && [ ! -e "$T/restarted" ] && peering && [ "$(changed)" = 0 ]; then
+  pass "peering: the key is made once, a rerun keeps it, and nothing restarts without a rotation"
+else
+  fail "peering: the key was not made, a rerun changed it, or the link restarted"; tail -15 "$LOG"
+fi
+POLD="$(cat "$P" 2>/dev/null || true)"
+live_is "$P"
+
+if peering -e peering_wg_transport_rotation=t1 && [ -s "$P" ] && [ "$(cat "$P" 2>/dev/null)" != "$POLD" ] \
+   && [ "$(cat "$T/edge/.previous-t1/wg-fed0.key" 2>/dev/null)" = "$POLD" ] && [ "$(mode_of "$T/edge/.previous-t1")" = 700 ] \
+   && [ "$(mode_of "$P")" = 600 ] && [ -e "$T/restarted" ] && [ -s "$K" ] && [ ! -e "$T/edge/.previous-t1/wg-carry0.key" ]; then
+  pass "peering: a rotation sets the key aside in .previous-t1/ (0700), makes a new one (0600), restarts the link, and leaves the carrier"
+else
+  fail "peering: the rotation did not set the key aside, make a new one and restart the link"; ls -la "$T/edge" "$T/edge/.previous-t1" 2>/dev/null || true; tail -15 "$LOG"
+fi
+PNEW="$(cat "$P" 2>/dev/null || true)"
+
+if peering -e peering_wg_transport_rotation=t1 && [ "$(cat "$P" 2>/dev/null)" = "$PNEW" ] && [ -e "$T/restarted" ] \
+   && [ "$(cat "$T/edge/.previous-t1/wg-fed0.key" 2>/dev/null)" = "$POLD" ]; then
+  pass "peering: a rerun of the rotation moves nothing, and restarts the link while the interface holds the old key"
+else
+  fail "peering: a rerun of the rotation moved a key, or did not restart a link holding the old key"; tail -15 "$LOG"
+fi
+live_is "$P"
+if peering -e peering_wg_transport_rotation=t1 && [ "$(changed)" = 0 ] && [ ! -e "$T/restarted" ]; then
+  pass "peering: once the interface holds the new key, a rerun of the rotation changes nothing"
+else
+  fail "peering: a rerun restarted a link that already holds the new key"; tail -15 "$LOG"
+fi
+
+if peering -e '{"peering_wg_transport_rotation": "a b"}'; then
+  fail "peering: a rotation id that is not a plain word was accepted"
+elif grep -qF "is not a rotation id" "$LOG" && [ "$(cat "$P" 2>/dev/null)" = "$PNEW" ]; then
+  pass "peering: a rotation id that is not a plain word is refused, and nothing moves"
+else
+  fail "peering: wrong refusal for a bad rotation id, or the key moved"; grep -E 'fatal' -A3 "$LOG" | head -6 || true
 fi
 
 if [ "$FAILS" -eq 0 ]; then

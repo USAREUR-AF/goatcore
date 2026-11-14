@@ -1,0 +1,50 @@
+---
+# The peering's private key (K4, docs/design/federation-key-rotation.md §3): made
+# here, it never leaves this host. Only the public half crosses, inside the signed
+# package. Included by tasks/prepare.yml before the interface is brought up;
+# tests/test-rotation.sh runs it alone.
+#
+# A rotation (`goatbuilder federate rotate <partner> transport`) passes an id in
+# peering_wg_transport_rotation. The key in place is moved, once, to
+# .previous-<id>/ beside it (0700), and the generation below makes a new one. A
+# rerun with the same id finds .previous-<id>/ and moves nothing, so a resumed
+# rotation never sets aside the key it already made. tasks/transport-live.yml
+# then puts the new key on the interface.
+
+- name: peering-wg | peering key | the rotation id is a plain word
+  ansible.builtin.assert:
+    that:
+      - peering_wg_transport_rotation is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+    fail_msg: >-
+      peering_wg_transport_rotation '{{ peering_wg_transport_rotation }}' is not a rotation id
+      (letters, digits, '-' and '_'). Nothing was moved.
+    quiet: true
+  when: peering_wg_transport_rotation | length > 0
+
+- name: peering-wg | peering key | set the key aside for this rotation, once
+  when: peering_wg_transport_rotation | length > 0
+  vars:
+    _pw_aside: "{{ peering_wg_key_path | dirname }}/.previous-{{ peering_wg_transport_rotation }}"
+  block:
+    - name: peering-wg | peering key | whether this rotation already set the key aside
+      ansible.builtin.stat:
+        path: "{{ _pw_aside }}"
+      register: _pw_key_aside_stat
+
+    - name: peering-wg | peering key | the rotation's directory
+      ansible.builtin.file:
+        path: "{{ _pw_aside }}"
+        state: directory
+        mode: "0700"
+      when: not _pw_key_aside_stat.stat.exists
+
+    - name: peering-wg | peering key | move the key in place aside
+      ansible.builtin.command:
+        argv: [mv, "--", "{{ peering_wg_key_path }}", "{{ _pw_aside }}/"]
+        removes: "{{ peering_wg_key_path }}"
+      when: not _pw_key_aside_stat.stat.exists
+
+- name: peering-wg | make the private key if there is none
+  ansible.builtin.shell:
+    cmd: "umask 077; wg genkey > {{ peering_wg_key_path }}"
+    creates: "{{ peering_wg_key_path }}"

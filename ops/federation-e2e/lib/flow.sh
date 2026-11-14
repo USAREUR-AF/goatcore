@@ -4,17 +4,39 @@
 # the receiver afterwards, so a step's effect on the flow is measured rather than assumed.
 # Sourced by a unit after units/pair.sh (put_release, stored_at).
 #
-#   flow_start <sender> <receiver> <label>   one fresh value a second, in the background
-#   flow_stop <label>                        stops it, waits, reads every value back
+#   flow_start <sender> <receiver> <label> [reader]
+#                                            one fresh value a second, in the background; with
+#                                            `reader`, also a reader on the receiver's core that
+#                                            records each sample's number and arrival time
+#                                            (lib/samples.py)
+#   flow_stop <label>                        stops both, waits, reads every value back
 #   flow_report <label>                      totals, the longest run lost, the last stored
+#
+# Each sample is named fl<label><epoch>n<i>, and <i> counts up from 1 for the whole flow:
+# the number the key-rotation scenario's samples-<key> check reads (federation-key-rotation.md
+# §6). The reader is the receiver core's REST subscription (Server-Sent Events) on the
+# sender's release keys; its records are in flow-<label>.arrived. It is a subscriber, so a
+# unit that measures reception with nothing subscribed (gate row B4, units/flow.sh) starts
+# its flow without one.
 #
 # A release with no route is dropped by design (docs/design/zenoh-brokerless-consequences.md,
 # row 4), so what a check reads is how long and how many, against what its scenario allows.
 
-flow_start() { # $1 sender, $2 receiver, $3 label
+flow_start() { # $1 sender, $2 receiver, $3 label, $4 "reader" for an arrival-recording reader
   local s="$1" them="$2" l="$3"
   : > "$RECORD/flow-$l.sent"
+  : > "$RECORD/flow-$l.arrived"
   printf '%s %s\n' "$s" "$them" > "$RECORD/flow-$l.pair"
+  rm -f "$RECORD/flow-$l.reader.pid"
+  if [ "${4:-}" = reader ]; then
+    # The reader first, so the first sample has someone to arrive at.
+    (
+      curl -sN -H 'Accept: text/event-stream' "http://$(core_ip "$them"):8000/from/$s/all/**" \
+        | python3 "$HERE/lib/samples.py" record "$RECORD/flow-$l.arrived" --prefix "fl$l"
+    ) > /dev/null 2>&1 &
+    echo $! > "$RECORD/flow-$l.reader.pid"
+    sleep 1
+  fi
   (
     i=0
     while [ ! -e "$RECORD/flow-$l.stop" ]; do
@@ -32,7 +54,12 @@ flow_stop() { # $1 label
   touch "$RECORD/flow-$l.stop"
   wait "$(cat "$RECORD/flow-$l.pid")" 2>/dev/null || true
   read -r s them < "$RECORD/flow-$l.pair"
-  sleep 8 # the last values travel
+  sleep 8 # the last values travel, and reach the reader
+  if [ -e "$RECORD/flow-$l.reader.pid" ]; then
+    # The reader's subshell, its curl and its recorder.
+    pkill -P "$(cat "$RECORD/flow-$l.reader.pid")" 2>/dev/null || true
+    kill "$(cat "$RECORD/flow-$l.reader.pid")" 2>/dev/null || true
+  fi
   : > "$RECORD/flow-$l.read"
   while IFS=$'\t' read -r t k code; do
     printf '%s\t%s\t%s\t%s\n' "$t" "$k" "$code" "$([ "$(stored_at "$them" "from/$s/all/$k" | head -1)" = "$k" ] && echo stored || echo lost)" >> "$RECORD/flow-$l.read"
