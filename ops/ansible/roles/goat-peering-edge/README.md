@@ -132,6 +132,30 @@ Worth knowing about the rest:
 | `peering_edge_xfrm_if_id` | `1001` | local to this host; unique per peering, not agreed with the partner |
 | `peering_edge_local_ts` / `_remote_ts` | the two `/32`s | see the note below on port scoping |
 
+## Rotating the leaf (K6)
+
+Off unless `peering_edge_rotation` names a rotation id
+([federation-key-rotation.md](../../../../docs/design/federation-key-rotation.md) §8). The role still writes no
+secret. The offline ceremony issues the new material and an operator stages it beside the live files:
+`<name>-cert.next.pem` in `x509/`, `<name>-key.next.pem` in `private/` at mode 0600, and for an `ipsec-ca`
+rotation our new CA as `<name>-local-ca.next.pem` in `x509ca/`. The role then:
+
+1. checks what is staged before anything moves: the key is the certificate's, it chains to
+   `peering_edge_local_ca_path` (or to the staged new CA for `ca`), its CN is `peering_edge_local_id`, its key
+   is ECDSA P-384, and it is valid now and for `peering_edge_min_valid_days` more days (GB-289 when something
+   is missing, GB-290 when something is wrong);
+2. for `ca`, refuses unless `peering_edge_rotation_ca_readback` is the new CA's sha256 as the partner read it
+   back (GB-303);
+3. copies the live pair into `.previous-<id>/` (0700), once per id, and moves the staged pair over it;
+4. runs `swanctl --load-creds` and `swanctl --rekey --ike <name> --reauth`, and waits up to
+   `peering_edge_rotation_confirm_seconds` (the DPD timeout) for an established SA with an installed CHILD SA;
+5. if none comes up, copies the old pair back, loads it, re-authenticates and stops (GB-302).
+
+A rerun with the same id moves nothing, so a killed run finishes. `peering_edge_rotation_retire: true`, after
+both sides pass phase 14, removes the set-aside key and keeps its certificate. During a partner's own CA
+rotation, `peering_edge_remote_ca_next_path` makes `remote.cacerts` accept their new CA beside the current one.
+`tests/test-rotation.sh` covers each step with a stand-in `swanctl` and certificates made at test time.
+
 ## Before you apply this to a host
 
 Nothing below is done by the role.
