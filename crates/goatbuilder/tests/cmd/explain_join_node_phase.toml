@@ -1,0 +1,33 @@
+# explain answers for a phase of join-node from the phase catalog, by number.
+bin.name = "goatbuilder"
+args = ["explain", "join-node", "12"]
+stdout = """
+join-node phase 12 mesh-ip [GATE]: mesh_ip and the mesh inventory filled in one change
+
+What it does:
+  Runs the config preflight without the placeholder allowance and checks that no TBD_ remains in the group's vars or the mesh inventory: the node's mesh IP is recorded in both, in one change.
+
+Why it exists:
+  Mesh IPs are not stable across re-enrolment; a value recorded in one place and not the other sends plays to the wrong address.
+
+What it changes:
+  Nothing.
+
+How to tell it worked:
+  the preflight passes and no TBD_ is left
+
+It runs:
+  ops/scripts/standup-config-preflight.py
+
+By hand:
+  goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 12 --to 12 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+
+If it failed:
+  a TBD_ remains, or the mesh IP is in one file only
+
+Then:
+  record the mesh IP in both, then resume with --from 12
+
+Read:
+  docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
+"""

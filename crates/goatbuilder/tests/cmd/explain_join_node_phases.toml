@@ -1,0 +1,22 @@
+# explain lists the phases of join-node from the phase catalog.
+bin.name = "goatbuilder"
+args = ["explain", "join-node"]
+stdout = """
+join-node: 15 phases. goatbuilder explain join-node <phase> answers for one, by number or id.
+
+  1  reach              MANUAL           reach the box on the site LAN
+  2  seed-key           T                seed the SSH key
+  3  repo-work          GATE             repo work first: group, inventory, pins, exclusions
+  4  quiet-apt          T                quiet apt on the node
+  5  baseline           A                host baseline, narrowed to the node
+  6  wireguard-first    A                WireGuard kernel modules, first pass
+  7  ca                 GATE             the CA this site trusts is its own
+  8  enrol-url          GATE             the site declares where its nodes enrol
+  9  enrol-preflight    GATE             enrollment preflight on the node
+ 10  enrol              A + GATE + T     enrol the node, check the kernel ACL plane, record its mesh address
+ 11  wireguard-again    A                WireGuard kernel modules again
+ 12  mesh-ip            GATE             mesh_ip and the mesh inventory filled in one change
+ 13  converge           A + GATE + SKIP  converge the node's class
+ 14  unmask-apt         T                unmask the apt timers
+ 15  proven             GATE             done means proven
+"""

@@ -1919,8 +1919,9 @@ pub enum Stage {
     #[command(name = super::backout::VERB)]
     Backout(super::backout::BackoutArgs),
     /// A two-driver peering's import of an edge result, as a hand-off object
-    /// names it. Not built yet: refuses with GB-267
-    /// (docs/design/federation-two-drivers.md).
+    /// names it: checked against the edge driver's confirm code, placed under
+    /// the working directory and journaled. Built for phase 1; a later phase's
+    /// import refuses with GB-267 (docs/design/federation-two-drivers.md).
     Import(super::handoff::ImportArgs),
 }
 
@@ -1931,7 +1932,10 @@ pub fn run(repo: &Path, stage: &Stage, mock: Option<&Path>) -> Result<Report> {
         Stage::Verb(_) | Stage::Backout(_) => {
             Err(anyhow!("the federation verbs and backout are run before this point"))
         }
-        Stage::Import(a) => Err(super::handoff::import_not_built(a)),
+        Stage::Import(a) => {
+            let work = a.work.clone().unwrap_or_else(|| super::env_or("FED_WORK", format!("/var/lib/goat-federation/{}", a.with)));
+            super::handoff::import(a, Path::new(&work))
+        }
         Stage::Plan {
             with,
             env,

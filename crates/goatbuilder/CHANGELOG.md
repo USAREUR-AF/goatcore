@@ -90,6 +90,18 @@ checkout (GB-276, new); and a peering that is not declared (GB-149). The
 undeclared peering now exits 1, refused, as GB-149 says and as `federate
 allocate`'s same refusal already did; it exited 2 (gate row C5) (#656).
 
+#### "Added: a two-driver peering's controller imports phase 1's edge result and runs its core half"
+
+On a peering declared `drivers: two`, `goatbuilder federate import <peering> 1
+<file> --sha256 <code>` takes in the edge driver's phase 1 result: it checks
+the file against the confirm code the edge driver printed, places it under
+`<work>/handoff/1/` and records its sha256 in the run journal. `goatbuilder
+federate <peering> --from 1` then hashes the file again, runs phase 1's core
+checks (preflight `--side core`), joins the two sides' results, and goes on to
+phase 2's hand-off. A result that cannot be imported is GB-277. The edge
+driver's own run, and the import of later phases, are not built yet (gate row
+B10).
+
 #### Fixed: federate status resumes from the first phase it cannot show passed
 
 `goatbuilder federate status` named the next command from the phase the last
@@ -98,6 +110,25 @@ recorded as an outcome this build does not know (for example `deferred`), it
 advised a `--from` past those phases, although such an outcome never counts as
 passed. It now advises `--from` the first phase the journal does not show
 passed. After a failure or an operator step, the advice is unchanged (#632).
+
+#### Added: explain answers for join-node's phases and deploy's steps, and their failures name the error
+
+`goatbuilder explain join-node [<phase>]` and `goatbuilder explain deploy
+[<step>]` answer from the phase catalog, as they already do for `standup` and
+`federate`: what the phase does, why, what it changes, how to tell it worked,
+what it runs and the command by hand. With no phase given, they list the
+verb's phases.
+
+When a join-node phase or a group's deploy play fails, its output is matched
+against the error catalog. The failure then carries an `interpreted` row: the
+error's code, its likely cause and fix, the log, and the command that runs
+that step again by hand. With no known error, the row gives the phase's own
+guidance.
+
+The standup runbook's phase table and the federate table in the sites chapter
+of the reference are now rendered from the phase catalog. The runbook's table
+has one row a phase, with what it does and how to tell it worked; `explain
+standup <phase>` gives the rest.
 
 #### "Added: join-node deploys the data router at a joining site"
 

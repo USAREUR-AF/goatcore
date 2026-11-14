@@ -635,6 +635,9 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                     // checkout is refused by ansible-preflight before any play runs).
                     let fatal: Vec<String> = text.lines().filter(|l| l.contains("fatal:") || l.contains("REFUSE")).take(3).map(|l| l.chars().take(200).collect()).collect();
                     checks.push(not_done(&format!("{}/{g}/deploy", p.name), format!("deploy FAILED — log {log}; {}", fatal.join(" | "))));
+                    // F5: the play's output, kept in its log, matched against the
+                    // error catalog under the deploy step's key.
+                    checks.extend(crate::explain_phase::interpreted("deploy", "deploy", Some(&log)));
                     rc_not_converged = true;
                     skipped_verify(g, "not checked: the deploy failed");
                     continue;
@@ -1126,6 +1129,50 @@ mod tests {
 #[cfg(test)]
 mod more_tests {
     use super::*;
+
+    /// The phase catalog (ops/phases/catalog.yaml) describes deploy as this file
+    /// runs it: one entry for each step the runner opens (`runner::phase`: prep,
+    /// fresh-source, transport, then deploy and verify once per group) and for
+    /// the plan's `playbook` row, and no other; and every script an entry's
+    /// `runs` names is one this code starts.
+    #[test]
+    fn the_phase_catalog_describes_deploys_steps() {
+        let source = include_str!("push.rs");
+        let opened = regex::Regex::new(r#"runner::phase\(\s*&?(?:format!\()?"([a-z-]+)"#).unwrap();
+        let mut steps: std::collections::BTreeSet<String> = opened
+            .captures_iter(source)
+            .map(|c| c[1].to_string())
+            .collect();
+        assert!(
+            source.contains("/playbook\", p.name)"),
+            "the plan's playbook row"
+        );
+        steps.insert("playbook".to_string());
+        let entries = goat_errors::phases::phases().of("deploy");
+        let keys: std::collections::BTreeSet<String> =
+            entries.iter().map(|e| e.phase.to_string()).collect();
+        assert_eq!(
+            keys, steps,
+            "the catalog's deploy entries are the steps push.rs runs"
+        );
+        let code = [source, include_str!("fresh.rs"), include_str!("secrets.rs")].concat();
+        for e in &entries {
+            for part in e.runs.split(", ") {
+                let Some(w) = part.split_whitespace().next() else {
+                    continue;
+                };
+                if !w.contains('/') {
+                    continue;
+                }
+                let name = w.rsplit('/').next().unwrap_or(w);
+                assert!(
+                    code.contains(name),
+                    "deploy step {}: `runs` names {w}, which deploy does not start",
+                    e.phase
+                );
+            }
+        }
+    }
 
     fn repo() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()

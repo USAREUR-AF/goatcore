@@ -10,10 +10,15 @@
 //! in its text. A two-driver run at any later phase that needs the edge (3,
 //! 11 to 14) is refused before acting (GB-267), because its object differs
 //! (phase 3's result is the edge half, 11 to 13 carry files, 14 binds by id)
-//! and is not built; so is `--side edge`. Not built either: `import`, each
-//! phase's core half against an imported result, and `status` showing the
-//! object. A two-driver peering therefore stops at its first phase that needs
-//! the edge and goes no further.
+//! and is not built; so is `--side edge`.
+//!
+//! Built for phase 1: `import` ([`import`]) checks the edge result against
+//! the confirm code the edge driver printed, places it under
+//! `<work>/handoff/1/` and journals its sha256 as an `operator-step` on phase
+//! 1; the controller's `--from 1` then hashes it again ([`check_imported`]),
+//! runs phase 1's core half (preflight `--side core`) and joins the two sides'
+//! results ([`join_phase_1`]). Not built: the edge driver's run, the import and
+//! core half of phase 2 and later, and `status` showing the object.
 
 use crate::Check;
 use std::path::Path;
@@ -111,8 +116,8 @@ pub struct EdgeRunArgs {
 }
 
 /// `goatbuilder federate import <partner> <phase> <result> --sha256 <code>`:
-/// the hand-off object's `import`, accepted so that it parses, and refused
-/// until the import is built.
+/// the hand-off object's `import`. Built for phase 1 ([`import`]); a later
+/// phase's import is refused as not built (GB-267).
 #[derive(clap::Args, Debug, Clone)]
 pub struct ImportArgs {
     /// The peering name (the counterparty, as declared).
@@ -125,6 +130,288 @@ pub struct ImportArgs {
     /// first digits).
     #[arg(long, value_name = "CODE")]
     pub sha256: String,
+    /// The working directory (default `$FED_WORK`, else /var/lib/goat-federation/<peering>).
+    #[arg(long)]
+    pub work: Option<String>,
+}
+
+/// The edge result cannot be imported (gate row B10).
+pub const UNIMPORTABLE: &str = "GB-277";
+
+/// The phases whose import and core half are built.
+pub fn core_half_built(n: u32) -> bool {
+    n == 1
+}
+
+/// The result a phase-`n` hand-off names, under the writer's `<work>`.
+pub fn result_of(n: u32) -> String {
+    format!("handoff/{n}/edge.json")
+}
+
+/// The fewest hex digits of the sha256 a confirm code must give: the edge
+/// driver prints 32.
+const CODE_DIGITS: usize = 32;
+
+fn hex_sha256(b: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(b)
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect()
+}
+
+fn unimportable(why: String) -> anyhow::Error {
+    goat_errors::coded(
+        UNIMPORTABLE,
+        format!("{why}; nothing was placed or recorded"),
+    )
+    .into()
+}
+
+/// A confirm code as typed: its hex digits, lowercased, spaces and dashes
+/// between groups dropped. None when it holds anything else.
+fn code_digits(code: &str) -> Option<String> {
+    let d: String = code
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .collect::<String>()
+        .to_lowercase();
+    (!d.is_empty() && d.chars().all(|c| c.is_ascii_hexdigit())).then_some(d)
+}
+
+/// Whether `doc` is phase 1's edge result for `with`: preflight's result
+/// (`goat-federation-preflight/v1`) for the edge side's checks.
+fn phase_1_edge_result(doc: &serde_json::Value, with: &str) -> Result<(), String> {
+    if doc["schema"] != "goat-federation-preflight/v1" {
+        return Err(format!(
+            "it is not a phase 1 result (schema {}, not goat-federation-preflight/v1)",
+            doc["schema"]
+        ));
+    }
+    if doc["peering"] != with {
+        return Err(format!(
+            "it is peering {}'s result, not {with}'s",
+            doc["peering"]
+        ));
+    }
+    if doc["side"] != "edge" {
+        return Err(format!(
+            "it holds the {} side's checks, not the edge's",
+            doc["side"]
+        ));
+    }
+    if doc["ready"].as_bool().is_none() || !doc["results"].is_array() {
+        return Err("it has no ready flag or no results".into());
+    }
+    Ok(())
+}
+
+/// `goatbuilder federate import <with> <phase> <result> --sha256 <code>`: the
+/// controller takes in an edge result. The code is the one the edge driver
+/// printed: at least the first 32 hex digits of the file's sha256. The file
+/// must be this phase's edge result for this peering, and this peering's
+/// journal must be waiting on phase `phase` for the edge. Then the file is
+/// placed at `<work>/handoff/<phase>/edge.json` and its whole sha256 is
+/// journaled as an `operator-step` confirmation on the phase, which the
+/// phase's core half reads (`--from <phase>`). Anything else is GB-277, and
+/// nothing is placed or recorded.
+pub fn import(a: &ImportArgs, work: &Path) -> anyhow::Result<crate::Report> {
+    if !core_half_built(a.phase) {
+        return Err(import_not_built(a));
+    }
+    let bytes = std::fs::read(&a.result).map_err(|e| {
+        unimportable(format!(
+            "import: {} cannot be read ({e})",
+            a.result.display()
+        ))
+    })?;
+    let sha = hex_sha256(&bytes);
+    let code = code_digits(&a.sha256).ok_or_else(|| {
+        unimportable(format!(
+            "import: the confirm code '{}' is not hex digits",
+            a.sha256
+        ))
+    })?;
+    if code.len() < CODE_DIGITS {
+        return Err(unimportable(format!("import: the confirm code gives {} hex digits; the edge driver prints {CODE_DIGITS}, and fewer do not bind the file", code.len())));
+    }
+    if !sha.starts_with(&code) {
+        return Err(unimportable(format!("import: {} is not the file the edge driver confirmed: its sha256 begins {}, and the code given is {}", a.result.display(), &sha[..CODE_DIGITS], &code[..CODE_DIGITS.min(code.len())])));
+    }
+    let doc: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| unimportable(format!("import: {} is not JSON ({e})", a.result.display())))?;
+    phase_1_edge_result(&doc, &a.with).map_err(|why| {
+        unimportable(format!(
+            "import: {} is not phase {}'s edge result for {}: {why}",
+            a.result.display(),
+            a.phase,
+            a.with
+        ))
+    })?;
+    let _lock = super::lock::PeeringLock::take(work, &a.with)?;
+    let Some(mut state) = super::state::State::read(work)? else {
+        return Err(unimportable(format!("import: no run of {} is waiting on the edge driver here ({} has no run journal): run goatbuilder federate {} --from {} first", a.with, work.display(), a.with, a.phase)));
+    };
+    if state.peering != a.with {
+        return Err(unimportable(format!(
+            "import: {} holds peering {}'s journal, not {}'s",
+            work.display(),
+            state.peering,
+            a.with
+        )));
+    }
+    let waiting = state.phases.get(&a.phase).is_some_and(|p| {
+        p.outcome == super::state::Outcome::Stopped && p.detail.starts_with(WAITING)
+    });
+    if !waiting {
+        return Err(unimportable(format!("import: peering {} is not waiting on the edge driver at phase {}: run goatbuilder federate {} --from {} to reach its hand-off first", a.with, a.phase, a.with, a.phase)));
+    }
+    let rel = result_of(a.phase);
+    let dest = work.join(&rel);
+    let dir = dest.parent().expect("a hand-off result has a folder");
+    std::fs::create_dir_all(dir)
+        .map_err(|e| super::lock::io_error(format!("cannot create {}", dir.display()), e))?;
+    let tmp = dir.join(format!(".edge.json.{}", std::process::id()));
+    std::fs::write(&tmp, &bytes)
+        .map_err(|e| super::lock::io_error(format!("cannot write {}", tmp.display()), e))?;
+    std::fs::rename(&tmp, &dest)
+        .map_err(|e| super::lock::io_error(format!("cannot place {}", dest.display()), e))?;
+    let run = state.open_run("import", a.phase, a.phase, false, "");
+    let bound = format!("sha256:{sha}");
+    let mut values = std::collections::BTreeMap::new();
+    values.insert("edge_result".to_string(), rel.clone());
+    state.confirm(&run, a.phase, "operator-step", "flag", &bound, values);
+    state.close_run(&run, "passed");
+    state.save(work)?;
+    let rows = vec![
+        Check { name: "import".into(), ok: true, detail: format!("phase {}'s edge result for {} is the file the edge driver confirmed ({bound}); placed at {}", a.phase, a.with, dest.display()), fix: None },
+        Check { name: "next".into(), ok: true, detail: format!("carry on here: goatbuilder federate {} --from {}", a.with, a.phase), fix: None },
+    ];
+    Ok(crate::Report::new(
+        "federate-import",
+        rows,
+        crate::EXIT_REFUSED,
+    ))
+}
+
+/// The edge result imported for phase `n` and the sha256 it was imported at,
+/// from the journal's newest `operator-step` on `n` that names one.
+pub fn imported(state: &super::state::State, n: u32) -> Option<(String, String)> {
+    state
+        .confirmations
+        .iter()
+        .rev()
+        .find(|c| c.kind == "operator-step" && c.phase == n)
+        .and_then(|c| {
+            c.values
+                .get("edge_result")
+                .map(|f| (f.clone(), c.bound_to.clone()))
+        })
+}
+
+/// The imported edge result for phase `n`, hashed again before it is read:
+/// its document when its sha256 is the one journaled, else the stop.
+pub fn check_imported(
+    work: &Path,
+    n: u32,
+    file: &str,
+    bound: &str,
+) -> Result<serde_json::Value, Check> {
+    let path = work.join(file);
+    let stop = |why: String| {
+        Check {
+        name: "handoff".into(),
+        ok: false,
+        detail: format!("{WAITING}: phase {n}'s imported edge result {why}, so phase {n}'s core half did not run"),
+        fix: Some(format!("bring the edge driver's file again and import it: goatbuilder federate import <peering> {n} <file> --sha256 <code>")),
+    }
+    };
+    let bytes = std::fs::read(&path)
+        .map_err(|e| stop(format!("{} cannot be read ({e})", path.display())))?;
+    let sha = format!("sha256:{}", hex_sha256(&bytes));
+    if sha != bound {
+        return Err(stop(format!(
+            "{} has changed since it was imported (it is {sha}, and {bound} was imported)",
+            path.display()
+        )));
+    }
+    serde_json::from_slice(&bytes)
+        .map_err(|e| stop(format!("{} is not JSON ({e})", path.display())))
+}
+
+/// The edge checks that do not pass in a phase 1 edge result, as `check
+/// outcome code` words, or nothing when it is ready.
+pub fn phase_1_edge_problems(edge: &serde_json::Value) -> Vec<String> {
+    let bad = |o: &str| o == "FAIL" || o == "BLOCKED";
+    let mut out: Vec<String> = edge["results"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| bad(r["outcome"].as_str().unwrap_or_default()))
+        .map(|r| {
+            format!(
+                "{} {} {}",
+                r["check"].as_str().unwrap_or("?"),
+                r["outcome"].as_str().unwrap_or("?"),
+                r["code"].as_str().unwrap_or("")
+            )
+            .trim()
+            .to_string()
+        })
+        .collect();
+    if out.is_empty() && edge["ready"] != true {
+        out.push("the edge result says it is not ready".into());
+    }
+    out
+}
+
+/// Phase 1's two sides joined into `<work>/preflight/result.json`: the core
+/// half's result there and the imported edge result, written as one result
+/// for both sides, ready only when both are.
+pub fn join_phase_1(work: &Path, edge: &serde_json::Value) -> anyhow::Result<bool> {
+    let path = work.join("preflight/result.json");
+    let core: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| {
+            anyhow::anyhow!(
+                "phase 1's core half left no result at {} ({e})",
+                path.display()
+            )
+        })?)
+        .map_err(|e| anyhow::anyhow!("{} is not JSON ({e})", path.display()))?;
+    anyhow::ensure!(
+        core["side"] == "core",
+        "{} holds the {} side's result, not the core half's",
+        path.display(),
+        core["side"]
+    );
+    let ready = core["ready"] == true && edge["ready"] == true;
+    let tag = |side: &'static str, v: &serde_json::Value| -> Vec<serde_json::Value> {
+        v["results"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mut r| {
+                r["side"] = serde_json::Value::from(side);
+                r
+            })
+            .collect()
+    };
+    let mut results = tag("edge", edge);
+    results.extend(tag("core", &core));
+    let joined = serde_json::json!({
+        "schema": core["schema"],
+        "peering": core["peering"],
+        "only": [],
+        "side": "both",
+        "ready": ready,
+        "results": results,
+        "joined": {"edge": "imported (handoff/1/edge.json)", "core": "this run"},
+    });
+    let tmp = path.with_extension("json.joining");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&joined)? + "\n")?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(ready)
 }
 
 /// The refusal of `import` while it is not built.
@@ -252,7 +539,7 @@ pub fn stop(with: &str, n: u32, commit: &str) -> Stop {
         Check {
             name: "note".into(),
             ok: true,
-            detail: "the edge driver's run, `import` and the core half against an imported result are not built yet (docs/design/federation-two-drivers.md, What has to be built); this stop is".into(),
+            detail: "the edge driver's run is not built yet, nor the import and core half of any phase after 1 (docs/design/federation-two-drivers.md, What has to be built); this stop is, and phase 1's import and core half are".into(),
             fix: None,
         },
     ];

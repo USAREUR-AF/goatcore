@@ -36,8 +36,10 @@ Commands:
   backout  Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation,
            edge router, republisher, forwarder mapping and core admission, and leave every other
            peering and the core as they were
-  import   A two-driver peering's import of an edge result, as a hand-off object names it. Not built
-           yet: refuses with GB-267 (docs/design/federation-two-drivers.md)
+  import   A two-driver peering's import of an edge result, as a hand-off object names it: checked
+           against the edge driver's confirm code, placed under the working directory and journaled.
+           Built for phase 1; a later phase's import refuses with GB-267
+           (docs/design/federation-two-drivers.md)
   help     Print this message or the help of the given subcommand(s)
 
 Arguments:

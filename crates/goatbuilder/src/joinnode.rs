@@ -493,6 +493,10 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         if !status.success() {
             let rc = status.code().unwrap_or(1);
             checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the node is left partway through phase {}. `--dry-run` prints this phase's command and the gate that proves it.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
+            // F5: the phase's output, as the runner kept it, matched against
+            // the error catalog (explain_phase::interpreted), as standup does.
+            let id = ph.n.to_string();
+            checks.extend(crate::explain_phase::interpreted("join-node", &id, crate::explain_phase::runner_log(&id).as_deref()));
             exit = EXIT_REFUSED;
             break;
         }
@@ -693,6 +697,136 @@ mod tests {
         assert_eq!(rows[1].name, "not-run");
         assert_eq!(rows[1].detail, "not read: ops/goatbuilder/endstate/endstate.py is not in this checkout; this list of what the site does not run is left out");
         assert!(rows.iter().all(|r| r.ok), "a missing list is a stated line, not a refusal");
+    }
+
+    /// The scripts and plays a planned command runs: every `*.yml`, `*.py` and
+    /// `*.sh` word it names, by file name, except the group_vars files a step
+    /// only reads.
+    fn command_runs(cmd: &str) -> std::collections::BTreeSet<String> {
+        let re = regex::Regex::new(r"[A-Za-z0-9_./-]+\.(?:yml|py|sh)\b").unwrap();
+        re.find_iter(cmd)
+            .map(|m| m.as_str())
+            .filter(|w| !w.contains("group_vars/"))
+            .map(|w| w.rsplit('/').next().unwrap_or(w).to_string())
+            .collect()
+    }
+
+    /// The scripts and plays an entry's `runs` names: each comma-separated
+    /// part's first word, by its file name.
+    fn runs_names(runs: &str) -> Vec<String> {
+        runs.split(", ")
+            .filter_map(|part| part.split_whitespace().next())
+            .filter(|w| {
+                w.contains('/') || w.ends_with(".yml") || w.ends_with(".py") || w.ends_with(".sh")
+            })
+            .map(|w| w.rsplit('/').next().unwrap_or(w).to_string())
+            .collect()
+    }
+
+    /// The phase catalog (ops/phases/catalog.yaml) describes join-node as its
+    /// plan is, for every class and site shape: a founder's and a joiner's core
+    /// node (signal federation on, and declared off), a founder's and a joiner's
+    /// obs node, a breakglass and a network-jump node, and a run through the env
+    /// door. Every phase the plan holds has an entry and every entry is a phase;
+    /// a phase's `kind` is the kinds of its steps; and its `runs` names exactly
+    /// the scripts and plays its steps run.
+    #[test]
+    fn the_phase_catalog_describes_join_nodes_plan() {
+        let t = joiner_checkout();
+        let gv = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gv).unwrap();
+        std::fs::write(gv.join("vars.yml"), "goatnet_founder: true\n").unwrap();
+        std::fs::write(
+            t.path().join("ops/ansible/utility-host-bootstrap.yml"),
+            "---\n",
+        )
+        .unwrap();
+        let off = joiner_checkout();
+        std::fs::write(
+            off.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"),
+            "goatnet_founder: false\njoin_founder_site: zagros\nsite_enrollment_dns: netbird.example.net\nsignal_federation_absent_reason: not yet\n",
+        )
+        .unwrap();
+        let shapes: Vec<(&Path, Options)> = vec![
+            (t.path(), opts("zagros", "core", "zagros")),
+            (t.path(), opts("zagros-b", "core", "zagros")),
+            (off.path(), opts("zagros-b", "core", "zagros")),
+            (t.path(), opts("zagros", "obs", "zagros")),
+            (t.path(), opts("zagros-b", "obs", "zagros")),
+            (t.path(), opts("zagros", "breakglass", "zagros")),
+            (t.path(), opts("zagros", "network-jump", "zagros")),
+            (
+                t.path(),
+                Options {
+                    via: "door",
+                    ..opts("zagros", "core", "zagros")
+                },
+            ),
+        ];
+        let mut planned: std::collections::BTreeMap<
+            u32,
+            (std::collections::BTreeSet<String>, Vec<String>),
+        > = Default::default();
+        for (r, o) in &shapes {
+            for p in plan(r, o).unwrap() {
+                let slot = planned.entry(p.n).or_default();
+                slot.0.insert(p.kind.to_string());
+                if p.kind != "MANUAL" {
+                    slot.1.push(p.cmd);
+                }
+            }
+        }
+        let entries = goat_errors::phases::phases().of("join-node");
+        let keys: std::collections::BTreeSet<String> =
+            entries.iter().map(|e| e.phase.to_string()).collect();
+        let want: std::collections::BTreeSet<String> =
+            planned.keys().map(|n| n.to_string()).collect();
+        assert_eq!(
+            keys, want,
+            "the catalog's join-node entries are the phases the plan can hold"
+        );
+        let source = include_str!("joinnode.rs");
+        let mut wrong = Vec::new();
+        for e in &entries {
+            let n: u32 = e.phase.to_string().parse().unwrap();
+            let (kinds, cmds) = &planned[&n];
+            let said: std::collections::BTreeSet<String> =
+                e.kind.split(" + ").map(str::to_string).collect();
+            if &said != kinds {
+                wrong.push(format!(
+                    "phase {n}: kind `{}`, the plan's steps are {kinds:?}",
+                    e.kind
+                ));
+            }
+            let names = runs_names(&e.runs);
+            for c in cmds {
+                for r in command_runs(c) {
+                    if !names.contains(&r) {
+                        wrong.push(format!(
+                            "phase {n}: a planned step runs {r}, which its `runs` does not name"
+                        ));
+                    }
+                }
+            }
+            for name in &names {
+                if !cmds.iter().any(|c| c.contains(name.as_str()))
+                    && !source.contains(name.as_str())
+                {
+                    wrong.push(format!(
+                        "phase {n}: `runs` names {name}, which no planned step runs"
+                    ));
+                }
+            }
+        }
+        wrong.dedup();
+        assert!(
+            wrong.is_empty(),
+            "the catalog does not match join-node's plan:\n  {}",
+            wrong.join("\n  ")
+        );
+        let p13 =
+            goat_errors::phases::explain_phase("join-node", "converge").expect("phase 13 by id");
+        assert_eq!(p13.phase.to_string(), "13");
     }
 
     /// A checkout with one founder and one joiner site, for the plan tests

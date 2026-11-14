@@ -30,25 +30,31 @@ existing goatnet.
 ## `federate`
 
 **Purpose.** Federate this goatnet with another sovereign goatnet. Today one
-run takes the peering through the fourteen phases below; it stops at the two
-`MANUAL` phases and resumes with `--from`.
+run takes the peering through the fourteen phases below; it stops at phase 5
+(`CONFIRM`) and phase 10 (`MANUAL`) and resumes with `--from`. The table is
+rendered from the phase catalog (`ops/phases/catalog.yaml`); `goatbuilder
+explain federate <phase>` prints one phase's whole entry.
+
+<!-- BEGIN generated: phase-catalog federate summary -->
 
 | Phase | Kind | What it does |
 |---|---|---|
-| 1 | GATE | peering preflight, including the peering directory |
+| 1 | GATE | preflight, fail-closed |
 | 2 | A | prepare what the package measures: the federation interface and the SPIRE bundle |
-| 3 | T | our half, read from the running system |
-| 4 | T | lint our package against the specification |
-| 5 | MANUAL | exchange packages and CA certificates through the peering directory; read the verifying key and CA fingerprint aloud and record both keys |
-| 6 | T | compose one agreement with one digest |
-| 7 | T | verify the agreement from our side |
-| 8 | T | mint the peering leaf certificates from the agreement |
-| 9 | T | render the access rules and configuration; the only writer |
-| 10 | MANUAL | review what was rendered; admit the edge on our core |
-| 11 | A | open the transport the agreement chose, or refuse when no play stands it up |
-| 12 | A | deploy the edge router, then the republisher on our core host |
-| 13 | A | federate the SPIRE trust domains |
-| 14 | GATE | acceptance, once per offered release set: it carries, it refuses, it round-trips |
+| 3 | T | `init` — our half, measured |
+| 4 | T | `lint` |
+| 5 | **CONFIRM** | exchange through the directory; read the key and CA fingerprint **aloud** |
+| 6 | T | `compose` |
+| 7 | T | `verify` |
+| 8 | T | validate or mint the peering leaves |
+| 9 | T | `apply --confirm` |
+| 10 | MANUAL | admit the edge on our core |
+| 11 | A | open the transport the AGREEMENT selected |
+| 12 | A | deploy the edge, then the outbound republisher (`peering-zenoh-edge.yml`, then `peering-republisher.yml` with `--limit <peering>_core`) |
+| 13 | A | federate the SPIRE trust domains (ADR 1157 step 2) |
+| 14 | GATE | acceptance: carries, refuses, and round-trips |
+
+<!-- END generated: phase-catalog federate summary -->
 
 Phase 1 needs `FED_DIRECTORY_URL`, `FED_COUNTERPARTY_ID` and `FED_SIGNING_KEY`
 (`FED_NO_DIRECTORY=1` only for a counterparty that can reach no directory).
