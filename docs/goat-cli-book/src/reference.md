@@ -1211,7 +1211,9 @@ Show fabric health (per-class load vs capacity + green/amber/red) and, with --me
 | `--watch` | Live-refresh: keep printing each health beat as it arrives |  |
 | `--peer <PEER>` | Also show this producer's own footprint (its rate, class shares, rank, near-limit). Subscribes ops/fabric/footprint/<peer>. Fabric only (rejected with a non-fabric --domain) |  |
 | `--me` | Shorthand for `--peer <your-own-id>`, resolved from the profile |  |
-| `--json` | One-shot only: print one JSON object for the beat — domain, scope, colour, age, sample count — or `"beat": false` with the reason when none arrived in the window. The machine contract the acceptance assay grades (docs/design/goatnet-acceptance-suite.md). Not for `--domain crypto`, whose beat has no colour |  |
+| `--json` | One-shot only: print one JSON object for the beat — domain, scope, colour, age, sample count — or `"beat": false` with the reason when none arrived in the window. The machine contract the acceptance assay grades (docs/design/goatnet-acceptance-suite.md). Not for `--domain crypto`, whose beat has no colour. `--domain peer` adds `detail` (the site verdict and every peer row). On a machine with its own Zenoh identity, `own_zid` and `own_verdict` (the router's verdict document on ops/peer/verdict/<own zid>, or null) are added |  |
+| `--zid <ZIDS>` | `--domain peer` only: also listen for the router's verdict on this Zenoh ID, on ops/peer/verdict/<ID>. A verdict is keyed by the router that STAMPED the samples (the ID in a peer row), not by a client. 1 to 32 lowercase hex characters, as the router prints it. Repeatable |  |
+| `--peering <PEERING>` | `--domain peer` only: also listen for the verdict on one peering, on ops/peer/verdict/peering/<NAME>. The name is the partner's sovereign id: 2 to 16 characters of lowercase a-z, 0-9 and `-` |  |
 
 ## `goat flow`
 
