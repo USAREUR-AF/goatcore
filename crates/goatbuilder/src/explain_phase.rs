@@ -590,6 +590,25 @@ mod tests {
         }
     }
 
+    /// F5 on phase 11: the peering-wg read-back that found the interface without
+    /// the agreed peer and address is its own error (GB-271), not X-ANSIBLE-003's
+    /// "a secret the play templates was empty". The fixture is the play's real
+    /// output from a kill-and-resume run.
+    #[test]
+    fn the_peering_wg_interface_read_back_names_the_link_not_a_secret() {
+        let out = include_str!("../tests/fixtures/failed-phase/peering-wg-interface-readback.log");
+        let f = failed_phase("federate", 11, out, None).unwrap();
+        assert_eq!(f.code.as_deref(), Some("GB-271"), "{f:?}");
+        let e = goat_errors::explain("GB-271").unwrap();
+        assert_eq!(f.cause, e.causes[0]);
+        assert!(!f.cause.contains("secret"), "{f:?}");
+        assert!(f.fix.contains("systemctl restart goat-peering-wg@"), "{f:?}");
+        assert!(f.fix.contains("--from 11"), "{f:?}");
+        let d = f.detail();
+        assert!(d.contains("goatbuilder explain GB-271"), "{d}");
+        assert!(!d.contains("GB-007"), "{d}");
+    }
+
     /// Output that names no known error gets the phase catalog's own guidance,
     /// never a lexical guess.
     #[test]
