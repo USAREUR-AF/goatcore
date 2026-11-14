@@ -785,18 +785,19 @@ mod tests {
     }
 
     #[test]
-    fn a_run_is_refused_up_front_when_its_first_edge_phase_is_after_2() {
+    fn a_run_is_refused_up_front_when_its_first_edge_phase_is_after_3() {
         let range = |from: u32, to: u32| move |n: u32| n >= from && n <= to;
-        // From 1 or 2: the stop hands it off before any later phase.
+        // From 1, 2 or 3: the stop hands it off before any later phase.
         assert!(refused_before_running(range(1, 14)).is_none());
         assert!(refused_before_running(range(2, 13)).is_none());
+        assert!(refused_before_running(range(3, 3)).is_none());
+        assert!(refused_before_running(range(3, 10)).is_none());
         // 4 to 10 needs no edge (8 and 10 are core): nothing to refuse.
         assert!(refused_before_running(range(4, 10)).is_none());
         // Deploy (10 to 13) and its --from 11 reach 11 on the edge.
         for (from, to, n) in [
             (10, 13, 11),
             (11, 13, 11),
-            (3, 3, 3),
             (4, 11, 11),
             (14, 14, 14),
         ] {
