@@ -1339,3 +1339,19 @@ def test_without_the_flag_every_file_written_and_line_printed_is_as_before(serve
     assert not any(f.endswith(d.SINGLE_SLOT_MARK) for f in files)
     assert "WARN    package signature" in printed[4][1]
     assert not any("/packages/" in r for r in state["hosted"])
+
+
+@needs_ed25519
+def test_the_directory_signer_never_signs_an_acceptance_result_statement():
+    """The key that signs directory requests and entries also signs acceptance
+    results. A request statement begins `saltlick-request/v1` and an entry is a
+    canonical JSON object, so neither begins with the result's first line, and
+    the signer refuses that line outright."""
+    seed = d.load_seed(str(KEY["xab"]))
+    statement = d.request_statement("PUT", "xab", b"{}", PUB["xab"])
+    assert statement.startswith(b"saltlick-request/v1\n")
+    assert d.canonical({"a": 1}).startswith(b"{")
+    assert not statement.startswith(d.RESULT_DOMAIN)
+    assert len(d.sign(seed, statement)) == 64
+    with pytest.raises(ValueError, match="acceptance-result"):
+        d.sign(seed, d.RESULT_DOMAIN + b"agreement sha256:00\n")

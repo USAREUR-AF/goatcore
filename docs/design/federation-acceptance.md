@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, report signing and any automatic bilateral gate |
+| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, the command publishing and verifying a partner's signed result (the signing library is built, §6.1), and any automatic bilateral gate |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
@@ -399,11 +399,79 @@ own core and edge only: no counterparty surface, no shared credentials, no servi
    that wrote ours, and a malformed one is a FAIL. Exit 0 when
    the required scope of both sides passed, 1 on any failure, 3 otherwise.
 
-A signature would only say who reported a result, not whether their infrastructure is honest, and
-no report-signing identity exists yet. So every combined result says that peer-reported rows are
+A signature would only say who reported a result, not whether their infrastructure is honest.
+Until a command verifies one (§6.1), every combined result says that peer-reported rows are
 not authenticated and that it is for the two operators to review; nothing gates on it, and
-phase 14's own exit status stays its local verdict. Report signing, its key lifecycle and an
-automatic bilateral gate are not built.
+phase 14's own exit status stays its local verdict. An automatic bilateral gate is not built.
+
+### 6.1 A partner's signed result
+
+**Built, library only** (`crates/goat-federation/src/acceptance_sig.rs`, unit tests only; no
+command reaches it yet). It is the first part of gate row B2, in which the command completes
+the partner's half of acceptance.
+
+**The key.** Each side signs its result with its federation signing key
+(`secrets.federation.signing_key`), the Ed25519 key that signs its federation package at
+phase 3. The partner verifies under the key bound to that side at phase 5 and confirmed on
+the call, never under a key the result carries. No second key and no second binding is made.
+
+**What is signed.** Not the result as JSON: a result can hold `null` and fractions, which the
+package's canonical form refuses. The signature covers a fixed-format statement, each line
+ending in a newline:
+
+```text
+goat-acceptance-result/v1
+agreement sha256:<the agreement's sha256>
+session <session id>
+attempt <n>
+by <the signer's sovereign id>
+for <the verifier's sovereign id>
+echoes <the verifier's challenge, as the signer's run observed it>
+result sha256:<the sha256 of the result file's exact bytes>
+key sha256:<the sha256 of the signer's 32-byte public key>
+```
+
+Each field is held to its shape first (the session id, sovereign ids and challenge as in §6,
+the digests as 64 lowercase hex characters), so no field can add a line. The statement is
+published beside the result as a detached document, `goat-acceptance-signature/v1`, which
+carries the same fields and the 64-byte signature in standard base64.
+
+**Why the key can sign both.** Every message this key signs begins with a byte that tells its
+kind:
+
+| What | Signed by | Begins with |
+|---|---|---|
+| a federation package (phase 3) | `goat federate init`, `goatbuilder federate init` | `{`: the package's signing input is the canonical form of a JSON object |
+| the conformance attestation | `federate verify` | `conformance ok for ` |
+| a peering directory entry | `directory.py` | `{`: the entry's canonical JSON |
+| a peering directory request | `directory.py`, `directory_withdraw.py` | `saltlick-request/v1` |
+| an acceptance result | `acceptance_sig.rs` | `goat-acceptance-result/v1` |
+
+So no package, attestation or directory signature can verify as a result's, and no result's
+as any of them. Both signers also refuse the other's input: the package signer
+(`verbs::sign_with`) and the directory signer refuse a message that begins
+`goat-acceptance-result/v1`, and a result is signed only through `acceptance_sig.rs`. Tests:
+`what_phase_3_signs_for_a_package_can_never_begin_with_the_result_domain` reads every vector
+package's signing input; `a_package_signature_is_not_a_result_signature` and, in
+`compose.rs`, `a_result_signature_is_not_a_package_signature` check the two directions;
+`tests/test_fed_directory.py` holds the directory signer to it.
+
+**Verifying.** A partner's result is refused with GB-273, before its signature is checked,
+when it is for another agreement, session or attempt, is by or for another party, or does not
+echo our challenge. It is refused with GB-272 when its signature document is malformed, names
+a key other than the one bound to the partner, signs other result bytes, or does not verify.
+
+**Rotation and revocation.** A result's signature is bound to the key in force for the
+partner when it was signed: the verified key's sha256 and the key itself are stored beside the
+evidence, in `<evidence>/bilateral/`. Rotating or revoking a party's federation key therefore
+also invalidates the acceptance evidence signed with it: that evidence still says which key
+signed it, but a result is never verified again under a later key, and the peering needs a new
+acceptance session to hold current evidence.
+
+The acceptance evidence is the files under `<evidence>/bilateral/` and, while a session runs,
+each side's result and signature under the session's key on its own core. Publishing them on
+the core, deriving the session from the agreement, and the command combining both halves are
+the next parts of B2, not built.
 
 ## 7. Publishing `exchanging`
 

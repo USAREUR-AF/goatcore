@@ -614,6 +614,38 @@ entries:
       - "\"msg\": \"The interface does not hold what the agreement says"
     exit: 1
 
+  - code: GB-272
+    tool: goatbuilder
+    title: the partner's acceptance result does not verify
+    what: "In a bilateral acceptance session each side signs its phase 14 result and the other verifies it under the key bound to that side at phase 5, the same key that signs its federation package. The signature document beside the partner's result did not verify: it is malformed, it names another key, the result read is not the one it signs, or the signature does not verify under the bound key. Nothing from it is combined (docs/design/federation-acceptance.md §6.1)."
+    causes:
+      - "the result or its signature document was altered, or the result was read before the partner finished writing it"
+      - "the partner signed with a key other than the one bound to them at phase 5 (their federation key was rotated, or the wrong key file was used)"
+      - "the signature document is not `goat-acceptance-signature/v1`, or a member is missing or malformed"
+    fixes:
+      - "check with the partner, on the call, the key fingerprint confirmed at phase 5 and the one their signature document names"
+      - "ask the partner to run phase 14 again in the same session, so a new result and signature are published"
+    read: docs/design/federation-acceptance.md
+    matches:
+      - "^GB-272: "
+    exit: 2
+
+  - code: GB-273
+    tool: goatbuilder
+    title: the partner's acceptance result is not from this session
+    what: "The partner's signed acceptance result is for another agreement, session or attempt, is signed by or for another party, or does not echo the challenge issued to us, so it cannot be from this session's samples. It is refused before its signature is checked, and nothing from it is combined (docs/design/federation-acceptance.md §6.1)."
+    causes:
+      - "an earlier session's or attempt's result was read again (a replay, or a result left from before)"
+      - "the two sides hold different agreements: the digests read aloud at phase 6 differ"
+      - "our own result was read back as if it were the partner's"
+    fixes:
+      - "compare the agreement digest and the session id with the partner on the call"
+      - "run phase 14 again on both sides in one session"
+    read: docs/design/federation-acceptance.md
+    matches:
+      - "^GB-273: "
+    exit: 2
+
   - code: GB-261
     tool: goatbuilder
     title: the release's signature does not verify, so the update refuses

@@ -1,0 +1,9 @@
+goat-acceptance-result/v1
+agreement sha256:3d2bd7e59ac1d1cdb4fe6a7b4e3a85f0cba0ddd04a4ab1a63e64ab1a8b7b0f5d
+session ses-xaa-xab-20261109-1
+attempt 1
+by xab
+for xaa
+echoes 6f1c2a9e4b7d03e5a8c1f2b3d4e5f607
+result sha256:5b84bf99e8e71b9f13b0d50fba403ac92b64d17730be3c6045757653f2be809e
+key sha256:c7fe27c0c119754394a6b744d7d46acd69e67d6e3e2641ffcbd3b75c7571131d

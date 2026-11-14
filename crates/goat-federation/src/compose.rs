@@ -440,7 +440,10 @@ mod tests {
             ))
             .unwrap(),
         );
-        assert!(verify_signature(&pkg, &keys).is_none(), "the vector package verifies as it is");
+        assert!(
+            verify_signature(&pkg, &keys).is_none(),
+            "the vector package verifies as it is"
+        );
 
         let f = Fields {
             agreement_sha256: "0".repeat(64),
@@ -453,7 +456,9 @@ mod tests {
         // Sign the package's own signing input as a result: the bytes that
         // would most help a forger, and still a statement, not a package.
         let doc = sign_result(
-            &seed(include_str!("../../../ops/federation/vectors/testkeys/xab.seed.hex")),
+            &seed(include_str!(
+                "../../../ops/federation/vectors/testkeys/xab.seed.hex"
+            )),
             &f,
             pkg.signing_input().as_bytes(),
         )
@@ -461,7 +466,8 @@ mod tests {
         let v = crate::json::parse_document(doc.as_bytes()).unwrap();
         let sig = v.get("signature").and_then(JVal::as_str).unwrap();
         pkg.signature_bytes = decode_signature(sig).unwrap();
-        let f = verify_signature(&pkg, &keys).expect("a result signature must not verify a package");
+        let f =
+            verify_signature(&pkg, &keys).expect("a result signature must not verify a package");
         assert_eq!(f.rule, "C_SIGNATURE");
     }
 }

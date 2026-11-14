@@ -95,39 +95,249 @@ fn refuse(code: &'static str, detail: impl Into<String>) -> Refusal {
     }
 }
 
-/// The exact bytes Ed25519 signs for a result.
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn is_hex(s: &str, min: usize, max: usize) -> bool {
+    (min..=max).contains(&s.len())
+        && s.bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+}
+
+fn is_sovereign_id(s: &str) -> bool {
+    let b = s.as_bytes();
+    (2..=16).contains(&b.len())
+        && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+        && b.iter()
+            .all(|&c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+}
+
+fn is_session_id(s: &str) -> bool {
+    s.strip_prefix("ses-").is_some_and(|r| {
+        (1..=64).contains(&r.len()) && r.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+    })
+}
+
+/// Each field is held to the shape acceptance_session.py gives it, so no value
+/// can carry a newline, or anything else, into the statement.
+fn check_fields(f: &Fields) -> Result<(), Refusal> {
+    let mut bad = Vec::new();
+    if !is_hex(&f.agreement_sha256, 64, 64) {
+        bad.push("agreement_sha256 is not 64 lowercase hex characters");
+    }
+    if !is_session_id(&f.session_id) {
+        bad.push("session_id is not `ses-` and then 1 to 64 letters, digits or hyphens");
+    }
+    if f.attempt < 1 {
+        bad.push("attempt is not a whole number from 1");
+    }
+    if !is_sovereign_id(&f.by) || !is_sovereign_id(&f.for_) {
+        bad.push("`by` and `for` must be sovereign ids");
+    }
+    if !is_hex(&f.echoes, 16, 64) {
+        bad.push("echoes is not 16 to 64 lowercase hex characters");
+    }
+    if bad.is_empty() {
+        Ok(())
+    } else {
+        Err(refuse(NOT_VERIFIED, bad.join("; ")))
+    }
+}
+
+/// The exact bytes Ed25519 signs for a result: the domain line, then one line
+/// per field, each ending in a newline.
 pub fn statement(f: &Fields, result_sha256: &str, key_sha256: &str) -> String {
-    let _ = (f, result_sha256, key_sha256);
-    unimplemented!("statement")
+    format!(
+        "{RESULT_DOMAIN}agreement sha256:{}\nsession {}\nattempt {}\nby {}\nfor {}\nechoes {}\n\
+         result sha256:{result_sha256}\nkey sha256:{key_sha256}\n",
+        f.agreement_sha256, f.session_id, f.attempt, f.by, f.for_, f.echoes
+    )
+}
+
+fn key_sha256(public: &[u8; 32]) -> String {
+    hex(&Sha256::digest(public))
 }
 
 /// Sign a result: the detached signature document, in canonical form.
 pub fn sign_result(seed: &[u8; 32], f: &Fields, result: &[u8]) -> Result<String, Refusal> {
-    let _ = (seed, f, result);
-    unimplemented!("sign_result")
+    use ed25519_dalek::{Signer, SigningKey};
+    check_fields(f)?;
+    let sk = SigningKey::from_bytes(seed);
+    let key = key_sha256(sk.verifying_key().as_bytes());
+    let digest = hex(&Sha256::digest(result));
+    let sig = sk.sign(statement(f, &digest, &key).as_bytes());
+    let doc = JVal::Obj(vec![
+        ("schema".into(), JVal::Str(SIGNATURE_SCHEMA.into())),
+        (
+            "agreement_sha256".into(),
+            JVal::Str(f.agreement_sha256.clone()),
+        ),
+        ("session_id".into(), JVal::Str(f.session_id.clone())),
+        ("attempt".into(), JVal::Int(f.attempt)),
+        ("by".into(), JVal::Str(f.by.clone())),
+        ("for".into(), JVal::Str(f.for_.clone())),
+        ("echoes".into(), JVal::Str(f.echoes.clone())),
+        ("result_sha256".into(), JVal::Str(digest)),
+        ("key_sha256".into(), JVal::Str(key)),
+        (
+            "signature".into(),
+            JVal::Str(base64::engine::general_purpose::STANDARD.encode(sig.to_bytes())),
+        ),
+    ]);
+    Ok(canonical(&doc))
 }
 
 /// Verify a partner's result against its detached signature document, the key
-/// bound to the partner, and our own view of the session.
+/// bound to the partner, and our own view of the session. The document's shape
+/// is checked first, then that it is for this session, then the key, the
+/// result's digest and the signature.
 pub fn verify_result(
     result: &[u8],
     signature_doc: &[u8],
     keys: &KeyRing,
     expect: &Expect,
 ) -> Result<Verified, Refusal> {
-    let _ = (
-        result,
-        signature_doc,
-        keys,
-        expect,
-        canonical,
-        parse_document,
-    );
-    let _: Option<JVal> = None;
-    let _ = decode_signature;
-    let _ = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(b""));
-    let _ = refuse(NOT_VERIFIED, "");
-    unimplemented!("verify_result")
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    let doc = parse_document(signature_doc).map_err(|f| {
+        refuse(
+            NOT_VERIFIED,
+            format!("the signature document is not readable: {}", f.detail),
+        )
+    })?;
+    let text = |name: &str| -> Result<String, Refusal> {
+        doc.get(name)
+            .and_then(JVal::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                refuse(
+                    NOT_VERIFIED,
+                    format!("the signature document has no `{name}`"),
+                )
+            })
+    };
+    if text("schema")? != SIGNATURE_SCHEMA {
+        return Err(refuse(
+            NOT_VERIFIED,
+            format!("the signature document is not `{SIGNATURE_SCHEMA}`"),
+        ));
+    }
+    let attempt = doc.get("attempt").and_then(JVal::as_int).ok_or_else(|| {
+        refuse(
+            NOT_VERIFIED,
+            "the signature document has no whole-number `attempt`",
+        )
+    })?;
+    let f = Fields {
+        agreement_sha256: text("agreement_sha256")?,
+        session_id: text("session_id")?,
+        attempt,
+        by: text("by")?,
+        for_: text("for")?,
+        echoes: text("echoes")?,
+    };
+    check_fields(&f)?;
+    let claimed_result = text("result_sha256")?;
+    let claimed_key = text("key_sha256")?;
+    if !is_hex(&claimed_result, 64, 64) || !is_hex(&claimed_key, 64, 64) {
+        return Err(refuse(
+            NOT_VERIFIED,
+            "result_sha256 and key_sha256 must each be 64 lowercase hex characters",
+        ));
+    }
+    let sig_text = text("signature")?;
+    let sig = decode_signature(&sig_text).map_err(|f| refuse(NOT_VERIFIED, f.detail))?;
+
+    // Is it this session's, from the partner, for us?
+    let mut other = Vec::new();
+    if f.agreement_sha256 != expect.agreement_sha256 {
+        other.push(format!(
+            "agreement {} is not ours ({})",
+            f.agreement_sha256, expect.agreement_sha256
+        ));
+    }
+    if f.session_id != expect.session_id {
+        other.push(format!(
+            "session {} is not ours ({})",
+            f.session_id, expect.session_id
+        ));
+    }
+    if f.attempt != expect.attempt {
+        other.push(format!(
+            "attempt {} is not ours ({})",
+            f.attempt, expect.attempt
+        ));
+    }
+    if f.by != expect.them || f.for_ != expect.us {
+        other.push(format!(
+            "it is by `{}` for `{}`, not by `{}` for `{}`",
+            f.by, f.for_, expect.them, expect.us
+        ));
+    }
+    if f.echoes != expect.our_challenge {
+        other.push(
+            "it does not echo the challenge issued to us, so it is not from this session's samples"
+                .into(),
+        );
+    }
+    if !other.is_empty() {
+        return Err(refuse(NOT_THIS_SESSION, other.join("; ")));
+    }
+
+    // Under the key bound to the partner at phase 5.
+    let Some(bound) = keys.get(&expect.them) else {
+        return Err(refuse(
+            NOT_VERIFIED,
+            format!(
+                "no key is bound to `{}`: it is bound at phase 5, never taken from the result",
+                expect.them
+            ),
+        ));
+    };
+    let bound_sha = key_sha256(bound);
+    if claimed_key != bound_sha {
+        return Err(refuse(
+            NOT_VERIFIED,
+            format!(
+                "it names key sha256:{claimed_key}, and the key bound to `{}` is sha256:{bound_sha}",
+                expect.them
+            ),
+        ));
+    }
+    let digest = hex(&Sha256::digest(result));
+    if claimed_result != digest {
+        return Err(refuse(
+            NOT_VERIFIED,
+            format!(
+                "it signs result sha256:{claimed_result}, and the result read is sha256:{digest}"
+            ),
+        ));
+    }
+    let vk = VerifyingKey::from_bytes(bound).map_err(|_| {
+        refuse(
+            NOT_VERIFIED,
+            format!("the key bound to `{}` is not an Ed25519 key", expect.them),
+        )
+    })?;
+    vk.verify(
+        statement(&f, &digest, &bound_sha).as_bytes(),
+        &Signature::from_bytes(&sig),
+    )
+    .map_err(|_| {
+        refuse(
+            NOT_VERIFIED,
+            format!(
+                "the signature does not verify under the key bound to `{}`",
+                expect.them
+            ),
+        )
+    })?;
+    Ok(Verified {
+        key_sha256: bound_sha,
+        key_b64: base64::engine::general_purpose::STANDARD.encode(bound),
+        result_sha256: digest,
+    })
 }
 
 #[cfg(test)]
@@ -423,6 +633,15 @@ mod tests {
     fn the_committed_signature_document_is_a_vector_that_recomputes() {
         // Ed25519 is deterministic: signing the fixture again gives the
         // committed document byte for byte, and the committed one verifies.
+        // The statement and the document were computed by a second
+        // implementation (Python's `cryptography`) from the rule in §6.1, not
+        // by this code, so the two implementations agree byte for byte.
+        let st = statement(
+            &fields(),
+            &hex(&Sha256::digest(RESULT)),
+            &hex(&Sha256::digest(key(XAB_PUB))),
+        );
+        assert_eq!(st, include_str!("testdata/acceptance/statement-xab.txt"));
         let again = sign_result(&seed(XAB_SEED), &fields(), RESULT).unwrap();
         assert_eq!(
             again.as_bytes(),

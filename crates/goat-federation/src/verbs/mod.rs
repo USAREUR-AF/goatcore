@@ -374,6 +374,14 @@ pub(crate) fn sign_with(path: &Path, message: &[u8]) -> anyhow::Result<String> {
     use base64::Engine as _;
     use ed25519_dalek::{Signer, SigningKey};
 
+    // This key also signs acceptance results, under their own domain line
+    // (acceptance_sig.rs). A package's signing input is a JSON object and the
+    // attestation line begins `conformance`, so neither begins with it; this
+    // signer refuses the domain outright, so no caller can make it sign a
+    // result statement.
+    if message.starts_with(crate::acceptance_sig::RESULT_DOMAIN.as_bytes()) {
+        anyhow::bail!("refusing to sign an acceptance-result statement with the package signer");
+    }
     let text =
         std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     let text = text.trim();

@@ -191,7 +191,16 @@ def public_key(seed: bytes) -> bytes:
         return der[-32:]
 
 
+# The same key signs acceptance results, under their own first line
+# (crates/goat-federation/src/acceptance_sig.rs). Everything this module signs is
+# a saltlick request statement or a canonical JSON entry, so neither begins with
+# it; refusing it here means no caller can make this signer sign one.
+RESULT_DOMAIN = b"goat-acceptance-result/v1\n"
+
+
 def sign(seed: bytes, msg: bytes) -> bytes:
+    if msg.startswith(RESULT_DOMAIN):
+        raise ValueError("refusing to sign an acceptance-result statement as a directory request or entry")
     try:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
         return Ed25519PrivateKey.from_private_bytes(seed).sign(msg)
