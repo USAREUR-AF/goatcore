@@ -22,7 +22,9 @@ def play_vars():
 
 def servers(**facts):
     expr = play_vars()["mesh_dns_servers"]
-    out = jinja2.Environment().from_string(expr).render(**facts)
+    # The expression renders a Python list literal, never HTML: nothing is escaped.
+    env = jinja2.Environment(autoescape=jinja2.select_autoescape(default_for_string=False))
+    out = env.from_string(expr).render(**facts)
     return ast.literal_eval(out.strip())
 
 
