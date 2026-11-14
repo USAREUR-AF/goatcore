@@ -319,6 +319,40 @@ NO_IN="the agreement offers no release set from $THEM (a send-only peering)"
 #      only the partner can observe (our samples arriving on their core) is BLOCKED
 #      here and names the partner's row that observes it (`observed_by_peer`), for
 #      `acceptance_session.py combine` once their bundle is imported.
+# ---- A DERIVED SESSION (FED_ACCEPTANCE_ATTEMPT, docs/design/federation-acceptance.md
+#      §6.2, §6.3). No manifest passes between the operators: each side derives the
+#      same session from the agreement it holds and the attempt number, draws a new
+#      challenge for this run from the OS CSPRNG, and learns the partner's from the
+#      partner's sample. After the rows, each side signs its result, publishes it on
+#      its own core under the session's key, reads and verifies the partner's, and
+#      combines. Both sides start phase 14 within FED_SESSION_WAIT of each other.
+#      FED_ACCEPTANCE_SIGNER and FED_ACCEPTANCE_VERIFIER are the commands that sign
+#      our result and verify theirs (a command and its fixed words, split on spaces);
+#      the mode refuses to start without both, so no result is published unsigned.
+DERIVED=""
+if [ -n "${FED_ACCEPTANCE_ATTEMPT:-}" ]; then
+  if [ -n "${FED_ACCEPTANCE_SESSION:-}" ]; then
+    echo "acceptance: FED_ACCEPTANCE_ATTEMPT (a derived session) and FED_ACCEPTANCE_SESSION (a manifest file) both name a session; give one" >&2
+    exit 2
+  fi
+  for v in FED_ACCEPTANCE_SIGNER FED_ACCEPTANCE_VERIFIER; do
+    if [ -z "${!v:-}" ]; then
+      echo "acceptance: a derived session needs $v (the command that signs our result, and the one that verifies the partner's); no result is published unsigned" >&2
+      exit 2
+    fi
+  done
+  SDIR="$EVID/session"
+  mkdir -p "$SDIR" || { echo "acceptance: cannot write $SDIR" >&2; exit 2; }
+  python3 "$HERE/acceptance_session.py" derive --agreement "$AGREEMENT" --us "$US" --attempt "$FED_ACCEPTANCE_ATTEMPT" \
+    --out "$SDIR/derived.json" >/dev/null || { echo "acceptance: no session could be derived from $AGREEMENT" >&2; exit 2; }
+  SESSION_ID=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["session_id"])' "$SDIR/derived.json")
+  AGREEMENT_HEX=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["agreement_sha256"].split(":", 1)[1])' "$SDIR/derived.json")
+  MY_CHAL=$(python3 "$HERE/acceptance_session.py" challenge)
+  THEIR_CHAL=""
+  DERIVED=1
+  echo "  session: $SESSION_ID (derived, attempt $FED_ACCEPTANCE_ATTEMPT)"
+  echo
+fi
 SESSION="${FED_ACCEPTANCE_SESSION:-}"
 if [ -n "$SESSION" ]; then
   python3 "$HERE/acceptance_session.py" validate --manifest "$SESSION" --agreement "$AGREEMENT" --us "$US" \
@@ -329,6 +363,7 @@ EOF
   echo "  session: $SESSION_ID"
   echo
 fi
+[ -n "$DERIVED" ] && SESSION=derived
 session_lanes() {
   local set sk key val i landed=0 waits ops_key ng_key gops gng
   sk="acceptance/$SESSION_ID"
@@ -366,11 +401,18 @@ session_lanes() {
   fi
   for set in $(list "$THEIR_SETS"); do
     begin; key="$(wire_of "$THEM" "$set")/$sk/$THEM"; val="$THEM-$THEIR_CHAL-${set#release/}"
-    for i in $(seq 1 "$waits"); do
-      get_side ours "$key"
-      [ "$GOT_RC" -eq 0 ] && [ -n "$GOT" ] && break
-      settle 2
-    done
+    if [ -n "$DERIVED" ]; then
+      wait_for_partner "$key"
+      learn_their_challenge "$GOT" "$set"
+      val="$THEM-$THEIR_CHAL-${set#release/}"
+      i=1
+    else
+      for i in $(seq 1 "$waits"); do
+        get_side ours "$key"
+        [ "$GOT_RC" -eq 0 ] && [ -n "$GOT" ] && break
+        settle 2
+      done
+    fi
     obs key "$key"; obs sent_expected "$val"; obs received "$GOT"; obs attempts "$i"
     obs sent_sha256 "$(sha "$val")"; obs received_sha256 "$(sha "$GOT")"
     if [ "$GOT_RC" -ne 0 ]; then blk "delivery/inbound/$set" inbound positive "$THEM's session sample under $set/**: our core's REST surface did not answer" "$GOT_ERR"
@@ -407,6 +449,37 @@ session_lanes() {
     begin; edge_refusals
   fi
 }
+# wait_for_partner KEY: in a derived session, read KEY on our core until something is
+# there or FED_SESSION_WAIT runs out, saying how long is left, so the operator knows
+# to start the other side. Sets GOT, GOT_RC and GOT_ERR as get_side does.
+wait_for_partner() {
+  local end next=0 left
+  end=$((SECONDS + ${FED_SESSION_WAIT:-300}))
+  while :; do
+    get_side ours "$1"
+    [ "$GOT_RC" -eq 0 ] && [ -n "$GOT" ] && return 0
+    left=$((end - SECONDS))
+    [ "$left" -le 0 ] && return 0
+    if [ "$SECONDS" -ge "$next" ]; then
+      echo "  waiting for $THEM's phase 14, ${left}s left"
+      next=$((SECONDS + 10))
+    fi
+    settle 2
+  done
+}
+
+# learn_their_challenge VALUE SET: the partner's challenge is the one their sample
+# carries, `<them>-<challenge>-<set>`, read once and held to its shape. It is never
+# taken from a file; a sample of another shape teaches nothing.
+learn_their_challenge() {
+  local v="${1#"$THEM"-}" set="${2#release/}"
+  [ -n "$THEIR_CHAL" ] && return 0
+  [ "$v" = "$1" ] && return 0
+  v="${v%-"$set"}"
+  if [[ "$v" =~ ^[0-9a-f]{16,64}$ ]]; then THEIR_CHAL="$v"; fi
+  return 0
+}
+
 # session_persist SET: the partner's second sample on SET reaches our store when only
 # the store subscribes to its key. The scope is read before the sample is read; the
 # partner staged it in their own run, so a subscriber that existed then and is gone
@@ -441,6 +514,12 @@ session_persist() {
 #      status, so the rule "a check that did not run is not a pass" lives in one place.
 set_or_not() { if [ -n "$1" ]; then echo 1; else echo 0; fi; }
 finish() { # DIR
+  if [ -n "$DERIVED" ]; then
+    python3 "$HERE/acceptance_session.py" run-manifest --derived "$SDIR/derived.json" --us "$US" \
+      --our-challenge "$MY_CHAL" --their-challenge "$THEIR_CHAL" --started "$RUN_STARTED" --out "$SDIR/run.json" \
+      || { echo "  ACCEPTANCE FAILED — this run's session could not be written to $SDIR."; exit 2; }
+    FED_ACCEPTANCE_SESSION="$SDIR/run.json"
+  fi
   python3 "$EVIDENCE" finalize "$CHECKS" --out "$1" --agreement "$AGREEMENT" --us "$US" --them "$THEM" \
     --run-id "$RUN_ID" --started "$RUN_STARTED" --inputs \
     "theirs_rest=$(set_or_not "$FED_THEIRS_REST")" "ssh_ours=$(set_or_not "$FED_SSH_OURS")" \
@@ -462,7 +541,69 @@ finish() { # DIR
     echo "  ACCEPTANCE FAILED — the evidence for$RECORD_FAILED could not be recorded; the bundle is incomplete."
     exit 2
   fi
+  [ -n "$DERIVED" ] && [ "$rc" -ne 2 ] && bilateral_round "$1" "$rc"
   exit "$rc"
+}
+
+# bilateral_round DIR RC: in a derived session, sign our result, publish it on our
+# own core under the session's key, read the partner's from our core, verify it under
+# the key bound to them at phase 5, and combine (§6.3). Exits: the combined verdict
+# (0 PASS, 1 FAIL, 3 open), or 2 when the partner's result is refused.
+bilateral_round() {
+  local dir="$1" rc="$2" sk pub_ours pub_theirs key end next=0 left last="" res sig verr open
+  open=3; [ "$rc" -eq 1 ] && open=1
+  sk="acceptance/$SESSION_ID"
+  pub_ours=$(list "$OUR_SETS" | head -n 1); pub_theirs=$(list "$THEIR_SETS" | head -n 1)
+  if [ -z "$THEIR_CHAL" ] || [ -z "$pub_ours" ] || [ -z "$pub_theirs" ]; then
+    echo "  BILATERAL OPEN — nothing of $THEM's arrived in this run, so there is no challenge of theirs to echo and no signed result is published."
+    echo "  Both sides start phase 14 within FED_SESSION_WAIT (${FED_SESSION_WAIT:-300}s) of each other, normally on the same call (X-ACCEPT-001)."
+    exit "$open"
+  fi
+  # shellcheck disable=SC2086  # a command and its fixed words, split on spaces
+  $FED_ACCEPTANCE_SIGNER --agreement-sha256 "$AGREEMENT_HEX" --session "$SESSION_ID" --attempt "$FED_ACCEPTANCE_ATTEMPT" \
+    --by "$US" --for "$THEM" --echoes "$THEIR_CHAL" --result "$dir/result.json" > "$SDIR/ours.signature.json" \
+    || { echo "  ACCEPTANCE FAILED — our result could not be signed (FED_ACCEPTANCE_SIGNER); nothing is published."; exit 2; }
+  put_ours "$pub_ours/$sk/$US/result" "$(base64 < "$dir/result.json" | tr -d '\n')"
+  put_ours "$pub_ours/$sk/$US/signature" "$(cat "$SDIR/ours.signature.json")"
+  echo "  published our signed result under $pub_ours/$sk/$US/result"
+  key="$(wire_of "$THEM" "$pub_theirs")/$sk/$THEM"
+  end=$((SECONDS + ${FED_SESSION_WAIT:-300}))
+  while :; do
+    get_side ours "$key/result"; res="$GOT"
+    get_side ours "$key/signature"; sig="$GOT"
+    if [ -n "$res" ] && [ -n "$sig" ] && [ "$res$sig" != "$last" ]; then
+      last="$res$sig"
+      printf '%s' "$res" | python3 -c 'import base64, sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))' \
+        > "$SDIR/theirs.result.json" 2>/dev/null || : > "$SDIR/theirs.result.json"
+      printf '%s' "$sig" > "$SDIR/theirs.signature.json"
+      # shellcheck disable=SC2086
+      if $FED_ACCEPTANCE_VERIFIER --agreement-sha256 "$AGREEMENT_HEX" --session "$SESSION_ID" \
+          --attempt "$FED_ACCEPTANCE_ATTEMPT" --us "$US" --them "$THEM" --our-challenge "$MY_CHAL" \
+          --result "$SDIR/theirs.result.json" --signature "$SDIR/theirs.signature.json" \
+          > "$SDIR/theirs.verified.json" 2> "$SDIR/verify.err"; then
+        break
+      fi
+      verr=$(cat "$SDIR/verify.err")
+      case "$verr" in
+        GB-273*) echo "  $THEM's result on our core is not from this run: $verr. Waiting for this run's." ;;
+        *) echo "  ACCEPTANCE REFUSED — $THEM's result does not verify: ${verr:-the verifier gave no reason}"; exit 2 ;;
+      esac
+    fi
+    left=$((end - SECONDS))
+    if [ "$left" -le 0 ]; then
+      echo "  BILATERAL OPEN — no signed result of this run from $THEM within ${FED_SESSION_WAIT:-300}s (X-ACCEPT-001)."
+      exit "$open"
+    fi
+    if [ "$SECONDS" -ge "$next" ]; then
+      echo "  waiting for $THEM's phase 14, ${left}s left"
+      next=$((SECONDS + 10))
+    fi
+    settle 2
+  done
+  python3 "$HERE/acceptance_session.py" import-signed --manifest "$FED_ACCEPTANCE_SESSION" --us "$US" --evidence "$dir" \
+    --verified "$SDIR/theirs.verified.json" "$SDIR/theirs.result.json" || exit 2
+  python3 "$HERE/acceptance_session.py" combine --manifest "$FED_ACCEPTANCE_SESSION" --us "$US" --evidence "$dir"
+  exit $?
 }
 
 # ---- EXISTING PARTNERSHIPS. A deployment for one partner must leave every other

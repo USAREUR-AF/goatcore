@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, phase 14 running on a session both sides derive (the derivation is built, §6.2), the command publishing and verifying a partner's signed result (the signing library is built, §6.1), and any automatic bilateral gate |
+| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, the command running phase 14 on a session both sides derive (the derivation, and the runner's derived mode on the in-process fabric, are built: §6.2, §6.3), the command publishing and verifying a partner's signed result (the signing library is built, §6.1), and any automatic bilateral gate |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
@@ -489,6 +489,10 @@ agreement's `expires` day. Nothing in it is random or read from a clock.
 It holds no challenge. Each side's challenge stays its own and random, and travels with that
 side's samples.
 
+**Both sides start phase 14 within `FED_SESSION_WAIT` of each other, normally on the same
+call.** That is the one rule a derived session asks of the operators, and it follows from the
+next paragraph.
+
 **Freshness rests on the challenge alone.** A derived session has no `not_before` and no
 window of hours, so nothing about time keeps an old result out. What does is the challenge:
 each run of phase 14 draws a new one, and a partner's result must echo the challenge of our
@@ -498,6 +502,43 @@ even when it is from the same session and attempt
 members in canonical form (sorted keys, no whitespace). When the two sides' sessions differ,
 `compare_sessions` refuses with GB-274 and names the members that differ: the two sides hold
 different agreements, or are on different attempts.
+
+### 6.3 Phase 14 on a derived session
+
+**Built, on the in-process fabric only** (`acceptance.sh` with `FED_ACCEPTANCE_ATTEMPT`; tests
+in `test_acceptance.py`, the `test_derived_` cases). The command does not start it yet:
+goatbuilder's own signer and verifier, and phase 14 run this way, are the next part of B2.
+
+With `FED_ACCEPTANCE_ATTEMPT=<n>` and no manifest file, a run:
+
+1. derives the session (§6.2) and draws its challenge: 128 random bits from the operating
+   system's CSPRNG (`secrets`), new for every run and never derived;
+2. stages its samples as in §6, then reads the partner's from its own core for up to
+   `FED_SESSION_WAIT` seconds (300 by default), printing
+   `waiting for <partner>'s phase 14, <n>s left` so the operator knows to start the other side.
+   The partner's challenge is the one their sample carries, held to its shape; it is never
+   taken from a file;
+3. runs its rows and writes its result, as before;
+4. signs the result with `FED_ACCEPTANCE_SIGNER` (§6.1, echoing the partner's challenge) and
+   publishes it on its own core, the result under
+   `release/<first offered set>/acceptance/<session id>/<us>/result` (base64, so its bytes
+   survive) and the signature document beside it under `.../signature`. Both travel to the
+   partner's core as any value in that offered set does;
+5. reads the partner's from its own core, again for up to `FED_SESSION_WAIT`, and verifies
+   it with `FED_ACCEPTANCE_VERIFIER` under the key bound to the partner at phase 5. A result
+   that echoes an earlier run's challenge (GB-273) is left and the run waits for this run's;
+   any other refusal (GB-272) ends the run with exit 2 and nothing is combined;
+6. imports the verified result marked `authenticated: true`, with the partner's key and its
+   sha256 kept beside it, and combines. The combined result in `<evidence>/bilateral/` says
+   `authenticated: true` and carries the key as `peer_key`. The run's exit is the combined
+   verdict: 0 PASS, 1 FAIL, 3 open.
+
+A run with no signer or no verifier is refused before it starts (exit 2): no result is
+published unsigned. When nothing of the partner's arrives, the run publishes nothing and ends
+open (exit 3, X-ACCEPT-001); a retry draws a new challenge and needs the partner to run within
+its wait. A sample left on our core by the partner's earlier run teaches that run's challenge,
+so our result then echoes a stale one: the partner refuses it, our run may still pass, and both
+sides run again to hold the same verdict.
 
 ## 7. Publishing `exchanging`
 
