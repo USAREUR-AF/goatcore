@@ -1,0 +1,70 @@
+---
+# Back out ONE peering's edge router (ops/ansible/peering-backout.yml). The role names
+# everything of one peering after its partner: the compose project and container
+# goat-zenoh-edge-<partner>, /etc/goat-zenoh-edge-<partner>/ (configuration, the trust
+# bundle, and the certificate directory tls/) and /opt/goat-zenoh-edge-<partner>/.
+# Exact names; another partner's edge is never matched. A stack name overridden so that
+# it no longer ends in -<partner> is refused rather than guessed at.
+#
+# The partner CA file named by goat_zenoh_edge_partner_ca_path is the deployment's own
+# path and may be shared by its own layout; it is removed only when it lies inside this
+# peering's /etc directory (it then goes with the directory).
+- name: zenoh-edge | absent | the stack is named for this partner
+  ansible.builtin.assert:
+    that:
+      - _pb_names.edge.stack is match('^[A-Za-z0-9_.-]+$')
+      - _pb_names.edge.stack.endswith('-' ~ peering_backout_id)
+    fail_msg: >-
+      goat_zenoh_edge_stack is '{{ _pb_names.edge.stack }}', which does not end in
+      '-{{ peering_backout_id }}', so it cannot be shown to be this peering's edge router.
+      Nothing was changed. Remove it by hand, or set the stack name back to the role default.
+    quiet: true
+
+- name: zenoh-edge | absent | the container
+  ansible.builtin.command:
+    argv: [docker, container, inspect, --format, "{{ '{{.Name}} {{.State.Status}}' }}", "{{ _pb_names.edge.stack }}"]
+  register: _pbe_ctr
+  changed_when: false
+  failed_when: false
+
+- name: zenoh-edge | absent | the directories and the compose project
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: false
+  loop: "{{ _pb_names.edge.dirs + [_pb_names.edge.compose] }}"
+  register: _pbe_paths
+
+- name: zenoh-edge | absent | record what is there
+  ansible.builtin.set_fact:
+    _pb_rows: >-
+      {%- set out = _pb_rows -%}
+      {%- set act = 'removed' if _pb_apply else 'remove' -%}
+      {%- set probe = _pbe_ctr | backout_probe_state('docker', _pb_names.edge.stack) -%}
+      {%- set _ = out.append({'component': 'edge router', 'resource': 'container ' ~ _pb_names.edge.stack, 'state': probe.state, 'action': (act if probe.state == 'present' else 'none'), 'note': probe.note}) -%}
+      {%- for p in _pbe_paths.results[:2] -%}
+      {%-   set _ = out.append({'component': 'edge router', 'resource': 'dir ' ~ p.item, 'state': ('present' if p.stat.exists else 'absent'), 'action': (act if p.stat.exists else 'none'), 'note': ''}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: zenoh-edge | absent | take the compose project down
+  ansible.builtin.command:
+    argv: [docker, compose, --project-directory, "/opt/{{ _pb_names.edge.stack }}", -f, "{{ _pb_names.edge.compose }}", down, --remove-orphans]
+  register: _pbe_down
+  changed_when: _pbe_down.rc == 0
+  failed_when: false
+  when: _pb_apply and _pbe_paths.results[2].stat.exists
+
+- name: zenoh-edge | absent | the container is gone
+  ansible.builtin.command:
+    argv: [docker, rm, -f, "{{ _pb_names.edge.stack }}"]
+  register: _pbe_rm
+  changed_when: _pbe_rm.rc == 0
+  failed_when: false
+  when: _pb_apply and _pbe_ctr.rc == 0
+
+- name: zenoh-edge | absent | its directories are gone
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ _pb_names.edge.dirs }}"
+  when: _pb_apply

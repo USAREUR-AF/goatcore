@@ -1,0 +1,115 @@
+---
+# rows-only.yml: refresh the row list of a status page that is already deployed.
+#
+# Entry point of ops/ansible/isitup-rows.yml (include_role, tasks_from). It
+# renders services.env and data/meta.json from the current declaration and
+# recreates the isitup container when the probe list changed. It reads no
+# sign-in secret, touches no Hydra client, and leaves isitup.env, the Traefik
+# routers, the compose overlay and the oauth2-proxy container as they are.
+#
+# With -e isitup_rows_verify_only=true it writes nothing: it compares the
+# digest in the host's data/meta.json with the list rendered from this tree and
+# fails when they differ.
+
+- name: Build, check and stamp the status-page row list
+  ansible.builtin.import_tasks: rows-build.yml
+
+- name: Look for the deployed status page
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ isitup_compose_file }}"
+    - "{{ isitup_dir }}/services.env"
+  register: isitup_rows_deployed
+
+- name: The status page is already deployed on this host
+  ansible.builtin.assert:
+    that:
+      - isitup_rows_deployed.results | map(attribute='stat.exists') | min
+    fail_msg: >-
+      {{ isitup_compose_file }} or {{ isitup_dir }}/services.env is missing, so
+      the status page is not deployed on this host. Run isitup-deploy.yml once;
+      after that isitup-rows.yml refreshes the row list.
+
+- name: Verify only (compare the host's list stamp with this tree, write nothing)
+  when: isitup_rows_verify_only | default(false) | bool
+  block:
+    - name: Read data/meta.json from the host
+      ansible.builtin.slurp:
+        src: "{{ isitup_dir }}/data/meta.json"
+      register: isitup_rows_verify_meta
+      failed_when: false
+
+    - name: The list on the host is the list this tree declares
+      ansible.builtin.assert:
+        that:
+          - _isitup_on_host.sha256 is defined
+          - _isitup_on_host.sha256 == isitup_rows_sha256
+        fail_msg: >-
+          The status page on {{ inventory_hostname }} is behind the declaration.
+          Host list: {{ _isitup_on_host.sha256 | default('no stamp (rendered before the stamp existed, or never)') }},
+          rendered from {{ _isitup_on_host.source | default({}) | to_json }}
+          at {{ _isitup_on_host.at | default('unknown') }}.
+          This tree declares {{ isitup_rows_sha256 }} ({{ isitup_rows | length }} rows).
+          Run isitup-rows.yml without isitup_rows_verify_only to refresh it.
+        success_msg: >-
+          The status page on {{ inventory_hostname }} carries the declared list
+          ({{ isitup_rows_sha256[:12] }}, {{ isitup_rows | length }} rows).
+      vars:
+        _isitup_host_meta: "{{ isitup_rows_verify_meta.content | default('e30=') | b64decode | from_json }}"
+        _isitup_on_host: "{{ (_isitup_host_meta['rendered'] | default({})) if (_isitup_host_meta is mapping) else {} }}"
+
+- name: Refresh the list (render, recreate the container when the probe list changed)
+  when: not (isitup_rows_verify_only | default(false) | bool)
+  vars:
+    isitup_rows_notify: recreate isitup container
+  block:
+    - name: Render the row list (services.env + data/meta.json)
+      ansible.builtin.import_tasks: rows-render.yml
+
+    # A run that was interrupted after services.env was written leaves the file
+    # correct on disk and the container on the previous inode; the render above
+    # then reports `ok` and notifies nothing. Compare what is running with what
+    # is on disk, as tasks/main.yml does for all four bind-mounted files.
+    - name: Detect a services.env the running container has not picked up
+      ansible.builtin.shell: |
+        set -o pipefail
+        want=$(md5sum "{{ isitup_dir }}/services.env" | awk '{print $1}')
+        got=$(docker exec isitup md5sum /etc/isitup/services.env 2>/dev/null | awk '{print $1}' || true)
+        if [ -z "$got" ] || [ "$want" != "$got" ]; then
+          echo "STALE /etc/isitup/services.env (running ${got:-none}, on disk ${want})"
+        fi
+        exit 0
+      args:
+        executable: /bin/bash
+      register: isitup_rows_bindmount_drift
+      changed_when: "'STALE' in isitup_rows_bindmount_drift.stdout"
+      failed_when: false
+      notify: recreate isitup container
+
+    - name: Flush handlers so the container reads the new list before the probe runs
+      ansible.builtin.meta: flush_handlers
+
+    # The page shows the previous probe results until check.sh runs again. The
+    # cron entry runs it every five minutes; this run makes the new list
+    # visible now. A freshly recreated container installs its tools in the
+    # background, so the first attempts can fail.
+    - name: Run check.sh once so data/current.json follows the new list
+      ansible.builtin.command:
+        cmd: docker exec isitup /usr/local/bin/check.sh
+      register: isitup_rows_first_check
+      changed_when: false
+      failed_when: false
+      retries: 10
+      delay: 6
+      until: isitup_rows_first_check.rc == 0
+
+    - name: Print the list-render summary
+      ansible.builtin.debug:
+        msg: |
+          isitup row list on {{ inventory_hostname }}:
+            Rows:      {{ isitup_rows | length }} probed; {{ isitup_rows | rejectattr('lifecycle', 'equalto', 'live') | list | length }} not live
+            Digest:    {{ isitup_rows_sha256 }}
+            Source:    {{ isitup_rows_source | to_json }}
+            Rendered:  {{ isitup_rows_rendered_at }}
+            Probe run: {{ 'done' if (isitup_rows_first_check.rc | default(1)) == 0 else 'not yet; the cron entry runs check.sh within five minutes' }}

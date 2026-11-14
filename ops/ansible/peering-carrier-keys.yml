@@ -1,0 +1,127 @@
+---
+# peering-carrier-keys.yml — copy the two carrier PUBLIC keys of a forwarded
+# peering to the machine running the driver, so the next play reads them from
+# the group_vars `goatbuilder federate allocate` rendered.
+#
+#   Design: docs/design/peering-forwarder.md §7 (the three runs, done by the driver)
+#   Driver: crates/goatbuilder/src/federate/forwarder.rs (phase 2)
+#
+# Phase 2 of a forwarded peering runs, in order: peering-prepare.yml (the edge
+# makes its carrier key), this play, peering-forwarder.yml (it reads the edge's
+# key and makes its own), this play again, peering-prepare.yml (the carrier comes
+# up). Only public keys move. Each private key stays on the host that made it.
+#
+# Variables, from the rendered group_vars:
+#   edge:      peering_wg_carrier_interface, peering_carrier_edge_key_out
+#   forwarder: peering_carrier_forwarder_key_out  ({carrier interface: path})
+# A host without them is skipped. A key file that does not exist yet is skipped:
+# the forwarder's exists only after its play has run once.
+#
+# Rollback: delete the copied .pub files; the plays that read them then refuse.
+
+- name: Peering carrier keys, the edge's
+  hosts: peering_edges
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Skip a host with no forwarded peering
+      ansible.builtin.meta: end_host
+      when: >-
+        not (peering_wg_via_forwarder | default(false) | bool)
+        or (peering_carrier_edge_key_out | default('') | length == 0)
+
+    - name: Look for the edge's carrier key
+      ansible.builtin.stat:
+        path: "{{ peering_wg_config_dir | default('/etc/goat-peering-wg') }}/{{ peering_wg_carrier_interface }}.key"
+      register: _pck_edge_key
+
+    - name: Read the edge's carrier public key
+      ansible.builtin.shell:
+        cmd: "wg pubkey < {{ _pck_edge_key.stat.path }}"
+      register: _pck_edge_pub
+      changed_when: false
+      when: _pck_edge_key.stat.exists
+
+    - name: The edge's carrier public key is a WireGuard key
+      ansible.builtin.assert:
+        that:
+          - _pck_edge_pub.stdout is match('^[A-Za-z0-9+/]{43}=$')
+        fail_msg: "wg pubkey printed '{{ _pck_edge_pub.stdout }}', not a WireGuard public key"
+      when: _pck_edge_key.stat.exists
+
+    # The peering's certificate directory: phase 8 makes it 0700 and keeps
+    # private leaf keys in it, so it is never widened here.
+    - name: The directory it goes to, on the machine running the driver
+      ansible.builtin.file:
+        path: "{{ peering_carrier_edge_key_out | dirname }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      when: _pck_edge_key.stat.exists
+
+    - name: Copy it to the machine running the driver
+      ansible.builtin.copy:
+        dest: "{{ peering_carrier_edge_key_out }}"
+        content: "{{ _pck_edge_pub.stdout }}\n"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+      when: _pck_edge_key.stat.exists
+
+- name: Peering carrier keys, the forwarder's
+  hosts: peering_forwarders
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Skip a host with no forwarded peering
+      ansible.builtin.meta: end_host
+      when: peering_carrier_forwarder_key_out | default({}) | length == 0
+
+    - name: Look for each carrier's key
+      ansible.builtin.stat:
+        path: "{{ peering_forwarder_config_dir | default('/etc/goat-peering-forwarder') }}/{{ item.key }}.key"
+      loop: "{{ peering_carrier_forwarder_key_out | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: _pck_fwd_keys
+
+    - name: Read each carrier's public key
+      ansible.builtin.shell:
+        cmd: "wg pubkey < {{ item.stat.path }}"
+      loop: "{{ _pck_fwd_keys.results | selectattr('stat.exists') | list }}"
+      loop_control:
+        label: "{{ item.item.key }}"
+      register: _pck_fwd_pubs
+      changed_when: false
+
+    - name: Each is a WireGuard key
+      ansible.builtin.assert:
+        that:
+          - item.stdout is match('^[A-Za-z0-9+/]{43}=$')
+        fail_msg: "wg pubkey printed '{{ item.stdout }}' for {{ item.item.item.key }}, not a WireGuard public key"
+      loop: "{{ _pck_fwd_pubs.results }}"
+      loop_control:
+        label: "{{ item.item.item.key }}"
+
+    - name: The directories they go to, on the machine running the driver (0700, as above)
+      ansible.builtin.file:
+        path: "{{ item.item.item.value | dirname }}"
+        state: directory
+        mode: "0700"
+      loop: "{{ _pck_fwd_pubs.results }}"
+      loop_control:
+        label: "{{ item.item.item.key }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Copy each to the machine running the driver
+      ansible.builtin.copy:
+        dest: "{{ item.item.item.value }}"
+        content: "{{ item.stdout }}\n"
+        mode: "0644"
+      loop: "{{ _pck_fwd_pubs.results }}"
+      loop_control:
+        label: "{{ item.item.item.key }}"
+      delegate_to: localhost
+      become: false

@@ -145,7 +145,7 @@ func (s *Server) handleDataRoles(w http.ResponseWriter, r *http.Request) {
 			"declared registry (roster path) not configured — the data-roles resolver cannot derive roles")
 		return
 	}
-	dr, err := access.LoadDataRoster(s.cfg.RosterPath)
+	dr, err := s.rosters.Load(s.cfg.RosterPath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "registry", "could not load the declared registry: "+err.Error())
 		return

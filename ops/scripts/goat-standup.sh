@@ -165,20 +165,42 @@ phase_arg() {  # phase_arg <flag> <value>
 phase_arg --from "$FROM"; phase_arg --to "$TO"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# A declared value as one shell word in a planned command, the way goatbuilder's
+# sh_quote / sh_word write it (standup.rs): sh_quote always single-quotes, each '
+# written as '\''; sh_word leaves a value of letters, digits and _ . / : = @ % + , -
+# as it is, keeps a leading ~/ meaning the home directory, and quotes the rest.
+sh_quote() { local q="'\\''"; printf "'%s'" "${1//\'/$q}"; }
+sh_word() {
+  local plain='^[A-Za-z0-9_./:=@%+,-]+$'
+  # shellcheck disable=SC2088  # a literal ~/ on purpose: the planned word keeps it for the phase shell to expand
+  case "$1" in
+    "~/"*) if [[ "${1#\~/}" =~ $plain ]]; then printf '%s' "$1"; else printf '~/%s' "$(sh_quote "${1#\~/}")"; fi ;;
+    *) if [[ "$1" =~ $plain ]]; then printf '%s' "$1"; else sh_quote "$1"; fi ;;
+  esac
+}
 GROUP="${SITE//-/_}_hosts"
 
 # goatlite (ADR 1213): is THIS site the one <repo>/goatlite.yaml declares? Read as
-# YAML with python3 + PyYAML, the way gv_value reads group_vars below; no file, no
-# python3, no PyYAML, or another name all mean "not lite" and change nothing.
+# YAML with python3 + PyYAML, the way gv_value reads group_vars below, and judged
+# the way `goatbuilder standup` judges it (standup.rs resolve_lite): no file, or a
+# file that names another goatnet, means "not lite" and changes nothing; a file that
+# cannot be read as YAML refuses the run, and so does one that names this site and
+# does not validate (ops/goatbuilder/validate.py).
 LITE=0; LITE_INTERNET_AWS=""
 if [ -f "$REPO/goatlite.yaml" ]; then
-  lite_name="$(python3 - "$REPO/goatlite.yaml" <<'PY' 2>/dev/null || true
+  lite_rc=0
+  lite_name="$(python3 - "$REPO/goatlite.yaml" <<'PY'
 import sys
 try:
     import yaml
+except ImportError:
+    print("goat-standup: reading goatlite.yaml needs PyYAML (pip install pyyaml)", file=sys.stderr)
+    sys.exit(3)
+try:
     d = yaml.safe_load(open(sys.argv[1])) or {}
-except Exception:
-    sys.exit(0)
+except Exception as e:
+    print(f"goat-standup: goatlite.yaml is not readable as YAML: {e}", file=sys.stderr)
+    sys.exit(3)
 if isinstance(d, dict) and d.get("preset") == "lite":
     lite = d.get("lite") or {}
     # name on the first line, the declared administrator on the second, and on the
@@ -189,11 +211,16 @@ if isinstance(d, dict) and d.get("preset") == "lite":
     inet = lite.get("internet")
     print(str((inet.get("aws_profile") or lite.get("name", "")) if isinstance(inet, dict) else "").strip())
 PY
-)"
+)" || lite_rc=$?
+  [ "$lite_rc" = 0 ] || { echo "goat-standup: refusing to plan: fix $REPO/goatlite.yaml (or move it aside), then re-run" >&2; exit 2; }
   lite_admin="$(printf '%s\n' "$lite_name" | sed -n 2p)"
   lite_aws="$(printf '%s\n' "$lite_name" | sed -n 3p)"
   lite_name="$(printf '%s\n' "$lite_name" | sed -n 1p)"
-  if [ -n "$lite_name" ] && [ "$lite_name" = "$SITE" ]; then LITE=1; LITE_INTERNET_AWS="$lite_aws"; fi
+  if [ -n "$lite_name" ] && [ "$lite_name" = "$SITE" ]; then
+    python3 "$REPO/ops/goatbuilder/validate.py" "$REPO/goatlite.yaml" >&2 \
+      || { echo "goat-standup: goatlite.yaml does not validate; fix it, then re-run" >&2; exit 2; }
+    LITE=1; LITE_INTERNET_AWS="$lite_aws"
+  fi
 fi
 
 # Phase 12's dependency graph, the same file `goatbuilder standup` reads
@@ -220,7 +247,11 @@ OBS_GROUP="${SITE//-/_}_obs_hosts"
 # (crate::settings), so a run resumed with the other avenue finds its files.
 # STATE_DECL keeps the `~` for the commands a phase prints and runs; STATE_DIR
 # is the same path expanded, for what this script opens itself.
-STATE_DECL="$("$REPO/ops/scripts/project-setting.sh" --repo "$REPO" deploy state_dir 2>/dev/null || true)"
+# Only an empty answer with exit 0 means undeclared; any other exit of
+# project-setting.sh (its refusal, exit 3, or a file or value it cannot read)
+# stops the run with its message kept.
+ps_rc=0; STATE_DECL="$("$REPO/ops/scripts/project-setting.sh" --repo "$REPO" deploy state_dir)" || ps_rc=$?
+[ "$ps_rc" = 0 ] || exit 2
 # shellcheck disable=SC2088  # the literal `~` is kept on purpose, see above
 [ -n "$STATE_DECL" ] || STATE_DECL='~/.goat/state'
 case "$STATE_DECL" in \~/*) STATE_DIR="$HOME/${STATE_DECL#\~/}" ;; *) STATE_DIR="$STATE_DECL" ;; esac
@@ -265,10 +296,11 @@ fi
 # read after GOAT_AWS_PROFILE and before the project's.
 AWS_PROFILE_STANDUP="${GOAT_AWS_PROFILE:-$LITE_INTERNET_AWS}"
 if [ -z "$AWS_PROFILE_STANDUP" ] && [ -f "$REPO/ops/goatbuilder/goatbuilder.yaml" ]; then
-  AWS_PROFILE_STANDUP="$(python3 - "$REPO/ops/goatbuilder/goatbuilder.yaml" <<'PY' 2>/dev/null || true
-import sys
+  if python3 -c 'import yaml' >/dev/null 2>&1; then
+    # With PyYAML the file is read as YAML, every form of it, as goatbuilder reads it.
+    AWS_PROFILE_STANDUP="$(python3 - "$REPO/ops/goatbuilder/goatbuilder.yaml" <<'PY' 2>/dev/null || true
+import sys, yaml
 try:
-    import yaml
     d = yaml.safe_load(open(sys.argv[1])) or {}
 except Exception:
     sys.exit(0)
@@ -276,6 +308,12 @@ if isinstance(d, dict):
     print(str((d.get("deploy") or {}).get("aws_profile", "")).strip())
 PY
 )"
+  else
+    # Without it, read as deploy.state_dir is (project-setting.sh): any exit but 0
+    # stops the run with its message kept.
+    ps_rc=0; AWS_PROFILE_STANDUP="$("$REPO/ops/scripts/project-setting.sh" --repo "$REPO" deploy aws_profile)" || ps_rc=$?
+    [ "$ps_rc" = 0 ] || exit 2
+  fi
 fi
 AWS_PROFILE_STANDUP="${AWS_PROFILE_STANDUP:-default}"
 # Fresh source (contract C3): once, before phase 1 touches a host. Every play
@@ -314,7 +352,7 @@ case "$PROFILE" in lan|internet) ;; *) echo "bad --profile '$PROFILE' (want lan|
 # (crates/goatbuilder/src/standup.rs).
 AWS_MODE_STANDUP=""
 [[ "${LITE}" == 1 && "$PROFILE" == lan ]] && AWS_MODE_STANDUP="GOAT_AWS_MODE=none "
-ANSIBLE_PRE="OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ${AWS_MODE_STANDUP}../scripts/with-aws $AWS_PROFILE_STANDUP -- ../scripts/ansible-preflight.sh"
+ANSIBLE_PRE="OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ${AWS_MODE_STANDUP}../scripts/with-aws $(sh_word "$AWS_PROFILE_STANDUP") -- ../scripts/ansible-preflight.sh"
 
 # Founder or joiner (ADR 1084). goatnet_founder:false in the site's group_vars
 # makes site-bootstrap auto-skip the account seed (the account arrives by Spock
@@ -341,7 +379,25 @@ fi
 # replication, so it applies nothing and is checked against the founder's ACL.
 # The mgmt API is the site's public_mgmt_fqdn (a joiner's is the founder's).
 ACL_SITE="$SITE"; [ "$JOINER" = 1 ] && ACL_SITE="$JOIN_FOUNDER_SITE"
+# The ACL site names the token variable phase 12 reads (<SITE>_NB_API_TOKEN), so a
+# founder site that cannot make a variable name is refused (standup.rs read_site).
+ACL_UPPER="$(printf '%s' "${ACL_SITE//-/_}" | tr '[:lower:]' '[:upper:]')"
+if [ -n "$ACL_SITE" ] && ! [[ "$ACL_UPPER" =~ ^[A-Z0-9_]+$ ]]; then
+  # A joiner's ACL site is its founder's (join_founder_site); a founder's is itself.
+  if [ "$JOINER" = 1 ]; then ACL_SOURCE="join_founder_site '$ACL_SITE' in group_vars/$GROUP/vars.yml"; else ACL_SOURCE="the site '$ACL_SITE'"; fi
+  echo "goat-standup: $ACL_SOURCE is not a site id: phase 12 reads the token variable ${ACL_UPPER}_NB_API_TOKEN named after it, so it may hold only letters, digits, - and _" >&2
+  exit 2
+fi
 MGMT_FQDN="$(grep -E '^[[:space:]]*public_mgmt_fqdn:' "$GV_FILE" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"'\''' || true)"
+# The group_vars values above as one shell word each in a planned command
+# (sh_quote / sh_word, as standup.rs writes them).
+ACL_SITE_Q="$(sh_quote "$ACL_SITE")"
+MGMT_URL_W="$(sh_word "https://$MGMT_FQDN")"
+JFS_Q="$(sh_quote "$JOIN_FOUNDER_SITE")"; JFG_Q="$(sh_quote "$JOIN_FOUNDER_GROUP")"; JFG_W="$(sh_word "$JOIN_FOUNDER_GROUP")"
+RELAY_HOSTS_W="$(sh_word "inventory/hosts-$JOIN_FOUNDER_SITE.ini")"
+RELAY_ALIAS_W="$(sh_word "inventory/$JOIN_FOUNDER_SITE-goat-relay-alias.ini")"
+FOUNDER_SITE_W="$(sh_word "founder_site=$JOIN_FOUNDER_SITE")"
+RELAY_MISSING_Q="$(sh_quote "founder relay inventory inventory/hosts-$JOIN_FOUNDER_SITE.ini missing — generate it first: inventory/generate-relays.sh $JOIN_FOUNDER_SITE terraform-$JOIN_FOUNDER_SITE")"
 
 # intra_site_pair: an A/B core pair runs A->B streaming replication (inside
 # site-bootstrap.yml),
@@ -636,7 +692,7 @@ step 1 GATE "every input the phases before the manual step will reach is set (on
 # goatnet has no doors.yaml entry the generator stops and says what to declare.
 # ADR 1117 / docs/design/env-doors.md. The finish gate re-asserts it (--check).
 step 1 GATE "the NetBird ACL for ${ACL_SITE:-?} is declared, with no Default All->All (ADR 1185)" \
-  "python3 '$REPO/ops/scripts/netbird-policy-posture.py' '$ACL_SITE' --declared"
+  "python3 '$REPO/ops/scripts/netbird-policy-posture.py' $ACL_SITE_Q --declared"
 step 1 GATE "establish the env-door (off-profile transport)" \
   "python3 '$REPO/ops/scripts/generate-door-inventory.py' $SITE"
 
@@ -706,12 +762,15 @@ step 4 T "mint leaf certs" \
 #     in via name_snapshot_enabled. Signs with this goatnet's offline CA (same
 #     key family as the leaf certs; ca_id is read from the snapshot). goat-get (phase 12)
 #     then serves it. Skips cleanly when not opted in or the CA key is absent.
+CA_KEY_WORD="$(sh_word "${STATE_DECL}/${SITE}-ca/ca.key.age")"
+AUDIT_WORD="$(sh_word "$AUDIT_DECL")"
+NO_KEY_MSG="$(sh_quote "name_snapshot: no ${STATE_DECL}/${SITE}-ca/ca.key.age — generate ran, SIGN manually with ops/enrollment/cmd/name-snapshot-sign")"
 step 4 T "name-fallback snapshot (generate + sign)" \
   "if grep -qE 'name_snapshot_enabled:[[:space:]]*true' '$REPO/ops/ansible/group_vars/${GROUP}/vars.yml' 2>/dev/null; then \
      python3 '$REPO/ops/dns/generate-mesh-hosts.py'; \
-     if [ -f ${STATE_DECL}/${SITE}-ca/ca.key.age ]; then \
-       ( cd '$REPO/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '$REPO/ops/dns/${SITE}/name-snapshot.json' --root-key ${STATE_DECL}/${SITE}-ca/ca.key.age --age-identity ~/.config/age/keys.txt --audit-log ${AUDIT_DECL} ); \
-     else echo 'name_snapshot: no ${STATE_DECL}/${SITE}-ca/ca.key.age — generate ran, SIGN manually with ops/enrollment/cmd/name-snapshot-sign'; fi; \
+     if [ -f ${CA_KEY_WORD} ]; then \
+       ( cd '$REPO/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '$REPO/ops/dns/${SITE}/name-snapshot.json' --root-key ${CA_KEY_WORD} --age-identity ~/.config/age/keys.txt --audit-log ${AUDIT_WORD} ); \
+     else echo ${NO_KEY_MSG}; fi; \
    else echo 'name_snapshot_enabled not true for ${GROUP} — skipping (ADR 1082)'; fi"
 
 # Phase 5. mgmt-stack (postgres/signal/management/traefik/admit-audit). Needs FIVE
@@ -723,8 +782,17 @@ step 4 T "name-fallback snapshot (generate + sign)" \
 #    Hydra, so it and every play after it run in phase 6, after ory-deploy
 #    (--skip-tags stack). Each play runs once; no phase stops on purpose.
 OWNER_EMAIL_STANDUP="\$OWNER_EMAIL"
-[[ "${LITE}" == 1 && -n "${lite_admin:-}" ]] && OWNER_EMAIL_STANDUP="$lite_admin"
-BOOTSTRAP_SECRETS_EV="-e bootstrap_owner_email=\"$OWNER_EMAIL_STANDUP\" -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\" -e netbird_encryption_key=\"\$(printenv ${SITE_UPPER}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"\$(printenv ${SITE_UPPER}_BKP_KEY)\""
+OWNER_EMAIL_ARG="\"\$OWNER_EMAIL\""
+if [[ "${LITE}" == 1 && -n "${lite_admin:-}" ]]; then
+  # The declared address reaches the bootstrap phases as data: exported, and read
+  # on the command line inside double quotes with printenv, so the phase's shell
+  # expands it once and never parses the address, and standup-phase-run refuses
+  # it by name when it is empty (goatbuilder's owner_word does the same).
+  OWNER_EMAIL_STANDUP="$lite_admin"
+  export GOAT_BOOTSTRAP_OWNER_EMAIL="$lite_admin"
+  OWNER_EMAIL_ARG="\"\$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)\""
+fi
+BOOTSTRAP_SECRETS_EV="-e bootstrap_owner_email=$OWNER_EMAIL_ARG -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\" -e netbird_encryption_key=\"\$(printenv ${SITE_UPPER}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"\$(printenv ${SITE_UPPER}_BKP_KEY)\""
 # A joiner's bootstrap carries site_id as a PLAY variable: its own
 # $SITE-bootstrap.yml when it keeps one (that play sets site_id), else the
 # generic wrapper site-bootstrap-for.yml -e bootstrap_site=$SITE. Never
@@ -800,7 +868,7 @@ if [ "$JOINER" = 1 ]; then
 SEED_PLAY=site-seed-from-peer.yml
 [ -f "$REPO/ops/ansible/${SITE}-seed-from-peer.yml" ] && SEED_PLAY="${SITE}-seed-from-peer.yml"
 step 6 A "[joiner] seed-from-peer (pass 2 — data-only copy from founder ${JOIN_FOUNDER_SITE:-?}; guarded)" \
-  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_SITE' ] || { echo 'joiner: group_vars/$GROUP/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} $SEED_PLAY -e site_id=$SITE"
+  "cd '$REPO/ops/ansible' && { [ -n $JFS_Q ] || { echo 'joiner: group_vars/$GROUP/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} $SEED_PLAY -e site_id=$SITE"
 fi
 
 # Phase 6. The rest of site-bootstrap, now that Ory is up: the account seed waits
@@ -841,7 +909,7 @@ fi
 #     the seed step above, so wiring carries incremental writes only and never truncates.
 if [ "$JOINER" = 1 ]; then
 step 6 A "[joiner] founder-side mirror (spock-mesh-wire on ${JOIN_FOUNDER_GROUP:-?}, peer=$SITE only — both-direction subscriptions)" \
-  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_GROUP' ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} spock-mesh-wire.yml --limit $JOIN_FOUNDER_GROUP -e '{\"inter_site_spock_peers\":[\"$SITE\"],\"ory_spock_reconcile_history\":false}'"
+  "cd '$REPO/ops/ansible' && { [ -n $JFG_Q ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} spock-mesh-wire.yml --limit $JFG_W -e '{\"inter_site_spock_peers\":[\"$SITE\"],\"ory_spock_reconcile_history\":false}'"
 step 6 A "[joiner] the joiner's Spock wiring again, now that the founder's half exists (Ory subscription + history reconcile)" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} spock-mesh-wire.yml --limit $GROUP"
 fi
@@ -916,7 +984,7 @@ fi
 #       <founder>-rathole-client.yml -e rathole_client_target=<site>_hosts
 if [ "$JOINER" = 1 ] && [ "$PROFILE" = internet ]; then
 step 7 A "[joiner] wire $SITE into the founder (${JOIN_FOUNDER_SITE:-?}) relay ingress + re-render" \
-  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_SITE' ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && { ls inventory/hosts-$JOIN_FOUNDER_SITE.ini >/dev/null 2>&1 || { echo 'founder relay inventory inventory/hosts-$JOIN_FOUNDER_SITE.ini missing — generate it first: inventory/generate-relays.sh $JOIN_FOUNDER_SITE terraform-$JOIN_FOUNDER_SITE'; exit 1; }; } && $ANSIBLE_PRE -i inventory/hosts-$JOIN_FOUNDER_SITE.ini -i inventory/$JOIN_FOUNDER_SITE-goat-relay-alias.ini ${INV[*]} relay-ingress-add-site.yml -e target=goat_relay_hosts -e founder_site=$JOIN_FOUNDER_SITE -e join_site=$SITE"
+  "cd '$REPO/ops/ansible' && { [ -n $JFS_Q ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && { ls $RELAY_HOSTS_W >/dev/null 2>&1 || { echo $RELAY_MISSING_Q; exit 1; }; } && $ANSIBLE_PRE -i $RELAY_HOSTS_W -i $RELAY_ALIAS_W ${INV[*]} relay-ingress-add-site.yml -e target=goat_relay_hosts -e $FOUNDER_SITE_W -e join_site=$SITE"
 fi
 
 # Phase 8. [internet] Mesh-enroll the hosts onto their own goatnet, scripted
@@ -931,9 +999,9 @@ fi
 if [ "$PROFILE" = internet ]; then
 MESH_IPS="$STATE_DIR/standup-$SITE-mesh-ips.json"
 step 8 A "[internet] mesh-enroll the hosts (a single-use key each, the declared enrolment URL)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} mesh-enroll-host.yml -e target=$GROUP -e mesh_ips_out='$MESH_IPS'"
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} mesh-enroll-host.yml -e target=$GROUP -e mesh_ips_out=$(sh_quote "$MESH_IPS")"
 step 8 T "[internet] record the mesh IPs (group_vars, mesh inventory, cert manifest) and re-mint the router cert" \
-  "python3 '$REPO/ops/scripts/standup-mesh-record.py' $SITE --ips '$MESH_IPS'"
+  "python3 '$REPO/ops/scripts/standup-mesh-record.py' $SITE --ips $(sh_quote "$MESH_IPS")"
 fi
 
 # Phase 9. Per-uuid Zenoh router (binds the mesh IP on internet, LAN IP on lan; cert from phase 4/8).
@@ -1015,10 +1083,10 @@ fi
 #     token from phase 11. A joiner applies nothing: its account IS the founder's.
 if [ "$JOINER" = 0 ]; then
 step 12 A "declared NetBird ACL: groups, then policies, then enforce (one play run)" \
-  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://$MGMT_FQDN"
+  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=$MGMT_URL_W"
 fi
 step 12 GATE "the live NetBird account holds only the declared ACL for $ACL_SITE, and no All-group rule" \
-  "python3 '$REPO/ops/scripts/netbird-policy-posture.py' '$ACL_SITE' --url https://$MGMT_FQDN --token-env $(printf '%s' "${ACL_SITE//-/_}" | tr '[:lower:]' '[:upper:]')_NB_API_TOKEN"
+  "python3 '$REPO/ops/scripts/netbird-policy-posture.py' $ACL_SITE_Q --url $MGMT_URL_W --token-env $(sh_word "${ACL_UPPER}_NB_API_TOKEN")"
 
 # Phase 12. NetBird service identities (ops/netbird/service-identities.yaml). This
 #     goatnet's group_vars decide which identities it needs; mint every missing
@@ -1097,7 +1165,7 @@ elif [ "$OBS" = 1 ]; then
   OBS_SSH_TARGET="$(python3 "$REPO/ops/scripts/inventory-hosts.py" "$OBS_GROUP" --ssh-target --inventory "$REPO/ops/ansible/inventory/mgmt-hosts.ini" --inventory "$REPO/ops/ansible/inventory/mgmt-hosts-mesh.ini" 2>/dev/null | head -1)"
 step 12 T "mint the pubsub-state mirror bot on the obs host's Forgejo (once; skipped when FORGEJO_PUBSUB_TOKEN is set)" \
   "if [ -n \"\${FORGEJO_PUBSUB_TOKEN:-}\" ]; then echo '    FORGEJO_PUBSUB_TOKEN already set — bot minted; skipping'; \
-   else '$REPO/ops/scripts/forgejo-mint-pubsub-bot.sh' '$OBS_SSH_TARGET' \
+   else '$REPO/ops/scripts/forgejo-mint-pubsub-bot.sh' $(sh_quote "$OBS_SSH_TARGET") \
      && eval \"\$('$REPO/ops/scripts/envrc-var.sh' FORGEJO_PUBSUB_TOKEN)\" \
      && '$REPO/ops/scripts/standup-keep-secret' FORGEJO_PUBSUB_TOKEN \
      && echo '    token loaded from the operator envrc; the run continues'; fi"
@@ -1171,7 +1239,7 @@ if [ "$LITE" = 1 ] && [ "$CHECK" = 0 ]; then
   fi
 else
 step 13 GATE "$ACCEPTANCE_LABEL" \
-  "python3 '$REPO/ops/goatbuilder/endstate/endstate.py' model $SITE > '$STATE_DIR/endstate-$SITE.json' && python3 '$REPO/ops/validation/generate-values.py' $SITE && python3 '$REPO/ops/validation/run-acceptance.py' --env $SITE --values '$REPO/ops/validation/values-$SITE.yaml' --endstate '$STATE_DIR/endstate-$SITE.json' --all-eligible --by-layer"
+  "python3 '$REPO/ops/goatbuilder/endstate/endstate.py' model $SITE > $(sh_quote "$STATE_DIR/endstate-$SITE.json") && python3 '$REPO/ops/validation/generate-values.py' $SITE && python3 '$REPO/ops/validation/run-acceptance.py' --env $SITE --values '$REPO/ops/validation/values-$SITE.yaml' --endstate $(sh_quote "$STATE_DIR/endstate-$SITE.json") --all-eligible --by-layer"
 fi
 
 # Phase 14. JOIN THE CROSS-GOATNET SURFACES. The goatnet overview on every relay-health

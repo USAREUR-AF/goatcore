@@ -56,17 +56,21 @@ jobs:
   unit:
     name: unit tests + lint
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     defaults:
       run:
         working-directory: ops/enrollment
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-go@v5
         with:
           # Match the patched Go pin in ci.yml. Go 1.27 export data is not
           # supported by the current linter.
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache-dependency-path: ops/enrollment/go.sum
       - name: Install libpcsclite-dev (piv-go cgo dep)
         timeout-minutes: 8

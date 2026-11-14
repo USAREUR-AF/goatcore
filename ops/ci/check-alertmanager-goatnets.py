@@ -121,7 +121,6 @@ route:
 {routes}
 receivers:
   - name: webhook-noop
-    webhook_configs: [{{url: "http://localhost:9999/noop"}}]
   - name: critical-fanout
     webhook_configs: [{{url: "http://localhost:9999/crit"}}]
   - name: warning-fanout

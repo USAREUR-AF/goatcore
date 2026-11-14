@@ -1704,7 +1704,7 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "goat-cli"
-version = "0.5.18"
+version = "0.5.19"
 dependencies = [
  "age",
  "anyhow",
@@ -1717,6 +1717,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "goat-errors",
+ "goat-federation",
  "goat-fun",
  "goat-selfupdate",
  "grant-crypto",
@@ -1767,6 +1768,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "goat-federation"
+version = "0.5.18"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "clap",
+ "ed25519-dalek",
+ "pem",
+ "rcgen 0.13.2",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "toml 0.8.23",
+ "x509-parser 0.16.0",
+]
+
+[[package]]
 name = "goat-fun"
 version = "0.1.0"
 dependencies = [
@@ -1783,34 +1803,41 @@ dependencies = [
 
 [[package]]
 name = "goatbuilder"
-version = "0.4.3"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
  "clap",
  "clap_complete",
+ "ed25519-dalek",
  "goat-errors",
+ "goat-federation",
  "goat-fun",
  "goat-selfupdate",
  "i18n-embed",
  "i18n-embed-fl",
  "jsonschema",
  "once_cell",
+ "rcgen 0.13.2",
  "regex",
+ "ring",
  "rust-embed",
  "serde",
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
+ "shlex",
  "similar",
  "tempfile",
+ "time",
  "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
  "trycmd",
  "unic-langid",
  "ureq",
+ "x509-parser 0.16.0",
 ]
 
 [[package]]
@@ -3728,9 +3755,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp"
-version = "0.5.14"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "addec6a0dcad8a8d96a771f815f0eaf55f9d1805756410b39f5fa81332574cbd"
+checksum = "af66907df18639dcf4db56ca65490cabc4b27a97dbadd96f2926cca73298f016"
 dependencies = [
  "cfg_aliases",
  "libc",

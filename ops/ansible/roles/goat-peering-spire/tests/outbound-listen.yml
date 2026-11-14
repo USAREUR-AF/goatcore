@@ -1,0 +1,17 @@
+---
+# Runs tasks/outbound-listen.yml on localhost (tests/test-outbound-listen.sh).
+- name: outbound listen address
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  # Play vars, as the role's defaults and group_vars are (extra vars would outrank
+  # set_fact): the test passes `server` and `listen`.
+  vars:
+    peering_spire_server_addr: "{{ server | default('') }}"
+    peering_spire_outbound_listen: "{{ listen | default('') }}"
+  tasks:
+    - name: the role's task file
+      ansible.builtin.include_tasks: ../tasks/outbound-listen.yml
+    - name: report
+      ansible.builtin.debug:
+        msg: "LISTEN={{ peering_spire_outbound_listen }}"

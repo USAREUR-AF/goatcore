@@ -76,7 +76,7 @@ The list is a **read-model + operator workflow**, in no enforcement path — the
 **v1 = the identity/stray domain** — the concrete, present need, and the reference implementation. `kind` is in the schema from the start so the same list holds future anomaly types without a re-model:
 
 - **topic** — a live topic with no declared producer (the F-177 silent-denial inverse).
-- **peer** — a mesh peer that maps to no declared owner.
+- **peer** — a mesh peer that maps to no declared owner, and a fault observed on a peer we do not own (a clock ahead of the limit, a trust root the router no longer presents). Detector, owner notice and automatic close: [`peer-fault-handling.md`](peer-fault-handling.md) (ADR 1232), not built.
 - **inbound** — an origin-attributed quarantined blob (composes with the data-plane quarantine, ADR 1020, which is a *namespace* mechanism at a different layer — probation is the *entity-disposition* workflow over it).
 
 Only the identity detectors + exits are built in v1; other kinds are schema-reserved, not implemented, and each needs its own detector + repair/purge mapping before it lights up.

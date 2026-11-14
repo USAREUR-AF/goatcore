@@ -1,0 +1,10 @@
+{
+  "schema": "goatbuilder.error/v1",
+  "error": "peering 'no-such-peer' is not declared in ops/goatbuilder/compat/documents/fixtures/journal/repo/ops/goatbuilder/goatbuilder.yaml peerings: (declared: hello-ally on zagros) — declare it first (C1)",
+  "interpretation": {
+    "schema": "goat-errors.interpretation/v1",
+    "summary": "peering 'no-such-peer' is not declared in ops/goatbuilder/compat/documents/fixtures/journal/repo/ops/goatbuilder/goatbuilder.yaml peerings: (declared: hello-ally on zagros) — declare it first (C1)",
+    "hits": [],
+    "unrecognised": true
+  }
+}

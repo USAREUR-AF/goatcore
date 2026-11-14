@@ -1,0 +1,399 @@
+{
+  "schema": "goatbuilder.federate.state/v1",
+  "peering": "hello-ally",
+  "updated": "2026-11-12T19:10:53Z",
+  "runs": [
+    {
+      "id": "run-20261112T191052Z-96025",
+      "stage": "federate",
+      "started": "2026-11-12T19:10:52Z",
+      "ended": "2026-11-12T19:10:53Z",
+      "from": 1,
+      "to": 99,
+      "resume": true,
+      "outcome": "stopped"
+    },
+    {
+      "id": "run-20261112T191053Z-96717",
+      "stage": "federate",
+      "started": "2026-11-12T19:10:53Z",
+      "ended": "2026-11-12T19:10:53Z",
+      "from": 6,
+      "to": 99,
+      "resume": false,
+      "outcome": "stopped"
+    },
+    {
+      "id": "run-20261112T191053Z-97459",
+      "stage": "federate",
+      "started": "2026-11-12T19:10:53Z",
+      "ended": "2026-11-12T19:10:53Z",
+      "from": 11,
+      "to": 99,
+      "resume": false,
+      "outcome": "passed"
+    }
+  ],
+  "phases": {
+    "1": {
+      "outcome": "passed",
+      "inputs": "sha256:97c86eeb6cf7c8b809792c138fc54d74f6eebc0e68cd3a2d3a218ec075e8eafe",
+      "outputs": "",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "attempts": 1
+    },
+    "2": {
+      "outcome": "passed",
+      "inputs": "sha256:4d6b7b331cfb3b5e04b24ba304197187b929ff84141ab67b4a89c412afa1cdb2",
+      "outputs": "",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "attempts": 1
+    },
+    "3": {
+      "outcome": "passed",
+      "inputs": "sha256:9002fb72e0635488967fa88b72b3239c44744d70e14cda4c220e3e7a4f635610",
+      "outputs": "sha256:a52542a8001c92bc3aada8f2ef03dd3d36b3cd2d4357ea440f8073ae6de1bcd5",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "attempts": 1
+    },
+    "4": {
+      "outcome": "passed",
+      "inputs": "sha256:c00b42358be5220b2d9c681e7e273303cde23d51c8f6a523495f6c4b3b06d588",
+      "outputs": "",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "attempts": 1
+    },
+    "5": {
+      "outcome": "passed",
+      "inputs": "sha256:9bf173ffebad418ecf624c2191aa57173d15ee6de8a752502b411f53949e8004",
+      "outputs": "sha256:7f0c2b15125c7b9e57efc3df20f96a59a5a7ca4d39f245046bed2eeec9cefd29",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "attempts": 2,
+      "detail": "done by hand, declared with --from 6"
+    },
+    "6": {
+      "outcome": "passed",
+      "inputs": "sha256:8b5b5974e9334ff40183869ae98477f4e970bf8398e35fafed29abf4eea47708",
+      "outputs": "sha256:b168578a7dc6376cf4e95b10817b8d5c9981912da033a2b3151d1ac4ed159897",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "attempts": 1
+    },
+    "7": {
+      "outcome": "passed",
+      "inputs": "sha256:b500b63abfe46f0b48cf8222ec1d3e3c89f9e549f11b7eb730fb615900387d78",
+      "outputs": "",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "attempts": 1
+    },
+    "8": {
+      "outcome": "passed",
+      "inputs": "sha256:c36dd0e8cbf479a81c158230e3b6a2b1deed42538bf6bcd51a9d0687498d90e1",
+      "outputs": "sha256:3329941bd6ce40225a18dde30006408d59a79513c76865206f08aade9db261df",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "attempts": 1
+    },
+    "9": {
+      "outcome": "passed",
+      "inputs": "sha256:028791a4160b2888e9e236f5e840977f5f70c3110c553d3fd0263f36a2c517cf",
+      "outputs": "sha256:2674a9612a57d6023d0144f1940c3fc0858ed3bd5b2fba9f94bc8ea7eb6296b4",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "attempts": 1
+    },
+    "10": {
+      "outcome": "passed",
+      "inputs": "sha256:e88448f2be8a2382f14d2e51a2f3da22c9c9989be75fa45951c784d3e77de148",
+      "outputs": "",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "attempts": 2,
+      "detail": "done by hand, declared with --from 11"
+    },
+    "11": {
+      "outcome": "passed",
+      "inputs": "sha256:3b6c5f285a486a32d15ffd66b4b9ceaaca38ae784511d2e27c055f78cdd4e1cb",
+      "outputs": "",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "attempts": 1
+    },
+    "12": {
+      "outcome": "passed",
+      "inputs": "sha256:65c2d16297bd30e4483ec2e6f858eb39bc293645df92e7003e53d383c02549e9",
+      "outputs": "",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "attempts": 1
+    },
+    "13": {
+      "outcome": "passed",
+      "inputs": "sha256:7db094044e80fa8f9235fcdd7f29e1f87bd8aa90ba5c930304aecc2555f7a46b",
+      "outputs": "",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "attempts": 1
+    },
+    "14": {
+      "outcome": "passed",
+      "inputs": "sha256:0d833772654758ab4531df3d62084d9d135809371f2f74987f3f30fccde3e274",
+      "outputs": "",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "attempts": 1
+    }
+  },
+  "confirmations": [
+    {
+      "kind": "operator-step",
+      "phase": 5,
+      "how": "flag",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "bound_to": "sha256:9bf173ffebad418ecf624c2191aa57173d15ee6de8a752502b411f53949e8004",
+      "values": {
+        "from": "6"
+      }
+    },
+    {
+      "kind": "operator-step",
+      "phase": 10,
+      "how": "flag",
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "bound_to": "sha256:e88448f2be8a2382f14d2e51a2f3da22c9c9989be75fa45951c784d3e77de148",
+      "values": {
+        "from": "11"
+      }
+    }
+  ],
+  "owned": [],
+  "attempts": [
+    {
+      "at": "2026-11-12T19:10:52Z",
+      "run": "run-20261112T191052Z-96025",
+      "phase": 1,
+      "event": "start",
+      "detail": "phases 1 to 99"
+    },
+    {
+      "at": "2026-11-12T19:10:52Z",
+      "run": "run-20261112T191052Z-96025",
+      "phase": 1,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "phase": 1,
+      "event": "passed"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "phase": 2,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "phase": 2,
+      "event": "passed"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "phase": 3,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "phase": 3,
+      "event": "passed"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "phase": 4,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "phase": 4,
+      "event": "passed"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "phase": 5,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191052Z-96025",
+      "phase": 5,
+      "event": "stopped",
+      "detail": "waiting for the operator step"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 5,
+      "event": "confirmed",
+      "detail": "operator-step (flag) for sha256:9bf173ffebad418ecf624c2191aa57173d15ee6de8a752502b411f53949e8004"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 5,
+      "event": "passed",
+      "detail": "done by hand, declared with --from 6"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 6,
+      "event": "start",
+      "detail": "phases 6 to 99"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 6,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 6,
+      "event": "passed"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 7,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 7,
+      "event": "passed"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 8,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 8,
+      "event": "passed"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 9,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 9,
+      "event": "passed"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 10,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-96717",
+      "phase": 10,
+      "event": "stopped",
+      "detail": "waiting for the operator step"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "phase": 10,
+      "event": "confirmed",
+      "detail": "operator-step (flag) for sha256:e88448f2be8a2382f14d2e51a2f3da22c9c9989be75fa45951c784d3e77de148"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "phase": 10,
+      "event": "passed",
+      "detail": "done by hand, declared with --from 11"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "phase": 11,
+      "event": "start",
+      "detail": "phases 11 to 99"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "phase": 11,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "phase": 11,
+      "event": "passed"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "phase": 12,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "phase": 12,
+      "event": "passed"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "phase": 13,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "phase": 13,
+      "event": "passed"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "phase": 14,
+      "event": "start"
+    },
+    {
+      "at": "2026-11-12T19:10:53Z",
+      "run": "run-20261112T191053Z-97459",
+      "phase": 14,
+      "event": "passed"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # id console: SQLite to Postgres cutover, and rollback
 
-**Status (2026-10-29):** code ready (ADR 1165 step A deploy slice). No goatnet is cut over.
+**Status:** built (ADR 1165 step A deploy slice).
 **Each goatnet's cutover and any rollback is run with the operator present.**
 
 The id console (`goat-id-console`) keeps its onboarding store and org registry in two SQLite

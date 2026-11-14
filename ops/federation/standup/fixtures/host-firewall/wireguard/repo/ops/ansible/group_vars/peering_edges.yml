@@ -1,0 +1,2 @@
+# A shallower group, but a playbook group_vars file: it wins (2400).
+ansible_port: 2400

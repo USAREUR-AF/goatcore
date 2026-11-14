@@ -505,7 +505,7 @@ fn pull_probe(reference: &str) -> Option<bool> {
     if std::env::var("GOAT_PREFLIGHT_PULL").map(|v| v == "0").unwrap_or(false) {
         return None;
     }
-    let docker = std::process::Command::new("docker")
+    let docker = crate::runner::Cmd::new("docker")
         .args(["manifest", "inspect", reference])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

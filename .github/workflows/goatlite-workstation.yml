@@ -38,10 +38,26 @@ jobs:
   fresh-ubuntu:
     name: tutorial setup on a fresh Ubuntu 24.04
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 25
     container: ubuntu:24.04
+    # Our package cache, read only when the Ubuntu mirror does not answer
+    # (.github/actions/apt-failover). A job container has no docker, so the cache runs as
+    # this job's service. The image is named twice: here and in that action's cache-image
+    # default; swap the digest into both. GitHub pulls it on every run of this job.
+    services:
+      apt-cache:
+        image: ghcr.io/usareur-af/ci-apt-cache:2026-11-11@sha256:f2e089fcd18ead4e97f13fb0eff5c934e7b6a27c8f37bca730b34f4ef5521ac6
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
+        with:
+          service-host: apt-cache
       - name: The page declares every prerequisite step
         run: bash ops/tutorials/check-workstation.sh --lint
       - name: The setup runs as written, with a negative control per prerequisite

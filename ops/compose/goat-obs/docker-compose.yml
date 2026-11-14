@@ -36,9 +36,9 @@ services:
       resources:
         limits:
           cpus: "1.0"
-          memory: 1G
+          memory: "${PROMETHEUS_MEMORY:-1G}"
         reservations:
-          memory: 256M
+          memory: "${PROMETHEUS_MEMORY_RESERVATION:-256M}"
     environment:
       SITE_NAME: ${SITE_NAME:?set SITE_NAME in .env}
     command:
@@ -74,9 +74,9 @@ services:
           # 1.0, not 0.25: the host-namespace collectors walk /proc and /sys
           # for every container on each scrape, and a quarter core throttles them.
           cpus: "1.0"
-          memory: 128M
+          memory: "${NODE_EXPORTER_MEMORY:-128M}"
         reservations:
-          memory: 32M
+          memory: "${NODE_EXPORTER_MEMORY_RESERVATION:-32M}"
     pid: host
     # Host network namespace — the netdev collector reads /proc/self/net,
     # which resolves inside the READER's netns regardless of the /host/proc
@@ -128,9 +128,9 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 384M
+          memory: "${CADVISOR_MEMORY:-384M}"
         reservations:
-          memory: 64M
+          memory: "${CADVISOR_MEMORY_RESERVATION:-64M}"
     privileged: true
     # Host cgroup namespace — on cgroup v2 docker defaults containers to a
     # PRIVATE cgroupns, so cadvisor would see only its own subtree (root cgroup,
@@ -182,9 +182,9 @@ services:
           cpus: "1.0"
           # 256M, not 128M: it sits near 128M with dozens of containers'
           # worth of processes tracked.
-          memory: 256M
+          memory: "${PROCESS_EXPORTER_MEMORY:-256M}"
         reservations:
-          memory: 32M
+          memory: "${PROCESS_EXPORTER_MEMORY_RESERVATION:-32M}"
     # Needs to see the host's /proc (not the container's).
     privileged: true
     command:
@@ -202,16 +202,16 @@ services:
   blackbox-exporter:
     # HTTP / TCP / ICMP / DNS reachability probes. Used for "is this
     # public hostname / mesh peer / DNS resolver answering?" panels.
-    image: prom/blackbox-exporter:v0.25.0@sha256:9761529b5ff576deb4e823e298ec5ca70e738086fd7d073a84698332c9ae3554
+    image: prom/blackbox-exporter:v0.29.1@sha256:ea1c7aa3ef3f307cd03e85f34abb604478ccb90b567fc690da0cd9776da76b13
     container_name: ${OBS_PREFIX:?set OBS_PREFIX in .env}-blackbox
     restart: unless-stopped
     deploy:
       resources:
         limits:
           cpus: "0.25"
-          memory: 128M
+          memory: "${BLACKBOX_EXPORTER_MEMORY:-128M}"
         reservations:
-          memory: 32M
+          memory: "${BLACKBOX_EXPORTER_MEMORY_RESERVATION:-32M}"
     # ICMP probes need raw sockets — keep the cap but drop everything else.
     cap_drop:
       - ALL
@@ -237,9 +237,9 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 256M
+          memory: "${POSTGRES_EXPORTER_MEMORY:-256M}"
         reservations:
-          memory: 64M
+          memory: "${POSTGRES_EXPORTER_MEMORY_RESERVATION:-64M}"
     environment:
       # Reuses the 'monitoring' PG role created by obs.yml.
       # Connects to postgres-a (the mgmt-host postgres) over the
@@ -258,9 +258,9 @@ services:
       resources:
         limits:
           cpus: "1.0"
-          memory: 512M
+          memory: "${GRAFANA_MEMORY:-512M}"
         reservations:
-          memory: 128M
+          memory: "${GRAFANA_MEMORY_RESERVATION:-128M}"
     environment:
       # Local-admin fallback. Required even when OIDC is on — used for
       # recovery and provisioning verification. Mesh-only via Traefik
@@ -415,9 +415,9 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: 128M
+          memory: "${ALERTMANAGER_MEMORY:-128M}"
         reservations:
-          memory: 32M
+          memory: "${ALERTMANAGER_MEMORY_RESERVATION:-32M}"
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
       - --storage.path=/alertmanager

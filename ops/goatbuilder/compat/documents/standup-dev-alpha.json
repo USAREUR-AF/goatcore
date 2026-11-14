@@ -1,0 +1,103 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "standup",
+  "ok": true,
+  "exit": 0,
+  "checks": [
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 5 [core] netbird-mgmt ==="
+    },
+    {
+      "name": "dev/alpha/core/netbird-mgmt/publish",
+      "ok": true,
+      "detail": "serial 1: ghcr.io/example-org/netbird-mgmt:v0.30.0@sha256:1a1a1a1a1a1a… by Reader"
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-1/netbird-mgmt",
+      "ok": true,
+      "detail": "converged on ghcr.io/example-org/netbird-mgmt:v0.30.0@sha256:1a1a1a1a1a1a… after 2 observations"
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-2/netbird-mgmt",
+      "ok": true,
+      "detail": "converged on ghcr.io/example-org/netbird-mgmt:v0.30.0@sha256:1a1a1a1a1a1a… after 2 observations"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 9 [core] zenoh-router ==="
+    },
+    {
+      "name": "dev/alpha/core/zenoh-router/publish",
+      "ok": true,
+      "detail": "serial 2: ghcr.io/example-org/zenoh-router:v1.9.0@sha256:2b2b2b2b2b2b… by Reader"
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-1/zenoh-router",
+      "ok": true,
+      "detail": "converged on ghcr.io/example-org/zenoh-router:v1.9.0@sha256:2b2b2b2b2b2b… after 1 observation"
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-2/zenoh-router",
+      "ok": true,
+      "detail": "converged on ghcr.io/example-org/zenoh-router:v1.9.0@sha256:2b2b2b2b2b2b… after 1 observation"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 9 [obs] obs-stack ==="
+    },
+    {
+      "name": "dev/alpha/obs/obs-stack/publish",
+      "ok": true,
+      "detail": "serial 3: ghcr.io/example-org/obs-stack:v2.0.1@sha256:4d4d4d4d4d4d… by Reader"
+    },
+    {
+      "name": "dev/alpha/obs/alpha-obs-1/obs-stack",
+      "ok": true,
+      "detail": "converged on ghcr.io/example-org/obs-stack:v2.0.1@sha256:4d4d4d4d4d4d… after 1 observation"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [core] portal ==="
+    },
+    {
+      "name": "dev/alpha/core/portal/publish",
+      "ok": true,
+      "detail": "serial 4: ghcr.io/example-org/portal:v1.4.0@sha256:3c3c3c3c3c3c… by Reader"
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-1/portal",
+      "ok": true,
+      "detail": "converged on ghcr.io/example-org/portal:v1.4.0@sha256:3c3c3c3c3c3c… after 1 observation"
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-2/portal",
+      "ok": true,
+      "detail": "converged on ghcr.io/example-org/portal:v1.4.0@sha256:3c3c3c3c3c3c… after 1 observation"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 14 [breakglass] breakglass-node ==="
+    },
+    {
+      "name": "dev/alpha/breakglass/breakglass-node/publish",
+      "ok": true,
+      "detail": "serial 5: ghcr.io/example-org/breakglass-node:v0.3.0@sha256:5e5e5e5e5e5e… by Reader"
+    },
+    {
+      "name": "dev/alpha/breakglass/alpha-breakglass-1/breakglass-node",
+      "ok": true,
+      "detail": "converged on ghcr.io/example-org/breakglass-node:v0.3.0@sha256:5e5e5e5e5e5e… after 1 observation"
+    },
+    {
+      "name": "measured",
+      "ok": true,
+      "detail": "declared → verified: 5 components on 4 machines in 0 ms — every record names its declared ref"
+    }
+  ]
+}

@@ -35,9 +35,10 @@
 //! after a landing the scratch tree is assembled again and the deploy runs
 //! from it.
 
+use crate::runner::Cmd;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::rc::Rc;
 
 use anyhow::{anyhow, Context, Result};
@@ -139,21 +140,30 @@ fn render(r: &str) -> String {
     }
 }
 
+/// How both avenues abbreviate a commit they print (rc.sh does the same): a
+/// fixed length, so the line does not change when git's automatic length
+/// grows with the repository's object count, and the parity gate compares
+/// equal lines.
+const SHORT: &str = "--short=12";
+
+/// `rev` in `repo`, abbreviated as both avenues print it.
+fn short_rev(repo: &str, rev: &str) -> Result<String> {
+    sh("git", &["-C", repo, "rev-parse", SHORT, rev])
+}
+
 fn sh(cmd: &str, args: &[&str]) -> Result<String> {
-    let mut c = Command::new(cmd);
+    let mut c = Cmd::new(cmd);
     c.args(args);
-    crate::trace::cmd(&c);
     let out = c.output().with_context(|| format!("{cmd} {}", args.join(" ")))?;
     if !out.status.success() {
-        return Err(anyhow!("{}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-258", String::from_utf8_lossy(&out.stderr).trim().to_string())));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 fn sh_ok(cmd: &str, args: &[&str]) -> bool {
-    let mut c = Command::new(cmd);
+    let mut c = Cmd::new(cmd);
     c.args(args).stdout(Stdio::null()).stderr(Stdio::null());
-    crate::trace::cmd(&c);
     c.status().map(|s| s.success()).unwrap_or(false)
 }
 
@@ -180,6 +190,12 @@ fn facts(repo: &Path, component: &str) -> Result<serde_json::Value> {
         "fleet": comp.get("fleet").cloned().unwrap_or(serde_json::Value::Null),
         "dev": dev, "preprod": pre, "prod": prod,
     }))
+}
+
+/// The dev rung's deviation reason (rc.sh's dev pin step): it carries the day
+/// the candidate was declared.
+fn dev_reason(tag: &str, date: &str, ack: &str) -> String {
+    format!("RC {tag} ({date}, ADR 1173), nominated by {ack}: the dev-rung candidate. Validated by the live acceptance rows the change affects; their PASS is the dev->preprod validation evidence.")
 }
 
 /// `datetime.date.today()` — the local date, as the script stamps evidence.
@@ -227,9 +243,8 @@ impl<'a> Run<'a> {
             self.note(format!("DRY: {cmd} {}", args.join(" ")));
             return Ok(());
         }
-        let mut c = Command::new(cmd);
+        let mut c = Cmd::new(cmd);
         c.args(args);
-        crate::trace::cmd(&c);
         let st = c.status().with_context(|| cmd.to_string())?;
         if !st.success() {
             return Err(goat_errors::coded("GB-028", format!("{cmd} {} failed", args.join(" "))).into());
@@ -252,7 +267,7 @@ impl<'a> Run<'a> {
         }
         let (lines, code) = promote::call(&self.wt, cmd);
         if code != 0 {
-            return Err(anyhow!("{}", lines.join("\n")));
+            return Err(anyhow::Error::from(goat_errors::coded("GB-033", lines.join("\n"))));
         }
         Ok(lines)
     }
@@ -284,7 +299,7 @@ impl<'a> Run<'a> {
         let Some(ov) = self.overlay.as_mut() else { return Ok(()) };
         let wt = self.wt.clone();
         let _ = std::fs::remove_dir_all(&wt);
-        let out = Command::new(ov.owt.join("assemble.sh")).arg(&wt).output().with_context(|| format!("{}/assemble.sh", ov.owt.display()))?;
+        let out = Cmd::new(ov.owt.join("assemble.sh")).arg(&wt).output().with_context(|| format!("{}/assemble.sh", ov.owt.display()))?;
         if !out.status.success() {
             eprint!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
             return Err(goat_errors::coded("GB-028", format!("{}/assemble.sh could not build the scratch tree {}", ov.owt.display(), wt.display())).into());
@@ -293,7 +308,7 @@ impl<'a> Run<'a> {
         sh("git", &["-C", &wt_s, "add", "-A", "--force"])?;
         ov.snap = sh("git", &["-C", &wt_s, "write-tree"])?;
         sh("git", &["-C", &wt_s, "reset", "-q"])?;
-        let short = sh("git", &["-C", &ov.owt.display().to_string(), "rev-parse", "--short", "HEAD"]).unwrap_or_default();
+        let short = short_rev(&ov.owt.display().to_string(), "HEAD").unwrap_or_default();
         self.root = wt.clone();
         self.note(format!("scratch tree {wt_s} assembled from overlay {short}"));
         Ok(())
@@ -412,7 +427,7 @@ impl<'a> Run<'a> {
         } else {
             let r = pins::run(&self.wt, true)?;
             if !r.ok {
-                return Err(anyhow!("{}", r.checks.iter().filter(|c| !c.ok).map(|c| c.detail.clone()).collect::<Vec<_>>().join("\n")));
+                return Err(anyhow::Error::from(goat_errors::coded("GB-034", r.checks.iter().filter(|c| !c.ok).map(|c| c.detail.clone()).collect::<Vec<_>>().join("\n").to_string())));
             }
         }
         Ok(())
@@ -455,7 +470,7 @@ impl<'a> Run<'a> {
             // from THIS checkout, which ansible-preflight requires to be current.
             let rbr = sh("git", &["-C", self.repo.to_str().unwrap_or("."), "symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| "main".into());
             let _ = sh("git", &["-C", self.repo.to_str().unwrap_or("."), "fetch", "-q", "origin", &rbr]);
-            let ok = Command::new("git")
+            let ok = Cmd::new("git")
                 .env("GOAT_ALLOW_MASTER_GIT_MUTATE", "1")
                 .args(["-C", self.repo.to_str().unwrap_or("."), "merge", "--ff-only", &format!("origin/{rbr}")])
                 .stdout(Stdio::null())
@@ -487,7 +502,7 @@ impl<'a> Run<'a> {
         if name.is_empty() {
             return Err(goat_errors::coded("GB-016", format!("no runner settings for {goatnet} in ops/validation/goatnet-runners.yaml")).into());
         }
-        let rows = Command::new("python3")
+        let rows = Cmd::new("python3")
             .args([self.repo.join("ops/validation/affected-flows.py").to_str().unwrap_or(""), "--component", self.o.component, "--head", &self.tag, "--json"])
             .output()
             .ok()
@@ -575,7 +590,7 @@ impl<'a> Run<'a> {
             self.note(format!("DRY: env {}", args.join(" ")));
             return Ok(true);
         }
-        let st = Command::new("env").args(&args).status()?;
+        let st = Cmd::new("env").args(&args).status()?;
         // exit 2 from the runner is an environment problem (a tool missing, a
         // context not configured): the rows did not run. UNTESTED, never FAIL.
         if st.code() == Some(2) {
@@ -624,7 +639,13 @@ pub fn release(repo: &Path, o: &Options) -> Result<Report> {
         Ok(r) => Ok(r),
         Err(e) => {
             let mut v = checks.take();
-            v.push(Check { name: "refused".into(), ok: false, detail: e.to_string(), fix: None });
+            // The refusal's catalog code stays with it in the row, as main prints
+            // one for an error that ends the program (gate row C5).
+            let detail = match e.downcast_ref::<goat_errors::Coded>() {
+                Some(c) => format!("{e} ({})", c.code),
+                None => e.to_string(),
+            };
+            v.push(Check { name: "refused".into(), ok: false, detail, fix: None });
             let mut r = Report::new("release", v, EXIT_REFUSED);
             r.ok = false;
             r.exit = EXIT_REFUSED;
@@ -709,7 +730,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
     let fleet_shown = if run.fleet.is_empty() { "<none>".to_string() } else { render(&run.fleet) };
     run.note(format!("image {}; rungs dev={} preprod={} prod={}; fleet ref {fleet_shown}", run.image, run.dev, run.pre, run.prod));
     let _ = sh("git", &["-C", &repo_s, "fetch", "-q", "origin", "main"]);
-    let main = sh("git", &["-C", &repo_s, "rev-parse", "--short", "origin/main"])?;
+    let main = short_rev(&repo_s, "origin/main")?;
 
     // --- 1 preflight
     run.step("preflight");
@@ -855,7 +876,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
         run.step(&format!("dev rung: {} runs {}", run.dev, run.tag));
         run.mkwt()?;
         let dev = run.dev.clone();
-        let reason = format!("RC {} ({}, ADR 1173), nominated by {}: the dev-rung candidate. Validated by the live acceptance rows the change affects; their PASS is the dev->preprod validation evidence.", run.tag, utc_date(), o.ack);
+        let reason = dev_reason(&run.tag, &utc_date(), o.ack);
         run.set_deviation(&dev, &reason)?;
         // after the pin: a record dev ran until now goes stale exactly here
         run.reconcile_superseded(&dev)?;
@@ -1003,7 +1024,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
         let (dev, pre, prod) = (run.dev.clone(), run.pre.clone(), run.prod.clone());
         run.step(&format!("prod rung: graduate {} and fold it into fleet:", run.tag));
         run.mkwt()?;
-        let out = run.promote(&format!("graduate {} --ack '{}'  (refuses until the soak gate is met)", o.component, o.ack), &promote::Sub::Graduate { component: o.component.into(), ack: Some(o.ack.into()) })?;
+        let out = run.promote(&format!("graduate {} --ack '{}'  (refuses until the soak gate is met)", o.component, o.ack), &promote::Sub::Graduate { component: o.component.into(), ack: Some(o.ack.into()), override_runtime_health: None })?;
         if o.dry_run {
             run.rec = format!("ops/release/records/{}/<the open candidate record>.yaml", o.component);
         } else {
@@ -1079,10 +1100,108 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
 mod tests {
     use super::*;
 
+    /// The dev step re-run on a later day (a run that crosses midnight UTC)
+    /// declares the same candidate with the next day's reason. The rung already
+    /// declares it, so the pins table must not change, or the step lands a
+    /// dev-pin PR for nothing.
+    #[test]
+    fn a_dev_step_rerun_on_a_later_day_leaves_fleet_pins_byte_identical() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("fleet-pins.yaml");
+        let old = "ghcr.io/example-org/portal:v1.0.0@sha256:1111111111111111111111111111111111111111111111111111111111111111";
+        let rc = "ghcr.io/example-org/portal:v1.1.0-rc.1@sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        std::fs::write(&p, format!("goatnets:\n  dev:\n    members: [dev_hosts]\ncomponents:\n  portal:\n    var: portal_image\n    fleet: \"{old}\"\n")).unwrap();
+        let tag = "portal/v1.1.0-rc.1";
+        pins::edit_set_deviation(&p, "portal", "dev", rc, &dev_reason(tag, "2026-11-13", "A Person")).unwrap();
+        let before = std::fs::read_to_string(&p).unwrap();
+        assert!(before.contains("(2026-11-13, ADR 1173)"), "{before}");
+        pins::edit_set_deviation(&p, "portal", "dev", rc, &dev_reason(tag, "2026-11-14", "A Person")).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), before, "the re-run rewrote the dev deviation");
+        // A new candidate still replaces the deviation, with its own day.
+        let rc2 = rc.replace("rc.1@sha256:2222", "rc.2@sha256:3333");
+        pins::edit_set_deviation(&p, "portal", "dev", &rc2, &dev_reason("portal/v1.1.0-rc.2", "2026-11-14", "A Person")).unwrap();
+        let after = std::fs::read_to_string(&p).unwrap();
+        assert!(after.contains(&rc2) && after.contains("(2026-11-14, ADR 1173)") && !after.contains("2026-11-13"), "{after}");
+        assert_eq!(after.matches("      dev:\n").count(), 1, "{after}");
+    }
+
+    /// git's automatic abbreviation grows with the object count (7, then 8 ...),
+    /// so `--short` alone printed `d7e1f2a` on one side and `d7e1f2a1` on the
+    /// other. With core.abbrev forced short, the release still prints 12.
+    #[test]
+    fn a_commit_is_printed_at_twelve_characters_whatever_git_would_choose() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path().to_str().unwrap();
+        let git = |a: &[&str]| {
+            let o = std::process::Command::new("git")
+                .args(["-C", r])
+                .args(a)
+                .output()
+                .unwrap();
+            assert!(
+                o.status.success(),
+                "git {a:?}: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.org",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "c",
+        ]);
+        git(&["config", "core.abbrev", "7"]);
+        let s = short_rev(r, "HEAD").unwrap();
+        assert_eq!(s.len(), 12, "{s}");
+        git(&["config", "core.abbrev", "9"]);
+        assert_eq!(
+            short_rev(r, "HEAD").unwrap(),
+            s,
+            "the same 12 characters whatever core.abbrev says"
+        );
+    }
+
+    /// Both avenues print every commit they name at the same fixed length: no
+    /// `rev-parse --short` without `=12` in rc.sh, pr-land.sh or this module.
+    #[test]
+    fn both_avenues_name_commits_at_a_fixed_length() {
+        let bare = format!("\"rev-parse\", \"{}\"", "--short");
+        let here = include_str!("release.rs");
+        assert!(
+            !here.contains(&bare),
+            "release.rs calls rev-parse --short without a length"
+        );
+        assert_eq!(SHORT, "--short=12");
+        for (name, text) in [
+            (
+                "ops/scripts/rc.sh",
+                include_str!("../../../ops/scripts/rc.sh"),
+            ),
+            (
+                "ops/scripts/pr-land.sh",
+                include_str!("../../../ops/scripts/pr-land.sh"),
+            ),
+        ] {
+            for (n, line) in text.lines().enumerate() {
+                if let Some(i) = line.find("rev-parse --short") {
+                    assert!(
+                        line[i..].starts_with("rev-parse --short=12"),
+                        "{name}:{}: {line}",
+                        n + 1
+                    );
+                }
+            }
+        }
+    }
     #[test]
     fn a_run_finds_the_open_record_only_when_preprod_already_pins_the_ref() {
-        let d = std::env::temp_dir().join(format!("goatbuilder-release-{}-reuse", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = crate::testdir::path("goatbuilder-release-reuse-");
         std::fs::create_dir_all(d.join("ops/pins")).unwrap();
         std::fs::create_dir_all(d.join("ops/release/records/comp")).unwrap();
         let r = "ghcr.io/o/comp:v1-rc.1@sha256:cccccccccccc0000";

@@ -181,6 +181,13 @@ The `goat admin` commands and the console call the same APIs (`/api/onboard/*`, 
 
 ## 9. Federation — CLI-ONLY by design
 
+> **Moving out of `goat`.** [ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) (Proposed) moves all federation code into the
+> `goat-federation` library and `goatbuilder federate`. Until a goatbuilder release carrying the
+> verbs is available to partner environments, `goat federate <verb>` runs the same library and
+> prints one line naming the goatbuilder command; then it is removed from `goat`. The
+> classification below holds for the goatbuilder verbs: they stay CLI-only.
+> Status: measured — the federation end-to-end test drives both sides with goatbuilder federate alone (run up-4b1adc18cc3b-20261111T102642).
+
 `goat federate` builds and checks the federation package two parties exchange to peer. The
 `lint`/`compose`/`diff` package-processing subset is designed to run with **no network, no
 credentials and no ambient host access**: inputs are explicitly supplied files and public

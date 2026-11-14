@@ -82,3 +82,9 @@ fabric_health_spire_socket_dir: "/run/spire/sockets"
 # (Chainguard goat-fabric-health) runs as nonroot 65532.
 fabric_health_svid_dir: "/opt/fabric-health/svid"
 fabric_health_spire_uid: 65532
+
+# Container memory ceilings. The defaults are the values these limits had
+# when they were written into the compose template; a small host lowers them
+# in group_vars. ops/ci/check-compose-memory-is-variable.sh refuses a literal.
+fabric_health_memory_limit: 512M  # the fabric-health container
+fabric_health_spiffe_helper_memory_limit: 512M  # its spiffe-helper container

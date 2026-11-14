@@ -9,4 +9,5 @@ goatbuilder: the following required arguments were not provided:
   --site <SITE>
 
 (--site may be omitted only on a goatlite run: goatlite.yaml at the checkout root with preset lite and lite.name zagros)
+  (GB-243 — goatbuilder explain GB-243)
 """

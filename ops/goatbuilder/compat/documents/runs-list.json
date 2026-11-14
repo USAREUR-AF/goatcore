@@ -1,0 +1,23 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "runs",
+  "ok": true,
+  "exit": 0,
+  "checks": [
+    {
+      "name": "run",
+      "ok": true,
+      "detail": "20261114T022342Z-rollback-352859  rollback  exit 2  1 command(s)  -C /tmp/goatbuilder-compat/repo rollback portal 1 --env dev --yes"
+    },
+    {
+      "name": "run",
+      "ok": true,
+      "detail": "20261114T022342Z-deploy-352854  deploy  exit 2  0 command(s)  -C /tmp/goatbuilder-compat/repo deploy --env dev --component portal --yes"
+    },
+    {
+      "name": "runs",
+      "ok": true,
+      "detail": "goatbuilder show <id> prints one; goatbuilder runs diff <a> <b> compares two"
+    }
+  ]
+}

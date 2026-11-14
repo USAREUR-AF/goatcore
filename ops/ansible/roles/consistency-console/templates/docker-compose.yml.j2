@@ -16,7 +16,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "{{ consistency_console_memory_limit }}"
     restart: unless-stopped
     networks:
       - "{{ consistency_console_traefik_network }}"
@@ -84,7 +84,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "{{ consistency_console_oauth2_proxy_memory_limit }}"
     restart: unless-stopped
     networks:
       - "{{ consistency_console_traefik_network }}"

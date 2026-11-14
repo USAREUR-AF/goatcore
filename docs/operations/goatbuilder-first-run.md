@@ -20,7 +20,7 @@ One signed build, two homes. Verify the same way from either.
 # from the release page or from get.<site>.<zone>/goatbuilder/ — same files, same signature
 OS=$(uname -s | tr '[:upper:]' '[:lower:]'); ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 cosign verify-blob --bundle SHA256SUMS.cosign-bundle \
-  --certificate-identity-regexp '^https://github.com/usareur-af/goatcore/' \
+  --certificate-identity-regexp '^https://github\.com/USAREUR-AF/goatcore/\.github/workflows/_release-binary\.yml@refs/tags/goatbuilder/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS          # shasum -a 256 -c on macOS
 install -m 0755 "goatbuilder-$OS-$ARCH" ~/.local/bin/goatbuilder
@@ -59,7 +59,9 @@ in each role's `deploy-history.yml`.
 
 Run from the checkout you will deploy from. `doctor` names what a run needs:
 the tools, the checkout rule (a release runs from a `main` checkout current
-with origin, never a feature branch — F-586), the transport to each
+with origin, never a feature branch — F-586; an assembled tree, marked by
+its `.goat-assembled` file, is on a detached HEAD by construction and passes
+with what it was built from), the transport to each
 environment, every playbook's target mode, and the secrets each
 component's play templates.
 
@@ -72,7 +74,8 @@ goatbuilder doctor --env <goatnet> --credentials   # one environment; omit --env
 
 Environment keys are the pins' goatnet keys, one per rung of the release
 ladder (dev, preprod, prod). Every row is `ok` or `FAIL` with a fix; the
-verb exits 1 on any `FAIL`.
+verb exits 1 on any `FAIL`. The live rows' browser toolchain (`tool:live-rows`)
+is a note unless you pass `--browser-tests`; pass it before a release.
 
 ## Secrets: named before any host is touched
 

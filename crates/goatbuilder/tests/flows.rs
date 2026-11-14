@@ -21,6 +21,11 @@
 //! Flows that need hosts, GitHub or a registry are not here: the deployment
 //! e2e harness (ops/e2e) runs those against container hosts.
 
+#[path = "common/test_home.rs"]
+mod test_home;
+#[path = "../src/test_support.rs"]
+mod test_support;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -33,7 +38,7 @@ fn repo() -> PathBuf {
 }
 
 fn run(args: &[&str]) -> Output {
-    Command::new(bin())
+    test_home::isolate(&mut Command::new(bin()))
         .args(args)
         .env("GOAT_MESH_PROBE", "0")
         .output()
@@ -49,6 +54,15 @@ fn code(o: &Output) -> i32 {
 }
 
 /// Copy a directory tree (the fixtures are small, plain files).
+/// A test's own directory under the system temp directory, removed when the
+/// returned guard drops (a panicking test included).
+fn scratch(prefix: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .expect("a temporary directory for the test")
+}
+
 fn copy_tree(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
     for e in std::fs::read_dir(from).unwrap() {
@@ -494,7 +508,7 @@ fn deploy_dry_run_names_secret_variables_never_their_values() {
     let rs = r.to_str().unwrap();
     let before = repo_porcelain();
     let secret = "s3cr3t-value-that-must-not-print";
-    let o = Command::new(bin())
+    let o = test_home::isolate(&mut Command::new(bin()))
         .args(["deploy", "-C", rs, "--env", "zagros_dev", "--component", "netvis", "--dry-run"])
         .env("GOAT_MESH_PROBE", "0")
         .env("ZAGROS_DEV_NETVIS_OAUTH2_PROXY_CLIENT_SECRET", secret)
@@ -703,7 +717,7 @@ fn preflight_mock_grades_the_four_rollout_cases() {
     let (_tmp, fx) = fixture_copy("preflight");
     let r = repo();
     let preflight = |component: &str| -> Output {
-        Command::new(bin())
+        test_home::isolate(&mut Command::new(bin()))
             .args(["-o", "json", "preflight", "-C", r.to_str().unwrap(), "--mock", fx.to_str().unwrap(), component, "--env", "zagros-dev"])
             .env("GOAT_MESH_PROBE", "0")
             .env("GOAT_PREFLIGHT_PULL", "0")
@@ -783,18 +797,18 @@ fn deploy_prep_phase_gates_a_declared_restore_required_rollout_on_ack() {
     assert!(!text(&o).contains("re-run with --ack"), "ack given: not gated — {}", text(&o));
 }
 
-fn founder_copy(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("gb-mock-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+fn founder_copy(name: &str) -> (tempfile::TempDir, PathBuf) {
+    let held = scratch(&format!("gb-mock-{name}-"));
+    let dir = held.path().to_path_buf();
     copy_tree(&repo().join("ops/goatbuilder/fixtures/goatnet-from-scratch/01-founder"), &dir);
-    dir
+    (held, dir)
 }
 
 /// A dry run on a fixture acts on nothing and needs no actor, for standup and
 /// for teardown (the walkthrough found both ignoring --dry-run).
 #[test]
 fn a_mock_dry_run_changes_nothing() {
-    let dir = founder_copy("dry");
+    let (_held, dir) = founder_copy("dry");
     let d = dir.to_str().unwrap();
     let before = snapshot(&dir);
     let o = run(&["--mock", d, "standup", "zagros", "--site", "alpha", "--dry-run"]);
@@ -817,7 +831,7 @@ fn a_mock_dry_run_changes_nothing() {
 /// --from and --to bound a rehearsal as they bound a real run.
 #[test]
 fn a_mock_standup_honours_its_phase_range() {
-    let dir = founder_copy("range");
+    let (_held, dir) = founder_copy("range");
     let d = dir.to_str().unwrap();
     let o = run(&["--mock", d, "standup", "zagros", "--site", "alpha", "--from", "9", "--to", "9", "--dry-run"]);
     assert_eq!(code(&o), 0, "{}", text(&o));
@@ -858,12 +872,74 @@ fn assay_plan_writes_nothing_in_the_checkout() {
     }
 }
 
+/// `assay --plan` is a dry run: its derivations start through the runner, but it
+/// begins no run, so it prints no `run record:` line and writes no record. This is
+/// the goatlite tutorial's rehearsal, whose checkpoint has no such line
+/// (ops/tutorials/check.sh).
+#[test]
+fn assay_plan_leaves_no_run_record() {
+    if !python_deps() {
+        return;
+    }
+    let r = repo();
+    let values = r.join("ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite/assay-values.yaml");
+    let o = run(&["-C", r.to_str().unwrap(), "assay", "pasture", "--values", values.to_str().unwrap(), "--plan"]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    assert!(!text(&o).contains("run record:"), "assay --plan printed a run record:\n{}", text(&o));
+    let runs = test_home::path().join(".goat/state/runs");
+    assert!(!runs.exists(), "assay --plan wrote {}", runs.display());
+}
+
+/// `rollback --list` and `--status` only report, so they write no run record: they
+/// print no `run record:` line and no runner frame, and read as rollback.sh reads
+/// (ops/goatbuilder/parity-rollback.sh compares the two byte for byte). The
+/// component has a host, so both modes start their ssh reads; this ssh refuses
+/// at once, as an unreachable host does.
+#[test]
+fn rollback_list_and_status_leave_no_run_record() {
+    let dir = scratch("rollback-no-record");
+    let repo = dir.path().join("repo");
+    let role = repo.join("ops/ansible/roles/demo");
+    std::fs::create_dir_all(&role).unwrap();
+    std::fs::write(
+        role.join("deploy-history.yml"),
+        "hosts:\n  - host: 192.0.2.10\n    ssh_user: goat\n    site: zagros-dev\nhistory:\n  - image: ghcr.io/example/demo\n    sha: sha-aaaaaaa\n    merged_at: \"2026-01-01\"\n    pr: 1\n    summary: first\n",
+    )
+    .unwrap();
+    assert!(Command::new("git").args(["init", "-q"]).current_dir(&repo).status().unwrap().success());
+    let bin_dir = dir.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let ssh = bin_dir.join("ssh");
+    test_support::executable(&ssh, "#!/bin/sh\nexit 255\n");
+    let path = format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default());
+    for mode in ["--list", "--status"] {
+        let o = test_home::isolate(&mut Command::new(bin()))
+            .args(["-C", repo.to_str().unwrap(), "rollback", "demo", mode])
+            .env("PATH", &path)
+            .env("GOAT_MESH_PROBE", "0")
+            .output()
+            .expect("run goatbuilder");
+        let t = text(&o);
+        assert_eq!(code(&o), 0, "rollback {mode}: {t}");
+        assert!(t.contains("192.0.2.10") || t.contains("sha-aaaaaaa"), "rollback {mode} read nothing: {t}");
+        assert!(!t.contains("run record:"), "rollback {mode} printed a run record:\n{t}");
+        assert!(!t.contains("· FAILED: ssh"), "rollback {mode} printed a runner frame:\n{t}");
+    }
+    let runs = test_home::path().join(".goat/state/runs");
+    assert!(!runs.exists(), "rollback --list/--status wrote {}", runs.display());
+}
+
 /// A throwaway repo and a `gh` that logs its arguments and knows one tag.
-struct FastlaneRepo { dir: PathBuf, gh_log: PathBuf, path: String }
+struct FastlaneRepo {
+    dir: PathBuf,
+    gh_log: PathBuf,
+    path: String,
+    _held: tempfile::TempDir,
+}
 
 fn fastlane_repo(name: &str, component: &str) -> FastlaneRepo {
-    let dir = std::env::temp_dir().join(format!("goatbuilder-fastlane-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let held = scratch(&format!("goatbuilder-fastlane-{name}-"));
+    let dir = held.path().to_path_buf();
     for d in ["ops/pins", "ops/ansible/roles/app", "ops/release/sets", "ops/goatbuilder", "bin"] {
         std::fs::create_dir_all(dir.join(d)).unwrap();
     }
@@ -872,11 +948,9 @@ fn fastlane_repo(name: &str, component: &str) -> FastlaneRepo {
     std::fs::write(dir.join("ops/ansible/odd-name.yml"), "- hosts: all\n").unwrap();
     let gh_log = dir.join("gh.log");
     let gh = dir.join("bin/gh");
-    std::fs::write(&gh, format!("#!/bin/sh\necho \"$*\" >> '{}'\necho sha256:{}\n", gh_log.display(), "a".repeat(64))).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    test_support::executable(&gh, &format!("#!/bin/sh\necho \"$*\" >> '{}'\necho sha256:{}\n", gh_log.display(), "a".repeat(64)));
     let path = format!("{}:{}", dir.join("bin").display(), std::env::var("PATH").unwrap_or_default());
-    FastlaneRepo { dir, gh_log, path }
+    FastlaneRepo { dir, gh_log, path, _held: held }
 }
 
 fn fastlane_dry(r: &FastlaneRepo, reference: &str) -> serde_json::Value {
@@ -886,7 +960,7 @@ fn fastlane_dry(r: &FastlaneRepo, reference: &str) -> serde_json::Value {
 /// The same dry run with a PATH of the caller's choosing, so a test can take a
 /// tool away (a PATH of the fixture's bin alone has no `gh` once it is removed).
 fn fastlane_dry_on(r: &FastlaneRepo, reference: &str, path: &str) -> serde_json::Value {
-    let o = Command::new(env!("CARGO_BIN_EXE_goatbuilder"))
+    let o = test_home::isolate(&mut Command::new(env!("CARGO_BIN_EXE_goatbuilder")))
         .args(["-o", "json", "-C", r.dir.to_str().unwrap(), "fastlane", "app", "--ref", reference, "--reason", "test", "--ack", "Flow Test", "--dry-run"])
         .env("PATH", path)
         .env("GOAT_MESH_PROBE", "0")
@@ -981,7 +1055,7 @@ fn fastlane_refuses_a_component_in_an_open_set() {
 #[test]
 fn completion_survives_a_closed_pipe() {
     use std::process::Stdio;
-    let mut child = Command::new(bin())
+    let mut child = test_home::isolate(&mut Command::new(bin()))
         .args(["completion", "zsh"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

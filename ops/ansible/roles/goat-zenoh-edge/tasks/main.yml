@@ -80,45 +80,25 @@
     success_msg: "key-bundle scope is per release set"
   when: goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
 
-- name: edge | read the core's key storages, to compare against what we grant
-  # A queryable declared WIDER than the lane this edge grants is refused, and
-  # SILENTLY. The bundle is served
-  # by a storage on the core, so a core storing "keys/**" against a per-set grant
-  # means the declaration never reaches the partner and their fetch returns an
-  # empty result that reads as "nothing was published".
-  #
-  # Read-only, and never fatal on its own: the core may legitimately be a host
-  # this play cannot reach, and a check that cannot run must not be reported as
-  # a check that passed.
-  ansible.builtin.shell: >-
-    set -o pipefail;
-    docker exec {{ goat_zenoh_edge_core_container | default('goat-zenoh') }}
-    cat /etc/zenoh/config.json5 2>/dev/null
-    | grep -oE '"keys/[^"]*"' | sort -u | tr '\n' ' '
-  args: { executable: /bin/bash }
-  register: _edge_core_key_storages
-  changed_when: false
-  failed_when: false
+- name: edge | find the core router the checks below read
+  ansible.builtin.include_tasks: find-core.yml
+  when: >-
+    goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
+    or (goat_zenoh_edge_ingress_key_exprs | default([]) | length > 0
+        and goat_zenoh_edge_ingress_scope_check | default(true) | bool)
+
+- name: edge | compare the core's key storage with the key-bundle grant
+  ansible.builtin.include_tasks: key-storage-check.yml
   when: goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
 
-- name: edge | warn when the core's key storage is wider than the grant
-  ansible.builtin.fail:
-    msg: >-
-      The core stores {{ _edge_core_key_storages.stdout | trim }}, which is WIDER
-      than the {{ goat_zenoh_edge_key_bundle_key_exprs | join(', ') }} this edge
-      grants. A queryable declared wider than the granted lane is refused
-      silently, so the partner's fetch will return an empty result that reads as
-      "no bundle published". Narrow the core's key storage to the
-      released set(s), or set goat_zenoh_edge_key_scope_check=false if you have
-      deliberately accepted this.
-  when:
-    - goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
-    - goat_zenoh_edge_key_scope_check | default(true)
-    - _edge_core_key_storages.stdout | default('') is search('"keys/\\*\\*"')
-
-- name: edge | inspect scoped ingress storage when a local core is readable
+- name: edge | require a receive store on the core for each admitted ingress scope
   ansible.builtin.include_tasks: ingress-storage-check.yml
   when: goat_zenoh_edge_ingress_key_exprs | default([]) | length > 0
+
+# Before the first write: a refusal here leaves the edge as it was.
+- name: edge | check the peering certificates in the run's working directory
+  ansible.builtin.include_tasks: certificates-check.yml
+  when: goat_zenoh_edge_install_certs | bool
 
 - name: edge | directories
   ansible.builtin.file:
@@ -220,6 +200,12 @@
       concatenates it with the partner's, and `fragment` names it in the
       per-endpoint override AND MOUNTS IT -- an override pointing at a path the
       container cannot read is discarded, and the edge never dials.
+
+# After every other check, so a refusal cannot follow a certificate change whose
+# restart would then be lost; before the bundle reads the installed partner CA.
+- name: edge | install the checked peering certificates
+  ansible.builtin.include_tasks: certificates-install.yml
+  when: goat_zenoh_edge_install_certs | bool
 
 - name: edge | read our CA
   ansible.builtin.slurp:

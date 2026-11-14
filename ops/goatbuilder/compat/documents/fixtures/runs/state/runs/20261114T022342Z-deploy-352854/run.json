@@ -1,0 +1,34 @@
+{
+  "schema": "goatbuilder.run/v1",
+  "id": "20261114T022342Z-deploy-352854",
+  "tool_version": "0.6.0",
+  "tree_commit": null,
+  "verb": "deploy",
+  "args": [
+    "-C",
+    "/tmp/goatbuilder-compat/repo",
+    "deploy",
+    "--env",
+    "dev",
+    "--component",
+    "portal",
+    "--yes"
+  ],
+  "started": "2026-11-14T02:23:42Z",
+  "ended": "2026-11-14T02:23:42Z",
+  "exit": 2,
+  "error": "/tmp/goatbuilder-compat/repo/ops/pins/fleet-pins.yaml: No such file or directory (os error 2)",
+  "phases": [
+    {
+      "id": "prep",
+      "name": "the rollout facts and the ack gate",
+      "purpose": "",
+      "started": "2026-11-14T02:23:42Z",
+      "ended": "2026-11-14T02:23:42Z",
+      "exit": null,
+      "commands": 0
+    }
+  ],
+  "commands": [],
+  "inputs": []
+}

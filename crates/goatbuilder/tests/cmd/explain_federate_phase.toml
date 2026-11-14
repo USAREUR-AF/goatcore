@@ -1,0 +1,34 @@
+# explain answers for a phase of federate from the phase catalog, by number.
+bin.name = "goatbuilder"
+args = ["explain", "federate", "8"]
+stdout = """
+federate phase 8 mint (plan) [T]: validate or mint the peering leaves
+
+What it does:
+  Validates the four peering leaf certificates in the working directory, or mints the missing ones from the agreement with our CA: outward, inward, core and republisher, with every address that will be dialled as a SAN. It places our CA beside them as our-ca.pem.
+
+Why it exists:
+  The names the partner and our core match on come from the agreement; certificates typed by hand have failed silently before (a missing SAN, a CN no ACL names).
+
+What it changes:
+  In the working directory, pki/: the leaf certificates and keys, and our-ca.pem. A valid existing pair is reused, never rewritten.
+
+How to tell it worked:
+  four certificates, names derived from the agreement, SANs covering every address that will be dialled: outward, inward, core, and `republisher.pem` with CN `fed.<us>.<them>.republisher.01`
+
+It runs:
+  ops/federation/standup/mint-peering-leaves.sh
+
+By hand:
+  ops/federation/standup/mint-peering-leaves.sh <work>/agreement.json <work>/pki --as <us>
+
+If it failed:
+  a certificate pair is invalid or changed
+
+Then:
+  inspect it (phase 8 reruns (docs/operations/sovereign-federation-runbook.md#phase-8-reruns-and-deliberate-certificate-replacement)); do not delete files to get past it
+
+Read:
+  docs/operations/sovereign-federation-runbook.md#phase-8-reruns-and-deliberate-certificate-replacement
+"""
+stderr = ""

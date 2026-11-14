@@ -268,6 +268,12 @@ because GitHub will not let a workflow approve its own pull request (warrant
 [`crates/goat-cli/src/cmd/warrant.rs`](../../crates/goat-cli/src/cmd/warrant.rs),
 built on the transfer-engine primitives in `members.rs`.
 
+- It reads the goatnet's ACL declaration (`netbird_acl_taxonomy.yml`,
+  `netbird_acl_matrix.yml`) as every `goat warrant` verb does
+  ([`warrant.md`](warrant.md)). On the management host the `warrant-membership`
+  role installs both files in `/etc/goat/warrant/acl/` from the checkout it
+  deploys from, and the unit names that directory in
+  `GOAT_ACL_DECLARATION_DIR`.
 - `--mode report|enforce`; the file's `converge:` is the ceiling — the CLI can
   lower `enforce` to `report`, never raise it.
 - Enforce adds before it removes, per group, and re-reads to verify (ADR 1088's

@@ -103,6 +103,68 @@
     - zenoh_peer_read_scoped | default(false) | bool
     - zenoh_partner_read_partition | default(false) | bool
 
+- name: Pre-flight | with several sovereign peerings, each reads its own sets only
+  # Every peering's republisher writes its sets under `from/<us>/<set>/**` on this one
+  # core. A peering whose release_key_exprs is the whole wire name `from/<us>/**` (or
+  # wider) can read every other peering's sets, including a set agreed with another
+  # partner only, and its edge carries them out. With one peering the whole prefix and
+  # the offered sets carry the same data; with two it is a leak. Refuse rather than
+  # render it: list the wire key of each set the agreement offers, as
+  # `goat federate apply` renders it (`from/<us>/<set>/**`).
+  ansible.builtin.assert:
+    that:
+      - _sov_whole_prefix | length == 0
+    fail_msg: >-
+      zenoh_sovereign_peerings declares {{ zenoh_sovereign_peerings | length }} peerings, and
+      {{ _sov_whole_prefix | join(', ') }} reads a whole wire name or wider
+      (release_key_exprs). Each peering's republisher writes onto this core, so that
+      peering's edge would carry the other peerings' sets out, including sets agreed with
+      another partner only. Narrow it to the wire key of each set its agreement offers,
+      e.g. from/<us>/<set>/**, and set its release_interest_key_exprs to from/<us>/**
+      (interest carries no data, and a narrower interest rule refuses the receiver's
+      subscription).
+    quiet: true
+  vars:
+    _sov_whole_prefix: >-
+      {%- set out = [] -%}
+      {%- for p in zenoh_sovereign_peerings | default([]) -%}
+      {%-   for k in p.release_key_exprs | default([]) -%}
+      {%-     set segs = k.split('/') -%}
+      {%-     if (segs | length) <= 3 and segs[-1] == '**' or (segs[:3] | select('search', '\\*') | list | length > 0) -%}
+      {%-       set _ = out.append(p.sovereign ~ ' (' ~ k ~ ')') -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out | unique }}
+  when: (zenoh_sovereign_peerings | default([]) | length) > 1
+
+- name: Pre-flight | a sovereign read narrowed to sets keeps its interest on the wire name
+  # Narrowing release_key_exprs to sets also narrows the interest rules unless
+  # release_interest_key_exprs says otherwise, and zenoh then refuses the receiver's
+  # subscriber declaration for the whole wire name: the link stays up, nothing is
+  # asked for, nothing crosses, and nothing is logged above TRACE. Refuse instead.
+  ansible.builtin.assert:
+    that:
+      - _sov_interest_narrowed | length == 0
+    fail_msg: >-
+      {{ _sov_interest_narrowed | join(', ') }}: release_key_exprs names sets, and with
+      release_interest_key_exprs unset the interest rules narrow with it, so that
+      partner's subscription to our whole wire name is refused and nothing crosses.
+      Set release_interest_key_exprs to the whole wire name, e.g. from/<us>/**.
+    quiet: true
+  vars:
+    _sov_interest_narrowed: >-
+      {%- set out = [] -%}
+      {%- for p in zenoh_sovereign_peerings | default([]) -%}
+      {%-   set keys = p.release_key_exprs | default([]) -%}
+      {%-   if keys | length > 0 and (p.release_interest_key_exprs | default([]) | length == 0)
+              and (keys | select('search', '^[^/]+/[^/]+/\\*\\*$') | list | length == 0) -%}
+      {%-     set _ = out.append(p.sovereign) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: (zenoh_sovereign_peerings | default([]) | length) > 0
+
 - name: Pre-flight | flatten the pre-cut partner slot ranges (ADR 1138)
   # The explicit lane map is only half the partner population: the pre-cut
   # blocks carve whole ranges of slot indexes. A `slot_idx:` grant landing in
@@ -371,7 +433,14 @@
       [ -f "$f" ] || { : > /tmp/.goat-trust-before; echo "no-prior-bundle"; exit 0; }
       awk 'BEGIN{n=0} /BEGIN CERT/{n++} {print > ("/tmp/.gtb-" n ".pem")}' "$f"
       for c in /tmp/.gtb-*.pem; do
-        [ -s "$c" ] && openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null
+        [ -s "$c" ] || continue
+        # An issuer already expired NOW can validate nothing, so its absence
+        # from the rebuilt bundle is rotation hygiene, not a dropped anchor.
+        # Counting it made the loss assertion fail on every legitimate CA
+        # rotation and invited a bypass of a trust check. A VALID issuer that
+        # disappears still fails the assertion below.
+        openssl x509 -in "$c" -noout -checkend 0 >/dev/null 2>&1 || continue
+        openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null
       done | sed 's/.*=//' | sort -u > /tmp/.goat-trust-before
       rm -f /tmp/.gtb-*.pem
       wc -l < /tmp/.goat-trust-before
@@ -669,13 +738,21 @@
   ansible.builtin.fail:
     msg: >-
       F-447: zenoh_orphan_stores_fail is set for this goatnet, and
-      {{ _zenoh_orphan_stores.stdout_lines | default([]) | length }} undeclared
+      {{ _orphans_left | length }} undeclared
       store directory/ies remain:
-      {{ _zenoh_orphan_stores.stdout_lines | default([]) | join(', ') }}.
+      {{ _orphans_left | join(', ') }}.
       Dispose of them (or clear the flag) before deploying.
+  vars:
+    # The store of a partner the back-out is dropping (goat_zenoh_drop_partner_store,
+    # ADR 1234) is undeclared until ops/ansible/zenoh-drop-partner-store.yml deletes
+    # it, right after this play.
+    _orphans_left: >-
+      {{ _zenoh_orphan_stores.stdout_lines | default([])
+         | reject('equalto', 'sovereign_from_' ~ (goat_zenoh_drop_partner_store | default('')))
+         | list }}
   when:
     - zenoh_orphan_stores_fail | default(false) | bool
-    - (_zenoh_orphan_stores.stdout_lines | default([]) | length) > 0
+    - (_orphans_left | length) > 0
 
 # ===== PER-VENDOR MODE: F-258 seed + org fragment reconciliation ===========
 - name: F-258 | install acl-assemble.py reconciler on host

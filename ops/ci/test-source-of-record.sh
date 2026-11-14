@@ -23,7 +23,11 @@
 #   beside a goatrodeo role -> 0; a marker without goatrodeo -> as before
 #   pre-disclosure patches (embargo=), carried in the overlay or declared by
 #   digest in embargo/<id>/patches.sha256: recorded and applied -> 0; any
-#   other change, a missing or altered patch, a marker that disagrees -> GB-064
+#   other change, a missing or altered patch, a marker that disagrees -> GB-064;
+#   each patch judged against its own repository: a path both patches leave
+#   with the same bytes -> 0; a goatstuff patch to a file each repository
+#   carries for itself (goatcore's stays) -> 0; different bytes at any other
+#   path both carry -> GB-064
 # and that a clone (no marker) is still judged by the trunk-remote path.
 # No network, no host.
 set -euo pipefail
@@ -42,6 +46,7 @@ cp "$REPO/ops/scripts/fresh-source.sh" "$S/core/ops/scripts/"
 cp "$REPO/ops/scripts/lib/source_of_record.py" "$S/core/ops/scripts/lib/"
 echo "- debug: msg=core" > "$S/core/ops/ansible/roles/x/tasks/main.yml"
 echo "core: example" > "$S/core/ops/ansible/group_vars_all.yml"
+mkdir -p "$S/core/crates"; echo "# goatcore workspace" > "$S/core/crates/Cargo.toml"
 git "${G[@]}" -C "$S/core" init -q
 git -C "$S/core" add -A
 git "${G[@]}" -C "$S/core" commit -q -m "chore: export from the source tree at 0123456789ab"
@@ -131,6 +136,7 @@ mkdir -p "$S/stuff/ops/ansible/roles/y/tasks" "$S/stuff/ops/ansible/roles/z/defa
 echo "- debug: msg=stuff" > "$S/stuff/ops/ansible/roles/y/tasks/main.yml"
 echo "z: stuff" > "$S/stuff/ops/ansible/roles/z/defaults/main.yml"
 echo "goatstuff" > "$S/stuff/README.md"
+mkdir -p "$S/stuff/crates"; echo "# goatstuff workspace" > "$S/stuff/crates/Cargo.toml"
 git "${G[@]}" -C "$S/stuff" init -q
 git -C "$S/stuff" add -A
 git "${G[@]}" -C "$S/stuff" commit -q -m "goatstuff"
@@ -283,6 +289,61 @@ git "${G[@]}" -C "$S/ov" commit -q -m "embargo A and B disclosed"
 git -C "$S/ov" push -q origin main
 assemble_stuff "$STUFF"
 expect "patches removed from the overlay, unpatched tree runs" 0 "$CORE" fs
+
+# --- each patch is judged against its own repository ----------------------------
+# C: both patches add the same file under ops/ and each changes its own
+# crates/Cargo.toml (a file each repository carries for itself: the tree keeps
+# goatcore's); the goatstuff patch also changes a goatstuff role.
+mkdir -p "$S/ov/embargo/C"
+mkpatch "$S/core" "$CORE" "$S/ov/embargo/C/core.patch" sh -c 'mkdir -p ops/ci && echo "guard" > ops/ci/guard.sh && echo "core-dep = 1" >> crates/Cargo.toml && git add -N ops/ci/guard.sh'
+mkpatch "$S/stuff" "$STUFF" "$S/ov/embargo/C/stuff.patch" sh -c 'mkdir -p ops/ci && echo "guard" > ops/ci/guard.sh && echo "stuff-dep = 1" >> crates/Cargo.toml && echo "- debug: msg=fixed" >> ops/ansible/roles/y/tasks/main.yml && git add -N ops/ci/guard.sh'
+echo "# C" > "$S/ov/embargo/C/README.md"
+git -C "$S/ov" add -A
+git "${G[@]}" -C "$S/ov" commit -q -m "embargo C"
+git -C "$S/ov" push -q origin main
+assemble_own() {   # <id>: core.patch on the goatcore files; of stuff.patch, what a layered goatstuff adds (its role)
+  assemble_stuff "$STUFF"
+  (cd "$S/t" && git apply "$S/ov/embargo/$1/core.patch" && git apply --include='ops/ansible/*' "$S/ov/embargo/$1/stuff.patch")
+  printf 'embargo=%s/core.patch:%s,%s/stuff.patch:%s\n' "$1" "$(sha256 "$S/ov/embargo/$1/core.patch")" \
+    "$1" "$(sha256 "$S/ov/embargo/$1/stuff.patch")" >> "$S/t/.goat-assembled"
+}
+assemble_own C
+expect "both patches leave one path with the same bytes; a goatstuff patch to its own workspace manifest" 0 "pre-disclosure patches C" fs
+echo "stuff-dep = 1" >> "$S/t/crates/Cargo.toml"
+expect "a file goatcore's patch changes, edited further" 1 "pre-disclosure patches change are not" fs
+assemble_own C
+echo "more" >> "$S/t/ops/ci/guard.sh"
+expect "a file both patches add, edited further" 1 "pre-disclosure patches change are not" fs
+
+# D: the two patches add one path under ops/ with different bytes
+git -C "$S/ov" rm -q -r embargo/C
+mkdir -p "$S/ov/embargo/D"
+mkpatch "$S/core" "$CORE" "$S/ov/embargo/D/core.patch" sh -c 'mkdir -p ops/ci && echo "guard" > ops/ci/guard.sh && git add -N ops/ci/guard.sh'
+mkpatch "$S/stuff" "$STUFF" "$S/ov/embargo/D/stuff.patch" sh -c 'mkdir -p ops/ci && echo "another guard" > ops/ci/guard.sh && git add -N ops/ci/guard.sh'
+echo "# D" > "$S/ov/embargo/D/README.md"
+git -C "$S/ov" add -A
+git "${G[@]}" -C "$S/ov" commit -q -m "embargo D"
+git -C "$S/ov" push -q origin main
+assemble_stuff "$STUFF"
+(cd "$S/t" && git apply "$S/ov/embargo/D/core.patch")
+printf 'embargo=D/core.patch:%s,D/stuff.patch:%s\n' "$(sha256 "$S/ov/embargo/D/core.patch")" "$(sha256 "$S/ov/embargo/D/stuff.patch")" >> "$S/t/.goat-assembled"
+expect "the two patches leave one path with different bytes" 1 "different content at a path both repositories carry: ops/ci/guard.sh" fs
+
+# E: a goatstuff patch writes a path goatcore carries (not one of a repository's own files)
+git -C "$S/ov" rm -q -r embargo/D
+mkdir -p "$S/ov/embargo/E"
+mkpatch "$S/stuff" "$STUFF" "$S/ov/embargo/E/stuff.patch" sh -c 'mkdir -p ops/ansible/roles/x/tasks && echo "- debug: msg=theirs" > ops/ansible/roles/x/tasks/main.yml && git add -N ops/ansible/roles/x/tasks/main.yml'
+echo "# E" > "$S/ov/embargo/E/README.md"
+git -C "$S/ov" add -A
+git "${G[@]}" -C "$S/ov" commit -q -m "embargo E"
+git -C "$S/ov" push -q origin main
+assemble_stuff "$STUFF"
+printf 'embargo=E/stuff.patch:%s\n' "$(sha256 "$S/ov/embargo/E/stuff.patch")" >> "$S/t/.goat-assembled"
+expect "a goatstuff patch leaves other bytes at a goatcore path" 1 "different content at a path both repositories carry: ops/ansible/roles/x/tasks/main.yml" fs
+
+git -C "$S/ov" rm -q -r embargo
+git "${G[@]}" -C "$S/ov" commit -q -m "embargo E disclosed"
+git -C "$S/ov" push -q origin main
 
 # a marker without goatstuff_ref records no goatstuff
 assemble

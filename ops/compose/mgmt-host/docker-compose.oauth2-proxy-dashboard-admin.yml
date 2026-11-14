@@ -37,7 +37,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: "${OAUTH2_PROXY_DASHBOARD_ADMIN_MEMORY:-128M}"
     labels:
       - "site_id=${SITE_ID:-unknown}"
       - "block=mesh-change-control"

@@ -45,18 +45,29 @@ peering also needs a counterparty, and the validated FIPS backend where your acc
 |---|---|---|
 | 1 | gate | Preflight: the declaration, the edge group, the tools |
 | 2 | task | Prepare the edge: the WireGuard interface and the SPIRE bundle export |
-| 3 | task | `goat federate init`: your half, read from the running system |
-| 4 | task | `goat federate lint` |
-| 5 | manual | Exchange packages, CA certificates and SPIFFE bundles through the peering directory; read the keys aloud and record them |
-| 6 | task | `goat federate compose`: one agreement |
-| 7 | task | `goat federate verify` from your side |
+| 3 | task | `goatbuilder federate init`: your half, read from the running system |
+| 4 | task | `goatbuilder federate lint` |
+| 5 | confirm | Exchange packages, CA certificates and SPIFFE bundles through the peering directory; read the keys aloud and type the partner's back |
+| 6 | task | `goatbuilder federate compose`: one agreement |
+| 7 | task | `goatbuilder federate verify` from your side |
 | 8 | task | Mint the peering leaf certificates from the agreement |
-| 9 | task | `goat federate apply`: the access rules and configuration |
-| 10 | manual | Review what will change, check the partner CA, admit the edge on your core |
+| 9 | task | `goatbuilder federate apply`: the access rules and configuration |
+| 10 | confirm | Approve the plan, then what your core will admit; the command places it and restarts your core |
 | 11 | task | Open the transport the agreement selected (WireGuard or IPsec), refuse any other |
 | 12 | task | Deploy the edge router |
 | 13 | task | Federate the two SPIRE trust domains |
 | 14 | gate | Acceptance: carries, refuses, round-trips, read from the receiving side |
+
+The fourteen phases are one command, `goatbuilder federate <partner>`, which
+runs phases 1 to 9 itself. `goatbuilder federate plan` then runs phase 1's
+checks and writes the plan from what those phases left; 10 to 13 are `deploy`,
+14 is `test`, and `status` reports what the run journal and the evidence say. At a terminal, `goatbuilder federate <partner>`
+runs them in order and asks at phases 5, 6 and 10: the partner's key (typed)
+and CA fingerprint at 5, the agreement digest at 6, the plan and the admission
+at 10. The
+[runbook's step 1](../operations/sovereign-federation-runbook.md#step-1--run-goatbuilder-federate-partner)
+covers each stage. The runs below drive both sovereigns through that same
+command.
 
 ## Run it in containers
 

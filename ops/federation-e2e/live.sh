@@ -320,10 +320,10 @@ accept_as() { # $1 scenario, $2 sovereign, $3 avenue
       tar -xzf "$TARBALL" -C "$clone"; git -C "$clone" init -q
       hget "$s" /opt/goat/ops/goatbuilder/goatbuilder.yaml > "$clone/ops/goatbuilder/goatbuilder.yaml"
     fi
-    rec "s$n-acceptance-as-$s" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" \
+    rec "s$n-acceptance-as-$s" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" --expect-not-in "ACCEPTANCE INCOMPLETE" \
       -- env "${env[@]}" "$LGB" -C "$clone" --yes federate "$them" --as "$s" --work "$w" --from 14 --to 14
   else
-    rec "s$n-acceptance-as-$s" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" \
+    rec "s$n-acceptance-as-$s" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" --expect-not-in "ACCEPTANCE INCOMPLETE" \
       -- env "${env[@]}" "$REPO/ops/scripts/peering-standup.sh" "$them" --as "$s" --from 14 --to 14
   fi
 }

@@ -13,6 +13,9 @@
 #   5. refused: a file in the config directory the role did not write
 #   6. refused: the host has a wt0 interface (a mesh peer)
 #   7. refused: the host holds a peering edge's configuration
+#   8. two peerings in the shape `goatbuilder federate allocate` renders them
+#      (crates/goatbuilder/src/federate/forwarder.rs): two carriers, each relaying
+#      its own public port to its own edge listen port
 #
 # Needs docker with --privileged and cgroup v2, and the wireguard kernel module.
 # usage: ops/ci/test-peering-forwarder-role.sh [--keep]
@@ -42,10 +45,12 @@ cleanup() {
 trap cleanup EXIT
 
 log "image"
-docker build -q -t "$IMG" - >/dev/null <<'EOF' || fail "building the test image"
+docker build --progress=plain -t "$IMG" - <<'EOF' || fail "building the test image"
 FROM ubuntu:24.04
-RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-      systemd systemd-sysv sudo python3 python3-pip python3-apt wireguard-tools nftables iproute2 >/dev/null \
+# Retry transient mirror failures, but never build from a partial index refresh.
+RUN printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "20";' 'Acquire::https::Timeout "20";' > /etc/apt/apt.conf.d/80-ci-network
+RUN apt-get update -o APT::Update::Error-Mode=any && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      systemd systemd-sysv sudo python3 python3-pip python3-apt wireguard-tools nftables iproute2 \
  && pip3 install --break-system-packages -q 'ansible-core>=2.16,<2.21'
 CMD ["/sbin/init"]
 EOF
@@ -117,5 +122,17 @@ x 'ip link del wt0'
 x 'mkdir -p /etc/goat-peering-wg'
 refused good "holds a peering"
 x 'rmdir /etc/goat-peering-wg'
+
+# 8. The rendered shape: every key explicit, the second peering one index up.
+vars rendered "[{\"name\": \"xab\", \"interface\": \"wg-carry0\", \"peering_port\": 51820, \"edge_peering_port\": 51823, \"carrier_port\": 51821, \"carrier_local_ip\": \"169.254.30.0\", \"carrier_remote_ip\": \"169.254.30.1\", \"carrier_prefix_len\": 31, \"edge_carrier_public_key\": \"$KEY_EDGE\"}, {\"name\": \"xac\", \"interface\": \"wg-carry1\", \"peering_port\": 51822, \"edge_peering_port\": 51825, \"carrier_port\": 51823, \"carrier_local_ip\": \"169.254.30.2\", \"carrier_remote_ip\": \"169.254.30.3\", \"carrier_prefix_len\": 31, \"edge_carrier_public_key\": \"$KEY_EDGE2\"}]"
+play rendered || { cat "/tmp/$C-rendered.log"; fail "8: two rendered peerings did not converge"; }
+[ "$(x 'wg show wg-carry1 peers')" = "$KEY_EDGE2" ] || fail "8: the second carrier does not hold exactly its edge"
+[ "$(x 'wg show wg-carry1 listen-port')" = 51823 ] || fail "8: the second carrier does not listen on 51823"
+table=$(x 'nft list table inet goat_peering_forwarder')
+printf '%s\n' "$table" | grep -Eq 'udp dport 51822 dnat (ip )?to 169\.254\.30\.3:51825' \
+  || { printf '%s\n' "$table"; fail "8: the second peering's public port is not relayed to its edge listen port"; }
+printf '%s\n' "$table" | grep -Eq 'udp dport 51820 dnat (ip )?to 169\.254\.30\.1:51823' \
+  || { printf '%s\n' "$table"; fail "8: the first peering's public port is not relayed to its edge listen port"; }
+log "ok: 8 two rendered peerings converge, each port to its own edge"
 
 log "PASS"

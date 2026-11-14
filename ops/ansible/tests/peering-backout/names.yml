@@ -1,0 +1,20 @@
+---
+# Test fixture for ops/ansible/tests/peering-backout/test_peering_backout.py: derive the
+# back-out names of every host's peering and write them to <out>/<host>.json. Runs on
+# localhost; touches nothing else.
+- name: peering-backout | names of each peering
+  hosts: all
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Derive this peering's names
+      ansible.builtin.include_tasks: ../../tasks/peering-backout-begin.yml
+      vars:
+        peering_backout_id: "{{ peering_id }}"
+        peering_backout_tasks_dir: "{{ playbook_dir }}/../../tasks"
+    - name: Write them
+      ansible.builtin.copy:
+        content: "{{ _pb_names | to_nice_json }}"
+        dest: "{{ out }}/{{ inventory_hostname }}.json"
+        mode: "0644"
+      delegate_to: localhost

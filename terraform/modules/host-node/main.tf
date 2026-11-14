@@ -194,6 +194,7 @@ resource "aws_security_group" "this" {
   }
 
   egress {
+    description = "Allow outbound IPv4 traffic"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"

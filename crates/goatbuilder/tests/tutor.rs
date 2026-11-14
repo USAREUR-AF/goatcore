@@ -8,9 +8,20 @@
 //! lesson's commands run for real, on the tutor's own fixture copies or
 //! read-only on this checkout.
 
+#[path = "common/test_home.rs"]
+mod test_home;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+
+/// A test's own directory under the system temp directory, removed when the
+/// returned guard drops (a panicking test included).
+fn scratch(prefix: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .expect("a temporary directory for the test")
+}
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_goatbuilder"))
 }
@@ -20,7 +31,7 @@ fn repo() -> PathBuf {
 }
 
 fn tutor(ws: &Path) -> serde_json::Value {
-    let out = Command::new(bin())
+    let out = test_home::isolate(&mut Command::new(bin()))
         .args(["-C", repo().to_str().unwrap(), "-o", "json", "tutor", "--workspace", ws.to_str().unwrap()])
         .env("GOATBUILDER_TUTOR", ws)
         .output()
@@ -58,8 +69,8 @@ fn a_learner_completes_every_available_lesson_by_typing_what_it_prints() {
     if !checkout_declares_a_deployment() {
         return; // a public clone of goatcore ships no deployment
     }
-    let ws = std::env::temp_dir().join(format!("goatbuilder-tutor-e2e-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&ws);
+    let held = scratch("goatbuilder-tutor-e2e-");
+    let ws = held.path().join("ws");
     let path = format!("{}:{}", bin().parent().unwrap().display(), std::env::var("PATH").unwrap_or_default());
     let mut finished = Vec::new();
     for _ in 0..20 {
@@ -137,8 +148,8 @@ fn a_command_run_outside_the_tutors_copy_does_not_count() {
     if !checkout_declares_a_deployment() {
         return; // a public clone of goatcore ships no deployment
     }
-    let ws = std::env::temp_dir().join(format!("goatbuilder-tutor-wrong-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&ws);
+    let held = scratch("goatbuilder-tutor-wrong-");
+    let ws = held.path().join("ws");
     let _ = tutor(&ws);
     // Lesson 1 done through its two commands: validate on the skeleton, doctor on the checkout.
     let path = format!("{}:{}", bin().parent().unwrap().display(), std::env::var("PATH").unwrap_or_default());
@@ -147,9 +158,8 @@ fn a_command_run_outside_the_tutors_copy_does_not_count() {
     assert!(rows(&tutor(&ws)).iter().any(|(n, _, d)| n == "lesson 1" && d == "done"));
     // Lesson 2 on the basic fixture in the checkout, not the tutor's copy.
     let basic = repo().join("ops/goatbuilder/fixtures/basic");
-    let copy = std::env::temp_dir().join(format!("goatbuilder-tutor-basic-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&copy);
-    std::fs::create_dir_all(&copy).unwrap();
+    let held_copy = scratch("goatbuilder-tutor-basic-");
+    let copy = held_copy.path().to_path_buf();
     Command::new("cp").args(["-R", &format!("{}/.", basic.display()), copy.to_str().unwrap()]).status().unwrap();
     run(&format!("goatbuilder --mock {} status --env dev", copy.display()), &ws, &path);
     let r = rows(&tutor(&ws));
@@ -167,8 +177,8 @@ fn a_finished_lesson_opens_to_read_and_changes_nothing() {
     if !checkout_declares_a_deployment() {
         return; // a public clone of goatcore ships no deployment
     }
-    let ws = std::env::temp_dir().join(format!("goatbuilder-tutor-review-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&ws);
+    let held = scratch("goatbuilder-tutor-review-");
+    let ws = held.path().join("ws");
     let _ = tutor(&ws);
     let path = format!("{}:{}", bin().parent().unwrap().display(), std::env::var("PATH").unwrap_or_default());
     run(&format!("goatbuilder validate -C {}/repo", ws.display()), &ws, &path);
@@ -177,7 +187,7 @@ fn a_finished_lesson_opens_to_read_and_changes_nothing() {
     let page = |args: &[&str]| {
         let mut a = vec!["-C", repo().to_str().unwrap().to_owned().leak(), "tutor", "--workspace", ws.to_str().unwrap().to_owned().leak()];
         a.extend_from_slice(args);
-        let o = Command::new(bin()).args(&a).env("GOATBUILDER_TUTOR", &ws).env("GOAT_LANG", "en").output().unwrap();
+        let o = test_home::isolate(&mut Command::new(bin())).args(&a).env("GOATBUILDER_TUTOR", &ws).env("GOAT_LANG", "en").output().unwrap();
         String::from_utf8_lossy(&o.stdout).to_string()
     };
     for args in [&["--lesson", "1"][..], &["1"][..]] {

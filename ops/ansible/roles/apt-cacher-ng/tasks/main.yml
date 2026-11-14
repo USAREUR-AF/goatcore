@@ -81,6 +81,13 @@
     mode: "0755"
   when: apt_cacher_ng_emit_node_exporter_metrics
 
+- name: cron is installed (the entry below is a crontab entry; a minimal image has no cron)
+  become: true
+  ansible.builtin.apt:
+    name: cron
+    state: present
+    cache_valid_time: 3600
+
 - name: Schedule apt-cacher-ng metric emission (every 5 min)
   become: true
   ansible.builtin.cron:

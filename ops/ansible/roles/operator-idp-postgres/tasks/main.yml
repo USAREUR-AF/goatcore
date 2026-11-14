@@ -120,6 +120,12 @@
     - app_user_smoke.rc != 0
     - "'password authentication failed' in (app_user_smoke.stderr | default(''))"
 
+- name: cron is installed (the entry below is a crontab entry; a minimal image has no cron)
+  ansible.builtin.apt:
+    name: cron
+    state: present
+    cache_valid_time: 3600
+
 - name: Install pg-dump cron entry
   # System-wide cron (not per-user crontab) — survives operator
   # account changes; runs as root which is what `docker exec` needs.

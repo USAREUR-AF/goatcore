@@ -1,0 +1,9 @@
+# a phase the verb does not have is refused with GB-262, naming the phases it has.
+bin.name = "goatbuilder"
+args = ["explain", "federate", "99"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: federate has no phase `99`: its phases are 1 preflight, 2 prepare, 3 init, 4 lint, 5 exchange, 6 compose, 7 verify, 8 mint, 9 apply, 10 admit, 11 transport, 12 edge, 13 spire, 14 acceptance (by number or id). goatbuilder explain federate lists them
+  (GB-262 — goatbuilder explain GB-262)
+"""

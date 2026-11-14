@@ -273,6 +273,26 @@ def check_mgmt_hosts_membership(group, v):
                  f"peers. Add the line `{g}` under [mgmt_hosts:children].")
 
 
+# A mesh address is known only once the node has enrolled (join-node phase 10),
+# so its placeholder is the one TBD_ sentinel a run before enrolment expects.
+MESH_PLACEHOLDER = re.compile(r"TBD_[A-Z0-9_]*MESH_IP[A-Z0-9_]*")
+
+
+def check_tbd_sentinels(raw, before_enrolment=False):
+    """[P1] TBD_ sentinels — the runbook's own first-boot gate, surfaced early.
+
+    With before_enrolment, a mesh-address placeholder (TBD_<...>MESH_IP<...>)
+    is a WARN, not a FAIL: join-node's phases 3 and 7 run before the node has
+    a mesh address, and phase 12 runs this check again without the flag, after
+    the address is filled. Every other sentinel fails either way."""
+    for m in sorted(set(re.findall(r"TBD_[A-Z0-9_]+", raw))):
+        if before_enrolment and MESH_PLACEHOLDER.fullmatch(m):
+            warn(f"mesh-address placeholder {m}: allowed before enrolment; "
+                 "join-node phase 12 fails on it once the node has enrolled")
+        else:
+            fail(f"TBD sentinel still present: {m}")
+
+
 def load_group(group):
     d = GV / group
     if not d.is_dir():
@@ -573,6 +593,10 @@ def main():
     ap.add_argument("--scaffold-from", metavar="GROUP",
                     help="reference group for --scaffold and --scaffold-plan "
                          "(default: the parity manifest's `reference`)")
+    ap.add_argument("--before-enrolment", action="store_true",
+                    help="the node has not enrolled yet: a mesh-address "
+                         "placeholder (TBD_..MESH_IP..) is a warning, not a "
+                         "failure (join-node phases 3 and 7)")
     ap.add_argument("--force", action="store_true",
                     help="overwrite files that already exist")
     ap.add_argument("--scaffold-plan", action="store_true",
@@ -620,8 +644,7 @@ def main():
                          f"use its own relays from ops/relay/health/relays*.conf)")
 
     # [P1] TBD_ sentinels — the runbook's own first-boot gate, surfaced early.
-    for m in sorted(set(re.findall(r"TBD_[A-Z0-9_]+", raw))):
-        fail(f"TBD sentinel still present: {m}")
+    check_tbd_sentinels(raw, args.before_enrolment)
 
     # [16] sidecar owns 127.0.0.1:8080 — every goatnet must override.
     if "mgmt_container_host_port" not in v:

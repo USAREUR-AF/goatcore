@@ -267,3 +267,9 @@ consistency_aggregator_sibling_panoscope_url: ""
 consistency_aggregator_sibling_stethoscope_url: ""
 consistency_aggregator_sibling_flashlight_url: ""
 consistency_aggregator_sibling_portal_url: ""
+
+# Container memory ceilings. The defaults are the values these limits had
+# when they were written into the compose template; a small host lowers them
+# in group_vars. ops/ci/check-compose-memory-is-variable.sh refuses a literal.
+consistency_console_memory_limit: 512M  # the consistency-console container
+consistency_console_oauth2_proxy_memory_limit: 512M  # its oauth2-proxy container

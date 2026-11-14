@@ -55,17 +55,20 @@ services:
       resources:
         limits:
           cpus: "2.0"
-          memory: 2G
+          memory: "${POSTGRES_A_MEMORY:-2G}"
         reservations:
-          memory: 512M
+          memory: "${POSTGRES_A_MEMORY_RESERVATION:-512M}"
     # Baked config lives at /etc/postgresql/postgresql.conf; the default
     # postgres entrypoint would otherwise use PGDATA/postgresql.conf which
     # initdb generates with wal_level=replica. 00-verify-config.sql fails
     # fast if this override is forgotten.
-    command:
-      - postgres
-      - -c
-      - config_file=/etc/postgresql/postgresql.conf
+    #
+    # POSTGRES_A_MEMORY_ARGS adds `-c shared_buffers=…` and `-c max_connections=…`
+    # for a small host. Unset, the baked config's values apply (768MB, 300).
+    # Ansible renders it from mgmt_postgres_shared_buffers and
+    # mgmt_postgres_max_connections. A command-line setting wins over ALTER
+    # SYSTEM, so a goatnet sets each value in one place only.
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf ${POSTGRES_A_MEMORY_ARGS:-}
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD in .env}
       # Cluster encoding. Default UTF8, NOT the pgedge base image's SQL_ASCII
@@ -146,7 +149,7 @@ services:
           cpus: "${SIGNAL_A_CPUS:-1.0}"
           memory: "${SIGNAL_A_MEMORY:-512M}"
         reservations:
-          memory: 128M
+          memory: "${SIGNAL_A_MEMORY_RESERVATION:-128M}"
     command:
       - --node=${SITE_NAME:-pilot}-a
       - --grpc-addr=:10000
@@ -221,7 +224,7 @@ services:
     # (.env, written by Ansible on goatnets that enable the dual path;
     # single-site goatnets never run it).
     # Multi-arch INDEX digest (amd64+arm64) — resolve per-host at pull.
-    image: ${FEDERATION_PROXY_IMAGE:-haproxy:3.0-alpine@sha256:dee54db8b27cd6c21519ea4f0ba0604f3742e8e7369bc16fb5b69133dec3f47f}
+    image: ${FEDERATION_PROXY_IMAGE:-haproxy:3.0.30-alpine@sha256:d2b3567d836f3b7d174edb6d6f611ed5308e7966e53a9cd9a597e0415a298efd}
     container_name: federation-proxy
     profiles: ["federation-proxy"]
     restart: unless-stopped
@@ -230,9 +233,9 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 128M
+          memory: "${FEDERATION_PROXY_MEMORY:-128M}"
         reservations:
-          memory: 32M
+          memory: "${FEDERATION_PROXY_MEMORY_RESERVATION:-32M}"
     volumes:
       - ./federation-proxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     networks:
@@ -260,7 +263,7 @@ services:
           cpus: "${MANAGEMENT_A_CPUS:-1.0}"
           memory: "${MANAGEMENT_A_MEMORY:-512M}"
         reservations:
-          memory: 128M
+          memory: "${MANAGEMENT_A_MEMORY_RESERVATION:-128M}"
     depends_on:
       postgres-a:
         condition: service_healthy
@@ -390,7 +393,7 @@ services:
           cpus: "${TRAEFIK_CPUS:-0.5}"
           memory: "${TRAEFIK_MEMORY:-1G}"
         reservations:
-          memory: 64M
+          memory: "${TRAEFIK_MEMORY_RESERVATION:-64M}"
     command:
       - --providers.file.directory=/etc/traefik/dynamic
       - --providers.file.watch=true

@@ -1,0 +1,36 @@
+# error text after a catalog verb is still interpreted, not taken for a phase.
+bin.name = "goatbuilder"
+args = ["explain", "federate", "refused"]
+stdout = """
+federate refused
+  not recognised exactly; the nearest catalog entries:
+  [nearest: 2 shared words, score 1.00]
+  GB-183 — a federate phase failed
+    what: The word the run journal records for a phase that exited non-zero, with its exit code. The run stopped there; no later phase ran.
+    why:  the phase's own error, printed above it (a `goat federate` exit 20 to 24, a play's failed task, a refused gate)
+    fix:  fix the cause, then run the same command again; with --resume, the phases found unchanged are not run again
+    read: docs/operations/sovereign-federation-runbook.md
+    exit: 1
+  [nearest: 2 shared words, score 1.00]
+  GB-239 — a flag that does not apply to the federation verb it was given to
+    what: The six federation verbs (init, lint, compose, diff, verify, apply) read only the files they are named and the party's context, and run for real. --mock, -C/--repo (except for init --over-ssh) and -o/--output choose things they do not read; --over-ssh and its host flags belong to init alone. A run with one where it does not apply is refused rather than the flag ignored.
+    why:  --mock, -C/--repo or -o/--output given to a federation verb
+          --over-ssh or its host flags given to a verb other than init, to a plan or to a peering run
+    fix:  drop the flag; the verbs take --json for a JSON report
+          goatbuilder -C <repo> federate init --over-ssh <peering>   (the one verb that reads a checkout)
+          FED_MEASURE=ssh goatbuilder federate <partner>   (a peering run measures phase 3 over SSH)
+    read: docs/design/goatbuilder.md
+    exit: 2
+  [nearest: 2 shared words, score 1.00]
+  GB-267 — this part of a two-driver peering is not built yet
+    what: A peering declared with two drivers (`drivers: two`) is handed off between the edge driver and the controller only at phases 1 and 2, where the hand-off is built. Three cases are refused before anything runs: the edge driver's own run (`goatbuilder federate <partner> --side edge`, with or without the `--expect-commit` a hand-off object names), the controller's `goatbuilder federate import`, which is not built either, and a two-driver run that would reach a phase after 2 that needs the edge (3, 11, 12, 13 or 14), whose hand-off is designed and not built. That includes every `goatbuilder federate deploy`, which runs phase 10 then 11: it is refused before its plan is approved or rechecked, so phase 10 never admits the edge on our core.
+    why:  goatbuilder federate <partner> --side edge was run on the edge driver, as a hand-off object's command names it
+          goatbuilder federate import <partner> <phase> <result> --sha256 <code> was run, as a hand-off object's import names it
+          a two-driver run that would reach phase 3, 11, 12, 13 or 14, such as --from 3, --from 4 with no --to, or goatbuilder federate deploy (a run from 4 to 10 is not refused)
+    fix:  run the peering with one driver for now: remove drivers: two from its peerings: entry, from a machine that reaches both the edge host and the core host
+    read: docs/design/federation-two-drivers.md
+    exit: 1
+  if none of these is it: goatbuilder explain --report -   (writes ~/.goat/error-reports/<stamp>.txt to share)
+"""
+stderr = ""
+status.code = 1

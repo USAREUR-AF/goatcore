@@ -112,6 +112,14 @@ def derive_lite(config: dict, checkout: dict | None = None) -> dict:
     return out
 
 
+# Words `goatbuilder federate <word>` takes, so none can name a partner. The one
+# list is RESERVED_PEERING_NAMES in crates/goatbuilder/src/config.rs; a test there
+# holds this copy equal to it.
+RESERVED_PEERING_NAMES = ("init", "lint", "compose", "diff", "verify", "apply", "help",
+                          "status", "plan", "deploy", "test", "allocate", "backout", "rotate",
+                          "import")
+
+
 def errors_for(config: dict, schema: dict | None = None, checkout: dict | None = None) -> list[str]:
     """Every problem with `config`, as 'where: what' lines; empty means valid.
     `checkout` is the checkout's own ops/goatbuilder/goatbuilder.yaml, when a lite
@@ -166,6 +174,12 @@ def errors_for(config: dict, schema: dict | None = None, checkout: dict | None =
             continue
         if cls not in (s.get("classes") or {}):
             out.append(f"peerings/{pi}: edge_class '{cls}' is not a declared class at site '{site}'")
+    # A word of `goatbuilder federate` never names a partner (GB-120). The binary also
+    # refuses pins that collide; that needs its allocator (crates/goatbuilder/src/federate/alloc.rs).
+    for pi, p in enumerate(config.get("peerings") or []):
+        if p.get("with") in RESERVED_PEERING_NAMES:
+            out.append(f"peerings/{pi} (with '{p.get('with')}'): '{p.get('with')}' is a word of `goatbuilder federate` "
+                       f"and cannot name a partner (GB-120)")
     return out
 
 

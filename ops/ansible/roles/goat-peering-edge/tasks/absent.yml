@@ -1,0 +1,165 @@
+---
+# Back out ONE peering's IPsec link (ops/ansible/peering-backout.yml). Included by path
+# after tasks/peering-backout-begin.yml; names in _pb_names.ipsec, all derived from
+# this peering's peering_edge_name.
+#
+# Ownership: the state file of that name, or the group's peering_edge_their_sovereign_id,
+# names this partner. Otherwise nothing is removed and the play refuses.
+#
+# Shared by every peering on the host and never removed: strongSwan, swanctl.conf, the
+# drop-in, the unit template goat-peering-link@.service and its script. The MSS clamp
+# chain inet goat_peering/clamp is shared too: only this link's two rules leave it, and
+# the link is stopped with clamping off so its ExecStop cannot delete the table.
+- name: peering-edge | absent | this host declares no IPsec peering for this group
+  ansible.builtin.set_fact:
+    _pb_rows: "{{ _pb_rows + [{'component': 'tunnel', 'resource': 'ipsec', 'state': 'absent', 'action': 'none', 'note': 'peering_edge_name is empty for this group'}] }}"
+  when: _pb_names.ipsec.name | length == 0
+
+- name: peering-edge | absent | read the link, its unit, files and state
+  when: _pb_names.ipsec.name | length > 0
+  block:
+    - name: peering-edge | absent | the name is a plain name
+      ansible.builtin.assert:
+        that:
+          - _pb_names.ipsec.name is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "peering_edge_name '{{ _pb_names.ipsec.name }}' is not a plain name; nothing was changed."
+        quiet: true
+
+    - name: peering-edge | absent | the files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        get_checksum: false
+      loop: "{{ _pb_names.ipsec.files + [_pb_names.ipsec.link_env, _pb_names.ipsec.state] }}"
+      register: _pbi_files
+
+    - name: peering-edge | absent | the state file
+      ansible.builtin.slurp:
+        src: "{{ _pb_names.ipsec.state }}"
+      register: _pbi_state_raw
+      failed_when: false
+
+    - name: peering-edge | absent | the link interface
+      ansible.builtin.command: "ip -o link show {{ _pb_names.ipsec.ifname }}"
+      register: _pbi_link
+      changed_when: false
+      failed_when: false
+
+    - name: peering-edge | absent | the unit
+      ansible.builtin.command: "systemctl show -p LoadState -p ActiveState -p UnitFileState {{ _pb_names.ipsec.service }}"
+      register: _pbi_unit
+      changed_when: false
+      failed_when: false
+
+    # The shared chain is read in the survey, not grepped through 2>/dev/null at
+    # removal: this link's rules are a row of the survey, and a chain that cannot be
+    # read is unknown, which stops the back-out, instead of reading as "no rules".
+    - name: peering-edge | absent | the shared clamp chain
+      ansible.builtin.command: "nft -a list chain inet goat_peering clamp"
+      register: _pbi_clamp
+      changed_when: false
+      failed_when: false
+
+    - name: peering-edge | absent | this link's clamp rules, by handle
+      ansible.builtin.set_fact:
+        _pbi_clamp_probe: "{{ _pbi_clamp | backout_probe_state('nft', 'goat_peering') }}"
+        _pbi_clamp_handles: >-
+          {{ (_pbi_clamp.stdout_lines | default([]) if (_pbi_clamp.rc | default(1)) == 0 else [])
+             | select('search', '(o|i)ifname "' ~ (_pb_names.ipsec.ifname | regex_escape) ~ '" ')
+             | select('search', '# handle [0-9]+$')
+             | map('regex_replace', '^.*# handle ([0-9]+)$', '\1') | list }}
+
+    - name: peering-edge | absent | ownership
+      ansible.builtin.set_fact:
+        _pbi_owner: >-
+          {%- set st = (_pbi_state_raw.content | b64decode | from_json) if (_pbi_state_raw.content is defined) else {} -%}
+          {%- set their = st.identity.their_sovereign_id | default(_pb_names.ipsec.their_id) -%}
+          {%- if their == peering_backout_id -%}ours
+          {%- elif their -%}other:{{ their }}
+          {%- else -%}unproven
+          {%- endif -%}
+
+    - name: peering-edge | absent | record what is there
+      ansible.builtin.set_fact:
+        _pb_rows: >-
+          {%- set out = _pb_rows -%}
+          {%- set bad = _pbi_owner != 'ours' -%}
+          {%- set link = _pbi_link | backout_probe_state('ip-link', _pb_names.ipsec.ifname) -%}
+          {%- set items = [
+                ['ike ' ~ _pb_names.ipsec.name, (_pbi_files.results[0].stat.exists)],
+                ['interface ' ~ _pb_names.ipsec.ifname, link],
+                ['unit ' ~ _pb_names.ipsec.service, (_pbi_unit | backout_probe_state('systemd', _pb_names.ipsec.service))],
+                ['nft clamp rules for ' ~ _pb_names.ipsec.ifname,
+                 (_pbi_clamp_probe if _pbi_clamp_probe.state == 'unknown' else (_pbi_clamp_handles | length > 0))],
+              ] -%}
+          {%- for f in _pbi_files.results -%}
+          {%-   set _ = items.append(['file ' ~ f.item, f.stat.exists]) -%}
+          {%- endfor -%}
+          {%- for i in items -%}
+          {%-   if i[1] is mapping and i[1].state == 'unknown' -%}
+          {%-     set _ = out.append({'component': 'tunnel', 'resource': i[0], 'state': 'unknown', 'action': 'none', 'note': i[1].note}) -%}
+          {%-   else -%}
+          {%-     set present = (i[1].state == 'present') if (i[1] is mapping) else (i[1] | bool) -%}
+          {%-     set state = ('not-ours' if (bad and present) else ('present' if present else 'absent')) -%}
+          {%-     set action = ('kept' if state == 'not-ours' else (('removed' if _pb_apply else 'remove') if present else 'none')) -%}
+          {%-     set note = (_pbi_owner ~ '; handles ' ~ (_pbi_clamp_handles | join(', '))) if (i[0].startswith('nft clamp rules') and present) else _pbi_owner -%}
+          {%-     set _ = out.append({'component': 'tunnel', 'resource': i[0], 'state': state, 'action': action, 'note': note}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+        # Nothing is removed while the link, its unit or the clamp chain could not be read.
+        _pbi_remove: >-
+          {{ _pbi_owner == 'ours'
+             and (_pbi_link | backout_probe_state('ip-link', _pb_names.ipsec.ifname)).state != 'unknown'
+             and _pbi_clamp_probe.state != 'unknown'
+             and (_pbi_unit | backout_probe_state('systemd', _pb_names.ipsec.service)).state != 'unknown' }}
+
+    - name: peering-edge | absent | close the IKE SA and its children
+      ansible.builtin.command: "swanctl --terminate --ike {{ _pb_names.ipsec.name }}"
+      register: _pbi_term
+      changed_when: _pbi_term.rc == 0
+      failed_when: false
+      when: _pb_apply and (_pbi_remove | bool)
+
+    - name: peering-edge | absent | stop clamping on this link before its unit stops
+      ansible.builtin.lineinfile:
+        path: "{{ _pb_names.ipsec.link_env }}"
+        regexp: '^LINK_CLAMP_MSS='
+        line: LINK_CLAMP_MSS=0
+      failed_when: false
+      when: _pb_apply and (_pbi_remove | bool)
+
+    - name: peering-edge | absent | stop the link
+      ansible.builtin.systemd:
+        name: "{{ _pb_names.ipsec.service }}"
+        state: stopped
+        enabled: false
+        daemon_reload: true
+      failed_when: false
+      when: _pb_apply and (_pbi_remove | bool)
+
+    - name: peering-edge | absent | remove this link's clamp rules, and only them
+      ansible.builtin.command: "nft delete rule inet goat_peering clamp handle {{ item }}"
+      loop: "{{ _pbi_clamp_handles }}"
+      failed_when: false
+      when: _pb_apply and (_pbi_remove | bool)
+
+    - name: peering-edge | absent | the interface is gone
+      ansible.builtin.command: "ip link del {{ _pb_names.ipsec.ifname }}"
+      register: _pbi_del
+      changed_when: _pbi_del.rc == 0
+      failed_when: false
+      when: _pb_apply and (_pbi_remove | bool)
+
+    - name: peering-edge | absent | the files are gone
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ _pb_names.ipsec.files + [_pb_names.ipsec.link_env, _pb_names.ipsec.state] }}"
+      when: _pb_apply and (_pbi_remove | bool)
+
+    - name: peering-edge | absent | strongSwan forgets the connection (the others reload unchanged)
+      ansible.builtin.command: "swanctl --load-all"
+      register: _pbi_load
+      changed_when: _pbi_load.rc == 0
+      failed_when: false
+      when: _pb_apply and (_pbi_remove | bool)

@@ -23,7 +23,7 @@
 use std::collections::BTreeMap;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use crate::runner::Cmd;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -212,8 +212,27 @@ pub fn declared(repo: &Path, component: &str, goatnet: &str, only_group: Option<
     Ok(Declared { var, ledger, members, skipped })
 }
 
+/// Open group `g`'s verify step, one of deploy's five, as its own phase.
+fn verify_phase(g: &str) {
+    crate::runner::phase(&format!("verify:{g}"), &format!("every host of {g} names the declared ref"), "");
+}
+
+/// A verify step the deploy skips for group `g` is still a phase of the record,
+/// with `why` as its verdict, so `runs diff` sees it go from skipped to checked.
+fn skipped_verify(g: &str, why: &str) {
+    verify_phase(g);
+    crate::runner::verdict(why);
+}
+
+/// The mesh probe a deploy starts: what a dry run prints, and what runs.
+fn netbird_status_cmd() -> Cmd {
+    let mut c = Cmd::new("netbird");
+    c.arg("status");
+    c
+}
+
 fn netbird_status() -> (String, String) {
-    let out = Command::new("netbird").arg("status").output();
+    let out = netbird_status_cmd().output();
     let text = out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
     let field = |key: &str| {
         text.lines()
@@ -294,7 +313,7 @@ pub fn transport(repo: &Path, name: &str, members: &[String], dry_run: bool) -> 
         // pin the path where nothing is reachable, and an SSM door there only times out.
         let open = std::env::var("GOAT_DOOR_OPEN").map(|v| v != "0").unwrap_or(true);
         if !dry_run && open {
-            let st = Command::new(&opener).arg(name).output().map(|o| o.status.success()).unwrap_or(false);
+            let st = Cmd::new(&opener).arg(name).output().map(|o| o.status.success()).unwrap_or(false);
             if !st {
                 return Err(goat_errors::coded("GB-006", format!("door to {name} did not open")).into());
             }
@@ -351,11 +370,30 @@ pub(crate) fn render_ref(r: &str) -> String {
     }
 }
 
+/// The deploy play's arguments for group `g`: the inventories, the play, the target as two words, and the accepted risk (ADR 1211).
+fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>) -> Vec<String> {
+    let mut args = inv.to_vec();
+    args.push(play.file_name().unwrap_or_default().to_string_lossy().to_string());
+    // The flag and its value, two words: `-e`, `<var>=<group>` or `-l`, `<group>`.
+    match target_flag.split_once(' ') {
+        Some((flag, value)) => {
+            args.push(flag.to_string());
+            args.push(format!("{value}{g}"));
+        }
+        None => args.push(format!("{target_flag}{g}")),
+    }
+    if let Some(accept) = accept {
+        args.push("-e".into());
+        args.push(format!("{{\"rollback_preflight_accept\": {accept}}}"));
+    }
+    args
+}
+
 /// Run `ansible-preflight.sh` (or `ansible`/`ansible-inventory`) from ops/ansible under ops/scripts/with-aws, as the script does.
-pub(crate) fn ansible_cmd(repo: &Path, tool: &str, args: &[String]) -> Command {
+pub(crate) fn ansible_cmd(repo: &Path, tool: &str, args: &[String]) -> Cmd {
     // AWS credentials through ops/scripts/with-aws (ADR 1204): aws-vault where the
     // team uses it, a plain AWS profile or none where it does not.
-    let mut c = Command::new("../scripts/with-aws");
+    let mut c = Cmd::new("../scripts/with-aws");
     c.current_dir(repo.join("ops/ansible"));
     c.env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES");
     c.arg(crate::settings::aws_profile(repo)).arg("--");
@@ -365,8 +403,7 @@ pub(crate) fn ansible_cmd(repo: &Path, tool: &str, args: &[String]) -> Command {
         c.arg(tool);
     }
     c.args(args);
-    // `-v`: the ansible / ansible-inventory / preflight line a deploy runs.
-    crate::trace::cmd(&c);
+    // `-v` logs the line when it runs: the runner traces every command.
     c
 }
 
@@ -445,6 +482,10 @@ fn split_expected(inv: &serde_json::Value, group: &str, write_role: &str) -> (Ve
 pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
     let mut checks = Vec::new();
     let name = o.goatnet.replace('_', "-");
+    // The runner frames and records each step's commands under it
+    // (crates/goatbuilder/src/runner.rs); the names are the five steps, the
+    // last two once per group.
+    crate::runner::phase("prep", "the rollout facts and the ack gate", "");
 
     // Prep phase (ADR 1211): the reversibility readout, first, before anything
     // is cut — the three facts, then the ack gate. A `none` or
@@ -491,6 +532,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
     let mut trunk = String::new();
     if !o.dry_run && !o.verify_only {
         resolve(repo, o.component, o.goatnet, o.only_group)?;
+        crate::runner::phase("fresh-source", "the checkout is current with the trunk", "");
         let f = crate::fresh::check(repo)?;
         let refused = f.refused();
         trunk = f.trunk.clone();
@@ -499,6 +541,12 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
             return Ok(Report::new("deploy", checks, EXIT_REFUSED));
         }
     }
+    // A dry run names the fresh-source probe a real run starts before its
+    // plays, built by the code that starts it; its verdict is the run's.
+    if o.dry_run {
+        checks.push(ok("probe", crate::fresh::command(repo).line()));
+    }
+    crate::runner::phase("transport", "the secrets, and how the hosts are reached", "");
     let p = plan(repo, o)?;
     let r = &p.resolved;
     if !r.skipped.is_empty() {
@@ -524,6 +572,13 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         &format!("{}/playbook", p.name),
         format!("{} {}<group>; ledger component {}", r.play.file_name().unwrap_or_default().to_string_lossy(), r.target_flag, r.ledger),
     ));
+    // The probes this dry run started itself, in plan(): the secrets posture
+    // (secrets::available) and the mesh status (transport); their answers are
+    // in the rows above.
+    if o.dry_run {
+        checks.push(ok("probe-ran", crate::secrets::posture_cmd(repo, &["available"]).line()));
+        checks.push(ok("probe-ran", netbird_status_cmd().line()));
+    }
     let logdir = std::env::var("GOAT_DEPLOY_LOG_DIR").or_else(|_| std::env::var("TMPDIR")).unwrap_or_else(|_| "/tmp".into());
     let ts = stamp();
     let inv = inventory_args(&p.transport);
@@ -539,19 +594,15 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         // The ledger rows as they stand before the play: the only reliable way to say
         // afterwards whether this run wrote a row or found one (a row's own ts is the
         // play's fact-gathering time, which a fact cache can make stale).
+        crate::runner::phase(&format!("deploy:{g}"), &format!("the play on {g}"), "");
         let before = if o.dry_run || o.verify_only { String::new() } else { read_tails(repo, &inv, g, &r.ledger)? };
         if !o.verify_only {
-            let mut args = inv.clone();
-            args.push(r.play.file_name().unwrap_or_default().to_string_lossy().to_string());
-            args.push(format!("{}{g}", r.target_flag));
-            // The accepted risk (ADR 1211) rides into the play as an extra-var so
-            // rollback-ledger records it in the row — what was knowingly accepted.
-            if let Some(accept) = &accept_var {
-                args.push("-e".into());
-                args.push(format!("{{\"rollback_preflight_accept\": {accept}}}"));
-            }
+            let args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref());
             if o.dry_run {
-                checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("DRY: deploying {}: (cd ops/ansible && ../scripts/with-aws {} -- ../scripts/ansible-preflight.sh {}) > {log}", render_ref(w), crate::settings::aws_profile(repo), args.join(" "))));
+                checks.push(ok("probe", ledger_read_cmd(repo, &inv, g, &r.ledger).line_from(repo)));
+                // The play's line, built from the argv a real run starts, in the
+                // directory it starts in.
+                checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("DRY: deploying {}: {} > {log}", render_ref(w), ansible_cmd(repo, "preflight", &args).line_from(repo))));
             } else {
                 checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("deploying {}", render_ref(w))));
                 let mut cmd = ansible_cmd(repo, "preflight", &args);
@@ -564,6 +615,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 let recap: Vec<&str> = text.lines().skip_while(|l| !l.contains("PLAY RECAP")).skip(1).take(8).filter(|l| l.contains("ok=")).collect();
                 if recap.is_empty() && text.contains("skipping: no hosts matched") {
                     checks.push(ok(&format!("{}/{g}/hosts", p.name), "no host of this group in the loaded inventories (declared, not built?) — nothing deployed, skipping".into()));
+                    skipped_verify(g, "not checked: no host of this group is in the inventories");
                     continue;
                 }
                 // A nonzero exit is a failed deploy even when a clean recap printed (#1545).
@@ -574,6 +626,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                     let fatal: Vec<String> = text.lines().filter(|l| l.contains("fatal:") || l.contains("REFUSE")).take(3).map(|l| l.chars().take(200).collect()).collect();
                     checks.push(not_done(&format!("{}/{g}/deploy", p.name), format!("deploy FAILED — log {log}; {}", fatal.join(" | "))));
                     rc_not_converged = true;
+                    skipped_verify(g, "not checked: the deploy failed");
                     continue;
                 }
                 for l in recap {
@@ -581,6 +634,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 }
             }
         }
+        verify_phase(g);
         // Served payloads (goat-get, goat-docs): what the surface serves is versioned by
         // role vars, not by its image; the same module as the script judges them.
         let served_note = match served_declared(repo, &r.ledger, g) {
@@ -620,9 +674,11 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 continue;
             }
             answered.insert(host.clone());
-            if line.contains("| UNREACHABLE!") {
-                // Never "not converged": a host that cannot be read is unknown (C7).
-                checks.push(not_done(&format!("{}/{host}", p.name), "unknown — host unreachable; its ledger was not read".into()));
+            if line.contains("| UNREACHABLE!") || line.contains("| FAILED!") {
+                // Never "not converged": a host that cannot be read is unknown (C7). A read
+                // that FAILED (become refused, no python) read no ledger either.
+                let why = if line.contains("| FAILED!") { "the ledger read FAILED on the host" } else { "host unreachable" };
+                checks.push(not_done(&format!("{}/{host}", p.name), format!("unknown — {why}; its ledger was not read")));
                 rc_not_converged = true;
                 continue;
             }
@@ -692,7 +748,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
 /// as main declares them: `ops/scripts/served-payloads.py declared`, the module the script
 /// calls too. Empty when the component serves nothing but its image.
 pub(crate) fn served_declared(repo: &Path, ledger: &str, group: &str) -> std::result::Result<String, String> {
-    let out = Command::new(crate::endstate::python())
+    let out = Cmd::new(crate::endstate::python())
         .arg(repo.join("ops/scripts/served-payloads.py"))
         .args(["declared", "--repo"])
         .arg(repo)
@@ -711,7 +767,7 @@ pub(crate) fn served_declared(repo: &Path, ledger: &str, group: &str) -> std::re
 /// `served-payloads.py check` decides, so the verdict and its words are the script's.
 pub(crate) fn served_check(repo: &Path, ledger: &str, group: &str, line: &str) -> (bool, String) {
     use std::io::Write;
-    let child = Command::new(crate::endstate::python())
+    let child = Cmd::new(crate::endstate::python())
         .arg(repo.join("ops/scripts/served-payloads.py"))
         .args(["check", "--repo"])
         .arg(repo)
@@ -744,23 +800,30 @@ fn recap_count(line: &str, field: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// The newest ledger row per host of a group, one `host | … | (stdout) <row>` line each
-/// (ansible `-o`); `NO_LEDGER` where the file is absent.
-fn read_tails(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<String> {
+/// The ad-hoc `ansible` words that read the newest ledger row of every host of a group.
+pub(crate) fn ledger_read_args(inv: &[String], group: &str, ledger: &str) -> Vec<String> {
     let mut args = inv.to_vec();
     args.push(group.to_string());
     args.extend(["-m".into(), "shell".into(), "-a".into(), format!("tail -n 1 /var/lib/goat/{ledger}/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER"), "-o".into()]);
-    let out = ansible_cmd(repo, "ansible", &args).output().with_context(|| "ansible")?;
+    args
+}
+
+/// The ledger read a deploy starts on `group`: what a dry run prints, and what runs.
+fn ledger_read_cmd(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Cmd {
+    ansible_cmd(repo, "ansible", &ledger_read_args(inv, group, ledger))
+}
+
+/// The newest ledger row per host of a group, one `host | … | (stdout) <row>` line each
+/// (ansible `-o`); `NO_LEDGER` where the file is absent.
+fn read_tails(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<String> {
+    let out = ledger_read_cmd(repo, inv, group, ledger).output().with_context(|| "ansible")?;
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 /// [`read_tails`], plus the ledger read's failure: `Some(exit code)` when ansible did
 /// not exit 0 (an unreachable or failed host), `None` when it did.
 fn read_tails_status(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<(String, Option<String>)> {
-    let mut args = inv.to_vec();
-    args.push(group.to_string());
-    args.extend(["-m".into(), "shell".into(), "-a".into(), format!("tail -n 1 /var/lib/goat/{ledger}/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER"), "-o".into()]);
-    let out = ansible_cmd(repo, "ansible", &args).output().with_context(|| "ansible")?;
+    let out = ledger_read_cmd(repo, inv, group, ledger).output().with_context(|| "ansible")?;
     let failed = (!out.status.success()).then(|| out.status.code().map_or("by signal".into(), |c| c.to_string()));
     Ok((String::from_utf8_lossy(&out.stdout).to_string(), failed))
 }
@@ -962,6 +1025,37 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
     }
 
+    /// The target reaches ansible-playbook as two argv words, the flag and its
+    /// value, in both modes: `-e <var>=<group>` and `-l <group>`. As one word
+    /// (`"-e target=<group>"`) it parsed only because argparse took the rest of
+    /// the word as the value and ansible stripped its leading space.
+    #[test]
+    fn the_target_is_two_argv_words() {
+        let inv = vec!["-i".to_string(), "inventory/mgmt-hosts.ini".to_string()];
+        let play = Path::new("/r/ops/ansible/microscope-deploy.yml");
+        let argv = |flag: &str, accept: Option<&str>| -> Vec<String> {
+            let c = ansible_cmd(Path::new("/r"), "preflight", &deploy_args(&inv, play, flag, "zagros_dev_hosts", accept));
+            c.get_args().map(|a| a.to_string_lossy().to_string()).collect()
+        };
+        let head = |v: &[&str]| -> Vec<String> {
+            let mut out: Vec<String> = vec![crate::settings::aws_profile(Path::new("/r")), "--".into(), "../scripts/ansible-preflight.sh".into()];
+            out.extend(v.iter().map(|s| s.to_string()));
+            out
+        };
+        assert_eq!(
+            argv("-e target=", None),
+            head(&["-i", "inventory/mgmt-hosts.ini", "microscope-deploy.yml", "-e", "target=zagros_dev_hosts"])
+        );
+        assert_eq!(
+            argv("-l ", None),
+            head(&["-i", "inventory/mgmt-hosts.ini", "microscope-deploy.yml", "-l", "zagros_dev_hosts"])
+        );
+        assert_eq!(
+            argv("-e target=", Some("true")),
+            head(&["-i", "inventory/mgmt-hosts.ini", "microscope-deploy.yml", "-e", "target=zagros_dev_hosts", "-e", "{\"rollback_preflight_accept\": true}"])
+        );
+    }
+
     /// The pins resolution agrees with the script on this repository's real components.
     #[test]
     fn resolves_microscope_on_zagros_dev_like_the_script() {
@@ -999,8 +1093,7 @@ mod tests {
     /// `preflight <c> --env <lite goatnet>` said "unknown goatnet; known: []".
     #[test]
     fn a_goatnet_declared_only_in_the_lite_sidecar_is_known() {
-        let d = std::env::temp_dir().join(format!("goatbuilder-push-lite-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = crate::testdir::path("goatbuilder-push-lite-");
         std::fs::create_dir_all(d.join("ops/pins")).unwrap();
         std::fs::write(d.join("ops/pins/fleet-pins.yaml"), "goatnets: {}\ncomponents:\n  alpha:\n    var: alpha_image\n    fleet: \"a@sha256:1\"\n").unwrap();
         std::fs::write(d.join("ops/pins/lite-pins.yaml"), "goatnets:\n  pasture:\n    members: [pasture_hosts]\ncomponents: {}\n").unwrap();

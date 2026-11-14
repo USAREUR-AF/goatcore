@@ -1,0 +1,48 @@
+---
+# Where the core router _edge_core_container reads its configuration, inside
+# its container, read from the arguments it was started with (docker inspect,
+# .Args): -c or --config, in any of their forms. A router whose arguments name
+# no configuration reads the goat-zenoh role's /etc/zenoh/config.json5, or
+# goat_zenoh_edge_core_config_path when that is set. Nothing is guessed:
+# arguments that cannot be read, a configuration argument without a usable
+# path, or an override that differs from the path the arguments name each
+# leave the path empty and say why. _edge_core_on, when an includer sets it,
+# names the inventory host the core router runs on; unset or empty, this host.
+#
+# Sets: _edge_core_config_path (or "") and _edge_core_config_problem (or "").
+- name: edge | the arguments the core router was started with
+  ansible.builtin.command:
+    argv:
+      - docker
+      - inspect
+      - --type
+      - container
+      - --format
+      - "{% raw %}{{json .Args}}{% endraw %}"
+      - "{{ _edge_core_container }}"
+  register: _edge_core_args
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  delegate_to: "{{ _edge_core_on | default('', true) or inventory_hostname }}"
+
+- name: edge | the path the core router reads its configuration from
+  vars:
+    _override: "{{ goat_zenoh_edge_core_config_path | default('', true) }}"
+    _parsed: >-
+      {{ (_edge_core_args.stdout | default('') | zenoh_core_config_path)
+         if (_edge_core_args.rc | default(-1) | int) == 0
+         else {'path': '', 'named': false,
+               'error': 'docker inspect exited ' ~ (_edge_core_args.rc | default('without a status'))
+                        ~ ' (' ~ ((_edge_core_args.stderr | default('') | trim) or 'no error text') ~ ')'} }}
+  ansible.builtin.set_fact:
+    _edge_core_config_path: >-
+      {{ '' if _parsed.error
+         else ('' if (_parsed.named and _override and _override != _parsed.path)
+               else (_parsed.path if _parsed.named else (_override or _parsed.path))) }}
+    _edge_core_config_problem: >-
+      {{ _parsed.error if _parsed.error
+         else (('the core router was started with configuration ' ~ _parsed.path
+                ~ ', but goat_zenoh_edge_core_config_path is ' ~ _override
+                ~ '; remove the override, or set it to ' ~ _parsed.path)
+               if (_parsed.named and _override and _override != _parsed.path) else '') }}

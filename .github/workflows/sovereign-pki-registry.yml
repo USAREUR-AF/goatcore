@@ -27,7 +27,7 @@ on:
       - 'ops/identity/cac-test-pki/**'
       - 'ops/identity/grammar.yaml'
       - 'ops/ansible/filter_plugins/sovereign_pki.py'
-      - 'ops/ansible/filter_plugins/test_sovereign_pki.py'
+      - 'tests/ansible_filter_plugins/test_sovereign_pki.py'
       - 'ops/ansible/roles/icam-mtls-proxy/**'
       - 'ops/ci/check-sovereign-pkis.py'
       - '.github/workflows/sovereign-pki-registry.yml'
@@ -39,9 +39,13 @@ concurrency:
 jobs:
   check-sovereign-pkis:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -63,6 +67,6 @@ jobs:
           NGINX_JS_MODULE: /usr/lib/nginx/modules/ngx_http_js_module.so
         run: python3 -W error::ResourceWarning ops/identity/test_sovereign_pkis.py -v
       - name: The role's filters render what the library renders
-        run: python3 ops/ansible/filter_plugins/test_sovereign_pki.py -v
+        run: python3 tests/ansible_filter_plugins/test_sovereign_pki.py -v
       - name: The role's templates render for the default profile (Jinja, filters loaded)
         run: python3 ops/ansible/roles/icam-mtls-proxy/test_render.py -v

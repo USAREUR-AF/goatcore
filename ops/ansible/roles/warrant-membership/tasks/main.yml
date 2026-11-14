@@ -28,6 +28,7 @@
         - /etc/systemd/system/warrant-membership.service
         - /etc/goat/warrant/warrant.env
         - /etc/goat/warrant/membership
+        - "{{ warrant_membership_acl_dest_dir }}"
         # The profile the role wrote; the fallback audit log beside it is
         # left for whoever reads the record.
         - /var/lib/goat-warrant/profile/contexts/default/profile.toml
@@ -209,6 +210,46 @@
       ansible.builtin.file:
         path: "/etc/goat/warrant/membership/{{ warrant_membership_scope }}.yaml"
         state: absent
+      notify: restart warrant-membership timer
+
+    # The ACL declaration the converger checks membership against. goat
+    # carries none of its own, so a unit without these two files exits
+    # E_ACL_DECLARATION_MISSING on every run.
+    - name: warrant-membership | the ACL declaration exists in the repo
+      ansible.builtin.stat:
+        path: "{{ warrant_membership_acl_src_dir }}/{{ item }}"
+      loop: "{{ warrant_membership_acl_files }}"
+      delegate_to: localhost
+      become: false
+      register: warrant_membership_acl_src
+
+    - name: warrant-membership | refuse without the ACL declaration
+      ansible.builtin.assert:
+        that:
+          - warrant_membership_acl_src.results | map(attribute='stat.exists') | min
+        fail_msg: >-
+          {{ warrant_membership_acl_src_dir }} must hold
+          {{ warrant_membership_acl_files | join(' and ') }}: the converger
+          reads the goatnet's ACL declaration and goat carries none of its own
+          (E_ACL_DECLARATION_MISSING).
+        quiet: true
+
+    - name: warrant-membership | ACL declaration directory
+      ansible.builtin.file:
+        path: "{{ warrant_membership_acl_dest_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: warrant-membership | install the ACL declaration
+      ansible.builtin.copy:
+        src: "{{ warrant_membership_acl_src_dir }}/{{ item }}"
+        dest: "{{ warrant_membership_acl_dest_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ warrant_membership_acl_files }}"
       notify: restart warrant-membership timer
 
     - name: warrant-membership | install env file

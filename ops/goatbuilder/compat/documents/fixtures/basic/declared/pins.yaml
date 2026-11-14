@@ -1,0 +1,13 @@
+# The declaration the fixture's components point at (declared_in). One ref per
+# component per environment, digest-pinned: contract C1 — the tool deploys what
+# is declared here, never what a working tree says. `netvis` on dev carries a
+# mutable tag on purpose: the C1 test expects it refused.
+components:
+  portal:
+    dev:
+      ref: ghcr.io/example-org/portal:v1.4.0@sha256:0b2a6c1d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
+    preprod:
+      ref: ghcr.io/example-org/portal:v1.3.2@sha256:9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0
+  netvis:
+    dev:
+      ref: ghcr.io/example-org/netvis:latest

@@ -20,6 +20,44 @@ PHASE  TYPE     STEP
 13     ansible  Trust the other party's identity service
 14     gate     Test that allowed traffic passes and the rest is refused
 
+What each phase runs:
+
+1  Check this site is ready to peer
+    python3 './ops/federation/standup/preflight.py' 'hello-ally' --work '/tmp/goat-peering-rehearsal' --edge-group 'hello-ally_edge'
+
+2  Make the link interface and export our trust bundle
+    cd './ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit 'hello-ally_edge' -e fed_edge_group='hello-ally_edge' -e fed_work='/tmp/goat-peering-rehearsal' -e fed_counterparty='/tmp/goat-peering-rehearsal/theirs.canonical.json' peering-prepare.yml
+
+3  Build our half of the agreement from the running system
+    goatbuilder federate init --with-transport --with-data --out '/tmp/goat-peering-rehearsal/ours.canonical.json' --over-ssh 'hello-ally' --ssh-edge-group 'hello-ally_edge' --repo '.'
+
+4  Check our half is valid
+    goatbuilder federate lint '/tmp/goat-peering-rehearsal/ours.canonical.json'
+
+6  Combine both halves into one agreement
+    goatbuilder federate compose '/tmp/goat-peering-rehearsal/ours.canonical.json' '/tmp/goat-peering-rehearsal/theirs.canonical.json' --out '/tmp/goat-peering-rehearsal/agreement.json'
+
+7  Check the agreement from our side
+    goatbuilder federate verify '/tmp/goat-peering-rehearsal/agreement.json' --as 'zagros'
+
+8  Create the certificates for this peering
+    './ops/federation/standup/mint-peering-leaves.sh' '/tmp/goat-peering-rehearsal/agreement.json' '/tmp/goat-peering-rehearsal/pki' --as 'zagros'
+
+9  Write the access rules and settings
+    goatbuilder federate apply '/tmp/goat-peering-rehearsal/agreement.json' --as 'zagros' --edge-group 'hello-ally_edge' --out '/tmp/goat-peering-rehearsal/applied' --confirm
+
+11  Open the connection the agreement chooses
+    cd './ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit 'hello-ally_edge' -e fed_edge_group='hello-ally_edge' -e fed_work='/tmp/goat-peering-rehearsal' -e fed_counterparty='/tmp/goat-peering-rehearsal/theirs.canonical.json' peering-edge.yml
+
+12  Deploy the edge router, and the republisher on our core
+    cd './ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit 'hello-ally_edge' -e fed_edge_group='hello-ally_edge' -e fed_work='/tmp/goat-peering-rehearsal' -e fed_counterparty='/tmp/goat-peering-rehearsal/theirs.canonical.json' peering-zenoh-edge.yml && cd './ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit 'hello-ally_core' -e fed_edge_group='hello-ally_edge' -e fed_work='/tmp/goat-peering-rehearsal' -e fed_counterparty='/tmp/goat-peering-rehearsal/theirs.canonical.json' peering-republisher.yml
+
+13  Trust the other party's identity service
+    cd './ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit 'hello-ally_edge' -e fed_edge_group='hello-ally_edge' -e fed_work='/tmp/goat-peering-rehearsal' -e fed_counterparty='/tmp/goat-peering-rehearsal/theirs.canonical.json' peering-spire.yml
+
+14  Test that allowed traffic passes and the rest is refused
+    './ops/federation/standup/acceptance.sh' '/tmp/goat-peering-rehearsal/agreement.json' --as 'zagros'
+
 What a real run would leave to you, at phase 5:
 
   1. Phase 5 exchanges your half and CA certificate with theirs through the
@@ -38,8 +76,17 @@ What a real run would leave to you, at phase 5:
 
      /tmp/goat-peering-rehearsal/keys.txt
 
-To see more: add -o json to see every phase's command, or read
-docs/operations/sovereign-federation-runbook.md.
+Phase 1 checks these before anything changes:
+  inputs          every required input is present
+  edge-ports      the tunnel and edge router ports are free on the edge
+  core-ports      the republisher metrics port is free on the core
+  slot-anchors    the committed slot list equals the registry
+  core-router     the core router container is found
+  ingress-stores  the core's receive stores match what the edge grants
+  signing-ca      our CA certificate and its signing key resolve
+
+To see more: -o json lists every row of the plan, and
+docs/operations/sovereign-federation-runbook.md says what each phase proves.
 
 To run it for real: remove --dry-run. The run stops at phase 5 for you. When you
 finish those steps, carry on with:

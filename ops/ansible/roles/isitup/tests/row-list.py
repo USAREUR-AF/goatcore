@@ -13,7 +13,9 @@ owner) from it. This pins the rules that decide the list:
   - a row past its `retire_after` date is dropped, whatever `enabled` says;
   - `lifecycle` and `owner` reach meta.json, and every external declaration
     row is `source: external`, so the page can move them to /external;
-  - a hostname can carry its own probe path.
+  - a hostname can carry its own probe path;
+  - meta.json carries the stamp of the list itself (`rendered`: digest, row
+    count, source commits, time), and the digest follows the rows.
 
 Needs python3 + jinja2; skips without jinja2, like free-text-columns.sh.
 """
@@ -22,7 +24,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from render_services_env import render
+    from render_services_env import RENDERED_AT, SOURCE, render, rows_sha256
 except ImportError:
     print("[isitup/row-list] SKIP (python3 jinja2 not importable)")
     sys.exit(0)
@@ -146,5 +148,26 @@ check(env_ids == ids, "services.env probes exactly the row list, in order")
 check(sorted(meta.get("rows", {})) == sorted(ids), "meta.json describes exactly the row list")
 check(meta["rows"].get("platform", {}).get("retire_after") == "2026-12-31",
       "meta.json carries retire_after for the page")
+
+# The stamp of the list itself: what the page shows and isitup-list.py compares.
+stamp = meta.get("rendered", {})
+check(stamp.get("sha256") == rows_sha256(rows), "meta.json carries the digest of the row list")
+check(stamp.get("rows") == len(rows), "meta.json carries the row count")
+check(stamp.get("source") == SOURCE and stamp.get("at") == RENDERED_AT,
+      "meta.json carries the source commits and the render time")
+check(len(stamp.get("sha256", "")) == 64, "the digest is a sha256")
+
+# Same declaration, same digest; a removed row, a different one. A page that
+# still carries the old list is then told apart from the declaration.
+rows_again, _, _ = render(CONTEXT, TODAY)
+check(rows_sha256(rows_again) == rows_sha256(rows), "two renders of one declaration give one digest")
+without = dict(CONTEXT, isitup_services=[s for s in CONTEXT["isitup_services"] if s["id"] != "portal"])
+rows_without, _, meta_without = render(without, TODAY)
+check(meta_without["rendered"]["sha256"] != stamp.get("sha256"),
+      "removing a row from the declaration changes the digest")
+# A retire_after date that passes drops the row, so the digest moves with it.
+rows_later, _, _ = render(CONTEXT, "2026-11-01")
+check("oldthing" not in [r["id"] for r in rows_later] and rows_sha256(rows_later) != rows_sha256(rows),
+      "a row passing its retire_after date changes the digest")
 
 sys.exit(fail)

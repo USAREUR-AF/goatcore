@@ -14,7 +14,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "{{ time_health_memory_limit }}"
     restart: unless-stopped
     networks:
       # Reaches the router over the zenoh compose network.

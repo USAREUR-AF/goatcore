@@ -1,0 +1,48 @@
+# ntfy message template for Alertmanager webhooks. Publishers select it with
+# ?template=goat-alertmanager on the topic URL. Installed into ntfy's
+# template-dir by the relay-health role; ntfy reads it per request, so a
+# change lands without a restart.
+#
+# Why not ntfy's built-in `alertmanager` template: it prints every alert in
+# the batch with its generator URL. ntfy refuses a rendered message over its
+# 4096-byte limit with HTTP 400 (40041), and Alertmanager drops a 4xx without
+# retry, so the page was lost exactly when a group got large (measured: real
+# alerts failed at five per batch).
+#
+# Bounded by construction. At most five firing alerts are listed, every
+# printed field is truncated, and the rest are counted. Alerts Alertmanager
+# itself left out (webhook max_alerts) arrive only as the truncatedAlerts
+# number, with no status, so they are reported as such rather than counted
+# as firing. Measured worst case: a 136-byte title and a 1.2 KB message from a
+# 108 KB request with every field oversized. `trunc` counts bytes, so a cut
+# multibyte character renders as one U+FFFD; that is cosmetic.
+#
+# JSON numbers reach the template as float64, and ntfy's Sprig fork has no
+# `int`, so truncatedAlerts is tested by truthiness (0 is false), never with
+# `gt`, which errors on a float64 against an int literal.
+title: |
+  {{- $firing := 0 -}}{{- range .alerts -}}{{- if eq .status "firing" -}}{{- $firing = add $firing 1 -}}{{- end -}}{{- end -}}
+  {{- if eq .status "firing" -}}[FIRING {{ $firing }}{{ if .truncatedAlerts }}+{{ end }}]{{- else -}}[RESOLVED]{{- end }} {{ trunc 80 (.commonLabels.alertname | default "alert") }}{{ with .commonLabels.site }} @ {{ trunc 40 . }}{{ end }}
+message: |
+  {{- $firing := 0 -}}{{- $resolved := 0 -}}
+  {{- range .alerts -}}{{- if eq .status "firing" -}}{{- $firing = add $firing 1 -}}{{- else -}}{{- $resolved = add $resolved 1 -}}{{- end -}}{{- end -}}
+  {{- $shown := 0 -}}
+  {{- range .alerts -}}
+  {{- if and (eq .status "firing") (lt $shown 5) }}
+  - {{ trunc 140 (.annotations.summary | default .labels.instance | default .labels.alertname | default "alert") }}
+  {{- $shown = add $shown 1 -}}
+  {{- end -}}
+  {{- end -}}
+  {{- if gt (sub $firing $shown) 0 }}
+  + {{ sub $firing $shown }} more firing
+  {{- end -}}
+  {{- if gt $resolved 0 }}
+  {{ $resolved }} resolved
+  {{- end -}}
+  {{- if .truncatedAlerts }}
+  + {{ .truncatedAlerts }} more not included by Alertmanager (max_alerts)
+  {{- end -}}
+  {{- with .commonAnnotations.description }}
+
+  {{ trunc 400 . }}
+  {{- end }}

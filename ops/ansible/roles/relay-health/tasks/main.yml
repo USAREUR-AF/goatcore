@@ -878,6 +878,23 @@
     - "{{ ntfy_dir }}"
     - "{{ ntfy_dir }}/cache"
     - "{{ ntfy_dir }}/data"
+    - "{{ ntfy_dir }}/templates"
+  when:
+    - relay_health_standalone | bool
+    - relay_health_public_enabled | bool
+    - ntfy_enabled | default(false) | bool
+
+# Alertmanager's ntfy webhooks select this with ?template=goat-alertmanager.
+# It must be on the server before any webhook URL names it: ntfy answers an
+# unknown template with HTTP 400 (40047), which Alertmanager does not retry.
+# ntfy reads templates per request, so no restart is needed.
+- name: ntfy | message templates
+  ansible.builtin.copy:
+    src: ntfy-templates/
+    dest: "{{ ntfy_dir }}/templates/"
+    owner: root
+    group: root
+    mode: "0644"
   when:
     - relay_health_standalone | bool
     - relay_health_public_enabled | bool

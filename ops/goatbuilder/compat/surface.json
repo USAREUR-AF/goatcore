@@ -1,0 +1,1270 @@
+{
+ "goatbuilder": {
+  "args": [],
+  "flags": {
+   "--color": true,
+   "--frozen": false,
+   "--lang": true,
+   "--mock": true,
+   "--offline": false,
+   "--output": true,
+   "--repo": true,
+   "--timeout": true,
+   "--verbose": false,
+   "--yes": false,
+   "-C": true,
+   "-o": true,
+   "-v": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder adopt": {
+  "args": [],
+  "flags": {
+   "--env": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder apply": {
+  "args": [
+   {
+    "name": "PLAN",
+    "required": true
+   }
+  ],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder assay": {
+  "args": [
+   {
+    "name": "SITE",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--only": true,
+   "--plan": false,
+   "--rows-out": true,
+   "--values": true,
+   "--var": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder completion": {
+  "args": [
+   {
+    "name": "SHELL",
+    "required": true
+   }
+  ],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "<SHELL>": [
+    "bash",
+    "elvish",
+    "fish",
+    "powershell",
+    "zsh"
+   ]
+  }
+ },
+ "goatbuilder deploy": {
+  "args": [],
+  "flags": {
+   "--ack": true,
+   "--component": true,
+   "--dry-run": false,
+   "--env": true,
+   "--group": true,
+   "--verify-only": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder diff": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--all": false,
+   "--env": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder docs": {
+  "args": [],
+  "flags": {
+   "--markdown": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder doctor": {
+  "args": [],
+  "flags": {
+   "--all": false,
+   "--browser-tests": false,
+   "--credentials": false,
+   "--env": true,
+   "--site": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder endstate": {
+  "args": [
+   {
+    "name": "SITE",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--assay-rows": true,
+   "--facts": true,
+   "--no-assay": false,
+   "--root": true,
+   "--strict": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder explain": {
+  "args": [
+   {
+    "name": "INPUT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--list": false,
+   "--report": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder fastlane": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--dry-run": false,
+   "--no-deploy": false,
+   "--reason": true,
+   "--ref": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder federate": {
+  "args": [
+   {
+    "name": "WITH",
+    "required": true
+   },
+   {
+    "name": "PARTNER",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--agreement-digest": true,
+   "--approve-admission": true,
+   "--approve-plan": true,
+   "--as": true,
+   "--confirm": false,
+   "--dry-run": false,
+   "--edge-group": true,
+   "--env": true,
+   "--from": true,
+   "--no-confirm": false,
+   "--no-resume": false,
+   "--partner-ca-fingerprint": true,
+   "--partner-key": true,
+   "--place-pointer-package": true,
+   "--plan": true,
+   "--resume": false,
+   "--review-in-pr": false,
+   "--to": true,
+   "--work": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate apply": {
+  "args": [
+   {
+    "name": "AGREEMENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--as": true,
+   "--confirm": false,
+   "--edge-group": true,
+   "--json": false,
+   "--out": true,
+   "--partner-audience": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate backout": {
+  "args": [
+   {
+    "name": "PARTNER",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--as": true,
+   "--dry-run": false,
+   "--edge-group": true,
+   "--env": true,
+   "--work": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate compose": {
+  "args": [
+   {
+    "name": "FIRST",
+    "required": true
+   },
+   {
+    "name": "SECOND",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--json": false,
+   "--key": true,
+   "--keyring": true,
+   "--now": true,
+   "--out": true,
+   "--print": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate diff": {
+  "args": [
+   {
+    "name": "OURS",
+    "required": true
+   },
+   {
+    "name": "THEIRS",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--json": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate init": {
+  "args": [],
+  "flags": {
+   "--declaration": true,
+   "--json": false,
+   "--out": true,
+   "--signing-key": true,
+   "--with-data": false,
+   "--with-transport": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate lint": {
+  "args": [
+   {
+    "name": "PACKAGE",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--json": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate plan": {
+  "args": [
+   {
+    "name": "WITH",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--as": true,
+   "--edge-group": true,
+   "--env": true,
+   "--no-live": false,
+   "--recheck": false,
+   "--work": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate verify": {
+  "args": [
+   {
+    "name": "AGREEMENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--as": true,
+   "--json": false,
+   "--signing-key": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder history": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--component": true,
+   "--env": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder join-node": {
+  "args": [
+   {
+    "name": "ENV",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--address": true,
+   "--class": true,
+   "--dry-run": false,
+   "--from": true,
+   "--node": true,
+   "--pass-var": true,
+   "--site": true,
+   "--to": true,
+   "--via": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--via": [
+    "mesh",
+    "door"
+   ]
+  }
+ },
+ "goatbuilder pins": {
+  "args": [],
+  "flags": {
+   "--check": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder plan": {
+  "args": [
+   {
+    "name": "VERB",
+    "required": true
+   },
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--env": true,
+   "--group": true,
+   "--n": true,
+   "--out": true,
+   "--site": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder preflight": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--env": true,
+   "--site": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder promote": {
+  "args": [],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder promote abandon": {
+  "args": [
+   {
+    "name": "RECORD",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--reason": true,
+   "--superseded-by": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder promote check": {
+  "args": [],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder promote graduate": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--override-runtime-health": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder promote graduate-set": {
+  "args": [
+   {
+    "name": "NAME",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder promote hotfix": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--previous-ref": true,
+   "--reason": true,
+   "--ref": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder promote open": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--reason": true,
+   "--ref": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder promote readiness": {
+  "args": [],
+  "flags": {
+   "--out": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder promote review": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--detail": false,
+   "--json": false,
+   "--no-header": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder promote status": {
+  "args": [],
+  "flags": {
+   "--json": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder release": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--dry-run": false,
+   "--from": true,
+   "--rc": true,
+   "--tag": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder rollback": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   },
+   {
+    "name": "N",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--dry-run": false,
+   "--env": true,
+   "--list": false,
+   "--site": true,
+   "--status": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder runs": {
+  "args": [],
+  "flags": {
+   "--last": true,
+   "--verb": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder runs diff": {
+  "args": [
+   {
+    "name": "A",
+    "required": true
+   },
+   {
+    "name": "B",
+    "required": true
+   }
+  ],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder secrets": {
+  "args": [
+   {
+    "name": "ARGS",
+    "required": true
+   }
+  ],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder show": {
+  "args": [
+   {
+    "name": "RUN",
+    "required": true
+   }
+  ],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder standup": {
+  "args": [
+   {
+    "name": "ENV",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--check": false,
+   "--dry-run": false,
+   "--from": true,
+   "--obs-only": false,
+   "--parallel": false,
+   "--profile": true,
+   "--site": true,
+   "--skip-obs": false,
+   "--to": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder status": {
+  "args": [],
+  "flags": {
+   "--component": true,
+   "--env": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder survey": {
+  "args": [],
+  "flags": {
+   "--all": false,
+   "--env": true,
+   "--html": true,
+   "--inter": false,
+   "--intra": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder teardown": {
+  "args": [
+   {
+    "name": "ENV",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--dry-run": false,
+   "--from": true,
+   "--profile": true,
+   "--services": false,
+   "--site": true,
+   "--to": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder tutor": {
+  "args": [
+   {
+    "name": "LESSON",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--lesson": true,
+   "--list": false,
+   "--reset": false,
+   "--workspace": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder update": {
+  "args": [],
+  "flags": {
+   "--check": false,
+   "--force": false,
+   "--site": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder validate": {
+  "args": [
+   {
+    "name": "CONFIG",
+    "required": true
+   }
+  ],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder verify": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--dry-run": false,
+   "--env": true,
+   "--group": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ }
+}

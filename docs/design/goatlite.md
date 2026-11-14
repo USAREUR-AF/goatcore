@@ -141,10 +141,16 @@ The SPIRE trust domain and the CA stay as they were: both are locked once minted
 
 **Proof today.** Rendered from scratch and grown from a LAN render, each surface passes `goat-standup.sh <name> --plan` on the internet profile, `standup-required-inputs.py <name> --profile internet --no-secrets` with nothing missing, `standup-config-preflight.py <name>_hosts`, `--verify`, and the standup parity gate between the two drivers. `tests/test_goatlite_render_internet.py` holds the value checks and their negative controls. The `goatenv` repository carries a rendered internet example, `example-internet`, under `internet/`.
 
+### Growing into a full environment
+
+Status: designed, not built. Gate rows G1 and G2.
+
+Reach is the first of the growth steps, not the last. `goatbuilder grow` takes a running goatlite into a full-preset goatnet on the same box, with the same name, CA and database, in numbered steps that each show what they change first: custody of the identity root, reach (the `lite.internet` render above), the hand-over of `goatlite.yaml` and the rendered file set to a full configuration, the secrets store, the tier ceiling and promotion rungs, an observability host, and a second core. The first run gains nothing from this: no fact, prompt, outside account or phase, and nothing is provisioned ahead of growth. The design, with the identity-root options, what the name fixes for good, and whether a second site can join a running one, is [goatlite-growth.md](goatlite-growth.md).
+
 ## 7. What goatlite is not
 
 - Not a second procedure. `check-deployment-doctrine.sh` must see the quickstart point back to goatnet-standup.md.
-- Not production, now or later. No obs host, no core pair, no Spock, no relays, tier ceiling 1. Those are the full preset, and growing out (§6) adds reach, not those. A production goatnet is stood up with the full preset.
+- Not production. No obs host, no core pair, no Spock, no relays, tier ceiling 1. Those are the full preset. A goatlite reaches them only by growing into a full-preset goatnet ([goatlite-growth.md](goatlite-growth.md)); whether a goatnet grown that way is acceptable for production is its owning team's declared posture.
 - Not a participant appliance. A learner who wants to join someone else's goatnet runs a moon-pod ([goat-moon-pod.md](https://github.com/usareur-af/goatstuff/blob/main/docs/design/goat-moon-pod.md)); rung 2 of the ladder.
 - Not a fork of the playbooks. Any lite-only playbook is a defect against ADR 1198 D6.
 

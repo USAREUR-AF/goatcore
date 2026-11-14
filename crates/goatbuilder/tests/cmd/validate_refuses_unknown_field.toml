@@ -3,7 +3,7 @@ bin.name = "goatbuilder"
 args = ["validate", "-C", "../..", "tests/fixtures/configs/unknown-field.yaml"]
 status.code = 1
 stdout = """
-FAIL  config  (root): Additional properties are not allowed ('flavour' was unexpected)
+FAIL  config  GB-025: (root): Additional properties are not allowed ('flavour' was unexpected)
 validate: refused (1 check)
 """
 stderr = ""

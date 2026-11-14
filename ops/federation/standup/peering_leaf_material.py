@@ -51,6 +51,22 @@ def sans(value):
     return result
 
 
+def only_trust_options(ca, out):
+    """`openssl verify` options that trust nothing but `ca`: no default CA file,
+    path or store. OpenSSL 1.1 and later name them (-no-CAfile, -no-CApath,
+    -no-CAstore). LibreSSL (macOS's openssl) has none of them and loads its
+    default locations only for a -CAfile or -CApath that is not given, so both
+    are given: the CA itself, and a directory that does not exist."""
+    help_result = subprocess.run(['openssl', 'verify', '-help'], capture_output=True)
+    usage = help_result.stderr + help_result.stdout
+    if b'-no-CAfile' in usage:
+        options = ['-no-CAfile', '-no-CApath']
+        if b'-no-CAstore' in usage:
+            options.append('-no-CAstore')
+        return options
+    return ['-CAfile', ca, '-CApath', out / '.no-default-ca-path']
+
+
 def validate(cert, key, ca, cn, expected_sans, min_seconds, trust_options):
     if stat.S_IMODE(key.stat().st_mode) != 0o600:
         raise ValueError('private key must have mode 0600')
@@ -91,6 +107,78 @@ def mint(folder, name, cn, san, ca, ca_key, days):
             '-passin', 'pass:', '-set_serial', serial, '-out', cert,
             '-days', days, '-sha256', '-extfile', ext)
     cert.chmod(0o644)
+
+
+STAGING_PREFIX = '.mint-'
+
+
+def sweep_stale_staging(out):
+    """Remove what an interrupted run left in its private staging directories.
+
+    Every leaf is minted into <out>/.mint-*, and a run that is killed (kill -9,
+    a lost host) leaves that directory behind with the private keys it had
+    generated. Only this helper creates a .mint-* entry, and only while it
+    holds the exclusive lock on <out>/.mint.lock; the kernel drops that lock
+    when its holder dies. Called with the lock held, so every .mint-* entry
+    seen here belongs to a run that is no longer alive and none is live
+    material. Installed leaves, our CA, the lock file and a rotation's
+    retained .previous-* set do not match the prefix and are never touched.
+    A symlink or file of that name is unlinked, never followed.
+    """
+    for entry in sorted(out.glob(STAGING_PREFIX + '*')):
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+        print('  [removed] ' + entry.name + ': staging left by an interrupted run')
+
+
+OUR_CA = 'our-ca.pem'
+OUR_CA_MODE = 0o600
+
+
+def our_ca_target(out):
+    """Where our CA goes beside the leaves: refused, before anything is issued,
+    when something other than a regular file holds that path."""
+    target = out / OUR_CA
+    if target.is_symlink() or (target.exists() and not target.is_file()):
+        raise ValueError(OUR_CA + ': expected a regular file at ' + str(target)
+                         + '; a container started before phase 8 creates a directory at a '
+                         'mounted path that does not exist. Remove it and run phase 8 again')
+    return target
+
+
+def place_our_ca(out, ca):
+    """Our CA, the one the agreement names for us, beside the leaves it signs.
+
+    The rendered deployment halves name <out>/our-ca.pem as the CA of the
+    edge's inward endpoint (root_ca_certificate_file) and as the republisher's
+    core CA, and the edge mounts that path into its container. Nothing else
+    writes it, and a bind mount of a path that does not exist makes the
+    container runtime create a directory there: zenoh then cannot read the CA,
+    discards the endpoint and never dials the core, with nothing logged.
+    Written once the leaves are in place, and only when the content differs,
+    so a re-run changes nothing. Mode OUR_CA_MODE, the owner's alone, like the
+    leaf keys beside it: every reader is the owner or root. The edge container
+    sets no user (its image runs as root) and already reads the 0600 leaf keys
+    mounted beside it; the edge role reads it on the edge with become; the
+    republisher role copies it from the controller as the driver's user, who
+    ran phase 8 and owns it.
+    """
+    target = our_ca_target(out)
+    data = ca.read_bytes()
+    if target.is_file() and target.read_bytes() == data:
+        if stat.S_IMODE(target.stat().st_mode) != OUR_CA_MODE:
+            os.chmod(target, OUR_CA_MODE)
+        return
+    stage = out / ('.' + OUR_CA + '.tmp')
+    stage.unlink(missing_ok=True)
+    fd = os.open(stage, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, OUR_CA_MODE)
+    with os.fdopen(fd, 'wb') as handle:
+        handle.write(data)
+    os.chmod(stage, OUR_CA_MODE)
+    os.replace(stage, target)
+    print('  [placed] ' + OUR_CA + ': our CA, as the agreement names it')
 
 
 def main():
@@ -135,11 +223,10 @@ def main():
         journal = out / '.rotation-pending'
         if journal.exists() or journal.is_symlink():
             raise ValueError('interrupted rotation: inspect .rotation-pending and its backup before recovery')
-        help_result = subprocess.run(['openssl', 'verify', '-help'], capture_output=True)
-        trust_options = ['-no-CAfile', '-no-CApath']
-        if b'-no-CAstore' in help_result.stderr + help_result.stdout:
-            trust_options.append('-no-CAstore')
+        sweep_stale_staging(out)
+        trust_options = only_trust_options(ca, out)
         openssl('verify', *trust_options, '-trusted', ca, ca)
+        our_ca_target(out)
         pending = []
         existing = []
         for name, cn, san in args.leaf:
@@ -161,15 +248,20 @@ def main():
         if not pending:
             for name in names:
                 print('  [reused] ' + name + ': existing certificate and key validated')
+            place_our_ca(out, ca)
             return
         if args.ca_key is None or not args.ca_key.is_file():
-            raise ValueError('issuance requires our CA key; set FED_CA_KEY or --ca-key')
+            raise ValueError('issuance requires our CA key; set FED_CA_KEY or --ca-key, '
+                             'or opt in to the age-encrypted key with FED_CA_KEY_FROM_AGE=1 '
+                             '(FED_CA_KEY_AGE with FED_AGE_IDENTITY)')
         ca_key = args.ca_key.absolute()
         if public_key(ca, certificate=True) != public_key(ca_key):
             raise ValueError('signing CA certificate and private key do not match')
         # Validate the complete candidate set before replacing any leaf. Temporary
-        # private material stays under a private directory on the same filesystem.
-        with tempfile.TemporaryDirectory(prefix='.mint-', dir=out) as temp:
+        # private material stays under a private (0700) directory on the same
+        # filesystem, so installation is a rename; if this run dies before the
+        # directory is removed, the next run's sweep_stale_staging removes it.
+        with tempfile.TemporaryDirectory(prefix=STAGING_PREFIX, dir=out) as temp:
             stage = Path(temp)
             for name, cn, san in pending:
                 mint(stage, name, cn, san, ca, ca_key, args.days)
@@ -208,6 +300,7 @@ def main():
                 journal.unlink()
             for name, _, _ in pending:
                 print('  [issued] ' + name)
+            place_our_ca(out, ca)
             if backup:
                 print('  Previous material retained at ' + str(backup))
 

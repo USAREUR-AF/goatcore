@@ -22,6 +22,7 @@ Each component below has one of four words, and each word means one thing.
 | `goat`, the operator CLI | `crates/goat-cli/` | Tested in CI | `ci.yml`, `goat-cli-pr.yml` |
 | `goatbuilder`, build, release, deploy and standup | `crates/goatbuilder/` | Tested in CI | `ci.yml` |
 | Release binaries of `goat` and `goatbuilder` for linux-amd64, linux-arm64 and darwin-arm64, with a signed `SHA256SUMS` | `.github/workflows/goat-release.yml`, `.github/workflows/goatbuilder-release.yml` | Not run | They run on a tag `goat-cli-v<semver>` or `goatbuilder/v<semver>` |
+| Federation e2e environment: synthetic sovereigns, a scenario matrix against any ref | `ops/federation-e2e/env`, [design](design/federation-e2e-environment.md) | WIP | `federation-e2e.yml` runs its two-party subset |
 | Error catalog and interpreter | `crates/goat-errors/`, `ops/errors/` | Tested in CI | `ci.yml`, `error-catalog.yml` |
 | `panoscope-core`, the portal client shared with `goatstuff` | `crates/panoscope-core/` | Tested in CI | `ci.yml` |
 | Relay and relay protocol | `goat-relay/`, `goat-relay-protocol/` | Tested in CI | `goat-relay.yml`, `goat-relay-protocol.yml` |

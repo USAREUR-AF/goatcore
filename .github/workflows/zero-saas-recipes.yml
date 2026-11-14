@@ -6,7 +6,9 @@
 #   smtp-sink       ops/recipes/smtp-sink/test.sh: the smtp-sink play brings Mailpit
 #                   up; the identity console's mailer delivers an invite to it
 #   alert-channels  tests/test_alert_channels_off_when_empty.py: empty channels render
-#                   no outside receiver, amtool accepts the render, no role requires one
+#                   no outside receiver, amtool accepts the render, no role requires one;
+#                   tests/test_ntfy_alertmanager_delivery.py: the pinned Alertmanager
+#                   delivers an alert storm to the pinned ntfy as one bounded notification
 #
 # Rollback: rm this file.
 
@@ -28,6 +30,10 @@ on:
       - 'ops/ansible/group_vars/**'
       - 'ops/goat-id-console/internal/mailer/**'
       - 'tests/test_alert_channels_off_when_empty.py'
+      - 'tests/test_ntfy_alertmanager_delivery.py'
+      - 'ops/ansible/roles/relay-health/files/ntfy-templates/**'
+      - 'ops/ansible/roles/relay-health/templates/ntfy-server.yml.j2'
+      - 'ops/compose/relay-health-standalone/docker-compose.public.yml'
       - '.github/workflows/zero-saas-recipes.yml'
 
 permissions:
@@ -41,9 +47,13 @@ jobs:
   local-registry:
     name: local registry (row 13)
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -89,3 +99,7 @@ jobs:
         env:
           REQUIRE_DOCKER: '1'
         run: python3 tests/test_alert_channels_off_when_empty.py
+      - name: An alert storm reaches ntfy as one bounded notification
+        env:
+          REQUIRE_DOCKER: '1'
+        run: python3 tests/test_ntfy_alertmanager_delivery.py

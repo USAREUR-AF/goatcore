@@ -15,6 +15,7 @@ Thank you for working on goat. This page is the whole process; nothing else is r
 - **DCO sign-off on every commit** (`git commit -s`). By signing off you certify the [Developer Certificate of Origin 1.1](https://developercertificate.org/): you wrote the change or have the right to submit it under this project's licence. There is no CLA. The policy is in [Policy](#policy).
 - **Every commit is signed and verified.** Set up [SSH or GPG commit signing](https://docs.github.com/en/authentication/managing-commit-signature-verification) once and register the key on your GitHub account as a *signing* key. The required check `verified-commits` refuses a pull request while any of its commits is unsigned or signed with an unregistered key; re-sign with `git rebase --exec 'git commit --amend --no-edit -S' origin/main` and `git push --force-with-lease`. Automation commits through the GitHub API, which signs them, never by pushing unsigned commits. The decision is [ADR 1226](docs/adr/1226-every-commit-in-a-pull-request-is-signed-and-verified.md).
 - One logical change per pull request. Refactors and behaviour changes are separate pull requests.
+- **A fix shows its failure on `main`.** Before opening a `fix` pull request, reproduce the fault on a plain checkout of this repository's `main`, with a test or a command that fails there and passes with the change. A tree or host built from anything more than `main` (a local overlay, unmerged patches, another branch) can behave differently from `main`; a fault that does not appear on `main` is not fixed here, and describing it here misstates what `main` does.
 
 ## Gates
 
@@ -27,7 +28,7 @@ Every CI check is a script you can run locally before you push. The ones that ap
 | Go (`ops/*/go.mod`) | `go vet ./... && go test ./...` in that module |
 | Ansible | `ops/ci/check-role-template-refs-resolve.sh` · `ansible-playbook --syntax-check` on the playbook you changed |
 | Shell | `shellcheck` · `ops/ci/check-bash-portability.sh` (scripts must run on bash 3.2) |
-| Docs | `ops/ci/check-doc-links.py` · `ops/ci/check-doc-code-citations.sh` — every `path:line` citation must point at an existing line |
+| Docs | `ops/ci/check-doc-links.py` · `ops/ci/check-doc-code-citations.sh` — every `path:line` citation must point at an existing line · `ops/ci/check-doc-signer-identity.py` — every documented cosign identity is a release signer's |
 | An ADR | add its row to `docs/adr/INDEX.md` in the same change; ADRs are never rewritten, they are superseded |
 
 The pull-request workflow runs the same scripts. A red gate names the script, so the fix is reproducible locally.
@@ -69,9 +70,20 @@ When a review is needed, an owner reads the change against this list and, if it 
 
 A new push removes the label. The approval that merges the pull request comes from a different owner than the one who applied it. If you are registered in a community environment, link your GitHub account there and your pull requests take the faster path.
 
+### What you can expect from the maintainers
+
+- **Once you are validated, the maintainers aim to reply within one working day.** This is an aim, not a guarantee. You are validated when you are registered in a goat community environment with a linked GitHub account, or have an earlier merged pull request here: the "Known" row in the table above. Validation takes work from both sides and has no fixed time. The reply is in words: who has it, and what happens next.
+- **Your pull request is labeled `community`.** The same check that asks who wrote a pull request applies the label to every one from outside the maintainers. Maintainers work that list first: [open community pull requests](https://github.com/usareur-af/goatcore/pulls?q=is%3Apr+is%3Aopen+label%3Acommunity).
+- **Maintainers carry the rebase.** `main` moves many times a day. A pull request does not have to be up to date with `main` to merge. When yours conflicts, a maintainer rebases it; leave "Allow edits from maintainers" on so they can push to your branch.
+- **Your work is not replaced without a word.** If a maintainer's pull request carries the same change, it says so in yours before yours is closed, and credits your commits.
+
+The decision is ADR 1231 (`docs/adr/`).
+
 ## Merging
 
 Development happens in this repository. A pull request merged to `main` is the change; there is no other upstream. A deployment picks it up by moving the commit it pins, in its own overlay repository.
+
+`main` changes many times a day. To build on goat, pin a whole-tree release, the tag `goatcore/vX.Y.Z`, or follow the branch `stable`, which always points at the newest one. `stable` takes no pull requests: every contribution goes to `main` ([the design](docs/design/community-and-stable-line.md)).
 
 ## Reporting a bug or proposing a feature
 

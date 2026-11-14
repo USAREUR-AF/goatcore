@@ -36,14 +36,18 @@ permissions:
 
 concurrency:
   group: federation-bundle-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   bundle:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
 
       # Runs the ratchet, the determinism comparison, and the eight red-proofs
       # of the verifier. Nothing to install: bash, python3, coreutils and tar

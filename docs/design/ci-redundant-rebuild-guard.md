@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Authored 2026-05-17. Applied to all image-building workflows in `.github/workflows/` (11 as of 2026-07-27). **Amended 2026-07-27:** the delta check now runs on `pull_request` events only — `push` events build unconditionally (see "Push events always build" below), after the delta silently false-skipped a real `main`-push image build (`panoscope-image` on the #1807 merge: the changed-file list plainly contained `crates/panoscope-core/**` + `ops/panoscope/**`, yet the job emitted `relevant=false`; unreproducible from the logged inputs). |
-| Related | [ADR 0708](../adr/0708-build-zenoh-from-source.md), [ADR 0858](../adr/0858-zenoh-image-upstream-pivot.md) (drops two of these guards once we pivot off the custom zenoh build), F-122 |
+| Related | [ci-results-follow-inputs.md](ci-results-follow-inputs.md) (the general rule: a check's result follows its inputs), [ADR 0708](../adr/0708-build-zenoh-from-source.md), [ADR 0858](../adr/0858-zenoh-image-upstream-pivot.md) (drops two of these guards once we pivot off the custom zenoh build), F-122 |
 
 ## What the guard does
 

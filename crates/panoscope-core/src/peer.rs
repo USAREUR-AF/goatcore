@@ -174,12 +174,7 @@ impl PeerInfo {
         // 4. Publishes ONLY under reserved operator namespaces. Requires
         //    at least one publish — a peer with no publishes falls through
         //    to App unless an earlier signal already classed it infra.
-        if !self.publishes.is_empty()
-            && self.publishes.iter().all(|t| is_reserved_namespace(t))
-        {
-            return true;
-        }
-        false
+        !self.publishes.is_empty() && self.publishes.iter().all(|t| is_reserved_namespace(t))
     }
 
     /// Stable sub-type key for an infrastructure node, or `None` when the

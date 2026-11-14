@@ -295,6 +295,11 @@ GNSS lock, power, thermal, RF: each is a per-host signal a small agent publishes
 extends), a roll-up reader rolls to `ops/<domain>/health/<scope>` as `EnvHealthV1{domain:"<x>"}`, and the
 three renderers pick it up via the `oneof` arm. No new surfaces, no new contract.
 
+**Peer (designed, not built).** `ops/peer/health/<site>` carries faults observed on machines we do not own,
+measured by a reader beside each router that terminates an outside connection
+([`peer-fault-handling.md`](peer-fault-handling.md), ADR 1232). A clock offset that reader observes is a
+row in the `time` domain (§4.2), marked observed by a neighbor and not self-reported.
+
 ## 5. Three altitudes — one contract, rendered three ways
 
 The same `EnvHealthV1` stream, rendered at the altitude that fits the question. All three already exist

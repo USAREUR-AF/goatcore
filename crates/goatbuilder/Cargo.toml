@@ -1,6 +1,6 @@
 [package]
 name = "goatbuilder"
-version = "0.4.3"
+version = "0.6.1"
 edition = "2021"
 description = "The build/release command-line for a goat environment: one config, one deploy contract, enforced in one place (ADR 1198)"
 publish = false
@@ -22,6 +22,10 @@ clap_complete = "4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 goat-errors = { path = "../goat-errors" }
+# `federate init|lint|compose|diff|verify|apply`: the six federation verbs, run
+# in process from the library goat federate also runs (src/federate/verbs.rs).
+# Phase 5 also checks each package's signature under the key read aloud.
+goat-federation = { path = "../goat-federation" }
 # `update`: the self-update core goat shares (asset name, version compare,
 # checksum, atomic replace), and a small blocking HTTP client for get.<site>.
 goat-selfupdate = { path = "../goat-selfupdate" }
@@ -43,6 +47,16 @@ rust-embed = "8"
 unic-langid = "0.9"
 once_cell = "1"
 toml = "0.8"
+# Splits an inventory's ansible_ssh_common_args into ssh arguments.
+shlex = "1"
+# `federate` phase 5: our verifying key, derived from the seed that signs our
+# package, shown to be read aloud.
+ed25519-dalek = "2"
+# `update`: SHA256SUMS's keyless signature checked in process (src/update/signature.rs):
+# ECDSA and Ed25519 by ring, certificates by x509-parser. Both were already linked
+# (ring through rustls, x509-parser through goat-federation), so nothing new is built.
+ring = "0.17"
+x509-parser = { version = "0.16", features = ["verify"] }
 
 [dev-dependencies]
 # Golden command tests, the same framework and conventions as goat-cli
@@ -52,4 +66,8 @@ trycmd = "0.15"
 # Whole-flow integration tests run the built binary on throwaway copies of
 # the fixtures (tests/flows.rs).
 tempfile = "3"
+# update/signature.rs: a certificate no trusted CA issued.
+rcgen = "0.13"
+# tests/support/sigstore.rs: certificate validity windows for the stand-in Sigstore.
+time = "0.3"
 

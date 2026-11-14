@@ -127,7 +127,8 @@
 # Prove the identity works HERE, rather than discovering at the quota wall
 # that the one service meant to prevent an outage cannot authenticate. A
 # measurement needs only ListBucket, so this exercises the credential without
-# deleting anything.
+# deleting anything. rc 4 still proves the credential: it means the bucket is
+# already over high-water, which is judged below, after the timer is running.
 - name: Prove the evictor identity can measure the bucket
   ansible.builtin.command:
     argv:
@@ -135,7 +136,7 @@
       - --measure-only
   register: _evict_probe
   changed_when: false
-  failed_when: _evict_probe.rc != 0
+  failed_when: _evict_probe.rc not in [0, 4]
 
 - name: Show what the evictor measured
   ansible.builtin.debug:
@@ -146,3 +147,22 @@
     name: goat-audit-fifo-evict.timer
     enabled: true
     state: started
+
+# A bucket already over high-water with eviction disabled is the outage shape
+# this role exists to prevent: the timer will measure and alarm but never
+# relieve it, and at the quota MinIO refuses every audit write. Warn, do not
+# fail. Disabled is the shipped default and enabling deletes objects
+# irreversibly, so a red converge would offer no way back to green short of
+# turning on deletion. The AuditEvictionDisabledOverHighWater alert carries
+# the condition continuously between converges.
+- name: Warn when over high-water while eviction is disabled
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: the audit bucket is at or over its high-water mark and
+      audit_fifo_evict_enabled is false. The evictor runs measure-only and
+      will never relieve the bucket, so MinIO will refuse audit writes at the
+      quota. Decide whether to enable eviction or raise the quota. The
+      AuditEvictionDisabledOverHighWater alert stays live until you do.
+  when:
+    - _evict_probe.rc == 4
+    - not (audit_fifo_evict_enabled | bool)

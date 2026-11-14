@@ -1,0 +1,34 @@
+---
+# Row declaration for list-freshness.sh. It sets no OIDC client secret and no
+# cookie secret on purpose: the list render must not need either. The rows are
+# literal (no Jinja) so the plain-jinja2 harness renders the same list.
+site_id: listtest
+site_dns_zone: example.invalid
+isitup_enabled: true
+isitup_services:
+  - id: portal
+    name: "Portal"
+    fqdn: portal.listtest.example.invalid
+    container: portal
+    port: 8090
+    category: platform
+    access: public
+  - id: docs
+    name: 'Docs "and" guides'
+    fqdn: docs.listtest.example.invalid
+    container: docs
+    port: 80
+    desc: "Reading material; nothing else stops while it is down."
+  - id: hidden
+    name: "Hidden"
+    fqdn: hidden.listtest.example.invalid
+    container: hidden
+    port: 80
+    listed: false
+external_service_board:
+  name: board
+  owner: "Board owners (example)"
+  enabled: true
+  status:
+    name: "Whiteboard"
+    category: tools
