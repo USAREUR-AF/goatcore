@@ -184,6 +184,16 @@ under `-o json` and as a section of the plan page, and names the secrets
 posture probes it ran to read them. A secret is shown by its source only,
 never its value (#649).
 
+#### Added: a failed standup phase names the error in its output
+
+When a standup phase fails, its output (the log the run kept of it) is matched
+against the error catalog, as `goatbuilder federate` already does. The failure
+then carries an `interpreted` row: the error's code, its likely cause and fix,
+the log, and the command that runs that phase again by hand. With no known
+error in the output, the row gives the phase's own guidance from the phase
+catalog. This covers the numbered phases; the image pull, the observability
+legs and phase 12's parallel steps are not covered yet.
+
 #### Added: goatbuilder status reads real hosts
 
 `goatbuilder status --env <env>` without `--mock` refused with GB-026. It now

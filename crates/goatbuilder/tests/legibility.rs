@@ -1067,7 +1067,8 @@ fn f5_a_failed_standup_phase_carries_its_known_error_s_code_and_fix() {
         .output()
         .unwrap();
     assert!(!out.status.success(), "a phase fails: {}", text(&out));
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(&out)));
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(&out)));
     let rows = |name: &str| -> Vec<String> {
         v["checks"]
             .as_array()
@@ -1081,10 +1082,19 @@ fn f5_a_failed_standup_phase_carries_its_known_error_s_code_and_fix() {
     let failed = rows("failed");
     let phase: u32 = failed
         .iter()
-        .find_map(|d| d.strip_prefix("!! Phase ").and_then(|r| r.split_whitespace().next()).and_then(|n| n.parse().ok()))
+        .find_map(|d| {
+            d.strip_prefix("!! Phase ")
+                .and_then(|r| r.split_whitespace().next())
+                .and_then(|n| n.parse().ok())
+        })
         .unwrap_or_else(|| panic!("no failed phase row: {failed:?}"));
     let interpreted = rows("interpreted");
-    assert_eq!(interpreted.len(), 1, "phase {phase} failed with a known error and carries no interpreted row: {}", text(&out));
+    assert_eq!(
+        interpreted.len(),
+        1,
+        "phase {phase} failed with a known error and carries no interpreted row: {}",
+        text(&out)
+    );
     let d = &interpreted[0];
     let e = goat_errors::explain("X-SSH-001").unwrap();
     assert!(d.starts_with(&format!("X-SSH-001: {}", e.title)), "{d}");
@@ -1097,7 +1107,10 @@ fn f5_a_failed_standup_phase_carries_its_known_error_s_code_and_fix() {
         .and_then(|r| r.split(". By hand: ").next())
         .unwrap_or_else(|| panic!("no log path: {d}"));
     let logged = std::fs::read_to_string(log).unwrap_or_else(|e| panic!("{log}: {e}"));
-    assert!(logged.contains("Permission denied (publickey)"), "{log}: {logged}");
+    assert!(
+        logged.contains("Permission denied (publickey)"),
+        "{log}: {logged}"
+    );
     // The command that runs the phase by hand, from standup's phase catalog.
     let p = goat_errors::phases::explain_phase("standup", &phase.to_string())
         .unwrap_or_else(|| panic!("standup phase {phase} has no phase-catalog entry"));
