@@ -1378,6 +1378,14 @@ fn centered_rect(pct_w: u16, pct_h: u16, area: ratatui::layout::Rect) -> ratatui
 fn draw_help_overlay(f: &mut ratatui::Frame) {
     let area = centered_rect(76, 88, f.area());
     f.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" goat top — legend  (Esc/? closes) ");
+    f.render_widget(Paragraph::new(legend_lines()).block(block), area);
+}
+
+/// The legend's lines, apart from drawing so a test can read them.
+fn legend_lines() -> Vec<Line<'static>> {
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let dim = Style::default().add_modifier(Modifier::DIM);
     // Fixed-width term column → the meaning column lines up into a grid.
@@ -1400,13 +1408,17 @@ fn draw_help_overlay(f: &mut ratatui::Frame) {
         ])
     };
     let blank = || Line::from("");
-    let lines: Vec<Line> = vec![
+    vec![
         sec("fabric weather — one honesty-graded chip per domain"),
         row("MESH", "WireGuard link health (measured latency)"),
         row("FABRIC", "Zenoh class-load vs declared envelopes"),
         row("TIME", "internal-sync coherence + UTC confidence"),
         row("PRESENCE", "peers alive on the bus right now"),
         row("PEER", "faults our router measured on peers we do not own"),
+        row(
+            "",
+            "amber on trust: a client refuses our certificate; candidates, not faults",
+        ),
         blank(),
         sec("honesty colors — a color means exactly what it says"),
         crow("green", "green", "healthy"),
@@ -1440,11 +1452,7 @@ fn draw_help_overlay(f: &mut ratatui::Frame) {
             "  live, read-only — goat top never writes to the fabric",
             dim,
         )),
-    ];
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" goat top — legend  (Esc/? closes) ");
-    f.render_widget(Paragraph::new(lines).block(block), area);
+    ]
 }
 
 /// The `↵` producer drill-down: the selected producer's full footprint plus its
@@ -2505,6 +2513,56 @@ mod tests {
             "last in the strip"
         );
         assert!(render_plain(&vm, TopSort::Msgs).contains("PEER RED n=1"));
+    }
+
+    #[test]
+    fn a_trust_reading_colors_the_peer_chip_amber_or_unmetered_never_green() {
+        use crate::health_wire::PeerFaultDetailV1;
+        for (verdict, color, want) in [
+            ("trust_refused_candidates", "amber", "PEER AMBER n=1"),
+            ("trust_refused_unattributed", "amber", "PEER AMBER n=1"),
+            ("trust_unmeasured", "unmetered", "PEER UNMETERED n=1"),
+        ] {
+            let mut st = TopState::new(None, TopSort::Msgs, 2);
+            let now = Instant::now();
+            st.apply_env(
+                env_beat(
+                    "peer",
+                    color,
+                    1,
+                    EnvDetail::Peer(PeerFaultDetailV1 {
+                        verdict: verdict.to_string(),
+                        trust_verdict: "candidates".to_string(),
+                        ..Default::default()
+                    }),
+                ),
+                now,
+            );
+            let vm = st.view_model(&AliasRegistry::empty(), &EnvelopeRegistry::empty(), now);
+            let out = render_plain(&vm, TopSort::Msgs);
+            assert!(out.contains(want), "{verdict}:\n{out}");
+            assert!(!out.contains("PEER GREEN"), "{verdict}:\n{out}");
+        }
+    }
+
+    #[test]
+    fn the_legend_names_the_trust_reading() {
+        let text: String = legend_lines()
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect();
+        assert!(
+            text.contains(
+                "amber on trust: a client refuses our certificate; candidates, not faults"
+            ),
+            "{text}"
+        );
     }
 
     #[test]

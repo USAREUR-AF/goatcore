@@ -64,7 +64,7 @@ Every input is already published on the bus by shipped work. `goat top` is a **n
 | Per-producer footprint (the "top" rows) | `ops/fabric/footprint/<peer>` | `ProducerFootprintV1` | [ADR 1034](../adr/1034-fabric-health-surface.md) |
 | Presence (alive / dropped, churn) | `ops/presence/health/<site>` | `EnvHealthV1{presence}` | [ADR 1040](../adr/1040-zenoh-advanced-pubsub-liveliness-adoption.md) gap 3 |
 | Time/clock health | `ops/time/health/<site>` | `EnvHealthV1{time}` | [ADR 1036](../adr/1036-environment-health-surface.md) time domain |
-| Peer faults (clock offsets our router measured on peers we do not own) | `ops/peer/health/<site>` | `EnvHealthV1{peer}` (arm 17) | ADR 1232 (in review); published by goat-peer-health in goatstuff |
+| Peer faults (clock offsets and trust refusals our router measured on peers we do not own) | `ops/peer/health/<site>` | `EnvHealthV1{peer}` (arm 17) | ADR 1232 (in review); published by goat-peer-health in goatstuff |
 
 The wire types are the hand-written prost-derive structs `goat health` already decodes
 (`crates/goat-cli/src/cmd/health.rs`). To avoid a third hand-copy of those structs, the shared
@@ -116,7 +116,10 @@ weather-strip generalization of the `goat health` board glance, all domains side
 
 The PEER chip is built (unit-tested; not yet run against a live goat-peer-health publisher). It
 shows the site grade of `ops/peer/health/<site>` only; the per-peer rows are `goat health --domain
-peer`.
+peer`. The site grade combines the clock and trust-refusal readings: a client that refuses our
+router's certificate turns it amber (the declared peers holding no session are candidates, not
+faults), and a router not known to log refused handshakes keeps a clean clock reading unmetered,
+never green. The `?` legend names the trust reading in one line.
 
 ### 4.2 Fabric class-load row
 
