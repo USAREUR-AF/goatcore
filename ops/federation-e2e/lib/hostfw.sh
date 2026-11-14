@@ -81,15 +81,18 @@ fw_profile_vars() {
   } > "$4"
 }
 
-# Each partner's edge group_vars with the baseline on, in a sovereign's clone before its first
-# commit, when the tree carries the role (an older tree's plays never read these values).
-# $1 sovereign, $2 its clone.
+# The baseline on for every edge, in a sovereign's clone before its first commit, when the tree
+# carries the role (an older tree's plays never read these values). One file in the parent
+# group peering_edges, whose children are every peering's edge group: the values are the same
+# for each of this sovereign's peerings (see above), and a tree with no peering yet (scenario
+# nothing-hand-written) gets no peering's group directory. `goatbuilder federate allocate`
+# reads a hand-written file in a peering's edge group as that peering already running (GB-230).
+# A unit that changes one edge (units/nodesec.sh) writes that peering's own group, which
+# overrides this one. $1 sovereign, $2 its clone.
 edge_fw_declare() {
-  local s="$1" c="$2" t
+  local s="$1" c="$2"
   grep -q '^goat_host_firewall_baseline:' "$c/ops/ansible/roles/goat-host-firewall/defaults/main.yml" 2>/dev/null || return 0
   fw_profile_vars "$s" 0 "$WORK/$s/host-firewall-edge.yml" "$WORK/$s/host-firewall-core.yml"
-  for t in $(partners "$s"); do
-    mkdir -p "$c/ops/ansible/group_vars/${t}_edge"
-    cp "$WORK/$s/host-firewall-edge.yml" "$c/ops/ansible/group_vars/${t}_edge/host-firewall.yml"
-  done
+  mkdir -p "$c/ops/ansible/group_vars/peering_edges"
+  cp "$WORK/$s/host-firewall-edge.yml" "$c/ops/ansible/group_vars/peering_edges/host-firewall.yml"
 }
