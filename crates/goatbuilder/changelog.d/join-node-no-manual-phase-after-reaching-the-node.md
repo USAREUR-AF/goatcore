@@ -14,4 +14,4 @@ each file it wrote, for you to review and commit. Phase 8 now checks that the
 site declares `mesh_enrollment_url`, and phase 9 sends no setup key. Phase 2
 resolves the first-login password through the secrets injector and refuses
 one that still holds a reference (GB-269); the password reaches `sudo` on
-standard input. Only phase 1, reaching the node, stops the run.
+standard input. Only phase 1, reaching the node, stops the run (#661).
