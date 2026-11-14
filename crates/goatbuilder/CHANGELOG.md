@@ -143,7 +143,7 @@ old name kept as an alias warns only when the old name is typed. An entry can
 now deprecate one value of a positional argument (`flag: <COMPONENT>` with
 `value:`), as the compatibility check already allowed. The list is empty
 today, so no run prints a warning yet. The run's `-o json` document does not
-carry the warnings yet.
+carry the warnings yet (#798).
 
 #### Added: the release check starts at the cut-off, and the tag's tree check decides a rerun
 
