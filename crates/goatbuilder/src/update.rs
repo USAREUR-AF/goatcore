@@ -286,12 +286,7 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
 fn signed(repo: &Path, agent: &ureq::Agent, base: &str, asset: &str, want: &str, version: &str, total: Duration) -> Result<String> {
     let sums_url = format!("{base}/SHA256SUMS");
     let sums = fetch_text(agent, &sums_url, total).map_err(|e| unread(format!("cannot read the signed checksums: {e}")))?;
-    let listed = sums.lines().find_map(|l| {
-        let mut f = l.split_whitespace();
-        let (d, n) = (f.next()?, f.next()?);
-        (n.trim_start_matches('*') == asset).then(|| d.to_lowercase())
-    });
-    match listed {
+    match listed(&sums, asset) {
         Some(d) if d == want => {}
         Some(d) => return Err(goat_errors::coded("GB-074", format!("checksum mismatch, refusing to install: {asset}.sha256 says {want}, SHA256SUMS says {d}; the installed binary is untouched")).into()),
         None => return Err(goat_errors::coded("GB-074", format!("checksum mismatch, refusing to install: SHA256SUMS at {base}/ does not list {asset}; the installed binary is untouched")).into()),
@@ -318,6 +313,89 @@ fn signed(repo: &Path, agent: &ureq::Agent, base: &str, asset: &str, want: &str,
         Ok(v) => Ok(format!("SHA256SUMS signed by {} (Rekor entry {}, {})", v.identity, v.log_index, chrono::DateTime::from_timestamp(v.integrated_time, 0).map(|d| d.to_rfc3339()).unwrap_or_default())),
         Err(r) => Err(sig_refused(format!("the signature over {base}/SHA256SUMS does not verify for the {source} release workflow at {}{version}: {r}", signature::TAG_PREFIX))),
     }
+}
+
+/// The digest SHA256SUMS lists for `name` (`<sha256>  <name>`, a leading `*`
+/// on the name ignored), lowercased; None when it does not list `name`.
+fn listed(sums: &str, name: &str) -> Option<String> {
+    sums.lines().find_map(|l| {
+        let mut f = l.split_whitespace();
+        let (d, n) = (f.next()?, f.next()?);
+        (n.trim_start_matches('*') == name).then(|| d.to_lowercase())
+    })
+}
+
+/// `update verify-release <dir>`: verify a downloaded goatbuilder release
+/// without installing it. The same two checks `update` makes before it
+/// installs: the keyless signature over `<dir>/SHA256SUMS`
+/// ([`signature::verify`], against the release workflow of `repo` at
+/// `goatbuilder/v<version>`), and every other file in `<dir>` against that
+/// SHA256SUMS: a file at the digest SHA256SUMS lists for it, and a
+/// `<asset>.sha256` naming the digest SHA256SUMS lists for `<asset>`.
+pub struct VerifyRelease<'a> {
+    pub dir: &'a Path,
+    /// `<owner>/<repo>` the release was built in.
+    pub repo: &'a str,
+    /// The release's version (`0.6.1`), its tag `goatbuilder/v<version>`.
+    pub version: &'a str,
+    /// A trusted_root.json trusted beside the embedded public one.
+    pub trusted_root: Option<&'a Path>,
+}
+
+pub fn verify_release(o: &VerifyRelease) -> Result<Report> {
+    let plain = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-+/".contains(c));
+    if !plain(o.repo) || o.repo.matches('/').count() != 1 {
+        return Err(goat_errors::coded("GB-242", format!("--signer '{}' is not <owner>/<repo>", o.repo)).into());
+    }
+    if !plain(o.version) || o.version.contains('/') {
+        return Err(goat_errors::coded("GB-242", format!("--version '{}' is not a version (the release tag is goatbuilder/v<version>)", o.version)).into());
+    }
+    let read = |name: &str| std::fs::read(o.dir.join(name));
+    let sums = read("SHA256SUMS").map_err(|e| goat_errors::coded(SIGNATURE_REFUSED, format!("refused: {}/SHA256SUMS cannot be read ({e}) (check: sums)", o.dir.display())))?;
+    let bundle = read("SHA256SUMS.cosign-bundle").map_err(|e| goat_errors::coded(SIGNATURE_REFUSED, format!("refused: the release has no signature over SHA256SUMS, {}/SHA256SUMS.cosign-bundle ({e}) (check: bundle)", o.dir.display())))?;
+    let root = signature::TrustRoot::resolve_with(o.trusted_root).map_err(|e| goat_errors::coded(SIGNATURE_REFUSED, format!("refused: cannot read the trusted root: {e} (check: trusted-root)")))?;
+    let expect = signature::Expect { signer: o.repo, version: o.version, workflow: signature::RELEASE_WORKFLOW };
+    let v = signature::verify(&sums, &String::from_utf8_lossy(&bundle), &expect, &root).map_err(|r| {
+        goat_errors::coded(
+            SIGNATURE_REFUSED,
+            format!("refused: SHA256SUMS does not verify for the {} release workflow at {}{}: {r} (check: {})", o.repo, signature::TAG_PREFIX, o.version, r.check),
+        )
+    })?;
+    let sums = String::from_utf8_lossy(&sums).to_string();
+    let mut names: Vec<String> = std::fs::read_dir(o.dir)
+        .map_err(|e| goat_errors::coded("GB-074", format!("refused: {} cannot be listed: {e} (check: listed)", o.dir.display())))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n != "SHA256SUMS" && n != "SHA256SUMS.cosign-bundle")
+        .collect();
+    names.sort();
+    let mut rows = vec![ok("signature", format!("SHA256SUMS signed by {} (Rekor entry {})", v.identity, v.log_index))];
+    for name in &names {
+        let path = o.dir.join(name);
+        if !std::fs::symlink_metadata(&path).map(|m| m.is_file()).unwrap_or(false) {
+            return Err(goat_errors::coded("GB-074", format!("refused: {name} in the release is not a plain file (check: listed)")).into());
+        }
+        let bytes = std::fs::read(&path).map_err(|e| goat_errors::coded("GB-074", format!("refused: {name} cannot be read ({e}) (check: listed)")))?;
+        let detail = match (listed(&sums, name), name.strip_suffix(".sha256").and_then(|a| listed(&sums, a))) {
+            (Some(want), _) => {
+                let got = goat_selfupdate::sha256_hex(&bytes);
+                if got != want {
+                    return Err(goat_errors::coded("GB-074", format!("refused: {name} is sha256 {got}, and SHA256SUMS lists {want} (check: listed)")).into());
+                }
+                format!("sha256 {want}, as SHA256SUMS lists it")
+            }
+            (None, Some(want)) => {
+                let says = goat_selfupdate::parse_checksum(&String::from_utf8_lossy(&bytes));
+                if says.as_deref() != Some(want.as_str()) {
+                    return Err(goat_errors::coded("GB-074", format!("refused: {name} names {}, and SHA256SUMS lists {want} for {} (check: listed)", says.unwrap_or_else(|| "no digest".into()), name.trim_end_matches(".sha256"))).into());
+                }
+                format!("names {want}, as SHA256SUMS lists it")
+            }
+            (None, None) => return Err(goat_errors::coded("GB-074", format!("refused: SHA256SUMS does not list {name} (check: listed)")).into()),
+        };
+        rows.push(ok(name, detail));
+    }
+    Ok(Report::new("update-verify-release", rows, EXIT_REFUSED))
 }
 
 /// The signature over SHA256SUMS did not verify, or could not be checked.

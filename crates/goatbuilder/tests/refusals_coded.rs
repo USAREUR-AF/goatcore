@@ -105,6 +105,7 @@ const EXPECTED: &[(&str, &str)] = &[
     ("update_no_surface", "GB-072"),
     ("update_unknown_site", "GB-072"),
     ("update_unknown_site_json", "GB-072"),
+    ("update_verify_release_nothing_to_verify", "GB-261"),
     ("usage_bad_output_format", "GB-242"),
     ("usage_join_node_needs_class", "GB-242"),
     ("usage_mock_on_a_verb_that_reads_the_checkout", "GB-039"),

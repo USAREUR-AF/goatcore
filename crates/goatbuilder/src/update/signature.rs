@@ -219,7 +219,18 @@ impl TrustRoot {
     /// The embedded public Sigstore root, plus the operator's file when
     /// `GOATBUILDER_UPDATE_TRUSTED_ROOT` names one.
     pub fn resolve() -> Result<Self, String> {
+        Self::resolve_with(None)
+    }
+
+    /// [`Self::resolve`], and the trusted_root.json at `extra` trusted beside
+    /// it too, when given (`update verify-release --trusted-root`).
+    pub fn resolve_with(extra: Option<&Path>) -> Result<Self, String> {
         let mut root = Self::parse(EMBEDDED_ROOT, "the embedded Sigstore trusted root")?;
+        if let Some(path) = extra {
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| format!("--trusted-root {}: {e}", path.display()))?;
+            root.add(Self::parse(&text, &format!("--trusted-root {}", path.display()))?);
+        }
         if let Some(p) = std::env::var_os(TRUSTED_ROOT_ENV).filter(|p| !p.is_empty()) {
             let path = Path::new(&p);
             let text = std::fs::read_to_string(path)

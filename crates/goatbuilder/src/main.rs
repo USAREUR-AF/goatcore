@@ -814,7 +814,10 @@ pub enum Cmd {
     /// swap is atomic. Already current: one row, exit 0. `--check` reads only
     /// (exit 3 when behind). The surface: `GOATBUILDER_UPDATE_URL`, else `--site`
     /// from its group_vars, else the one the last update used.
+    #[command(args_conflicts_with_subcommands = true)]
     Update {
+        #[command(subcommand)]
+        action: Option<UpdateAction>,
         /// The goatnet that serves goatbuilder (its group_vars site).
         #[arg(long)]
         site: Option<String>,
@@ -1084,6 +1087,31 @@ fn takes_fixture(cmd: &Cmd) -> bool {
             | Cmd::Survey { .. }
             | Cmd::Tutor { .. }
     )
+}
+
+/// `goatbuilder update`'s subcommands.
+#[derive(Subcommand, Debug)]
+pub enum UpdateAction {
+    /// Verify a downloaded goatbuilder release without installing it: the keyless
+    /// signature over `<DIR>/SHA256SUMS` (`SHA256SUMS.cosign-bundle`), with the
+    /// checks `update` makes before it installs, for the release workflow of
+    /// `--signer` at `goatbuilder/v<version>`; then every other file in `<DIR>`
+    /// against that `SHA256SUMS`. Reads only. Exit 0 verified; 1 refused (GB-261
+    /// the signature, GB-074 a file)
+    #[command(name = "verify-release")]
+    VerifyRelease {
+        /// The downloaded release: its files, SHA256SUMS and SHA256SUMS.cosign-bundle.
+        dir: PathBuf,
+        /// `<owner>/<repo>` the release was built and signed in.
+        #[arg(long, value_name = "OWNER/REPO")]
+        signer: String,
+        /// The release's version: its tag is `goatbuilder/v<version>`.
+        #[arg(long)]
+        version: String,
+        /// A Sigstore trusted_root.json trusted beside the embedded public one.
+        #[arg(long, value_name = "FILE")]
+        trusted_root: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1362,7 +1390,8 @@ fn main() {
             }
             r
         }),
-        Cmd::Update { site, check, force } => update::run(&repo, &update::Options { site: site.as_deref(), check: *check, force: *force, output: cli.output, timeout: cli.timeout }),
+        Cmd::Update { action: Some(UpdateAction::VerifyRelease { dir, signer, version, trusted_root }), .. } => update::verify_release(&update::VerifyRelease { dir, repo: signer, version, trusted_root: trusted_root.as_deref() }),
+        Cmd::Update { action: None, site, check, force } => update::run(&repo, &update::Options { site: site.as_deref(), check: *check, force: *force, output: cli.output, timeout: cli.timeout }),
         Cmd::Status { env, component } => match &cli.mock {
             Some(dir) => verbs::Fixture::open(dir).and_then(|f| verbs::status(&f, env, component.as_deref())).map(|mut r| {
                 // The rows stay on the report for -o json and the tutor's log.

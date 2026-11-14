@@ -921,6 +921,27 @@ Replace this binary with the release its goatnet serves at `get.<site>.<zone>/go
 | `--check` | Report running against served; change nothing |  |
 | `--force` | Reinstall even when already current (re-verifies the checksum) |  |
 
+**Subcommands**
+
+- [`goatbuilder update verify-release`](#goatbuilder-update-verify-release) — Verify a downloaded goatbuilder release without installing it: the keyless signature over `<DIR>/SHA256SUMS` (`SHA256SUMS.cosign-bundle`), with the checks `update` makes before it installs, for the release workflow of `--signer` at `goatbuilder/v<version>`; then every other file in `<DIR>` against that `SHA256SUMS`. Reads only. Exit 0 verified; 1 refused (GB-261 the signature, GB-074 a file)
+
+## `goatbuilder update verify-release`
+
+Verify a downloaded goatbuilder release without installing it: the keyless signature over `<DIR>/SHA256SUMS` (`SHA256SUMS.cosign-bundle`), with the checks `update` makes before it installs, for the release workflow of `--signer` at `goatbuilder/v<version>`; then every other file in `<DIR>` against that `SHA256SUMS`. Reads only. Exit 0 verified; 1 refused (GB-261 the signature, GB-074 a file)
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<DIR>` | The downloaded release: its files, SHA256SUMS and SHA256SUMS.cosign-bundle |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--signer <SIGNER>` | `<owner>/<repo>` the release was built and signed in |  |
+| `--trusted-root <TRUSTED_ROOT>` | A Sigstore trusted_root.json trusted beside the embedded public one |  |
+
 ## `goatbuilder completion`
 
 Print a shell completion script to stdout (`goatbuilder completion zsh >> ~/.zshrc`). For live candidates a static script cannot know — the sites, components and goatnets this checkout declares — wire a hook to `goatbuilder _complete` (see the generated script's header)

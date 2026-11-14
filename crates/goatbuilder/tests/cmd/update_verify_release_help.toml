@@ -1,0 +1,48 @@
+# `update verify-release --help`: verify a downloaded goatbuilder release without installing it.
+bin.name = "goatbuilder"
+args = ["update", "verify-release", "--help"]
+status.code = 0
+stdout = """
+Verify a downloaded goatbuilder release without installing it: the keyless signature over
+`<DIR>/SHA256SUMS` (`SHA256SUMS.cosign-bundle`), with the checks `update` makes before it installs,
+for the release workflow of `--signer` at `goatbuilder/v<version>`; then every other file in `<DIR>`
+against that `SHA256SUMS`. Reads only. Exit 0 verified; 1 refused (GB-261 the signature, GB-074 a
+file)
+
+Usage: goatbuilder update verify-release [OPTIONS] --signer <OWNER/REPO> --version <VERSION> <DIR>
+
+Arguments:
+  <DIR>  The downloaded release: its files, SHA256SUMS and SHA256SUMS.cosign-bundle
+
+Options:
+  -o, --output <OUTPUT>      Output format: a table for a person; JSON or YAML for a program
+                             [default: table] [possible values: table, json, yaml]
+      --signer <OWNER/REPO>  `<owner>/<repo>` the release was built and signed in
+  -C, --repo <DIR>           The repository root. Defaults to the checkout this binary is run in
+      --version <VERSION>    The release's version: its tag is `goatbuilder/v<version>`
+      --trusted-root <FILE>  A Sigstore trusted_root.json trusted beside the embedded public one
+      --yes                  Confirm a declarative verb without prompting (for automation)
+      --frozen               Refuse any run that would need to fast-forward the checkout (strict C3)
+      --offline              An islanded site: do not fetch the trunk; judge the checkout against
+                             the cached one, and record the run as offline (C3;
+                             ops/scripts/fresh-source.sh)
+      --mock <DIR>           Run against a fixture directory instead of hosts: no registry, no
+                             transport, deterministic (goatbuilder-conformance.md §"The fixture")
+      --lang <TAG>           Language for help and error explanations (a tag such as fr, uk, de);
+                             output a pipeline reads stays English. Default: the OS locale [env:
+                             GOAT_LANG=]
+      --color <COLOR>        Color the table's ok/FAIL glyph and verdict (auto|always|never). `auto`
+                             colors only a terminal; NO_COLOR and CLICOLOR_FORCE override. JSON and
+                             YAML are never colored [default: auto] [possible values: auto, always,
+                             never]
+  -v, --verbose              Log what a run does — the external commands it shells out to, and the
+                             network phase of `update` — to stderr, so `-o json|yaml` stays a clean
+                             document. Or set RUST_LOG=goatbuilder=debug
+      --timeout <SECS>       Seconds to bound the connect/reach phase before failing fast — the one
+                             phase that can block on an unreachable host (`update`'s fetch of the
+                             served version). Does NOT cap a play's own run or the binary download
+                             (stall-bounded). Also reads GOATBUILDER_TIMEOUT [env:
+                             GOATBUILDER_TIMEOUT=]
+  -h, --help                 Print help
+"""
+stderr = ""

@@ -1,0 +1,10 @@
+# A directory with no SHA256SUMS: refused (GB-261), naming the check.
+bin.name = "goatbuilder"
+args = ["update", "verify-release", "/nonexistent-goatbuilder-release", "--signer", "example-org/goatcore", "--version", "1.2.3"]
+env.add.GOATBUILDER_NO_VERSION_CHECK = "1"
+status.code = 1
+stdout = ""
+stderr = """
+goatbuilder: refused: /nonexistent-goatbuilder-release/SHA256SUMS cannot be read (No such file or directory (os error 2)) (check: sums)
+  (GB-261 — goatbuilder explain GB-261)
+"""

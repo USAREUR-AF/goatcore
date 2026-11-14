@@ -170,6 +170,16 @@ machine. It reads only: no play runs and nothing is written. It exits 3 while
 any machine is pending or unknown. GB-026 is retired: no release after this one
 prints it (#648).
 
+#### "Added: `goatbuilder update verify-release` verifies a downloaded goatbuilder release without installing it"
+
+`goatbuilder update verify-release <dir> --signer <owner>/<repo> --version
+<x.y.z> [--trusted-root <file>]` verifies a downloaded goatbuilder release
+without installing it, with the checks `goatbuilder update` makes before it
+installs: the keyless signature over `SHA256SUMS` (`SHA256SUMS.cosign-bundle`)
+for the release workflow of `<owner>/<repo>` at `goatbuilder/v<version>`, and
+every other file in `<dir>` against that `SHA256SUMS`. It reads only. A
+refusal names the failed check: GB-261 for the signature, GB-074 for a file.
+
 ### For someone contributing
 
 #### Fixed: CI runs on main to the end, and several checks say why they fail
