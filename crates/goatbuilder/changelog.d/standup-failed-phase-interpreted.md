@@ -10,4 +10,4 @@ the log, and the command that runs that phase again by hand. With no known
 error in the output, the row gives the phase's own guidance from the phase
 catalog. This covers the numbered phases, the image pull, the observability
 legs and the phase-12 steps that `--parallel` runs in waves, each read from its
-own log.
+own log (#652, #669).
