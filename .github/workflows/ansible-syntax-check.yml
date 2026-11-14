@@ -114,6 +114,8 @@ jobs:
           bash ops/ansible/roles/mesh-coredns/tests/apex-pin-standby.sh
           bash ops/ansible/tests/smoke-standby/run.sh
 
+      - name: The coordinated upgrade migrates each site's database in turn (task order and syntax)
+        run: python3 ops/ansible/tests/coordinated-upgrade/test_coordinated_upgrade.py
       - name: Peering edge certificate installation (disposable CAs, localhost only)
         run: bash ops/ansible/roles/goat-zenoh-edge/tests/test-certificates.sh
       - name: Peering WireGuard read-back prints only public keys and addresses (stand-in wg, localhost only)

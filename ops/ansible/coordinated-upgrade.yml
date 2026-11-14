@@ -1,9 +1,14 @@
 ---
 # coordinated-upgrade.yml — Coordinated Netbird upgrade for multi-master Spock cluster
 #
-# Implements the deterministic upgrade procedure from:
-#   docs/design/ha-multi-site.md §6 (DDL coordination)
-#   docs/design/ha-multi-site.md §5.8.1 (skipMigration plumbing)
+# Spock replicates rows, not schema changes. A NetBird version that adds a
+# column adds it only in the database of the management server that runs the
+# migration, and rows replicated from that site into a site whose schema lacks
+# the column stop replication there until its schema matches. So the
+# coordinated upgrade migrates each site's database in turn before starting
+# its services, so a schema change reaches every site and replication resumes.
+# NetBird's AutoMigrate is idempotent: a site whose schema is already current
+# changes nothing.
 #
 # What this does:
 #   1. Stop management on ALL sites.
@@ -11,8 +16,14 @@
 #   3. Touch the migration marker on ONE designated migrator node.
 #   4. Start migrator (entrypoint detects marker -> AutoMigrate runs).
 #   5. Verify Spock replication health.
-#   6. Remove marker, start remaining sites serially (entrypoint sets
-#      NETBIRD_SKIP_MIGRATIONS=true -> AutoMigrate suppressed).
+#   6. Remove marker. Then, one site at a time, each remaining site: touch its
+#      marker, start management (AutoMigrate migrates its own database), wait
+#      for it, remove the marker, and wait until its Spock subscriptions
+#      replicate again. The next site starts only after that.
+#
+# Outside this playbook, a restart without the marker still runs with
+# NETBIRD_SKIP_MIGRATIONS=true (ops/netbird/entrypoint.sh), so no other start
+# migrates a database.
 #
 # Aligns with the compose layout rendered by ops/ansible/mgmt-host.yml:
 #   compose dir:        /opt/mgmt-host/
@@ -198,26 +209,32 @@
       when: recent_conflicts.stdout | trim | int > 0
 
 # ============================================================================
-# Phase 5: start remaining sites serially (AutoMigrate suppressed)
+# Phase 5: migrate and start each remaining site, one at a time
 # ============================================================================
-- name: "coordinated-upgrade: start non-migrator sites"
+- name: "coordinated-upgrade: migrate and start non-migrator sites, one at a time"
   hosts: "mgmt_hosts:!{{ migrator_host }}"
   gather_facts: false
   serial: 1
   tasks:
-    - name: Confirm migration marker is absent (defense-in-depth)
+    - name: Confirm migration marker is absent before this site's migration (defense-in-depth)
       ansible.builtin.stat:
         path: /opt/mgmt-host/management-a/marker/migrations.allow
       register: marker
 
-    - name: Fail if marker accidentally present on non-migrator
+    - name: Fail if a marker is left from an earlier run
       ansible.builtin.fail:
         msg: >-
-          Marker file present on non-migrator {{ inventory_hostname }} —
+          Marker file already present on {{ inventory_hostname }} before this run placed it —
           refusing to start. Remove /opt/mgmt-host/management-a/marker/migrations.allow first.
       when: marker.stat.exists
 
-    - name: Start management-a (entrypoint will set NETBIRD_SKIP_MIGRATIONS=true)
+    - name: Touch migration marker (entrypoint will enable AutoMigrate for this site's database)
+      ansible.builtin.file:
+        path: /opt/mgmt-host/management-a/marker/migrations.allow
+        state: touch
+        mode: '0644'
+
+    - name: Start management-a (AutoMigrate migrates this site's database)
       ansible.builtin.command:
         cmd: docker compose -f /opt/mgmt-host/docker-compose.yml up -d management-a
 
@@ -235,6 +252,32 @@
         port: 8080
         state: started
         timeout: "{{ (health_retries | default(30) | int) * (health_delay_seconds | default(5) | int) }}"
+
+    - name: Remove migration marker (avoid re-trigger on future restarts)
+      ansible.builtin.file:
+        path: /opt/mgmt-host/management-a/marker/migrations.allow
+        state: absent
+
+    - name: Wait until this site's Spock subscriptions replicate again
+      # With this site's schema now current, rows from the migrator apply
+      # here again. A subscription that stays down or in error after the
+      # retries stops the run before the next site starts.
+      ansible.builtin.command:
+        cmd: >-
+          docker exec postgres-a psql -U postgres -d netbird -t -A -F'|' -c
+          "SELECT subscription_name, status FROM spock.sub_show_status();"
+      register: site_spock_state
+      changed_when: false
+      retries: "{{ health_retries | default(30) | int }}"
+      delay: "{{ health_delay_seconds | default(5) | int }}"
+      until: >-
+        site_spock_state.rc == 0
+        and 'down' not in site_spock_state.stdout
+        and 'error' not in site_spock_state.stdout
+
+    - name: Display this site's Spock subscriptions
+      ansible.builtin.debug:
+        msg: "Spock state on {{ inventory_hostname }}: {{ site_spock_state.stdout_lines }}"
 
 # ============================================================================
 # Phase 6: post-upgrade verification
