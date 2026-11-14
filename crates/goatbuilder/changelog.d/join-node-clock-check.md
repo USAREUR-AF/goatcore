@@ -10,4 +10,5 @@ time source, or is more than 250 ms from UTC (`JOIN_NODE_CLOCK_BUDGET_MS`), is
 refused with GB-297, naming the node and what it read. A Zenoh router refuses
 a timestamp more than 500 ms ahead of its own clock, and nothing tells the
 machine's owner. A clock that could not be read is reported as not verified,
-never as passed. The rule is the federation preflight's clock check (GB-268).
+never as passed. The rule is the federation preflight's clock check
+(GB-268) (#766).
