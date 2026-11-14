@@ -509,11 +509,17 @@ impl Cmd {
         let child = self.inner.spawn();
         match child {
             Ok(mut c) => {
-                if let Some(o) = c.stdout.take() {
-                    copy_in_background(o, log.clone(), stdout_to_stderr());
+                // Only the streams the runner piped are its to stream; one the
+                // caller set (`stdout`, `stderr`) stays on the child for the caller.
+                if !self.stdout_set {
+                    if let Some(o) = c.stdout.take() {
+                        copy_in_background(o, log.clone(), stdout_to_stderr());
+                    }
                 }
-                if let Some(e) = c.stderr.take() {
-                    copy_in_background(e, log, true);
+                if !self.stderr_set {
+                    if let Some(e) = c.stderr.take() {
+                        copy_in_background(e, log, true);
+                    }
                 }
                 entry.log_note = Some("started in the background; its end is not recorded".into());
                 self.record(entry);
