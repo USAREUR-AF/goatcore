@@ -34,6 +34,9 @@ releases:
 - tag: goatbuilder/v0.6.1
   binary_sha256: 1def669e7ac2637177f18e1769fc6eabb17076009b60f52ee0c80de84dcd4746
   note: ''
+- tag: goatbuilder/v0.7.0
+  binary_sha256: a4bfed2540646e14b765f7f4a18913ca5565a8fe14278696d8cc483e151736a2
+  note: ''
 configs:
 - release: goatbuilder/v0.4.1
   source: crates/goatbuilder/tests/fixtures/configs/not-yaml.yaml
@@ -676,6 +679,98 @@ configs:
   file: files/95dbda8f522b04be-goatbuilder.yaml
   expect: valid
 - release: goatbuilder/v0.6.1
+  source: ops/goatbuilder/fixtures/tutor/goatbuilder.yaml
+  file: files/a62016543fa36260-goatbuilder.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: crates/goatbuilder/tests/fixtures/configs/not-yaml.yaml
+  file: files/98bd30371bf0ace0-not-yaml.yaml
+  expect: error
+  code: GB-245
+  named: GB-245
+- release: goatbuilder/v0.7.0
+  source: crates/goatbuilder/tests/fixtures/configs/rung-undeclared-environment.yaml
+  file: files/c942c1207804efa5-rung-undeclared-environment.yaml
+  expect: refused
+  code: GB-025
+  named: GB-025
+- release: goatbuilder/v0.7.0
+  source: crates/goatbuilder/tests/fixtures/configs/soak-without-min-days.yaml
+  file: files/e733ead851d24233-soak-without-min-days.yaml
+  expect: refused
+  code: GB-025
+  named: GB-025
+- release: goatbuilder/v0.7.0
+  source: crates/goatbuilder/tests/fixtures/configs/unknown-converger.yaml
+  file: files/19031abc09ca2f45-unknown-converger.yaml
+  expect: refused
+  code: GB-025
+  named: GB-025
+- release: goatbuilder/v0.7.0
+  source: crates/goatbuilder/tests/fixtures/configs/unknown-field.yaml
+  file: files/a5c1afec9e66ff42-unknown-field.yaml
+  expect: refused
+  code: GB-025
+  named: GB-025
+- release: goatbuilder/v0.7.0
+  source: crates/goatbuilder/tests/fixtures/configs/wrong-schema-version.yaml
+  file: files/c61b8dbc4f31cc90-wrong-schema-version.yaml
+  expect: refused
+  code: GB-025
+  named: GB-025
+- release: goatbuilder/v0.7.0
+  source: docs/design/goatbuilder.md#example-1
+  file: files/d5ff7f14da33e2f3-goatbuilder.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: docs/design/goatlite.md#example-1
+  file: files/49b557744179c6af-goatlite.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: docs/reference/goatbuilder/03-configuration.md#example-1
+  file: files/cebab861f3446cb2-03-configuration.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: docs/tutorials/00-goatlite.md#example-1
+  file: files/66b2a5cf204ba874-00-goatlite.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: ops/goatbuilder/fixtures/basic/goatbuilder.yaml
+  file: files/49b6ad38d449a859-goatbuilder.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite/goatbuilder.yaml
+  file: files/e409344943ad8897-goatbuilder.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: ops/goatbuilder/fixtures/goatnet-from-scratch/01-founder/goatbuilder.yaml
+  file: files/ea427bf4900ec21e-goatbuilder.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: ops/goatbuilder/fixtures/goatnet-from-scratch/02-first-federated-node/goatbuilder.yaml
+  file: files/6ed6ef0e48213fa5-goatbuilder.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node/goatbuilder.yaml
+  file: files/4c161db99f6250c8-goatbuilder.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: ops/goatbuilder/fixtures/join-node-third-site/ops/goatbuilder/goatbuilder.yaml
+  file: files/d4d925a4663355ed-goatbuilder.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: ops/goatbuilder/fixtures/preflight/goatbuilder.yaml
+  file: files/037f680f8b005a27-goatbuilder.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: ops/goatbuilder/fixtures/standup/goatbuilder.yaml
+  file: files/1a4c22eb007a1031-goatbuilder.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
+  source: ops/goatbuilder/fixtures/survey/goatbuilder.yaml
+  file: files/95dbda8f522b04be-goatbuilder.yaml
+  expect: valid
+- release: goatbuilder/v0.7.0
   source: ops/goatbuilder/fixtures/tutor/goatbuilder.yaml
   file: files/a62016543fa36260-goatbuilder.yaml
   expect: valid

@@ -197,8 +197,7 @@ documents:
   - no-such-peer
   - --dry-run
   exit: 1
-  release_exit: 2
-  exit_changed: "the refusal now names its catalog code, GB-149 (gate row C5), and takes that entry's exit: 1, refused, a precondition failed (the peering is not declared), as federate allocate's same refusal already exits; it was 2, the exit of an error with no code"
+  release_exit: 1
 - name: deploy-dev-portal
   format: json
   scratch:

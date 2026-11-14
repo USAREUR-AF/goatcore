@@ -1,10 +1,35 @@
 {
   "schema": "goatbuilder.error/v1",
   "error": "peering 'no-such-peer' is not declared in ops/goatbuilder/compat/documents/fixtures/journal/repo/ops/goatbuilder/goatbuilder.yaml peerings: (declared: hello-ally on zagros) — declare it first (C1)",
+  "code": "GB-149",
   "interpretation": {
     "schema": "goat-errors.interpretation/v1",
     "summary": "peering 'no-such-peer' is not declared in ops/goatbuilder/compat/documents/fixtures/journal/repo/ops/goatbuilder/goatbuilder.yaml peerings: (declared: hello-ally on zagros) — declare it first (C1)",
-    "hits": [],
-    "unrecognised": true
+    "hits": [
+      {
+        "code": "GB-149",
+        "layer": "code",
+        "evidence": "peering 'no-such-peer' is not declared in ops/goatbuilder/compat/documents/fixtures/journal/repo/ops/goatbuilder/goatbuilder.yaml peerings: (declared: hello-ally on zagros) — declare it first (C1)",
+        "at": 0,
+        "entry": {
+          "code": "GB-149",
+          "tool": "goatbuilder",
+          "title": "the peering is not declared",
+          "what": "the partner is not in goatbuilder.yaml peerings:. A peering nobody declared is one nobody reviewed (contract C1).",
+          "causes": [
+            "the peering was never added to the deployment's goatbuilder.yaml"
+          ],
+          "fixes": [
+            "add the peering to ops/goatbuilder/goatbuilder.yaml peerings: (with, environment, site, edge_class)"
+          ],
+          "read": "docs/design/federation-preflight.md",
+          "exit": 1,
+          "matches": [
+            "declared .*\\(GB-149\\)"
+          ]
+        }
+      }
+    ],
+    "unrecognised": false
   }
 }

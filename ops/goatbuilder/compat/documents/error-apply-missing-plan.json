@@ -1,20 +1,21 @@
 {
   "schema": "goatbuilder.error/v1",
   "error": "apply is a mutation: pass --yes without a terminal (C10)",
+  "code": "GB-008",
   "interpretation": {
     "schema": "goat-errors.interpretation/v1",
     "summary": "apply is a mutation: pass --yes without a terminal (C10)",
     "hits": [
       {
         "code": "GB-008",
-        "layer": "pattern",
+        "layer": "code",
         "evidence": "apply is a mutation: pass --yes without a terminal (C10)",
-        "at": 21,
+        "at": 0,
         "entry": {
           "code": "GB-008",
           "tool": "goatbuilder",
           "title": "a mutation needs --yes when there is no terminal",
-          "what": "deploy, release, rollback and fastlane change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10).",
+          "what": "deploy, release, rollback, fastlane, standup, teardown, join-node, federate and apply change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10).",
           "causes": [
             "run from a script, CI or a pipe"
           ],
