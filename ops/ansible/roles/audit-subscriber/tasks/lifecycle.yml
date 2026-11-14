@@ -289,23 +289,74 @@
         - audit_subscriber_lifecycle_bucket_check.rc == 0
         - not ansible_check_mode
 
-    # NOT asserted, deliberately: this clause is hygiene for stalled partial
-    # uploads, not part of the retention guarantee, and MinIO
-    # RELEASE.2024-10-29T16-01-48Z + mc RELEASE.2024-10-08 drop it on import
-    # today. Failing every audit deploy fleet-wide over it would be the wrong
-    # trade. It is reported honestly instead, so nobody reads the confirm
-    # block and believes multipart cleanup is running when it is not.
-    - name: audit-subscriber | lifecycle | note whether the multipart-abort clause survived import
-      ansible.builtin.debug:
-        msg: >-
-          {{
-            'AbortIncompleteMultipartUpload stored OK.'
-            if (((audit_subscriber_lifecycle_applied.stdout | default('') | trim) or '{"Rules":[]}') | from_json | json_query('Rules') | default([], true)
-                 | selectattr('AbortIncompleteMultipartUpload', 'defined') | list | length > 0)
-            else 'AbortIncompleteMultipartUpload was SENT and NOT STORED — MinIO dropped it on
-                  import without an error. Stalled multipart uploads are NOT being cleaned up
-                  on this bucket. Not fatal, not F-171, but do not assume it is running.'
-          }}
+    # Stalled multipart uploads count against the bucket's quota, so something
+    # must clean them up. Either of two things does: the lifecycle clause
+    # above, when MinIO stores it, or MinIO's own server-wide cleanup, which
+    # aborts an upload older than its `api` setting stale_uploads_expiry
+    # (MINIO_API_STALE_UPLOADS_EXPIRY; MinIO's default is 24h, checked every
+    # stale_uploads_cleanup_interval). Some MinIO releases drop the clause on
+    # import with no error, so the server setting is read back too, and the
+    # deploy fails when neither is in place.
+    - name: audit-subscriber | lifecycle | read the server's stale-upload expiry
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -e HOME=/tmp --env-file {{ audit_subscriber_lifecycle_mc_env_path | quote }}
+          {{ audit_subscriber_minio_container | quote }}
+          mc admin config get {{ audit_subscriber_minio_alias }} api
+      register: audit_subscriber_lifecycle_api_config
+      changed_when: false
+      failed_when: false
+      when:
+        - audit_subscriber_lifecycle_bucket_check.rc == 0
+        - not ansible_check_mode
+
+    # The expiry is a Go duration (24h, 1h30m0s); it is read as seconds, and 0
+    # stands for a setting that could not be read.
+    - name: audit-subscriber | lifecycle | decide whether stalled multipart uploads are cleaned up
+      ansible.builtin.set_fact:
+        audit_subscriber_lifecycle_abort_stored: >-
+          {{ (((audit_subscriber_lifecycle_applied.stdout | default('') | trim) or '{"Rules":[]}') | from_json).Rules | default([], true)
+             | selectattr('AbortIncompleteMultipartUpload', 'defined') | list | length > 0 }}
+        audit_subscriber_lifecycle_stale_expiry_seconds: >-
+          {%- set ns = namespace(total=0) -%}
+          {%- set out = audit_subscriber_lifecycle_api_config.stdout | default('') -%}
+          {%- set out = out if (audit_subscriber_lifecycle_api_config.rc | default(1)) == 0 else '' -%}
+          {%- set found = out | regex_findall('stale_uploads_expiry=([0-9hms.]+)') -%}
+          {%- if found -%}
+          {%- for n, unit in found[0] | regex_findall('([0-9]+)([hms])') -%}
+          {%- set ns.total = ns.total + (n | int) * {'h': 3600, 'm': 60, 's': 1}[unit] -%}
+          {%- endfor -%}
+          {%- endif -%}
+          {{ ns.total }}
+      when:
+        - audit_subscriber_lifecycle_bucket_check.rc == 0
+        - not ansible_check_mode
+
+    - name: audit-subscriber | lifecycle | assert stalled multipart uploads are cleaned up
+      ansible.builtin.assert:
+        that:
+          - >-
+            (audit_subscriber_lifecycle_abort_stored | bool)
+            or ((audit_subscriber_lifecycle_stale_expiry_seconds | int) > 0
+                and (audit_subscriber_lifecycle_stale_expiry_seconds | int) <= (audit_subscriber_minio_multipart_abort_days | int) * 86400)
+        fail_msg: |
+          Nothing cleans up stalled multipart uploads on {{ audit_subscriber_s3_bucket }}:
+          MinIO stored the lifecycle policy without AbortIncompleteMultipartUpload,
+          and its own stale-upload expiry is
+          {{ ((audit_subscriber_lifecycle_stale_expiry_seconds | int) ~ 's') if (audit_subscriber_lifecycle_stale_expiry_seconds | int) > 0 else 'unreadable' }},
+          where {{ audit_subscriber_minio_multipart_abort_days }} day(s) is wanted.
+
+            mc admin config get <alias> api:
+            {{ audit_subscriber_lifecycle_api_config.stdout | default('') | trim }}
+            {{ audit_subscriber_lifecycle_api_config.stderr | default('') | trim }}
+
+          Set MINIO_API_STALE_UPLOADS_EXPIRY on the MinIO container to
+          {{ (audit_subscriber_minio_multipart_abort_days | int) * 24 }}h or less (or remove an override,
+          MinIO's default is 24h), or run a MinIO release that stores the clause.
+        success_msg: >-
+          Stalled multipart uploads are cleaned up:
+          {{ 'the lifecycle clause is stored' if (audit_subscriber_lifecycle_abort_stored | bool)
+             else 'by MinIO itself after ' ~ audit_subscriber_lifecycle_stale_expiry_seconds ~ 's (stale_uploads_expiry); the lifecycle clause was dropped on import' }}.
       when:
         - audit_subscriber_lifecycle_bucket_check.rc == 0
         - not ansible_check_mode
@@ -316,7 +367,7 @@
           Lifecycle policy applied to {{ audit_subscriber_minio_alias }}/{{ audit_subscriber_s3_bucket }}:
             Expiration:                     {{ audit_subscriber_minio_expiration_days }} days
             NoncurrentVersionExpiration:    {{ audit_subscriber_minio_noncurrent_days }} day(s)
-            AbortIncompleteMultipartUpload: {{ audit_subscriber_minio_multipart_abort_days }} day(s) — REQUESTED; see the note above for whether MinIO stored it
+            AbortIncompleteMultipartUpload: {{ audit_subscriber_minio_multipart_abort_days }} day(s) — requested; the check above says whether it or MinIO's stale-upload expiry cleans up
             ExpiredObjectDeleteMarker:      {{ 'enabled (separate rule)' if audit_subscriber_minio_expire_delete_markers | default(true) | bool else 'DISABLED — markers will accumulate' }}
           F-171 needs BOTH clauses. NoncurrentVersionExpiration bounds the
           noncurrent VERSIONS; ExpiredObjectDeleteMarker removes the delete

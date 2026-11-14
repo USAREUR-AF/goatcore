@@ -144,7 +144,9 @@ audit_subscriber_minio_noncurrent_days: 1
 
 # Lifecycle AbortIncompleteMultipartUpload — orphaned partial uploads
 # from past audit-subscriber crashes get aborted after this many days.
-# Hygiene clause.
+# When MinIO drops the clause on import, its own stale_uploads_expiry
+# (MINIO_API_STALE_UPLOADS_EXPIRY, default 24h) must be no longer than
+# this, or the lifecycle task fails the deploy.
 audit_subscriber_minio_multipart_abort_days: 1
 
 # Expire "zombie" delete markers — a delete marker left as the only thing at a
