@@ -1094,8 +1094,9 @@ scenarios:
     runs_where: local
     pass_condition: >
       The proving scenario of docs/design/federation-key-rotation.md §6, on the forwarder unit's
-      peering ({A} behind NAT through its forwarder). A flow of one fresh value a second runs
-      each way for the whole scenario (lib/flow.sh). For each key in turn (leaves, carrier,
+      peering ({A} behind NAT through its forwarder). A flow of one numbered sample a second
+      runs each way for the whole scenario (lib/flow.sh), with a reader on each receiving core
+      recording each number's arrival time (lib/samples.py). For each key in turn (leaves, carrier,
       transport, signing), first {A} and then {B}: `goatbuilder federate rotate <partner> <key>`
       exits 0; the key's material differs from the material set aside before it; every other
       key's material is unchanged and was read (non-empty, no error); the partner's material is
@@ -1103,7 +1104,17 @@ scenarios:
       seed the side signs this peering with (its edge group's goat_federation_signing_key, else
       FED_SIGNING_KEY), whose digest must change, and, as its own check (partner-keyring), its
       verifying key in the partner's keyring, which must change too; the partner's step for
-      that waits on §5, and the check reads BLOCKED until it exists.
+      that waits on §5, and the check reads BLOCKED until it exists. After each rotation the
+      ordinary command from phase 1 skips 3, 6 and 9 and rotates nothing (rerun-after). Once
+      both sides rotated a key, its old material is retired where §6 says: the old WireGuard
+      key in no peer list on the partner's interface, the old carrier key in none on the
+      forwarder (old-retired); the old leaf's exposure until notAfter is not driven yet and
+      reads BLOCKED. Per key, no number is missing at either reader across the key's step, and
+      for transport and carrier, whose step has a gap by design, every number is re-delivered
+      after it, the gap named in seconds (samples-<key>). A key the goatbuilder under test
+      refuses (GB-189 or GB-282) has every check of its own marked BLOCKED with the refusal's
+      words, and the next key goes on. The forced SPIRE CA rotation is not driven yet
+      (spire-ca-rotation, BLOCKED).
       Values are stored during and after every rotation and the last five of each flow are
       stored (samples-resume), and no .rotation-pending file remains. How much a flow may lose
       during a rotation is an operator decision not yet made (the same as gate row B4's
@@ -1152,6 +1163,22 @@ scenarios:
       - {id: partner-kept-signing-second, step: "rot-partner-kept-signing-{B}"}
       - {id: partner-keyring-second, step: "rot-partner-keyring-{B}"}
       - {id: acceptance-signing-second, step: "rot-acceptance-signing-{B}"}
+      - {id: rerun-after-leaves-first, step: "rot-rerun-after-leaves-{A}"}
+      - {id: rerun-after-leaves-second, step: "rot-rerun-after-leaves-{B}"}
+      - {id: rerun-after-carrier-first, step: "rot-rerun-after-carrier-{A}"}
+      - {id: rerun-after-carrier-second, step: "rot-rerun-after-carrier-{B}"}
+      - {id: rerun-after-transport-first, step: "rot-rerun-after-transport-{A}"}
+      - {id: rerun-after-transport-second, step: "rot-rerun-after-transport-{B}"}
+      - {id: rerun-after-signing-first, step: "rot-rerun-after-signing-{A}"}
+      - {id: rerun-after-signing-second, step: "rot-rerun-after-signing-{B}"}
+      - {id: old-retired-leaves, step: "rot-old-retired-leaves"}
+      - {id: old-retired-carrier, step: "rot-old-retired-carrier"}
+      - {id: old-retired-transport, step: "rot-old-retired-transport"}
+      - {id: samples-leaves, step: "rot-samples-leaves"}
+      - {id: samples-carrier, step: "rot-samples-carrier"}
+      - {id: samples-transport, step: "rot-samples-transport"}
+      - {id: samples-signing, step: "rot-samples-signing"}
+      - {id: spire-ca-rotation, step: "rot-spire-ca-rotation"}
       - {id: samples-resume, step: "rot-samples-resume"}
       - {id: samples-loss, step: "rot-samples-loss"}
       - {id: no-pending, step: "rot-no-pending"}
