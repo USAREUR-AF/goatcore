@@ -11,4 +11,4 @@ its exact detail inside the plan and its hash. The plan view shows it at
 approval, and deploy goes ahead while the check reads exactly the same. When
 it reads differently, deploy refuses (GB-188) and names what it reads now and
 what was accepted. Only a check deploy does not run again can be accepted,
-and only when it is SKIP (#742).
+and only when it is SKIP (#779).

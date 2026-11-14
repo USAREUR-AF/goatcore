@@ -3,9 +3,10 @@ heading: For someone deploying
 title: "Fixed: a host-allocation SKIP says which case it is and what clears it"
 ---
 
-A plan whose host-allocation check was SKIP cannot be deployed: deploy does
-not run that check again, so it refuses the plan (GB-188), and a new plan
-records the same SKIP. The refusal used to say only "host-allocation was SKIP
+A plan whose host-allocation check was SKIP cannot be deployed as it stands:
+deploy does not run that check again, so it refuses the plan (GB-188), and a
+new plan records the same SKIP, unless the plan accepts it (`--accept
+host-allocation`, below). The refusal used to say only "host-allocation was SKIP
 when the plan was made". Now the plan view, the refusal and the run record
 carry the check's detail, which gives the case and the route:
 - the inventory names no host for this peering: run `goatbuilder federate
