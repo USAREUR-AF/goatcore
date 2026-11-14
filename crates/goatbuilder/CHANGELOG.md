@@ -25,6 +25,19 @@ service owns as `SKIPPED` with the same text instead of N/A. `goatbuilder
 join-node` lists the gaps under "What <site> does not run yet", from the
 catalog, before the services the site turns off (ADR 1233, #671).
 
+#### "Added: join-node runs mesh DNS at a joining site"
+
+A site that joins a goatnet now runs its own mesh DNS, so it still resolves
+the goatnet's service names when it is cut off from its founder. Phase 13
+of `goatbuilder join-node`, for a joining site's core node, runs a replica
+of the goatnet's zone on the node and registers the site's own nameserver
+group, `<site>-mesh-dns`, which lists the site's replica first and the
+founder's second. The group is written through the founder's management
+API, with the founder's token (`<FOUNDER>_NB_API_TOKEN`), resolved through
+the secrets injector; an unset or unresolved token is refused before the
+step (GB-281). A site with no zone file to serve is refused when the plan
+is made (GB-280). See ADR 1235.
+
 #### "Fixed: a host-allocation SKIP says which case it is and what clears it"
 
 A plan whose host-allocation check was SKIP cannot be deployed: deploy does

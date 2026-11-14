@@ -374,6 +374,40 @@ if grep -qE '^[[:space:]]*goatnet_founder:[[:space:]]*false' "$GV_FILE" 2>/dev/n
   [ -n "$JOIN_FOUNDER_SITE" ] && JOIN_FOUNDER_GROUP="${JOIN_FOUNDER_SITE//-/_}_hosts"
 fi
 
+# A joining internet site serves the goatnet's mesh zone as its own nameserver
+# group (ADR 1235), as standup.rs read_site derives it: the zone is the site's
+# site_dns_zone, else the founder's; the file is the first ops/dns/<dir>/mesh-hosts
+# whose records carry it; the API and its token are the founder's. A site with no
+# zone to serve is refused before any phase (GB-280).
+MESH_DNS=0
+if [ "$JOINER" = 1 ] && [ "$PROFILE" = internet ] && [ -n "$JOIN_FOUNDER_SITE" ]; then
+  MESH_DNS=1
+  first_value() { grep -E "^[[:space:]]*$1:" "$2" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"'\''' || true; }
+  FOUNDER_US="${JOIN_FOUNDER_SITE//-/_}"
+  FOUNDER_ZONE="$(first_value site_dns_zone "$REPO/ops/ansible/group_vars/${FOUNDER_US}_hosts/vars.yml")"
+  MESH_DNS_ZONE="$(first_value site_dns_zone "$GV_FILE")"
+  [ -n "$MESH_DNS_ZONE" ] || MESH_DNS_ZONE="$FOUNDER_ZONE"
+  if [ -z "$MESH_DNS_ZONE" ]; then
+    echo "GB-280: $SITE has no mesh DNS zone to serve: neither group_vars/${GROUP} nor group_vars/${FOUNDER_US}_hosts declares site_dns_zone. Declare it, then generate the zone: python3 ops/dns/generate-mesh-hosts.py" >&2
+    exit 1
+  fi
+  MESH_DNS_DIR=""; MESH_DNS_NAME=""
+  for zf in "$REPO"/ops/dns/*/mesh-hosts; do
+    [ -f "$zf" ] || continue
+    name="$(awk -v z="$MESH_DNS_ZONE" '!/^[[:space:]]*#/ && NF { n = $NF; if (length(n) >= length(z) && substr(n, length(n) - length(z) + 1) == z) { print n; exit } }' "$zf")"
+    if [ -n "$name" ]; then MESH_DNS_DIR="$(basename "$(dirname "$zf")")"; MESH_DNS_NAME="$name"; break; fi
+  done
+  if [ -z "$MESH_DNS_DIR" ]; then
+    echo "GB-280: $SITE has no mesh DNS zone to serve: no ops/dns/*/mesh-hosts carries $MESH_DNS_ZONE. Generate it from the goatnet's registry (python3 ops/dns/generate-mesh-hosts.py, or --init <site_id> for a zone that has none yet) and commit it; without it the site, cut off from $JOIN_FOUNDER_SITE, resolves none of the goatnet's names" >&2
+    exit 1
+  fi
+  [ -n "$FOUNDER_ZONE" ] || FOUNDER_ZONE="$MESH_DNS_ZONE"
+  MESH_DNS_GROUP_NAME="$SITE-mesh-dns"
+  MESH_DNS_API="https://$FOUNDER_ZONE/api"
+  MESH_DNS_TOKEN="$(printf '%s' "$FOUNDER_US" | tr '[:lower:]' '[:upper:]')_NB_API_TOKEN"
+  MESH_DNS_PEER_GROUP="${FOUNDER_US}_hosts"
+fi
+
 # The NetBird ACL this standup applies and checks (ADR 1185). A founder applies
 # its own declared ACL; a joiner shares the founder's NetBird account through
 # replication, so it applies nothing and is checked against the founder's ACL.
@@ -1117,19 +1151,22 @@ fi
 #      `target`, so it is narrowed with --limit. Afterwards, drop the laptop's
 #      /etc/hosts pin from phase 11.
 #
-#      ONLY for a site that has a mesh zone. generate-mesh-hosts.py renders a
-#      zone (ops/dns/<site>/mesh-hosts) only for a site with a non-empty
-#      isitup_services; a joiner that declares none
-#      has no zone and resolves through
-#      the FOUNDER's DNS plane — its only local name, the zenoh router, is
-#      reached by mesh IP (its cert carries the IP SAN, not a DNS name). Running
-#      mesh CoreDNS there rendered a Corefile and then died in the drift-guard's
-#      awk on the never-generated zone file. Skip it when no zone exists.
-#      That fallback to the founder's DNS is today's gap, not the target: every
-#      site is to run its own resolver (ADR 1233, gate row I3).
-if [ "$PROFILE" = internet ]; then
-step 12 A "[internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233)" \
-  "cd '$REPO' && python3 ops/dns/generate-mesh-hosts.py && { if [ -f ops/dns/$SITE/mesh-hosts ]; then cd ops/ansible && $ANSIBLE_PRE ${INV[*]} goat-coredns.yml --limit $GROUP; else echo '    no ops/dns/$SITE/mesh-hosts — this site declares no mesh zone (a joiner on the founder DNS plane); skipping mesh CoreDNS'; fi; }"
+#      A founder site runs it ONLY when it has a mesh zone: generate-mesh-hosts.py
+#      renders a zone (ops/dns/<site>/mesh-hosts) only for a site with a
+#      non-empty isitup_services, and running mesh CoreDNS with none rendered a
+#      Corefile and then died in the drift-guard's awk on the never-generated
+#      zone file.
+#      A joining site serves the goatnet's zone as its own nameserver group,
+#      this replica first and the founder's second, written through the
+#      founder's management (ADR 1235), after a gate on the founder's API token.
+if [ "$PROFILE" = internet ] && [ "$MESH_DNS" = 1 ]; then
+step 12 GATE "[internet, joiner] the founder's management API token ($MESH_DNS_TOKEN) resolves, before anything registers the site's nameserver group" \
+  "'$REPO/ops/scripts/with-secrets' '$REPO/ops/scripts/require-secret.sh' GB-281 $(sh_word "$MESH_DNS_TOKEN") $(sh_quote "the mesh DNS step registers this site's nameserver group through the founder's management API with it")"
+step 12 A "[internet, joiner] mesh CoreDNS: a replica of the goatnet's zone ($MESH_DNS_ZONE, ops/dns/$MESH_DNS_DIR/mesh-hosts), as the site's own nameserver group $MESH_DNS_GROUP_NAME, this replica first and $JOIN_FOUNDER_SITE's second, written through $JOIN_FOUNDER_SITE's management (ADR 1235)" \
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} goat-coredns.yml --limit $GROUP -e mesh_dns_zone_dir_name=$(sh_word "$MESH_DNS_DIR") -e mesh_coredns_smoke_test_name=$(sh_word "$MESH_DNS_NAME") -e netbird_nameserver_group_name=$(sh_word "$MESH_DNS_GROUP_NAME") -e netbird_api=$(sh_word "$MESH_DNS_API") -e netbird_api_token_envvar=$(sh_word "$MESH_DNS_TOKEN") -e mesh_dns_peer_replica_group=$(sh_word "$MESH_DNS_PEER_GROUP")"
+elif [ "$PROFILE" = internet ]; then
+step 12 A "[internet] mesh CoreDNS (only if this site has a mesh zone)" \
+  "cd '$REPO' && python3 ops/dns/generate-mesh-hosts.py && { if [ -f ops/dns/$SITE/mesh-hosts ]; then cd ops/ansible && $ANSIBLE_PRE ${INV[*]} goat-coredns.yml --limit $GROUP; else echo '    no ops/dns/$SITE/mesh-hosts — this site declares no mesh zone; skipping mesh CoreDNS'; fi; }"
 fi
 
 # Phase 12. goat-zenoh-portal — the registry, certificate minting and the grant rows
