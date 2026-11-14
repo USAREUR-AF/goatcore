@@ -152,6 +152,13 @@ admin; a divergence between sites raises an alert.
 - `spock-drift-watch` (role `spock-drift-watch`, ADR 1084 D5) gains every replicated table of
   `portal`, `console`, `orgs` in `spock_drift_watch_tables`, and every site gets its peers in
   `spock_drift_watch_peers`.
+- drift-watch also counts, per peer, the rows of `goat_ceiling_refused` in the `kratos`
+  database: the platform-admin grants that peer's guard applied without `PLATFORM-ADMIN`
+  (ADR 1205 D10). It runs `goat_ceiling_refused_stamp()` first, when its user may, and
+  reports the newest refused grant's commit time. `SpockCeilingRefused` (critical,
+  `ops/compose/mgmt-host/monitoring/rules/spock.yml`) alerts on an increase. Built: the count
+  and the alert, with a promtool test; the count is run in the partition harness against the
+  guard in a local run only, since the guard and this count land separately.
 - Alert on: subscription not `replicating`, empty repset, any unresolved exception
   older than 1 h, any drift-watch mismatch.
 

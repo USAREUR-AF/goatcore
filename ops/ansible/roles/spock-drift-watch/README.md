@@ -57,6 +57,27 @@ Run on both peers. Compare:
 
 Output one line per (db, table_pair, site_pair) to the textfile collector. The script does not attempt to identify *which* rows differ — that's L3 reconciler scope per ADR 0823.
 
+## Platform-admin grants refused
+
+The platform-admin guard (ADR 1205 D10) applies a replicated grant of
+`PLATFORM-ADMIN` that did not come from the hub without the group, and logs it
+in `goat_ceiling_refused` in the `kratos` database. When `kratos` is among the
+watched databases, drift-watch reports for every peer:
+
+```text
+spock_ceiling_guard_installed{site,peer,db}             1, or 0 when the table is missing
+spock_ceiling_refused_readable{site,peer,db}            0 when this user cannot read it
+spock_ceiling_refused_rows{site,peer,db}                the rows of goat_ceiling_refused
+spock_ceiling_refused_last_commit_seconds{site,peer,db} newest committed_at, 0 when none
+```
+
+Before counting it runs `goat_ceiling_refused_stamp()`, which fills in
+`committed_at` from each refused grant's commit timestamp, when the user has
+`UPDATE` on the table and `EXECUTE` on the function; otherwise it counts
+without it and says so on stderr. `SpockCeilingRefused`
+(`ops/compose/mgmt-host/monitoring/rules/spock.yml`, critical) alerts on an
+increase of `spock_ceiling_refused_rows` over 2h.
+
 ## What this role does NOT do
 
 - **Not authoritative-mode merge.** Reports only. Per ADR 1010 §D5 + ADR 0823 §7.
