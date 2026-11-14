@@ -273,6 +273,21 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 
 | Flag | Description | Default |
 |---|---|---|
+| `--context-dir <CONTEXT_DIR>` | The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it) |  |
+| `--cert <CERT>` | The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory) |  |
+| `--ca-roots <CA_ROOTS>` | The six verbs: the CA roots (default: ca-roots.pem in the context directory) |  |
+| `--context <CONTEXT>` | The six verbs: the goat context to read, as `goat --context` (default: $GOAT_CONTEXT, else current_context in the profile's config.toml, else default) |  |
+| `--profile-dir <PROFILE_DIR>` | The six verbs: the goat profile directory, as `goat --profile-dir` (default: $GOAT_PROFILE_DIR, else ~/.goat) |  |
+| `--over-ssh <OVER_SSH>` | init: measure this peering's edge and core over SSH from this machine, reaching the hosts of inventory groups <PEERING>_edge and <PEERING>_core in ops/ansible/inventory/peering-edges.ini as the plays reach them. Only read-only commands run there; nothing is copied to either host |  |
+| `--ssh-edge-group <SSH_EDGE_GROUP>` | init --over-ssh: the edge's inventory group (default <PEERING>_edge) |  |
+| `--ssh-core-group <SSH_CORE_GROUP>` | init --over-ssh: the core's inventory group (default <PEERING>_core) |  |
+| `--edge-host <EDGE_HOST>` | init --over-ssh: the edge host to measure, when its group has several |  |
+| `--core-host <CORE_HOST>` | init --over-ssh: the core host to measure, when its group has several |  |
+| `--router-container <ROUTER_CONTAINER>` | init --over-ssh: the core router container, by hand (default: the name the core host's variables give, else the one discovery finds there) |  |
+| `--side <SIDE>` | init --over-ssh: measure one half of phase 3 on this machine, for a peering no one machine reaches both hosts of (docs/design/federation-router-discovery.md): `edge` measures only the edge and writes the result to --half-out; `core` measures only the core, joins the edge half read from --edge-half, and builds the package. Without it, both hosts are measured here, as always. On a peering run, `--side edge` is the edge driver's run of a two-driver peering (`drivers: two`): not built yet, and refused with GB-267 (docs/design/federation-two-drivers.md) |  |
+| `--half-out <HALF_OUT>` | init --over-ssh --side edge: the file the edge half is written to |  |
+| `--edge-half <EDGE_HALF>` | init --over-ssh --side core: the edge half the edge driver wrote |  |
+| `--edge-half-sha256 <EDGE_HALF_SHA256>` | init --over-ssh --side core: the edge half's sha256 as the edge driver printed it, read from there and confirmed here (the full digest, or its first 32 hex digits; spaces and dashes are ignored) |  |
 | `--expect-commit <EXPECT_COMMIT>` | With --side edge: the commit the edge driver's checkout must be at, as a hand-off object names it. The edge driver's run is not built yet: refused with GB-267 (docs/design/federation-two-drivers.md) |  |
 | `--plan <PLAN>` | deploy: the plan to execute (default <work>/plan.json) |  |
 | `--approve-plan <APPROVE_PLAN>` | deploy: approve exactly this plan hash, after reading the plan. --yes never approves a plan |  |
