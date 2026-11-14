@@ -877,5 +877,67 @@ class EdgeFirewallEntry(unittest.TestCase):
         with open(self.log, encoding="utf-8") as f:
             self.assertIn("systemctl disable --now goat-host-firewall.service", f.read())
 
+    def test_the_defaults_it_repeats_are_the_roles(self):
+        text = (ANSIBLE / "roles/goat-host-firewall/tasks/absent.yml").read_text()
+        role = yaml.safe_load((ANSIBLE / "roles/goat-host-firewall/defaults/main.yml").read_text())
+        for var in ("goat_host_firewall_dir", "goat_host_firewall_service", "goat_host_firewall_rollback_unit"):
+            m = re.search(r"\{\{ %s \| default\('([^']*)'\) \}\}" % var, text)
+            self.assertIsNotNone(m, var)
+            self.assertEqual(m.group(1), role[var], var)
+
+    def entry(self, name, port, link):
+        return {"name": name, "transport": "wireguard", "listen_port": port, "peer_addr": "192.0.2.10",
+                "tunnel_interface": name, "remote_link_ip": link, "edge_port": 7448,
+                "extra_tcp_ports": [], "via_forwarder": False}
+
+    def test_a_pending_rollback_refuses_and_nothing_is_removed(self):
+        self.store("wg-fed1")
+        with open(f"{self.bindir}/systemctl", "w", encoding="utf-8") as f:
+            f.write('#!/bin/sh\necho "systemctl $*" >> %s\n' % self.log
+                    + 'case "$1" in is-active) echo active; exit 0 ;; esac\n'
+                    + NETWORK_NOT_FOUND["systemctl"] + "\n")
+        r, rows = self.backout(apply=True)
+        self.assertNotEqual(r.returncode, 0, "the back-out refuses")
+        self.assertIn("GB-214", self.row(rows, "baseline")["note"])
+        self.assertEqual(self.row(rows, "baseline")["state"], "refused")
+        self.assertTrue(os.path.exists(f"{self.fw}/peerings/wg-fed1.json"), "nothing is removed")
+        with open(self.log, encoding="utf-8") as f:
+            self.assertNotIn("disable", f.read())
+
+    def test_with_another_peering_left_the_role_reloads_without_this_one(self):
+        """The reload runs the role itself, for the peering that stays. Unprivileged, the role
+        renders, then cannot write its root-owned files; the entry is then put back, so the
+        stored entries match the ruleset the host still carries, and the back-out can run again."""
+        os.makedirs(f"{self.fw}/peerings")
+        dump(f"{self.fw}/profile", "edge\n")
+        for name, port, link in (("wg-fed0", 51820, "169.254.77.1"), ("wg-fed1", 51821, "169.254.78.1")):
+            dump(f"{self.fw}/peerings/{name}.json", json.dumps(self.entry(name, port, link)))
+        with open(f"{self.fw}/peerings/wg-fed1.json", encoding="utf-8") as f:
+            before = f.read()
+        with open(f"{self.bindir}/systemctl", "w", encoding="utf-8") as f:
+            f.write('#!/bin/sh\necho "systemctl $*" >> %s\n' % self.log
+                    + 'case "$1" in is-active) exit 3 ;; list-units) exit 0 ;; esac\n'
+                    + NETWORK_NOT_FOUND["systemctl"] + "\n")
+        with open(f"{self.bindir}/ss", "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(f"{self.bindir}/ss", 0o700)
+        work = f"{self.tmp}/work/xac"
+        argv = ["ansible-playbook", "-i", self.inv, "--limit", "xac_edge", str(ANSIBLE / "peering-backout.yml"),
+                "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                "-e", "ansible_become=false", "-e", f"goat_host_firewall_dir={self.fw}",
+                "-e", "peering_backout_apply=true",
+                "-e", '{"goat_host_firewall_management_sources": ["198.51.100.10/32"]}']
+        r = run(argv, self.tmp, path_prefix=self.bindir)
+        out = r.stdout
+        self.assertIn("rules: ", out, out[-6000:])
+        rules = out.split("rules: ", 1)[1].split('"', 1)[0]
+        self.assertIn("wg-fed0/tunnel", rules, "the peering that stays keeps its rules")
+        self.assertNotIn("wg-fed1", rules, "the backed-out peering's rules are gone from the ruleset")
+        self.assertNotEqual(r.returncode, 0, "unprivileged, the role cannot load")
+        self.assertIn("Its entry was put back", out, out[-6000:])
+        with open(f"{self.fw}/peerings/wg-fed1.json", encoding="utf-8") as f:
+            self.assertEqual(f.read(), before, "the entry is back as it was")
+        self.assertTrue(os.path.exists(f"{self.fw}/peerings/wg-fed0.json"))
+
 if __name__ == "__main__":
     unittest.main()
