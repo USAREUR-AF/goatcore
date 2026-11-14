@@ -267,6 +267,12 @@ services:
     ledger: time-health
     zenoh: {put: ["ops/time/health/{site}"]}
     assay: [time-health]
+  peer-health:
+    class: mgmt
+    present: {pin: peer-health}
+    containers: [peer-health]
+    ledger: peer-health
+    zenoh: {put: ["ops/peer/health/{site}"]}
   consistency-health:
     class: mgmt
     present: {pin: consistency-health, var: consistency_health_enabled}
