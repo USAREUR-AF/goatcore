@@ -12,4 +12,5 @@ machine, and `goat_zenoh_edge_install_certs` is off; the fix is to turn that
 switch on. With it on, the `goat-zenoh-edge` role now also installs our CA's
 certificate as `<cert_dir>/our-ca.pem`, from `<work>/pki/our-ca.pem` (never the
 CA's key: a source holding a private key is refused), and `goatbuilder federate
-allocate` renders our CA's path and the core endpoint's override at that path.
+allocate` renders our CA's path and the core endpoint's override at that path
+(#658).

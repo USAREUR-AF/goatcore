@@ -63,7 +63,7 @@ federation verb given site flags before it (GB-238) or a flag it does not take
 (GB-239); an unknown `FED_VERBS` (GB-240); `--mock` on a verb that reads the
 checkout (GB-276, new); and a peering that is not declared (GB-149). The
 undeclared peering now exits 1, refused, as GB-149 says and as `federate
-allocate`'s same refusal already did; it exited 2 (gate row C5).
+allocate`'s same refusal already did; it exited 2 (gate row C5) (#656).
 
 #### Fixed: federate status resumes from the first phase it cannot show passed
 
@@ -134,7 +134,7 @@ from `postgres_max_connections`. The roles that schedule jobs with cron
 allowed-ips` and `listen-port`, and a back-out checks that a carrier exists with
 `listen-port`. When a carrier does not hold what the declaration says, the failure
 message lists each peer's public key and allowed address, then the port the
-carrier listens on.
+carrier listens on (#663).
 
 #### Fixed: a phase 11 link that did not come up is named as GB-271
 
@@ -223,7 +223,7 @@ the log, and the command that runs that phase again by hand. With no known
 error in the output, the row gives the phase's own guidance from the phase
 catalog. This covers the numbered phases, the image pull, the observability
 legs and the phase-12 steps that `--parallel` runs in waves, each read from its
-own log.
+own log (#652, #669).
 
 #### Added: goatbuilder status reads real hosts
 
@@ -256,7 +256,8 @@ without installing it, with the checks `goatbuilder update` makes before it
 installs: the keyless signature over `SHA256SUMS` (`SHA256SUMS.cosign-bundle`)
 for the release workflow of `<owner>/<repo>` at `goatbuilder/v<version>`, and
 every other file in `<dir>` against that `SHA256SUMS`. It reads only. A
-refusal names the failed check: GB-261 for the signature, GB-074 for a file.
+refusal names the failed check: GB-261 for the signature, GB-074 for a file
+(#655).
 
 #### Fixed: an edge deployed from a workspace gets the certificates it mounts, or phase 12 says why
 
@@ -269,7 +270,8 @@ machine, and `goat_zenoh_edge_install_certs` is off; the fix is to turn that
 switch on. With it on, the `goat-zenoh-edge` role now also installs our CA's
 certificate as `<cert_dir>/our-ca.pem`, from `<work>/pki/our-ca.pem` (never the
 CA's key: a source holding a private key is refused), and `goatbuilder federate
-allocate` renders our CA's path and the core endpoint's override at that path.
+allocate` renders our CA's path and the core endpoint's override at that path
+(#658).
 
 ### For someone contributing
 
@@ -393,6 +395,16 @@ is removed from every other phase's environment, even when the operator's
 own environment holds it: least privilege for child processes. A test
 allows a process-environment write only in `main`, before any thread
 starts (#642).
+
+#### Added: standup's phases are in the phase catalog, and explain answers for them
+
+`ops/phases/catalog.yaml` now describes standup's 14 phases and its named
+steps (the image pull and the observability legs, with their joins), each
+with what it does and why, what it changes, how to tell it worked, what it
+runs, the command by hand and what to do when it failed. A test builds
+standup's plan for six site shapes and holds the catalog to it, so the two
+cannot drift. `goatbuilder explain standup [<phase>]` answers from the
+catalog, by number or name, as it does for federate (gate row F4) (#651).
 
 #### Added: a test that backing out a role-admitted core gives its org fragment back
 
