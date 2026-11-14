@@ -1,0 +1,17 @@
+---
+- name: e2e-canary | refuse an unpinned image
+  ansible.builtin.assert:
+    that:
+      - e2e_canary_image | length > 0
+      - "'@sha256:' in e2e_canary_image"
+    fail_msg: >-
+      e2e_canary_image must be a digest-pinned reference
+      (ghcr.io/<org>/e2e-canary:<tag>@sha256:...). Empty or tag-only is refused.
+
+- name: e2e-canary | the pull reference (mirror only when explicitly configured)
+  ansible.builtin.set_fact:
+    _e2e_pull_ref: >-
+      {{ (e2e_canary_registry ~ '/' ~
+          (e2e_canary_image | regex_replace('^ghcr[.]io/[^/]+/', '')))
+         if e2e_canary_registry | length > 0 else e2e_canary_image }}
+

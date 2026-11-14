@@ -12,11 +12,10 @@
 # from ops/pins/fleet-pins.yaml. Never a tag alone.
 e2e_canary_image: ""
 
-# Where the image is pulled from. The pin names ghcr.io/<org>/e2e-canary; the
-# hermetic set serves the same bytes from a local registry, so the host rewrites
-# only the registry prefix and pulls by the SAME digest (the pin's digest is the
-# proof, wherever the bytes came from).
-e2e_canary_registry: "ghcr.io/{{ ghcr_org }}"
+# Leave empty to pull the declared pin unchanged. The hermetic set can opt
+# into a local mirror by setting its registry/namespace here; the digest stays
+# the same. A deployment namespace is never substituted implicitly.
+e2e_canary_registry: ""
 
 # One compose project per host, so three hermetic hosts sharing one Docker
 # daemon do not collide; on a real host the suffix is just the host's name.
