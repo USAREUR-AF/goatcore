@@ -15,7 +15,9 @@
 #     peer_report_infra_prefixes,
 #   - the Rosenpass roster attributes owners by the goatnet's name,
 #   - the revocation driver hands GOATNET and NB_API to the mgmt-host Python,
-#   - live-canary refuses --bump from an assembled tree.
+#   - live-canary refuses --bump from an assembled tree,
+#   - live-canary passes --site to both rollback avenues and, off the mesh,
+#     reads the host's ledger through the goatnet's door.
 
 bats_require_minimum_version 1.5.0
 
@@ -208,4 +210,83 @@ ROWS
   run bash "$T/ops/e2e/live-canary.sh"
   [ "$status" -eq 2 ]
   [[ "$output" == *"name the goatnet with --env"* ]]
+}
+
+# A canary run that reaches the rollback step: an assembled tree (no branch
+# check, no --bump), a goatbuilder and a rollback.sh that record their
+# arguments, and an ssh that answers the ledger reads with two refs, the newest
+# row a deploy until a rollback has run, then a rollback to the older ref. A
+# plain ssh to an address in $SSH_DOWN does not answer; one that jumps through
+# a ProxyCommand does.
+canary_stubs() {
+  : > "$T/.goat-assembled"
+  cp "$REPO_ROOT/ops/e2e/rec.py" "$T/ops/e2e/rec.py"
+  cat > "$T/gb" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$LOG/gb"
+echo "e2e-canary: every host's ledger names the declared ref; DRY: would read /var/lib/goat/e2e-canary/deploy-history.jsonl"
+SH
+  cat > "$T/ops/scripts/rollback.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$LOG/rollback.sh"
+echo "rolled back"
+SH
+  cat > "$T/bin/ssh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$LOG/ssh"
+case "$*" in *ProxyCommand=*) ;; *"${SSH_DOWN:-no-such-address}"*) exit 255 ;; esac
+case "$*" in
+  *"wc -l"*) echo 2 ;;
+  *"tail -n 1"*)
+    if [ -e "$LOG/rollback.sh" ] || grep -q '^rollback e2e-canary 1 ' "$LOG/gb" 2>/dev/null; then
+      echo '{"ref": "ghcr.io/example/e2e-canary:sha-a@sha256:1", "action": "rollback"}'
+    else
+      echo '{"ref": "ghcr.io/example/e2e-canary:sha-b@sha256:2", "action": "deploy"}'
+    fi ;;
+esac
+exit 0
+SH
+  chmod +x "$T/gb" "$T/ops/scripts/rollback.sh" "$T/bin/ssh"
+}
+
+@test "live-canary: the goatbuilder avenue rolls back with --site" {
+  canary_stubs
+  LIVE_CANARY_AVENUE=cli run bash "$T/ops/e2e/live-canary.sh" --env site_a_dev --goatbuilder "$T/gb" --record "$BATS_TEST_TMPDIR/rec"
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&3; return 1; }
+  grep -qxF -- "rollback e2e-canary --list --site site-a-dev" "$LOG/gb"
+  grep -qxF -- "rollback e2e-canary 1 --site site-a-dev --yes" "$LOG/gb"
+  [ ! -e "$LOG/rollback.sh" ]
+}
+
+@test "live-canary: the scripts avenue rolls back with --site" {
+  canary_stubs
+  LIVE_CANARY_AVENUE=scripts run bash "$T/ops/e2e/live-canary.sh" --env site_a_dev --goatbuilder "$T/gb" --record "$BATS_TEST_TMPDIR/rec"
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&3; return 1; }
+  grep -qxF -- "e2e-canary 1 --site site-a-dev" "$LOG/rollback.sh"
+  grep -qxF -- "rollback e2e-canary --list --site site-a-dev" "$LOG/gb"
+}
+
+@test "live-canary: off the mesh, the ledger is read by jumping through the door to the host" {
+  canary_stubs
+  printf '#!/bin/sh\necho "$*" >> "$LOG/door-open"\n' > "$T/ops/scripts/door-open.sh"
+  printf '#!/bin/sh\n[ "$2" = --ssh-target ] && echo doorkeeper@127.0.0.1:12203\n' > "$T/ops/scripts/env-door.sh"
+  SSH_DOWN=devuser@198.51.100.1 LIVE_CANARY_AVENUE=scripts run bash "$T/ops/e2e/live-canary.sh" --env site_a_dev --goatbuilder "$T/gb" --record "$BATS_TEST_TMPDIR/rec"
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&3; return 1; }
+  [[ "$output" == *"by jumping through the site-a-dev door (doorkeeper@127.0.0.1:12203)"* ]]
+  grep -qxF -- "site-a-dev" "$LOG/door-open"
+  # Every read after the first probe goes to the host's own address, its key
+  # checked, through the door's tunnel hop; the door is never the destination.
+  [ "$(grep -c 'ProxyCommand=ssh .* -p 12203 -W %h:%p doorkeeper@127.0.0.1 devuser@198.51.100.1 ' "$LOG/ssh")" -ge 3 ]
+  grep 'ProxyCommand' "$LOG/ssh" | grep -qF "StrictHostKeyChecking=accept-new"
+  [ "$(grep -vc ProxyCommand "$LOG/ssh")" -eq 1 ]
+  ! grep -qE '(^| )(ssh://)?[a-z]+@127\.0\.0\.1' "$LOG/ssh"
+  grep -qxF -- "e2e-canary 1 --site site-a-dev" "$LOG/rollback.sh"
+}
+
+@test "live-canary: a named --host is used as given, with no door" {
+  canary_stubs
+  LIVE_CANARY_AVENUE=cli run bash "$T/ops/e2e/live-canary.sh" --env site_a_dev --host ops@192.0.2.50 --goatbuilder "$T/gb" --record "$BATS_TEST_TMPDIR/rec"
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&3; return 1; }
+  grep -qF "ops@192.0.2.50" "$LOG/ssh"
+  ! grep -qF "127.0.0.1" "$LOG/ssh"
 }

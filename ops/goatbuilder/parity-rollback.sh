@@ -18,6 +18,12 @@
 # component whose hosts span more than one site, `--status --site` is compared
 # for its first site, and an unknown site must be refused in the same words.
 #
+# A goatnet reached through its env door: on a fixture tree with a door
+# registry (doors.yaml) and one component on one site, `--list --site` and
+# `--status --site` are compared with a door that opens and with one that does
+# not. Both avenues try the host directly first, then the door, and fall back to
+# the in-repo history when neither answers; neither names the door on a read.
+#
 # usage: parity-rollback.sh <goatbuilder binary> [component ...]
 #        parity-rollback.sh --self-test
 set -euo pipefail
@@ -61,8 +67,9 @@ if [ ${#COMPONENTS[@]} -eq 0 ]; then
 fi
 command -v yq >/dev/null || { echo "parity-rollback: yq required by the script side (brew install yq / apt-get install yq)"; exit 2; }
 
-script_side() { "$REPO/ops/scripts/rollback.sh" "$@" 2>&1 | sed -E 's/^rollback\.sh: //' | sed -E 's/[[:space:]]+$//'; }
-binary_side() { "$BIN" -C "$REPO" rollback "$@" 2>&1 | binary_filter; }
+ROOT="$REPO"
+script_side() { "$ROOT/ops/scripts/rollback.sh" "$@" 2>&1 | sed -E 's/^rollback\.sh: //' | sed -E 's/[[:space:]]+$//'; }
+binary_side() { "$BIN" -C "$ROOT" rollback "$@" 2>&1 | binary_filter; }
 
 # The distinct sites of a component's hosts, whichever yq is installed.
 sites_of() {
@@ -88,5 +95,43 @@ for c in "${COMPONENTS[@]}"; do
     compare "$c" --list --site no-such-site
   fi
 done
+
+# The door fixture. Its host does not answer here unless something on this
+# machine answers on 100.127.0.9; either way both avenues must agree.
+DOORS="$(mktemp -d "${TMPDIR:-/tmp}/parity-rollback-door.XXXXXX")"
+trap 'rm -rf "$DOORS"' EXIT
+mkdir -p "$DOORS/ops/scripts" "$DOORS/ops/ansible/inventory" "$DOORS/ops/ansible/roles/door-fixture"
+cp "$REPO/ops/scripts/rollback.sh" "$REPO/ops/scripts/env-door.sh" "$REPO/ops/scripts/generate-door-inventory.py" "$DOORS/ops/scripts/"
+cat > "$DOORS/ops/ansible/inventory/doors.yaml" <<'YAML'
+doors:
+  zagros-dev:
+    type: ssm
+    instance: i-0000
+    region: zz-test-1
+    port: 12203
+    user: doorkeeper
+    mgmt:
+      - {name: mgmt-zagros-dev-01, mesh_ip: 100.127.0.9, gv_group: zagros_dev_hosts, landed: true}
+YAML
+cat > "$DOORS/ops/ansible/roles/door-fixture/deploy-history.yml" <<'YAML'
+hosts:
+  - host: 100.127.0.9
+    ssh_user: ops
+    container_name: door-fixture
+    compose_path: /opt/door-fixture/docker-compose.yml
+    site: zagros-dev
+history:
+  - sha: sha-b
+    image: ghcr.io/example/door-fixture:sha-b
+    pr: 2
+    merged_at: "2026-10-02T00:00:00Z"
+YAML
+ROOT="$DOORS"
+for opens in 0 1; do
+  printf '#!/bin/sh\nexit %s\n' "$opens" > "$DOORS/ops/scripts/door-open.sh"
+  chmod +x "$DOORS/ops/scripts/"*.sh
+  for mode in --list --status; do compare door-fixture "$mode" --site zagros-dev; done
+done
+ROOT="$REPO"
 [ "${n:-0}" -gt 0 ] || { echo "parity FAIL: nothing was compared (no inputs read — is PyYAML importable by python3?)"; exit 1; }
 if [ "$fail" = 0 ]; then echo "parity ok: $n rollback invocations identical, $host on the host path (script vs goatbuilder rollback --list/--status over ${#COMPONENTS[@]} components)"; else echo "parity FAIL: $fail of $n differ"; exit 1; fi
