@@ -62,10 +62,18 @@ sys_arm_undo() {
 
 # sys_trust_registry CERT: Docker trusts CERT for ghcr.io.
 sys_trust_registry() {
+  local saved
   if [ -d "$E2E_CERTS_DIR/ghcr.io" ]; then
     if [ -f "$E2E_CERTS_DIR/ghcr.io/ca.crt" ] && [ -z "$SYS_CA_SAVED" ]; then
-      SYS_CA_SAVED="$(mktemp)"
-      cp "$E2E_CERTS_DIR/ghcr.io/ca.crt" "$SYS_CA_SAVED"
+      # Saved through sudo (the file may be root's alone), and named for the undo only
+      # once the save succeeded: a failed save must never be restored over the CA.
+      saved="$(mktemp)"
+      if ! sudo cp "$E2E_CERTS_DIR/ghcr.io/ca.crt" "$saved"; then
+        rm -f "$saved"
+        echo "hermetic: cannot save $E2E_CERTS_DIR/ghcr.io/ca.crt, so it is not replaced; stopping" >&2
+        return 1
+      fi
+      SYS_CA_SAVED="$saved"
     fi
   else
     SYS_CERTS_MADE=1
