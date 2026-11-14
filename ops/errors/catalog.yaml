@@ -2932,6 +2932,7 @@ entries:
       - the partner was left out, or given after a peering name instead of a stage word
       - --to, --resume or a --from other than 10 or 11 was given to a stage
       - --plan or --approve-plan was given outside `deploy`
+      - --bilateral was given outside `test`
     fixes:
       - "goatbuilder federate deploy <partner> --approve-plan <hash>   (or --from 11 after the admission)"
       - "goatbuilder federate test <partner>"

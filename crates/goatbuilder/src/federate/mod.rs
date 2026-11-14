@@ -67,6 +67,7 @@ mod admit;
 mod admit_leaf;
 mod admit_role;
 mod confirm;
+pub mod acceptance;
 pub mod deploy;
 pub mod handoff;
 pub mod site_values;
@@ -386,9 +387,31 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
     }
     ev.push(p(12, "A", "deploy the sovereign edge router and the outbound republisher", format!("{} && {}", play("peering-zenoh-edge.yml"), play_on(&core_group, "peering-republisher.yml"))));
     ev.push(p(13, "A", "federate the SPIRE trust domains (ADR 1157 step 2)", play("peering-spire.yml")));
-    ev.push(p(14, "GATE", "acceptance — carries, refuses, and round-trips", format!("'{r}/ops/federation/standup/acceptance.sh' '{agreement}'{as_arg}")));
+    ev.push(p(14, "GATE", "acceptance — carries, refuses, and round-trips", format!("{}'{r}/ops/federation/standup/acceptance.sh' '{agreement}'{as_arg}", bilateral_env(work))));
     let _ = resume;
     ev
+}
+
+/// The variables phase 14 is given on a session both sides derive
+/// (`federate test --bilateral`, docs/design/federation-acceptance.md §6.3):
+/// the attempt, this binary as signer and verifier, and the peering's keyring,
+/// the keys phase 5 bound. Nothing when the run did not ask for it.
+fn bilateral_env(work: &str) -> String {
+    let Some(attempt) = runenv::var("FED_ACCEPTANCE_ATTEMPT").ok().filter(|v| !v.is_empty()) else {
+        return String::new();
+    };
+    let sq = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "goatbuilder".into());
+    let keyring = run::Paths::new(work).keyring.display().to_string();
+    format!(
+        "FED_ACCEPTANCE_ATTEMPT={} FED_ACCEPTANCE_SIGNER={} FED_ACCEPTANCE_VERIFIER={} FED_KEYRING={} ",
+        sq(&attempt),
+        sq(&format!("{exe} acceptance-result sign")),
+        sq(&format!("{exe} acceptance-result verify")),
+        sq(&keyring)
+    )
 }
 
 /// Our sovereign id when `--as` is absent, by the same rule on both avenues

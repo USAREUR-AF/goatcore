@@ -291,7 +291,8 @@ struct Baseline {
 /// The sections deploy's own last phase left, for this approved plan; None
 /// before deploy has passed a phase of it.
 pub fn baseline(a: &Approved) -> Option<Plan> {
-    let b: Baseline = serde_json::from_str(&std::fs::read_to_string(baseline_path(a)).ok()?).ok()?;
+    let b: Baseline =
+        serde_json::from_str(&std::fs::read_to_string(baseline_path(a)).ok()?).ok()?;
     (b.plan_hash == a.hash).then_some(b.sections)
 }
 
@@ -305,7 +306,13 @@ pub fn record_baseline(a: &Approved) -> Result<()> {
         std::fs::create_dir_all(d)?;
     }
     let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(&Baseline { plan_hash: a.hash.clone(), sections: now })?)?;
+    std::fs::write(
+        &tmp,
+        serde_json::to_vec_pretty(&Baseline {
+            plan_hash: a.hash.clone(),
+            sections: now,
+        })?,
+    )?;
     std::fs::rename(&tmp, &p).with_context(|| format!("{}", p.display()))?;
     Ok(())
 }
@@ -464,7 +471,11 @@ pub fn whole(
     checks.extend(made.checks);
     let deployed = deploy(
         repo,
-        &Options { from: DEPLOY_FROM, to: 99, ..*o },
+        &Options {
+            from: DEPLOY_FROM,
+            to: 99,
+            ..*o
+        },
         None,
         None,
         ask,
@@ -483,6 +494,17 @@ pub fn whole(
     r.exit = exit;
     r.ok = exit == crate::EXIT_OK;
     Ok(r)
+}
+
+/// `federate test <partner> --bilateral [<attempt>]`: phase 14 on a session both
+/// sides derive (docs/design/federation-acceptance.md §6.3), with this binary as
+/// its signer and verifier. Opt-in: without it, phase 14 is as it always was.
+pub fn test_bilateral(repo: &Path, o: &Options, attempt: Option<u32>) -> Result<Report> {
+    match attempt {
+        Some(n) => crate::federate::runenv::set("FED_ACCEPTANCE_ATTEMPT", n.to_string()),
+        None => crate::federate::runenv::unset("FED_ACCEPTANCE_ATTEMPT"),
+    }
+    test(repo, o)
 }
 
 /// `goatbuilder federate test <partner>`: acceptance alone.

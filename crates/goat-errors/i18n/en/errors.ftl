@@ -800,6 +800,7 @@ gb-189-what = The stages `status`, `deploy` and `test` take the partner after th
 gb-189-cause-1 = the partner was left out, or given after a peering name instead of a stage word
 gb-189-cause-2 = --to, --resume or a --from other than 10 or 11 was given to a stage
 gb-189-cause-3 = --plan or --approve-plan was given outside `deploy`
+gb-189-cause-4 = --bilateral was given outside `test`
 gb-190-title = the admission on our core is not recorded as done for what is rendered now
 gb-190-what = `deploy --from 11` skips phase 10, the by-hand admission of the partner's edge on our core, so it runs only when the journal records phase 10 as done for exactly the files rendered now. It does not, so nothing changed: either the admission was never declared, or the rendered files changed after it.
 gb-190-cause-1 = deploy has not stopped at phase 10 yet, so the admission was never done for these files

@@ -540,6 +540,13 @@ pub enum Cmd {
         /// with unchanged inputs (the behavior before resuming was the default).
         #[arg(long)]
         no_resume: bool,
+        /// `federate test` only: run phase 14 on a session both sides derive from
+        /// the agreement, each side's result signed and the partner's verified
+        /// under the key bound at phase 5 (default attempt 1). Both sides start
+        /// phase 14 within FED_SESSION_WAIT of each other, normally on the same
+        /// call. Without it, phase 14 is unchanged.
+        #[arg(long, value_name = "ATTEMPT", num_args = 0..=1, default_missing_value = "1")]
+        bilateral: Option<u32>,
     },
     /// ONE resolution pass with TWO renderings: every listed member's
     /// group_vars pins.yml and every listed goatnet's IntentV1 artifact, from
@@ -611,6 +618,13 @@ pub enum Cmd {
     /// Hidden (src/fun.rs).
     #[command(hide = true)]
     Argan,
+    /// Hidden: the signer and verifier of a phase 14 acceptance result, which
+    /// `federate test --bilateral` gives acceptance.sh (src/federate/acceptance.rs).
+    #[command(hide = true, name = "acceptance-result")]
+    AcceptanceResult {
+        #[command(subcommand)]
+        cmd: AcceptanceResultCmd,
+    },
     /// The declared secrets posture (ADR 1204): which store is in force
     /// (1password, openbao, sops, git-crypt, env-file, env), what is available,
     /// how to supply what is missing, and the store's own checks. `init --env
@@ -1234,6 +1248,15 @@ fn usage_exit(e: clap::Error) -> ! {
     std::process::exit(e.exit_code())
 }
 
+/// `goatbuilder acceptance-result sign|verify` (hidden).
+#[derive(Subcommand, Debug)]
+pub enum AcceptanceResultCmd {
+    /// Sign our phase 14 result: print its signature document.
+    Sign(federate::acceptance::SignArgs),
+    /// Verify the partner's result under the key bound at phase 5.
+    Verify(federate::acceptance::VerifyArgs),
+}
+
 fn main() {
     // The language is chosen before clap builds the command, so the help clap
     // prints is already localized (goat's order, docs/design/goat-cli-i18n.md).
@@ -1286,6 +1309,10 @@ fn main() {
     match &cli.cmd {
         Cmd::Make { words } => std::process::exit(fun::make(words, cli.yes)),
         Cmd::Argan => std::process::exit(fun::argan()),
+        Cmd::AcceptanceResult { cmd } => std::process::exit(federate::acceptance::print(match cmd {
+            AcceptanceResultCmd::Sign(a) => federate::acceptance::sign(a),
+            AcceptanceResultCmd::Verify(a) => federate::acceptance::verify(a),
+        })),
         Cmd::Bound => std::process::exit(goat_fun::bound("goatbuilder")),
         Cmd::Completion { shell } => {
             let mut c = Cli::command();
@@ -1390,7 +1417,7 @@ fn main() {
 
     let report = match &cli.cmd {
         Cmd::Explain { .. } => unreachable!("explain exits above"),
-        Cmd::Make { .. } | Cmd::Argan | Cmd::Bound => unreachable!("the hidden verbs exit above"),
+        Cmd::Make { .. } | Cmd::Argan | Cmd::Bound | Cmd::AcceptanceResult { .. } => unreachable!("the hidden verbs exit above"),
         Cmd::Completion { .. } | Cmd::Docs { .. } | Cmd::Complete { .. } => unreachable!("the machine surfaces exit above"),
         Cmd::Validate { config: path } => {
             // A checkout with no config of its own (the open-source export) is judged by
@@ -1602,7 +1629,7 @@ fn main() {
                 federate::plan::run(&repo, stage, cli.mock.as_deref())
             }
         }
-        Cmd::Federate { verb: None, site, measure, edge_run, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
+        Cmd::Federate { verb: None, site, measure, edge_run, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume, bilateral } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
             // `--side edge` alone on a peering run is the edge driver's run of
@@ -1631,6 +1658,8 @@ fn main() {
                 Err(goat_errors::coded("GB-189", format!("unexpected argument '{}': only a stage word (status, deploy, test) takes a partner after it, and `allocate` the one peering to allocate", partner.as_deref().unwrap_or_default())).into())
             } else if (partner_key.is_some() || partner_ca_fingerprint.is_some() || agreement_digest.is_some() || place_pointer_package.is_some()) && matches!(with, "deploy" | "test") {
                 Err(goat_errors::coded("GB-189", format!("--partner-key, --partner-ca-fingerprint, --agreement-digest and --place-pointer-package belong to phases 5 and 6 of `goatbuilder federate <partner>`, not to {with}")).into())
+            } else if bilateral.is_some() && with != "test" {
+                Err(goat_errors::coded("GB-189", "--bilateral belongs to `goatbuilder federate test <partner>`: it runs phase 14 on a session both sides derive").into())
             } else if (*confirm || approve_admission.is_some() || *review_in_pr) && with == "test" {
                 Err(goat_errors::coded("GB-189", "--confirm, --approve-admission and --review-in-pr do not apply to `goatbuilder federate test`").into())
             } else if (approve_admission.is_some() || *review_in_pr || *confirm) && with == "deploy" && *from > 10 {
@@ -1658,7 +1687,7 @@ fn main() {
                 let o = federate::Options { with: name, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) };
                 match with {
                     "deploy" => federate::deploy::deploy(&repo, &o, plan.as_deref(), approve_plan.as_deref(), &mut federate::prompt::Terminal, federate::Admission { approve: approve_admission.clone(), review_in_pr: *review_in_pr }, federate::prompt::ask_by_default(*confirm, *no_confirm)),
-                    "test" => federate::deploy::test(&repo, &o),
+                    "test" => federate::deploy::test_bilateral(&repo, &o, *bilateral),
                     // `allocate <peering>`: that peering alone, beside hand-written ones.
                     "allocate" if partner.is_some() => federate::peering_files::run_scoped(&repo, &federate::Options { with, ..o }, partner.as_deref()),
                     _ => {
