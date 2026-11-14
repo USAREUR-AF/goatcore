@@ -842,3 +842,136 @@ fn on_a_role_core_the_router_leaf_goes_where_the_role_reads_it() {
     );
     assert!(w.log().contains("play zenoh-deploy.yml"), "{}", w.log());
 }
+
+/// Item 1b of the key-rotation design: phase 10 by the command makes no
+/// change when the admission it would make is the one already placed and
+/// restarted, and every file on the core is byte for byte what it would
+/// place. A later run of phase 10 whose inputs changed and whose placement
+/// did not (a leaf the edge presents replaced, the core leaf not) then
+/// places nothing and restarts nothing.
+/// A file changed on the core, or an admission that failed to restart, is
+/// admitted again.
+#[test]
+fn an_admission_already_in_place_byte_for_byte_places_nothing_and_restarts_nothing() {
+    let w = world();
+    let plan = ready(&w, true);
+    let digest = reviewed_digest(&w, &plan);
+    let deploy = [
+        "deploy",
+        "hello-ally",
+        "--approve-plan",
+        &plan,
+        "--approve-admission",
+        &digest,
+    ];
+    let restarts = |w: &World| w.log().lines().filter(|l| *l == "restart").count();
+    w.clear_log();
+    let (out, _) = w.run(&deploy);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(restarts(&w), 1, "{}", w.log());
+    let cfg = w.root.path().join("core/config.json5");
+    let placed = std::fs::read(&cfg).unwrap();
+    let backups = |w: &World| {
+        walk(&w.work.join("admission"))
+            .iter()
+            .filter(|p| p.to_string_lossy().contains("/backup/"))
+            .count()
+    };
+    let backed_up = backups(&w);
+
+    // An input of phase 10 changes and nothing it places does: a leaf the
+    // edge presents is replaced (a leaf rotation without a core leaf), so a
+    // new plan is made and phase 10 runs again. The core is left as it is.
+    std::fs::write(w.work.join("pki/peering-outward.pem"), "a rotated leaf\n").unwrap();
+    let (out, _) = w.run(&["plan", "hello-ally"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let plan2 = plan_hash(&w);
+    assert_ne!(plan2, plan);
+    w.clear_log();
+    let (out, v) = w.run(&[
+        "deploy",
+        "hello-ally",
+        "--approve-plan",
+        &plan2,
+        "--review-in-pr",
+    ]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(phases_run(&v), [10, 11, 12, 13], "{}", says(&out));
+    assert_eq!(restarts(&w), 0, "the core restarted again: {}", w.log());
+    assert!(!w.log().contains("dry-run"), "{}", w.log());
+    assert!(
+        rows(&v, "unchanged")
+            .iter()
+            .any(|d| d.contains("nothing placed, nothing restarted")),
+        "{}",
+        says(&out)
+    );
+    assert_eq!(std::fs::read(&cfg).unwrap(), placed);
+    assert_eq!(
+        backups(&w),
+        backed_up,
+        "a backup was taken of an unchanged file"
+    );
+
+    // A file on the core changed by hand, and phase 10 run again: the
+    // admission is not in place, so it is approved and restarted again.
+    std::fs::write(&cfg, b"{}\n").unwrap();
+    std::fs::write(w.work.join("pki/peering-outward.pem"), "rotated again\n").unwrap();
+    let (out, _) = w.run(&["plan", "hello-ally"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let plan2 = plan_hash(&w);
+    w.clear_log();
+    let (_, v) = w.run(&[
+        "deploy",
+        "hello-ally",
+        "--approve-plan",
+        &plan2,
+        "--confirm",
+    ]);
+    let digest3 = admission_digest(&v);
+    let (out, _) = w.run(&[
+        "deploy",
+        "hello-ally",
+        "--approve-plan",
+        &plan2,
+        "--approve-admission",
+        &digest3,
+    ]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(restarts(&w), 1, "{}", w.log());
+    assert_eq!(std::fs::read(&cfg).unwrap(), placed);
+}
+
+/// An admission whose restart failed is not in place, even with every file
+/// placed: the next run restarts.
+#[test]
+fn an_admission_whose_restart_failed_is_restarted_by_the_next_run() {
+    let w = world();
+    let plan = ready(&w, true);
+    let out = w
+        .command(&["deploy", "hello-ally", "--approve-plan", &plan, "--confirm"])
+        .env("FED_CORE_RESTART", "exit 4")
+        .output()
+        .unwrap();
+    let digest = admission_digest(&serde_json::from_slice(&out.stdout).unwrap());
+    let failed = |w: &World| {
+        w.command(&[
+            "deploy",
+            "hello-ally",
+            "--approve-plan",
+            &plan,
+            "--approve-admission",
+            &digest,
+        ])
+        .env("FED_CORE_RESTART", "exit 4")
+        .output()
+        .unwrap()
+    };
+    assert!(says(&failed(&w)).contains("GB-196"));
+    let again = failed(&w);
+    assert!(
+        says(&again).contains("GB-196"),
+        "the restart is tried again: {}",
+        says(&again)
+    );
+}
