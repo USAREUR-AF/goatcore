@@ -24,7 +24,7 @@ LIVE = HERE / "testdata" / "network-live.json"
 SCRIPT = HERE / "reconcile.py"
 
 
-def declaration(ns=(), routes=(), scope="zagros-dev") -> str:
+def declaration(ns=(), routes=(), scope="zagros") -> str:
     def lst(xs):
         return "[" + ", ".join(xs) + "]"
     return f"version: 1\nscope: {scope}\nnameserver_groups: {lst(ns)}\nroutes: {lst(routes)}\n"
@@ -63,9 +63,9 @@ class ClassifyTest(unittest.TestCase):
 class CliTest(unittest.TestCase):
     def run_cli(self, decl: str | None, *extra, live=LIVE):
         with tempfile.TemporaryDirectory() as tmp:
-            args = [sys.executable, str(SCRIPT), "--network", "--scope", "zagros-dev"]
+            args = [sys.executable, str(SCRIPT), "--network", "--scope", "zagros"]
             if decl is not None:
-                f = Path(tmp) / "zagros-dev.yaml"
+                f = Path(tmp) / "zagros.yaml"
                 f.write_text(decl)
                 args += ["--network-file", str(f)]
             if live is not None:
@@ -90,11 +90,11 @@ class CliTest(unittest.TestCase):
         r = self.run_cli(declaration(["mesh-dns"]), "--json")
         self.assertEqual(r.returncode, 1)
         doc = json.loads(r.stdout)
-        self.assertEqual(doc["scope"], "zagros-dev")
+        self.assertEqual(doc["scope"], "zagros")
         self.assertEqual(len(doc["buckets"]["routes"]["undeclared"]), 2)
 
     def test_invalid_declaration_exits_2(self):
-        r = self.run_cli("version: 2\nscope: zagros-dev\n")
+        r = self.run_cli("version: 2\nscope: zagros\n")
         self.assertEqual(r.returncode, 2)
 
     def test_unreadable_live_exits_2(self):
@@ -105,13 +105,13 @@ class CliTest(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 
     def test_no_source_exits_2(self):
-        r = subprocess.run([sys.executable, str(SCRIPT), "--network", "--scope", "zagros-dev"],
+        r = subprocess.run([sys.executable, str(SCRIPT), "--network", "--scope", "zagros"],
                            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
         self.assertEqual(r.returncode, 2)
 
-    @unittest.skipUnless((Path(__file__).parent / "network" / "zagros-dev.yaml").exists(), "no declared goatnet in this tree")
+    @unittest.skipUnless((Path(__file__).parent / "network" / "zagros.yaml").exists(), "no declared goatnet in this tree")
     def test_repo_declaration_is_read(self):
-        r = subprocess.run([sys.executable, str(SCRIPT), "--network", "--scope", "zagros-dev",
+        r = subprocess.run([sys.executable, str(SCRIPT), "--network", "--scope", "zagros",
                             "--live-json", str(LIVE)], capture_output=True, text=True)
         self.assertEqual(r.returncode, 1, r.stderr)  # the file is empty; everything live is undeclared
 

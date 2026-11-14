@@ -26,7 +26,7 @@
 netbird_acl_matrix:
 
   hello-galaxy:
-    site_prefix: ZAGROS
+    site_prefix: HELLO-GALAXY
     rules:
 
       # ----------------------------------------------------------------

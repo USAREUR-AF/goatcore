@@ -1325,8 +1325,8 @@ mod tests {
     }
 
     #[test]
-    fn an_zagros_prod_shaped_model_does_not_regress_against_the_declared_assertions() {
-        let mut m = declared("zagros-prod").expect("zagros-prod model");
+    fn a_zagros_shaped_model_does_not_regress_against_the_declared_assertions() {
+        let mut m = declared("zagros").expect("zagros model");
         // A rule that sources from All and targets one peer resource on netbird-ssh 22.
         m.groups.insert("NETBIRD-SSH".into());
         m.permits.push(Permit {
@@ -1337,12 +1337,12 @@ mod tests {
             rule: "SSH Access".into(),
         });
 
-        let tests = decl().tests("zagros-prod");
+        let tests = decl().tests("zagros");
         let r = evaluate(&m, &tests);
 
         assert!(
             r.is_clean(),
-            "The zagros-prod shipped assertion set should not regress when an All-sourced port-scoped permit is added.\nViolated: {}, Undetermined: {}",
+            "The zagros shipped assertion set should not regress when an All-sourced port-scoped permit is added.\nViolated: {}, Undetermined: {}",
             r.violated, r.undetermined
         );
     }
