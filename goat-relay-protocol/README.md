@@ -8,8 +8,9 @@ no async runtime — the async transport binary lives elsewhere (Block 33B work)
 
 ## Status
 
-**Skeleton (Block 33A in progress).** Module layout matches the spec doc; each
-module is a placeholder pending upstream-source reading.
+**Implemented, version 0.1.0.** The modules (framing, messages, handshake,
+keepalive, transport) implement the spec doc, and the relay server `goat-relay`
+is built on this crate and in service.
 
 ## Where to start reading
 
@@ -24,8 +25,8 @@ cargo check
 cargo test
 ```
 
-The skeleton compiles and passes a single trivial test (`VERSION` constant
-matches the Cargo metadata). Real tests land as the modules fill in.
+`cargo test` runs the unit tests. The conformance tool under `src/bin/` parses
+each fixture frame, serializes it again and requires identical bytes.
 
 ## License
 
