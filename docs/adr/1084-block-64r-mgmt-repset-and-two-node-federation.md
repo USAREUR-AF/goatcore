@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted 2026-07-15. D3 amended by [ADR 1165](1165-island-mode-multi-writer-every-site-admits.md) (Proposed): single-homing of admin surfaces is lifted one write class at a time, as each class passes the partition harness; the intended placement is every site. |
+| Status | Accepted 2026-07-15. D3 amended by [ADR 1165](1165-island-mode-multi-writer-every-site-admits.md) (Accepted): single-homing of admin surfaces is lifted one write class at a time, as each class passes the partition harness; the intended placement is every site. |
 | Deciders | maintainers |
 | Block | 64R (closes the backlog gate opened by 64Q) |
 | Supersedes / amends | Amends ha-multi-site.md §5.6/§5.9; consumes ADR 0801 (Spock), ADR 1009/1010 (Ory on Spock), F-004 |

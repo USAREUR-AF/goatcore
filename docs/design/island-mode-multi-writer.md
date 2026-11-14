@@ -1,6 +1,6 @@
 # Island mode, every site writes: portal, console, NetBird and Kratos on Spock
 
-**Status:** Step A (§5) built: the portal and console run on Postgres, in no Spock replication set. The partition harness (§6) is built for NetBird, Kratos and Hydra; its portal and console scenarios are listed in `scenarios/pending.tsv`. Step B (§5), the per-class turn-on (gate G3) and the drills (gate G4) are designed, not built. Until a write class passes gate G3, the admin surfaces run at one site per goatnet ([ADR 1084](../adr/1084-block-64r-mgmt-repset-and-two-node-federation.md) D3); the intended placement is every site. Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md) (Proposed 2026-10-29). Execution and resume point: `island-mode-program.md`. Builds on ADR 1193 (revocations are absorbing; Proposed). §2 is the measurement before step A, against `USAREUR-AF/goatcore` main `2aa281381`, 2026-10-28.
+**Status:** Step A (§5) built: the portal and console run on Postgres, in no Spock replication set. The partition harness (§6) is built for NetBird, Kratos and Hydra; its portal and console scenarios are listed in `scenarios/pending.tsv`. Step B (§5), the per-class turn-on (gate G3) and the drills (gate G4) are designed, not built. Until a write class passes gate G3, the admin surfaces run at one site per goatnet ([ADR 1084](../adr/1084-block-64r-mgmt-repset-and-two-node-federation.md) D3); the intended placement is every site. Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md) and [ADR 1205](../adr/1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md), accepted together 2026-11-14. Execution and resume point: `island-mode-program.md`. Builds on ADR 1193 (revocations are absorbing; Proposed). §2 is the measurement before step A, against `USAREUR-AF/goatcore` main `2aa281381`, 2026-10-28.
 
 Any site of a goatnet that is cut off from the others must keep working fully —
 admitting people, enrolling machines, changing and revoking access — and merge cleanly
@@ -112,6 +112,26 @@ download and publish counters, and the per-site runtime tables above. These go i
 per-site database (`portal_local`, `console_local`) outside every repset.
 `vendor_topic_activity` has had no writer since `progress.go:233` and is dropped.
 `govern_meta` replicates, because its marker gates a one-time migration.
+
+### 3.3 The hub's authority over the other sites
+
+**Plain:** every site writes, so one site broken into could otherwise reach every other.
+The hub is the one site whose word is final ([ADR 1205](../adr/1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md));
+each mechanism below makes another site refuse what did not come from it.
+
+| Mechanism | Where | Scope | Status |
+|---|---|---|---|
+| Directives accepted only from the hub's replication origin; `sever_site`, `restore_site`, owner-site precedence, identity ownership (D1 to D7) | `goat_hub_directives` (`ops/postgres/spock/hub-authority/netbird.sql`), role `spock-hub-directives` | In 1.0 | built; proven by the harness; applied by no play until PR #596 |
+| The first site declares itself the hub at standup, and a joining site inherits the value; the hub's name is read only from each site's configuration (D8) | `goatbuilder standup` writes `goatnet_hub_site` beside `goatnet_founder`; the config preflight refuses a joiner that declares no hub or another; the D10 guard reads the Postgres setting `goat.hub_site`, written by Ansible | In 1.0 | designed, not built |
+| A platform-admin grant is made only at the hub (D10) | grant paths refuse at a non-hub site; a trigger on Kratos `identities` refuses a replicated or local row adding `PLATFORM-ADMIN` whose origin is not the hub, logs it in `goat_ceiling_refused`, and alerts; an alert on `netbird_admin_reconcile_stray_admins`; the sponsor ceiling at a non-hub site stops at `iam-admin` | In 1.0 (gate row I4) | designed, not built |
+| A join or rejoin needs an applied `admit_site` (or a later `restore_site`) for the joining node (D9) | a new directive kind; `spock-mesh-peering` checks the local applied-directives table before `spock.sub_create` from a node; `standup` and `join-node` for a joining site stop before their Spock step and print the hub's command; the role refuses a non-empty `spock_mesh_forward_origins` | After 1.0 | designed, not built |
+| After a sever, the hub lists the rows whose current version the severed node committed since a stated time, by commit origin, and revokes them (D11) | a function installed with the hub-authority SQL, run at the hub | After 1.0 | designed, not built |
+
+A harness scenario proves each part before it is built: a platform-admin grant at B
+refused at A (gate row I4 of [`goatbuilder-v1-gate.md`](goatbuilder-v1-gate.md)), a join
+with no `admit_site` refused, and the post-sever list naming exactly the rows B wrote.
+The sever-and-restore drill on a standing goatnet is listed under "Fast follow after 1.0"
+in the gate file.
 
 ---
 
