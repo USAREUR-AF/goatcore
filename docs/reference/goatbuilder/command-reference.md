@@ -288,7 +288,8 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 | `--half-out <HALF_OUT>` | init --over-ssh --side edge: the file the edge half is written to |  |
 | `--edge-half <EDGE_HALF>` | init --over-ssh --side core: the edge half the edge driver wrote |  |
 | `--edge-half-sha256 <EDGE_HALF_SHA256>` | init --over-ssh --side core: the edge half's sha256 as the edge driver printed it, read from there and confirmed here (the full digest, or its first 32 hex digits; spaces and dashes are ignored) |  |
-| `--expect-commit <EXPECT_COMMIT>` | With --side edge: the commit the edge driver's checkout must be at, as a hand-off object names it. The edge driver's run is not built yet: refused with GB-267 (docs/design/federation-two-drivers.md) |  |
+| `--expect-commit <EXPECT_COMMIT>` | With --side edge: the commit the edge driver's checkout must be at, as a hand-off object names it. The run refuses a checkout at another commit or with changes (GB-278) |  |
+| `--expect <EXPECT>` | With --side edge: a file the controller produced, under the edge driver's <work> or its checkout, and the sha256 the hand-off names. The run refuses a file that is not there or has another digest (GB-278) |  |
 | `--plan <PLAN>` | deploy: the plan to execute (default <work>/plan.json) |  |
 | `--approve-plan <APPROVE_PLAN>` | deploy: approve exactly this plan hash, after reading the plan. --yes never approves a plan |  |
 | `--confirm` | Phases 5, 6 and 10: confirm the keys, the agreement digest and the admission here, at this terminal, instead of stopping for them by hand. The default when both stdin and stderr are a terminal |  |

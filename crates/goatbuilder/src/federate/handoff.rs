@@ -10,15 +10,21 @@
 //! in its text. A two-driver run at any later phase that needs the edge (3,
 //! 11 to 14) is refused before acting (GB-267), because its object differs
 //! (phase 3's result is the edge half, 11 to 13 carry files, 14 binds by id)
-//! and is not built; so is `--side edge`.
+//! and is not built.
 //!
 //! Built for phase 1: `import` ([`import`]) checks the edge result against
 //! the confirm code the edge driver printed, places it under
 //! `<work>/handoff/1/` and journals its sha256 as an `operator-step` on phase
 //! 1; the controller's `--from 1` then hashes it again ([`check_imported`]),
 //! runs phase 1's core half (preflight `--side core`) and joins the two sides'
-//! results ([`join_phase_1`]). Not built: the edge driver's run, the import and
-//! core half of phase 2 and later, and `status` showing the object.
+//! results ([`join_phase_1`]). The edge driver's run of phase 1 (`--side edge
+//! --from 1 --to 1 --expect-commit <commit>`, [`edge_run`]) refuses a
+//! checkout at another commit or with changes, and a carried file
+//! (`--expect <file>=<sha256>`) that is missing or differs (GB-278); it runs
+//! preflight's edge checks into `<work>/handoff/1/edge.json` and prints the
+//! way back ([`way_back`]) with the confirm code. Not built: the edge
+//! driver's run, the import and core half of phase 2 and later, and `status`
+//! showing the object.
 
 use crate::Check;
 use std::path::Path;
@@ -103,16 +109,176 @@ pub fn two(drivers: Option<&str>) -> bool {
     drivers == Some("two")
 }
 
-/// The flag the hand-off object's edge `command` carries beside `--side
-/// edge`, accepted so that the command parses with the binary that printed
-/// it, and refused with the rest of the edge driver's run until it is built.
+/// The flags the hand-off object's edge `command` carries beside `--side
+/// edge`: the edge driver's run ([`edge_run`]).
 #[derive(clap::Args, Debug, Default, Clone)]
 pub struct EdgeRunArgs {
     /// With --side edge: the commit the edge driver's checkout must be at,
-    /// as a hand-off object names it. The edge driver's run is not built
-    /// yet: refused with GB-267 (docs/design/federation-two-drivers.md).
+    /// as a hand-off object names it. The run refuses a checkout at another
+    /// commit or with changes (GB-278).
     #[arg(long, value_name = "COMMIT")]
     pub expect_commit: Option<String>,
+    /// With --side edge: a file the controller produced, under the edge
+    /// driver's <work> or its checkout, and the sha256 the hand-off names.
+    /// The run refuses a file that is not there or has another digest (GB-278).
+    #[arg(long, value_name = "FILE=SHA256")]
+    pub expect: Vec<String>,
+}
+
+/// The edge driver's checkout or carried files are not the controller's.
+pub const NOT_THE_CONTROLLERS: &str = "GB-278";
+
+/// The phases whose edge driver's run is built.
+pub fn edge_half_built(n: u32) -> bool {
+    n == 1
+}
+
+/// What the edge driver's run carries into the phase loop: the commit its
+/// checkout was checked at, and the result file its phase writes.
+#[derive(Clone, Debug)]
+pub struct EdgeRun {
+    pub commit: String,
+    pub result: std::path::PathBuf,
+}
+
+fn not_the_controllers(why: String) -> anyhow::Error {
+    goat_errors::coded(
+        NOT_THE_CONTROLLERS,
+        format!("{why}; nothing ran on the edge"),
+    )
+    .into()
+}
+
+/// The checks before the edge driver runs phase `from` (= `to`) of a
+/// two-driver peering: one phase, built, with the controller's commit
+/// checked out clean and every carried file as the hand-off names it. A
+/// carried file is read under `work` when it is there, else in the checkout.
+pub fn edge_run(
+    repo: &Path,
+    a: &EdgeRunArgs,
+    from: u32,
+    to: u32,
+    work: &Path,
+) -> anyhow::Result<EdgeRun> {
+    if from != to {
+        return Err(goat_errors::coded("GB-189", format!("--side edge runs one phase, as a hand-off names it: --from N --to N (given --from {from} --to {to})")).into());
+    }
+    if !edge_half_built(from) {
+        return Err(goat_errors::coded(NOT_BUILT, format!("--side edge: the edge driver's run of phase {from} is not built yet; only phase 1's is (docs/design/federation-two-drivers.md); run the peering with one driver for now")).into());
+    }
+    let Some(expect) = a.expect_commit.as_deref() else {
+        return Err(not_the_controllers("--side edge needs --expect-commit <commit>, the commit the controller's hand-off names: without it the edge driver cannot know its checkout is the controller's".into()));
+    };
+    let commit = match checkout(repo) {
+        Ok(c) => c,
+        Err(Checkout::NotGit) => return Err(not_the_controllers(format!("{} is not a git checkout, so it cannot be shown to be the controller's commit {expect}", repo.display()))),
+        Err(Checkout::NoCommit) => return Err(not_the_controllers(format!("{} has no commit yet; the controller's hand-off names {expect}", repo.display()))),
+        Err(Checkout::Changed(files)) => return Err(not_the_controllers(format!("the edge driver's checkout has changes, so it is not the controller's commit {expect}: {}", files.join(", ")))),
+    };
+    if !commit.eq_ignore_ascii_case(expect.trim()) {
+        return Err(not_the_controllers(format!("the edge driver's checkout is at {commit}, and the controller's hand-off names {expect}: check out that commit, then run the same command again")));
+    }
+    for e in &a.expect {
+        let Some((file, want)) = e.split_once('=') else {
+            return Err(goat_errors::coded(
+                "GB-189",
+                format!("--expect takes <file>=<sha256>, as a hand-off names it, not '{e}'"),
+            )
+            .into());
+        };
+        let rel = Path::new(file);
+        if file.is_empty()
+            || rel.is_absolute()
+            || rel
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(not_the_controllers(format!("--expect {file}: a carried file is a path under <work> or the checkout, as the hand-off names it")));
+        }
+        let want = want.trim().trim_start_matches("sha256:").to_lowercase();
+        let at = [work.join(rel), repo.join(rel)]
+            .into_iter()
+            .find(|p| p.is_file());
+        let Some(at) = at else {
+            return Err(not_the_controllers(format!("the carried file {file} is neither under {} nor in the checkout: copy it from the controller's <work> to the same path here", work.display())));
+        };
+        let bytes = std::fs::read(&at).map_err(|e| {
+            not_the_controllers(format!(
+                "the carried file {} cannot be read ({e})",
+                at.display()
+            ))
+        })?;
+        let got = hex_sha256(&bytes);
+        if got != want {
+            return Err(not_the_controllers(format!("the carried file {} has sha256 {got}, and the hand-off names {want}: copy it from the controller again", at.display())));
+        }
+    }
+    Ok(EdgeRun {
+        commit,
+        result: work.join(result_of(from)),
+    })
+}
+
+/// The edge driver's way back from phase `n`: the object (`run_on`
+/// `controller`, no `command`) with the result it wrote, its sha256 and the
+/// confirm code, which `import` carries filled in; and the text, which names
+/// the same argvs.
+pub fn way_back(with: &str, n: u32, e: &EdgeRun) -> anyhow::Result<Stop> {
+    let bytes = std::fs::read(&e.result).map_err(|err| {
+        anyhow::anyhow!(
+            "the edge result {} was not written ({err})",
+            e.result.display()
+        )
+    })?;
+    let sha = hex_sha256(&bytes);
+    let code = sha.as_bytes()[..CODE_DIGITS]
+        .chunks(4)
+        .map(|c| String::from_utf8_lossy(c).to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let words = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let phase = n.to_string();
+    let result = result_of(n);
+    let import = words(&[
+        "goatbuilder",
+        "federate",
+        "import",
+        with,
+        &phase,
+        "{result}",
+        "--sha256",
+        &code,
+    ]);
+    let then = words(&["goatbuilder", "federate", with, "--from", &phase]);
+    let object = serde_json::json!({
+        "phase": n,
+        "code": WAITING,
+        "run_on": "controller",
+        "command": null,
+        "commit": e.commit,
+        "carry": [],
+        "result": result,
+        "result_path": e.result.display().to_string(),
+        "result_sha256": format!("sha256:{sha}"),
+        "confirm_code": code,
+        "import": import,
+        "then": then,
+    });
+    let text = format!(
+        "{WAITING}: phase {n}'s edge half is done: the run is waiting on the controller.\nThe confirm code: {code}\nBring {} to the controller; never send this code with the file. There, run:\n  {}\nthen:\n  {}",
+        e.result.display(),
+        shell_line(&import),
+        shell_line(&then),
+    );
+    Ok(Stop {
+        object,
+        rows: vec![Check {
+            name: "handoff".into(),
+            ok: true,
+            detail: text,
+            fix: None,
+        }],
+    })
 }
 
 /// `goatbuilder federate import <partner> <phase> <result> --sha256 <code>`:
@@ -426,15 +592,6 @@ pub fn import_not_built(a: &ImportArgs) -> anyhow::Error {
     .into()
 }
 
-/// The refusal of `--side edge` while the edge driver's run is not built.
-pub fn edge_side_not_built() -> anyhow::Error {
-    goat_errors::coded(
-        NOT_BUILT,
-        "--side edge: the edge driver's run of a two-driver peering is not built yet (docs/design/federation-two-drivers.md); run the peering with one driver for now",
-    )
-    .into()
-}
-
 /// What the controller prints at a hand-off stop: the object, and the rows
 /// of the text a person reads.
 pub struct Stop {
@@ -445,6 +602,31 @@ pub struct Stop {
 /// The checkout's commit, when it is a git checkout with nothing uncommitted;
 /// otherwise the refusal, naming each file with changes.
 pub fn clean_commit(repo: &Path) -> Result<String, Check> {
+    let refuse = |detail: String| {
+        Check {
+        name: "handoff".into(),
+        ok: false,
+        detail,
+        fix: Some("commit every file named, then run the same command again: the hand-off pins the edge driver's checkout to the controller's commit".into()),
+    }
+    };
+    match checkout(repo) {
+        Ok(c) => Ok(c),
+        Err(Checkout::NotGit) => Err(refuse(format!("{DIRTY}: {} is not a git checkout, so no hand-off can name the commit the edge driver must be at", repo.display()))),
+        Err(Checkout::Changed(files)) => Err(refuse(format!("{DIRTY}: the controller's checkout has changes, so no hand-off is given: the edge driver could not be pinned to them. Commit each: {}", files.join(", ")))),
+        Err(Checkout::NoCommit) => Err(refuse(format!("{DIRTY}: {} has no commit yet", repo.display()))),
+    }
+}
+
+/// Why a checkout is not one clean commit.
+enum Checkout {
+    NotGit,
+    Changed(Vec<String>),
+    NoCommit,
+}
+
+/// The checkout's commit, when it is a git checkout with nothing uncommitted.
+fn checkout(repo: &Path) -> Result<String, Checkout> {
     let git = |args: &[&str]| {
         crate::runner::Cmd::new("git")
             .arg("-C")
@@ -455,27 +637,20 @@ pub fn clean_commit(repo: &Path) -> Result<String, Check> {
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
     };
-    let refuse = |detail: String| {
-        Check {
-        name: "handoff".into(),
-        ok: false,
-        detail,
-        fix: Some("commit every file named, then run the same command again: the hand-off pins the edge driver's checkout to the controller's commit".into()),
-    }
-    };
     let Some(status) = git(&["status", "--porcelain", "--untracked-files=all"]) else {
-        return Err(refuse(format!("{DIRTY}: {} is not a git checkout, so no hand-off can name the commit the edge driver must be at", repo.display())));
+        return Err(Checkout::NotGit);
     };
-    let files: Vec<&str> = status.lines().filter_map(|l| l.get(3..)).collect();
+    let files: Vec<String> = status
+        .lines()
+        .filter_map(|l| l.get(3..))
+        .map(String::from)
+        .collect();
     if !files.is_empty() {
-        return Err(refuse(format!("{DIRTY}: the controller's checkout has changes, so no hand-off is given: the edge driver could not be pinned to them. Commit each: {}", files.join(", "))));
+        return Err(Checkout::Changed(files));
     }
     match git(&["rev-parse", "HEAD"]) {
         Some(c) if !c.trim().is_empty() => Ok(c.trim().to_string()),
-        _ => Err(refuse(format!(
-            "{DIRTY}: {} has no commit yet",
-            repo.display()
-        ))),
+        _ => Err(Checkout::NoCommit),
     }
 }
 
@@ -539,7 +714,7 @@ pub fn stop(with: &str, n: u32, commit: &str) -> Stop {
         Check {
             name: "note".into(),
             ok: true,
-            detail: "the edge driver's run is not built yet, nor the import and core half of any phase after 1 (docs/design/federation-two-drivers.md, What has to be built); this stop is, and phase 1's import and core half are".into(),
+            detail: "phase 1's edge driver's run, import and core half are built; phase 2's and later are not (docs/design/federation-two-drivers.md, What has to be built)".into(),
             fix: None,
         },
     ];

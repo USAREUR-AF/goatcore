@@ -984,6 +984,11 @@ gb-297-cause-2 = the clock is synchronized but still slewing a large step, or th
 gb-307-title = an environment declares converger pull-agent, and the pull converger is not built
 gb-307-what = goatbuilder.yaml declares converger: pull-agent for this environment, one of its sites or one of their classes. No pull converger is built: no agent on a machine fetches and applies its class's release. The only converger on real hosts is push, and pushing to machines declared to pull would change what the declaration means once pull is built. So doctor refuses the environment, and deploy (its dry run too), release's deploy rungs, fastlane's deploy and rollback refuse it before any step. deploy --verify-only reads and is not refused; validate accepts the value, and --mock converges it on a fixture.
 gb-307-cause-1 = the environment, a site or a class was declared pull-agent ahead of the pull converger
+gb-278-title = the edge driver's checkout or carried files are not the controller's
+gb-278-what = On a two-driver peering (drivers: two), the edge driver runs a phase's edge half with the command the controller's hand-off names: `goatbuilder federate <peering> --side edge --from <N> --to <N> --expect-commit <commit>`, with one `--expect <file>=<sha256>` per file the controller carried. The edge driver refused to run: --expect-commit was not given; its checkout is not a git checkout, has no commit, has changes, or is at another commit than the one named; or a carried file is not under its <work> or in its checkout, or has another sha256. Nothing ran on the edge.
+gb-278-cause-1 = the edge driver's checkout was not updated to the controller's commit, or has local changes
+gb-278-cause-2 = the command was typed without the hand-off's --expect-commit
+gb-278-cause-3 = a carried file was not copied from the controller's <work>, or was changed on the way
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened
