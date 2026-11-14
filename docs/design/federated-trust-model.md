@@ -157,7 +157,10 @@ Three mechanisms:
    published in the compose overlay + a serving profile; verify at deploy. The end-to-end path
    exercised so far is the bootstrap + trust-sync below, which does not depend on it.)
 2. **Bootstrap** — a one-time `spire-server bundle set` per partner that provides `bundle_b64`
-   (the out-of-band first exchange `https_spiffe` needs before it can self-refresh).
+   (the out-of-band first exchange `https_spiffe` needs before it can self-refresh). For a
+   cross-sovereign peering, goat-peering-spire's phase 13 sets it only when the server holds no
+   bundle for the partner, or the exchanged file's `spiffe_sequence` is newer, so a rerun never
+   replaces a bundle the refresh already advanced (`roles/goat-peering-spire/tasks/bundle-import.yml`).
 3. **Edge trust + rotation survival** — `spire-trust-sync` writes, per peering declared in
    `spire_trust_sync_federated_edges`, **own (`bundle show`) ⊕ that one partner
    (`bundle list -id <trust domain>`)** into that peering's EDGE router trust file, every tick;
