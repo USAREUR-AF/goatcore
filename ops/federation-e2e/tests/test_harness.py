@@ -13,6 +13,10 @@
 3. lib/handoff.py on the two-driver contract's own hand-off object: it reads a stop's hand-off
    and an edge run's way back, refuses a confirm code that is not the result's, fills only
    whole-element tokens, and finds each command quoted in the person's text.
+4. lib/srctree.sh on a worktree that has just fetched a commit no ref holds, its objects
+   loose: the clone build() makes is checked out at that commit and holds every object of it,
+   so the commit stays readable after the source repository drops those loose objects; and a
+   clone an earlier run left without a checkout is made again, not reused.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -239,7 +243,56 @@ table inet goat_host_firewall {
         check(run("198.51.100.10", "eth0") is None, "fwdeclared: a file without the goat_host_firewall table was read as a rule set")
 
 
+def srctree_checks():
+    """src_tree: the source tree of the commit under test holds every object of it."""
+    with tempfile.TemporaryDirectory() as d:
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
+                   GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.org", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.org")
+        git = lambda *a, cwd=d: subprocess.run(["git", *a], cwd=cwd, env=env, capture_output=True, text=True)
+        git("init", "-q", "-b", "main", "upstream")
+        up = os.path.join(d, "upstream")
+        git("commit", "-q", "--allow-empty", "-m", "one", cwd=up)
+        git("clone", "-q", "--bare", "upstream", "main.git")
+        common = os.path.join(d, "main.git")
+        git("worktree", "add", "-q", os.path.join(d, "wt"), "main", cwd=common)
+        write_text(os.path.join(up, "f"), "the commit under test\n")
+        git("add", "f", cwd=up)
+        git("commit", "-q", "-m", "two", cwd=up)
+        sha = git("rev-parse", "HEAD", cwd=up).stdout.strip()
+        # Fetched into the worktree by sha alone: its objects are loose, and no ref holds them.
+        git("fetch", "-q", up, sha, cwd=os.path.join(d, "wt"))
+        loose = [os.path.join(common, "objects", o[:2], o[2:]) for o in
+                 git("rev-list", "--objects", sha, "--not", "main", cwd=common).stdout.split()[::2] if len(o) == 40]
+        check(loose and all(os.path.exists(p) for p in loose), f"srctree: the fetched commit's objects are not loose in the source ({loose})")
+
+        def tree(dest):
+            return subprocess.run(["bash", "-c", '. "$1"; src_tree "$2" "$3" "$4"', "_", os.path.join(ROOT, "lib", "srctree.sh"), common, sha, dest],
+                                  env=env, capture_output=True, text=True)
+
+        def holds(dest):
+            head = git("rev-parse", "-q", "--verify", "HEAD", cwd=dest).stdout.strip() if os.path.isdir(dest) else ""
+            readable = os.path.isdir(dest) and git("cat-file", "-e", f"{sha}^{{tree}}", cwd=dest).returncode == 0
+            return head == sha and readable and os.path.exists(os.path.join(dest, "f"))
+
+        dest = os.path.join(d, "src", sha)
+        p = tree(dest)
+        check(p.returncode == 0 and holds(dest), f"srctree: the clone is not checked out at the fetched commit: {p.stderr.strip()}")
+        # The source drops the commit's loose objects, as git prune or gc may: the clone still has them.
+        for o in loose:
+            os.remove(o)
+        check(os.path.isdir(dest) and git("cat-file", "-e", f"{sha}^{{tree}}", cwd=dest).returncode == 0,
+              "srctree: the clone lost the commit's tree when the source dropped its loose objects (it borrows objects it does not hold)")
+
+        # A clone an earlier run left with no checkout is made again, not reused.
+        git("fetch", "-q", up, sha, cwd=os.path.join(d, "wt"))
+        broken = os.path.join(d, "src", "broken")
+        git("clone", "-q", "--no-checkout", common, broken)
+        p = tree(broken)
+        check(p.returncode == 0 and holds(broken), f"srctree: an earlier clone with no checkout was reused: {p.stderr.strip()}")
+
+
 catalog_checks()
+srctree_checks()
 verdict_checks()
 fwdeclared_checks()
 handoff_checks()

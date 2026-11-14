@@ -38,6 +38,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
 FE2E_HOME="${FE2E_HOME:-$HOME/.cache/fe2e}"
+# shellcheck source=lib/srctree.sh
+. "$HERE/lib/srctree.sh"
 # Builds, clones and the linker write temporary files; keep them on FE2E_HOME's disk, not a
 # shared /tmp that other work can fill.
 mkdir -p "$FE2E_HOME/tmp"; export TMPDIR="$FE2E_HOME/tmp"
@@ -73,12 +75,8 @@ build() { # $1 sha: the tree, the binaries, the republisher image; prints nothin
   src="$FE2E_HOME/src/$sha"; bin="$FE2E_HOME/bin/$sha"; tag="fe2e-republisher:${sha:0:12}"
   mkdir -p "$FE2E_HOME/src" "$FE2E_HOME/bin" "$FE2E_HOME/target" "$FE2E_HOME/locks"
   lock "$FE2E_HOME/locks/build"
-  if [ ! -d "$src/.git" ]; then
-    common="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)"
-    rm -rf "$src"
-    git clone -q --shared --no-checkout "$common" "$src"
-    GIT_LFS_SKIP_SMUDGE=1 git -C "$src" checkout -q --detach "$sha"
-  fi
+  common="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)"
+  src_tree "$common" "$sha" "$src" || { unlock "$FE2E_HOME/locks/build"; die "no tree for ${sha:0:12} at $src"; }
   if [ ! -x "$bin/goat" ] || [ ! -x "$bin/goatbuilder" ]; then
     say "build goat and goatbuilder at ${sha:0:12}"
     ( cd "$src/crates" && CARGO_TARGET_DIR="$FE2E_HOME/target" nice cargo build --release --locked -p goat-cli -p goatbuilder >&2 ) \
@@ -121,12 +119,8 @@ directory_build() { # $1 saltlick sha: its tree and its image; prints nothing on
   repo="$(saltlick_repo)"; src="$FE2E_HOME/saltlick/$sha"; tag="fe2e-saltlick:${sha:0:12}"
   mkdir -p "$FE2E_HOME/saltlick" "$FE2E_HOME/locks"
   lock "$FE2E_HOME/locks/build-saltlick"
-  if [ ! -d "$src/.git" ]; then
-    common="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)"
-    rm -rf "$src"
-    git clone -q --shared --no-checkout "$common" "$src"
-    git -C "$src" checkout -q --detach "$sha"
-  fi
+  common="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)"
+  src_tree "$common" "$sha" "$src" || { unlock "$FE2E_HOME/locks/build-saltlick"; die "no saltlick tree for ${sha:0:12} at $src"; }
   if ! docker image inspect "$tag" >/dev/null 2>&1; then
     say "build the saltlick image at ${sha:0:12}"
     docker build -q -t "$tag" "$src" >/dev/null \
