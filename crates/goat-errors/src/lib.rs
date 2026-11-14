@@ -671,6 +671,19 @@ mod tests {
     }
 
     #[test]
+    fn an_unpublished_recipient_key_is_recognised_from_goats_words() {
+        // `goat access key` bails with this text (crates/goat-cli/src/cmd/access.rs);
+        // no GoatError variant carries it, so the pattern is the only way in.
+        let text = "recipient key for 0123456789abcdef0123456789abcdef is NOT published — \
+                    no persisted recipient cert for this anchor";
+        let i = interpret(text);
+        assert_eq!(i.hits.iter().map(|h| h.code.as_str()).collect::<Vec<_>>(), vec!["E_RECIPIENT_KEY_UNPUBLISHED"]);
+        assert_eq!(i.hits[0].layer, Layer::Pattern);
+        // The success line matches no pattern (a lexical guess is all it can get).
+        assert!(interpret("recipient key for 0123 is PUBLISHED").unrecognised);
+    }
+
+    #[test]
     fn every_locale_resolves_every_entry_without_a_raw_key() {
         let cat = catalog();
         let locs = locales();
