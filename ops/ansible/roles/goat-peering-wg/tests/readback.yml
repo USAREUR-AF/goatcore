@@ -1,0 +1,14 @@
+---
+# Runs tasks/readback.yml on localhost against the stand-in wg and ip that
+# test-readback.sh puts first on PATH. Its values come as extra vars.
+- name: goat-peering-wg read-back, against a stand-in interface
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  environment:
+    PATH: "{{ stand_in_bin }}:{{ ansible_env.PATH | default(lookup('env', 'PATH')) }}"
+  vars:
+    ansible_date_time: {epoch: "{{ now_epoch }}"}
+  tasks:
+    - name: The read-back
+      ansible.builtin.include_tasks: ../tasks/readback.yml
