@@ -417,14 +417,17 @@ class Fabric:
         def ossl(*args):
             subprocess.run(["openssl"] + list(args), check=True, capture_output=True)
 
-        for side in (self.us, self.them):
+        # The CAs and workload SVIDs are made once per fabric: start() runs once per side's
+        # run, and a server's root does not change between two runs of one session.
+        made = os.path.exists(os.path.join(d, "leaf-%s.pem" % self.them))
+        for side in () if made else (self.us, self.them):
             ossl("req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
                  "-keyout", os.path.join(d, side + "-ca.key"), "-out", os.path.join(d, side + "-ca.pem"),
                  "-days", "2", "-subj", "/CN=%s spire ca" % side,
                  "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
         td = {p["sovereign_id"]: p["trust_domain"] for p in self.ag["parties"]}
         # One workload SVID per side, issued by that side's CA in its trust domain.
-        for side in (self.us, self.them):
+        for side in () if made else (self.us, self.them):
             ext = os.path.join(d, "leaf-%s.ext" % side)
             with open(ext, "w") as f:
                 f.write("subjectAltName=URI:%s/federation-acceptance\n" % td[side])
