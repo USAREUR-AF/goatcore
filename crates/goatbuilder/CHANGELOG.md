@@ -228,6 +228,15 @@ instead of going on to build nothing, and a sha that is not 40 lower-case
 hex characters is refused before anything is removed: an empty one would
 have named the directory of every cached tree (#638).
 
+#### Fixed: the goat client's doctor tests write their fake netbird from a child process
+
+Two tests of `goat doctor` failed at random: each wrote a fake `netbird`
+script and ran it at once, and when another test thread forked while the
+script was still open for writing, running it failed with ETXTBSY. A test
+helper now writes the script and sets its mode from a short-lived child
+process, so the test process never holds it open. Only test code changes
+(#314).
+
 #### Fixed: an in-process federation verb no longer writes the process environment
 
 When goatbuilder runs a federation verb in process, phase 3's `init` used
@@ -255,6 +264,13 @@ A pull request adds its goatbuilder changelog entry as a file in
 entries into a release. The index row of an ADR above 1234 is
 rendered from the ADR's own header by `ops/release/adr_index.py`, so adding
 an ADR edits no shared file. `docs-guards` checks both (#623, #636).
+
+#### Changed: the pull request template drops its co-author trailer line
+
+The pull request template no longer carries a checklist line about
+co-author trailers added by tooling. The rule is unchanged: ADR 0109 still
+states it, and `pr-readiness` still refuses such a trailer in a commit
+message (#315).
 
 #### Fixed: standup passes the trunk and the mirror token to its phases as run state
 
