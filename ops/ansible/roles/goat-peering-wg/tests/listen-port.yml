@@ -1,0 +1,19 @@
+---
+# Runs tasks/listen_port.yml on its own, for tests/listen-port.sh. The link
+# environment is a fixture file, `wg` is a stub on PATH that reports whatever listen
+# port the case sets, and the restart handler only records that it was notified.
+- name: the recorded listen port follows the configuration, or the run refuses
+  hosts: localhost
+  gather_facts: false
+  vars:
+    peering_wg_interface: wg-fed0
+    peering_wg_service: goat-peering-wg@wg-fed0
+  tasks:
+    - name: run the guard
+      ansible.builtin.import_tasks: ../tasks/listen_port.yml
+  handlers:
+    - name: Restart goat peering wg
+      ansible.builtin.copy:
+        dest: "{{ restart_marker }}"
+        content: "restarted\n"
+        mode: "0600"

@@ -16,7 +16,13 @@ peering_wg_enabled: false
 # The interface `[transport] interface` names in federation.toml. `goat federate init`
 # reads its key from here, so the two have to be the same string. <= 15 chars (IFNAMSIZ).
 peering_wg_interface: wg-fed0
-peering_wg_listen_port: 51820
+# The local UDP port wg-fed0 listens on. Not 51820: a PEERING-EDGE is a peer of its
+# own goatnet's NetBird mesh, and NetBird's wt0 holds 51820 on every such host. The
+# port the partner dials is separate (the forwarder's peering_port, or the endpoint in
+# the package) and can stay 51820. 51823 is the first port goatbuilder allocates
+# (crates/goatbuilder/src/federate/alloc.rs). A link already up keeps its port: the
+# role refuses to move it (tasks/listen_port.yml).
+peering_wg_listen_port: 51823
 
 # --- from the agreement, through federation-<them>-transport.yml -------------
 peering_wg_kind: "{{ goat_peering_transport_kind | default('') }}"

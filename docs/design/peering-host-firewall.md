@@ -82,8 +82,8 @@ entitles nothing else inbound from the mesh: platform admins reach it on SSH, wh
 **One UDP port, one owner.** The mesh port and every peering's tunnel, IKE and carrier ports must
 differ on one host; the renderer refuses an overlap (GB-210). The mesh rule admits any source, so
 an overlap would void the tunnel rule's source restriction, and two peerings on one port cannot
-both work. goat-peering-wg and a mesh client both default to UDP 51820, which is the collision the
-9 November run hit.
+both work. goat-peering-wg and a mesh client both defaulted to UDP 51820, which is the collision the
+9 November run hit; goat-peering-wg now defaults to 51823 (see `peering-forwarder.md` §3).
 
 **Several peerings on one edge.** Each peering's run stores its entry on the host
 (`/etc/goat-host-firewall/peerings/<if>.json`), and the edge's ruleset admits every peering stored

@@ -34,7 +34,8 @@ peering_forwarder_peerings: []
 peering_forwarder_peering_defaults:
   interface: wg-carry0          # <= 15 chars (IFNAMSIZ)
   peering_port: 51820           # public UDP port the partner dials
-  edge_peering_port: 51820      # the edge's wg-fed0 listen port, the DNAT target
+  edge_peering_port: 51823      # the edge's wg-fed0 listen port, the DNAT target; equals
+                                # goat-peering-wg's peering_wg_listen_port (51820 is NetBird's)
   carrier_port: 51821           # public UDP port the edge dials for the carrier
   carrier_local_ip: 169.254.30.0
   carrier_remote_ip: 169.254.30.1

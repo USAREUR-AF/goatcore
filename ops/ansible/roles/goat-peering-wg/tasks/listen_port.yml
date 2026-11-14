@@ -1,0 +1,64 @@
+---
+# THE LISTEN PORT IN THE LINK ENVIRONMENT FOLLOWS THE CONFIGURATION, OR THE RUN REFUSES.
+#
+# Phase 2 writes the link environment once (force: false, so a rerun cannot take away
+# what phase 11 wrote). So a changed peering_wg_listen_port used to have no effect: the
+# file kept the old port, and a phase 2 that failed on a port another process holds
+# (NetBird's 51820) failed the same way on every rerun.
+#
+# Two cases, told apart by what the interface itself listens on:
+#   - The link never came up on the recorded port (the interface is missing, or
+#     listens on another port). Nothing was measured from it, so this run writes the
+#     configured port into the file and restarts the link.
+#   - The link is up on the recorded port. Phase 3 may have measured that port into the
+#     signed package, and a forwarder relays to it, so moving it here would cut the
+#     peering with nothing logged. Refuse, and say how to keep it or move it.
+- name: peering-wg | listen port | read this interface's link environment
+  ansible.builtin.slurp:
+    src: "{{ peering_wg_env_path }}"
+  register: _pw_own_env_raw
+  failed_when: false
+
+- name: peering-wg | listen port | the port the link environment records
+  ansible.builtin.set_fact:
+    _pw_recorded_port: >-
+      {%- set port = namespace(v='') -%}
+      {%- if _pw_own_env_raw.content is defined -%}
+      {%-   for line in (_pw_own_env_raw.content | b64decode).splitlines() if line.startswith('WG_LISTEN_PORT=') -%}
+      {%-     set port.v = line.split('=', 1)[1] | trim -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ port.v }}
+
+- name: peering-wg | listen port | the port the interface listens on now
+  ansible.builtin.command: "wg show {{ peering_wg_interface }} listen-port"
+  register: _pw_live_port
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - _pw_recorded_port | length > 0
+    - _pw_recorded_port != (peering_wg_listen_port | string)
+
+- name: peering-wg | listen port | a link that is up keeps its port
+  ansible.builtin.assert:
+    that: (_pw_live_port.stdout | default('') | trim) != _pw_recorded_port
+    fail_msg: >-
+      goat-peering-wg refuses: {{ peering_wg_interface }} is up and listens on UDP
+      {{ _pw_recorded_port }}, which {{ peering_wg_env_path }} records, and this run sets
+      peering_wg_listen_port to {{ peering_wg_listen_port }}. Moving the port of a running
+      link cuts the peering: the package from phase 3 and the forwarder's
+      edge_peering_port name the old port. To keep the link, set peering_wg_listen_port:
+      {{ _pw_recorded_port }} in group_vars/<peering>_edge/. To move it on purpose, change
+      the forwarder's edge_peering_port to the same port, stop the link
+      (systemctl stop {{ peering_wg_service }}), and run phase 2 again; without a
+      forwarder, the partner's endpoint changes too, so redo the peering from phase 3.
+  when: _pw_live_port is not skipped
+
+- name: peering-wg | listen port | a link that never came up takes the configured port
+  ansible.builtin.lineinfile:
+    path: "{{ peering_wg_env_path }}"
+    regexp: '^WG_LISTEN_PORT='
+    line: "WG_LISTEN_PORT={{ peering_wg_listen_port }}"
+  notify: Restart goat peering wg
+  when: _pw_live_port is not skipped

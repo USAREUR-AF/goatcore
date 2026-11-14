@@ -72,6 +72,16 @@ either party, and either party may operate it.
 | **Our edge** | On `wg-fed0`: the peering port only from the carrier interface. On `wg-carry0`: nothing initiated from the forwarder | UDP 51821 to the forwarder only, plus the fabric TLS port inward to its own core, as without a forwarder |
 | **Partner edge** | Unchanged | UDP 51820 to the forwarder's public address |
 
+**Our edge's peering port is not 51820.** A PEERING-EDGE is a peer of its own goatnet's NetBird
+mesh, and NetBird's `wt0` holds UDP 51820 on it. So `wg-fed0` listens on 51823 by default
+(`peering_wg_listen_port` in `roles/goat-peering-wg`), and the forwarder's DNAT target
+(`edge_peering_port` in `roles/goat-peering-forwarder`) defaults to the same port. The public
+port the partner dials stays 51820, because the forwarder translates it. A changed
+`peering_wg_listen_port` takes effect on a rerun when the link never came up; when the link is up
+on the recorded port, the role refuses to move it (`tasks/listen_port.yml`). Status: built and
+tested (`ops/ansible/roles/goat-peering-wg/tests/listen-port.sh`); not yet run on a PEERING-EDGE
+with the new defaults.
+
 **When the partner sits behind carrier-grade NAT or a satellite terminal, its egress address
 changes**, so the forwarder's peering port stays open to any source. That is acceptable because
 WireGuard answers nothing that does not carry a valid handshake for the edge's key: an

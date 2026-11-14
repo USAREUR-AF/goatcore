@@ -283,6 +283,9 @@ jobs:
       - name: the forwarder play, run on a systemd host, converges and refuses
         timeout-minutes: 10
         run: bash ops/ci/test-peering-forwarder-role.sh
+      - name: the edge's recorded listen port follows the configuration, or the run refuses
+        timeout-minutes: 5
+        run: bash ops/ansible/roles/goat-peering-wg/tests/listen-port.sh
 
   peering-host-firewall:
     needs: changes
