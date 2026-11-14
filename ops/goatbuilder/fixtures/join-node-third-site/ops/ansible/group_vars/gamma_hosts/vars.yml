@@ -14,4 +14,5 @@ auth_audience: netbird
 auth_oidc_config_endpoint: https://auth.zagros.example.org/.well-known/openid-configuration
 kratos_secrets_cookie_env: ZAGROS_KRATOS_COOKIE
 site_enrollment_dns: netbird.zagros.example.org
+mesh_enrollment_url: https://netbird.zagros.example.org:443
 signal_federation_absent_reason: one management node at gamma holds every peer that signals through it
