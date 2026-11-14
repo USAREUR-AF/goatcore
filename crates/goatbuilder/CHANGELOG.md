@@ -207,6 +207,13 @@ under `-o json` and as a section of the plan page, and names the secrets
 posture probes it ran to read them. A secret is shown by its source only,
 never its value (#649).
 
+#### Added: site bootstrap installs the hub-directive applier at Spock sites that name a hub
+
+`site-bootstrap.yml` now applies the `spock-hub-directives` role (ADR 1205)
+at each site that replicates with Spock and sets `goatnet_hub_site`. A Spock
+site that names no hub gets a message and no applier. The play carries the
+tag `hub-directives` beside its phase tag, so it can be run alone. (#596)
+
 #### Added: a failed standup phase names the error in its output
 
 When a standup phase fails, its output (the log the run kept of it) is matched
@@ -226,6 +233,20 @@ it the way `goatbuilder verify` grades it, so the three agree about every
 machine. It reads only: no play runs and nothing is written. It exits 3 while
 any machine is pending or unknown. GB-026 is retired: no release after this one
 prints it (#648).
+
+#### Fixed: a back-out that stops after its plan says why, with its code
+
+`goatbuilder federate backout <partner>` printed its plan and then stopped
+without saying why when the survey refused (GB-221) or the slot recheck was
+blocked (GB-223). The plan was all that reached the terminal. The refusal, its code and
+its fix are now printed after the plan, as are a later stop's rows: an
+unconfirmed back-out, a removal play that failed (GB-225), and a back-out
+that did not converge. A `federate` dry run whose values could not be listed
+now says so after its plan, too.
+
+A run record (`<state>/runs/<id>/run.json`) of a run that stopped without an
+error now keeps the rows that stopped it, under `stop`, and
+`goatbuilder show <run>` prints them (#668).
 
 #### "Added: `goatbuilder update verify-release` verifies a downloaded goatbuilder release without installing it"
 

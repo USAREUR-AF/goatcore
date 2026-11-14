@@ -41,3 +41,38 @@ fn f5_a_failed_phase_carries_its_known_error_s_code_and_fix() {
     let p = goat_errors::phases::explain_phase("federate", "12").unwrap();
     assert!(d.contains(&format!("By hand: {}", p.by_hand)), "{d}");
 }
+
+/// The run record keeps the rows that stopped a run that ended without an
+/// error: a phase that failed returns its failure as rows, and those rows,
+/// with their code, are why it stopped (docs/design/goatbuilder-legibility.md,
+/// step 4).
+#[test]
+fn the_run_record_keeps_the_rows_that_stopped_the_run() {
+    let w = world();
+    w.run(&["hello-ally"]);
+    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+    w.run(&["hello-ally", "--from", "6"]);
+    std::fs::write(&w.fail_12, "").unwrap();
+    let (out, v) = w.run(&["hello-ally", "--from", "11"]);
+    assert!(!out.status.success(), "phase 12 fails: {}", says(&out));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let path = stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("run record: "))
+        .unwrap_or_else(|| panic!("no run record: {}", says(&out)));
+    let rec: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let stop = rec["stop"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no stop in the run record: {rec}"));
+    let failed = rows(&v, "failed");
+    assert!(!failed.is_empty(), "{}", says(&out));
+    for d in failed {
+        assert!(
+            stop.iter()
+                .any(|s| s["name"] == "failed" && s["detail"] == d),
+            "the failure row is kept: {d}\n{rec}"
+        );
+    }
+    assert!(stop.iter().all(|s| s["ok"] == false), "{rec}");
+}
