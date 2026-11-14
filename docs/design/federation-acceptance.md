@@ -374,7 +374,7 @@ own core and edge only: no counterparty surface, no shared credentials, no servi
 
 | Row | Here |
 |---|---|
-| `publish/outbound/<set>` | our sample is staged on our core with our challenge |
+| `publish/outbound/<set>` | our core's REST surface accepted both of our samples for the set (HTTP 2xx), each carrying our challenge; FAIL when it refused one, BLOCKED when it did not answer. A core declares no store on the staging name `release/**`, so a sample is never read back where it was staged: its arrival is the partner's `delivery/inbound/<set>` |
 | `delivery/outbound/<set>`, `persistence/outbound/<set>`, `republisher-boundary/outbound`, `out-of-lane/outbound`, `roundtrip/inbound/<their set>` | BLOCKED: observed by the partner. Each names the partner's row that observes it (`observed_by_peer`) |
 | `delivery/inbound/<set>` | the partner's sample arrived on our core with the partner's challenge, byte for byte; BLOCKED while nothing has arrived (they may not have run yet) |
 | `persistence/inbound/<set>` | only our core's own store subscribes to the key of the partner's second sample, and that sample reads back (§2.1). The scope is read when we read, not when they published |

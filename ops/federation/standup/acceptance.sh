@@ -288,6 +288,9 @@ get_ours()   { ours   "curl -s -m 8 -w '\n%{http_code}' $(printf %q "$FED_OURS_R
 get_theirs() { theirs "curl -s -m 8 -w '\n%{http_code}' $(printf %q "$FED_THEIRS_REST/$1")" | value; }
 put_ours()   { ours   "curl -s -m 8 -X PUT -d $(printf %q "$2") $(printf %q "$FED_OURS_REST/$1") -o /dev/null"; }
 put_theirs() { theirs "curl -s -m 8 -X PUT -d $(printf %q "$2") $(printf %q "$FED_THEIRS_REST/$1") -o /dev/null"; }
+# put_ours_code KEY VALUE: as put_ours, and prints the HTTP status our core's REST
+# surface answered (000 when it did not answer).
+put_ours_code() { ours "curl -s -m 8 -X PUT -d $(printf %q "$2") $(printf %q "$FED_OURS_REST/$1") -o /dev/null -w '%{http_code}'"; }
 sha()        { printf '%s' "$1" | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; } | cut -d' ' -f1; }
 
 # get_side ours|theirs KEY: sets GOT, GOT_RC (0 read, else unreadable) and GOT_ERR.
@@ -368,7 +371,7 @@ EOF
 fi
 [ -n "$DERIVED" ] && SESSION=derived
 session_lanes() {
-  local set sk key val i landed=0 waits ops_key ng_key gops gng
+  local set sk key val i landed=0 waits ops_key ng_key gops gng codes="" c1 c2
   sk="acceptance/$SESSION_ID"
   waits=$(( ${FED_SESSION_WAIT:-300} / 2 )); [ "$waits" -ge 1 ] || waits=1
   begin
@@ -376,25 +379,40 @@ session_lanes() {
   # one sample per offered set, a second (persist) sample per set, a set nobody
   # offered, and two writes outside every lane.
   for set in $(list "$OUR_SETS"); do
-    put_ours "$set/$sk/$US" "$US-$MY_CHAL-${set#release/}"; gap
+    c1=$(put_ours_code "$set/$sk/$US" "$US-$MY_CHAL-${set#release/}"); gap
     # In a derived session the start time goes after the sample, never before: a
     # reader that finds an earlier run's start time beside this run's sample only
     # waits a moment more, while a new start time beside an earlier run's sample would
     # let that sample's challenge be learned.
     [ -n "$DERIVED" ] && { put_ours "$set/$sk/$US/started" "$MY_STARTED"; gap; }
-    put_ours "$set/$sk/$US/persist" "$US-$MY_CHAL-${set#release/}-persist"; gap
+    c2=$(put_ours_code "$set/$sk/$US/persist" "$US-$MY_CHAL-${set#release/}-persist"); gap
+    codes="$codes$set ${c1:-000} ${c2:-000}
+"
   done
   if [ "$HAVE_OUT" = 1 ]; then
     put_ours "release/$US-not-offered/$sk/$US" "nope-$MY_CHAL"; gap
     put_ours "ops/fabric/acceptance-$SESSION_ID-$US" "nope-$MY_CHAL"; gap
     put_ours "from/$US-not-granted/acceptance-$SESSION_ID" "nope-$MY_CHAL"; gap
   fi
+  # Staged is what our runner can observe of its own samples: our core accepted both
+  # PUTs. A core declares no store on the staging name release/** (roles/goat-zenoh),
+  # so a sample is never read back where it was staged; the republisher's subscription
+  # takes it, and its arrival is observed by the partner's runner (delivery/inbound).
   for set in $(list "$OUR_SETS"); do
     begin; val="$US-$MY_CHAL-${set#release/}"
-    get_side ours "$set/$sk/$US"; obs key "$set/$sk/$US"; obs staged "$GOT"
-    if [ "$GOT_RC" -ne 0 ]; then blk "publish/outbound/$set" outbound positive "our session sample under $set/**: our core's REST surface did not answer" "$GOT_ERR"
-    elif [ "$GOT" = "$val" ]; then ok "publish/outbound/$set" outbound positive "our session sample is staged under $set/** with our challenge"
-    else no "publish/outbound/$set" outbound positive "our session sample under $set/** was not staged" "read '${GOT:-<nothing>}'"; fi
+    c1=$(printf '%s' "$codes" | awk -v s="$set" '$1 == s { print $2; exit }')
+    c2=$(printf '%s' "$codes" | awk -v s="$set" '$1 == s { print $3; exit }')
+    obs key "$set/$sk/$US"; obs sent "$val"; obs http_status "$c1"; obs persist_http_status "$c2"
+    case "$c1 $c2" in
+      2[0-9][0-9]" "2[0-9][0-9])
+        ok "publish/outbound/$set" outbound positive "our session sample is staged under $set/** with our challenge: our core accepted it (HTTP $c1)" ;;
+      000" "*|*" "000|" "*|*" ")
+        blk "publish/outbound/$set" outbound positive "our session sample under $set/**: our core's REST surface did not answer the PUT" \
+          "HTTP $c1 (sample), $c2 (persist sample); 000 is no answer" ;;
+      *)
+        no "publish/outbound/$set" outbound positive "our core refused our session sample under $set/**" \
+          "HTTP $c1 (sample), $c2 (persist sample) from $FED_OURS_REST" ;;
+    esac
     begin; obs observed_by_peer "delivery/inbound/$set"; obs key "$(wire_of "$US" "$set")/$sk/$US"
     blk "delivery/outbound/$set" outbound positive "our $set/** arriving on their core is observed by $THEM's runner in this session" \
       "Import their bundle (acceptance_session.py import) and combine."
