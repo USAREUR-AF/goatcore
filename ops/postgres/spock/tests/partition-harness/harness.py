@@ -14,6 +14,7 @@ Every input is read from the file that owns it, never copied:
 Subcommands:
   pins                       shell assignments NB_IMAGE, KRATOS_IMAGE, HYDRA_IMAGE
   tables <db>                replicated tables of netbird | kratos | hydra | portal_registry
+  repset <db>                the replication set that database's tables are in
   drift-env <out> <portA> <portB> <pwvar>
                              env file for ops/ansible/roles/spock-drift-watch
   account <expect> <dump>    match spock.exception_log / spock.resolutions rows
@@ -249,6 +250,8 @@ def main(argv):
         pins()
     elif cmd == "tables":
         print("\n".join(tables(args[0])))
+    elif cmd == "repset":
+        print(REPSET[args[0]])
     elif cmd == "drift-env":
         drift_env(*args)
     elif cmd == "account":

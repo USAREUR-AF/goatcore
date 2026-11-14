@@ -32,7 +32,7 @@ after_heal() {
     q a "$db" "SELECT spock.sub_create(
         subscription_name := 'sub_b_to_a',
         provider_dsn      := 'host=$PFX-b dbname=$db user=replicator password=$PW',
-        replication_sets  := ARRAY['$([[ "$db" == netbird ]] && echo netbird_mgmt || echo ory_narrow)'],
+        replication_sets  := ARRAY['$("${PY[@]}" repset "$db")'],
         synchronize_data  := false,
         forward_origins   := ARRAY[]::text[]);" >/dev/null
   done
