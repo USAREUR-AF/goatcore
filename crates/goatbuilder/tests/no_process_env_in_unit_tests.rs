@@ -113,3 +113,26 @@ fn the_scan_finds_a_write_in_a_test_module_of_any_name() {
     assert_eq!(in_tests.len(), 1, "anywhere in tests/");
     assert_eq!(test_modules("#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {}\n}\n"), vec![(2, 5)]);
 }
+
+/// federate drives phases and, in process, the federation library's verbs, on
+/// one thread while the rest of the process keeps running. A `set_var` there is
+/// unsound in a multi-threaded process, so nothing under `src/federate/` writes
+/// the process environment, product code included: a verb's values reach it as
+/// values (runenv, and the library's `_with` hooks), never through the process.
+#[test]
+fn federate_never_writes_the_process_environment() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    sources(&root.join("src/federate"), &mut files);
+    files.sort();
+    let mut found = Vec::new();
+    for f in &files {
+        let rel = f.strip_prefix(root).unwrap().display().to_string();
+        for (n, l) in std::fs::read_to_string(f).unwrap().lines().enumerate() {
+            if writes_env(l) {
+                found.push(format!("{rel}:{}: {}", n + 1, l.trim()));
+            }
+        }
+    }
+    assert!(found.is_empty(), "federate writes the process environment; pass the value in instead:\n{}", found.join("\n"));
+}
