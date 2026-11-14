@@ -132,3 +132,43 @@ fn federate_never_writes_the_process_environment() {
     }
     assert!(found.is_empty(), "federate writes the process environment; pass the value in instead:\n{}", found.join("\n"));
 }
+
+/// The product code that may write the process environment: in `main`, before any
+/// thread starts, where `set_var` is sound. Each line names the file, the text on
+/// the line, and what reads the value.
+const MAIN_ONLY: &[(&str, &str, &str)] = &[
+    ("src/main.rs", "set_var(\"GOAT_DEPLOY_OFFLINE\"", "--offline: the plays and scripts every child runs read it"),
+    ("src/awake.rs", "set_var(MARKER", "the keep-awake marker a nested goatbuilder reads, so it holds no second assertion"),
+];
+
+/// goatbuilder runs threads once a verb starts (the runner's output copies, survey),
+/// and `set_var` while another thread runs is unsound. So outside `main`'s first
+/// lines, product code passes a value to the child that reads it (`Cmd::env`,
+/// run state) and never writes the process environment. `src/federate/` has its
+/// own test (`federate_never_writes_the_process_environment`, with the in-process
+/// init change) and is left to it.
+#[test]
+fn product_code_writes_the_process_environment_only_in_main_before_threads() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    sources(&root.join("src"), &mut files);
+    files.sort();
+    let mut found = Vec::new();
+    for f in &files {
+        let rel = f.strip_prefix(root).unwrap().display().to_string();
+        if rel.starts_with("src/federate/") {
+            continue;
+        }
+        for (n, l) in std::fs::read_to_string(f).unwrap().lines().enumerate() {
+            if writes_env(l) && !MAIN_ONLY.iter().any(|(file, needle, _)| rel == *file && l.contains(needle)) {
+                found.push(format!("{rel}:{}: {}", n + 1, l.trim()));
+            }
+        }
+    }
+    assert!(found.is_empty(), "product code writes the process environment while threads may run; pass the value to the child instead:\n{}", found.join("\n"));
+    // Each allowed site is still there: an entry that matches nothing is removed.
+    for (file, needle, _) in MAIN_ONLY {
+        let text = std::fs::read_to_string(root.join(file)).unwrap();
+        assert!(text.lines().any(|l| writes_env(l) && l.contains(needle)), "{file}: no `{needle}` left; remove it from MAIN_ONLY");
+    }
+}
