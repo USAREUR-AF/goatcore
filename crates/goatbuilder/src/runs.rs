@@ -36,6 +36,9 @@ struct Record<'a> {
     phases: &'a [crate::runner::PhaseEntry],
     commands: &'a [crate::runner::CommandEntry],
     inputs: &'a serde_json::Value,
+    /// Files in the checkout the run wrote; absent when it wrote none.
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    wrote: &'a [String],
 }
 
 /// Write the record of a run that ended with `exit` (and `error`, if it failed
@@ -62,6 +65,7 @@ pub fn write(run: &Finished, exit: i32, error: Option<&str>) -> Result<PathBuf> 
         phases: &run.phases,
         commands: &run.commands,
         inputs: &inputs,
+        wrote: &run.wrote,
     };
     std::fs::create_dir_all(&run.dir).with_context(|| format!("{}", run.dir.display()))?;
     let path = run.dir.join("run.json");
@@ -585,7 +589,22 @@ mod tests {
                 { "name": "target", "value": target, "secret": false, "source": "derived from --site by <site>_hosts" },
                 { "name": "ZAGROS_PG_PASS", "value": null, "secret": true, "source": "environment" }
             ]),
+            wrote: Vec::new(),
         }
+    }
+
+    /// The files in the checkout a run wrote are in its record, so a person
+    /// sees the checkout changed; a run that wrote none has no such field.
+    #[test]
+    fn a_record_names_the_checkout_files_the_run_wrote() {
+        let t = tempfile::tempdir().unwrap();
+        let mut a = finished(&t.path().join("runs/a"), &[("true", 0)], "zagros_hosts");
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(write(&a, 0, None).unwrap()).unwrap()).unwrap();
+        assert!(v.get("wrote").is_none(), "{v}");
+        a.dir = t.path().join("runs/b");
+        a.wrote = vec!["ops/ansible/group_vars/gamma_hosts/vars.yml".into(), "ops/ansible/inventory/mgmt-hosts-mesh.ini".into()];
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(write(&a, 0, None).unwrap()).unwrap()).unwrap();
+        assert_eq!(v["wrote"], serde_json::json!(["ops/ansible/group_vars/gamma_hosts/vars.yml", "ops/ansible/inventory/mgmt-hosts-mesh.ini"]));
     }
 
     #[test]

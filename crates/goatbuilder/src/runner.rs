@@ -105,6 +105,8 @@ pub struct Finished {
     pub phases: Vec<PhaseEntry>,
     pub commands: Vec<CommandEntry>,
     pub inputs: serde_json::Value,
+    /// Files in the checkout the run wrote, relative to it, in the order written.
+    pub wrote: Vec<String>,
 }
 
 struct Run {
@@ -120,6 +122,7 @@ struct Run {
     /// The index in `commands` where the open phase began.
     phase_from: usize,
     inputs: serde_json::Value,
+    wrote: Vec<String>,
     /// Unit tests share one process: a run belongs to the test thread that
     /// began it, so another test's command never joins it. A real run is the
     /// whole process, its worker threads included.
@@ -207,6 +210,7 @@ pub fn begin(
         phases: Vec::new(),
         phase_from: 0,
         inputs: serde_json::Value::Array(Vec::new()),
+        wrote: Vec::new(),
         #[cfg(test)]
         owner: std::thread::current().id(),
     });
@@ -227,7 +231,18 @@ pub fn end() -> Option<Finished> {
         phases: r.phases,
         commands: r.commands,
         inputs: r.inputs,
+        wrote: r.wrote,
     })
+}
+
+/// A file in the checkout this run wrote (relative to the checkout), so the
+/// run record names it and a person can see what to review and commit.
+pub fn wrote(path: &str) {
+    if let Some(r) = lock_run().as_mut() {
+        if !r.wrote.iter().any(|p| p == path) {
+            r.wrote.push(path.to_string());
+        }
+    }
 }
 
 /// The run's inputs, each with its source (docs/design/goatbuilder-legibility.md

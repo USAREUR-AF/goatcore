@@ -577,6 +577,21 @@ entries:
       - "^GB-266: "
     exit: 1
 
+  - code: GB-269
+    tool: goatbuilder
+    title: a secret for the node still holds a secret store's reference
+    what: "A value join-node hands to a node, such as the first-login password phase 2 seeds the SSH key with, still begins with a secret store's reference (op://, bao://, bw:// or the declared ref_prefix) after the secrets injector ran. Sent as it is, the node would take the reference as the secret. Nothing was sent to the node. The message names the variable and the scheme, never the reference."
+    causes:
+      - "the store's tool is not signed in, so with-secrets could not resolve the reference"
+      - "the variable was set to a reference under a store that resolves none (env, env-file)"
+    fixes:
+      - "sign in to the declared store's tool (for 1password: op signin), then re-run: goatbuilder join-node <environment> --site <site> --node <node> --class <class> --address <address> --from 2"
+      - "or export the value itself in the variable the message names"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-269: "
+    exit: 1
+
   - code: GB-267
     tool: goatbuilder
     title: this part of a two-driver peering is not built yet

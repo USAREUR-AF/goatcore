@@ -15,10 +15,15 @@
 //!   6  A      wireguard-kmod.yml, first pass — its wt0 check fails before
 //!             enrolment (wt0 absent); expected, and the only failure let pass
 //!   7  GATE   the goatnet CA this site trusts is the site's own, not the shared dev root
-//!   8  MANUAL mint a setup key carrying the group the site's other nodes hold
-//!   9  GATE   preflight-enrollment.sh on the node (clock, stale wt0, apex reach)
-//!  10  MANUAL netbird up with the goatnet's declared PQC posture; the gate is
-//!             `table ip netbird`, not "Connected"
+//!   8  GATE   the site declares mesh_enrollment_url, where its nodes enrol
+//!   9  GATE   preflight-enrollment.sh on the node (clock, stale wt0, apex reach);
+//!             no setup key is sent (--key-at-enrolment)
+//!  10  A      mesh-enroll-host.yml: a single-use, one-hour key minted where the
+//!             NetBird database is (a joiner: the founder's first host), with the
+//!             groups that host's peer holds, handed to `netbird up` through a
+//!             0600 file on the node; never on this machine. GATE: the kernel
+//!             interface and `table ip netbird`, not "Connected". T: the mesh
+//!             address into the checkout (standup-mesh-record.py --no-mint)
 //!  11  A      wireguard-kmod.yml again — changed=0 proves the kmod took
 //!  12  GATE   mesh_ip + the mesh inventory filled: preflight passes with no TBD_
 //!  13  A      the class's converge: core (founder pass, or a joiner's three
@@ -86,6 +91,9 @@ struct Phase {
     kind: &'static str,
     label: String,
     cmd: String,
+    /// Files in the checkout the phase may write, relative to it: the run
+    /// names each one it changed in its summary and its run record.
+    writes: Vec<String>,
 }
 
 fn row(name: &str, detail: String) -> Check {
@@ -141,7 +149,7 @@ fn signal_federation(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, fo
     let r = repo.display().to_string();
     let site_group = format!("{}_hosts", site.replace('-', "_"));
     let founder_group = format!("{}_hosts", founder.replace('-', "_"));
-    let p = |kind: &'static str, label: String, cmd: String| Phase { n: 13, kind, label, cmd };
+    let p = |kind: &'static str, label: String, cmd: String| Phase { n: 13, kind, label, cmd, writes: Vec::new() };
     // The founder site is read from vars.yml: one shell word wherever it is used.
     let w = |v: String| sh_word(&v);
     ev.push(p("GATE", format!("[signal federation] the repo declares it on both sides: {site_group} and {founder_group} crossed and complete, {founder}'s relay inventory pins each federation hostname to its own node, the names resolve to the relays, the shared token is in the environment"), format!("python3 '{r}/ops/scripts/signal-federation-check.py' {site} --peer {} --resolve --require-env", w(founder.to_string()))));
@@ -198,16 +206,32 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let founder_site = gv_first(&gv, "join_founder_site");
     let founder_group = if founder_site.is_empty() { String::new() } else { format!("{}_hosts", founder_site.replace('-', "_")) };
     let intra_pair = gv_matches(&gv, "intra_site_pair", "true");
-    let p = |n: u32, kind: &'static str, label: &str, cmd: String| Phase { n, kind, label: label.to_string(), cmd };
+    let p = |n: u32, kind: &'static str, label: &str, cmd: String| Phase { n, kind, label: label.to_string(), cmd, writes: Vec::new() };
 
     // A joiner enrols into the goatnet it joins: the founder's control plane.
     let enrol_at = if joiner && !founder_site.is_empty() { founder_site.as_str() } else { site };
     // The enrolment apex the preflight checks: the goatnet's, declared in the
     // site's core group (a joiner's names the goatnet it joins).
     let enrol_dns = { let d = gv_first(&gv, "site_enrollment_dns"); if d.is_empty() { format!("<site_enrollment_dns of {site_group}>") } else { d } };
+    // Phase 10 mints the setup key where the NetBird database is: a joiner
+    // site has none yet, so the key is minted on the founder's first host.
+    let mint_group = if joiner && !founder_group.is_empty() { founder_group.clone() } else { site_group.clone() };
+    let mesh_ips = format!("{}/join-node-{site}-{node}-mesh-ips.json", crate::settings::state_dir_abs(repo));
+    // The node's mesh address, into the checkout: the one edit a person made
+    // between phases 10 and 12. A node of another class sets only its mesh
+    // inventory line; the core pair's addresses are the core node's.
+    let record = {
+        let group_arg = if o.class == "core" { String::new() } else { format!(" --group {group}") };
+        let mut writes = vec!["ops/ansible/inventory/mgmt-hosts-mesh.ini".to_string()];
+        if o.class == "core" {
+            writes.insert(0, format!("ops/ansible/group_vars/{site_group}/vars.yml"));
+            writes.push(format!("ops/enrollment/manifests/{site}-certs.yaml"));
+        }
+        Phase { n: 10, kind: "T", label: "record the node's mesh address in the checkout (group_vars, mesh inventory) for phase 12; the router certificate is left as it is".into(), cmd: format!("python3 '{r}/ops/scripts/standup-mesh-record.py' {site} --ips {}{group_arg} --no-mint", sh_quote(&mesh_ips)), writes }
+    };
     let mut ev = vec![
         p(1, "MANUAL", "reach the box on the SITE LAN", format!("ssh {user}@{addr} — find the box's real LAN address before anything else and pass it as --address. On a Jetson the address handed over may be 192.168.55.1: that is l4tbr0, the USB device-mode bridge on the box itself, reachable only over a direct USB-C cable.")),
-        p(2, "T", "seed the SSH key (key auth + NOPASSWD sudo; password from the env var, never the command line) — skipped when key auth and NOPASSWD sudo already work", format!("if ssh -o BatchMode=yes -o ConnectTimeout=10 {user_w}@{addr} sudo -n true; then echo {}; else '{r}/ops/scripts/seed-ssh-key.sh' {user_w}@{addr} {pass_var}; fi", sh_quote(&format!(">> {user}@{addr}: key auth and NOPASSWD sudo already work — seed skipped")))),
+        p(2, "T", "seed the SSH key (key auth + NOPASSWD sudo; password from the env var, never the command line) — skipped when key auth and NOPASSWD sudo already work", format!("if ssh -o BatchMode=yes -o ConnectTimeout=10 {user_w}@{addr} sudo -n true; then echo {}; else '{r}/ops/scripts/with-secrets' '{r}/ops/scripts/seed-ssh-key.sh' {user_w}@{addr} {pass_var}; fi", sh_quote(&format!(">> {user}@{addr}: key auth and NOPASSWD sudo already work — seed skipped")))),
         // Phases 3 and 7 run before enrolment: the mesh-address placeholder
         // phase 12 fills is a warning there (--before-enrolment), not a failure.
         p(3, "GATE", "repo work first: group, inventory, pins, exclusions — the config preflight passes (the mesh-address placeholder is allowed until phase 12)", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} --before-enrolment")),
@@ -215,9 +239,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         p(5, "A", "host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves", format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={group} -e site_id={site} -l {node}")),
         p(6, "A", "WireGuard kernel modules, first pass — its wt0 check fails before enrolment (wt0 absent); expected, phase 11 re-runs it. Any other failure stops the run", format!("cd '{r}/ops/ansible' && log=$(mktemp) && if {pre} {inv} wireguard-kmod.yml -e target={group} -l {node} 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif {WT0_ABSENT_ONLY} \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi")),
         p(7, "GATE", "the CA this site trusts is its own, not the shared dev root (silence puts a production node on the dev CA)", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} --before-enrolment && ! grep -rqE 'ca_id:[[:space:]]*\"?[a-z]+-goat-ca-' '{r}/ops/ansible/group_vars/{group}/' || {{ echo 'group_vars/{group} names the unnamed default CA (<mode>-goat-ca-<date>); a site node trusts its goatnet CA'; exit 1; }}")),
-        p(8, "MANUAL", "mint a setup key carrying the group the site's other mgmt hosts hold — read it off a live peer, do not guess", format!("in the NetBird dashboard of {enrol_at} (or `goat admin` on it): Setup Keys → new key, auto_groups = the group a live mgmt host of {enrol_at} holds; keep it for phase 10")),
-        p(9, "GATE", "enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang)", format!("{{ printf 'export NETBIRD_SETUP_KEY=%q NETBIRD_MANAGEMENT_URL=%q\\n' \"$(printenv {upper}_NB_SETUP_KEY)\" {}; cat '{r}/ops/preflight-enrollment.sh'; }} | ssh {user_w}@{addr} 'bash -s'", sh_quote(&format!("https://{enrol_dns}")))),
-        p(10, "MANUAL", "enrol the node — the gate is the kernel ACL plane, not \"Connected\"", "on the node: sudo netbird up <the line phase 9 printed> --enable-rosenpass=false (match the goatnet's declared PQC posture; never also pass --rosenpass-permissive=false). Gate: `netbird status` shows Interface type: Kernel AND `sudo nft list tables` shows `table ip netbird` — Connected alone is an unfiltered node".to_string()),
+        p(8, "GATE", "the site declares where its nodes enrol (mesh_enrollment_url): phase 10 mints the setup key and enrols the node, and refuses before any key exists without it", format!("grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '{r}/ops/ansible/group_vars/{group}/' '{r}/ops/ansible/group_vars/{site_group}/' || {{ echo {}; exit 1; }}", sh_quote(&format!("set mesh_enrollment_url in group_vars/{site_group}/vars.yml: https://<the enrolment name of {enrol_at}>:443 (it resolves to the relays) or :8443 (it resolves to the host itself)")))),
+        p(9, "GATE", "enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang); no setup key is sent: phase 10 mints it where it is used", format!("{{ printf 'export NETBIRD_MANAGEMENT_URL=%q\\n' {}; cat '{r}/ops/preflight-enrollment.sh'; }} | ssh {user_w}@{addr} 'bash -s -- --key-at-enrolment'", sh_quote(&format!("https://{enrol_dns}")))),
+        p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine"), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e mesh_enroll_groups_from_peer=true -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&mesh_ips))),
+        p(10, "GATE", "the node is on the kernel ACL plane, not only \"Connected\": netbird's interface is the kernel's, and `table ip netbird` is loaded", format!("ssh {user_w}@{addr} 'sudo netbird status | grep -q \"Interface type: Kernel\" && sudo nft list tables | grep -qx \"table ip netbird\"'")),
+        record,
         p(11, "A", "WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists", format!("cd '{r}/ops/ansible' && {pre} {inv} wireguard-kmod.yml -e target={group} -l {node}")),
         p(12, "GATE", "mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqn 'TBD_' '{r}/ops/ansible/group_vars/{group}/' && ! grep -n 'TBD_' '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw {node}")),
     ];
@@ -450,7 +476,16 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
             break;
         }
         crate::runner::phase(&ph.n.to_string(), &ph.label, "");
+        let before: Vec<Option<Vec<u8>>> = ph.writes.iter().map(|f| std::fs::read(repo.join(f)).ok()).collect();
         let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
+        // Each checkout file the phase changed, in the summary and the run
+        // record, so a person sees the checkout changed and commits it.
+        for (f, was) in ph.writes.iter().zip(before) {
+            if std::fs::read(repo.join(f)).ok() != was {
+                checks.push(row("wrote", format!("wrote {f} — review it and commit it")));
+                crate::runner::wrote(f);
+            }
+        }
         if !status.success() {
             let rc = status.code().unwrap_or(1);
             checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the node is left partway through phase {}. `--dry-run` prints this phase's command and the gate that proves it.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
@@ -462,7 +497,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
     checks.extend(not_run(repo, o.site));
     if o.dry_run {
         checks.extend(crate::inputs::rows(&listed));
-        checks.push(row("footer", "PLAN complete. Remove --dry-run to execute (needs --address). Manual steps (1, 8, 10) pause the run; resume with --from <next>. docs/tutorials/02-first-federated-node.md walks through it.".into()));
+        checks.push(row("footer", "PLAN complete. Remove --dry-run to execute (needs --address). Phase 1, reaching the node, is the one manual step: it pauses the run; resume with --from 2. docs/tutorials/02-first-federated-node.md walks through it.".into()));
     }
     let mut r = Report::new("join-node", checks, EXIT_REFUSED);
     r.exit = exit;
@@ -512,6 +547,41 @@ mod tests {
             }
             assert!(gate(12).contains("standup-config-preflight.py' ") && !gate(12).contains("--before-enrolment"), "{class} phase 12: {}", gate(12));
         }
+    }
+
+    /// Gate row H2: only phase 1 is a person's step. Phase 9 sends no setup
+    /// key; phase 10 mints it where the NetBird database is (the founder's
+    /// first host for a joiner, the site's own for a founder), enrols the node,
+    /// proves the kernel ACL plane, and records the mesh address, the core
+    /// pair's for a core node and only the mesh inventory line for another class.
+    #[test]
+    fn only_phase_1_is_manual_and_the_key_is_minted_where_it_is_used() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let manual: Vec<u32> = ph.iter().filter(|p| p.kind == "MANUAL").map(|p| p.n).collect();
+        assert_eq!(manual, vec![1]);
+        assert!(ph.iter().all(|p| !p.cmd.contains("NB_SETUP_KEY")), "no phase reads a setup key");
+        let p9 = ph.iter().find(|p| p.n == 9).unwrap();
+        assert!(p9.cmd.ends_with("'bash -s -- --key-at-enrolment'") && !p9.cmd.contains("SETUP_KEY"), "{}", p9.cmd);
+        let p10: Vec<&Phase> = ph.iter().filter(|p| p.n == 10).collect();
+        assert_eq!(p10.iter().map(|p| p.kind).collect::<Vec<_>>(), vec!["A", "GATE", "T"]);
+        assert!(p10[0].cmd.contains("mesh-enroll-host.yml -e target=zagros_b_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out="), "{}", p10[0].cmd);
+        assert!(p10[1].cmd.contains("Interface type: Kernel") && p10[1].cmd.contains("table ip netbird"), "{}", p10[1].cmd);
+        assert!(p10[2].cmd.contains("standup-mesh-record.py' zagros-b --ips ") && p10[2].cmd.ends_with(" --no-mint") && !p10[2].cmd.contains("--group"), "{}", p10[2].cmd);
+        assert_eq!(p10[2].writes[0], "ops/ansible/group_vars/zagros_b_hosts/vars.yml");
+        let p2 = ph.iter().find(|p| p.n == 2).unwrap();
+        assert!(p2.cmd.contains("/ops/scripts/with-secrets' '") && p2.cmd.contains("seed-ssh-key.sh' "), "the password resolves through the injector: {}", p2.cmd);
+        // An obs node records only its mesh inventory line.
+        let ph = plan(t.path(), &opts("zagros-b", "obs", "zagros")).unwrap();
+        let rec = ph.iter().find(|p| p.n == 10 && p.kind == "T").unwrap();
+        assert!(rec.cmd.contains(" --group zagros_b_obs_hosts --no-mint"), "{}", rec.cmd);
+        assert_eq!(rec.writes, vec!["ops/ansible/inventory/mgmt-hosts-mesh.ini".to_string()]);
+        // A founder site's node mints on its own site's first host.
+        let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvf).unwrap();
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros", "core", "zagros")).unwrap();
+        assert!(ph.iter().any(|p| p.cmd.contains("-e mesh_enroll_mint_group=zagros_hosts ")));
     }
 
     /// A joiner site's core node gets the three passes and the founder-side

@@ -21,7 +21,15 @@ This reads it and, for the site's hosts in inventory order:
 
 Idempotent: a second run with the same IPs changes nothing and mints nothing.
 
-usage: standup-mesh-record.py <site> --ips <file> [--no-mint] [--repo <dir>]
+mesh_ip_a and mesh_ip_b follow each host's place in the site's inventory, not
+its place in the IP file, so recording one node that joins a site already
+running (join-node phase 10) never moves another host's address. With
+--group <group>, a node of another class (obs, breakglass, network-jump) at the
+site, only its line in the mesh inventory is set: mesh_ip_a/b and the router
+leaf belong to the site's core pair. With --no-mint and no cert manifest,
+nothing about the certificate is done, and that is not a refusal.
+
+usage: standup-mesh-record.py <site> --ips <file> [--group <group>] [--no-mint] [--repo <dir>]
 exit:  0 recorded · 1 refused (an IP file that names no site host, or a mint failure)
 """
 import argparse
@@ -134,34 +142,41 @@ def main(argv):
     ap.add_argument("site")
     ap.add_argument("--ips", required=True)
     ap.add_argument("--no-mint", action="store_true")
+    ap.add_argument("--group", help="the node's group, when it is not the site's core group")
     ap.add_argument("--repo", default=str(DEFAULT_REPO))
     a = ap.parse_args(argv)
     repo = Path(a.repo)
-    group = a.site.replace("-", "_") + "_hosts"
+    core = a.site.replace("-", "_") + "_hosts"
+    group = a.group or core
 
     ips = json.loads(Path(a.ips).read_text())
     for h, ip in ips.items():
         if ipaddress.ip_address(ip) not in CGNAT:
             print(f"standup-mesh-record: {h} reported {ip}, which is not a mesh address (100.64.0.0/10); refusing", file=sys.stderr)
             return 1
-    hosts = [h for h in site_hosts(repo, group) if h in ips]
+    every = site_hosts(repo, group)
+    hosts = [h for h in every if h in ips]
     if not hosts:
         print(f"standup-mesh-record: {a.ips} names no host of [{group}]; refusing", file=sys.stderr)
         return 1
     changed = False
 
-    gv = repo / "ops/ansible/group_vars" / group / "vars.yml"
-    text = gv.read_text() if gv.exists() else ""
     old = {}
-    for key, host in zip(("mesh_ip_a", "mesh_ip_b"), hosts):
-        text, prev = set_gv(text, key, ips[host], f"{host} wt0, recorded by standup phase 8")
-        old[prev] = ips[host]
-        print(f"  {key} = {ips[host]} ({host}){'' if prev != ips[host] else ' — unchanged'}")
-        changed |= prev != ips[host]
-    if len(hosts) > 2:
-        print(f"  note: {len(hosts)} hosts enrolled; mesh_ip_a / mesh_ip_b name the first two")
-    gv.parent.mkdir(parents=True, exist_ok=True)
-    gv.write_text(text)
+    if group == core:
+        gv = repo / "ops/ansible/group_vars" / group / "vars.yml"
+        text = gv.read_text() if gv.exists() else ""
+        for host in hosts:
+            place = every.index(host)
+            if place > 1:
+                print(f"  note: {host} is host {place + 1} of [{group}]; mesh_ip_a / mesh_ip_b name the first two")
+                continue
+            key = ("mesh_ip_a", "mesh_ip_b")[place]
+            text, prev = set_gv(text, key, ips[host], f"{host} wt0, recorded by standup phase 8")
+            old[prev] = ips[host]
+            print(f"  {key} = {ips[host]} ({host}){'' if prev != ips[host] else ' — unchanged'}")
+            changed |= prev != ips[host]
+        gv.parent.mkdir(parents=True, exist_ok=True)
+        gv.write_text(text)
 
     inv = repo / "ops/ansible/inventory/mgmt-hosts-mesh.ini"
     if inv.exists():
@@ -175,8 +190,14 @@ def main(argv):
             changed |= st == "set"
         inv.write_text(itext)
 
+    if group != core:
+        print(f"  [{group}] is not the site's core group: its router leaf is not this node's")
+        return 0
     manifest = repo / "ops/enrollment/manifests" / f"{a.site}-certs.yaml"
     if not manifest.exists():
+        if a.no_mint:
+            print(f"  --no-mint: no cert manifest {manifest.relative_to(repo)}; the certificate is left alone")
+            return 0
         print(f"standup-mesh-record: no cert manifest {manifest.relative_to(repo)}; nothing to re-mint", file=sys.stderr)
         return 1
     mtext, n = replace_router_sans(manifest.read_text(), old)

@@ -199,6 +199,7 @@ The tests never write into the real state directory. Every test that runs a verb
 | `phases[]` | each phase: `id`, `name`, `purpose`, `started`, `ended`, `exit` (the first non-zero exit of its commands, else 0; null when it ran none, or one did not start), `commands` (how many), and `verdict` when the verb gave one for a phase that started no command (deploy's `verify:<group>` for a group whose deploy failed reads `not checked: the deploy failed`); `runs diff` compares a phase's exit, or its verdict when it has no exit | |
 | `commands[]` | each process: `phase`, `command` (the line as a shell reads it), `argv`, `host`, `log` (its log file) or `log_note` (why there is none), `started`, `ended`, `exit`, `secs` | check (a) |
 | `inputs[]` | each value: `name`, `value`, `secret`, `source`, `origin` (below) | check (b) |
+| `wrote[]` | each file in the checkout the run wrote, relative to the checkout, in the order written; absent when it wrote none. `join-node`'s phase 10 writes the node's mesh address this way | a person, to see the checkout changed and commit it |
 
 One `inputs` entry is the same in `run.json` and in `goatbuilder inputs -o json` (step 5 writes the list; the run record carries it):
 

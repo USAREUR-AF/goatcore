@@ -363,13 +363,13 @@ kratos-selfservice-ui and mesh-coredns are placed by reading a live joiner's run
 
 That ADR is [ADR 1233](../adr/1233-a-joiner-runs-the-replication-core.md) (Proposed); the live read it names for kratos-selfservice-ui and mesh-coredns is not done.
 
-**(f) No manual phase after reaching the node (gate row H2).** Status: **designed**. Nothing in this part is built.
+**(f) No manual phase after reaching the node (gate row H2).** Status: **built** on the fixture, with one part **designed**. Steps 1 to 7 below are built and tested (`crates/goatbuilder/tests/join_node_third_site.rs`, on `ops/goatbuilder/fixtures/join-node-third-site`). They are **not measured** on hardware. The query in step 2, which reads the groups off a live peer, is written in the play but **designed**: it is not measured against a live NetBird database, and until it is, it is not called built.
 
 Today phases 8 and 10 are manual. A person mints a setup key, and then enrols the node by typing `netbird up` on it. Phase 9 sends `$(printenv <SITE>_NB_SETUP_KEY)` to the node. It runs that line in plain bash, not through the secrets injector, so under a reference store the node received the reference `op://...` instead of the key ([phone-node.md](phone-node.md), rows 4 and 5). The design below removes the two manual phases and both ways a secret can be passed unresolved. It reuses what `standup` already does at its phase 8 ([goatbuilder-speed.md](goatbuilder-speed.md), "Phase 8 enrolment as a scripted step").
 
-1. **Where the setup key is minted and kept.** The key is minted on the host that holds the NetBird database of the goatnet the node joins, with `mgmt-host-bootstrap create-setup-key`:
+1. **Where the setup key is minted and kept.** The key is minted on the host that holds the NetBird database of the goatnet the node joins, with `mgmt-host-bootstrap create-setup-key`. The key is not stored, as decided with the gate row's owner:
    - It is single use, and lives one hour.
-   - For a joiner, that host is the first host of the founder's core group, because the new site has no database yet. `mesh-enroll-host.yml` takes the minting host as a variable, `mesh_enroll_mint_host`, whose default is the site's first host, as today.
+   - For a joiner, that host is the first host of the founder's core group, because the new site has no database yet. `mesh-enroll-host.yml` takes the group whose first host mints as a variable, `mesh_enroll_mint_group`, whose default is the node's own group, as today.
    - The key is held under `no_log`. It is written to a 0600 file under `/run` on the node, handed to `netbird up --setup-key-file`, and the file is removed whatever the outcome.
    - The key never reaches the operator's machine. So it is not in the operator's secret store, not in any argument list, and not in any log.
 
@@ -381,9 +381,9 @@ Today phases 8 and 10 are manual. A person mints a setup key, and then enrols th
    - The play reads, from the same database, the groups held by the peer of the minting host, leaving out `All`.
    - It mints with those groups.
    - It refuses, before any key exists, if that peer holds no group other than `All`.
-   - The SQL against NetBird's `peers` and `group_peers` tables has to be checked against a live database before this is called built.
+   - The SQL against NetBird's `peers` and `group_peers` tables has to be checked against a live database before this is called built. It is opt-in (`mesh_enroll_groups_from_peer`), so `standup`'s phase 8, which enrols a site's own first host before any peer exists, mints as before.
 
-3. **How the key reaches the node.** Only through the 0600 file in step 1. It never travels as an argument, an environment variable on the operator's machine, or a here-string through ssh. Phase 10 becomes the step `mesh-enroll-host.yml -e target=<node's group> -l <node> -e mesh_enroll_mint_host=<host> -e mesh_ips_out=<state dir file>`. Its gate is unchanged, and now a command rather than a person:
+3. **How the key reaches the node.** Only through the 0600 file in step 1. It never travels as an argument, an environment variable on the operator's machine, or a here-string through ssh. Phase 10 becomes the step `mesh-enroll-host.yml -e target=<node's group> -l <node> -e mesh_enroll_mint_group=<group> -e mesh_enroll_groups_from_peer=true -e mesh_ips_out=<state dir file>`. Its gate is unchanged, and now a command rather than a person:
    - `netbird status` shows `Interface type: Kernel`;
    - `nft list tables` holds `table ip netbird`.
 
@@ -393,13 +393,19 @@ Today phases 8 and 10 are manual. A person mints a setup key, and then enrols th
 
    `--no-mint` leaves the router certificate alone. A joiner's service certificates are row I3's concern ("(b)", above).
 
-5. **Phase 9 sends no secret.** With the key minted at phase 10, phase 9 runs `preflight-enrollment.sh` with a new `--key-at-enrolment` argument. The setup-key check then reports SKIP with the reason, and the other checks run as before: the clock, a stale `wt0`, and the enrolment address. Nothing secret is piped to the node.
+   The script sets `mesh_ip_a` and `mesh_ip_b` by each host's place in the site's inventory, not by its place in the file of addresses. So recording one node never moves another host's address. A node of another class (`obs`, `breakglass`, `network-jump`) is recorded with `--group <its group>`, which sets only its line in the mesh inventory.
+
+   Each checkout file the step changes is named in the run's summary ("wrote <file> — review it and commit it") and in its run record (`wrote`, [goatbuilder-legibility.md](goatbuilder-legibility.md), "Run record"). Then a person can see the checkout changed and commit it.
+
+5. **Phase 9 sends no secret.** With the key minted at phase 10, phase 9 runs `preflight-enrollment.sh` with a new `--key-at-enrolment` argument (`bash -s -- --key-at-enrolment` on the node). Phase 8, which was the manual mint, is now a gate on this machine: the site declares `mesh_enrollment_url`. The setup-key check then reports SKIP with the reason, and the other checks run as before: the clock, a stale `wt0`, and the enrolment address. Nothing secret is piped to the node.
 
 6. **Every secret reference join-node passes to a node is resolved, or the run is refused.** After steps 1 to 5, a secret reaches a node only in two places:
    - **Every play.** These already run through `ansible-preflight.sh`, which execs `with-secrets` and refuses an unresolved reference (`goat_unresolved_reference_guard`).
-   - **Phase 2's first-login password.** `seed-ssh-key.sh` reads it from the variable `--pass-var` names. Phase 2 will run the seed under `ops/scripts/with-secrets`, so a reference resolves.
+   - **Phase 2's first-login password.** `seed-ssh-key.sh` reads it from the variable `--pass-var` names. Phase 2 runs the seed under `ops/scripts/with-secrets`, so a reference resolves.
 
-   `join-node` itself refuses, before it contacts the node, when a value it reads to hand to a node still has a reference store's prefix after resolution. Those prefixes are `op://`, `bao://`, `bw://`, or the declared `ref_prefix`. The refusal names the variable and the store, and never the value. It needs one new catalog code, which is not claimed yet.
+   `seed-ssh-key.sh` refuses with GB-269 when the password still has a reference store's prefix after resolution: `op://`, `bao://`, `bw://`, or `GOAT_SECRET_REF_PREFIX`. Nothing has been sent to the node at that point. The refusal names the variable and the scheme, never the reference.
+
+   The first-login password reaches `sudo` on the node on standard input. This is tested against stand-ins, and not measured on a password-only box.
 
 7. **What stays a person's step.** Only phase 1: finding the node on the site's LAN and passing `--address`. With a password-only box, the first-login password is also set in the environment before the run. That is input, not a step: the run does not stop for it.
 
