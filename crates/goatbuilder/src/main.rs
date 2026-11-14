@@ -447,14 +447,16 @@ pub enum Cmd {
     /// Each stage also runs alone: `plan <partner>`, `deploy <partner>`,
     /// `test <partner>`, `status [<partner>]`. `allocate [<peering>]` writes a
     /// peering's values and files for review; `backout <partner>` backs one
-    /// peering out and leaves the others as they were.
+    /// peering out and leaves the others as they were; `rotate <partner>
+    /// <key>` replaces one key of a running peering.
     /// `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of
     /// the six federation verbs in process, with the flags and exit codes of
     /// `goat federate <verb>`.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Federate {
-        /// One federation verb, one stage of the one command (`plan`), or
-        /// `backout <partner>`, instead of the whole peering.
+        /// One federation verb, one stage of the one command (`plan`),
+        /// `backout <partner>` or `rotate <partner> <key>`, instead of the
+        /// whole peering.
         #[command(subcommand)]
         verb: Option<federate::plan::Stage>,
         #[command(flatten)]
@@ -1591,6 +1593,16 @@ fn main() {
                 Err(goat_errors::coded("GB-008", "federate backout is a mutation: pass --yes without a terminal (C10)").into())
             } else {
                 federate::backout::backout(&repo, &b.options(cli.mock.as_deref(), cli.yes, matches!(cli.output, OutputFormat::Table)))
+            }
+        }
+        Cmd::Federate { verb: Some(federate::plan::Stage::Rotate(r)), .. } => {
+            // A key this build does not rotate is refused before anything else.
+            if let Err(e) = federate::rotation::refused(&r.partner, &r.key) {
+                Err(e)
+            } else if !cli.yes && !r.dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                Err(goat_errors::coded("GB-008", "federate rotate is a mutation: pass --yes without a terminal (C10)").into())
+            } else {
+                federate::rotation::rotate(&repo, &r.options(cli.mock.as_deref(), matches!(cli.output, OutputFormat::Table)), &r.key)
             }
         }
         Cmd::Federate { verb: Some(stage), site, measure, .. } => {

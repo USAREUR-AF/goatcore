@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 967 variables, 134 of them secret-bearing by name.
+# 968 variables, 134 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -436,7 +436,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 833 variables.
+# 834 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1674,6 +1674,9 @@ export JOIN_FOUNDER_SITE=""
 
 # ops/federation-e2e/lib/unit.sh
 export KEEP=""
+
+# ops/federation/standup/test_peering_leaf_material_interrupted.py
+export KILL_AT=""
 
 # ops/ci/check-alerting-receiver-not-noop.sh, ops/ci/check-partition-render-consistency.sh
 export KNOWN_OPEN_FILE=""

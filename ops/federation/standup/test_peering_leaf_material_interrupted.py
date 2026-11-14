@@ -1,4 +1,5 @@
-"""An interrupted phase-8 mint leaves no private key behind.
+"""An interrupted phase-8 mint leaves no private key behind, and an interrupted
+rotation is finished or rolled back by the next run, never minted a third time.
 
 A run killed while minting (kill -9: no cleanup handler runs) used to leave its
 private staging directory, pki/.mint-*, with the half-minted keys in it. The
@@ -34,6 +35,26 @@ if [ "$1" = x509 ] && [ "$2" = -req ]; then
   : > "$MINT_SHIM_DIR/signed-once"
 fi
 exec "$MINT_REAL_OPENSSL" "$@"
+'''
+
+
+# Stands in for python3 on PATH, for the leaf helper only: os.replace, which
+# installs each new file of a rotation, ends the process abruptly (os._exit: no
+# handler, no cleanup) on its KILL_AT-th call, as a kill -9 or a lost host would.
+KILL_BOOT = '''
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("peering_leaf_material", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+real, calls = os.replace, [0]
+def replace(source, target):
+    calls[0] += 1
+    if calls[0] == int(os.environ["KILL_AT"]):
+        os._exit(137)
+    return real(source, target)
+module.os.replace = replace
+sys.argv = sys.argv[1:]
+module.main()
 '''
 
 
@@ -83,11 +104,12 @@ class InterruptedMint(unittest.TestCase):
         }))
         self.env = {k: v for k, v in os.environ.items() if not k.startswith('FED_')}
 
-    def args(self, out, with_key=True):
+    def args(self, out, with_key=True, rotate=False):
         return (['bash', str(SCRIPT), str(self.agreement), str(out), '--as', 'xaa',
                  '--ca-cert', str(self.ca), '--core-cn', 'router',
                  '--core-san', 'core.example.test']
-                + (['--ca-key', str(self.ca_key)] if with_key else []))
+                + (['--ca-key', str(self.ca_key)] if with_key else [])
+                + (['--rotate'] if rotate else []))
 
     def mint(self, out):
         result = subprocess.run(self.args(out), env=self.env, capture_output=True, text=True)
@@ -99,7 +121,7 @@ class InterruptedMint(unittest.TestCase):
         self.mint(clean)
         return shape(clean)
 
-    def kill_mid_mint(self, out):
+    def kill_mid_mint(self, out, rotate=False):
         """Run the mint and SIGKILL its whole process group while it is minting."""
         shim_dir = self.root / 'shim'
         shim_dir.mkdir()
@@ -108,7 +130,7 @@ class InterruptedMint(unittest.TestCase):
         shim.chmod(0o755)
         env = dict(self.env, PATH=str(shim_dir) + os.pathsep + self.env.get('PATH', ''),
                    MINT_SHIM_DIR=str(shim_dir), MINT_REAL_OPENSSL=shutil.which('openssl'))
-        run = subprocess.Popen(self.args(out), env=env, stdout=subprocess.DEVNULL,
+        run = subprocess.Popen(self.args(out, rotate=rotate), env=env, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, start_new_session=True)
         try:
             deadline = time.monotonic() + 60
@@ -126,7 +148,7 @@ class InterruptedMint(unittest.TestCase):
         # The interruption itself is real: key material was left in staging.
         staged = list(out.glob('.mint-*'))
         self.assertEqual(len(staged), 1, shape(out))
-        self.assertTrue(list(staged[0].glob('*-key.pem')))
+        self.assertTrue(list(staged[0].rglob('*-key.pem')))
         self.mint(out)
         self.assertEqual(shape(out), self.clean_shape())
         self.assertEqual(stray_keys(out), [])
@@ -179,13 +201,16 @@ class InterruptedMint(unittest.TestCase):
         self.assertEqual(shape(out), self.clean_shape())
 
     def test_a_sweep_never_touches_installed_or_retained_keys(self):
-        # Installed leaves and a rotation's retained .previous-* set are live
-        # material, not staging: they survive a resumed run unchanged.
+        # Installed leaves and a .previous-* set an earlier release retained
+        # are not staging: they survive a resumed run unchanged.
         out = self.root / 'pki'
         self.mint(out)
         self.mint_rotate(out)
-        previous = list(out.glob('.previous-*'))
-        self.assertEqual(len(previous), 1)
+        self.assertFalse(list(out.glob('.previous-*')), 'a committed rotation keeps no previous set')
+        older = out / '.previous-older'
+        older.mkdir(mode=0o700)
+        shutil.copy2(out / 'core-key.pem', older / 'core-key.pem')
+        previous = [older]
         retained = {p.name: p.read_bytes() for p in previous[0].iterdir()}
         installed = {n: (out / n).read_bytes() for n in LEAF_KEYS}
         (out / '.mint-abandoned').mkdir(mode=0o700)
@@ -198,6 +223,93 @@ class InterruptedMint(unittest.TestCase):
         result = subprocess.run(self.args(out) + ['--rotate'], env=self.env,
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
+    def leaves(self, out):
+        """Every installed leaf file, by name, with its bytes."""
+        return {p.name: p.read_bytes() for p in out.glob('*.pem') if p.name != 'our-ca.pem'}
+
+    def kill_mid_install(self, out, at=2):
+        """Rotate, and end the helper abruptly at its at-th install of a new file."""
+        shim_dir = self.root / 'pyshim'
+        shim_dir.mkdir(exist_ok=True)
+        (shim_dir / 'boot.py').write_text(KILL_BOOT)
+        shim = shim_dir / 'python3'
+        shim.write_text('#!/bin/sh\ncase "$1" in\n  *peering_leaf_material.py) exec "$REAL_PYTHON3" "$KILL_BOOT_PY" "$@" ;;\n'
+                        'esac\nexec "$REAL_PYTHON3" "$@"\n')
+        shim.chmod(0o755)
+        env = dict(self.env, PATH=str(shim_dir) + os.pathsep + self.env.get('PATH', ''),
+                   REAL_PYTHON3=sys.executable, KILL_BOOT_PY=str(shim_dir / 'boot.py'), KILL_AT=str(at))
+        result = subprocess.run(self.args(out, rotate=True), env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        pending = out / '.rotation-pending'
+        self.assertTrue(pending.is_dir(), shape(out))
+        return pending
+
+    def test_a_rotation_killed_while_installing_is_finished_and_never_mints_a_third_pair(self):
+        for rerun_rotates in (True, False):
+            with self.subTest(rerun_rotates=rerun_rotates):
+                out = self.root / ('pki-' + str(rerun_rotates))
+                self.mint(out)
+                old = self.leaves(out)
+                pending = self.kill_mid_install(out)
+                # The set-aside pairs are the owner's alone, under the peering's own folder.
+                self.assertEqual(pending.lstat().st_mode & 0o777, 0o700)
+                kept = sorted((pending / 'previous').iterdir())
+                self.assertEqual({p.name for p in kept}, set(old))
+                for path in kept:
+                    self.assertEqual(path.lstat().st_mode & 0o777, 0o600, path.name)
+                    self.assertEqual(path.read_bytes(), old[path.name])
+                # The one new pair minted: what is installed, then what waits.
+                minted = self.leaves(out)
+                minted.update({p.name: p.read_bytes() for p in (pending / 'new').glob('*.pem')})
+                self.assertEqual(set(minted), set(old))
+                self.assertTrue(all(minted[n] != old[n] for n in old))
+                result = self.mint_rotate(out) if rerun_rotates else self.mint(out)
+                self.assertIn('finished', result.stdout)
+                self.assertEqual(self.leaves(out), minted, 'the run minted again')
+                self.assertFalse(pending.exists())
+                self.assertFalse(list(out.glob('.previous-*')))
+                self.assertEqual(stray_keys(out), [])
+                self.assertEqual(shape(out), self.clean_shape_once())
+
+    def test_a_rotation_that_cannot_be_finished_is_rolled_back_to_the_previous_pairs(self):
+        out = self.root / 'pki'
+        self.mint(out)
+        old = self.leaves(out)
+        pending = self.kill_mid_install(out)
+        waiting = sorted((pending / 'new').glob('*-key.pem'))
+        self.assertTrue(waiting)
+        waiting[0].write_text('not a key\n')
+        result = subprocess.run(self.args(out), env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('restored', result.stdout + result.stderr)
+        self.assertEqual(self.leaves(out), old)
+        for name in old:
+            want = 0o600 if name.endswith('-key.pem') else 0o640
+            self.assertEqual((out / name).lstat().st_mode & 0o777, want, name)
+        self.assertFalse(pending.exists())
+        self.assertEqual(stray_keys(out), [])
+        # Nothing is left half done: the next rotation starts afresh.
+        self.mint_rotate(out)
+        self.assertTrue(all(self.leaves(out)[n] != old[n] for n in old))
+
+    def test_a_rotation_killed_while_minting_leaves_the_previous_pairs_in_place(self):
+        out = self.root / 'pki'
+        self.mint(out)
+        old = self.leaves(out)
+        self.kill_mid_mint(out, rotate=True)
+        self.assertEqual(self.leaves(out), old)
+        self.assertFalse((out / '.rotation-pending').exists())
+        self.mint_rotate(out)
+        self.assertTrue(all(self.leaves(out)[n] != old[n] for n in old))
+        self.assertEqual(stray_keys(out), [])
+        self.assertEqual(shape(out), self.clean_shape_once())
+
+    def clean_shape_once(self):
+        if not hasattr(self, '_clean'):
+            self._clean = self.clean_shape()
+        return self._clean
 
 
 if __name__ == '__main__':

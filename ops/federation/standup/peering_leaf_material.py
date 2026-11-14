@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Validate/reuse phase-8 leaves; replacement is an explicit local operation."""
+"""Validate/reuse phase-8 leaves; replacement is an explicit local operation.
+
+A rotation (--rotate) is resumable. The new pairs are minted and validated in a
+private staging directory beside a copy of the pairs they replace (mode 0600),
+with a journal naming the leaves; renaming that directory to
+<out>/.rotation-pending is the one step that commits the rotation. The new files
+are then moved into place, the installed pairs validated, and the directory
+removed, so no previous pair is kept once the rotation is done. A run that finds
+<out>/.rotation-pending (the one before it was killed) finishes that rotation
+from what it holds and mints nothing; when the pairs it holds do not validate, it
+restores the previous pairs and removes it. Either way no third pair is minted.
+"""
 import argparse
 import fcntl
 import hashlib
@@ -91,10 +102,19 @@ def validate(cert, key, ca, cn, expected_sans, min_seconds, trust_options):
     openssl('x509', '-in', cert, '-noout', '-checkend', min_seconds)
 
 
+# A leaf's key is 0600 and its certificate 0640: owner read-write, group read,
+# nothing for others. Everything that uses a pair runs as the owner of the
+# working directory or as root (the controller's goatbuilder and Ansible, which
+# copy the files to the edge with their own modes, and the lab's docker exec),
+# and anything that can use the key can already read it, so the certificate
+# needs no wider mode than its owner and group.
+KEY_MODE, CERT_MODE = 0o600, 0o640
+
+
 def mint(folder, name, cn, san, ca, ca_key, days):
     key, cert = folder / (name + '-key.pem'), folder / (name + '.pem')
     openssl('ecparam', '-name', 'prime256v1', '-genkey', '-noout', '-out', key)
-    key.chmod(0o600)
+    key.chmod(KEY_MODE)
     csr, ext = folder / (name + '.csr'), folder / (name + '.ext')
     openssl('req', '-new', '-key', key, '-out', csr, '-subj', '/CN=' + cn)
     ext.write_text('subjectAltName=' + san + '\nbasicConstraints=CA:FALSE\n'
@@ -106,7 +126,7 @@ def mint(folder, name, cn, san, ca, ca_key, days):
     openssl('x509', '-req', '-in', csr, '-CA', ca, '-CAkey', ca_key,
             '-passin', 'pass:', '-set_serial', serial, '-out', cert,
             '-days', days, '-sha256', '-extfile', ext)
-    cert.chmod(0o644)
+    cert.chmod(CERT_MODE)
 
 
 STAGING_PREFIX = '.mint-'
@@ -181,6 +201,73 @@ def place_our_ca(out, ca):
     print('  [placed] ' + OUR_CA + ': our CA, as the agreement names it')
 
 
+ROTATION = '.rotation-pending'
+JOURNAL = 'journal.json'
+
+
+def leaf_files(name):
+    return (name + '.pem', name + '-key.pem')
+
+
+def fsync_dir(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def restore_previous(out, pending, leaves):
+    """Put back the pairs the rotation replaced, at their own modes; remove a new
+    file whose leaf had none before."""
+    previous = pending / 'previous'
+    for name, _, _ in leaves:
+        for file in leaf_files(name):
+            kept, target = previous / file, out / file
+            if kept.is_file():
+                stage = out / ('.' + file + '.restore')
+                stage.unlink(missing_ok=True)
+                shutil.copy2(kept, stage)
+                os.chmod(stage, KEY_MODE if file.endswith('-key.pem') else CERT_MODE)
+                os.replace(stage, target)
+            elif target.is_file() and not target.is_symlink():
+                target.unlink()
+
+
+def finish_rotation(out, ca, min_valid_seconds, trust_options):
+    """Finish the committed rotation in <out>/.rotation-pending: move each new file
+    still there into place, validate every rotated pair, and remove the directory
+    with the previous pairs in it. If a file cannot be moved or a pair does not
+    validate, the previous pairs are restored and the directory removed, and the
+    run is refused: nothing is minted here, whichever way it ends."""
+    pending = out / ROTATION
+    try:
+        record = json.loads((pending / JOURNAL).read_text())
+        leaves = [(str(n), str(c), str(a)) for n, c, a in record['leaves']]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(ROTATION + ' holds no readable journal; inspect it and its previous/ '
+                         'pairs before recovery') from exc
+    new = pending / 'new'
+    try:
+        for name, _, _ in leaves:
+            for file in leaf_files(name):
+                if (new / file).is_file():
+                    os.replace(new / file, out / file)
+        for name, cn, san in leaves:
+            validate(out / (name + '.pem'), out / (name + '-key.pem'), ca, cn, san,
+                     min_valid_seconds, trust_options)
+    except (OSError, ValueError) as exc:
+        restore_previous(out, pending, leaves)
+        shutil.rmtree(pending)
+        if isinstance(exc, OSError):
+            raise
+        raise ValueError('the rotation could not be finished (' + str(exc) + '); the previous '
+                         'pairs are restored and nothing new was minted; rotate again') from exc
+    shutil.rmtree(pending)
+    fsync_dir(out)
+    return [name for name, _, _ in leaves]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', required=True, type=Path)
@@ -220,13 +307,21 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ValueError('another certificate operation holds this output directory') from exc
-        journal = out / '.rotation-pending'
-        if journal.exists() or journal.is_symlink():
+        journal = out / ROTATION
+        if journal.is_symlink() or (journal.exists() and not journal.is_dir()):
+            # An earlier release's journal file: its backup is a .previous-* set.
             raise ValueError('interrupted rotation: inspect .rotation-pending and its backup before recovery')
         sweep_stale_staging(out)
         trust_options = only_trust_options(ca, out)
         openssl('verify', *trust_options, '-trusted', ca, ca)
         our_ca_target(out)
+        if journal.is_dir():
+            for name in finish_rotation(out, ca, args.min_valid_seconds, trust_options):
+                print('  [finished] ' + name + ': the interrupted rotation, from the pair it had minted')
+            print('  previous pairs removed: the rotation is done')
+            # This run's --rotate is the resumed command's: the rotation it asked
+            # for is the one just finished, so nothing is minted again.
+            args.rotate = False
         pending = []
         existing = []
         for name, cn, san in args.leaf:
@@ -260,50 +355,56 @@ def main():
         # Validate the complete candidate set before replacing any leaf. Temporary
         # private material stays under a private (0700) directory on the same
         # filesystem, so installation is a rename; if this run dies before the
-        # directory is removed, the next run's sweep_stale_staging removes it.
-        with tempfile.TemporaryDirectory(prefix=STAGING_PREFIX, dir=out) as temp:
-            stage = Path(temp)
+        # rotation is committed, the next run's sweep_stale_staging removes it.
+        stage = Path(tempfile.mkdtemp(prefix=STAGING_PREFIX, dir=out))
+        try:
+            new = stage / 'new'
+            new.mkdir(mode=0o700)
             for name, cn, san in pending:
-                mint(stage, name, cn, san, ca, ca_key, args.days)
-                validate(stage / (name + '.pem'), stage / (name + '-key.pem'),
+                mint(new, name, cn, san, ca, ca_key, args.days)
+                validate(new / (name + '.pem'), new / (name + '-key.pem'),
                          ca, cn, san, args.min_valid_seconds, trust_options)
-            backup = None
             if args.rotate and existing:
-                backup = Path(tempfile.mkdtemp(prefix='.previous-', dir=out))
+                previous = stage / 'previous'
+                previous.mkdir(mode=0o700)
                 for path in existing:
-                    shutil.copy2(path, backup / path.name)
-            if backup:
-                with journal.open('x') as record:
-                    json.dump({'backup': backup.name, 'leaves': names}, record)
+                    kept = previous / path.name
+                    shutil.copy2(path, kept)
+                    os.chmod(kept, KEY_MODE)
+                with (stage / JOURNAL).open('x') as record:
+                    json.dump({'leaves': [list(leaf) for leaf in pending]}, record)
                     record.flush()
                     os.fsync(record.fileno())
+                fsync_dir(previous)
+                fsync_dir(stage)
+                # The commit: from here on a run finishes this rotation.
+                os.rename(stage, journal)
+                stage = None
+                fsync_dir(out)
+                finish_rotation(out, ca, args.min_valid_seconds, trust_options)
+                for name, _, _ in pending:
+                    print('  [issued] ' + name)
+                print('  previous pairs removed: the rotation is done')
+                place_our_ca(out, ca)
+                return
             installed = []
             try:
                 for name, _, _ in pending:
-                    for suffix in ('.pem', '-key.pem'):
-                        target = out / (name + suffix)
-                        os.replace(stage / target.name, target)
+                    for file in leaf_files(name):
+                        target = out / file
+                        os.replace(new / file, target)
                         installed.append(target)
             except OSError:
-                # Best-effort rollback on an ordinary installation error. An
-                # abrupt host/process failure may require the retained backup;
-                # the next run validates pairs and refuses inconsistent material.
+                # A leaf that had no pair before: take back what was installed.
                 for path in reversed(installed):
-                    if backup and (backup / path.name).exists():
-                        shutil.copy2(backup / path.name, path)
-                    elif path not in existing:
-                        path.unlink(missing_ok=True)
-                if backup:
-                    journal.unlink()
+                    path.unlink(missing_ok=True)
                 raise
-            if backup:
-                journal.unlink()
             for name, _, _ in pending:
                 print('  [issued] ' + name)
             place_our_ca(out, ca)
-            if backup:
-                print('  Previous material retained at ' + str(backup))
-
+        finally:
+            if stage is not None and stage.exists():
+                shutil.rmtree(stage)
 
 if __name__ == '__main__':
     try:
