@@ -108,6 +108,9 @@ write one and is not an entry.
   deploying", "For someone contributing" or "To be removed";
 - `title`: the entry's one-line heading, for example "Fixed: a federate run
   killed in phase 11 resumes and brings the link up";
+- either value may be wrapped in one matching pair of quotes, as YAML
+  allows; the pair is removed before the value is checked or rendered
+  (built), so a quoted title never renders with its quotes;
 - the body, in Markdown, with no heading of level 1 to 3, ending with the
   pull request's number.
 

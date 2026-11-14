@@ -25,7 +25,7 @@ service owns as `SKIPPED` with the same text instead of N/A. `goatbuilder
 join-node` lists the gaps under "What <site> does not run yet", from the
 catalog, before the services the site turns off (ADR 1233, #671).
 
-#### "Fixed: a host-allocation SKIP says which case it is and what clears it"
+#### Fixed: a host-allocation SKIP says which case it is and what clears it
 
 A plan whose host-allocation check was SKIP cannot be deployed: deploy does
 not run that check again, so it refuses the plan (GB-188), and a new plan
@@ -39,6 +39,17 @@ carry the check's detail, which gives the case and the route:
 - its agreement was not found: both paths that were looked at are named.
 
 GB-188's catalog entry gains this cause (#742).
+
+### For someone contributing
+
+#### Fixed: a changelog entry title written in quotes renders without them
+
+`ops/release/changelog.py` read an entry's `title:` and `heading:` verbatim,
+so a title written YAML-style, `title: "Added: …"`, rendered as a heading
+with its quotes, and a quoted heading was refused as not one of the three.
+A value wrapped in one matching pair of `"` or `'` is now read without that
+pair; quotes inside a title are kept. The entries directory's README says a
+title needs no quotes for its colon.
 
 <!-- END generated: changelog unreleased -->
 
