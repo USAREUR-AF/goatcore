@@ -487,8 +487,14 @@ participants, the sample limits, the attempt, and a session id that is
 agreement's `expires` day. Nothing in it is random or read from a clock.
 
 It holds no challenge. Each side's challenge stays its own and random, and travels with that
-side's samples; a partner's result must echo ours (§6.1), so each run's challenge, not a time
-window, is what makes a result fresh. The session's `digest` is the sha256 of its other
+side's samples.
+
+**Freshness rests on the challenge alone.** A derived session has no `not_before` and no
+window of hours, so nothing about time keeps an old result out. What does is the challenge:
+each run of phase 14 draws a new one, and a partner's result must echo the challenge of our
+current run (§6.1). A result that echoes an earlier run's challenge is refused with GB-273,
+even when it is from the same session and attempt
+(`a_result_echoing_an_earlier_runs_challenge_in_the_same_session_is_refused`). The session's `digest` is the sha256 of its other
 members in canonical form (sorted keys, no whitespace). When the two sides' sessions differ,
 `compare_sessions` refuses with GB-274 and names the members that differ: the two sides hold
 different agreements, or are on different attempts.
