@@ -258,7 +258,7 @@ a stale list removes peers another writer added.
 | N12 | `lifecycle-sweep.py:1371` (hold record to `/var/lib/peerview/hold-records.jsonl`, host-local `flock`), `:1373 → 705`, `:1385,1447 → 723` | `lifecycle-sweep.py --apply --lane quarantine` (manual) | JSONL append; `PUT /api/groups/{id}` into `<SITE>-PROBATION-<role>` and out of every prior group | **X6** | The hold is ledger kind `netbird.hold` (peer, prior groups); the record moves to Postgres (design §5 B3) | `cross-c3-hold-at-a-release-at-b` |
 | N13 | `lifecycle-sweep.py:1580,1698,1702` (groups), `:1585,1695,1707` (JSONL) | `--lane release`, run by the onboard-runner `ops/onboard-runner/runner.go:448` from console C17 | `PUT /api/groups/{id}` back into prior groups; JSONL rewrite | **3** | A `reinstate` row naming the hold (X14) | `cross-c3-hold-at-a-release-at-b` |
 | N14 | `ops/scripts/external-service-finish.py:612` | `external-service.yml` | `PUT /api/groups/{id}`, fresh read | **5** | — | `netbird-c5-declared-state-hub-only` |
-| N15 | `ops/ansible/netbird-acl-cutover.yml:603,647,674,776,795,1149,1159` | playbook | `POST`, `PUT` (full body), `DELETE /api/policies…`; `DELETE /api/groups/{id}` on teardown | **5** | A cut-off site may `PUT` existing policy ids only; `POST` and `DELETE` wait for heal (§9 D8) | `netbird-c5-policy-regenerate-no-duplicates` |
+| N15 | `ops/ansible/netbird-acl-cutover.yml:646,690,717,819,838,1209,1219` | playbook | `POST`, `PUT` (full body), `DELETE /api/policies…`; `DELETE /api/groups/{id}` on teardown | **5** | A cut-off site may `PUT` existing policy ids only; `POST` and `DELETE` wait for heal (§9 D8) | `netbird-c5-policy-regenerate-no-duplicates` |
 | N16 | `ops/ansible/netbird-acl-bootstrap.yml:165`; `zagros-bootstrap.yml:151`; `zagros-prod-bootstrap.yml:288` | standup | `POST /api/groups` | **5** | — (hub only) | `netbird-c5-declared-state-hub-only` |
 | N17 | `goat-coredns.yml:246,271,346,370`, `mesh-coredns.yml:119,146`, `mgmt-host-dns.yml:132`, `nethost-dns.yml:66`; `ops/relay/deploy-relay.sh:234,240` | playbooks; relay deploy | `POST`, `PUT /api/dns/nameservers[/{id}]` | **5** | as N15 | `netbird-c5-declared-state-hub-only` |
 | N18 | `ops/scripts/netbird-service-identities.py:356,361` | `--mint`, at standup | `POST /api/users` (service user), `POST /api/users/{id}/tokens` | **1** | — | `netbird-c1-service-user-both-sides` |
@@ -360,7 +360,9 @@ the five classes, or adds a rule the design does not yet state.
 Measured by the partition harness (PR #2083), not covered by a rule above: Kratos rewrites an
 identity's credential rows with fresh ids on every admin write, so C41, C44, K4 and K11 at two
 cut-off sites never converge (F-590);
-N15 POSTs a missing warrant policy at each cut-off site (F-591).
+N15 POSTed a missing warrant policy at each cut-off site (F-591). **Built** 2026-11-14:
+`netbird-acl-cutover.yml -e cut_off=true` only `PUT`s existing policy ids, and refuses with GB-295,
+before any write, a run that would create or delete a policy; the scenario models that mode.
 
 Found in passing, not an island-mode issue: `update_group_peers`
 (`crates/panoscope-core/src/netbird.rs:564`) sends only `{name, peers}`, and NetBird sets
@@ -383,7 +385,7 @@ All twelve were applied to `island-mode-multi-writer.md` §2.1, §3, §6, §7 an
 | D5 | §3.2: `govern_meta` local | Its marker gates a one-time migration of `govern_admins` (P38); local, every site runs it once | `govern_meta` replicates, and the migration's ids are derived (X8) |
 | D6 | §3.2: `vendor_progress` and `vendor_topic_activity` local | Both have `REFERENCES vendors(prefix) ON DELETE CASCADE` (`internal/registry/schema.sql:184,205`); a foreign key cannot cross databases. `vendor_topic_activity` has had no writer since `internal/registry/progress.go:233` | Drop the FK on `vendor_progress`; drop `vendor_topic_activity` instead of moving it |
 | D7 | §7: "Classes 1-3 and 5 do not depend on timestamps" | Class 3 orders by `at` (X14); class 5's `network_serial` is a counter (X15) | Adopt the X14 and X15 rules, or state the dependency |
-| D8 | §3 class 5: warrant ACL policies "regenerate locally while cut off" | `netbird-acl-cutover.yml:603` POSTs a missing policy and NetBird assigns the id; two sites regenerating create two copies | While cut off, regeneration only `PUT`s existing ids; `POST` and `DELETE` run at the hub after heal |
+| D8 | §3 class 5: warrant ACL policies "regenerate locally while cut off" | `netbird-acl-cutover.yml:646` POSTs a missing policy and NetBird assigns the id; two sites regenerating create two copies | While cut off, regeneration only `PUT`s existing ids; `POST` and `DELETE` run at the hub after heal. **Built** 2026-11-14: `netbird-acl-cutover.yml -e cut_off=true` (GB-295) |
 | D9 | §2.1: 10 scripts open the files, 2 write | 11 open them and 3 write (`pubsub-export` runs migrations); 2 of the 10 open nothing | §7 of this document |
 | D10 | ADR 1165 Evidence: onboarding writes a NetBird setup key from the console (`onboard_api.go`, `onboard_actions.go`) | The console never writes NetBird; the onboard-runner runs `goat admin onboard --native`, which does (N1) | The harness (design §6) runs the onboard-runner and goat-cli as the NetBird writers |
 | D11 | §3 has no Hydra row | `hydra_client` is replicated and declared (K15); consent and tokens are not replicated (K14) | Add Hydra: clients class 5, consent revoke X11 |

@@ -3448,6 +3448,23 @@ entries:
     matches:
       - "nothing records what was there before it \\(GB-293\\)"
 
+  - code: GB-295
+    tool: goatbuilder
+    title: a cut-off site's access-rule cutover would have created or deleted a policy
+    what: "ops/ansible/netbird-acl-cutover.yml ran with cut_off=true, for a site cut off from the others. While cut off, a site may only update the access-rule policies it already has, by their ids: NetBird assigns a created policy's id, so two cut-off sites that each create the same rule leave two policies after the heal, and a delete at one site is undone or doubled by the other. This run would have created or deleted at least one policy (the message names each policy it would have created and each id it would have deleted), so it stopped before it wrote anything, updates included."
+    causes:
+      - the access-rule matrix names a rule the site has no policy for yet
+      - reap_orphans=true, and the site holds a generated policy the matrix no longer names
+      - enforce with the Default policy action delete
+      - the teardown play, which only deletes
+    fixes:
+      - "wait for the heal; the hub then runs ops/ansible/netbird-acl-cutover.yml without cut_off and makes the creates and deletes"
+      - "when the message names only deletes: drop reap_orphans=true, or set the Default policy action to disable, and run again with cut_off=true"
+    read: docs/design/island-mode-write-inventory.md
+    exit: 2
+    matches:
+      - "runs cut off \\(cut_off=true\\)"
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable
