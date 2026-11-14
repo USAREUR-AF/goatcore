@@ -9,7 +9,8 @@
 //!   2  T      seed-ssh-key.sh — key auth + NOPASSWD sudo, password from an env var;
 //!             skipped when `ssh -o BatchMode=yes <user>@<addr> sudo -n true` already
 //!             passes (a box installed unattended with the key and NOPASSWD sudo)
-//!   3  GATE   repo work done first: standup-config-preflight.py passes
+//!   3  GATE   repo work done first: standup-config-preflight.py passes; then the
+//!             node's clock, read-only (join-node-clock-check.py, GB-297)
 //!   4  T      quiet apt on the node (mask the daily timers; unmasked at 14)
 //!   5  A      mgmt-host-baseline.yml, narrowed to the node
 //!   6  A      wireguard-kmod.yml, first pass — its wt0 check fails before
@@ -268,6 +269,9 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         // Phases 3 and 7 run before enrolment: the mesh-address placeholder
         // phase 12 fills is a warning there (--before-enrolment), not a failure.
         p(3, "GATE", "repo work first: group, inventory, pins, exclusions — the config preflight passes (the mesh-address placeholder is allowed until phase 12)", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} --before-enrolment")),
+        // Before phase 4 changes anything on the node: its clock, read-only
+        // (ADR 1232). GB-297 refuses an unsynchronized node or one over budget.
+        p(3, "GATE", "the node's clock, read-only, before anything on it changes: synchronized to an outside reference and within the offset budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router's 500 ms limit)", format!("python3 '{r}/ops/scripts/join-node-clock-check.py' {} {user_w}@{addr}", sh_word(node))),
         p(4, "T", "quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14)", format!("ssh {user_w}@{addr} 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'")),
         p(5, "A", "host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves", format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={group} -e site_id={site} -l {node}")),
         p(6, "A", "WireGuard kernel modules, first pass — its wt0 check fails before enrolment (wt0 absent); expected, phase 11 re-runs it. Any other failure stops the run", format!("cd '{r}/ops/ansible' && log=$(mktemp) && if {pre} {inv} wireguard-kmod.yml -e target={group} -l {node} 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif {WT0_ABSENT_ONLY} \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi")),
@@ -1447,5 +1451,118 @@ mod tests {
         assert!(join_node(&repo(), &opts("zagros-prod", "router", "zagros_prod")).is_err());
         let o = Options { dry_run: false, ..opts("zagros-prod", "core", "zagros_prod") };
         assert!(join_node(&repo(), &o).unwrap_err().to_string().contains("--address"));
+    }
+
+    /// `chronyc -c tracking` of a node following 192.0.2.123 (or `refid`),
+    /// with the given system time offset in seconds and leap status.
+    fn chrony_csv(refid: &str, offset: &str, leap: &str) -> String {
+        format!("{refid},192.0.2.123,3,1700000000.0,{offset},0.0,0.0,0.0,0.0,0.0,0.010,0.002,64.0,{leap}")
+    }
+
+    /// Phase 3's clock step, run as join-node runs it, on a checkout that
+    /// carries the real script and the federation preflight's clock code. ssh
+    /// runs the remote line here; chronyc and timedatectl print `chrony` and
+    /// `timedatectl`, or answer nothing (exit 1) when they are empty.
+    fn run_clock_step(chrony: &str, timedatectl: &str, budget: Option<&str>) -> (i32, String) {
+        let t = joiner_checkout();
+        for f in ["ops/scripts/join-node-clock-check.py", "ops/federation/standup/preflight_live.py"] {
+            std::fs::create_dir_all(t.path().join(f).parent().unwrap()).unwrap();
+            std::fs::copy(repo().join(f), t.path().join(f)).unwrap();
+        }
+        std::fs::create_dir_all(t.path().join("ops/goatbuilder")).unwrap();
+        std::fs::write(t.path().join("ops/goatbuilder/goatbuilder.yaml"), "deploy:\n  ssh_user: operator\n").unwrap();
+        let bin = t.path().join("bin");
+        crate::test_support::executable(&bin.join("ssh"), "#!/bin/sh\nfor a; do last=\"$a\"; done\nexec sh -c \"$last\"\n");
+        crate::test_support::executable(&bin.join("chronyc"), "#!/bin/sh\n[ -n \"$FAKE_CHRONY\" ] || { echo '506 Cannot talk to daemon' >&2; exit 1; }\nprintf '%s\\n' \"$FAKE_CHRONY\"\n");
+        crate::test_support::executable(&bin.join("timedatectl"), "#!/bin/sh\n[ -n \"$FAKE_TIMEDATECTL\" ] || exit 1\nprintf '%s\\n' \"$FAKE_TIMEDATECTL\"\n");
+        let o = Options { address: Some("192.0.2.9"), ..opts("zagros-b", "core", "zagros") };
+        let step = plan(t.path(), &o).unwrap().into_iter().find(|p| p.cmd.contains("join-node-clock-check.py")).expect("a clock step");
+        assert_eq!((step.n, step.kind), (3, "GATE"));
+        assert!(step.cmd.ends_with("join-node-clock-check.py' node-x operator@192.0.2.9"), "{}", step.cmd);
+        let mut c = Command::new("bash");
+        c.args(["-euo", "pipefail", "-c", &step.cmd])
+            .current_dir(t.path())
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("FAKE_CHRONY", chrony)
+            .env("FAKE_TIMEDATECTL", timedatectl)
+            .env_remove("JOIN_NODE_CLOCK_BUDGET_MS");
+        if let Some(b) = budget {
+            c.env("JOIN_NODE_CLOCK_BUDGET_MS", b);
+        }
+        let out = c.output().unwrap();
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    }
+
+    /// ADR 1232: before phase 4 changes anything on the node, phase 3 reads
+    /// its clock. A node synchronized to an outside reference and within the
+    /// budget passes, and the line prints its offset; the budget can be
+    /// raised, never past the router's 500 ms limit.
+    #[test]
+    fn a_synchronized_clock_within_budget_passes_and_prints_its_offset() {
+        let (rc, out) = run_clock_step(&chrony_csv("C0000201", "-0.012345678", "Normal"), "", None);
+        assert_eq!(rc, 0, "{out}");
+        assert!(out.contains(">> clock: node-x offset 12.3 ms (chrony, stratum 3, reference 192.0.2.123); budget 250 ms of the 500 ms router limit"), "{out}");
+        let (rc, out) = run_clock_step(&chrony_csv("C0000201", "0.312300000", "Normal"), "", Some("400"));
+        assert_eq!(rc, 0, "{out}");
+        assert!(out.contains("offset 312.3 ms") && out.contains("budget 400 ms"), "{out}");
+        let (rc, out) = run_clock_step(&chrony_csv("C0000201", "0.0", "Normal"), "", Some("900"));
+        assert_eq!(rc, 2, "{out}");
+        assert!(out.contains("JOIN_NODE_CLOCK_BUDGET_MS: 900 is not a whole number of milliseconds from 1 to 500"), "{out}");
+    }
+
+    /// Over the budget, unsynchronized, or following only its own clock: the
+    /// node is refused with GB-297, which names the node as the run names it,
+    /// what was measured, the budget and the router limit, and says to repair
+    /// time synchronization on that node. The failed phase reads as GB-297.
+    #[test]
+    fn a_clock_over_budget_or_unsynchronized_is_refused_with_gb_297() {
+        for (chrony, measured) in [
+            (chrony_csv("C0000201", "0.312300000", "Normal"), "offset 312.3 ms from UTC, over the budget"),
+            (chrony_csv("00000000", "0.0", "Not synchronised"), "not synchronized (chrony leap status Not synchronised, no reference)"),
+            (chrony_csv("7F7F0101", "0.0", "Normal"), "not synchronized (chrony follows only this host's own local clock)"),
+        ] {
+            let (rc, out) = run_clock_step(&chrony, "NTPSynchronized=yes", None);
+            assert_eq!(rc, 1, "{out}");
+            assert!(out.starts_with(&format!("GB-297: node-x's clock is {measured}; budget 250 ms, router limit 500 ms")), "{out}");
+            assert!(out.contains("fix: repair time synchronization on node-x"), "{out}");
+            let f = crate::explain_phase::failed_phase("join-node", "3", &out, None).expect("phase 3 is in the catalog");
+            assert_eq!(f.code.as_deref(), Some("GB-297"), "{out}");
+        }
+    }
+
+    /// When chronyd does not answer, systemd's flag decides; it gives no
+    /// offset, and the line says so. Not synchronized there is refused too.
+    #[test]
+    fn timedatectl_decides_when_chrony_does_not_answer() {
+        let (rc, out) = run_clock_step("", "NTPSynchronized=yes", None);
+        assert_eq!(rc, 0, "{out}");
+        assert!(out.contains(">> clock: node-x synchronized (timedatectl; it reports no offset)"), "{out}");
+        let (rc, out) = run_clock_step("", "NTPSynchronized=no", None);
+        assert_eq!(rc, 1, "{out}");
+        assert!(out.starts_with("GB-297: node-x's clock is not synchronized (timedatectl NTPSynchronized=no)"), "{out}");
+    }
+
+    /// A clock no time service answers for is never a pass: the run goes on,
+    /// as join-node does for any fact it could not read, and the line says
+    /// NOT verified and which commands it tried.
+    #[test]
+    fn an_unreadable_clock_is_not_verified_never_passed() {
+        let (rc, out) = run_clock_step("", "", None);
+        assert_eq!(rc, 0, "{out}");
+        assert!(out.contains(">> clock: node-x: NOT verified, not read: no time service answered (tried chronyc -c tracking and timedatectl show -p NTPSynchronized -p TimeUSec)"), "{out}");
+        assert!(!out.contains("budget"), "{out}");
+    }
+
+    /// A dry run prints the clock step in phase 3, after the config preflight
+    /// and before phase 4 masks the apt timers, and runs nothing.
+    #[test]
+    fn a_dry_run_prints_the_clock_step_before_anything_on_the_node_changes() {
+        let t = joiner_checkout();
+        let r = execute(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let rows: Vec<&str> = r.checks.iter().map(|c| c.detail.as_str()).collect();
+        let at = |needle: &str| rows.iter().position(|d| d.contains(needle)).unwrap_or_else(|| panic!("no row {needle}"));
+        assert!(at("standup-config-preflight.py") < at("join-node-clock-check.py") && at("join-node-clock-check.py") < at("=== Phase 4 "));
+        assert!(rows[at("join-node-clock-check.py") - 1].starts_with("=== Phase 3 [GATE] the node's clock"), "{rows:?}");
+        assert!(rows.iter().all(|d| !d.contains(">> clock:") && !d.contains("GB-297")), "a dry run reads no clock");
     }
 }

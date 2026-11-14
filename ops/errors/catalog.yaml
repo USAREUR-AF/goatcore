@@ -3448,6 +3448,21 @@ entries:
     matches:
       - "nothing records what was there before it \\(GB-293\\)"
 
+  - code: GB-297
+    tool: goatbuilder
+    title: a joining node's clock is not synchronized or is too far from UTC
+    what: "join-node phase 3 read the joining node's clock from its own time service (chronyc -c tracking, else timedatectl), before anything on the node changed. A Zenoh router refuses a timestamp more than 500 ms ahead of its own clock, and nothing tells the machine's owner, so the node must hold its clock within half that, 250 ms by default (JOIN_NODE_CLOCK_BUDGET_MS), of UTC. A node that is not synchronized to an outside reference, or is over the budget, is refused; a node whose clock could not be read is reported as not verified, never as passed. The rule is the federation preflight's check clock (GB-268)."
+    causes:
+      - the node's time service follows no reachable time source, or only the node's own local clock
+      - the clock is synchronized but still slewing a large step, or the time source itself is wrong
+    fixes:
+      - "on the named node: chronyc tracking   (or: timedatectl show); repair its time synchronization"
+      - "goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 3"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "^GB-297: "
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable
