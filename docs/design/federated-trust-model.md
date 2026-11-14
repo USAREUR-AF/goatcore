@@ -1,7 +1,7 @@
 # Federated trust model
 
-How goatnet recognizes and trusts identities from **other** trust domains (partner moon-pods,
-peer goatnets) — and how that recognition is rotated, assured, validated, revoked, graduated, and
+How goatnet recognizes and trusts identities from **other** trust domains (peer goatnets, and
+moon pods in the learning setup, [ADR 1239](../adr/1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md)) — and how that recognition is rotated, assured, validated, revoked, graduated, and
 differentiated per partner. Companion to the SPIRE/SPIFFE design (ADR 0412),
 the federated-peering data-plane trust ([ADR 1020](../adr/1020-zenoh-federated-peering-trust-model.md)),
 revocation ([ADR 1031](../adr/1031-credential-revocation-mesh-first-offboarding.md)) and rotation
@@ -157,7 +157,10 @@ Three mechanisms:
    published in the compose overlay + a serving profile; verify at deploy. The end-to-end path
    exercised so far is the bootstrap + trust-sync below, which does not depend on it.)
 2. **Bootstrap** — a one-time `spire-server bundle set` per partner that provides `bundle_b64`
-   (the out-of-band first exchange `https_spiffe` needs before it can self-refresh).
+   (the out-of-band first exchange `https_spiffe` needs before it can self-refresh). For a
+   cross-sovereign peering, goat-peering-spire's phase 13 sets it only when the server holds no
+   bundle for the partner, or the exchanged file's `spiffe_sequence` is newer, so a rerun never
+   replaces a bundle the refresh already advanced (`roles/goat-peering-spire/tasks/bundle-import.yml`).
 3. **Edge trust + rotation survival** — `spire-trust-sync` writes, per peering declared in
    `spire_trust_sync_federated_edges`, **own (`bundle show`) ⊕ that one partner
    (`bundle list -id <trust domain>`)** into that peering's EDGE router trust file, every tick;

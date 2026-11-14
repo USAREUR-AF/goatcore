@@ -40,6 +40,12 @@ peering_spire_remote_link_ip: "{{ goat_peering_remote_link_ip | default('') }}"
 
 peering_spire_our_bundle_file: "{{ fed_work | default('') }}/ours.spiffe-bundle"
 peering_spire_their_bundle_file: "{{ fed_work | default('') }}/theirs.spiffe-bundle"
+# Phase 13 imports the exchanged bundle only when our server holds none for the
+# partner, or the file's spiffe_sequence is newer than the held one's: the refresh
+# from the partner's bundle endpoint keeps the held one current (tasks/bundle-import.yml).
+# true imports the file over any held bundle, for a partner whose SPIRE server was
+# rebuilt with new keys, confirmed on the call.
+peering_spire_bundle_replace: false
 
 # The partner these forwards serve, in their unit names: goat-peering-bundle-in-<partner>
 # and goat-peering-bundle-out-<partner>. One edge host can carry several peerings, and

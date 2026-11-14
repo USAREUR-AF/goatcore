@@ -584,7 +584,7 @@ Add a tier *only* where you need it:
 
 The one-shot operator/debug version of tier 1 is `goat pub --confirm` (read-back after a single publish). All of these need *your* client to participate — which is why the operator monitor (which needs no cooperation) is the platform's floor, and these are the local agency you layer on top.
 
-**Runnable reference:** `incubator/goat-moon-open-pod/examples/delivery_reconcile.py` is a working shape of tiers 1 + 2 (intent ledger → self-canary read-back → intent heartbeat). It ships in the moon-pod kit; the nova portal serves the equivalent per-topic snippet in its Examples tab.
+**Runnable reference:** [`zagros-moon-pod/examples/delivery_reconcile.py`](https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/examples/delivery_reconcile.py) is a working shape of tiers 1 + 2 (intent ledger → self-canary read-back → intent heartbeat). It ships in the moon-pod kit; the nova portal serves the equivalent per-topic snippet in its Examples tab.
 
 ## 10. Self-check before you ask for help
 

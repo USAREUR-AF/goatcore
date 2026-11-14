@@ -1,7 +1,7 @@
 # zenoh-ingress-gateway
 
 The **goat-side receiver** for data arriving over a Zenoh **router-to-router peering** from an
-entity that is not part of our trust domain (a partner moon-pod, a vendor aggregator relaying
+entity that is not part of our trust domain (a moon pod in the learning setup, a vendor aggregator relaying
 third parties — anything we did not onboard end-to-end). This is the implementation of the
 Tier-2 ingress path in [ADR 1020](../../docs/adr/1020-zenoh-federated-peering-trust-model.md) /
 [`zenoh-federated-peering-trust.md`](../../docs/design/zenoh-federated-peering-trust.md).
@@ -47,7 +47,7 @@ Two Zenoh client sessions, one direction of data (partner → core):
 
 A moon-pod is a Tier-2 peer. Its egress is received here, not federated directly into a core
 router. The pod always publishes `release/<partner>/**`; this gateway decides the admitted
-shape. See `incubator/goat-moon-open-pod/docs/architecture.md`
+shape. See [`zagros-moon-pod/docs/architecture.md`](https://github.com/USAREUR-AF/zagros-moon-pod/blob/main/docs/architecture.md)
 §"Receiver side".
 
 ## Status

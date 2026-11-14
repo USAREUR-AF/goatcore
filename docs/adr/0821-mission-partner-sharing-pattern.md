@@ -1,6 +1,6 @@
 # ADR 0821 — Mission partner sharing — `release/` namespace + bring-your-own-OIDC + four-facet expectations
 
-> **Read with ADR 1208.** This ADR predates the sovereign-environment model. It describes partners attaching to one goat-run fabric through goat-run bridges. That is the exercise-environment setup, used with the moon pod for learning. Operationally, each nation runs its own environment, runs the republisher and conditioning for what it releases, and shares only by release across boundary nodes that federate the environments ([ADR 1157](1157-cross-sovereign-federation-edge-terminated.md), [ADR 1208](1208-sovereign-environments-release-namespaces-and-grant-encryption.md)). The default release instrument is the owner's published declaration ([ADR 1143](1143-unilateral-release-declaration-and-accession.md)); the charter is the exception.
+> **Read with [ADR 1208](1208-sovereign-environments-release-namespaces-and-grant-encryption.md)**, which replaced the single goat-run fabric this ADR describes with sovereign environments that release across federated boundary nodes (default instrument: [ADR 1143](1143-unilateral-release-declaration-and-accession.md)), **and with [ADR 1239](1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md)**, which states what a moon pod is.
 
 
 | Field | Value |

@@ -10,6 +10,19 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Changed: phase 10 leaves our core router running when the admission it would make is already in place
+
+`goatbuilder federate deploy <partner>` with the admission done by the command
+no longer places, dry-runs and restarts our core router again when nothing it
+would place has changed. After a restart passes, the run journal records the
+admission as placed. A later phase 10 is the same admission when it has the same
+digest of what is placed (the approval digest without the plan hash) and every
+file on the core is byte for byte what it would place. That phase 10 then
+places nothing, restarts nothing and asks for no approval. This happens when
+phase 10 runs again because a rotated leaf the core does not hold changed its
+inputs. A file on the core changed by hand, or an admission whose restart
+failed, is admitted again as before.
+
 #### Changed: a back-out drops the partner's store whole on a goat-zenoh role core
 
 `goatbuilder federate backout <partner>` now takes the partner's entry out of
@@ -73,6 +86,14 @@ recorded as an outcome this build does not know (for example `deferred`), it
 advised a `--from` past those phases, although such an outcome never counts as
 passed. It now advises `--from` the first phase the journal does not show
 passed. After a failure or an operator step, the advice is unchanged (#632).
+
+#### "Added: join-node deploys the data router at a joining site"
+
+`goatbuilder join-node` now runs the site's own Zenoh router on a joining
+site's core node, in phase 13 after signal federation: `zenoh-deploy.yml`
+for the site's core group, limited to the node. It was a hand step after
+the command. The play still needs the node's router leaf certificate,
+which join-node does not stage yet.
 
 #### Added: `join-node` names what the site does not run, and why
 
@@ -213,6 +234,21 @@ never its value (#649).
 at each site that replicates with Spock and sets `goatnet_hub_site`. A Spock
 site that names no hub gets a message and no applier. The play carries the
 tag `hub-directives` beside its phase tag, so it can be run alone. (#596)
+
+#### Fixed: phase 13 no longer replaces the partner's refreshed SPIFFE bundle with the older exchanged one
+
+`goat-peering-spire` imported the partner's bundle from the file exchanged in
+phase 5 on every phase 13, with `spire-server bundle set`. That overwrites
+the bundle our server had already refreshed from the partner's bundle
+endpoint. After the partner's SPIRE rotated its keys, a rerun of phase 13
+put the old keys back: their new identities stopped verifying until the next
+refresh, and that refresh authenticates the endpoint with the bundle held.
+
+Phase 13 now imports the file only in two cases: when our server holds no
+bundle for the partner, or when the file's `spiffe_sequence` is newer than the
+one held. Otherwise it keeps the held bundle and says so. For a partner whose
+SPIRE server was rebuilt with new keys, confirmed on the call, set
+`peering_spire_bundle_replace: true` to import the file over any bundle held.
 
 #### Added: a failed standup phase names the error in its output
 

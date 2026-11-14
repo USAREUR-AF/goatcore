@@ -88,7 +88,7 @@ To have a coding agent do it with you, give it this line with your own values: `
 | [hello-galaxy-goatenv](https://github.com/usareur-af/hello-galaxy-goatenv) | A step-by-step walkthrough that builds that environment |
 | [goatstuff](https://github.com/usareur-af/goatstuff) | Inspection tools and demonstration applications |
 | [goatdocs](https://github.com/usareur-af/goatdocs) | Architecture, strategy, design system and integration guides |
-| [zagros-moon-pod](https://github.com/usareur-af/zagros-moon-pod) | A pod a partner runs to join a goat data fabric and share data under their own custody |
+| [zagros-moon-pod](https://github.com/usareur-af/zagros-moon-pod) | A pod that joins a goat environment, used today only to learn ([ADR 1239](docs/adr/1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md)) |
 
 ## Repository layout
 

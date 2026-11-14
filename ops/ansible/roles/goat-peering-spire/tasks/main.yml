@@ -42,27 +42,8 @@
       the rendered agreement) to name this peering's forward units; got
       '{{ peering_spire_partner_id }}'.
 
-- name: peering-spire | read the bundle the exchange placed
-  ansible.builtin.set_fact:
-    _ps_their_bundle: "{{ lookup('ansible.builtin.file', peering_spire_their_bundle_file) }}"
-
-- name: peering-spire | import the partner's public bundle
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -i
-      - "{{ peering_spire_container }}"
-      - "{{ peering_spire_bin }}"
-      - bundle
-      - set
-      - -format
-      - spiffe
-      - -id
-      - "{{ peering_spire_partner_trust_domain }}"
-    stdin: "{{ _ps_their_bundle }}"
-  delegate_to: "{{ peering_spire_server_host }}"
-  changed_when: false
+- name: peering-spire | import the partner's bundle unless ours holds a newer one
+  ansible.builtin.include_tasks: bundle-import.yml
 
 - name: peering-spire | is the relationship already declared?
   ansible.builtin.command:

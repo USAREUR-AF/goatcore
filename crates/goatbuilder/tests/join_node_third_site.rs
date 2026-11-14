@@ -488,3 +488,40 @@ fn an_unresolved_reference_is_refused_before_it_reaches_the_node() {
     );
     assert!(!argv.contains("op://"), "{argv}");
 }
+
+/// Gate row I3, the data router: a joining site's core node runs its own
+/// Zenoh router, so the site's data fabric does not depend on reaching the
+/// founder's. Phase 13 runs zenoh-deploy.yml for the site's core group,
+/// limited to the node, after the Spock wiring and signal federation and
+/// before phase 14.
+#[test]
+fn a_joiners_core_node_runs_its_data_router() {
+    let s = site();
+    let (out, _) = join_node(&s, Some("2"));
+    assert!(out.status.success(), "{}", says(&out));
+    let log = std::fs::read_to_string(&s.log).unwrap();
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    let router = plays
+        .iter()
+        .position(|l| l.contains("zenoh-deploy.yml"))
+        .unwrap_or_else(|| panic!("no data router play ran for the joiner: {plays:#?}"));
+    assert!(
+        plays[router].contains("zenoh-deploy.yml -e target=gamma_hosts -l gamma-core-1"),
+        "{}",
+        plays[router]
+    );
+    let rewire = plays
+        .iter()
+        .rposition(|l| l.contains("spock-mesh-wire.yml --limit gamma-core-1"))
+        .expect("the joiner's Spock wiring ran");
+    assert!(
+        rewire < router,
+        "the router after the Spock wiring: {plays:#?}"
+    );
+    let acceptance = log
+        .lines()
+        .position(|l| l.starts_with("acceptance "))
+        .unwrap();
+    let router_line = log.lines().position(|l| l == plays[router]).unwrap();
+    assert!(router_line < acceptance, "the router runs before phase 15");
+}

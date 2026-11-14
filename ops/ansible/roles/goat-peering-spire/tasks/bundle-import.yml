@@ -1,0 +1,87 @@
+---
+# The partner's public bundle, from the file the exchange placed (phase 5). It is
+# the trust anchor that bootstraps the relationship: once it is declared, our server
+# refreshes the bundle from the partner's bundle endpoint (https_spiffe), and that
+# refresh authenticates the endpoint with the bundle our server holds. So the file is
+# imported only when it is newer than what our server holds:
+#   - our server holds no bundle for that trust domain (the first phase 13);
+#   - or both carry a spiffe_sequence and the file's is greater.
+# Otherwise the bundle held, which the refresh keeps current, stays. Setting the
+# older exchanged copy over it would drop the partner's new keys until the next
+# refresh, and once the partner's server no longer presents an identity the old
+# bundle verifies, the refresh itself would fail.
+# peering_spire_bundle_replace: true imports the file over any held bundle, for a
+# partner whose SPIRE server was rebuilt with new keys, confirmed on the call.
+# Included by tasks/main.yml; tests/test-bundle-import.sh runs it alone.
+
+- name: peering-spire | read the bundle the exchange placed
+  ansible.builtin.set_fact:
+    _ps_their_bundle: "{{ lookup('ansible.builtin.file', peering_spire_their_bundle_file) }}"
+
+- name: peering-spire | the bundle our server holds for the partner, if any
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ peering_spire_container }}"
+      - "{{ peering_spire_bin }}"
+      - bundle
+      - list
+      - -id
+      - "{{ peering_spire_partner_trust_domain }}"
+      - -format
+      - spiffe
+  delegate_to: "{{ peering_spire_server_host }}"
+  register: _ps_held_bundle
+  changed_when: false
+  failed_when: false
+
+- name: peering-spire | whether our server holds one, and each bundle's sequence number
+  ansible.builtin.set_fact:
+    _ps_held: "{{ _ps_held_bundle.rc == 0 and _ps_held_json is mapping and (_ps_held_json.get('keys') | default([], true) | length > 0) }}"
+    _ps_held_seq: "{{ (_ps_held_json.spiffe_sequence | default('')) if _ps_held_json is mapping else '' }}"
+    _ps_file_seq: "{{ (_ps_file_json.spiffe_sequence | default('')) if _ps_file_json is mapping else '' }}"
+  vars:
+    _ps_held_text: "{{ _ps_held_bundle.stdout | regex_search('(?s)\\{.*\\}') | default('', true) }}"
+    _ps_held_json: "{{ (_ps_held_text | from_json) if (_ps_held_text | length > 0) else '' }}"
+    _ps_file_json: "{{ _ps_their_bundle | from_json }}"
+
+- name: peering-spire | whether the exchanged bundle is imported
+  ansible.builtin.set_fact:
+    _ps_import: >-
+      {{ (peering_spire_bundle_replace | bool)
+         or not (_ps_held | bool)
+         or ((_ps_held_seq | string) is match('^[0-9]+$')
+             and (_ps_file_seq | string) is match('^[0-9]+$')
+             and (_ps_file_seq | int) > (_ps_held_seq | int)) }}
+
+- name: peering-spire | keep the bundle our server holds
+  ansible.builtin.debug:
+    msg: >-
+      peering-spire keeps the bundle our server holds for
+      {{ peering_spire_partner_trust_domain }} (spiffe_sequence
+      {{ _ps_held_seq if (_ps_held_seq | string | length > 0) else 'not given' }}): the
+      exchanged file's ({{ _ps_file_seq if (_ps_file_seq | string | length > 0) else 'not given' }})
+      is not newer, and the refresh from the partner's bundle endpoint keeps the held
+      one current. peering_spire_bundle_replace=true imports the file anyway, for a
+      partner whose SPIRE server was rebuilt, confirmed on the call.
+  when: not (_ps_import | bool)
+
+- name: peering-spire | import the partner's public bundle
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -i
+      - "{{ peering_spire_container }}"
+      - "{{ peering_spire_bin }}"
+      - bundle
+      - set
+      - -format
+      - spiffe
+      - -id
+      - "{{ peering_spire_partner_trust_domain }}"
+    stdin: "{{ _ps_their_bundle }}"
+  delegate_to: "{{ peering_spire_server_host }}"
+  changed_when: true
+  when: _ps_import | bool

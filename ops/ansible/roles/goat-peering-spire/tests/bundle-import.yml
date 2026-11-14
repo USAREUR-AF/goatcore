@@ -1,0 +1,14 @@
+---
+# Runs tasks/bundle-import.yml on localhost against the stand-in docker that
+# test-bundle-import.sh puts first on PATH; its values come as extra vars.
+- name: goat-peering-spire bundle import, against a stand-in docker
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  environment:
+    PATH: "{{ stand_in_bin }}:{{ lookup('env', 'PATH') }}"
+  tasks:
+    - name: The role's task file
+      ansible.builtin.include_tasks: ../tasks/bundle-import.yml
