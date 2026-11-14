@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 967 variables, 134 of them secret-bearing by name.
+# 969 variables, 134 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -436,7 +436,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 833 variables.
+# 835 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -766,8 +766,14 @@ export DORMANCY_THRESHOLDS=""
 # ops/zenoh/docker-compose.yml, ops/zenoh/loadgen/main.go
 export DRY_RUN=""
 
+# ops/e2e/system.sh
+export E2E_CERTS_DIR=""
+
 # ops/e2e/stubs/gh
 export E2E_GH_STATE=""
+
+# ops/e2e/system.sh
+export E2E_HOSTS_FILE=""
 
 # ops/e2e/stubs/gh
 export E2E_ORIGIN=""
