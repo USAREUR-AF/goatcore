@@ -10,4 +10,4 @@ store on that staging name, so the read found nothing and both verdicts
 failed on `publish/outbound/<set>`, although the partner saw the samples
 arrive. The row now passes when our core accepts both samples (HTTP 2xx),
 fails when it refuses one and is BLOCKED when it does not answer; the
-partner's `delivery/inbound/<set>` still observes the arrival.
+partner's `delivery/inbound/<set>` still observes the arrival. (#789)
