@@ -170,6 +170,19 @@ checks that every `required_by` pair is granted its set somewhere and fails
 when one is not, which is the property that matters — a narrowing that severs
 a class fails loudly — without dropping assertions nobody agreed to drop.
 
+**A pair is checked where the tree can hold it** (built). The vocabulary's
+`required_by` pairs name a deployment's classes (`PLATFORM-ADMIN → INFRA`,
+`NET-ENGINEER → NETWORK`). This repository's intents hold the hello-galaxy
+example (`HUB`, `CREW`, `PROBE` and the rest) and a one-box `zagros`. A pair
+applies only where one goatnet's rules (or one rule template's) name both of
+its groups; otherwise it is printed as *not applicable here*, naming the two
+groups, instead of failing. Groups named by two different goatnets are two
+different groups. When one goatnet names both and no rule grants the set, the
+gate fails as before. A deployment's tree, where
+the classes exist, is checked in full. The gate's `--policy-dir` moves only the
+registry: the generator, extractor and loader always come from this
+repository's `ops/warrant/`.
+
 The same shape as `ops/serve/services.yaml` → Caddyfile and `isitup_services` →
 mesh DNS zones. The generated file stays fully expanded and human-readable:
 **the indirection lives in the source, not in what is applied or reviewed.** An

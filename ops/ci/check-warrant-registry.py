@@ -32,7 +32,13 @@ Checks:
      registry exists to prevent.
   4. required_by COVERAGE — every pair a set declares it is required by is
      actually granted that set somewhere. This is what makes a narrowing fail
-     loudly instead of quietly severing a class.
+     loudly instead of quietly severing a class. A pair is checked only when
+     the tree can hold it: some one goatnet (or rule template) whose rules
+     name both its source and its destination group. Otherwise it is printed
+     as "not applicable here", naming the two groups. This repository's
+     intents hold the hello-galaxy example and a one-box zagros, neither of
+     which carries a deployment's full set of classes; a deployment's tree
+     does, and there the pair fails as before.
   5. EXPIRY — a rule intent carrying `expires:` must carry an `owner:`, must
      parse as a date, and must not be past due.
 
@@ -42,6 +48,10 @@ nothing here reads a live mesh. Live posture is the cutover play's mode=propose
 report. Same boundary as check-netbird-acl-parity.py; see F-283.
 
 Usage:  python3 ops/ci/check-warrant-registry.py [--policy-dir DIR]
+
+--policy-dir moves only the registry (port-sets.yaml + rule-intents/). The
+generator, extractor and loader always come from this repository's
+ops/warrant/, so a policy directory needs no copy of the code.
 Rollback: rm this file, ops/warrant/, .github/workflows/warrant-registry.yml
 """
 
@@ -62,7 +72,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WARRANT_DIR = REPO_ROOT / "ops" / "warrant"
 MATRIX = REPO_ROOT / "ops" / "ansible" / "netbird_acl_matrix.yml"
 
-# --policy-dir relocates the POLICY, never the target. The generated matrix
+# --policy-dir relocates the POLICY, never the code or the target: generate.py
+# and extract.py run from WARRANT_DIR beside this script. The generated matrix
 # always lives in this repo. Passing both explicitly matters because
 # generate.py resolves its own defaults from its own path: run a copy of it
 # out of a temp directory and it would look for the matrix beside the copy,
@@ -115,7 +126,7 @@ def main() -> int:
 
     # 1. byte-identical
     rc, out = run_script(
-        policy_dir / "generate.py",
+        WARRANT_DIR / "generate.py",
         "--check",
         "--policy-dir", str(policy_dir),
         "--target", str(MATRIX),
@@ -131,7 +142,7 @@ def main() -> int:
 
     # 2. faithful extraction
     rc, out = run_script(
-        policy_dir / "extract.py",
+        WARRANT_DIR / "extract.py",
         "--check",
         "--policy-dir", str(policy_dir),
         "--source", str(MATRIX),
@@ -163,7 +174,7 @@ def main() -> int:
     # 3. vocabulary integrity — generate.py's loader is the single implementation
     #    of these rules; calling it here means the guard and the generator can
     #    never disagree about what a valid vocabulary is.
-    sys.path.insert(0, str(policy_dir))
+    sys.path.insert(0, str(WARRANT_DIR))
     from generate import GenerateError, load_port_sets  # noqa: E402
 
     try:
@@ -173,6 +184,14 @@ def main() -> int:
 
     # 4. required_by coverage
     granted: dict[str, list[tuple[str, str, str]]] = {}
+    # Groups each goatnet (or rule template) names. A pair applies where one
+    # scope names both of its groups; groups named by two different goatnets
+    # are two different groups.
+    named: dict[str, set[str]] = {}
+    for scope, rule in rules:
+        named.setdefault(scope, set()).update(rule.get("sources") or [])
+        named[scope].update(rule.get("destinations") or [])
+    not_applicable: list[str] = []
     for scope, rule in rules:
         name = rule.get("port_set")
         if not name:
@@ -188,6 +207,12 @@ def main() -> int:
         name = entry.get("name")
         for req in entry.get("required_by") or []:
             src, dst = req.get("src"), req.get("dst")
+            if not any(src in groups and dst in groups for groups in named.values()):
+                not_applicable.append(
+                    f"port-set '{name}': {src} -> {dst} — no goatnet in this tree declares "
+                    f"both {src} and {dst} (no one goatnet's rules name the two)"
+                )
+                continue
             hits = [g for g in granted.get(name, []) if g[0] == src and g[1] == dst]
             if not hits:
                 violations.append(
@@ -232,6 +257,11 @@ def main() -> int:
                 "  Remove the rule, or move its expiry with a reason in the PR.\n"
                 "  Recertification is this check going red, not a review meeting."
             )
+
+    if not_applicable:
+        print(f"required_by: {len(not_applicable)} pair(s) not applicable here:")
+        for line in not_applicable:
+            print(f"  - {line}")
 
     if violations:
         print("warrant registry gate: FAIL\n", file=sys.stderr)

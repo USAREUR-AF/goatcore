@@ -14,6 +14,12 @@ would actually change a goatnet's posture at cutover).
 Each test copies the registry to a temp dir, mutates the copy, and runs the
 guard against it with --policy-dir. The real registry is never touched.
 
+The rule intents in this repository are the hello-galaxy example (HUB, CREW,
+PROBE, OBSERVER, BREAKGLASS, QUARANTINED), so the mutations name its rules. The
+vocabulary's required_by pairs name a deployment's classes, which the example
+does not have; the guard reports those as not applicable here, and the 4a/4b
+tests below pin that boundary from both sides.
+
 Usage:  python3 ops/ci/test-warrant-registry.py
 """
 
@@ -128,25 +134,78 @@ def main() -> int:
         ),
     )
 
-    # 4. required_by must actually be satisfied
+    # 4a. required_by must actually be satisfied when the tree holds the pair:
+    #     OBSERVER and HUB are both named by example rules, and no rule grants
+    #     `netadmin` from one to the other.
     expect_refusal(
-        "a required_by pair nothing grants is caught",
-        "required_by",
+        "a required_by pair whose groups exist but nothing grants is caught",
+        "OBSERVER -> HUB, but no rule grants",
         lambda d: sub(
             d / "port-sets.yaml",
             "      - { src: NETWORK, dst: INFRA }",
-            "      - { src: NETWORK, dst: INFRA }\n      - { src: NOBODY, dst: NOWHERE }",
+            "      - { src: NETWORK, dst: INFRA }\n      - { src: OBSERVER, dst: HUB }",
         ),
     )
 
-    # 5a. an expired grant is caught
+    # 4b. a pair whose groups no goatnet in the tree declares is not a failure,
+    #     and the guard says which pair and which group it lacks.
+    def absent_pair(policy_dir: Path):
+        sub(
+            policy_dir / "port-sets.yaml",
+            "      - { src: NETWORK, dst: INFRA }",
+            "      - { src: NETWORK, dst: INFRA }\n      - { src: NOBODY, dst: NOWHERE }",
+        )
+        return run_guard(policy_dir)
+
+    rc, out = with_registry(absent_pair)
+    if rc != 0:
+        FAILURES.append(f"a pair with undeclared groups was refused.\n    got: {out.strip()[:400]}")
+    elif "NOBODY -> NOWHERE — no goatnet in this tree declares both NOBODY and NOWHERE" not in out:
+        FAILURES.append(f"a pair with undeclared groups passed without being named.\n    got: {out.strip()[:400]}")
+    else:
+        print("  ok  a pair whose groups no goatnet declares is named as not applicable")
+
+    # 4b'. groups named only by two DIFFERENT goatnets are two different groups:
+    #      CREW is hello-galaxy's, INFRA is zagros's, so CREW -> INFRA is not a
+    #      pair this tree holds, and is not refused.
+    def cross_goatnet_pair(policy_dir: Path):
+        sub(
+            policy_dir / "port-sets.yaml",
+            "      - { src: NETWORK, dst: INFRA }",
+            "      - { src: NETWORK, dst: INFRA }\n      - { src: CREW, dst: INFRA }",
+        )
+        return run_guard(policy_dir)
+
+    rc, out = with_registry(cross_goatnet_pair)
+    if rc != 0:
+        FAILURES.append(f"a pair named only across two goatnets was refused.\n    got: {out.strip()[:400]}")
+    elif "CREW -> INFRA — no goatnet in this tree declares both CREW and INFRA" not in out:
+        FAILURES.append(f"a pair named only across two goatnets passed without being named.\n    got: {out.strip()[:400]}")
+    else:
+        print("  ok  a pair named only by two different goatnets is not applicable")
+
+    # 4c. --policy-dir moves only the registry: a directory holding just
+    #     port-sets.yaml and rule-intents/ is judged with this repository's code.
+    with tempfile.TemporaryDirectory() as tmp:
+        bare = Path(tmp) / "policy"
+        (bare / "rule-intents").mkdir(parents=True)
+        shutil.copy2(WARRANT_DIR / "port-sets.yaml", bare / "port-sets.yaml")
+        shutil.copy2(WARRANT_DIR / "rule-intents" / "netbird-acl.yaml", bare / "rule-intents" / "netbird-acl.yaml")
+        rc, out = run_guard(bare)
+    if rc != 0:
+        FAILURES.append(f"a policy dir without the generator was refused.\n    got: {out.strip()[:400]}")
+    else:
+        print("  ok  a policy dir with no copy of the code is judged with the repository's")
+
+    # 5a. an expired grant is caught. The observer rule carries no expiry of its
+    #     own (the breakglass one does), so the inserted key is the only one.
     expect_refusal(
         "a past-due expires: is caught",
         "expired on",
         lambda d: sub(
             d / "rule-intents" / "netbird-acl.yaml",
-            '      - name: "breakglass → infra (ssh only)"',
-            '      - name: "breakglass → infra (ssh only)"\n'
+            '      - name: "observer → hub (https only)"',
+            '      - name: "observer → hub (https only)"\n'
             "        expires: 2020-01-01\n"
             "        owner: platform-admin",
         ),
@@ -158,8 +217,8 @@ def main() -> int:
         "no `owner:`",
         lambda d: sub(
             d / "rule-intents" / "netbird-acl.yaml",
-            '      - name: "breakglass → infra (ssh only)"',
-            '      - name: "breakglass → infra (ssh only)"\n'
+            '      - name: "observer → hub (https only)"',
+            '      - name: "observer → hub (https only)"\n'
             "        expires: 2099-01-01",
         ),
     )
@@ -169,8 +228,8 @@ def main() -> int:
     def not_yet_due(policy_dir: Path):
         sub(
             policy_dir / "rule-intents" / "netbird-acl.yaml",
-            '      - name: "breakglass → infra (ssh only)"',
-            '      - name: "breakglass → infra (ssh only)"\n'
+            '      - name: "observer → hub (https only)"',
+            '      - name: "observer → hub (https only)"\n'
             "        expires: 2030-06-01\n"
             "        owner: platform-admin",
         )
