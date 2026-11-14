@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 976 variables, 135 of them secret-bearing by name.
+# 977 variables, 135 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -439,7 +439,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 841 variables.
+# 842 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2520,6 +2520,9 @@ export RP_IMAGE=""
 
 # ops/scripts/rosenpass_revoke_and_reinvite.py
 export RP_LEDGER=""
+
+# ops/e2e/system.sh
+export RUNNER_ENVIRONMENT=""
 
 # ops/grant-crypto/transport-proof/run.sh
 export RUST_LOG=""

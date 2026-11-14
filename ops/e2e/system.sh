@@ -24,13 +24,16 @@ sys_changes() {
 # sys_guard HOSTS THROWAWAY: 0 when the run may go on; 2, with the reason, otherwise.
 sys_guard() {
   [ "$1" = 1 ] || return 0
-  [ "${GITHUB_ACTIONS:-}" = true ] && return 0
+  # CI here means a GitHub-hosted runner, a machine nobody else uses: a self-hosted runner
+  # also sets GITHUB_ACTIONS=true, and is often a shared machine.
+  [ "${GITHUB_ACTIONS:-}" = true ] && [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] && return 0
   [ "$2" = 1 ] && return 0
   {
     echo "hermetic: refusing to start: with hosts, this run changes the machine it runs on (it uses sudo):"
     sys_changes
     echo "  It undoes the first two on exit, but while it runs every other user of this machine"
-    echo "  resolves ghcr.io to its registry. Run it in CI (GITHUB_ACTIONS=true), or pass"
+    echo "  resolves ghcr.io to its registry. Run it on a GitHub-hosted runner (GITHUB_ACTIONS=true"
+    echo "  and RUNNER_ENVIRONMENT=github-hosted), or pass"
     echo "  --throwaway-machine on a machine nobody else uses, or pass --no-hosts for the"
     echo "  dry-run and refusal cases, which change nothing."
   } >&2

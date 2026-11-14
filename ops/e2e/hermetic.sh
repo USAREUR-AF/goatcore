@@ -20,7 +20,7 @@
 #                or debian (ops/e2e/host/Dockerfile.debian); the same cases run on either
 #   --throwaway-machine  run with hosts outside CI. With hosts the tier uses sudo to point
 #                ghcr.io at a local registry (/etc/hosts, /etc/docker/certs.d, a registry
-#                on :443), so it refuses to start unless GITHUB_ACTIONS=true or this is
+#                on :443), so it refuses to start unless on a GitHub-hosted runner or this is
 #                given (ops/e2e/system.sh); it undoes the two files on exit
 #
 # Exit 0 when every case passed or failed as expected (xfail); 1 otherwise.
