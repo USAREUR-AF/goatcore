@@ -65,6 +65,18 @@ checkout (GB-276, new); and a peering that is not declared (GB-149). The
 undeclared peering now exits 1, refused, as GB-149 says and as `federate
 allocate`'s same refusal already did; it exited 2 (gate row C5).
 
+#### "Added: a two-driver peering's controller imports phase 1's edge result and runs its core half"
+
+On a peering declared `drivers: two`, `goatbuilder federate import <peering> 1
+<file> --sha256 <code>` takes in the edge driver's phase 1 result: it checks
+the file against the confirm code the edge driver printed, places it under
+`<work>/handoff/1/` and records its sha256 in the run journal. `goatbuilder
+federate <peering> --from 1` then hashes the file again, runs phase 1's core
+checks (preflight `--side core`), joins the two sides' results, and goes on to
+phase 2's hand-off. A result that cannot be imported is GB-277. The edge
+driver's own run, and the import of later phases, are not built yet (gate row
+B10).
+
 #### Fixed: federate status resumes from the first phase it cannot show passed
 
 `goatbuilder federate status` named the next command from the phase the last

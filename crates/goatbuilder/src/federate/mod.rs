@@ -145,7 +145,7 @@ fn row(name: &str, detail: String) -> Check {
     Check { name: name.into(), ok: true, detail, fix: None }
 }
 
-fn env_or(name: &str, default: String) -> String {
+pub(crate) fn env_or(name: &str, default: String) -> String {
     runenv::var(name).ok().filter(|v| !v.is_empty()).unwrap_or(default)
 }
 
@@ -792,9 +792,43 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 break;
             }
         }
+        // Two drivers: a phase whose edge result was imported runs its core
+        // half here, against that result (federate/handoff.rs).
+        let mut core_cmd: Option<String> = None;
+        let mut edge_result: Option<serde_json::Value> = None;
+        if two_drivers && handoff::core_half_built(ph.n) {
+            if let Some((file, bound)) = run.as_ref().and_then(|r| handoff::imported(&r.state, ph.n)) {
+                match handoff::check_imported(Path::new(&work), ph.n, &file, &bound) {
+                    Ok(edge) => {
+                        let problems = handoff::phase_1_edge_problems(&edge);
+                        if !problems.is_empty() {
+                            let d = format!("phase 1's edge checks, imported from the edge driver, are not ready: {}; phase 1's core half did not run", problems.join("; "));
+                            checks.push(Check { name: "failed".into(), ok: false, detail: d.clone(), fix: Some(format!("fix what the edge checks name, run the edge driver's phase 1 again, import its new result, then goatbuilder federate {} --from 1", o.with)) });
+                            if let Some(r) = run.as_mut() {
+                                r.end(ph, state::Outcome::Failed, &d);
+                            }
+                            exit = EXIT_REFUSED;
+                            break;
+                        }
+                        checks.push(row("handoff", format!("phase {}'s edge result, imported at {bound}: its core half runs here", ph.n)));
+                        core_cmd = Some(format!("{} --side core", ph.cmd));
+                        edge_result = Some(edge);
+                    }
+                    Err(stop) => {
+                        let d = stop.detail.clone();
+                        checks.push(stop);
+                        if let Some(r) = run.as_mut() {
+                            r.end(ph, state::Outcome::Stopped, &d);
+                        }
+                        stopped = true;
+                        break;
+                    }
+                }
+            }
+        }
         // Two drivers: a phase that needs the edge stops here, before acting,
         // and hands it to the edge driver (docs/design/federation-two-drivers.md).
-        if two_drivers && matches!(handoff::side_of(ph.n), handoff::Side::Edge | handoff::Side::Both) {
+        if core_cmd.is_none() && two_drivers && matches!(handoff::side_of(ph.n), handoff::Side::Edge | handoff::Side::Both) {
             if !handoff::hands_off(ph.n) {
                 let refusal = handoff::later_phase_not_built(ph.n);
                 let d = refusal.detail.clone();
@@ -943,7 +977,8 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             None => {
                 // -e, like standup and join-node: a phase that is several statements
                 // stops at the first failure instead of running on past it.
-                let status = runenv::command("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
+                let cmd = core_cmd.as_deref().unwrap_or(&ph.cmd);
+                let status = runenv::command("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
                 if status.success() { 0 } else { status.code().unwrap_or(1) }
             }
         };
@@ -969,6 +1004,21 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             }
             exit = EXIT_REFUSED;
             break;
+        }
+        // Phase 1's two sides, joined into the one result the later phases read.
+        if let Some(edge) = &edge_result {
+            match handoff::join_phase_1(Path::new(&work), edge) {
+                Ok(true) => checks.push(row("handoff", "phase 1's edge and core results are joined in preflight/result.json; both sides are ready".into())),
+                Ok(false) | Err(_) => {
+                    let d = "phase 1's edge and core results could not be joined as ready (preflight/result.json)".to_string();
+                    checks.push(Check { name: "failed".into(), ok: false, detail: d.clone(), fix: Some(format!("goatbuilder federate {} --from 1", o.with)) });
+                    if let Some(r) = run.as_mut() {
+                        r.end(ph, state::Outcome::Failed, &d);
+                    }
+                    exit = EXIT_REFUSED;
+                    break;
+                }
+            }
         }
         if let Some(r) = run.as_mut() {
             // Confirmation 1, second half: the agreement digest after compose.
