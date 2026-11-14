@@ -916,6 +916,19 @@ mod tests {
         assert!(next(&passed(1..=14), "passed", Some("INCOMPLETE"))
             .starts_with("fix what acceptance found"));
         assert!(next(&passed(1..=14), "passed", None).ends_with("--from 14"));
+        // A phase a later goatbuilder recorded with a word this build does not
+        // know is never a pass, so the next step resumes from the first phase
+        // the journal does not show passed, not after the last one the run reached.
+        let later = |n: u32| (n, Outcome::Later("deferred".into()));
+        let mut ph = passed(1..=13);
+        ph[2] = later(3);
+        ph.push(later(14));
+        let n = next(&ph, "deferred", None);
+        assert!(n.ends_with("--from 3"), "phases 3 and 14 are deferred: {n}");
+        let mut ph = passed(1..=9);
+        ph[4] = later(5);
+        let n = next(&ph, "passed", None);
+        assert!(n.ends_with("--from 5"), "phase 5 is deferred: {n}");
     }
 
     #[test]
