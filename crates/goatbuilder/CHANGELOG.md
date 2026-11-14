@@ -7,6 +7,27 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+<!-- END generated: changelog unreleased -->
+
+## 0.7.0 — 2026-11-14
+
+What changed since 0.6.1, the previous release. Every refusal now names its
+error code, and a failed phase of any verb names the error in its output with
+its fix; `explain` answers for the phases of every verb.
+A run records every value it uses and where each came from. `goatbuilder
+status` reads real hosts, and `goatbuilder update verify-release` checks a
+downloaded release without installing it. `join-node` names what a joining site
+does not run and why, adds a node at a third site from phase 1 to 15, has no
+manual phase after reaching the node, and deploys a joining site's data router,
+its leaves, the health publishers it declares and, with signal federation off,
+its front door. Phase 10 places and restarts nothing when its admission is
+already in place. A back-out stops on a probe that
+cannot tell, takes back what admission placed, and drops a role core partner's
+store whole.
+
+Two behaviour changes: an undeclared peering exits 1, refused, where it exited
+2; and a back-out that used to pass over a probe that could not tell now stops
+on it. Nothing that is half built ships switched on.
 
 ### For someone deploying
 
@@ -78,7 +99,7 @@ not set it is graded as not running the proxy. A site without the
 `signal-federation-transport` ledger grades its deployment as unknown, never
 as failed (#637).
 
-#### "Changed: every refusal names its catalog code, and an undeclared peering exits 1"
+#### Changed: every refusal names its catalog code, and an undeclared peering exits 1
 
 The refusals that printed no catalog code now print one, on the line after
 the message (`(GB-NNN — goatbuilder explain GB-NNN)`): a command line goatbuilder
@@ -90,7 +111,7 @@ checkout (GB-276, new); and a peering that is not declared (GB-149). The
 undeclared peering now exits 1, refused, as GB-149 says and as `federate
 allocate`'s same refusal already did; it exited 2 (gate row C5) (#656).
 
-#### "Added: a two-driver peering's controller imports phase 1's edge result and runs its core half"
+#### Added: a two-driver peering's controller imports phase 1's edge result and runs its core half
 
 On a peering declared `drivers: two`, `goatbuilder federate import <peering> 1
 <file> --sha256 <code>` takes in the edge driver's phase 1 result: it checks
@@ -142,7 +163,7 @@ of the reference are now rendered from the phase catalog. The runbook's table
 has one row a phase, with what it does and how to tell it worked; `explain
 standup <phase>` gives the rest.
 
-#### "Added: join-node deploys the data router at a joining site"
+#### Added: join-node deploys the data router at a joining site
 
 `goatbuilder join-node` now runs the site's own Zenoh router on a joining
 site's core node, in phase 13 after signal federation: `zenoh-deploy.yml`
@@ -150,7 +171,7 @@ for the site's core group, limited to the node. It was a hand step after
 the command. The play still needs the node's router leaf certificate,
 which join-node does not stage yet.
 
-#### "Added: join-node deploys the health publishers a joining site declares"
+#### Added: join-node deploys the health publishers a joining site declares
 
 `goatbuilder join-node` now deploys a joining site's health publishers on
 its core node, in phase 13 after the data router. It reads the site's end
@@ -162,7 +183,7 @@ command. A publisher the model marks present whose play is not in the
 checkout is refused when the plan is made (GB-288). When the model cannot be
 read, the plan says so on a SKIP line and deploys none.
 
-#### "Added: join-node sets up a joining site's front door when signal federation is off"
+#### Added: join-node sets up a joining site's front door when signal federation is off
 
 `goatbuilder join-node` now sets up the front door of a joining site that
 declares signal federation off, in phase 13 after the data router, for the
@@ -173,7 +194,7 @@ site's core group limited to the node. A site that declares
 the router). Before, only signal federation set up the front door, so such a
 site had none. With federation on, nothing changes.
 
-#### "Added: join-node mints and stages a joining site's leaves"
+#### Added: join-node mints and stages a joining site's leaves
 
 `goatbuilder join-node` now mints a joining site's router and service leaves
 and stages them, in phase 13 before the data router. It runs
@@ -198,7 +219,7 @@ it for this class", followed by the declaration that keeps each one off.
 and the grade cannot disagree. When the model cannot be read, the section
 says so in one line and lists nothing; the run is not stopped. (#612)
 
-#### "Changed: join-node has no manual phase after reaching the node"
+#### Changed: join-node has no manual phase after reaching the node
 
 `goatbuilder join-node` stopped at phase 8, to mint a setup key, and at
 phase 10, to enrol the node by hand. Now phase 10 enrols the node itself. It
@@ -358,7 +379,7 @@ one held. Otherwise it keeps the held bundle and says so. For a partner whose
 SPIRE server was rebuilt with new keys, confirmed on the call, set
 `peering_spire_bundle_replace: true` to import the file over any bundle held.
 
-#### "Fixed: the audit-subscriber leaf is staged with the other service leaves"
+#### Fixed: the audit-subscriber leaf is staged with the other service leaves
 
 `stage-service-leaves.yml` now stages the audit-subscriber leaf and its key
 into `/opt/audit-subscriber/certs`, where the audit-subscriber role reads
@@ -402,7 +423,7 @@ A run record (`<state>/runs/<id>/run.json`) of a run that stopped without an
 error now keeps the rows that stopped it, under `stop`, and
 `goatbuilder show <run>` prints them (#668).
 
-#### "Added: `goatbuilder update verify-release` verifies a downloaded goatbuilder release without installing it"
+#### Added: `goatbuilder update verify-release` verifies a downloaded goatbuilder release without installing it
 
 `goatbuilder update verify-release <dir> --signer <owner>/<repo> --version
 <x.y.z> [--trusted-root <file>]` verifies a downloaded goatbuilder release
@@ -455,10 +476,10 @@ reaches the library yet; it is the first part of gate row B2 (#654).
 - The hermetic deploy job's release re-run and soak cases pass on a run
   that crosses midnight UTC (#621).
 
-#### Changed: the compatibility check holds more of the last release, now goatbuilder/v0.6.0
+#### Changed: the compatibility check holds more of the last release, now goatbuilder/v0.6.1
 
 `ops/ci/check-goatbuilder-compat.sh` compares each build with the last
-published release, now `goatbuilder/v0.6.0`. It keeps `-o json` documents
+published release, now `goatbuilder/v0.6.1`. It keeps `-o json` documents
 for the verbs that change state (`deploy`, `rollback`, `plan`, `standup`,
 `teardown`) and for run journals, and holds a field that only some entries
 of a list carry from a reviewed list (`conditional.yaml`). A kept command's
@@ -468,7 +489,7 @@ checksums are one list, `crates/goatbuilder/tests/upgrade/releases.sha256`,
 which the upgrade tests own and the check only reads, and it holds
 v0.6.0's and v0.6.1's binaries. The configuration files of both are kept
 for gate row A2 beside those of the earlier releases (#566, #617, #562,
-#563, #631, #634, #616, #674, #675).
+#563, #631, #634, #616, #674, #675, #676).
 
 #### Added: contract clause C11, legibility, is written beside C1 to C10
 
@@ -620,7 +641,9 @@ code, on its first line. The two examples that their own release refused,
 in the configuration reference and tutorial 00, are fixed, and the test
 runs on every pull request that touches goatbuilder or a document (#568).
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.6.1 — 2026-11-13
 
