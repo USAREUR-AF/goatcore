@@ -14,6 +14,8 @@ contract:
   * every `E_*` row of docs/design/goat-cli-error-codes.md is in the catalog and vice versa,
     with the same exit code
   * docs/reference/errors.md equals what --write generates from the catalog
+  * docs/reference/errors/<CODE>.md, one page per code, each equal what --write generates, and
+    the directory holds no page for a code the catalog does not have
 
 Exit 0 ok; 1 with every defect printed; 2 when an input cannot be read.
 
@@ -29,6 +31,9 @@ except ImportError:
 
 CATALOG = "ops/errors/catalog.yaml"
 REFERENCE = "docs/reference/errors.md"
+# One page per code, named by the code, so a search for a code finds a page whose
+# title is that code. Generated from CATALOG, never edited by hand.
+PAGES = "docs/reference/errors"
 # The English Fluent catalog of the entries' prose — the arbiter the other
 # locales are translated from (docs/design/goat-cli-i18n.md §"CLI catalog
 # currency"). Generated from CATALOG, never edited by hand; the translations
@@ -147,11 +152,51 @@ def render(data):
         out.append("|---|---|---|---|---|---|---|")
         for e in rows:
             cell = lambda xs: "<br>".join(str(x).replace("|", "\\|") for x in xs)
-            out.append("| `{code}` | {tool} | **{title}** — {what} | {causes} | {fixes} | `{read}` | {exit} |".format(
+            out.append("| [`{code}`](errors/{code}.md) | {tool} | **{title}** — {what} | {causes} | {fixes} | `{read}` | {exit} |".format(
                 code=e["code"], tool=e.get("tool", ""), title=str(e.get("title", "")).replace("|", "\\|"),
                 what=str(e.get("what", "")).replace("|", "\\|"), causes=cell(e.get("causes") or []),
                 fixes=cell(f"`{x}`" for x in (e.get("fixes") or [])), read=e.get("read", ""),
                 exit=e.get("exit", "")))
+    return "\n".join(out) + "\n"
+
+
+def page_path(code):
+    return f"{PAGES}/{code}.md"
+
+
+def md_prose(value):
+    """Catalog prose as Markdown text: outside `code spans`, a `<placeholder>` would
+    be read as an HTML tag and dropped, and `*` would start emphasis."""
+    parts = re.split(r"(`[^`]*`)", " ".join(str(value).split()))
+    return "".join(p if p.startswith("`") else p.replace("&", "&amp;").replace("<", "&lt;").replace("*", "\\*")
+                   for p in parts)
+
+
+def render_page(e):
+    """The page of one code: its title is the code and the entry's title, then
+    what / why / fix / read. Links are relative to PAGES, three levels below the
+    repository root."""
+    code, tool = str(e["code"]), str(e.get("tool", ""))
+    if code.startswith("X-"):
+        who = f"`{code}` is an error of `{tool}` that goat and goatbuilder carry and interpret."
+    else:
+        who = f"`{code}` is printed by `{tool}`."
+    out = [f"# {code}: {md_prose(e.get('title', ''))}", ""]
+    out.append(f"Generated from `{CATALOG}` by `ops/ci/check-error-catalog.py --write`; do not edit here. "
+               f"{who} The same text offline: `goat explain {code}` or `goatbuilder explain {code}`.")
+    if e.get("retired"):
+        out += ["", f"**Retired.** No current release raises this code ({md_prose(e['retired'])}). "
+                    "The page stays because logs of earlier releases carry the code."]
+    out += ["", "## What it means", "", md_prose(e.get("what", ""))]
+    out += ["", "## Why it happens", ""]
+    out += [f"- {md_prose(c)}" for c in e.get("causes") or []]
+    out += ["", "## What to do", "", "One line per step or alternative:", "", "```text"]
+    out += [" ".join(str(x).split()) for x in e.get("fixes") or []]
+    out += ["```", "", "## Read more", "", f"- [`{e.get('read', '')}`](../../../{e.get('read', '')})",
+            "- [Every error code](../errors.md)",
+            "- [How errors are interpreted](../../design/error-interpretation.md)"]
+    if "exit" in e:
+        out += ["", "## Exit code", "", f"`{tool}` exits with {e['exit']}."]
     return "\n".join(out) + "\n"
 
 
@@ -204,6 +249,14 @@ def self_test():
             yaml.safe_dump(good, f)
         write(os.path.join(t, "crates/goatbuilder/src/a.rs"), 'coded("GB-001", x)\n')
         write(os.path.join(t, REFERENCE), render(good))
+        os.makedirs(os.path.join(t, PAGES))
+        for e in good["entries"]:
+            write(os.path.join(t, page_path(e["code"])), render_page(e))
+        page = render_page(good["entries"][0])
+        assert page.startswith("# GB-001: t\n"), "a page's title is the code and the entry's title"
+        assert "goatbuilder explain GB-001" in page and "exits with 2" in page
+        assert md_prose("no <site> in `a <b> *`, 2 * 3") == "no &lt;site> in `a <b> *`, 2 \\* 3"
+        assert "**Retired.**" in render_page({**good["entries"][0], "retired": "goatbuilder/v0.6.0: gone"})
         os.makedirs(os.path.dirname(os.path.join(t, FTL)))
         write(os.path.join(t, FTL), render_ftl(good))
         assert run(t, write=False) == 0, "a complete catalog must pass"
@@ -214,6 +267,13 @@ def self_test():
             problems = []
             check_entries(t, {"schema": "goat-errors/v1", "entries": [{**good["entries"][0], "retired": mark}]}, problems)
             assert (not problems) == ok, f"retired {mark!r}: {problems}"
+        write(os.path.join(t, page_path("GB-001")), "stale\n")
+        assert run(t, write=False) == 1, "a stale code page must fail"
+        write(os.path.join(t, page_path("GB-001")), page)
+        write(os.path.join(t, page_path("GB-777")), "x\n")
+        assert run(t, write=False) == 1, "a page for a code the catalog does not have must fail"
+        os.remove(os.path.join(t, page_path("GB-777")))
+        assert run(t, write=False) == 0
         assert ftl_text("run `x { $y }`") == 'run `x {"{"} $y {"}"}`', "braces are escaped as Fluent literals"
         assert "gb-001-cause-1 = c" in render_ftl(good), "causes are numbered from 1"
         write(os.path.join(t, FTL), "stale\n")
@@ -255,6 +315,32 @@ def run(repo, write):
                 have = f.read()
         if have != want:
             problems.append(f"{REFERENCE} is out of date: regenerate with ops/ci/check-error-catalog.py --write")
+    pages = os.path.join(repo, PAGES)
+    want_pages = {f"{e['code']}.md": render_page(e) for e in data.get("entries") or []
+                  if CODE_SHAPE.match(str(e.get("code", "")))}
+    have_pages = sorted(n for n in os.listdir(pages) if n.endswith(".md")) if os.path.isdir(pages) else []
+    if write:
+        os.makedirs(pages, exist_ok=True)
+        for name in have_pages:
+            if name not in want_pages:
+                os.remove(os.path.join(pages, name))
+        for name, text in want_pages.items():
+            with open(os.path.join(pages, name), "w") as f:
+                f.write(text)
+        print(f"wrote {PAGES}/ ({len(want_pages)} pages)")
+    else:
+        stale = []
+        for name, text in want_pages.items():
+            have_page = ""
+            if name in have_pages:
+                with open(os.path.join(pages, name)) as f:
+                    have_page = f.read()
+            if have_page != text:
+                stale.append(name)
+        extra = [n for n in have_pages if n not in want_pages]
+        if stale or extra:
+            problems.append(f"{PAGES}/ is out of date ({len(stale)} page(s) differ or are missing, "
+                            f"{len(extra)} have no catalog entry): regenerate with ops/ci/check-error-catalog.py --write")
     ftl = os.path.join(repo, FTL)
     want_ftl = render_ftl(data)
     if write:
@@ -282,7 +368,7 @@ def run(repo, write):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", default=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-    ap.add_argument("--write", action="store_true", help=f"regenerate {REFERENCE} and {FTL}")
+    ap.add_argument("--write", action="store_true", help=f"regenerate {REFERENCE}, {PAGES}/ and {FTL}")
     ap.add_argument("--self-test", action="store_true")
     a = ap.parse_args()
     if a.self_test:

@@ -4,14 +4,14 @@
 |---|---|
 | Status | **Built** (2026-10-28): the catalog, the shared crate, `goat explain` and `goatbuilder explain`, both binaries' top-level error paths, the CI gate and the generated reference. The semantic layer is **designed, not built** (§"The fourth layer") |
 | Decision | [ADR 1199](../adr/1199-one-error-catalog-interpreted-by-both-clis.md) |
-| Sources | `ops/errors/catalog.yaml` (the catalog) · `crates/goat-errors/` (the crate) · `crates/goat-cli/src/cmd/explain.rs`, `crates/goatbuilder/src/main.rs` (the verbs and the error paths) · `ops/ci/check-error-catalog.py` + `.github/workflows/error-catalog.yml` (the gate) · [`docs/reference/errors.md`](../reference/errors.md) (generated) |
+| Sources | `ops/errors/catalog.yaml` (the catalog) · `crates/goat-errors/` (the crate) · `crates/goat-cli/src/cmd/explain.rs`, `crates/goatbuilder/src/main.rs` (the verbs and the error paths) · `ops/ci/check-error-catalog.py` + `.github/workflows/error-catalog.yml` (the gate) · [`docs/reference/errors.md`](../reference/errors.md) and one page per code under `docs/reference/errors/` (generated) |
 | Audience | platform admins and operators who read the errors; anyone adding an error to either binary |
 
 ## What this is
 
 An operator who sees an error from `goat` or `goatbuilder` must be able to act on it without asking anyone. Every error either binary prints therefore carries four things: what happened, the likely cause, what to do (a command where one exists), and where to read more. Errors that come from a tool the binary called — ansible, ssh, op, aws-vault, git, gh, cosign, docker, netbird — are carried through and interpreted the same way, because the words an operator is left with are often that tool's, not ours.
 
-One catalog holds all of it: `ops/errors/catalog.yaml`, 88 entries at the time of writing, compiled into both binaries at build time so `goat explain` and `goatbuilder explain` work offline and on a machine with no checkout. Adding an error is a YAML block in that file and nothing else.
+One catalog holds all of it: `ops/errors/catalog.yaml`, compiled into both binaries at build time so `goat explain` and `goatbuilder explain` work offline and on a machine with no checkout. Adding an error is a YAML block in that file and nothing else.
 
 ## What the operator sees
 
@@ -112,6 +112,7 @@ The goat `E_*` namespace, its exit codes and `docs/design/goat-cli-error-codes.m
 - every code a binary cites in Rust exists in the catalog; every `#[error("E_…")]` variant in `errors.rs` exists in the catalog
 - every row of `docs/design/goat-cli-error-codes.md` is in the catalog with the same exit code, and every `E_*` entry has a row there
 - `docs/reference/errors.md` equals what `--write` renders from the catalog
+- `docs/reference/errors/<CODE>.md` exists for every code and equals what `--write` renders for it, and the directory holds no page for a code the catalog does not have
 - a `retired` mark, where there is one, names a release tag and a reason: `^(goatbuilder/v|goat-cli-v)\d+\.\d+\.\d+: .+`
 
 `ops/ci/check-error-codes-kept.py` (same workflow; gate row A5) holds the catalog to the last release: it reads `ops/errors/catalog.yaml` at the last release of each binary that prints these codes, the newest `goatbuilder/v<x.y.z>` and `goat-cli-v<x.y.z>` tags reachable from HEAD (highest version, pre-releases excluded), with `git show`, never the network, and fails when a code of such a release is absent from the tree's catalog, or its title has changed and its entry carries no `retired` mark. A new code passes, a retired one passes whatever its title, and rewording `what`, `causes` or `fixes` passes: the title is the code's meaning. A pre-release tag (`-rc.N`) is not a release.
@@ -122,8 +123,8 @@ The crate's tests prove the three layers on real messages: a passthrough deploy 
 
 1. Add the entry to `ops/errors/catalog.yaml`. For a tool's error, put the exact words it prints in `matches:` (quote the stderr; keep the pattern literal).
 2. If a binary should emit the code itself, cite it: `Err(goat_errors::coded("GB-032", …))` in goatbuilder; a `GoatError` variant plus a row in `goat-cli-error-codes.md` in goat.
-3. `python3 ops/ci/check-error-catalog.py --write` regenerates the reference; `cargo test -p goat-errors` compiles the patterns.
+3. `python3 ops/ci/check-error-catalog.py --write` regenerates the reference and the code's page; `cargo test -p goat-errors` compiles the patterns.
 
 ## Hosting the reference
 
-`docs/reference/errors.md` is generated in this repository. The operator-facing book (`docs/goat-cli-book/`, served at `docs.<site>`) is translated into 29 languages under a currency gate, so a chapter there is a translation campaign, not a file copy; the reference goes into the book's Troubleshooting chapter as a link in the next book release, and the book's generated `reference.md` carries `goat explain`'s own help already.
+`docs/reference/errors.md` is generated in this repository, and so is one page per code, `docs/reference/errors/<CODE>.md` (for example [`GB-064`](../reference/errors/GB-064.md)). A code's page is titled with the code and the entry's title and carries what it means, why it happens, what to do and where to read more, so a search for a code finds a page about that code alone (built). The operator-facing book (`docs/goat-cli-book/`, served at `docs.<site>`) is translated into 29 languages under a currency gate, so a chapter there is a translation campaign, not a file copy; the reference goes into the book's Troubleshooting chapter as a link in the next book release, and the book's generated `reference.md` carries `goat explain`'s own help already.
