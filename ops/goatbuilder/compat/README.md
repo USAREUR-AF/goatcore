@@ -136,6 +136,14 @@ The rule itself (shown as written, not passed on resume, unknown fields kept
 on rewrite) is proven by `crates/goatbuilder/tests/journal_from_a_later_build.rs`,
 which lands with the reader that passes it.
 
+The run-record verbs (`runs`, `show`, `runs diff`) read the run records under
+the project's state directory. `documents/fixtures/runs/` holds a checkout whose
+`goatbuilder.yaml` declares that directory inside the fixture, and two records
+the published 0.6.0 wrote there: a `deploy` and a `rollback` of the basic
+fixture, each stopped by its first refusal, with the scratch directory they ran
+in written as `/tmp/goatbuilder-compat`. A4 keeps `runs`, `show` of the second
+and `runs diff` of the two.
+
 ## What is not checked here
 
 - The text of tables printed for a person, and the shell scripts beside the

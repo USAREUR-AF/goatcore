@@ -380,6 +380,34 @@ documents:
   - ops/goatbuilder/compat/documents/fixtures/journal/later
   exit: 0
   release_exit: 0
+- name: runs-list
+  format: json
+  args:
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/runs/repo
+  - runs
+  exit: 0
+  release_exit: 0
+- name: show-run
+  format: json
+  args:
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/runs/repo
+  - show
+  - 20261114T022342Z-rollback-352859
+  exit: 0
+  release_exit: 0
+- name: runs-diff
+  format: json
+  args:
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/runs/repo
+  - runs
+  - diff
+  - 20261114T022342Z-deploy-352854
+  - 20261114T022342Z-rollback-352859
+  exit: 0
+  release_exit: 0
 not_kept:
   completion: prints a shell script, not a document
   docs: prints the command reference as Markdown, not a document
