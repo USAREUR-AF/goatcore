@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Decided, 13 November 2026: option (a)** ([ADR 1234](../adr/1234-a-partners-data-lives-in-its-own-store-dropped-whole-when-the-peering-ends.md)), under the rule in "The decision". To be reviewed later; no date is set. The back-out that carries it out is built on a goat-zenoh role core and not measured; "What happened before the build" is the behavior before it
+| Status | **Decided, 13 November 2026: option (a)** ([ADR 1234](../adr/1234-a-partners-data-lives-in-its-own-store-dropped-whole-when-the-peering-ends.md)), under the rule in "The decision". To be reviewed later; no date is set. The back-out that carries it out is built on a goat-zenoh role core and measured (run `e8d6bd79cd35-20261114T040902-1443309`); "What happened before the build" is the behavior before it
 | Decides | What `goatbuilder federate backout <partner>` does with the core's receive stores for that partner, above all when it is the last peering |
 | Gate row | B7 of the goatbuilder 1.0 gate: "Backing a peering out removes everything the command created and nothing else", proven by the back-out scenario and a comparison of both hosts with their state before the peering |
 | Related | [sovereign-federation-runbook.md](../operations/sovereign-federation-runbook.md), Step 9 · [federation-package-spec.md](federation-package-spec.md), "Receiving storage interests" · [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md) |
@@ -39,7 +39,7 @@ design to get somewhere working for now".
   of the structure instead.
 - **Option (c) is not built**, now or as a follow-up. Deleting a partner's
   samples by key is rule 4's deletion by key.
-- **What the back-out does** (built, unit-tested, not measured): on a
+- **What the back-out does** (built, unit-tested, measured): on a
   goat-zenoh role core with no route of its own, behind the back-out's typed
   confirmation and after the core step, it takes the partner's entry out of
   `zenoh_sovereign_peerings` in `group_vars/<core router group>/peerings.yml`
@@ -52,6 +52,11 @@ design to get somewhere working for now".
   back-out did not write or could not take out, and the role deletes the one
   store it is told to drop. A core admitted through the deployment's own route
   (`FED_CORE_*`) keeps its role entry, reported as GB-227.
+  Measured in the federation test environment's back-out scenario, run
+  `e8d6bd79cd35-20261114T040902-1443309`, 58 of 58 checks on e8d6bd79 (#629's eight commits, identical on
+  b97071b9): the core's `acl-org-fragment.json5` and `config.json5` were byte
+  for byte the files before the peering, with no grant and no
+  `sovereign_from_<partner>` store, and the store drop ran as its own step.
 - **A store directory nothing declares** (an entry removed by hand, outside a
   back-out) has no retention. The role reports it, as it does today
   (`.undeclared-stores`); no automatic deletion is added for it.
