@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use jsonschema::{Draft, JSONSchema};
 use serde::Deserialize;
 use serde_json::Value;
@@ -463,6 +463,61 @@ pub fn derive_lite(value: &Value, checkout: Option<&Value>) -> Value {
         obj.insert("secrets".into(), serde_json::json!({"store": "env-file"}));
     }
     out
+}
+
+/// Gate row G1 (docs/design/goatlite-growth.md §6, the hand-over): the full
+/// configuration a lite one grows into, with the same values. It is what
+/// `derive_lite` computes from the `lite:` block, written as `preset: full`
+/// without that block, plus what a lite run decides from the preset, declared
+/// in `deploy:` so a full run decides the same: `ssh_user` and `owner` from
+/// `lite.ssh_user` and `lite.admin`, `cloud: none` on a LAN goatlite (else
+/// `aws_profile` from `lite.internet`), and `cross_goatnet: false`. The
+/// lite facts the full shape has no field for (host, admin, zone, disk and key
+/// choices) are already in the file set the render wrote, which the learner
+/// keeps. Refused unless the result validates: a four-fact file with no checkout
+/// config has no `repo` or `components`, and growth asks for them then.
+#[allow(dead_code)] // the verb's wiring in main.rs is a separate change; the tests call this
+pub fn grow(value: &Value, checkout: Option<&Value>) -> Result<Value> {
+    if value.get("preset").and_then(Value::as_str) != Some("lite") {
+        return Err(anyhow!("grow takes a goatlite config: this one does not declare preset: lite"));
+    }
+    let lite = value.get("lite").and_then(Value::as_object).ok_or_else(|| anyhow!("grow takes a goatlite config: this one has no lite: block"))?;
+    let mut out = derive_lite(value, checkout);
+    let obj = out.as_object_mut().expect("derive_lite keeps an object");
+    obj.remove("lite");
+    obj.insert("preset".into(), Value::from("full"));
+    let deploy = obj.entry("deploy").or_insert_with(|| Value::Object(Default::default()));
+    if let Some(d) = deploy.as_object_mut() {
+        if let Some(user) = lite.get("ssh_user").and_then(Value::as_str) {
+            d.entry("ssh_user").or_insert_with(|| Value::from(user));
+        }
+        if let Some(admin) = lite.get("admin").and_then(Value::as_str) {
+            d.entry("owner").or_insert_with(|| Value::from(admin));
+        }
+        match lite.get("internet").and_then(|i| i.get("aws_profile")).and_then(Value::as_str) {
+            Some(profile) => {
+                d.entry("aws_profile").or_insert_with(|| Value::from(profile));
+            }
+            // A LAN goatlite declares no cloud account; growing keeps it that way.
+            None if lite.get("internet").is_none() => {
+                d.entry("cloud").or_insert_with(|| Value::from("none"));
+            }
+            None => {}
+        }
+        // A goatlite keeps to its own boxes (standup phase 14, ADR 1213).
+        d.entry("cross_goatnet").or_insert(Value::Bool(false));
+    }
+    let problems = problems_in(&out, None)?;
+    if !problems.is_empty() {
+        let missing: Vec<&str> = ["repo", "components"].into_iter().filter(|k| out.get(*k).is_none()).collect();
+        let ask = if missing.is_empty() {
+            String::new()
+        } else {
+            format!("\n\nA full configuration declares {} of its own; the lite preset took them from the checkout's config, and this checkout has none. Add them to goatlite.yaml, then grow again.", missing.join(" and "))
+        };
+        return Err(anyhow!("the grown configuration does not validate:\n  {}{ask}", problems.join("\n  ")));
+    }
+    Ok(out)
 }
 
 /// The rules JSON Schema cannot express — identical in intent to validate.py's.
@@ -1024,4 +1079,123 @@ mod tests {
         }
     }
 
+    // --- gate row G1: a lite configuration grows into a full one ---------------
+
+    fn lite_fixture_text() -> String {
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite/goatbuilder.yaml")).unwrap()
+    }
+
+    fn lite_fixture() -> Value {
+        serde_json::to_value(serde_yaml::from_str::<serde_yaml::Value>(&lite_fixture_text()).unwrap()).unwrap()
+    }
+
+    /// The rewritten configuration is the full preset, carries the lite file's
+    /// values, and validates with no lite block to lean on.
+    #[test]
+    fn grow_turns_the_lite_fixture_into_a_full_config_that_validates() {
+        let lite = lite_fixture();
+        let full = grow(&lite, None).unwrap();
+        assert_eq!(full["preset"], json!("full"));
+        assert!(full.get("lite").is_none(), "the grown config has no lite block: {full:#}");
+        assert_eq!(problems(&full).unwrap(), Vec::<String>::new());
+        let derived = derive_lite(&lite, None);
+        for key in ["repo", "components", "environments", "promotion", "secrets"] {
+            assert_eq!(full[key], derived[key], "{key} carries over unchanged");
+        }
+        assert_eq!(full["deploy"]["ssh_user"], json!("ubuntu"), "lite.ssh_user is deploy.ssh_user in the full shape");
+        assert_eq!(full["deploy"]["owner"], json!("admin@example.org"), "lite.admin is deploy.owner");
+        assert_eq!((full["deploy"]["cloud"].clone(), full["deploy"]["cross_goatnet"].clone()), (json!("none"), json!(false)));
+    }
+
+    /// A grown config's deploy.owner reaches the bootstrap phases the way lite.admin
+    /// does: as data in the phase environment, arriving as written.
+    #[test]
+    fn a_grown_owner_reaches_the_bootstrap_phases_as_written() {
+        let raw = "o$wner'x@example.org";
+        let mut grown = grow(&lite_fixture(), None).unwrap();
+        grown["deploy"]["owner"] = json!(raw);
+        assert_eq!(problems(&grown).unwrap(), Vec::<String>::new(), "it validates as lite.admin would");
+        let mut lan = lite_fixture();
+        lan["lite"]["admin"] = json!("me@pasture");
+        assert_eq!(grow(&lan, None).unwrap()["deploy"]["owner"], json!("me@pasture"), "a single-label address a lite file accepts still grows");
+        let dir = crate::testdir::path("gb-grow-owner-");
+        std::fs::create_dir_all(dir.join("ops/goatbuilder")).unwrap();
+        std::fs::write(dir.join("ops/goatbuilder/goatbuilder.yaml"), serde_yaml::to_string(&grown).unwrap()).unwrap();
+        let words: Vec<String> = plan_steps(&dir)
+            .into_iter()
+            .filter_map(|(_, c)| Some(c.split_once("-e bootstrap_owner_email=")?.1.split_once(" -e postgres_superuser_password=")?.0.to_string()))
+            .collect();
+        assert!(!words.is_empty());
+        let o = crate::standup::Options { env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let env = crate::standup::phase_env_of(&dir, &o);
+        for w in words {
+            let out = std::process::Command::new("bash").args(["-euo", "pipefail", "-c", &format!("printf '%s' {w}")]).envs(env.clone()).env_remove("OWNER_EMAIL").output().unwrap();
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), raw, "{w}");
+        }
+    }
+
+    /// The four-fact file of the tutorial has no repo or components of its own; growth
+    /// asks for them then, never at first run.
+    #[test]
+    fn grow_refuses_without_repo_and_components_and_names_them() {
+        let mut four = goatlite();
+        four.as_object_mut().unwrap().retain(|k, _| ["schema", "preset", "lite"].contains(&k.as_str()));
+        let err = grow(&four, None).unwrap_err().to_string();
+        assert!(err.contains("repo") && err.contains("components"), "{err}");
+        let mut full = goatlite();
+        full["preset"] = json!("full");
+        assert!(grow(&full, None).unwrap_err().to_string().contains("preset: lite"));
+    }
+
+    /// One step of a standup dry run: its label and its command, with the checkout
+    /// path taken out so two checkouts compare.
+    fn plan_steps(repo: &Path) -> Vec<(String, String)> {
+        let o = crate::standup::Options { env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let report = crate::standup::standup(repo, &o).unwrap();
+        let root = repo.display().to_string();
+        let mut out: Vec<(String, String)> = Vec::new();
+        for c in &report.checks {
+            match c.name.as_str() {
+                "phase" => out.push((c.detail.clone(), String::new())),
+                "cmd" => {
+                    if let Some(last) = out.last_mut() {
+                        last.1 = c.detail.replace(&root, "<repo>");
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// G1's proof: a standup plan from the grown configuration runs nothing the lite
+    /// plan did not, with the same arguments. It may drop the two lite render
+    /// gates (their files exist by then) and the CA mint-if-missing flag (the CA
+    /// exists), and a GATE may differ (a gate measures and changes nothing).
+    #[test]
+    fn a_standup_plan_from_the_grown_config_changes_nothing_that_exists() {
+        let lite_dir = crate::testdir::path("gb-grow-lite-");
+        std::fs::write(lite_dir.join("goatlite.yaml"), lite_fixture_text()).unwrap();
+        let full_dir = crate::testdir::path("gb-grow-full-");
+        std::fs::create_dir_all(full_dir.join("ops/goatbuilder")).unwrap();
+        let grown = grow(&lite_fixture(), None).unwrap();
+        std::fs::write(full_dir.join("ops/goatbuilder/goatbuilder.yaml"), serde_yaml::to_string(&grown).unwrap()).unwrap();
+
+        let lite: Vec<_> = plan_steps(&lite_dir)
+            .into_iter()
+            .filter(|(label, _)| !label.contains("[GATE] goatlite: "))
+            .map(|(l, c)| (l, c.replace(" --mint-ca-if-missing", "")))
+            .collect();
+        let full = plan_steps(&full_dir);
+        let is_gate = |label: &str| label.contains(" [GATE] ");
+        let changing = |steps: &[(String, String)]| steps.iter().filter(|(l, _)| !is_gate(l)).cloned().collect::<Vec<_>>();
+        let (lite, full) = (changing(&lite), changing(&full));
+        let differ: Vec<String> = lite
+            .iter()
+            .zip(full.iter())
+            .filter(|(a, b)| a != b)
+            .map(|(a, b)| format!("lite:  {} :: {}\ngrown: {} :: {}", a.0, a.1, b.0, b.1))
+            .collect();
+        assert!(differ.is_empty() && lite.len() == full.len(), "{} step(s) differ ({} lite, {} grown):\n{}", differ.len(), lite.len(), full.len(), differ.join("\n\n"));
+    }
 }

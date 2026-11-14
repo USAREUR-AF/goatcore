@@ -21,11 +21,11 @@ The rule that decides every trade-off below: **a goatlite's first run does not g
 |---|---|---|---|
 | 1 | Custody of the identity root: the CA key is re-encrypted to two or more holders (§3) | the root certificate, every issued certificate, every host | designed, not built |
 | 2 | Reach: the `lite.internet` block, rendered and stood up from phase 5 ([goatlite.md §6](goatlite.md#6-growing-out-of-lite)) | the CA, the SPIRE trust domain, the ACL | render built; not stood up against real relays |
-| 3 | Hand-over: `goatlite.yaml` is rewritten into a full configuration with the same values, and the rendered file set becomes the learner's (§6) | every rendered file's content | designed, not built (gate row G1) |
+| 3 | Hand-over: `goatlite.yaml` is rewritten into a full configuration with the same values, and the rendered file set becomes the learner's (§6) | every rendered file's content | the rewrite is built (`config::grow`, shown by a dry run); writing it is not (gate row G1) |
 | 4 | Secrets store: values move from the env-file to the declared store (§6) | every value | designed, not built |
 | 5 | Tier ceiling and promotion rungs: `site_deploy_tier_max` raised; rungs added | the running tier-1 services | designed, not built |
-| 6 | Observability host: `join-node --class obs` | the core host | the verb is built; unmeasured on hardware |
-| 7 | Second core: an intra-site standby, or a second site that joins this one (§5) | the first site's data | the verbs are built; unmeasured on hardware, and never run from a founder that began as a goatlite |
+| 6 | Observability host: `join-node --class obs` | the core host | built; no run on hardware |
+| 7 | Second core: an intra-site standby, or a second site that joins this one (§5) | the first site's data | built; no run on hardware, and never run from a founder that began as a goatlite |
 
 The order has two reasons. Custody comes first because reach exposes the goatnet to networks beyond the LAN, and the CA key should have a second holder before that. Reach comes before the hand-over because the lite renderer is the only tool that writes the internet surface, and it refuses any file that is not `preset: lite` (`ops/scripts/goatlite-render.py:124`).
 
@@ -106,13 +106,17 @@ The design document this repository's Spock role points to for the multi-site de
 
 A standup plan from the grown configuration changes nothing that exists. Against the lite plan it loses the two render gates (`crates/goatbuilder/src/standup.rs:375`) and the `--mint-ca-if-missing` flag (`crates/goatbuilder/src/standup.rs:414`); its remaining steps are the same commands, and each skips what already exists (a leaf certificate that exists is skipped, `ops/scripts/mint-site-certs.sh:243`). After the hand-over `--site` must be passed, because only a lite run derives it (`crates/goatbuilder/src/standup.rs:135`).
 
-Three behaviors of a lite plan are decided today by the preset rather than by a declared value, so a plan from the grown configuration loses them; each needs a declared source before G1 passes:
+Three behaviors of a lite plan were decided by the preset rather than by a declared value, so a plan from the grown configuration would have lost them. The grown configuration now declares each in three optional `deploy` fields, which `config::grow` writes and the standup reads only when they are declared (`crates/goatbuilder/src/config.rs:474`):
 
-| Behavior | Today, under `preset: lite` | Declared source after the hand-over |
+| Behavior | Declared by the grown configuration | Read at |
 |---|---|---|
-| No cloud account: on the LAN profile every play runs with `GOAT_AWS_MODE=none` (a goatlite on the internet profile reaches AWS) | `crates/goatbuilder/src/standup.rs:299` | `deploy.cloud: none`, a new optional field G1 adds to the schema; no field declares it today |
-| The bootstrap owner is the declared administrator | `crates/goatbuilder/src/standup.rs:243` | `site_admins` in the site's group_vars, which the render wrote (`ops/scripts/goatlite-render.py:669`) |
-| Phase 14 does not reach other goatnets' relay-health boxes | `crates/goatbuilder/src/standup.rs:591` | the site's `relay_health` absent row in `ops/goatnets/cross-env.yaml`, which the render wrote |
+| No cloud account: on the LAN profile every play runs with `GOAT_AWS_MODE=none` (a goatlite on the internet profile reaches AWS) | `deploy.cloud: none` (`ops/goatbuilder/schema/goatbuilder-v1.schema.json:170`) | `crates/goatbuilder/src/settings.rs:46`, `crates/goatbuilder/src/standup.rs:324` |
+| The bootstrap owner is the declared administrator | `deploy.owner`, from `lite.admin` (`ops/goatbuilder/schema/goatbuilder-v1.schema.json:171`) | `crates/goatbuilder/src/settings.rs:53`, `crates/goatbuilder/src/standup.rs:267` |
+| Phase 14 does not reach other goatnets' relay-health boxes | `deploy.cross_goatnet: false` (`ops/goatbuilder/schema/goatbuilder-v1.schema.json:172`) | `crates/goatbuilder/src/settings.rs:60`, `crates/goatbuilder/src/standup.rs:627` |
+
+A configuration that declares none of the three plans exactly as before. `crates/goatbuilder/tests/full_plans_unchanged.rs` holds this for every fixture site without a `lite:` block.
+
+A grown goatlite is stood up with `goatbuilder`. `ops/scripts/goat-standup.sh` does not read these three fields, and the script route is not supported for a grown goatlite.
 
 **The secrets store (step 4).** The values move; none is generated again. The NetBird encryption key encrypts rows already in the database, and the replication password is shared with any site that joins later. Phase 3 mints only what is missing from the declared store and never rotates what is there (`ops/scripts/newsite-secrets.sh:5`), so switching the store before the values are in it would mint a second set for a running goatnet. `ops/secrets/posture.py` has no command that copies values between stores today; the step needs one.
 
@@ -124,8 +128,8 @@ Everything on hardware. No step of `grow` has run on a machine: not the custody 
 
 | Row | Proven by | Status |
 |---|---|---|
-| G1 | On the lite fixture `ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite`, `grow --dry-run` produces a full configuration that passes validation, and the standup plan from it, compared with the lite plan, runs no step that creates or replaces something that exists | not built |
-| G2 | On the same fixture, the count of facts the learner must supply, of prompts and of phases is pinned at today's numbers and may not rise, and `docs/tutorials/00-goatlite.md` gains no step before the goatnet works | not built |
+| G1 | On the lite fixture `ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite`, `grow --dry-run` produces a full configuration that passes validation, and the standup plan from it, compared with the lite plan, runs no step that creates or replaces something that exists | built: `config::grow` and its tests in `crates/goatbuilder/src/config.rs`, with `crates/goatbuilder/tests/full_plans_unchanged.rs`; the `grow` command itself is not wired yet |
+| G2 | On the same fixture, the count of facts the learner must supply, of prompts and of phases is pinned at today's numbers and may not rise, and `docs/tutorials/00-goatlite.md` gains no step before the goatnet works | built: `crates/goatbuilder/tests/goatlite_budget.rs` |
 
 **The first-run budget G2 holds**, measured 2026-11-12 on the lite fixture and held as ceilings by `crates/goatbuilder/tests/goatlite_budget.rs`. A count that drops lowers its ceiling in the same change; a count that rises changes this table and the test together, with the reason.
 

@@ -287,7 +287,10 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
     // rather than an OWNER_EMAIL the person must remember to export: phase 5
     // expanded "$OWNER_EMAIL" in its arguments and died before Ansible, and
     // phase 11 named a file on the host after it.
+    // A goatlite grown into a full config carries that administrator as
+    // deploy.owner (goatlite-growth.md §6); undeclared, $OWNER_EMAIL as before.
     let owner_email = lite_cfg.as_ref().and_then(|c| c.lite.as_ref()).map(|l| l.admin.clone())
+        .or_else(|| crate::settings::deploy_owner(repo))
         .unwrap_or_else(|| "$OWNER_EMAIL".to_string());
 
     let (obs, obs_why) = if o.skip_obs {
@@ -351,7 +354,8 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
         // every play asked the operator's keychain, once per play. On the internet
         // profile the relay plays reach AWS (SSM, Secrets Manager), so it stays.
         ansible_pre: format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES {}../scripts/with-aws {} -- ../scripts/ansible-preflight.sh",
-                             if lite && profile == "lan" { "GOAT_AWS_MODE=none " } else { "" }, sh_word(&aws)),
+                             // A grown goatlite declares the same as deploy.cloud: none.
+                             if (lite || crate::settings::declares_no_cloud(repo)) && profile == "lan" { "GOAT_AWS_MODE=none " } else { "" }, sh_word(&aws)),
         inv: INV,
         profile,
         joiner,
@@ -660,6 +664,11 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(Event::Skip { n: 14, kind: "A", label: "join the cross-goatnet surfaces (relay-health overview on every box)".into(), lines: vec![
             "SKIPPED — goatlite (ADR 1213): one box on its own LAN; this step reaches every relay-health box in ops/goatnets/cross-env.yaml, none of which belong to this goatnet".into(),
             "declared reason: cross-env.yaml carries this goatnet as relay_health absent; the overviews pick its roster row up on their next deploy".into()] });
+    } else if crate::settings::declares_no_cross_goatnet(repo) {
+        // A goatlite grown into a full config keeps to its own boxes: grow writes
+        // deploy.cross_goatnet: false (goatlite-growth.md §6).
+        ev.push(Event::Skip { n: 14, kind: "A", label: "join the cross-goatnet surfaces (relay-health overview on every box)".into(), lines: vec![
+            "SKIPPED — declared: deploy.cross_goatnet: false; this step reaches every relay-health box in ops/goatnets/cross-env.yaml, none of which belong to this goatnet".into()] });
     } else {
         ev.push(p(14, "A", "join the cross-goatnet surfaces (relay-health overview on every box)".into(), format!("'{r}/ops/goatnets/cross-env-apply.sh' --require {site}")));
     }
@@ -881,6 +890,13 @@ fn phase_command(repo: &Path, cmd: &str) -> Cmd {
         c.env("GOAT_LITE_CONFIG", p);
     }
     c
+}
+
+/// The phase environment a run of this site would set, for a test that runs a
+/// planned line the way the runner does.
+#[cfg(test)]
+pub(crate) fn phase_env_of(repo: &Path, o: &Options) -> Vec<(&'static str, String)> {
+    phase_env(&read_site(repo, o).expect("the site reads"))
 }
 
 /// The mirror bot's Forgejo token, and the phases that read it: the step that

@@ -133,7 +133,7 @@ A goatlite stays quick to start: one file of four facts, no outside account, and
 
 | # | Requirement | Status | Proven by |
 |---|---|---|---|
-| G1 | A lite configuration is valid input to the full preset: the tool rewrites it into a full configuration with the same values and shows the difference | designed (`docs/design/goatlite-growth.md`); the rewrite is in review | On the lite fixture, the rewritten configuration passes validation and a standup plan from it changes nothing that already exists |
+| G1 | A lite configuration is valid input to the full preset: the tool rewrites it into a full configuration with the same values and shows the difference | built: the rewrite (`config::grow`), proven by `crates/goatbuilder/tests/full_plans_unchanged.rs` and the plan test in `crates/goatbuilder/src/config.rs`; the `grow` command is not wired yet | On the lite fixture, the rewritten configuration passes validation and a standup plan from it changes nothing that already exists |
 | G2 | The first run of a goatlite does not grow: the count of facts the learner supplies, of prompts and of phases is held by a test | built: `crates/goatbuilder/tests/goatlite_budget.rs` | The budget test on the lite fixture, and tutorial 00 gains no step before the goatnet works |
 
 ### H. A node on a phone
