@@ -107,18 +107,19 @@ class CertificateReuse(unittest.TestCase):
         self.invoke('--min-valid-seconds', str(91 * 86400), ok=False)
         self.assertEqual(before, self.snapshot())
 
-    def test_explicit_rotation_replaces_keys_and_retains_previous_set(self):
+    def test_explicit_rotation_replaces_keys_and_removes_the_previous_set_once_committed(self):
         self.invoke()
         before = self.snapshot()
-        self.invoke('--rotate')
+        result = self.invoke('--rotate')
         after = self.snapshot()
         # Rotation replaces the leaves; our CA is the agreement's and stays.
         self.assertEqual(before.pop('our-ca.pem'), after['our-ca.pem'])
         for name in before:
             self.assertNotEqual(before[name][0], after[name][0], name)
-        backups = list(self.out.glob('.previous-*'))
-        self.assertEqual(len(backups), 1)
-        self.assertEqual({p.name for p in backups[0].glob('*.pem')}, set(before))
+        # The previous pairs are kept only while the rotation is under way.
+        self.assertFalse(list(self.out.glob('.previous-*')))
+        self.assertFalse((self.out / '.rotation-pending').exists())
+        self.assertIn('previous pairs removed', result.stdout)
         self.invoke(with_key=False)
 
     def test_missing_leaf_is_issued_without_replacing_valid_pairs(self):
@@ -211,6 +212,7 @@ class CertificateReuse(unittest.TestCase):
         self.invoke('--rotate', '--ca-key', str(other_key), ok=False)
         self.assertEqual(before, self.snapshot())
         self.assertFalse(list(self.out.glob('.previous-*')))
+        self.assertFalse((self.out / '.rotation-pending').exists())
 
     def test_interrupted_rotation_marker_requires_operator_recovery(self):
         self.invoke()

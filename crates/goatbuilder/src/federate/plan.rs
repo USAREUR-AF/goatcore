@@ -1919,6 +1919,12 @@ pub enum Stage {
     /// admission, and leave every other peering and the core as they were.
     #[command(name = super::backout::VERB)]
     Backout(super::backout::BackoutArgs),
+    /// Replace one key of a running peering and run the command again from
+    /// the first phase it changes: `rotate <partner> leaves` (phases 8 to 14)
+    /// or `rotate <partner> carrier` (phases 2 to 14). The other keys are
+    /// refused, each saying why (docs/design/federation-key-rotation.md).
+    #[command(name = super::rotation::VERB)]
+    Rotate(super::rotation::RotateArgs),
     /// A two-driver peering's import of an edge result, as a hand-off object
     /// names it: checked against the edge driver's confirm code, placed under
     /// the working directory and journaled. Built for phase 1; a later phase's
@@ -1930,8 +1936,8 @@ pub enum Stage {
 pub fn run(repo: &Path, stage: &Stage, mock: Option<&Path>) -> Result<Report> {
     match stage {
         // main.rs runs the verbs before it reads a repository.
-        Stage::Verb(_) | Stage::Backout(_) => {
-            Err(anyhow!("the federation verbs and backout are run before this point"))
+        Stage::Verb(_) | Stage::Backout(_) | Stage::Rotate(_) => {
+            Err(anyhow!("the federation verbs, backout and rotate are run before this point"))
         }
         Stage::Import(a) => {
             let work = a.work.clone().unwrap_or_else(|| super::env_or("FED_WORK", format!("/var/lib/goat-federation/{}", a.with)));
