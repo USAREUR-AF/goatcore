@@ -84,8 +84,10 @@ unit_main() {
   # cloned from (lib/engine.sh, gen_sovereign).
   # From the build's own source tree, a git repository that carries the release tags (REPO is
   # the run's copy of the harness, which is not one).
-  git clone -q --shared --no-checkout "$UP_SRC_BUILD" "$WORK/src-release"
-  git -C "$WORK/src-release" checkout -q --detach "$FE2E_UPGRADE_FROM_REF" || die "units/upgrade.sh: no $FE2E_UPGRADE_FROM_REF in $UP_SRC_BUILD"
+  # shellcheck source=ops/federation-e2e/lib/srctree.sh
+  . "$HERE/lib/srctree.sh"
+  src_clone_ref "$UP_SRC_BUILD" "$FE2E_UPGRADE_FROM_REF" "$WORK/src-release" \
+    || die "units/upgrade.sh: no clone of $UP_SRC_BUILD at $FE2E_UPGRADE_FROM_REF (a shallow source, or no such tag)"
   SRC="$WORK/src-release"; export SRC
   # The hosts mount $GB: the released binary until the swap.
   cp "$FE2E_UPGRADE_FROM" "$WORK/goatbuilder-released"; chmod 0755 "$WORK/goatbuilder-released"

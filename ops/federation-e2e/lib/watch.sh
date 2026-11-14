@@ -22,6 +22,8 @@
 # (integration-before-<sha12>); scenario module-revert compares the two.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
+# shellcheck source=ops/federation-e2e/lib/srctree.sh
+. "$HERE/lib/srctree.sh"
 FE2E_HOME="${FE2E_HOME:-$HOME/.cache/fe2e}"
 OUT=""; NOTES=""; INTERVAL=600; JOBS=2; ONCE=0; REVERTS=0; FIRST=""; SCEN="all"
 INTEGRATION="origin/integration/federation-turnkey"
@@ -80,8 +82,8 @@ regressions() { # $1 name, $2 sha: append to the notes what passes on main and n
 preview() {
   local d="$FE2E_HOME/preview" b merged="" failed=""
   rm -rf "$d"
-  git clone -q --shared --no-checkout "$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)" "$d"
-  GIT_LFS_SKIP_SMUDGE=1 git -C "$d" checkout -q --detach "$(git -C "$REPO" rev-parse "$INTEGRATION")"
+  src_clone_ref "$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)" "$(git -C "$REPO" rev-parse "$INTEGRATION")" "$d" \
+    || { log "preview: no clone of $INTEGRATION to merge in"; return 1; }
   for b in $(git -C "$REPO" for-each-ref --format='%(refname:short)' 'refs/remotes/origin/ws/*' 'refs/remotes/origin/ws-*'); do
     if git -C "$d" -c user.name=fe2e -c user.email=fe2e@example.org merge -q --no-edit "$(git -C "$REPO" rev-parse "$b")" >/dev/null 2>&1; then
       merged="$merged ${b#origin/}@$(git -C "$REPO" rev-parse --short=12 "$b")"
@@ -105,8 +107,8 @@ reverts() { # each merge on the integration branch, reverted on its head
   # Each module landed on the integration branch as one first-parent commit (a squash or a merge).
   for m in $(git -C "$REPO" rev-list --first-parent "origin/main..$INTEGRATION"); do
     rm -rf "$d"
-    git clone -q --shared --no-checkout "$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)" "$d"
-    GIT_LFS_SKIP_SMUDGE=1 git -C "$d" checkout -q --detach "$(git -C "$REPO" rev-parse "$INTEGRATION")"
+    src_clone_ref "$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)" "$(git -C "$REPO" rev-parse "$INTEGRATION")" "$d" \
+      || { log "reverts: no clone of $INTEGRATION to revert in"; return 1; }
     local mainline=""; [ "$(git -C "$REPO" rev-list --parents -n1 "$m" | wc -w)" -gt 2 ] && mainline="-m 1"
     # shellcheck disable=SC2086
     if git -C "$d" -c user.name=fe2e -c user.email=fe2e@example.org revert -q --no-edit $mainline "$m" >/dev/null 2>&1; then

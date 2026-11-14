@@ -34,3 +34,23 @@ src_tree() {
   fi
   GIT_LFS_SKIP_SMUDGE=1 git -C "$src" checkout -q --detach "$sha" || { rm -rf "$src"; return 1; }
 }
+
+# src_clone_ref SRC_GIT_DIR REF DEST: DEST is a clone of SRC_GIT_DIR checked out at REF (a
+# branch, a tag, or a sha the source holds), owning its objects: lib/watch.sh's preview merges
+# and reverts in it, and units/upgrade.sh checks out a release tag in it. A --shared clone
+# read every object from the source through alternates, so it lost a commit once the source
+# dropped that commit's loose objects (git prune, git gc). A plain local clone hard-links the
+# source's object files instead, and keeps them. A shallow source is refused: its history is
+# cut, so a merge or a revert there would read too little, and a clone of it is cut the same
+# way. Nothing is removed before the arguments and the source are checked.
+src_clone_ref() {
+  local common="$1" ref="$2" dest="$3"
+  [ -n "$common" ] && [ -n "$ref" ] && [ -n "$dest" ] || { echo "src_clone_ref: needs SRC_GIT_DIR REF DEST" >&2; return 1; }
+  if [ "$(git -C "$common" rev-parse --is-shallow-repository 2>/dev/null)" != false ]; then
+    echo "src_clone_ref: $common is a shallow repository, or not one git can read: its history is cut, so a merge, a revert or a release checkout there would read too little; run git -C $common fetch --unshallow" >&2
+    return 1
+  fi
+  rm -rf "$dest"
+  git clone -q --no-checkout "$common" "$dest" || return 1
+  GIT_LFS_SKIP_SMUDGE=1 git -C "$dest" checkout -q --detach "$ref" || { rm -rf "$dest"; return 1; }
+}
