@@ -12,6 +12,10 @@
 //! A refusal prints `GB-272: …` or `GB-273: …` on stderr and exits 2, which is
 //! how acceptance.sh tells a stale result (keep waiting) from a bad one.
 
+// No command reaches this module until its two commands are wired; the
+// allowance goes with that wiring.
+#![allow(dead_code)]
+
 use std::path::{Path, PathBuf};
 
 use goat_federation::acceptance_sig::{Expect, Fields, Refusal, NOT_VERIFIED};
@@ -62,24 +66,124 @@ pub struct VerifyArgs {
     pub keyring: Option<PathBuf>,
 }
 
+fn refuse(detail: impl Into<String>) -> Refusal {
+    Refusal {
+        code: NOT_VERIFIED,
+        detail: detail.into(),
+    }
+}
+
+/// Our Ed25519 seed, 64 hex characters or 32 bytes base64, as FED_SIGNING_KEY
+/// holds it for the package (confirm.rs reads it the same way).
+fn read_seed(path: Option<&Path>) -> Result<[u8; 32], Refusal> {
+    use base64::Engine as _;
+    let Some(path) = path else {
+        return Err(refuse(
+            "no signing key: set FED_SIGNING_KEY, or secrets.federation.signing_key, to our Ed25519 seed",
+        ));
+    };
+    let text =
+        std::fs::read_to_string(path).map_err(|e| refuse(format!("{}: {e}", path.display())))?;
+    let t = text.trim();
+    let bytes: Option<Vec<u8>> = if t.len() == 64 && t.bytes().all(|c| c.is_ascii_hexdigit()) {
+        (0..32)
+            .map(|i| u8::from_str_radix(&t[2 * i..2 * i + 2], 16).ok())
+            .collect()
+    } else {
+        base64::engine::general_purpose::STANDARD.decode(t).ok()
+    };
+    bytes
+        .and_then(|b| <[u8; 32]>::try_from(b).ok())
+        .ok_or_else(|| {
+            refuse(format!(
+                "{}: not an Ed25519 seed (64 hex characters or 32 bytes base64)",
+                path.display()
+            ))
+        })
+}
+
+/// The keys bound at phase 5, one `<sovereign id>=<base64 key>` per line, as
+/// peering-standup.sh reads the same file for compose.
+fn read_keyring(path: Option<&Path>) -> Result<goat_federation::compose::KeyRing, Refusal> {
+    let Some(path) = path else {
+        return Err(refuse(
+            "no keyring: set FED_KEYRING to the peering's keys.txt, which phase 5 writes",
+        ));
+    };
+    let text =
+        std::fs::read_to_string(path).map_err(|e| refuse(format!("{}: {e}", path.display())))?;
+    let mut ring = goat_federation::compose::KeyRing::default();
+    for line in text.lines() {
+        let l: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        let Some((sid, b64)) = l.split_once('=') else {
+            return Err(refuse(format!(
+                "{}: `{l}` is not `<sovereign id>=<base64 key>`",
+                path.display()
+            )));
+        };
+        let key = goat_federation::package::decode_verifying_key(b64)
+            .map_err(|e| refuse(format!("{}: the key for `{sid}`: {e}", path.display())))?;
+        ring.insert(sid, key);
+    }
+    Ok(ring)
+}
+
 /// Sign our result: the detached signature document.
 pub fn sign(a: &SignArgs) -> Result<String, Refusal> {
-    let _ = (a, Path::new(""), NOT_VERIFIED);
-    let _: Option<(Fields, Expect)> = None;
-    unimplemented!("sign")
+    let seed = read_seed(a.signing_key.as_deref())?;
+    let result =
+        std::fs::read(&a.result).map_err(|e| refuse(format!("{}: {e}", a.result.display())))?;
+    let f = Fields {
+        agreement_sha256: a.agreement_sha256.clone(),
+        session_id: a.session.clone(),
+        attempt: a.attempt,
+        by: a.by.clone(),
+        for_: a.for_.clone(),
+        echoes: a.echoes.clone(),
+    };
+    goat_federation::acceptance_sig::sign_result(&seed, &f, &result)
 }
 
 /// Verify the partner's result: `{key_b64, key_sha256, result_sha256}` as JSON.
 pub fn verify(a: &VerifyArgs) -> Result<String, Refusal> {
-    let _ = a;
-    unimplemented!("verify")
+    let keys = read_keyring(a.keyring.as_deref())?;
+    let result =
+        std::fs::read(&a.result).map_err(|e| refuse(format!("{}: {e}", a.result.display())))?;
+    let doc = std::fs::read(&a.signature)
+        .map_err(|e| refuse(format!("{}: {e}", a.signature.display())))?;
+    let expect = Expect {
+        agreement_sha256: a.agreement_sha256.clone(),
+        session_id: a.session.clone(),
+        attempt: a.attempt,
+        us: a.us.clone(),
+        them: a.them.clone(),
+        our_challenge: a.our_challenge.clone(),
+    };
+    let v = goat_federation::acceptance_sig::verify_result(&result, &doc, &keys, &expect)?;
+    Ok(serde_json::json!({
+        "key_b64": v.key_b64,
+        "key_sha256": v.key_sha256,
+        "result_sha256": v.result_sha256,
+    })
+    .to_string())
 }
 
 /// Run one of the two and print as acceptance.sh reads it: the answer on
 /// stdout and exit 0, or `<code>: <detail>` on stderr and exit 2.
 pub fn print(answer: Result<String, Refusal>) -> i32 {
-    let _ = answer;
-    unimplemented!("print")
+    match answer {
+        Ok(out) => {
+            println!("{out}");
+            0
+        }
+        Err(r) => {
+            eprintln!("{}: {}", r.code, r.detail);
+            2
+        }
+    }
 }
 
 #[cfg(test)]
