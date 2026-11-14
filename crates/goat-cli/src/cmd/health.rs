@@ -10,19 +10,27 @@
 // healthy/degraded/unattested. The richer per-token presence view stays the
 // standalone `goat presence` (one-shot/`--watch`/`--subscribers-of`); this is
 // the board glance of the same domain (ADR 1036 §5.1, three altitudes).
+// `--domain peer` (ADR 1232) reads the faults the router we own measured on
+// peers we do not own: the site grade, and per peer its name or Zenoh ID,
+// clock offset, rejections per minute, whether it holds a session directly,
+// and the peering. On a machine whose session carries its own Zenoh identity
+// (a slot-anchor certificate pins the ZID), every domain also listens on
+// ops/peer/verdict/<own zid> and prints the router's verdict sentence when one
+// arrives.
 //
 // Reads only — the consumer half of the QoS "Reveal" pillar. Decodes the
 // FabricHealthV1 / ProducerFootprintV1 protobuf with hand-written
 // prost-derive structs matching
 // ops/zenoh-trial-peers/fabric-health/proto/fabric_health_v1.proto, and the
-// EnvHealthV1{mesh|presence|time} envelope matching
+// EnvHealthV1{mesh|presence|time|net|consistency|peer} envelope matching
 // ops/zenoh-trial-peers/time-health/proto/env_health_v1.proto.
 
 use crate::health_wire::{
-    fmt_age, short_name, CryptoPostureV1, EnvDetail, EnvHealthV1, FabricHealthV1, MeshDetailV1,
-    ConsistencyDetailV1, MeshLinkHealthV1, PresenceDetailV1, ProducerFootprintV1, TimeDetailV1,
+    fmt_age, short_name, ConsistencyDetailV1, CryptoPostureV1, EnvDetail, EnvHealthV1,
+    FabricHealthV1, MeshDetailV1, MeshLinkHealthV1, PeerFaultDetailV1, PeerFaultKindV1,
+    PeerFaultV1, PeerVerdictV1, PresenceDetailV1, ProducerFootprintV1, TimeDetailV1,
     CONSISTENCY_KEY, CRYPTO_KEY, FOOTPRINT_PREFIX, HEALTH_KEY, HEALTH_PREFIX, MESH_KEY, NET_KEY,
-    PRESENCE_KEY, TIME_KEY,
+    PEER_KEY, PEER_VERDICT_PREFIX, PEER_VERDICT_SCHEMA, PRESENCE_KEY, TIME_KEY,
 };
 use clap::Args;
 use prost::Message as _;
@@ -55,6 +63,9 @@ pub enum HealthDomain {
     /// Convergence: which generation of its goatnet's intent each node
     /// converged against, and what it is running (ADR 1110).
     Consistency,
+    /// Faults on peers we do not own, measured at our router: clock offset,
+    /// rejections per minute, direct session, peering (ADR 1232).
+    Peer,
 }
 
 #[derive(Args, Debug)]
@@ -81,9 +92,60 @@ pub struct HealthArgs {
     /// colour, age, sample count — or `"beat": false` with the reason when
     /// none arrived in the window. The machine contract the acceptance
     /// assay grades (docs/design/goatnet-acceptance-suite.md). Not for
-    /// `--domain crypto`, whose beat has no colour.
+    /// `--domain crypto`, whose beat has no colour. `--domain peer` adds
+    /// `detail` (the site verdict and every peer row). On a machine with its
+    /// own Zenoh identity, `own_zid` and `own_verdict` (the router's verdict
+    /// document on ops/peer/verdict/<own zid>, or null) are added.
     #[arg(long, conflicts_with_all = ["watch", "peer", "me"])]
     pub json: bool,
+
+    /// `--domain peer` only: also listen for the router's verdict on this
+    /// Zenoh ID, on ops/peer/verdict/<ID>. A verdict is keyed by the router
+    /// that STAMPED the samples (the ID in a peer row), not by a client. 1 to
+    /// 32 lowercase hex characters, as the router prints it. Repeatable.
+    #[arg(long = "zid", value_name = "ID", value_parser = parse_zid_arg)]
+    pub zids: Vec<String>,
+
+    /// `--domain peer` only: also listen for the verdict on one peering, on
+    /// ops/peer/verdict/peering/<NAME>. The name is the partner's sovereign
+    /// id: 2 to 16 characters of lowercase a-z, 0-9 and `-`.
+    #[arg(long = "peering", value_name = "NAME", value_parser = parse_peering_arg)]
+    pub peering: Option<String>,
+}
+
+/// `--zid`: a Zenoh ID as a router prints it, 1 to 32 lowercase hex
+/// characters. Leading zeros are dropped, because the router prints the ID in
+/// minimal hex and the verdict key uses that form. Never a slash or wildcard.
+fn parse_zid_arg(s: &str) -> Result<String, String> {
+    let ok = (1..=32).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if !ok {
+        return Err(format!(
+            "`{s}` is not a Zenoh ID: 1 to 32 lowercase hex characters (no `/`, `*` or `$*`; a verdict is read one ID at a time)"
+        ));
+    }
+    match s.trim_start_matches('0') {
+        "" => Err("a Zenoh ID of all zeros names no router".to_string()),
+        z => Ok(z.to_string()),
+    }
+}
+
+/// `--peering`: a peering is named by the partner's sovereign id
+/// (federation-package-spec.md §3: 2 to 16 of lowercase a-z0-9-), which is the
+/// one key segment ops/peer/verdict/peering/<name> takes. Never a slash or
+/// wildcard.
+fn parse_peering_arg(s: &str) -> Result<String, String> {
+    let ok = (2..=16).contains(&s.len())
+        && s.bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-');
+    if ok {
+        Ok(s.to_string())
+    } else {
+        Err(format!(
+            "`{s}` is not a peering name: 2 to 16 characters of lowercase a-z, 0-9 and `-` (no `/`, `*` or `$*`)"
+        ))
+    }
 }
 
 // Wire types live in `crate::health_wire` (shared with `goat top`, ADR 1044).
@@ -104,11 +166,36 @@ pub async fn run(ctx: &super::Ctx, args: HealthArgs) -> anyhow::Result<()> {
         None
     };
 
+    if args.domain != HealthDomain::Peer && (!args.zids.is_empty() || args.peering.is_some()) {
+        anyhow::bail!("--zid/--peering name peer verdicts to read; use them with --domain peer");
+    }
+
     if args.json && args.domain == HealthDomain::Crypto {
-        anyhow::bail!("--json covers fabric, mesh, presence, time, net and consistency; read crypto with `goat health --domain crypto`");
+        anyhow::bail!("--json covers fabric, mesh, presence, time, net, consistency and peer; read crypto with `goat health --domain crypto`");
     }
 
     let session = super::pubsub::open_session_for(&ctx.profile).await?;
+    // The router's verdict on this machine, when it has a Zenoh identity of
+    // its own; listened for during whatever wait the domain does anyway.
+    let own = match own_identity(&ctx.profile, &session) {
+        Some(zid) => {
+            VerdictListener::listen(
+                &session,
+                "this machine",
+                zid.clone(),
+                format!("{PEER_VERDICT_PREFIX}{zid}"),
+            )
+            .await
+        }
+        None => None,
+    };
+    // Verdicts asked for by name (--zid, --peering), for the same wait.
+    let mut named: Vec<VerdictListener> = Vec::new();
+    for (who, id, key) in named_verdict_keys(&args.zids, args.peering.as_deref()) {
+        if let Some(l) = VerdictListener::listen(&session, who, id, key).await {
+            named.push(l);
+        }
+    }
 
     if args.json {
         // The fabric beat only: HEALTH_KEY also carries footprints and crypto.
@@ -120,12 +207,37 @@ pub async fn run(ctx: &super::Ctx, args: HealthArgs) -> anyhow::Result<()> {
             HealthDomain::Time => (TIME_KEY, "time"),
             HealthDomain::Net => (NET_KEY, "net"),
             HealthDomain::Consistency => (CONSISTENCY_KEY, "consistency"),
+            HealthDomain::Peer => (PEER_KEY, "peer"),
             HealthDomain::Crypto => unreachable!("refused above"),
         };
         let out = json_one_shot(&session, key, domain).await;
+        let mut out = out?;
+        let grace =
+            (domain == "peer" && out["beat"] == true).then(|| Instant::now() + VERDICT_GRACE);
+        if let Some(own) = &own {
+            let verdict = own.latest(grace).await;
+            out["own_zid"] = serde_json::Value::String(own.id.clone());
+            out["own_verdict"] = verdict
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .unwrap_or(serde_json::Value::Null);
+        }
+        if !named.is_empty() {
+            let mut rows = Vec::new();
+            for l in &named {
+                let v = l.latest(grace).await;
+                rows.push(named_verdict_json(l.who, &l.id, &l.key, v.as_ref()));
+            }
+            out["named_verdicts"] = serde_json::Value::Array(rows);
+        }
         let _ = session.close().await;
-        println!("{}", serde_json::to_string(&out?).unwrap_or_default());
+        println!("{}", serde_json::to_string(&out).unwrap_or_default());
         return Ok(());
+    }
+
+    if args.watch {
+        for l in own.iter().chain(named.iter()) {
+            l.print_as_they_arrive(&session);
+        }
     }
 
     match args.domain {
@@ -191,6 +303,17 @@ pub async fn run(ctx: &super::Ctx, args: HealthArgs) -> anyhow::Result<()> {
             )
             .await?;
         }
+        HealthDomain::Peer => {
+            env_dispatch(
+                &session,
+                args.watch,
+                PEER_KEY,
+                "peer",
+                print_peer,
+                "no peer-health beat seen — is goat-peer-health running beside a router of this fabric?",
+            )
+            .await?;
+        }
         HealthDomain::Crypto => {
             crypto_dispatch(
                 &session,
@@ -198,6 +321,33 @@ pub async fn run(ctx: &super::Ctx, args: HealthArgs) -> anyhow::Result<()> {
                 "no crypto-posture beat seen — is goat-crypto-posture running against this fabric's router?",
             )
             .await?;
+        }
+    }
+
+    if !args.watch {
+        let grace = (args.domain == HealthDomain::Peer).then(|| Instant::now() + VERDICT_GRACE);
+        for l in &named {
+            match l.latest(grace).await {
+                Some(v) => println!("\n{}", verdict_line(l.who, &l.id, &v)),
+                None => println!(
+                    "\n  {} {}: no verdict on {} in this window",
+                    l.who, l.id, l.key
+                ),
+            }
+        }
+        match &own {
+            Some(own) => match own.latest(grace).await {
+                Some(v) => println!("\n{}", verdict_line(own.who, &own.id, &v)),
+                None if args.domain == HealthDomain::Peer => println!(
+                    "\n  this machine ({}): no router verdict on {} in this window",
+                    own.id, own.key
+                ),
+                None => {}
+            },
+            None if args.domain == HealthDomain::Peer => println!(
+                "\n  this machine has no Zenoh identity of its own (its certificate pins no session ID),\n  so no router verdict is addressed to it"
+            ),
+            None => {}
         }
     }
 
@@ -219,6 +369,7 @@ async fn json_one_shot(
     let wait = if domain == "fabric" { ONESHOT_WAIT } else { ENV_ONESHOT_WAIT };
     let deadline = Instant::now() + wait;
     let mut undecoded = 0u32;
+    let mut detail: Option<serde_json::Value> = None;
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let sample = match timeout(remaining, subscriber.recv_async()).await {
@@ -236,7 +387,16 @@ async fn json_one_shot(
             }
         } else {
             match decode_env(&sample, domain) {
-                Some(e) => (e.scope, e.ts_unix_ms, e.overall_color, e.sample_count, e.window_secs),
+                Some(e) => {
+                    detail = env_detail_json(&e);
+                    (
+                        e.scope,
+                        e.ts_unix_ms,
+                        e.overall_color,
+                        e.sample_count,
+                        e.window_secs,
+                    )
+                }
                 None => {
                     undecoded += 1;
                     continue;
@@ -247,7 +407,7 @@ async fn json_one_shot(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        return Ok(serde_json::json!({
+        let mut out = serde_json::json!({
             "domain": domain,
             "beat": true,
             "key": sample.key_expr().as_str(),
@@ -256,7 +416,11 @@ async fn json_one_shot(
             "age_secs": ((now - ts).max(0)) / 1000,
             "samples": samples,
             "window_secs": window,
-        }));
+        });
+        if let Some(d) = detail {
+            out["detail"] = d;
+        }
+        return Ok(out);
     }
     let reason = if undecoded > 0 {
         format!("{undecoded} sample(s) arrived on `{key}` but none decoded as the {domain} beat")
@@ -1046,6 +1210,364 @@ fn print_time(env: &EnvHealthV1) {
     println!("  absence of a signed attestation is never reported as healthy.");
 }
 
+// ---------------------------------------------------------------------------
+// Peer domain (ADR 1232) — decode EnvHealthV1{peer}: faults the router we own
+// measured on peers we do not own. The reading is graded before anyone is
+// blamed: when our own clock is the likelier fault the site reads amber
+// (local_clock_suspect) and no peer row is at fault; when the reader has no
+// log to read it is unmetered, never green.
+// ---------------------------------------------------------------------------
+
+/// How long a peer one-shot waits for this machine's verdict after the beat
+/// arrived: the reader publishes both on the same tick.
+const VERDICT_GRACE: Duration = Duration::from_secs(3);
+
+/// A peer row's display name: the attribution name, else its Zenoh ID.
+fn peer_label(p: &PeerFaultV1) -> &str {
+    match p.attribution_name.as_deref() {
+        Some(n) if !n.trim().is_empty() => n,
+        _ => &p.zid,
+    }
+}
+
+/// `direct_session` in words: absent is unknown, never a guess.
+fn fmt_direct(direct: Option<bool>) -> &'static str {
+    match direct {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "unknown",
+    }
+}
+
+/// Signed offset in seconds: peer time minus our router's time.
+fn fmt_offset_secs(s: f64) -> String {
+    format!("{s:+.2} s")
+}
+
+fn peer_kind(p: &PeerFaultV1) -> &'static str {
+    match PeerFaultKindV1::try_from(p.kind) {
+        Ok(PeerFaultKindV1::ClockAhead) => "clock_ahead",
+        _ => "unspecified",
+    }
+}
+
+/// Headline reason: the reader's verdict, with its own reason when it gave one.
+fn peer_reason(detail: &PeerFaultDetailV1) -> String {
+    let verdict = if detail.verdict.is_empty() {
+        "no verdict"
+    } else {
+        detail.verdict.as_str()
+    };
+    if detail.verdict_reason.trim().is_empty() {
+        verdict.to_string()
+    } else {
+        format!("{verdict}: {}", detail.verdict_reason.trim())
+    }
+}
+
+/// The peer detail as JSON, for `--json`: the site grade and every row, with
+/// `direct_session` as yes/no/unknown, as the table prints it.
+fn peer_json(detail: &PeerFaultDetailV1) -> serde_json::Value {
+    let peering = (!detail.peering.is_empty()).then(|| detail.peering.clone());
+    serde_json::json!({
+        "verdict": detail.verdict,
+        "verdict_reason": detail.verdict_reason,
+        "local_clock": detail.local_clock,
+        "observed_by": detail.observed_by,
+        "peers_known": detail.peers_known,
+        "last_line_age_ms": detail.last_line_age_ms,
+        "unparsed_lines_window": detail.unparsed_lines_window,
+        "peering": peering,
+        "peering_rejections_per_minute": detail.peering_rejections_per_minute,
+        "peering_max_offset_seconds": detail.peering_max_offset_seconds,
+        "peers": detail.peers.iter().map(|p| serde_json::json!({
+            "label": peer_label(p),
+            "zid": p.zid,
+            "name": p.attribution_name,
+            "owner": p.attribution_owner,
+            "kind": peer_kind(p),
+            "grade": p.grade,
+            "color": p.color,
+            "offset_seconds": p.offset_seconds,
+            "min_offset_seconds": p.min_offset_seconds,
+            "max_offset_seconds": p.max_offset_seconds,
+            "limit_seconds": p.limit_seconds,
+            "rejections_per_minute": p.rejections_per_minute,
+            "rejections_in_window": p.rejections_in_window,
+            "direct_session": fmt_direct(p.direct_session),
+            "peering": peering,
+            "observed_by": p.observed_by,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// The per-domain detail `--json` carries beside the summary. Only the peer
+/// domain has one today.
+fn env_detail_json(env: &EnvHealthV1) -> Option<serde_json::Value> {
+    match &env.detail {
+        Some(EnvDetail::Peer(d)) => Some(peer_json(d)),
+        _ => None,
+    }
+}
+
+/// The board glance of one peer reading, as text. Pure, so it is tested.
+fn render_peer(env: &EnvHealthV1) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let Some(EnvDetail::Peer(detail)) = &env.detail else {
+        let _ = writeln!(
+            out,
+            "PEER: {} (site {}, n={}) — no per-peer detail in this beat",
+            colorize(&env.overall_color),
+            env.scope,
+            env.sample_count
+        );
+        return out;
+    };
+    let _ = writeln!(
+        out,
+        "PEER: {} — {}",
+        colorize(&env.overall_color),
+        peer_reason(detail)
+    );
+    let mut context = format!(
+        "  site {} · {}s window · our clock {} · {} peer{} known",
+        env.scope,
+        env.window_secs,
+        if detail.local_clock.is_empty() {
+            "unknown"
+        } else {
+            &detail.local_clock
+        },
+        detail.peers_known,
+        if detail.peers_known == 1 { "" } else { "s" },
+    );
+    if !detail.observed_by.is_empty() {
+        let _ = write!(context, " · observed by {}", detail.observed_by);
+    }
+    let _ = writeln!(out, "{context}");
+    if !detail.peering.is_empty() {
+        let _ = writeln!(
+            out,
+            "  peering {}: {:.1} rejections/min, largest offset {}",
+            detail.peering,
+            detail.peering_rejections_per_minute,
+            fmt_offset_secs(detail.peering_max_offset_seconds),
+        );
+    }
+    match env.overall_color.as_str() {
+        "unmetered" | "idle" => {
+            let _ = writeln!(
+                out,
+                "  ⓘ {} = the reader has no router log to judge — UNCONFIRMED, never a false green.",
+                env.overall_color
+            );
+        }
+        _ if detail.verdict == "local_clock_suspect" => {
+            let _ = writeln!(
+                out,
+                "  ⓘ our own clock is the likelier fault, so no peer is blamed; check this router's time sync first."
+            );
+        }
+        _ => {}
+    }
+    if detail.unparsed_lines_window > 0 {
+        let _ = writeln!(
+            out,
+            "  ⓘ {} rejection line(s) in the window did not parse; this reading never grades green.",
+            detail.unparsed_lines_window
+        );
+    }
+    if detail.peers.is_empty() {
+        return out;
+    }
+    let _ = writeln!(out);
+    let _ = writeln!(out, "  PEER                             STATE     GRADE                   OFFSET  REJ/MIN DIRECT   PEERING");
+    for p in &detail.peers {
+        let _ = writeln!(
+            out,
+            "  {:<32} {} {:<19} {:>10} {:>8.1} {:<8} {}",
+            peer_label(p),
+            pad_state(&p.color, 9),
+            p.grade,
+            fmt_offset_secs(p.offset_seconds),
+            p.rejections_per_minute,
+            fmt_direct(p.direct_session),
+            if detail.peering.is_empty() {
+                "—"
+            } else {
+                &detail.peering
+            },
+        );
+    }
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "  OFFSET is the peer's time minus our router's; the router replaces a timestamp more"
+    );
+    let _ = writeln!(
+        out,
+        "  than its limit ahead. A Zenoh ID names the router that stamped the sample, which can"
+    );
+    let _ = writeln!(
+        out,
+        "  sit behind the one holding the session (DIRECT no, or unknown without a sessions file)."
+    );
+    out
+}
+
+fn print_peer(env: &EnvHealthV1) {
+    print!("{}", render_peer(env));
+}
+
+/// This machine's own Zenoh ID, when it has one: the profile's certificate
+/// pins the session ID to its slot anchor, and the open session carries it
+/// (the pin can be refused at open, and then the ID is random and not ours).
+fn own_identity(profile: &crate::profile::Profile, session: &zenoh::Session) -> Option<String> {
+    let pinned = super::pubsub::pinned_zid(profile)?;
+    let live = session.zid().to_string();
+    (live == pinned).then_some(live)
+}
+
+/// A verdict document, when the payload is one (schema goat.peer.verdict.v1).
+fn decode_verdict(bytes: &[u8]) -> Option<PeerVerdictV1> {
+    let v: PeerVerdictV1 = serde_json::from_slice(bytes).ok()?;
+    (v.schema == PEER_VERDICT_SCHEMA).then_some(v)
+}
+
+/// Text from the bus, safe to print: no control characters, bounded length.
+fn clean_text(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_control())
+        .take(400)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// The line `goat health` prints for one verdict: `who` is "this machine",
+/// "router" or "peering", and `id` the Zenoh ID or peering name it is keyed by.
+fn verdict_line(who: &str, id: &str, v: &PeerVerdictV1) -> String {
+    let mut sentence = clean_text(&v.sentence);
+    if sentence.is_empty() {
+        sentence = if v.state == "cleared" {
+            "the router reports the clock fault cleared".to_string()
+        } else {
+            format!(
+                "the router sees your clock {:.1} s ahead of its own; the limit is {} s",
+                v.offset_seconds, v.limit_seconds
+            )
+        };
+    }
+    let state = match clean_text(&v.state) {
+        s if s.is_empty() => "unknown".to_string(),
+        s => s,
+    };
+    let mut line = format!("VERDICT on {who} ({id}, {state}): {sentence}");
+    let at = clean_text(&v.observed_at);
+    if !at.is_empty() {
+        line.push_str(&format!(" (observed {at})"));
+    }
+    line
+}
+
+/// The verdict keys `--zid` and `--peering` name: (who, id, key). The values
+/// were validated by the argument parsers, so each is one plain key segment.
+fn named_verdict_keys(
+    zids: &[String],
+    peering: Option<&str>,
+) -> Vec<(&'static str, String, String)> {
+    let mut out: Vec<(&'static str, String, String)> = Vec::new();
+    for z in zids {
+        if !out.iter().any(|(_, id, _)| id == z) {
+            out.push(("router", z.clone(), format!("{PEER_VERDICT_PREFIX}{z}")));
+        }
+    }
+    if let Some(p) = peering {
+        out.push((
+            "peering",
+            p.to_string(),
+            format!("{PEER_VERDICT_PREFIX}peering/{p}"),
+        ));
+    }
+    out
+}
+
+/// One `named_verdicts` entry of `--json`.
+fn named_verdict_json(
+    who: &str,
+    id: &str,
+    key: &str,
+    v: Option<&PeerVerdictV1>,
+) -> serde_json::Value {
+    let mut row = serde_json::json!({
+        "key": key,
+        "verdict": v.map(|v| serde_json::to_value(v).unwrap_or_default()),
+    });
+    row[if who == "peering" { "peering" } else { "zid" }] =
+        serde_json::Value::String(id.to_string());
+    row
+}
+
+/// A listener on one verdict key, open for the whole command.
+struct VerdictListener {
+    who: &'static str,
+    id: String,
+    key: String,
+    sub: zenoh::pubsub::Subscriber<zenoh::handlers::FifoChannelHandler<zenoh::sample::Sample>>,
+}
+
+impl VerdictListener {
+    async fn listen(
+        session: &zenoh::Session,
+        who: &'static str,
+        id: String,
+        key: String,
+    ) -> Option<Self> {
+        match session.declare_subscriber(&key).await {
+            Ok(sub) => Some(Self { who, id, key, sub }),
+            Err(e) => {
+                eprintln!("listen for the verdict on `{key}`: {e}");
+                None
+            }
+        }
+    }
+
+    /// The newest verdict that arrived so far; with `until`, wait up to that
+    /// moment for one when none has (one shared deadline for every listener).
+    async fn latest(&self, until: Option<Instant>) -> Option<PeerVerdictV1> {
+        let mut last = None;
+        while let Ok(Some(s)) = self.sub.try_recv() {
+            if let Some(v) = decode_verdict(s.payload().to_bytes().as_ref()) {
+                last = Some(v);
+            }
+        }
+        if let (None, Some(until)) = (&last, until) {
+            let left = until.saturating_duration_since(Instant::now());
+            if let Ok(Ok(s)) = timeout(left, self.sub.recv_async()).await {
+                last = decode_verdict(s.payload().to_bytes().as_ref());
+            }
+        }
+        last
+    }
+
+    /// `--watch`: print each verdict on this key as it arrives.
+    fn print_as_they_arrive(&self, session: &zenoh::Session) {
+        let session = session.clone();
+        let (who, id, key) = (self.who, self.id.clone(), self.key.clone());
+        tokio::spawn(async move {
+            let Ok(sub) = session.declare_subscriber(&key).await else {
+                return;
+            };
+            while let Ok(s) = sub.recv_async().await {
+                if let Some(v) = decode_verdict(s.payload().to_bytes().as_ref()) {
+                    println!("{}\n", verdict_line(who, &id, &v));
+                }
+            }
+        });
+    }
+}
+
 /// Board-glance renderer for one node's `net` envelope (node-net-health.md):
 /// the connection-inventory roll-up — mesh active/stale split, the 4-bucket
 /// counts, and the UNDECLARED risk list spelled out (process-attributed,
@@ -1788,5 +2310,436 @@ mod consistency_tests {
         assert!(n.rows[0].remediation_refuses);
         assert!(!n.rows[0].remediation.contains("refresh.yml"),
                 "an unexplained node must never be handed a re-run");
+    }
+}
+
+#[cfg(test)]
+mod peer_tests {
+    use super::*;
+
+    const ZID_A: &str = "3c9a51e0d2b7f4a6c18e05d9b3a7f2e1";
+    const ZID_B: &str = "7d2e4f6a8b0c1d3e5f7a9b1c3d5e7f90";
+    const OURS: &str = "5be08d2f41a97c36e0d1f8b2a4c6e9d7";
+
+    fn row(
+        zid: &str,
+        name: Option<&str>,
+        offset: f64,
+        rate: f64,
+        direct: Option<bool>,
+        grade: &str,
+        color: &str,
+    ) -> PeerFaultV1 {
+        PeerFaultV1 {
+            zid: zid.to_string(),
+            kind: PeerFaultKindV1::ClockAhead as i32,
+            offset_seconds: offset,
+            min_offset_seconds: offset - 0.2,
+            max_offset_seconds: offset + 0.1,
+            rejections_per_minute: rate,
+            rejections_in_window: (rate as u64).max(1),
+            first_seen_unix_ms: 1,
+            last_seen_unix_ms: 2,
+            observed_by: OURS.to_string(),
+            attribution_name: name.map(str::to_string),
+            attribution_owner: name.map(|_| "example partner".to_string()),
+            grade: grade.to_string(),
+            color: color.to_string(),
+            limit_seconds: 0.5,
+            direct_session: direct,
+        }
+    }
+
+    fn env(color: &str, detail: PeerFaultDetailV1) -> EnvHealthV1 {
+        EnvHealthV1 {
+            domain: "peer".to_string(),
+            scope: "zagros-sandbox".to_string(),
+            ts_unix_ms: 1_794_571_200_000,
+            overall_color: color.to_string(),
+            sample_count: detail.peers.len() as u64,
+            window_secs: 60,
+            detail: Some(EnvDetail::Peer(detail)),
+        }
+    }
+
+    fn at_fault(peering: &str) -> PeerFaultDetailV1 {
+        PeerFaultDetailV1 {
+            peers: vec![
+                row(
+                    ZID_A,
+                    Some("lab-router-b"),
+                    17.0,
+                    12.0,
+                    Some(true),
+                    "peer_at_fault",
+                    "red",
+                ),
+                row(ZID_B, None, 0.8, 1.5, None, "peer_at_fault", "red"),
+            ],
+            verdict: "peer_at_fault".to_string(),
+            verdict_reason: "2 peer(s) had timestamps rejected in the last 60 s".to_string(),
+            local_clock: "synced".to_string(),
+            observed_by: OURS.to_string(),
+            peers_known: 2,
+            last_line_age_ms: 400,
+            unparsed_lines_window: 0,
+            peering: peering.to_string(),
+            peering_rejections_per_minute: if peering.is_empty() { 0.0 } else { 13.5 },
+            peering_max_offset_seconds: if peering.is_empty() { 0.0 } else { 17.1 },
+        }
+    }
+
+    #[test]
+    fn envelope_round_trips_peer_oneof_arm_17() {
+        let e = env("red", at_fault("xab"));
+        let bytes = e.encode_to_vec();
+        // The arm is field 17: tag byte (17 << 3 | 2) = 0x8a 0x01, length-delimited.
+        assert!(
+            bytes.windows(2).any(|w| w == [0x8a, 0x01]),
+            "arm 17 on the wire"
+        );
+        let back = EnvHealthV1::decode(bytes.as_slice()).expect("decode");
+        assert_eq!(back.domain, "peer");
+        match back.detail {
+            Some(EnvDetail::Peer(d)) => {
+                assert_eq!(d.peers.len(), 2);
+                assert_eq!(d.peers[0].attribution_name.as_deref(), Some("lab-router-b"));
+                assert_eq!(d.peers[0].direct_session, Some(true));
+                assert_eq!(d.peers[1].direct_session, None, "absent stays unknown");
+                assert_eq!(
+                    PeerFaultKindV1::try_from(d.peers[0].kind),
+                    Ok(PeerFaultKindV1::ClockAhead)
+                );
+                assert_eq!(d.peering, "xab");
+            }
+            _ => panic!("expected peer detail"),
+        }
+    }
+
+    #[test]
+    fn an_envelope_with_an_arm_this_build_does_not_know_still_decodes() {
+        // Arm 16 (peering) is not mirrored: the envelope decodes, detail absent.
+        let mut bytes = EnvHealthV1 {
+            domain: "peering".to_string(),
+            scope: "s".to_string(),
+            ts_unix_ms: 1,
+            overall_color: "green".to_string(),
+            sample_count: 1,
+            window_secs: 30,
+            detail: None,
+        }
+        .encode_to_vec();
+        bytes.extend_from_slice(&[0x82, 0x01, 0x02, 0x0a, 0x00]); // field 16, 2 bytes
+        let back = EnvHealthV1::decode(bytes.as_slice()).expect("decode");
+        assert_eq!(back.domain, "peering");
+        assert!(back.detail.is_none());
+    }
+
+    #[test]
+    fn render_shows_site_grade_and_each_peer() {
+        let out = render_peer(&env("red", at_fault("")));
+        assert!(
+            out.starts_with("PEER: RED — peer_at_fault: 2 peer(s) had timestamps rejected"),
+            "{out}"
+        );
+        assert!(out.contains("our clock synced"), "{out}");
+        let a = out
+            .lines()
+            .find(|l| l.contains("lab-router-b"))
+            .expect("named row");
+        assert!(
+            a.contains("+17.00 s") && a.contains("12.0") && a.contains("yes"),
+            "{a}"
+        );
+        // No name: the Zenoh ID is the label, and an absent session is unknown.
+        let b = out.lines().find(|l| l.contains(ZID_B)).expect("zid row");
+        assert!(
+            b.contains("+0.80 s") && b.contains("1.5") && b.contains("unknown"),
+            "{b}"
+        );
+        assert!(b.trim_end().ends_with('—'), "no peering: {b}");
+        assert!(
+            !out.contains("peering "),
+            "no peering line without one: {out}"
+        );
+    }
+
+    #[test]
+    fn render_names_the_peering_when_set() {
+        let out = render_peer(&env("red", at_fault("xab")));
+        assert!(
+            out.contains("peering xab: 13.5 rejections/min, largest offset +17.10 s"),
+            "{out}"
+        );
+        let a = out.lines().find(|l| l.contains("lab-router-b")).unwrap();
+        assert!(a.trim_end().ends_with("xab"), "{a}");
+    }
+
+    #[test]
+    fn an_unmeasured_reading_is_never_green_and_says_why() {
+        let d = PeerFaultDetailV1 {
+            verdict: "unmeasured".to_string(),
+            verdict_reason: "no router log line for 900 s".to_string(),
+            local_clock: "synced".to_string(),
+            last_line_age_ms: -1,
+            ..Default::default()
+        };
+        let out = render_peer(&env("unmetered", d));
+        assert!(
+            out.starts_with("PEER: UNMETERED — unmeasured: no router log line"),
+            "{out}"
+        );
+        assert!(out.contains("never a false green"), "{out}");
+        assert!(!out.contains("PEER  "), "no table without rows: {out}");
+    }
+
+    #[test]
+    fn a_suspect_local_clock_blames_no_peer() {
+        let mut d = at_fault("");
+        d.verdict = "local_clock_suspect".to_string();
+        d.verdict_reason = "our host clock is not grounded (unsynced)".to_string();
+        d.local_clock = "unsynced".to_string();
+        for p in &mut d.peers {
+            p.grade = "local_clock_suspect".to_string();
+            p.color = "idle".to_string();
+        }
+        let out = render_peer(&env("amber", d));
+        assert!(out.contains("our own clock is the likelier fault"), "{out}");
+        assert!(!out.contains("peer_at_fault"), "{out}");
+    }
+
+    #[test]
+    fn json_carries_the_grade_and_every_row() {
+        let e = env("red", at_fault("xab"));
+        let j = env_detail_json(&e).expect("peer detail");
+        assert_eq!(j["verdict"], "peer_at_fault");
+        assert_eq!(j["peering"], "xab");
+        assert_eq!(j["local_clock"], "synced");
+        let peers = j["peers"].as_array().unwrap();
+        assert_eq!(peers.len(), 2);
+        assert_eq!(peers[0]["label"], "lab-router-b");
+        assert_eq!(peers[0]["zid"], ZID_A);
+        assert_eq!(peers[0]["offset_seconds"], 17.0);
+        assert_eq!(peers[0]["rejections_per_minute"], 12.0);
+        assert_eq!(peers[0]["direct_session"], "yes");
+        assert_eq!(peers[0]["kind"], "clock_ahead");
+        assert_eq!(peers[0]["peering"], "xab");
+        assert_eq!(peers[1]["label"], ZID_B);
+        assert_eq!(peers[1]["name"], serde_json::Value::Null);
+        assert_eq!(peers[1]["direct_session"], "unknown");
+        // Without a peering it is null, never an empty string.
+        let j = env_detail_json(&env("red", at_fault(""))).unwrap();
+        assert_eq!(j["peering"], serde_json::Value::Null);
+        // Other domains carry no detail.
+        let time = EnvHealthV1 {
+            domain: "time".to_string(),
+            detail: Some(EnvDetail::Time(TimeDetailV1 { hosts: vec![] })),
+            ..e
+        };
+        assert!(env_detail_json(&time).is_none());
+    }
+
+    const VERDICT: &str = r#"{"schema":"goat.peer.verdict.v1","fault":"clock_ahead","state":"at_fault","offset_seconds":17.0,
+ "limit_seconds":0.5,"rejections_per_minute":12.0,"observed_at":"2026-11-13T13:19:10.000Z",
+ "observed_by":"5be08d2f41a97c36e0d1f8b2a4c6e9d7",
+ "sentence":"the router sees your clock 17.0 s ahead of its own; the limit is 0.5 s"}"#;
+
+    #[test]
+    fn the_verdict_line_prints_the_routers_sentence() {
+        let v = decode_verdict(VERDICT.as_bytes()).expect("verdict");
+        assert_eq!(
+            verdict_line("this machine", ZID_A, &v),
+            format!(
+                "VERDICT on this machine ({ZID_A}, at_fault): the router sees your clock 17.0 s ahead of its own; \
+                 the limit is 0.5 s (observed 2026-11-13T13:19:10.000Z)"
+            )
+        );
+    }
+
+    #[test]
+    fn a_cleared_verdict_and_one_without_a_sentence_still_read() {
+        let mut v = decode_verdict(VERDICT.as_bytes()).unwrap();
+        v.sentence = String::new();
+        v.observed_at = String::new();
+        assert_eq!(
+            verdict_line("this machine", ZID_A, &v),
+            format!("VERDICT on this machine ({ZID_A}, at_fault): the router sees your clock 17.0 s ahead of its own; the limit is 0.5 s")
+        );
+        v.state = "cleared".to_string();
+        assert!(verdict_line("this machine", ZID_A, &v)
+            .ends_with("cleared): the router reports the clock fault cleared"));
+    }
+
+    #[test]
+    fn only_a_verdict_document_is_read_and_its_text_is_made_safe() {
+        assert!(decode_verdict(b"not json").is_none());
+        assert!(decode_verdict(br#"{"schema":"something.else","sentence":"x"}"#).is_none());
+        let v = decode_verdict(br#"{"schema":"goat.peer.verdict.v1","state":"at_fault","sentence":"ahead\u001b[2Jby 2 s"}"#)
+            .expect("minimal verdict");
+        let line = verdict_line("this machine", ZID_A, &v);
+        assert!(!line.chars().any(|c| c.is_control()), "{line:?}");
+        assert!(line.ends_with("ahead[2Jby 2 s"), "{line}");
+    }
+
+    #[derive(clap::Parser, Debug)]
+    struct Cli {
+        #[command(flatten)]
+        args: HealthArgs,
+    }
+
+    fn parse(argv: &[&str]) -> Result<HealthArgs, String> {
+        use clap::Parser as _;
+        Cli::try_parse_from(std::iter::once("goat-health").chain(argv.iter().copied()))
+            .map(|c| c.args)
+            .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn zid_and_peering_are_parsed_and_repeatable() {
+        let a = parse(&[
+            "--domain",
+            "peer",
+            "--zid",
+            ZID_A,
+            "--zid",
+            "00ab12",
+            "--peering",
+            "xab",
+        ])
+        .unwrap();
+        assert_eq!(
+            a.zids,
+            vec![ZID_A.to_string(), "ab12".to_string()],
+            "leading zeros dropped"
+        );
+        assert_eq!(a.peering.as_deref(), Some("xab"));
+        let a = parse(&["--domain", "peer", "--json", "--zid", ZID_B]).unwrap();
+        assert!(a.json && a.zids == vec![ZID_B.to_string()]);
+    }
+
+    #[test]
+    fn a_zid_that_is_not_one_plain_hex_segment_is_refused() {
+        for bad in [
+            "",
+            "ABCD",
+            "abcg",
+            "0123456789abcdef0123456789abcdef0",
+            "ab/cd",
+            "*",
+            "**",
+            "ab*",
+            "$*",
+            "ab cd",
+            "000",
+        ] {
+            assert!(parse_zid_arg(bad).is_err(), "{bad:?} accepted");
+            assert!(
+                parse(&["--domain", "peer", "--zid", bad]).is_err(),
+                "{bad:?} accepted by clap"
+            );
+        }
+        assert_eq!(
+            parse_zid_arg("0123456789abcdef0123456789abcdef").as_deref(),
+            Ok("123456789abcdef0123456789abcdef")
+        );
+        assert!(parse_zid_arg("ab/cd").unwrap_err().contains("no `/`"));
+    }
+
+    #[test]
+    fn a_peering_that_is_not_a_sovereign_id_is_refused() {
+        for ok in ["xab", "a-b1", "abcdefghijklmnop"] {
+            assert_eq!(parse_peering_arg(ok).as_deref(), Ok(ok));
+        }
+        for bad in [
+            "x",
+            "abcdefghijklmnopq",
+            "Xab",
+            "x_b",
+            "x.b",
+            "x/b",
+            "peering/xab",
+            "*",
+            "x*",
+            "**",
+            "$*",
+            "x b",
+            "",
+        ] {
+            assert!(parse_peering_arg(bad).is_err(), "{bad:?} accepted");
+        }
+    }
+
+    #[test]
+    fn named_verdicts_are_one_key_each() {
+        let keys = named_verdict_keys(
+            &[ZID_A.to_string(), ZID_A.to_string(), ZID_B.to_string()],
+            Some("xab"),
+        );
+        assert_eq!(
+            keys,
+            vec![
+                (
+                    "router",
+                    ZID_A.to_string(),
+                    format!("ops/peer/verdict/{ZID_A}")
+                ),
+                (
+                    "router",
+                    ZID_B.to_string(),
+                    format!("ops/peer/verdict/{ZID_B}")
+                ),
+                (
+                    "peering",
+                    "xab".to_string(),
+                    "ops/peer/verdict/peering/xab".to_string()
+                ),
+            ]
+        );
+        assert!(named_verdict_keys(&[], None).is_empty());
+    }
+
+    #[test]
+    fn a_named_verdict_prints_in_the_same_form() {
+        let v = decode_verdict(VERDICT.as_bytes()).unwrap();
+        assert!(verdict_line("router", ZID_A, &v).starts_with(&format!(
+            "VERDICT on router ({ZID_A}, at_fault): the router sees your clock 17.0 s"
+        )));
+        let mut p = v.clone();
+        p.peering = Some("xab".to_string());
+        p.sentence = "the router sees clocks in your network up to 17.0 s ahead of its own (2 stamping router(s)); the limit is 0.5 s".to_string();
+        assert!(verdict_line("peering", "xab", &p)
+            .starts_with("VERDICT on peering (xab, at_fault): the router sees clocks in your network up to 17.0 s"));
+    }
+
+    #[test]
+    fn named_verdicts_in_json_name_their_key_and_carry_the_document_or_null() {
+        let v = decode_verdict(VERDICT.as_bytes()).unwrap();
+        let key = format!("ops/peer/verdict/{ZID_A}");
+        let r = named_verdict_json("router", ZID_A, &key, Some(&v));
+        assert_eq!(
+            (r["key"].as_str(), r["zid"].as_str()),
+            (Some(key.as_str()), Some(ZID_A))
+        );
+        assert_eq!(r["verdict"]["sentence"], v.sentence);
+        assert!(r.get("peering").is_none());
+        let r = named_verdict_json("peering", "xab", "ops/peer/verdict/peering/xab", None);
+        assert_eq!(r["peering"], "xab");
+        assert!(
+            r["verdict"].is_null(),
+            "no verdict heard is null, never a made-up one"
+        );
+        assert!(r.get("zid").is_none());
+    }
+
+    #[test]
+    fn the_verdict_document_round_trips_as_json() {
+        let v = decode_verdict(VERDICT.as_bytes()).unwrap();
+        let j = serde_json::to_value(&v).unwrap();
+        assert_eq!(j["schema"], "goat.peer.verdict.v1");
+        assert_eq!(j["offset_seconds"], 17.0);
+        assert!(
+            j.get("peering").is_none() && j.get("zids").is_none(),
+            "absent fields stay absent"
+        );
     }
 }

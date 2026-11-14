@@ -24,6 +24,11 @@ pub(crate) const PRESENCE_KEY: &str = "ops/presence/health/**";
 pub(crate) const TIME_KEY: &str = "ops/time/health/**";
 pub(crate) const NET_KEY: &str = "ops/net/health/**";
 pub(crate) const CONSISTENCY_KEY: &str = "ops/consistency/health/**";
+/// Faults on peers we do not own, measured at the router we own (ADR 1232):
+/// the per-site reading, and the per-peer verdict documents (JSON) the reader
+/// publishes on `ops/peer/verdict/<zid>` and `ops/peer/verdict/peering/<name>`.
+pub(crate) const PEER_KEY: &str = "ops/peer/health/**";
+pub(crate) const PEER_VERDICT_PREFIX: &str = "ops/peer/verdict/";
 /// Crypto posture — evidence-based (ADR 1079); see
 /// ops/zenoh-trial-peers/crypto-posture/proto/crypto_posture_v1.proto.
 pub(crate) const CRYPTO_KEY: &str = "ops/fabric/crypto/**";
@@ -405,6 +410,118 @@ pub(crate) struct ConsistencyDetailV1 {
     pub intent_note: String,
 }
 
+// --- peer domain (ADR 1232) — goat-peer-health, arm 17 ---
+
+/// What the router saw wrong with a peer. Only the clock detector exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, prost::Enumeration)]
+#[repr(i32)]
+pub(crate) enum PeerFaultKindV1 {
+    PeerFaultKindUnspecified = 0,
+    /// The router rejected this peer's timestamps as ahead of its clock.
+    ClockAhead = 1,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct PeerFaultV1 {
+    /// The Zenoh ID that STAMPED the rejected samples.
+    #[prost(string, tag = "1")]
+    pub zid: String,
+    #[prost(enumeration = "PeerFaultKindV1", tag = "2")]
+    pub kind: i32,
+    /// Latest: peer time minus our router's time, seconds.
+    #[prost(double, tag = "3")]
+    pub offset_seconds: f64,
+    #[prost(double, tag = "4")]
+    pub min_offset_seconds: f64,
+    #[prost(double, tag = "5")]
+    pub max_offset_seconds: f64,
+    #[prost(double, tag = "6")]
+    pub rejections_per_minute: f64,
+    #[prost(uint64, tag = "7")]
+    pub rejections_in_window: u64,
+    #[prost(int64, tag = "8")]
+    pub first_seen_unix_ms: i64,
+    #[prost(int64, tag = "9")]
+    pub last_seen_unix_ms: i64,
+    /// Our router's Zenoh ID; "" when not known.
+    #[prost(string, tag = "10")]
+    pub observed_by: String,
+    #[prost(string, optional, tag = "11")]
+    pub attribution_name: Option<String>,
+    #[prost(string, optional, tag = "12")]
+    pub attribution_owner: Option<String>,
+    /// peer_at_fault | local_clock_suspect | quiet | cleared | unmeasured
+    #[prost(string, tag = "13")]
+    pub grade: String,
+    #[prost(string, tag = "14")]
+    pub color: String,
+    #[prost(double, tag = "15")]
+    pub limit_seconds: f64,
+    /// Whether this Zenoh ID holds a session with our router; absent = unknown.
+    #[prost(bool, optional, tag = "16")]
+    pub direct_session: Option<bool>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct PeerFaultDetailV1 {
+    #[prost(message, repeated, tag = "1")]
+    pub peers: Vec<PeerFaultV1>,
+    /// peer_at_fault | local_clock_suspect | recovering | clean | unmeasured
+    #[prost(string, tag = "2")]
+    pub verdict: String,
+    #[prost(string, tag = "3")]
+    pub verdict_reason: String,
+    /// synced | unsynced | unknown
+    #[prost(string, tag = "4")]
+    pub local_clock: String,
+    #[prost(string, tag = "5")]
+    pub observed_by: String,
+    #[prost(uint32, tag = "6")]
+    pub peers_known: u32,
+    /// -1 = no line read yet.
+    #[prost(int64, tag = "7")]
+    pub last_line_age_ms: i64,
+    #[prost(uint64, tag = "8")]
+    pub unparsed_lines_window: u64,
+    /// Set when the reader sits beside one per-partner edge router.
+    #[prost(string, tag = "9")]
+    pub peering: String,
+    #[prost(double, tag = "10")]
+    pub peering_rejections_per_minute: f64,
+    #[prost(double, tag = "11")]
+    pub peering_max_offset_seconds: f64,
+}
+
+/// The JSON document on `ops/peer/verdict/<zid>` (schema goat.peer.verdict.v1):
+/// what the router says to the peer it measured.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct PeerVerdictV1 {
+    pub schema: String,
+    #[serde(default)]
+    pub fault: String,
+    /// at_fault | cleared
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub offset_seconds: f64,
+    #[serde(default)]
+    pub limit_seconds: f64,
+    #[serde(default)]
+    pub rejections_per_minute: f64,
+    #[serde(default)]
+    pub observed_at: String,
+    #[serde(default)]
+    pub observed_by: String,
+    #[serde(default)]
+    pub sentence: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peering: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub zids: Vec<String>,
+}
+
+pub(crate) const PEER_VERDICT_SCHEMA: &str = "goat.peer.verdict.v1";
+
 #[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct EnvHealthV1 {
     #[prost(string, tag = "1")]
@@ -419,7 +536,8 @@ pub(crate) struct EnvHealthV1 {
     pub sample_count: u64,
     #[prost(uint32, tag = "6")]
     pub window_secs: u32,
-    #[prost(oneof = "EnvDetail", tags = "10, 11, 12, 13, 14, 15")]
+    // Arm 16 (peering) is not mirrored here; a decoder skips an arm it does not know.
+    #[prost(oneof = "EnvDetail", tags = "10, 11, 12, 13, 14, 15, 17")]
     pub detail: Option<EnvDetail>,
 }
 
@@ -437,6 +555,8 @@ pub(crate) enum EnvDetail {
     Net(NetDetailV1),
     #[prost(message, tag = "15")]
     Consistency(ConsistencyDetailV1),
+    #[prost(message, tag = "17")]
+    Peer(PeerFaultDetailV1),
 }
 
 // --- small pure display helpers (clock-free, unit-testable) ---
