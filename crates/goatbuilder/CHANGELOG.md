@@ -155,7 +155,7 @@ declaration and rule it was derived from, an environment variable, a default,
 an allocation or an argument. A dry run prints the same list, as `input` rows
 under `-o json` and as a section of the plan page, and names the secrets
 posture probes it ran to read them. A secret is shown by its source only,
-never its value.
+never its value (#649).
 
 #### Added: goatbuilder status reads real hosts
 
