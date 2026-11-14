@@ -43,6 +43,16 @@ peering's leaf, and our core router's leaf is restored from the earliest
 admission that touched it. An IPsec link's MSS clamp rules are removed by
 their own handles (#554).
 
+#### Added: the end state grades federation-proxy where a site turns it on
+
+`goatbuilder endstate` now has a row for `federation-proxy`, the node-local
+proxy signal federation dials its partner through. A site that sets
+`signal_federation_proxy_enabled` and does not run it, or runs it without
+the flag, is now reported. The flag defaults to false, so a site that does
+not set it is graded as not running the proxy. A site without the
+`signal-federation-transport` ledger grades its deployment as unknown, never
+as failed (#637).
+
 #### Fixed: federate status resumes from the first phase it cannot show passed
 
 `goatbuilder federate status` named the next command from the phase the last
@@ -168,6 +178,23 @@ A pull request adds its goatbuilder changelog entry as a file in
 entries into a release. The index row of an ADR above 1234 is
 rendered from the ADR's own header by `ops/release/adr_index.py`, so adding
 an ADR edits no shared file. `docs-guards` checks both (#623, #636).
+
+#### Added: a test that backing out a role-admitted core gives its org fragment back
+
+A unit test holds the back-out to the federation test environment's real
+fixtures: admission's `merge_org` turns the core's org fragment from before
+the peering into the admitted one, and `backout_core.py plan` turns the
+admitted one back into the fragment from before, byte for byte
+(`crates/goatbuilder/tests/fixtures/backout-role-core/`) (#547).
+
+#### Added: every whole configuration example in the docs is validated
+
+`crates/goatbuilder/tests/doc_configs.rs` runs every `yaml` block under
+`docs/` that holds `schema: goatbuilder/v1` through this build's
+`goatbuilder validate`. An example meant to be refused says so, with its
+code, on its first line. The two examples that their own release refused,
+in the configuration reference and tutorial 00, are fixed, and the test
+runs on every pull request that touches goatbuilder or a document (#568).
 
 <!-- END generated: changelog unreleased -->
 
