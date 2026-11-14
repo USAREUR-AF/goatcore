@@ -22,6 +22,14 @@ the Ory deployed by the next step: it now runs the stack plays only, as
 reason, was refused because its founder federates with another site: it now
 passes, unless the founder's federation names it.
 
+#### Fixed: a release re-run on a later day opens no dev-pin PR
+
+`goatbuilder release` declares a candidate on the dev rung with a reason that
+carries the day. Re-running a dev step that had already landed, on a later
+day, rewrote that reason and landed a pin PR that changed nothing but the
+date. A rung that already declares the candidate now keeps its deviation as
+it stands, reason and date included (#622).
+
 <!-- END generated: changelog unreleased -->
 
 ## 0.6.1 — 2026-11-13
