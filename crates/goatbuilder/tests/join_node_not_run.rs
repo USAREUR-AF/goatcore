@@ -1,10 +1,10 @@
 //! `goatbuilder join-node --dry-run` names what the joining site does not run
-//! (docs/design/goatbuilder.md, `join-node` part (d)): under its own heading,
-//! every catalog service the end-state model (`endstate.py model <site>`) marks
-//! absent here, each with the model's reason. An admin surface a joiner leaves
-//! to the founder reads as single-homed under ADR 1084 §D3; a service the site
-//! turns off reads its flag. A checkout whose model cannot be read says so in
-//! one line and lists nothing.
+//! yet (docs/design/goatbuilder.md, `join-node` part (d)): under its own
+//! heading, each gap the end-state model (`endstate.py model <site>`) names,
+//! with the gate row that closes it, and each service the site turns off, with
+//! its flag. Every site is declared to run every service (ADR 1165, gate group
+//! I), so a service a joining site does not run yet is a gap, never a design.
+//! A checkout whose model cannot be read says so in one line and lists nothing.
 //!
 //! The checkout is the standup fixture's declaration (`ops/goatbuilder/
 //! fixtures/standup`) with its site `alpha` declared as a joiner, and this
@@ -108,7 +108,9 @@ fn text(o: &Output) -> String {
     )
 }
 
-const D3: &str = "single-homed at the founder (ADR 1084 \u{a7}D3); every site once ADR 1165 lifts it for this class";
+/// The gap text the catalog gives an admin surface at a joining site, and mesh DNS.
+const ADMIN_GAP: &str = "declared, not yet built at this site: an admin surface cannot be turned on at a second site before its store is at the multi-writer schema and its write class is switched on there (gate row I1, I4)";
+const MESH_DNS_GAP: &str = "declared, not yet built at this site: join-node does not deploy mesh DNS yet, and a site cut off from the others needs its own resolver (gate row I3)";
 
 #[test]
 fn a_joiners_dry_run_lists_what_it_does_not_run_with_the_models_reasons() {
@@ -137,7 +139,8 @@ fn a_joiners_dry_run_lists_what_it_does_not_run_with_the_models_reasons() {
         .position(|(n, _)| n == "not-run-heading")
         .unwrap_or_else(|| panic!("no heading for what the site does not run: {rows:#?}"));
     assert!(
-        rows[heading].1.contains("does not run")
+        rows[heading].1.contains("does not run yet")
+            && rows[heading].1.contains("gate row")
             && rows[heading].1.contains("endstate.py model alpha"),
         "{rows:#?}"
     );
@@ -155,9 +158,16 @@ fn a_joiners_dry_run_lists_what_it_does_not_run_with_the_models_reasons() {
             .find(|d| d.starts_with(&format!("{svc} \u{2014} ")))
             .unwrap_or_else(|| panic!("{svc} not listed: {listed:#?}"))
     };
-    // A founder-only admin surface, and one the site's flag keeps off.
-    assert_eq!(line("netbird-dashboard"), format!("netbird-dashboard \u{2014} {D3} (declared by: founder-only service; this site joins a goatnet (goatnet_founder: false))"));
-    assert_eq!(line("id-admin-console"), format!("id-admin-console \u{2014} {D3} (declared by: `id_admin_console_enabled` is false in group_vars)"));
+    // Each admin surface, and mesh DNS, is a named gap with its gate row.
+    assert_eq!(line("netbird-dashboard"), format!("netbird-dashboard \u{2014} {ADMIN_GAP}"));
+    assert_eq!(line("id-admin-console"), format!("id-admin-console \u{2014} {ADMIN_GAP}"));
+    assert_eq!(line("mesh-coredns"), format!("mesh-coredns \u{2014} {MESH_DNS_GAP}"));
+    // Nothing reads as a design to leave a service out.
+    for d in &listed {
+        for wrong in ["founder-only", "single-homed", "by design", "\u{a7}D3"] {
+            assert!(!d.contains(wrong), "{d}");
+        }
+    }
     // A service the site turns off reads its flag.
     assert_eq!(
         line("isitup"),
@@ -171,7 +181,7 @@ fn a_joiners_dry_run_lists_what_it_does_not_run_with_the_models_reasons() {
 
     // The plain text carries the same heading and lines.
     let page = text(&dry_run(t.path(), false));
-    assert!(page.contains("does not run"), "{page}");
+    assert!(page.contains("does not run yet"), "{page}");
     assert!(
         page.contains("isitup \u{2014} `isitup_enabled` is false in group_vars"),
         "{page}"

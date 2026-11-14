@@ -8,8 +8,13 @@ acceptance with --endstate reads no row N/A for one of them".
 What a live joiner runs was measured on 2026-11-13 by reading the running
 containers on the management hosts of two joined sites of a standing goatnet.
 Both run the services in LIVE_JOINER_RUNS. Neither runs the NetBird dashboard,
-the portal, the id console, the onboarding engine or mesh DNS, so the fixture's
-declarations leave those off, and the model must give each its reason.
+the portal, the id console, the onboarding engine or mesh DNS yet.
+
+Every site is declared fully island-mode capable (ADR 1165, gate group I), so
+the end state declares every one of those present at every site that
+replicates. What a joining site does not run yet is a named gap, "declared, not
+yet built at this site", with the gate row that closes it (GAPS_AT_A_JOINER),
+never an absence by design and never N/A.
 
 federation-proxy also runs on both joiners; the catalog has no row for it, so
 the model cannot mark it either way.
@@ -51,11 +56,18 @@ LIVE_JOINER_RUNS = (
     "time-health",
     "traefik",
 )
-# Run by neither joiner.
-LIVE_JOINER_DOES_NOT_RUN = ("netbird-dashboard", "portal", "id-admin-console", "onboard-runner", "mesh-coredns")
-
-ADMIN_SURFACES = ("netbird-dashboard", "portal", "id-admin-console", "onboard-runner")
-D3 = "single-homed at the founder (ADR 1084 §D3); every site once ADR 1165 lifts it for this class"
+# Run by neither joiner yet: each a gap, with the gate row that closes it. The
+# admin surfaces wait for the multi-writer schema (I1) and their write class's
+# switch (I4); mesh DNS waits for join-node to deploy it (I3).
+GAPS_AT_A_JOINER = {
+    "netbird-dashboard": "I1, I4",
+    "portal": "I1, I4",
+    "id-admin-console": "I1, I4",
+    "onboard-runner": "I1, I4",
+    "mesh-coredns": "I3",
+}
+# The services a site cut off from the others needs, declared at every site.
+EVERY_SITE = ("traefik", "netbird-mgmt", "signal-server", "ory", "kratos-selfservice-ui")
 
 JOINER_VARS = """\
 goatnet_founder: false
@@ -117,27 +129,57 @@ class AJoinerRunsTheReplicationCore(unittest.TestCase):
         self.assertTrue(run_tokens, "the live joiner's services own acceptance rows")
         self.assertEqual(absent_tokens & run_tokens, set(), "rows a live joiner's services own would read N/A")
 
-    def test_what_neither_joiner_runs_is_absent_with_its_reason(self):
+    def test_what_a_joiner_does_not_run_yet_is_a_named_gap(self):
         s = self.model["services"]
-        for n in LIVE_JOINER_DOES_NOT_RUN:
-            self.assertIs(s[n]["present"], False, n)
-            self.assertTrue(s[n]["reason"], n)
-        for n in ADMIN_SURFACES:
-            self.assertTrue(s[n]["reason"].startswith(D3), f"{n}: {s[n]['reason']}")
-        self.assertFalse(s["mesh-coredns"]["reason"].startswith(D3), "mesh DNS is not an admin surface")
+        g = ENDSTATE.grade(self.model, {"hosts": {}}, None)
+        rows = {r["service"]: r for r in g["services"]}
+        for n, row in GAPS_AT_A_JOINER.items():
+            self.assertIs(s[n]["present"], True, f"{n} is declared at every site")
+            self.assertEqual((s[n]["gap"] or {}).get("row"), row, n)
+            self.assertIsNone(s[n]["reason"], n)
+            p = rows[n]["presence"]
+            self.assertEqual(p["status"], "GAP", n)
+            self.assertTrue(p["why"].startswith("declared, not yet built at this site: "), p["why"])
+            self.assertTrue(p["why"].endswith(f"(gate row {row})"), p["why"])
+        for r in g["services"]:
+            for wrong in ("founder-only", "single-homed", "by design"):
+                self.assertNotIn(wrong, r["presence"]["why"], r["service"])
 
-    def test_the_admin_surface_wording_comes_from_the_catalog_mark(self):
+    def test_acceptance_reads_a_gap_as_a_gap_never_na(self):
+        path = Path(self.tmp.name) / "endstate.json"
+        path.write_text(json.dumps(self.model))
+        absent = ACCEPTANCE.declared_absent(str(path))
+        gaps = ACCEPTANCE.declared_gaps(str(path))
+        for n, row in GAPS_AT_A_JOINER.items():
+            for t in self.model["services"][n].get("assay") or []:
+                self.assertNotIn(t, absent, f"{n}'s row {t} would read N/A")
+                self.assertIn(t, gaps, n)
+                self.assertTrue(gaps[t].startswith("declared, not yet built at this site: "), gaps[t])
+                self.assertIn(f"gate row {row}", gaps[t])
+
+    def test_no_catalog_row_is_founder_only(self):
         cat = ENDSTATE.catalog(ROOT)["services"]
-        marked = sorted(n for n, spec in cat.items() if spec.get("admin_surface"))
-        self.assertEqual(marked, sorted(ADMIN_SURFACES))
-        self.assertFalse(hasattr(ENDSTATE, "D3_ADMIN_SURFACES"), "the admin surfaces are named in the catalog, not in code")
+        for n, spec in cat.items():
+            self.assertNotIn("founder", spec.get("present") or {}, f"{n}: founder-only is not a presence rule")
+            self.assertNotIn("admin_surface", spec, n)
+        for n in list(EVERY_SITE) + list(GAPS_AT_A_JOINER):
+            self.assertTrue(
+                (cat[n].get("present") or {}).get("every_site"),
+                f"{n} is declared at every site that replicates",
+            )
 
-    def test_a_founder_is_graded_the_same_way_for_the_replication_core(self):
+    def test_the_gap_wording_comes_from_the_catalog(self):
+        cat = ENDSTATE.catalog(ROOT)["services"]
+        for n in GAPS_AT_A_JOINER:
+            self.assertEqual(self.model["services"][n]["gap"], {"row": cat[n]["gap"]["row"], "why": cat[n]["gap"]["why"]})
+        for name in ("D3_ADMIN_SURFACES", "D3_REASON"):
+            self.assertFalse(hasattr(ENDSTATE, name), f"{name}: the wording is the catalog's, not code's")
+
+    def test_a_founder_is_graded_the_same_way(self):
         m = ENDSTATE.model("zagros", self.root)["services"]
-        for n in ("traefik", "netbird-mgmt", "signal-server", "ory", "kratos-selfservice-ui"):
+        for n in list(EVERY_SITE) + list(GAPS_AT_A_JOINER):
             self.assertIs(m[n]["present"], True, n)
-        self.assertIs(m["netbird-dashboard"]["present"], True)
-        self.assertIs(m["mesh-coredns"]["present"], True)
+            self.assertIsNone(m[n]["gap"], f"{n}: a founder that runs it has no gap")
 
 
 if __name__ == "__main__":
