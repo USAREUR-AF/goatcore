@@ -85,12 +85,10 @@
 #   - Identity-create at A — verify present at B (lag observed in JSONL)
 #   - Client-create at B — verify present at A
 #   - Token-grant at A — verify introspect_ok at B (cross-node token usage)
-#   - F3 (per ADR 1010 D6): concurrent same-email identity-create at A AND B
-#     in the same tick. With both Kratos instances active and the production
-#     discipline holding (D4: writes through admin API only), Kratos's
-#     app-layer uniqueness constraint MUST reject one side. If both sides
-#     return 200, the discipline broke (Spock is the only thing left to
-#     reject the dup) and the JSONL row flags it via `f3_app_layer_caught=0`.
+#   - F3: concurrent same-email identity-create at A and B, with separate
+#     HTTP statuses and identity IDs. Exactly one 201 plus one 409 establishes
+#     an observed rejection; two 201 responses expose concurrent acceptance.
+#     Admin-API-only writes do not establish uniqueness across database nodes.
 #
 # What's NOT exercised here (separate Phase 2 tests):
 #   - Webauthn / passkey real browser flow (A10) — manual hands-on
@@ -848,23 +846,13 @@ while [ "$(date +%s)" -lt "$END" ]; do
     fi
   fi
 
-  # F3 (ADR 1010 D6): concurrent same-email identity-create at A AND B.
-  # Production discipline (D4) routes writes through one VIP-active admin
-  # API; here we deliberately violate that to detect whether the safety net
-  # (Kratos's app-layer unique-email constraint) holds. Pass = exactly one
-  # of the two sides returns 200; the other returns a non-2xx (typically
-  # 409 Conflict). Fail = both sides return 200 (uniqueness now relies on
-  # Spock's LWW, which silently drops a row).
-  EMAIL_F3="soak-f3-${ITER}@orysoak.local"
-  F3_BODY=$(printf '{"schema_id":"default","traits":{"email":"%s","name":"F3"},"credentials":{"password":{"config":{"password":"SoakF3!password"}}}}' "$EMAIL_F3")
-  HTTP_F3_A=$(curl -sS --max-time 5 -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:${KRATOS_A_ADM}/admin/identities" -H "Content-Type: application/json" -d "$F3_BODY" 2>/dev/null &
-              curl -sS --max-time 5 -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:${KRATOS_B_ADM}/admin/identities" -H "Content-Type: application/json" -d "$F3_BODY" 2>/dev/null &
-              wait) || true
-  # The two http codes are concatenated (e.g. "200409" or "409200" on pass,
-  # "200200" on fail). Count successes by counting "200" occurrences.
-  F3_OK_COUNT=$(printf "%s" "$HTTP_F3_A" | grep -o "200" | wc -l | tr -d ' ')
-  F3_APP_LAYER_CAUGHT=0
-  [ "$F3_OK_COUNT" = "1" ] && F3_APP_LAYER_CAUGHT=1
+  # F3 is a cross-site observation, not proof of distributed uniqueness.
+  # Preserve each status and accepted identity ID. A transport/server failure
+  # must never count as a uniqueness rejection. Use fresh per-run identities.
+  F3_JSON=$(python3 "$REPO_ROOT/ops/ansible/roles/ory/tests/soak/concurrent_identity.py" \
+    --admin-a "http://127.0.0.1:${KRATOS_A_ADM}" \
+    --admin-b "http://127.0.0.1:${KRATOS_B_ADM}" \
+    --email "soak-f3-${RUN_ID}-${ITER}@example.org")
 
   # Spock replication lag: query each subscription's lag from pg_stat_replication.
   LAG_A_BYTES=$(psqlA -d kratos -tAXc "SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::text,'0') FROM pg_stat_replication LIMIT 1;" 2>/dev/null | tr -d ' ' || echo 0)
@@ -907,7 +895,7 @@ print(json.dumps({
   'introspect_a_to_b':$INTROSPECT_A_TO_B,
   'concurrent_converged':$CONCURRENT_CONVERGED,
   'concurrent_data_loss':$CONCURRENT_DATA_LOSS,
-  'f3_app_layer_caught':$F3_APP_LAYER_CAUGHT,
+  **json.loads('''$F3_JSON'''),
   'lag_a_bytes':int('$LAG_A_BYTES' or 0),
   'lag_b_bytes':int('$LAG_B_BYTES' or 0),
   'kratos_a_health':int('$HK_A'),

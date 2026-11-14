@@ -8,6 +8,10 @@
 # sites, and it is A's.
 
 EMAIL="c4-$RUN@harness.test"
+CONTROL_EMAIL="c4-control-$RUN@harness.test"
+PASSWORD_A="C4-Survivor-Fixture!82"
+PASSWORD_B="C4-Losing-Fixture!93"
+CONTROL_PASSWORD="C4-Unrelated-Fixture!74"
 # The collision itself, at each site (the resolution queue, ADR 1165 D4), and
 # the resolution's deletes of rows that site had already discarded.
 EXPECT="a kratos exception identities INSERT:other 1
@@ -27,8 +31,24 @@ b kratos resolution identity_credential_identifiers delete_delete:skip 1
 b kratos resolution identity_recovery_addresses delete_delete:skip 1
 b kratos resolution identity_verifiable_addresses delete_delete:skip 1"
 
-write_a() { kratos_create a "$EMAIL" "C4 at A" > "$SCRATCH/id-a"; }
-write_b() { kratos_create b "$EMAIL" "C4 at B" > "$SCRATCH/id-b"; }
+seed() {
+  kratos_create a "$CONTROL_EMAIL" "C4 unrelated identity" "$CONTROL_PASSWORD" > "$SCRATCH/control-id"
+  sync_all
+  for s in a b; do
+    expect_eq "$s: unrelated identity logs in before collision" \
+      "$(kratos_login "$s" "$CONTROL_EMAIL" "$CONTROL_PASSWORD")" "$(cat "$SCRATCH/control-id")"
+  done
+}
+write_a() {
+  kratos_create a "$EMAIL" "C4 at A" "$PASSWORD_A" > "$SCRATCH/id-a"
+  expect_eq "a: original credential works while isolated" \
+    "$(kratos_login a "$EMAIL" "$PASSWORD_A")" "$(cat "$SCRATCH/id-a")"
+}
+write_b() {
+  kratos_create b "$EMAIL" "C4 at B" "$PASSWORD_B" > "$SCRATCH/id-b"
+  expect_eq "b: original credential works while isolated" \
+    "$(kratos_login b "$EMAIL" "$PASSWORD_B")" "$(cat "$SCRATCH/id-b")"
+}
 after_heal() {
   dump_logs "$SCRATCH/collision.logs"
   directive a identity_delete "$(cat "$SCRATCH/id-b")" > /dev/null
@@ -46,5 +66,11 @@ check() {
   for s in a b; do
     expect_eq "$s: identities with the email" \
       "$(kr "$s" "SELECT string_agg(id::text, ',') FROM identities WHERE traits->>'email' = '$EMAIL';")" "$(cat "$SCRATCH/id-a")"
+    expect_eq "$s: survivor password logs into the selected identity" \
+      "$(kratos_login "$s" "$EMAIL" "$PASSWORD_A")" "$(cat "$SCRATCH/id-a")"
+    expect_eq "$s: losing password cannot log into the survivor" \
+      "$(kratos_login "$s" "$EMAIL" "$PASSWORD_B")" invalid_credentials
+    expect_eq "$s: unrelated identity remains usable" \
+      "$(kratos_login "$s" "$CONTROL_EMAIL" "$CONTROL_PASSWORD")" "$(cat "$SCRATCH/control-id")"
   done
 }

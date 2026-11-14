@@ -53,6 +53,7 @@ WORK="$(mktemp -d)"
 RESULTS="${RESULTS:-$WORK/results.tsv}"
 : > "$RESULTS"
 KRATOS_ADMIN_a=54434; KRATOS_ADMIN_b=54534; HYDRA_ADMIN=54445
+KRATOS_PUBLIC_a=54433; KRATOS_PUBLIC_b=54533
 SHARED_NID="$(python3 -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["ory_shared_nid"])' "$REPO/ops/ansible/roles/ory/defaults/main.yml")"
 PRESEED_TS="$(python3 -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["ory_shared_preseed_ts"])' "$REPO/ops/ansible/roles/ory/defaults/main.yml")"
 
@@ -233,7 +234,8 @@ sync_all() {
 echo "== Kratos at both sites, Hydra at the hub (A)"
 for s in a b; do
   port="KRATOS_ADMIN_$s"
-  docker run -d --name "ph-kratos-$s" --network "$NET" -p "127.0.0.1:${!port}:4434" \
+  public_port="KRATOS_PUBLIC_$s"
+  docker run -d --name "ph-kratos-$s" --network "$NET" -p "127.0.0.1:${!port}:4434" -p "127.0.0.1:${!public_port}:4433" \
     -e DSN="postgres://postgres:$PW@ph-$s:5432/kratos?sslmode=disable" \
     -v "$WORK/ory:/etc/config:ro" "$KRATOS_IMAGE" serve -c /etc/config/kratos.yaml --dev >/dev/null
 done
@@ -259,10 +261,30 @@ kapi() { # kapi <site> <METHOD> <path> [json]
 hapi() { # hapi <METHOD> <path> [json]   (Hydra runs at the hub only)
   curl -fsS -X "$1" "http://127.0.0.1:$HYDRA_ADMIN$2" -H 'Content-Type: application/json' ${3:+-d "$3"}
 }
-kratos_create() { # kratos_create <site> <email> <name>  -> prints the identity id; the creating site owns it (ADR 1205 D5)
-  kapi "$1" POST /admin/identities "$(jq -cn --arg e "$2" --arg n "$3" --arg o "site_$1" \
+kratos_create() { # kratos_create <site> <email> <name> [fixture-password] -> prints the identity id; the creating site owns it (ADR 1205 D5)
+  kapi "$1" POST /admin/identities "$(jq -cn --arg e "$2" --arg n "$3" --arg o "site_$1" --arg p "${4:-harness-Passw0rd-not-secret}" \
     '{schema_id:"default", traits:{email:$e, name:$n}, metadata_admin:{owner_site:$o},
-      credentials:{password:{config:{password:"harness-Passw0rd-not-secret"}}}}')" | jq -r .id
+      credentials:{password:{config:{password:$p}}}}')" | jq -r .id
+}
+# Native login API: output only the session identity or a precise rejection,
+# never the response (which contains a session token). No cookies are reused.
+kratos_login() { # <site> <email> <fixture-password>
+  local port="KRATOS_PUBLIC_$1" base flow status body
+  base="http://127.0.0.1:${!port}"
+  body="$SCRATCH/login-$1.json"
+  flow=$(curl -fsS --max-time 10 "$base/self-service/login/api" -H 'Accept: application/json' | jq -er .id) || return 1
+  status=$(curl -sS --max-time 10 -o "$body" -w '%{http_code}' \
+    -X POST "$base/self-service/login?flow=$flow" -H 'Content-Type: application/json' \
+    -H 'Accept: application/json' \
+    -d "$(jq -cn --arg e "$2" --arg p "$3" '{method:"password",identifier:$e,password:$p}')") || return 1
+  if [[ "$status" == 200 ]]; then
+    jq -er '.session | select(.active == true) | .identity.id | select(type == "string" and length > 0)' "$body"
+  elif [[ "$status" == 400 ]] && jq -e '(.session == null) and any(.ui.messages[]?; .id == 4000006)' "$body" >/dev/null; then
+    printf '%s\n' invalid_credentials
+  else
+    echo "unexpected login response HTTP $status" >&2
+    return 1
+  fi
 }
 kname() { kr "$1" "SELECT traits->>'name' FROM identities WHERE id='$2';"; }
 
