@@ -409,6 +409,13 @@ import sys, yaml, re
 p, comp, g, ref, reason = sys.argv[1:6]
 s = open(p).read()
 d = yaml.safe_load(s); assert comp in d["components"]
+# A goatnet that already declares this value keeps its deviation as it stands,
+# reason included: the reason carries the day it was declared, so rewriting it
+# on a re-run from another day changed the table and opened a PR for nothing
+# (a re-run that crossed midnight, found by the hermetic e2e tier).
+cur = (d["components"][comp].get("deviations") or {}).get(g) or {}
+if cur.get("value") == ref:
+    sys.exit(0)
 # find the component block boundaries in the raw text (preserve comments)
 m = re.search(rf'(?m)^  {re.escape(comp)}:\n', s); start = m.start()
 nxt = re.search(r'(?m)^  [A-Za-z0-9_-]+:\n', s[m.end():]); end = m.end() + (nxt.start() if nxt else len(s) - m.end())

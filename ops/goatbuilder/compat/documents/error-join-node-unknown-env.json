@@ -1,0 +1,10 @@
+{
+  "schema": "goatbuilder.error/v1",
+  "error": "unknown environment \"nowhere\"; declared: [\"zagros\"]",
+  "interpretation": {
+    "schema": "goat-errors.interpretation/v1",
+    "summary": "unknown environment \"nowhere\"; declared: [\"zagros\"]",
+    "hits": [],
+    "unrecognised": true
+  }
+}

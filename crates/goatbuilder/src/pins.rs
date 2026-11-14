@@ -1601,6 +1601,13 @@ pub fn edit_set_deviation(path: &Path, comp: &str, g: &str, reference: &str, rea
         return Err(goat_errors::coded("GB-001", format!("AssertionError: {comp} is not a component of {}", path.display())).into());
     }
     let (start, end) = component_block(&s, comp).ok_or_else(|| anyhow!("{comp}: no component block"))?;
+    // A goatnet that already declares this value keeps its deviation as it
+    // stands, reason included: the reason carries the day it was declared, so
+    // rewriting it on a re-run from a later day changed the table and landed a
+    // PR for nothing (rc.sh `set_deviation` holds the same rule).
+    if s[start..end].contains(&format!("      {g}:\n        value: \"{reference}\"\n")) {
+        return Ok(());
+    }
     let entry = format!("      {g}:\n        value: \"{reference}\"\n        reason: >-\n          {}\n", reason.split('\n').collect::<Vec<_>>().join("\n          "));
     // An existing value deviation for `g` is replaced where it stands: re-declaring
     // the same value must leave the table byte-identical, so a re-run of a landed

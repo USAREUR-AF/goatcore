@@ -433,7 +433,12 @@ fn next_step(
         .get(&14)
         .is_some_and(|r| r.outcome == Outcome::Passed);
     if !passed_14 {
-        let next = on.map(|(n, _)| n + 1).unwrap_or(1);
+        // From the first phase the journal does not show passed: a phase with
+        // no record, or an outcome that is not a pass (a word a later goatbuilder
+        // wrote is never one), is not proven done, wherever the last run ended.
+        let next = (1..=14)
+            .find(|n| st.phases.get(n).is_none_or(|r| r.outcome != Outcome::Passed))
+            .unwrap_or(14);
         return format!("{again} --from {next}");
     }
     match acc {
@@ -916,6 +921,19 @@ mod tests {
         assert!(next(&passed(1..=14), "passed", Some("INCOMPLETE"))
             .starts_with("fix what acceptance found"));
         assert!(next(&passed(1..=14), "passed", None).ends_with("--from 14"));
+        // A phase a later goatbuilder recorded with a word this build does not
+        // know is never a pass, so the next step resumes from the first phase
+        // the journal does not show passed, not after the last one the run reached.
+        let later = |n: u32| (n, Outcome::Later("deferred".into()));
+        let mut ph = passed(1..=13);
+        ph[2] = later(3);
+        ph.push(later(14));
+        let n = next(&ph, "deferred", None);
+        assert!(n.ends_with("--from 3"), "phases 3 and 14 are deferred: {n}");
+        let mut ph = passed(1..=9);
+        ph[4] = later(5);
+        let n = next(&ph, "passed", None);
+        assert!(n.ends_with("--from 5"), "phase 5 is deferred: {n}");
     }
 
     #[test]

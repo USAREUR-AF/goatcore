@@ -1,0 +1,23 @@
+# alpha: the founder; federates signal with beta.
+goatnet_founder: true
+mesh_ip_a: 100.127.0.1
+has_breakglass_node: false
+breakglass_absent_reason: the operator console sits in the same rack
+has_network_jump_node: false
+network_jump_absent_reason: the switch is managed from the same rack
+mgmt_container_host_port: 8081
+signal_proto: https
+auth_issuer: https://auth.zagros.example.org/
+auth_audience: netbird
+auth_oidc_config_endpoint: https://auth.zagros.example.org/.well-known/openid-configuration
+kratos_secrets_cookie_env: ZAGROS_KRATOS_COOKIE
+site_enrollment_dns: netbird.zagros.example.org
+federation_peers_for_a: "federation-proxy:10001"
+signal_federation_proxy_enabled: true
+signal_federation_ingress_enabled: true
+federation_public_relays:
+  - relay-1.zagros.example.org
+signal_federation_token: "{{ lookup('env', 'ZAGROS_SIGNAL_FEDERATION_TOKEN') }}"
+signal_federation_ingress_fqdn: signal-alpha.zagros.example.org
+federation_peer_mesh_addr: "100.127.0.2:10000"
+federation_peer_public_sni: signal-beta.zagros.example.org

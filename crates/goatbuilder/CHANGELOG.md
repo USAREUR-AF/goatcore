@@ -6,6 +6,51 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+<!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+
+### For someone deploying
+
+#### Fixed: federate status resumes from the first phase it cannot show passed
+
+`goatbuilder federate status` named the next command from the phase the last
+run ended on, plus one. On a journal a later goatbuilder wrote, with phases
+recorded as an outcome this build does not know (for example `deferred`), it
+advised a `--from` past those phases, although such an outcome never counts as
+passed. It now advises `--from` the first phase the journal does not show
+passed. After a failure or an operator step, the advice is unchanged (#632).
+
+#### Fixed: join-node adds a node at a third site, phases 1 to 15
+
+Three refusals stopped `goatbuilder join-node` for a node not yet enrolled at
+a goatnet that already has a joiner. Phases 3 and 7 refused the mesh-address
+placeholder that phase 12 fills: they now run the config preflight with
+`--before-enrolment`, which warns on that one placeholder and still fails on
+any other. Pass 1 of phase 13 waited for a management service that needs
+the Ory deployed by the next step: it now runs the stack plays only, as
+`standup` does. A third site that declares signal federation off, with its
+reason, was refused because its founder federates with another site: it now
+passes, unless the founder's federation names it.
+
+#### Fixed: the command reference lists federate's own flags
+
+`goatbuilder docs --markdown` and `docs/reference/goatbuilder/command-reference.md`
+documented a global flag only on the root command. The flags `federate`
+declares for all its verbs (`--over-ssh`, `--side`, `--half-out`,
+`--edge-half`, `--edge-half-sha`, the host, group and router-container flags,
+and the goat context flags) appeared on no command. They are now documented
+once, on `goatbuilder federate`, so the compatibility check also holds them
+against the last release (#633).
+
+#### Fixed: a release re-run on a later day opens no dev-pin PR
+
+`goatbuilder release` declares a candidate on the dev rung with a reason that
+carries the day. Re-running a dev step that had already landed, on a later
+day, rewrote that reason and landed a pin PR that changed nothing but the
+date. A rung that already declares the candidate now keeps its deviation as
+it stands, reason and date included (#622).
+
+<!-- END generated: changelog unreleased -->
+
 ## 0.6.1 — 2026-11-13
 
 The fix for 0.6.0's known issue: a `goatbuilder federate` run killed in phase

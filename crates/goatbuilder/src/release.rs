@@ -192,6 +192,12 @@ fn facts(repo: &Path, component: &str) -> Result<serde_json::Value> {
     }))
 }
 
+/// The dev rung's deviation reason (rc.sh's dev pin step): it carries the day
+/// the candidate was declared.
+fn dev_reason(tag: &str, date: &str, ack: &str) -> String {
+    format!("RC {tag} ({date}, ADR 1173), nominated by {ack}: the dev-rung candidate. Validated by the live acceptance rows the change affects; their PASS is the dev->preprod validation evidence.")
+}
+
 /// `datetime.date.today()` — the local date, as the script stamps evidence.
 fn utc_local_date() -> String {
     chrono::Local::now().date_naive().to_string()
@@ -870,7 +876,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
         run.step(&format!("dev rung: {} runs {}", run.dev, run.tag));
         run.mkwt()?;
         let dev = run.dev.clone();
-        let reason = format!("RC {} ({}, ADR 1173), nominated by {}: the dev-rung candidate. Validated by the live acceptance rows the change affects; their PASS is the dev->preprod validation evidence.", run.tag, utc_date(), o.ack);
+        let reason = dev_reason(&run.tag, &utc_date(), o.ack);
         run.set_deviation(&dev, &reason)?;
         // after the pin: a record dev ran until now goes stale exactly here
         run.reconcile_superseded(&dev)?;
@@ -1093,6 +1099,31 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dev step re-run on a later day (a run that crosses midnight UTC)
+    /// declares the same candidate with the next day's reason. The rung already
+    /// declares it, so the pins table must not change, or the step lands a
+    /// dev-pin PR for nothing.
+    #[test]
+    fn a_dev_step_rerun_on_a_later_day_leaves_fleet_pins_byte_identical() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("fleet-pins.yaml");
+        let old = "ghcr.io/example-org/portal:v1.0.0@sha256:1111111111111111111111111111111111111111111111111111111111111111";
+        let rc = "ghcr.io/example-org/portal:v1.1.0-rc.1@sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        std::fs::write(&p, format!("goatnets:\n  dev:\n    members: [dev_hosts]\ncomponents:\n  portal:\n    var: portal_image\n    fleet: \"{old}\"\n")).unwrap();
+        let tag = "portal/v1.1.0-rc.1";
+        pins::edit_set_deviation(&p, "portal", "dev", rc, &dev_reason(tag, "2026-11-13", "A Person")).unwrap();
+        let before = std::fs::read_to_string(&p).unwrap();
+        assert!(before.contains("(2026-11-13, ADR 1173)"), "{before}");
+        pins::edit_set_deviation(&p, "portal", "dev", rc, &dev_reason(tag, "2026-11-14", "A Person")).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), before, "the re-run rewrote the dev deviation");
+        // A new candidate still replaces the deviation, with its own day.
+        let rc2 = rc.replace("rc.1@sha256:2222", "rc.2@sha256:3333");
+        pins::edit_set_deviation(&p, "portal", "dev", &rc2, &dev_reason("portal/v1.1.0-rc.2", "2026-11-14", "A Person")).unwrap();
+        let after = std::fs::read_to_string(&p).unwrap();
+        assert!(after.contains(&rc2) && after.contains("(2026-11-14, ADR 1173)") && !after.contains("2026-11-13"), "{after}");
+        assert_eq!(after.matches("      dev:\n").count(), 1, "{after}");
+    }
 
     /// git's automatic abbreviation grows with the object count (7, then 8 ...),
     /// so `--short` alone printed `d7e1f2a` on one side and `d7e1f2a1` on the

@@ -1,0 +1,39 @@
+{
+  "schema": "goatbuilder.error/v1",
+  "error": "no goatnet site named `nowhere`: ops/ansible/group_vars/nowhere_hosts/ does not exist",
+  "code": "GB-066",
+  "interpretation": {
+    "schema": "goat-errors.interpretation/v1",
+    "summary": "no goatnet site named `nowhere`: ops/ansible/group_vars/nowhere_hosts/ does not exist",
+    "hits": [
+      {
+        "code": "GB-066",
+        "layer": "code",
+        "evidence": "no goatnet site named `nowhere`: ops/ansible/group_vars/nowhere_hosts/ does not exist",
+        "at": 0,
+        "entry": {
+          "code": "GB-066",
+          "tool": "goatbuilder",
+          "title": "the site's declared end state cannot be derived or read",
+          "what": "endstate derives what a site should run from its own declarations (group_vars, the fleet pin table, the inventory) and the service catalog, then reads the site's hosts once over Ansible. One of those could not start, so nothing was graded.",
+          "causes": [
+            "the site name has no ops/ansible/group_vars/<site>_hosts/ directory",
+            "python3 or PyYAML is not installed on this machine",
+            "the catalog file ops/goatbuilder/endstate/catalog.yaml does not parse"
+          ],
+          "fixes": [
+            "ls ops/ansible/group_vars/   (the site names this repository declares)",
+            "python3 ops/goatbuilder/endstate/endstate.py model <site>   (the derived end state, without reading any host)",
+            "python3 ops/goatbuilder/endstate/endstate.py --self-test"
+          ],
+          "read": "docs/design/goatnet-end-state.md",
+          "exit": 1,
+          "matches": [
+            "no goatnet site named `[^`]+`: ops/ansible/group_vars/"
+          ]
+        }
+      }
+    ],
+    "unrecognised": false
+  }
+}

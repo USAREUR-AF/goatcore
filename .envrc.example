@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1402 variables, 392 of them secret-bearing by name.
+# 963 variables, 133 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -22,297 +22,24 @@
 # is a floor, not a census.
 
 # ==========================================================================
-# PER-GOATNET — the checklist for standing up a new environment.
-#
-# These come in families: one variable per goatnet, same suffix. Set
-# every line below with your new environment's prefix substituted for
-# <ENV>. Prefixes currently in use:
-#
-#   ZAGROS  ZAGROS_B  ZAGROS_CLOUD  ZAGROS_CLOUD_OBS  ZAGROS_DEV  ZAGROS_PROD
-#   ZAGROS_PROD_BREAKGLASS  ZAGROS_PROD_LTU  ZAGROS_PROD_LTU_BACKUP  ZAGROS_PROD_LTU_OBS_BACKUP  GOAT_CLIENT_ASSAY  HOBBY
-#   INTEGDEV  NOVA_LAN  UK
-# ==========================================================================
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_AIRDEFENDERS_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_AIRDEFENDERS_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: NOVA_LAN, UK
-export <ENV>_A_LUKS_PASS=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_BRIEF_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_BRIEF_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS_PROD
-export <ENV>_COMPLIANCE_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS_PROD
-export <ENV>_COMPLIANCE_OIDC_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS_PROD
-export <ENV>_CONSISTENCY_AGGREGATOR_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS_PROD
-export <ENV>_CONSISTENCY_AGGREGATOR_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_CONSISTENCY_CONSOLE_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_CONSISTENCY_CONSOLE_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS
-export <ENV>_C_LUKS_PASS=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_DASHBOARD_ADMIN_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_DASHBOARD_ADMIN_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_DASHBOARD_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_DASHBOARD_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD, HOBBY
-export <ENV>_DASHBOARD_OIDC_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_DATAFLOWS_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_DATAFLOWS_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_DECODE_HEALTH_PORTAL_KEY=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_ENROLLWATCH_NB_TOKEN=""  # SECRET
-
-# in use by: ZAGROS_PROD
-export <ENV>_GOAT_MAP_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS_PROD
-export <ENV>_GRAFANA_OIDC_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS
-export <ENV>_HELP_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS
-export <ENV>_HELP_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: INTEGDEV
-export <ENV>_HOST=""
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD, HOBBY, INTEGDEV
-export <ENV>_HYDRA_COOKIE=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD, HOBBY, INTEGDEV
-export <ENV>_HYDRA_SYSTEM=""
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_ID_ADMIN_CONSOLE_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_ID_ADMIN_CONSOLE_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_ID_CONSOLE_PORTAL_KEY=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_ISITUP_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_ISITUP_OIDC_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD, HOBBY, INTEGDEV
-export <ENV>_KRATOS_CIPHER=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD, HOBBY, INTEGDEV
-export <ENV>_KRATOS_COOKIE=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_MICROSCOPE_AUDIT_S3_SECRET_KEY=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_MICROSCOPE_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_MICROSCOPE_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_MINIO_OIDC_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_MINIO_ROOT_PASSWORD=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_MINIO_ROOT_USER=""
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_NB_API_TOKEN=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_NB_RECONCILE_TOKEN=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_NETVIS_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_NETVIS_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS
-export <ENV>_NTFY_ADMIN_PASSWORD=""  # SECRET
-
-# in use by: ZAGROS
-export <ENV>_NTFY_ALERTMANAGER_PASSWORD=""  # SECRET
-
-# in use by: UK
-export <ENV>_OBS_A_LUKS_PASS=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_ONBOARD_NOTIFY_TOKEN=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_ONBOARD_RUNNER_PORTAL_KEY=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD, HOBBY
-export <ENV>_ORY_SHARED_NID=""
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_PANOSCOPE_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_PANOSCOPE_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS_PROD
-export <ENV>_PEERVIEW_PORTAL_KEY=""  # SECRET
-
-# in use by: NOVA_LAN
-export <ENV>_PG_APP_PASSWORD=""  # SECRET
-
-# in use by: NOVA_LAN
-export <ENV>_PG_DUMP_AGE_RECIPIENT=""
-
-# in use by: NOVA_LAN
-export <ENV>_PG_PASS=""  # SECRET
-
-# in use by: ZAGROS
-export <ENV>_PORTAL_NB_SVC_TOKEN=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD, HOBBY
-export <ENV>_PORTAL_OPERATOR_API_KEY=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV
-export <ENV>_PORTAL_OPERATOR_API_KEYS=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_PROVENANCE_GUARD_NB_TOKEN=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_PROVENANCE_GUARD_PORTAL_KEY=""  # SECRET
-
-# in use by: ZAGROS_PROD
-export <ENV>_PUBSUB_MIRROR_PORTAL_KEY=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_RELAY_HEALTH_ALLOWED_EMAILS=""
-
-# in use by: ZAGROS
-export <ENV>_RELAY_HEALTH_DEX_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_RELAY_HEALTH_OAUTH2_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_RELAY_HEALTH_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_RELAY_HEALTH_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_RELAY_METRICS_BEARER_TOKEN=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD, GOAT_CLIENT_ASSAY, HOBBY
-export <ENV>_RELAY_SECRET=""  # SECRET
-
-# in use by: ZAGROS_DEV
-export <ENV>_SES_API_ACCESS_KEY_ID=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_SES_API_SECRET_ACCESS_KEY=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_SES_SMTP_PASSWORD=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_SES_SMTP_USERNAME=""
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_SIGNAL_FEDERATION_TOKEN=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV
-export <ENV>_SITE_ADMINS_JSON=""
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD, HOBBY
-export <ENV>_SLOT_POOL_SALT=""  # SECRET
-
-# in use by: ZAGROS_PROD
-export <ENV>_SNITCH_PROBE_KEY=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_STETHOSCOPE_AUDIT_S3_SECRET_KEY=""  # SECRET
-
-# in use by: ZAGROS_PROD
-export <ENV>_STETHOSCOPE_OIDC_CLIENT_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD, HOBBY
-export <ENV>_UI_COOKIE_SECRET=""  # SECRET
-
-# in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD, HOBBY
-export <ENV>_UI_CSRF_SECRET=""  # SECRET
-
-# in use by: ZAGROS
-export <ENV>_ZULIP_NB_SETUP_KEY=""  # SECRET
-
-# in use by: ZAGROS
-export <ENV>_ZULIP_OIDC_CLIENT_SECRET=""  # SECRET
-
-# ==========================================================================
 # SINGLETON SECRETS — one value for the operator laptop, not per goatnet.
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 200 variables.
+# 133 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
 export ADMIT_AUDIT_PASSWORD=""  # SECRET
 
-# ops/ansible/group_vars/zagros_cloud_hosts/vars.yml, ops/ansible/group_vars/zagros_dev_hosts/vars.yml …
-export ALERT_SMTP_PASS=""  # SECRET
-
-# .github/workflows/docs-translation-gate.yml, ops/ansible/nethost-secwatch.yml …
+# .github/workflows/docs-translation-gate.yml, ops/scripts/translate-ftl.py …
 export ANTHROPIC_API_KEY=""  # SECRET
 
-# ops/zenoh-trial-peers/airdefenders-schemas/upload-all.sh
-export API_KEY=""  # SECRET
-
-# ops/relay/health/serve.sh, ops/wave3/steady-state.sh
+# ops/relay/health/serve.sh
 export AWS_ACCESS_KEY_ID=""  # SECRET
 
-# ops/secrets/openbao/baolib.py, ops/secrets/openbao/bootstrap.sh …
+# ops/secrets/posture.py
 export BAO_TOKEN=""  # SECRET
-
-# ops/secrets/openbao/bao-login-cert, ops/secrets/openbao/baolib.py
-export BAO_TOKEN_PATH=""  # SECRET
 
 # ops/signal-federation-probe/docker-compose.yml
 export CANARY_REMOTE_KEY=""  # SECRET
@@ -320,19 +47,10 @@ export CANARY_REMOTE_KEY=""  # SECRET
 # ops/relay/health/canary-publish.sh
 export CANARY_TOKEN=""  # SECRET
 
-# docs/design/ha-failover.md, ops/ansible/nethost-secwatch.yml …
-export CF_API_TOKEN=""  # SECRET
-
-# .envrc, docs/operations/fresh-deploy-checklist.md …
+# docs/operations/fresh-deploy-checklist.md, ops/ansible/inventory/generate-relays.sh …
 export CLOUDFLARE_API_TOKEN=""  # SECRET
 
-# ops/ansible/group_vars/zagros_b_hosts/vars.yml, ops/ansible/group_vars/zagros_cloud_hosts/vars.yml …
-export CLOUDFLARE_API_TOKEN_ZAGROS=""  # SECRET
-
-# ops/ansible/group_vars/zagros_prod_hosts/vars.yml, ops/ansible/group_vars/zagros_prod_echo_hosts/vars.yml
-export CLOUDFLARE_API_TOKEN_ZAGROS_PROD=""  # SECRET
-
-# docs/operations/rapid-bringup-drill-runbook.md, ops/ansible/group_vars/zagros_dev_hosts/vars.yml …
+# docs/operations/rapid-bringup-drill-runbook.md, ops/bootstrap/publish-containers.sh …
 export CLOUDFLARE_API_TOKEN_PROD=""  # SECRET
 
 # ops/scripts/test_standup_required_inputs.py
@@ -344,7 +62,7 @@ export CLOUDFLARE_DNS_API_TOKEN=""  # SECRET
 # ops/ansible/roles/onboard-runner/defaults/main.yml, ops/onboard-runner/collab.go
 export COLLAB_KANIDM_API_TOKEN=""  # SECRET
 
-# ops/ansible/group_vars/zagros_cloud_hosts/vars.yml, ops/ansible/group_vars/zagros_dev_hosts/vars.yml …
+# ops/ansible/roles/onboard-runner/defaults/main.yml, ops/onboard-runner/collab.go …
 export COLLAB_KANIDM_IDM_ADMIN_PW=""  # SECRET
 
 # ops/ansible/compliance-proxy-deploy.yml
@@ -365,29 +83,14 @@ export CONSOLE_API_KEY=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.relay-health.yml, ops/compose/relay-health-standalone/docker-compose.public.yml …
 export CROSS_FLEET_TOKEN=""  # SECRET
 
-# ops/ansible/inventory/generate.sh, ops/ansible/inventory/group_vars/nethost.yml …
-export NETHOST_PASS=""  # SECRET
-
 # ops/deadman-watch/deadman-check.sh
 export DEADMAN_ROUTING_KEY=""  # SECRET
 
 # ops/deadman-watch/deadman-receive.py
 export DEADMAN_TOKEN=""  # SECRET
 
-# ops/ansible/deadman-watch-deploy.yml, ops/ansible/group_vars/zagros_dev_hosts/vars.yml …
+# ops/ansible/deadman-watch-deploy.yml, ops/ansible/roles/deadman-watch/defaults/main.yml
 export DEADMAN_WATCH_TOKEN=""  # SECRET
-
-# ops/ansible/group_vars/zagros_cloud_hosts/vars.yml, ops/ansible/group_vars/zagros_dev_hosts/vars.yml …
-export GOAT_IDM_ADMIN_PW=""  # SECRET
-
-# docs/findings/F-119-block-79-ecdsa-dev-ca-stored-outside-canonical-path.md
-export DEV_CA_KEY_PATH=""  # SECRET
-
-# .github/workflows/goat-cli-release.yml, .github/workflows/goatbuilder-release.yml …
-export DEV_ID_CERT_PASSWORD=""  # SECRET
-
-# ops/zenoh/wedge-repro/adminspace_deadlock.py, ops/zenoh/wedge-repro/slow_consumer.py
-export DL_KEY=""  # SECRET
 
 # ops/scripts/kanidm-door-audit.sh
 export DOOR_AUDIT_TOKEN=""  # SECRET
@@ -401,8 +104,23 @@ export E2E_GOAT_TOKEN=""  # SECRET
 # ops/ansible/roles/oci-substrate-t2-sync/templates/oci-goat-sync.sh.j2
 export ECR_PASSWORD=""  # SECRET
 
-# ops/federation/standup/mint-peering-leaves.sh, ops/federation/standup/preflight.py
+# ops/federation-e2e/lib/engine.sh
+export FE2E_SALTLICK_IMAGE=""  # SECRET
+
+# ops/federation-e2e/env
+export FE2E_SALTLICK_REPO=""  # SECRET
+
+# ops/federation/standup/mint-peering-leaves.sh
 export FED_CA_KEY=""  # SECRET
+
+# ops/federation/standup/mint-peering-leaves.sh
+export FED_CA_KEY_AGE=""  # SECRET
+
+# ops/federation/standup/mint-peering-leaves.sh
+export FED_CA_KEY_FROM_AGE=""  # SECRET
+
+# ops/federation/standup/mint-peering-leaves.sh
+export FED_CA_KEY_TMP=""  # SECRET
 
 # ops/federation-e2e/live.sh
 export FED_LIVE_GHCR_TOKEN_ENV=""  # SECRET
@@ -413,50 +131,17 @@ export FED_LIVE_MEADOW_KEY=""  # SECRET
 # ops/federation-e2e/live.sh
 export FED_LIVE_PASTURE_KEY=""  # SECRET
 
-# ops/federation/standup/preflight.py
-export FED_SIGNING_KEY=""  # SECRET
-
-# ops/ansible/group_vars/zagros_prod_hosts/pubsub-state.yml, ops/ansible/roles/pubsub-state-checkout/defaults/main.yml …
+# ops/ansible/roles/pubsub-state-checkout/defaults/main.yml, ops/ansible/roles/pubsub-state-repo/defaults/main.yml …
 export FORGEJO_PUBSUB_TOKEN=""  # SECRET
 
-# ops/ansible/c2-map-gate.yml
-export GATEWATCH_SHIP_KEY=""  # SECRET
-
-# docs/design/ghcr-private-pull.md, ops/ansible/group_vars/zagros_cloud_hosts/vars.yml …
+# docs/design/ghcr-private-pull.md, ops/ansible/roles/docker-engine/tasks/main.yml …
 export GHCR_READ_TOKEN=""  # SECRET
 
-# ops/ci/check-ghcr-namespace-parity.sh
-export GHCR_TOKEN=""  # SECRET
-
-# ops/ansible/roles/goat-docs/defaults/main.yml, ops/ansible/roles/goat-get/defaults/main.yml …
+# ops/ansible/roles/goat-docs/defaults/main.yml, ops/ansible/roles/goat-get/defaults/main.yml
 export GH_TOKEN=""  # SECRET
 
 # ops/ansible/roles/id-admin-console/defaults/main.yml, ops/goat-id-console/internal/config/config.go …
 export GITHUB_ONBOARD_TOKEN=""  # SECRET
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_FABRIC_KEY=""  # SECRET
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_NODE_HEALTH_KEY=""  # SECRET
-
-# ops/serve/goat-map/deploy/deploy.sh
-export GOATMAP_OAUTH2_CLIENT_SECRET=""  # SECRET
-
-# ops/serve/goat-map/deploy/deploy.sh
-export GOATMAP_OAUTH2_COOKIE_SECRET=""  # SECRET
-
-# ops/serve/goat-map/deploy/deploy.sh, ops/serve/goat-map/docker-compose.yml
-export GOATMAP_PORTAL_TOKEN=""  # SECRET
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_SITES_HEALTH_KEY=""  # SECRET
-
-# ops/secrets/openbao/bootstrap.sh
-export GOAT_BAO_ENTRA_CLIENT_SECRET=""  # SECRET
-
-# ops/secrets/openbao/bootstrap.sh
-export GOAT_BAO_GOOGLE_CLIENT_SECRET=""  # SECRET
 
 # ops/enrollment/cmd/wg-cp0/bundle_create_invoke.go
 export GOAT_CA_KEY=""  # SECRET
@@ -473,9 +158,6 @@ export GOAT_CROSS_FLEET_TOKEN=""  # SECRET
 # ops/scripts/create-door-audit-identity.sh, ops/scripts/kanidm-door-audit.sh …
 export GOAT_IDM_ADMIN_PW=""  # SECRET
 
-# incubator/goat-moon-open-pod/examples/delivery_reconcile.py
-export GOAT_MTLS_KEY=""  # SECRET
-
 # ops/scripts/reap-orphans.py
 export GOAT_NB_API_TOKEN=""  # SECRET
 
@@ -488,52 +170,25 @@ export GOAT_PUBLISHER_TOKEN=""  # SECRET
 # ops/goat-relay/docker-compose.yml
 export GOAT_RELAY_AUTH_SECRET=""  # SECRET
 
+# ops/scripts/secrets-session
+export GOAT_SECRETS_KEYSTORE=""  # SECRET
+
 # ops/scripts/ansible-preflight.sh, ops/scripts/with-secrets
 export GOAT_SECRETS_RESOLVED=""  # SECRET
 
-# ops/secrets/openbao/baolib.py
-export GOAT_SECRET_CACHE=""  # SECRET
-
-# ops/secrets/openbao/baolib.py
-export GOAT_SECRET_CACHE_DIR=""  # SECRET
-
-# ops/secrets/openbao/baolib.py
-export GOAT_SECRET_CACHE_IDENTITY=""  # SECRET
-
-# ops/secrets/openbao/baolib.py
-export GOAT_SECRET_CACHE_MAX_AGE=""  # SECRET
-
-# ops/secrets/openbao/baolib.py
-export GOAT_SECRET_CACHE_RECIPIENT=""  # SECRET
-
-# ops/secrets/openbao/cse.py
-export GOAT_SECRET_IDENTITY=""  # SECRET
+# ops/scripts/with-secrets
+export GOAT_SECRETS_SESSION=""  # SECRET
 
 # ops/scripts/newsite-secret-store.py
 export GOAT_SECRET_INIT=""  # SECRET
 
-# ops/secrets/openbao/cse.py
-export GOAT_SECRET_KEY_PINS=""  # SECRET
-
-# ops/secrets/openbao/acceptance.py, ops/secrets/openbao/bao-init …
-export GOAT_SECRET_MOUNT=""  # SECRET
-
-# ops/secrets/openbao/bao-run, ops/secrets/openbao/run
-export GOAT_SECRET_PARALLEL=""  # SECRET
-
-# ops/secrets/openbao/bao-init
-export GOAT_SECRET_PARTITION=""  # SECRET
-
-# ops/secrets/openbao/policies.py
-export GOAT_SECRET_PARTITIONS=""  # SECRET
-
-# .envrc, ops/ansible/zagros-prod-oidc-clients.yml …
+# ops/ansible/roles/goat-zenoh-portal/tasks/main.yml, ops/ansible/site-oidc-clients.yml …
 export GOAT_SECRET_REF_PREFIX=""  # SECRET
 
 # ops/scripts/with-secrets
 export GOAT_SECRET_RUN=""  # SECRET
 
-# .envrc, ops/scripts/ansible-preflight.sh …
+# ops/scripts/ansible-preflight.sh, ops/scripts/goat-standup.sh …
 export GOAT_SECRET_STORE=""  # SECRET
 
 # ops/scripts/newsite-secret-store.py
@@ -554,24 +209,6 @@ export GRAFANA_OIDC_CLIENT_SECRET=""  # SECRET
 # ops/ansible/roles/grant-keyd/defaults/main.yml
 export GRANT_KEYD_PORTAL_TOKEN=""  # SECRET
 
-# ops/wave3/scripts/bootstrap-hadev-netbird.sh, ops/wave3/scripts/check-soak-progress.sh …
-export HADEV_POSTGRES_SUPERUSER_PASSWORD=""  # SECRET
-
-# ops/ansible/roles/herd/defaults/main.yml
-export HERD_ADMIN_OVERRIDE_SECRET=""  # SECRET
-
-# ops/ansible/roles/herd-oidc-client/defaults/main.yml, ops/ansible/roles/herd/defaults/main.yml
-export HERD_OAUTH2_CLIENT_SECRET=""  # SECRET
-
-# ops/ansible/roles/herd/defaults/main.yml
-export HERD_OAUTH2_COOKIE_SECRET=""  # SECRET
-
-# ops/ansible/roles/herd/defaults/main.yml
-export HERD_PORTAL_KEY=""  # SECRET
-
-# ops/ansible/roles/herd/defaults/main.yml
-export HERD_POSTGRES_PASSWORD=""  # SECRET
-
 # ops/compose/mgmt-host/docker-compose.ory.yml
 export HYDRA_SECRETS_COOKIE=""  # SECRET
 
@@ -583,18 +220,6 @@ export ICAM_KC_ADMIN_PASSWORD=""  # SECRET
 
 # ops/ansible/roles/icam-mtls-proxy/tasks/main.yml, ops/ansible/roles/icam-mtls-proxy/templates/docker-compose.yml.j2
 export ICAM_MTLS_KRATOS_CLIENT_SECRET=""  # SECRET
-
-# ops/wave-33/tier-4b/inchworm.sh
-export INCHWORM_ENC_KEY=""  # SECRET
-
-# ops/wave-33/tier-4b/inchworm.sh
-export INCHWORM_PG_PASS=""  # SECRET
-
-# ops/ansible/mesh-coredns.yml
-export NOVA_NB_API_TOKEN=""  # SECRET
-
-# ops/zenoh-ingress-gateway/probes/acl-squat-probe.py
-export NOVA_SQUAT_KEY=""  # SECRET
 
 # ops/jetson-flash/flash-jetson-ubuntu.sh, ops/jetson-flash/flash-orin-remote.sh
 export JETSON_FLASH_SSH_KEY=""  # SECRET
@@ -610,18 +235,6 @@ export KRATOS_SECRETS_CIPHER=""  # SECRET
 
 # ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SECRETS_COOKIE=""  # SECRET
-
-# ops/ansible/group_vars/all.yml
-export VEGA_C_MINIO_ROOT_PASSWORD=""  # SECRET
-
-# ops/ansible/group_vars/all.yml
-export VEGA_C_OPENOBSERVE_ROOT_PASSWORD=""  # SECRET
-
-# docs/design/operator-credentials.md
-export VEGA_NB_API_TOKEN_OPERATOR1=""  # SECRET
-
-# docs/design/relay-blue-green-cutover.md
-export VEGA_RELAY_SECRET=""  # SECRET
 
 # ops/ansible/zenoh-loadtest.yml
 export LOADTEST_S3_ACCESS_KEY=""  # SECRET
@@ -641,50 +254,32 @@ export MEMBERSHIP_UNUSED_KEY_DAYS=""  # SECRET
 # ops/observability/wide-events/spike/run-spike.sh
 export MINIO_PASS=""  # SECRET
 
-# ops/ci/check-ghcr-namespace-parity.sh
-export MIRROR_GHCR_TOKEN=""  # SECRET
-
 # ops/ansible/roles/mesh-health/templates/mesh-health-snapshot.sh.j2, ops/ci/check-membership-reconcile.py …
 export NB_API_TOKEN=""  # SECRET
 
 # ops/relay/setup-vps.sh
 export NB_RELAY_AUTH_SECRET=""  # SECRET
 
-# ops/cgnat-validation/peer-node/install-netbird.sh
-export NB_SETUP_KEY=""  # SECRET
-
 # ops/scripts/lifecycle-sweep.py
 export NB_TOKEN=""  # SECRET
 
-# ops/ansible/nethost-dns.yml, ops/ansible/nethost-smoketest.yml …
+# ops/ansible/mgmt-host-dns.yml, ops/compose/goat-obs/dormancy-report/dormancy_report.py …
 export NETBIRD_API_TOKEN=""  # SECRET
-
-# deploy.sh
-export NETBIRD_PG_PASSWORD=""  # SECRET
 
 # ops/onboard-runner/docker-entrypoint.sh
 export NETBIRD_ROSENPASS=""  # SECRET
 
-# ops/cgnat-validation/peer-swarm/docker-compose.yml, ops/cgnat-validation/peer-swarm/entrypoint.sh …
+# ops/preflight-enrollment.sh
 export NETBIRD_SETUP_KEY=""  # SECRET
 
 # ops/onboard-runner/docker-entrypoint.sh
 export NETBIRD_TOKEN_ENV=""  # SECRET
 
-# ops/monitoring/net-health/reachability-canary.sh
-export NETHEALTH_TOKEN=""  # SECRET
+# ops/backup.sh, ops/relay/deploy-relay.sh …
+export NETHOST_PASS=""  # SECRET
 
-# .github/workflows/goat-cli-release.yml, .github/workflows/goatbuilder-release.yml …
-export NOTARY_KEY_ID=""  # SECRET
-
-# .github/workflows/goat-cli-release.yml, .github/workflows/goatbuilder-release.yml …
-export NOTARY_KEY_P8_BASE64=""  # SECRET
-
-# ops/secrets/openbao/bootstrap.sh
-export OIDC_CLIENT_SECRET=""  # SECRET
-
-# ops/secrets/openbao/bootstrap.sh
-export OIDC_JWT_PUBKEY_FILE=""  # SECRET
+# ops/zenoh-ingress-gateway/probes/acl-squat-probe.py
+export NOVA_SQUAT_KEY=""  # SECRET
 
 # ops/ansible/operator-ssh-key-install.yml
 export ONBOARD_API_KEY=""  # SECRET
@@ -698,17 +293,8 @@ export ONBOARD_RUNNER_PORTAL_KEY=""  # SECRET
 # ops/observability/wide-events/spike/run-spike.sh
 export OPENOBSERVE_PASS=""  # SECRET
 
-# ops/ansible/roles/openobserve/defaults/main.yml, ops/ansible/roles/otel-collector/defaults/main.yml
+# ops/ansible/roles/otel-collector/defaults/main.yml
 export OPENOBSERVE_ROOT_PASSWORD=""  # SECRET
-
-# ops/ansible/roles/openobserve/defaults/main.yml
-export OPENOBSERVE_S3_ACCESS_KEY=""  # SECRET
-
-# ops/ansible/roles/openobserve/defaults/main.yml
-export OPENOBSERVE_S3_SECRET_KEY=""  # SECRET
-
-# docs/project/iac-coverage-audit-2026-05-09.md
-export OPERATOR_AUTHORIZED_KEYS=""  # SECRET
 
 # ops/snitch/install-probe-darwin.sh, ops/snitch/internal/server/install.sh
 export OPERATOR_KEY=""  # SECRET
@@ -719,29 +305,14 @@ export OPERATOR_KEY_DIR=""  # SECRET
 # ops/backup.sh
 export OP_SERVICE_ACCOUNT_TOKEN=""  # SECRET
 
-# docs/operations/observability-paging-smoke.md, ops/ansible/group_vars/zagros_cloud_hosts/vars.yml …
+# docs/operations/observability-paging-smoke.md, ops/ansible/obs.yml …
 export PAGERDUTY_INTEGRATION_KEY=""  # SECRET
 
-# ops/ansible/roles/deadman-watch/defaults/main.yml, ops/monitoring/net-health/alert-eval.py
+# ops/ansible/roles/deadman-watch/defaults/main.yml
 export PAGERDUTY_INTEGRATION_KEY_EU=""  # SECRET
-
-# ops/monitoring/net-health/alert-eval.py
-export PAGERDUTY_ROUTING_KEY=""  # SECRET
-
-# ops/peerview/peerview-poll.py
-export PEERVIEW_NETBIRD_TOKEN=""  # SECRET
-
-# ops/peerview/peerview-poll.py
-export PEERVIEW_PORTAL_KEY=""  # SECRET
-
-# ops/wave-34/34I-enrollment-rate/run.sh
-export PEER_SSH_KEY=""  # SECRET
 
 # ops/ansible/group_vars/all.yml, ops/scripts/node-seed.py
 export PLATFORM_ADMIN_SSH_PUBKEYS=""  # SECRET
-
-# ops/zenoh-trial-peers/airdefenders-schemas/upload-all.sh, ops/zenoh-trial-peers/synth-vendor-schemas/delete-ghost-topics.sh …
-export PORTAL_API_KEY=""  # SECRET
 
 # ops/scripts/create-decode-health-identity.sh, ops/scripts/create-provenance-guard-identity.sh
 export PORTAL_KEYS_DIR=""  # SECRET
@@ -752,7 +323,7 @@ export PORTAL_LOOKUP_TOKEN=""  # SECRET
 # ops/ci/check-topic-decode-health.py, ops/compose/goat-obs/identity-reconcile/reconcile.py …
 export PORTAL_OPERATOR_API_KEY=""  # SECRET
 
-# docs/design/portal-service-keystore.md, ops/oss/docs-public/docs/design/portal-service-keystore.md
+# docs/design/portal-service-keystore.md
 export PORTAL_OPERATOR_API_KEYS=""  # SECRET
 
 # ops/ci/check-node-class-membership.sh
@@ -760,9 +331,6 @@ export PORTAL_OPERATOR_KEY=""  # SECRET
 
 # ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
 export POSTGRES_EXPORTER_PASSWORD=""  # SECRET
-
-# ops/replication-observability-fire-test/docker-compose.yml, ops/replication-observability-fire-test/setup-spock.sh
-export POSTGRES_PASSWORD=""  # SECRET
 
 # ops/compose/mgmt-host/docker-compose.ory.yml, ops/compose/mgmt-host/docker-compose.phase2.yml …
 export POSTGRES_SUPERUSER_PASSWORD=""  # SECRET
@@ -776,9 +344,6 @@ export R2_ACCESS_KEY_ID=""  # SECRET
 # ops/ansible/group_vars/all.yml
 export R2_SECRET_ACCESS_KEY=""  # SECRET
 
-# ops/rosenpass-canary/notional-2peer-proof.sh
-export REKEY_WAIT=""  # SECRET
-
 # ops/compose/mgmt-host/docker-compose.relay-health.yml, ops/compose/relay-health-standalone/docker-compose.public.yml …
 export RELAY_METRICS_BEARER_TOKEN=""  # SECRET
 
@@ -791,8 +356,8 @@ export RELAY_PEER_NAMES_PORTAL_KEY=""  # SECRET
 # ops/relay/update-stun-config.sh
 export RELAY_SECRET=""  # SECRET
 
-# ops/ha/failback.sh
-export REPL_PASSWORD=""  # SECRET
+# ops/ansible/inventory/generate-relays.sh
+export RELAY_SSH_KEY_DIR=""  # SECRET
 
 # ops/preflight-enrollment.sh
 export ROSENPASS_ENABLED=""  # SECRET
@@ -809,10 +374,7 @@ export SITE_COMPLIANCE_OIDC_CLIENT_SECRET=""  # SECRET
 # ops/ci/check-group-vars-parity.sh
 export SITE_SLOT_POOL_SALT=""  # SECRET
 
-# ops/zenoh-trial-peers/budget-notify/budget-notify.py
-export SMTP_PASSWORD=""  # SECRET
-
-# ops/ansible/snitch-probes.yml, ops/enrollment/cmd/bundle-create/main.go …
+# ops/enrollment/cmd/bundle-create/main.go, ops/snitch/cmd/snitch/main.go
 export SNITCH_ADMIN_KEY=""  # SECRET
 
 # ops/snitch/cmd/snitch/main.go
@@ -821,7 +383,7 @@ export SNITCH_IDENTITY_KEY=""  # SECRET
 # ops/snitch/install-probe-darwin.sh, ops/snitch/internal/server/install.sh
 export SNITCH_OPERATOR_KEY=""  # SECRET
 
-# ops/ansible/snitch-probes.yml, ops/snitch/cmd/snitch/main.go …
+# ops/snitch/cmd/snitch/main.go, ops/snitch/install-probe-darwin.sh …
 export SNITCH_PROBE_KEY=""  # SECRET
 
 # ops/compose/mgmt-host/docker-compose.spire.yml
@@ -830,20 +392,8 @@ export SPIRE_DB_PASSWORD=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.spire-agent.yml, ops/compose/mgmt-host/docker-compose.spire.yml
 export SPIRE_JOIN_TOKEN=""  # SECRET
 
-# ops/federation-partnerenv/drill/lib/common.sh, ops/wave-34/34F-signal-federation-rate/run.sh
-export SSH_KEY=""  # SECRET
-
-# ops/secrets/openbao/bootstrap.sh
-export SSO_CLIENT_SECRET=""  # SECRET
-
-# ops/zenoh/wedge-repro/churn.py, ops/zenoh/wedge-repro/openprobe.py …
-export STORM_KEY=""  # SECRET
-
 # ops/ansible/roles/oci-substrate-t2-sync/templates/oci-goat-sync.sh.j2
 export T1_R2_TOKEN=""  # SECRET
-
-# ops/tak/backup-tak.sh
-export TAK_PG_PASSWORD=""  # SECRET
 
 # ops/relay/setup-vps.sh
 export TURN_SECRET=""  # SECRET
@@ -854,38 +404,26 @@ export UI_COOKIE_SECRET=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.ory.yml
 export UI_CSRF_SECRET=""  # SECRET
 
-# ops/ansible/inventory/mgmt-hosts.ini
-export USA2_PASS=""  # SECRET
+# ops/ansible/group_vars/all.yml
+export VEGA_C_MINIO_ROOT_PASSWORD=""  # SECRET
 
-# ops/ansible/roles/vaultwarden/defaults/main.yml
-export VAULTWARDEN_ADMIN_TOKEN=""  # SECRET
+# ops/ansible/group_vars/all.yml
+export VEGA_C_OPENOBSERVE_ROOT_PASSWORD=""  # SECRET
 
-# ops/ansible/roles/vaultwarden/defaults/main.yml
-export VAULTWARDEN_SMTP_PASSWORD=""  # SECRET
-
-# ops/ansible/roles/vaultwarden/defaults/main.yml
-export VAULTWARDEN_SSO_CLIENT_SECRET=""  # SECRET
-
-# ops/secrets/openbao/baolib.py
-export VAULT_TOKEN=""  # SECRET
-
-# ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
+# ops/ansible/roles/goat-peering-forwarder/templates/goat-peering-forwarder-link.sh.j2, ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
 export WG_KEY_FILE=""  # SECRET
 
-# ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
+# ops/ansible/roles/goat-peering-forwarder/templates/goat-peering-forwarder-link.sh.j2, ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
 export WG_PEER_KEY=""  # SECRET
-
-# ops/ansible/roles/peerview/defaults/main.yml
-export X_NB_API_TOKEN=""  # SECRET
 
 # ops/scripts/test_standup_required_inputs.py
 export X_PASS=""  # SECRET
 
+# ops/ci/check-netbird-service-identities.py
+export ZAGROS_NB_API_TOKEN=""  # SECRET
+
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_CLIENT_KEY=""  # SECRET
-
-# MULTIPLAYER_NOTES.md
-export ZENOH_KEY_PATH=""  # SECRET
 
 # ops/relay/health/zenoh-health-probe.sh
 export ZH_KEY=""  # SECRET
@@ -895,35 +433,23 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 988 variables.
+# 830 variables.
 # ==========================================================================
-
-# ops/federation-partnerenv/drill/lib/common.sh
-export ACCOUNT=""
 
 # ops/scripts/goat-standup.sh
 export ACL_SITE=""
 
-# ops/zenoh/wedge-loadtest/scripts/rig-harness.sh
-export ADMIN_POLL_HZ=""
-
-# ops/ansible/roles/admit-audit/deploy-history.yml, ops/compose/mgmt-host/docker-compose.admit-audit.yml
+# ops/compose/mgmt-host/docker-compose.admit-audit.yml
 export ADMIT_AUDIT_IMAGE=""
+
+# ops/compose/mgmt-host/docker-compose.admit-audit.yml
+export ADMIT_AUDIT_MEMORY=""
+
+# ops/compose/mgmt-host/docker-compose.admit-audit.yml
+export ADMIT_AUDIT_MEMORY_RESERVATION=""
 
 # ops/ci/check-adr-status-vs-code.sh
 export ADR_STATUS_BASELINE=""
-
-# ops/serve/airdefenders/spawn-bots.sh
-export AD_BOTS=""
-
-# ops/serve/airdefenders/demo_auth.go
-export AD_DEMO_UNGATED=""
-
-# ops/serve/airdefenders/ws.go
-export AD_MAX_CONNS_PER_IP=""
-
-# ops/serve/airdefenders/spawn-bots.sh
-export AD_URL=""
 
 # ops/ci/check-federated-trust-retirement.sh
 export AFTER=""
@@ -934,26 +460,17 @@ export AGENT_REF_RANGE_BASE=""
 # ops/ci/check-no-agent-references.sh
 export AGENT_REF_RANGE_HEAD=""
 
+# ops/federation/standup/mint-peering-leaves.sh
+export AGE_IDENTITY=""
+
 # ops/loadtest/rca-throughput-decomposition.sh
 export AGG_K=""
 
-# docs/project/active-work/recently_completed/airdefenders-mp-merge.yaml, docs/project/active-work/recently_completed/easy-rollback-tier0-airdefenders.yaml …
-export AIRDEFENDERS_IMAGE=""
+# ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
+export ALERTMANAGER_MEMORY=""
 
-# ops/zenoh-trial-peers/bootstrap-airdefenders-portal.sh
-export AIRDEFENDERS_VENDOR_CERT_OUT_DIR=""
-
-# ops/ansible/roles/airdefenders/defaults/main.yml, ops/ansible/roles/airdefenders/tasks/deploy.yml …
-export AIRDEFENDERS_ZENOH_SIDECAR_IMAGE=""
-
-# ops/ansible/group_vars/zagros_cloud_hosts/vars.yml, ops/ansible/group_vars/zagros_dev_hosts/vars.yml …
-export ALERT_EMAIL_DIGEST_RECIPIENTS=""
-
-# ops/ansible/group_vars/zagros_cloud_hosts/vars.yml, ops/ansible/group_vars/zagros_dev_hosts/vars.yml …
-export ALERT_SMTP_SMARTHOST=""
-
-# ops/ansible/group_vars/zagros_cloud_hosts/vars.yml, ops/ansible/group_vars/zagros_dev_hosts/vars.yml …
-export ALERT_SMTP_USER=""
+# ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
+export ALERTMANAGER_MEMORY_RESERVATION=""
 
 # ops/scripts/edge-prefix-denials.sh
 export ALLOWED=""
@@ -973,14 +490,11 @@ export ALLOWLIST_PUBLISHERS=""
 # ops/bootstrap/publish-containers.sh
 export ALLOW_UNPINNED=""
 
-# ops/federation-partnerenv/drill/lib/common.sh
-export AMI_PATTERN=""
-
 # ops/ci/check-alertmanager-goatnets.py
 export AMTOOL=""
 
-# ops/secwatch/internal/analysis/claude.go
-export ANTHROPIC_MODEL=""
+# ops/ci/check-playbooks-parse.sh
+export ANSIBLE_DIR=""
 
 # ops/scripts/ory-group-mirror.sh
 export APPLY=""
@@ -988,32 +502,14 @@ export APPLY=""
 # ops/ansible/roles/isitup/files/check.sh
 export APP_SERVICES_FORMAT=""
 
-# ops/goat-client-assay/run-assay.sh
-export ASSAY_CHECKS=""
+# .github/workflows/apt-failover-selftest.yml, .github/workflows/goat-cli-pr.yml
+export APT_FAILOVER=""
 
-# ops/goat-client-assay/run-assay.sh
-export ASSAY_IDENTITY_RESTARTS=""
-
-# ops/goat-client-assay/run-assay.sh
-export ASSAY_MGMT_INSTANCE=""
-
-# ops/goat-client-assay/run-assay.sh
-export ASSAY_PEER_INSTANCES=""
-
-# ops/goat-client-assay/run-assay.sh
-export ASSAY_REGION=""
-
-# ops/goat-client-assay/run-assay.sh
-export ASSAY_SOAK_MIN=""
+# .github/workflows/apt-failover-selftest.yml
+export APT_FAILOVER_ADD_HOSTS=""
 
 # ops/scripts/rollback.sh
 export AT_POINTER=""
-
-# ops/zenoh-path-comparison/metrics-loop.sh
-export AUDIT=""
-
-# ops/zenoh/wedge-loadtest/scripts/rig-harness.sh
-export AUDIT_LISTENER=""
 
 # ops/scripts/austerity.sh
 export AUSTERITY_STATE=""
@@ -1024,7 +520,10 @@ export AUSTERITY_TIERS=""
 # ops/relay/metrics-publish.sh
 export AUTH_WINDOW_MIN=""
 
-# ops/federation-partnerenv/drill/lib/common.sh, ops/scripts/door-open.sh
+# ops/federation-e2e/lib/unit.sh
+export AVENUE=""
+
+# ops/scripts/door-open.sh
 export AWS_PROFILE_NAME=""
 
 # ops/scripts/goat-standup.sh
@@ -1033,17 +532,14 @@ export AWS_PROFILE_STANDUP=""
 # ops/ansible/roles/compliance-proxy/defaults/main.yml, ops/compose/mgmt-host/docker-compose.compliance-proxy.yml
 export AWS_SIGV4_PROXY_IMAGE=""
 
-# ops/ansible/inventory/gen-goat-relay-tier4b.sh, ops/ansible/scripts/create-setup-key.py …
+# ops/ansible/scripts/create-setup-key.py, ops/ansible/scripts/revoke-setup-key.sh
 export AWS_VAULT_PROFILE=""
 
-# ops/scripts/offboard_driver.py, ops/secrets/openbao/bao-login-cert …
+# ops/scripts/offboard_driver.py, ops/scripts/secrets-session …
 export BAO_ADDR=""
 
-# ops/secrets/openbao/bao-login-cert, ops/secrets/openbao/baolib.py …
+# ops/secrets/posture.py
 export BAO_CACERT=""
-
-# ops/secrets/openbao/bootstrap.sh
-export BAO_PUBLIC_ADDR=""
 
 # ops/federation/roundtrip/fedcheck.sh
 export BASE=""
@@ -1054,11 +550,11 @@ export BASELINE_FILE=""
 # ops/ci/check-federated-trust-retirement.sh
 export BEFORE=""
 
-# ops/serve/goat-map/deploy/deploy.sh
-export BIND_IP=""
+# ops/compose/goat-obs/docker-compose.yml
+export BLACKBOX_EXPORTER_MEMORY=""
 
-# ops/secrets/vaultwarden/gates/client-gates.sh, ops/secrets/vaultwarden/smoke.sh
-export BITWARDENCLI_APPDATA_DIR=""
+# ops/compose/goat-obs/docker-compose.yml
+export BLACKBOX_EXPORTER_MEMORY_RESERVATION=""
 
 # ops/compose/goat-obs/docker-compose.yml
 export BLACKBOX_EXTRA_PROBE_HOST=""
@@ -1066,23 +562,17 @@ export BLACKBOX_EXTRA_PROBE_HOST=""
 # ops/scripts/gated-service-preflight.sh
 export BRANCHES=""
 
-# ops/serve/airdefenders/spawn-bots.sh
-export BROWSER=""
-
-# terraform-prod/bootstrap.sh
-export BUCKET=""
-
 # ops/bootstrap/build-image-ec2.sh
 export BUILDER_ID=""
-
-# ops/scripts/reissue-3-relay-bundles.sh
-export BUNDLE_CREATE_MODE=""
 
 # ops/zenoh/docker-compose.yml, ops/zenoh/loadgen/main.go
 export BURST_DURATION=""
 
-# ops/secrets/posture.py, ops/secrets/vaultwarden/bwlib.py …
+# ops/scripts/secrets-session, ops/secrets/posture.py
 export BW_SESSION=""
+
+# ops/ci/check-compose-memory-is-variable.sh
+export B_MEMORY=""
 
 # ops/identity/cac-live-test/catcher.py
 export CAC_CLIENT=""
@@ -1090,11 +580,23 @@ export CAC_CLIENT=""
 # ops/identity/cac-live-test/catcher.py
 export CAC_ISSUER=""
 
+# ops/compose/goat-obs/docker-compose.yml
+export CADVISOR_MEMORY=""
+
+# ops/compose/goat-obs/docker-compose.yml
+export CADVISOR_MEMORY_RESERVATION=""
+
 # ops/relay/health/relay-metrics-ingest.py
 export CANARY_ALLOWED_NAMES=""
 
 # ops/signal-federation-probe/docker-compose.yml
 export CANARY_INTERVAL=""
+
+# ops/signal-federation-probe/docker-compose.yml
+export CANARY_MEMORY=""
+
+# ops/signal-federation-probe/docker-compose.yml
+export CANARY_MEMORY_RESERVATION=""
 
 # ops/signal-federation-probe/docker-compose.yml
 export CANARY_METRICS_ADDR=""
@@ -1111,23 +613,8 @@ export CANARY_TARGET=""
 # ops/relay/health/canary-publish.sh
 export CANARY_VANTAGE=""
 
-# ops/wave-34/34D-pg-pool-ceiling/run.sh
-export CANONICAL_CLIENTS=""
-
-# ops/wave-34/34F-signal-federation-rate/run.sh, ops/wave-34/34I-enrollment-rate/run.sh
-export CANONICAL_RATE=""
-
-# ops/zenoh/wedge-loadtest/scripts/rig-harness.sh
-export CARDINALITY=""
-
-# ops/oss/binary_match.py
-export CARGO_HOME=""
-
 # ops/identity/cac-live-test/catcher.py
 export CATCHER_MODE=""
-
-# ops/federation-partnerenv/drill/lib/common.sh
-export CA_DIR=""
 
 # ops/goat-zenoh-portal/internal/certmint/certmint_conformance_test.go
 export CERTMINT_CONFORMANCE_BIN_DIR=""
@@ -1138,41 +625,20 @@ export CERTMINT_CONFORMANCE_OUT=""
 # ops/scripts/mint-site-certs.sh
 export CERT_SIGN=""
 
-# deploy.sh
-export CF_ZONE=""
-
-# docs/design/ha-failover.md, ops/ha/cloud-promote.sh
-export CF_ZONE_ID=""
-
-# ops/ansible/nethost-secwatch.yml, ops/secwatch/cmd/secwatch/main.go
-export CF_ZT_ZONE_ID=""
-
-# ops/wave-34/multi-pair-relay/run.sh
-export CGNAT_INVENTORY=""
+# ops/scripts/cf-acme-challenge-clean.py
+export CF_API_BASE=""
 
 # ops/rpi-base-image/04-enroll-yubikey.sh
 export CHALLENGE=""
 
-# docs/briefs/build-zenoh-brief.sh, docs/rfc/build-nato-bundle.sh …
+# ops/ci/check-compose-memory-is-variable.sh
+export CHECK_ROOT=""
+
+# ops/scripts/render-doc-pdf.sh, ops/scripts/render-netbird-groups-reference.sh
 export CHROME=""
-
-# ops/zenoh/wedge-loadtest/router/peergen/peergen.py
-export CHURN=""
-
-# ops/zenoh/wedge-repro/ci-regression.sh, ops/zenoh/wedge-repro/run-stage.sh
-export CHURN_DUR=""
-
-# ops/zenoh/wedge-repro/run-stage.sh
-export CHURN_MODE=""
-
-# ops/zenoh/wedge-repro/ci-regression.sh, ops/zenoh/wedge-repro/run-stage.sh
-export CHURN_RATE=""
 
 # ops/scripts/coldstart
 export CLAUDE_PROJECT_DIR=""
-
-# ops/work/main.go
-export CLAUDE_SESSION_ID=""
 
 # ops/identity/aal2-oidc-repro/repro.sh
 export CLIENT_ID=""
@@ -1180,7 +646,7 @@ export CLIENT_ID=""
 # ops/scripts/closeout-check.sh
 export CLOSEOUT_NET_TIMEOUT=""
 
-# ops/bootstrap/publish-containers.sh, ops/bootstrap/publish-image.sh …
+# ops/bootstrap/publish-containers.sh, ops/bootstrap/publish-image.sh
 export CLOUDFLARE_ACCOUNT_ID=""
 
 # ops/goat-id-console/internal/config/config.go
@@ -1195,9 +661,6 @@ export COLLAB_KANIDM_URL=""
 # ops/onboard-runner/collab.go
 export COLLAB_SIGNIN_URL=""
 
-# ops/serve/airdefenders/spawn-bots.sh
-export COLS=""
-
 # ops/ansible/compliance-proxy-deploy.yml
 export COMPLIANCE_FUNCTION_URL_HOST=""
 
@@ -1207,7 +670,7 @@ export COMPLIANCE_FUNCTION_URL_REGION=""
 # ops/ci/check-pin-compat.sh
 export COMPOSE_FILE=""
 
-# ops/federation-drill/run-drill.sh, ops/federation-smoke/test-fabric.sh
+# ops/federation-smoke/test-fabric.sh
 export COMPOSE_PROJECT_NAME=""
 
 # ops/identity/backfill-console-rows.py, ops/scripts/rosenpass_revoke_and_reinvite.py
@@ -1216,23 +679,8 @@ export CONSOLE_URL=""
 # ops/netbird/netbird-boot-selfheal.sh
 export COOLDOWN_S=""
 
-# ops/federation-partnerenv/drill/lib/fabric.sh, ops/federation-partnerenv/drill/lib/pki.sh
-export CORE_GATEWAY=""
-
-# ops/federation-partnerenv/drill/lib/fabric.sh
-export CORE_PORT=""
-
 # ops/ci/check-per-partner-trust-isolation.sh
 export CORE_TRUST=""
-
-# ops/wave3/steady-state.sh
-export COUNT_AMD=""
-
-# ops/wave3/steady-state.sh
-export COUNT_ARM=""
-
-# ops/zenoh/wedge-loadtest/scripts/rig-harness.sh
-export CPUS=""
 
 # ops/netbird/netbird-boot-selfheal.sh
 export CP_WEDGE_ENABLED=""
@@ -1243,20 +691,20 @@ export CROSS_FLEET_ALLOWED_NAMES=""
 # ops/scripts/fastlane.sh
 export CURRENT_FLEET=""
 
-# ops/backup.sh, ops/dns/publish-service.sh …
-export NETHOST_HOST=""
-
-# ops/backup.sh, ops/dns/publish-service.sh …
-export NETHOST_USER=""
-
 # ops/goat-relay/canary/iperf3-24h-driver.sh
 export CYCLE_GAP_S=""
 
 # ops/goat-relay/canary/iperf3-24h-driver.sh
 export CYCLE_LEN_S=""
 
+# ops/federation/standup/acceptance.sh
+export CZID=""
+
 # ops/compose/mgmt-host/docker-compose.dashboard-admin.yml
 export DASHBOARD_ADMIN_HOST_PORT=""
+
+# ops/compose/mgmt-host/docker-compose.dashboard-admin.yml
+export DASHBOARD_ADMIN_MEMORY=""
 
 # ops/compose/mgmt-host/docker-compose.oauth2-proxy-dashboard-admin.yml
 export DASHBOARD_ADMIN_OAUTH2_PROXY_HOST_PORT=""
@@ -1266,9 +714,6 @@ export DASHBOARD_HOST_PORT=""
 
 # ops/compose/mgmt-host/docker-compose.oauth2-proxy-dashboard.yml
 export DASHBOARD_OAUTH2_PROXY_HOST_PORT=""
-
-# ops/zenoh/wedge-loadtest/router/peergen/peergen.py
-export DATA_LIFECYCLE=""
 
 # ops/netbird/netbird-boot-selfheal.sh
 export DATA_PROBE_TARGETS=""
@@ -1281,9 +726,6 @@ export DEADMAN_EVENTS_URL=""
 
 # ops/deadman-watch/deadman-check.sh
 export DEADMAN_EXPECTED_SOURCES=""
-
-# ops/ansible/group_vars/zagros_prod_echo_obs_hosts/vars.yml, ops/ansible/group_vars/zagros_prod_obs_hosts/vars.yml
-export DEADMAN_EXTERNAL_URL=""
 
 # ops/deadman-watch/deadman-receive.py
 export DEADMAN_LISTEN_ADDR=""
@@ -1300,62 +742,26 @@ export DEADMAN_STATE_FILE=""
 # ops/deadman-watch/deadman-check.sh
 export DEADMAN_THRESHOLD_SECONDS=""
 
-# ops/ansible/group_vars/zagros_cloud_obs_hosts/vars.yml, ops/ansible/group_vars/zagros_obs_hosts/vars.yml …
-export DEADMAN_WEBHOOK_URL=""
-
-# docs/briefs/architecture-in-pictures/deck/build.py
-export DECK_VARIANT=""
-
-# ops/wave3/federation-load/scenarios/scenario-2-latency-inject.sh
-export DELAY_MS=""
-
-# ops/nat-check.sh
-export GOAT_ROOT=""
-
 # ops/ansible/spire-ca-standby.yml, ops/ansible/surface-visit-deploy.yml
 export DEV_CA_AGE_BREAK_GLASS=""
 
 # ops/scripts/rc.sh
 export DEV_EVID=""
 
-# .github/workflows/goat-cli-release.yml, .github/workflows/goatbuilder-release.yml …
-export DEV_ID_CERT_P12_BASE64=""
+# ops/federation-e2e/env
+export DIRECTORY_REF=""
 
-# .github/workflows/goat-cli-release.yml, .github/workflows/goatbuilder-release.yml …
-export DEV_ID_IDENTITY=""
-
-# ops/zenoh/wedge-repro/adminspace_deadlock.py, ops/zenoh/wedge-repro/slow_consumer.py
-export DL_CA=""
-
-# ops/zenoh/wedge-repro/adminspace_deadlock.py, ops/zenoh/wedge-repro/slow_consumer.py
-export DL_CERT=""
-
-# ops/zenoh/wedge-repro/adminspace_deadlock.py
-export DL_ENDPOINT=""
-
-# ops/zenoh/wedge-repro/ci-adminspace-deadlock.sh
-export DL_EXTRA_CONFIG=""
-
-# ops/zenoh/wedge-repro/adminspace_deadlock.py, ops/zenoh/wedge-repro/ci-adminspace-deadlock.sh
-export DL_SECS=""
-
-# ops/scripts/austerity.sh, ops/zenoh/wedge-repro/ci-adminspace-deadlock.sh …
+# ops/scripts/austerity.sh
 export DOCKER=""
 
-# incubator/goat-moon-open-pod/host/goat-doctor.sh
-export DOCTOR_STATUS_PATH=""
+# .github/workflows/_image-build.yml
+export DOCKERFILE=""
 
 # ops/compose/goat-obs/dormancy-report/dormancy_report.py
 export DORMANCY_THRESHOLDS=""
 
-# ops/zenoh-trial-peers/consolidate-legacy-vendors.sh, ops/zenoh/docker-compose.yml …
+# ops/zenoh/docker-compose.yml, ops/zenoh/loadgen/main.go
 export DRY_RUN=""
-
-# ops/zenoh/wedge-loadtest/router/peergen/peergen.py
-export DURATION=""
-
-# ops/wave3/federation-load/scenarios/scenario-1-kill-server.sh, ops/wave3/federation-load/scenarios/scenario-2-latency-inject.sh …
-export DURATION_PER_PHASE=""
 
 # ops/e2e/stubs/gh
 export E2E_GH_STATE=""
@@ -1374,12 +780,6 @@ export E2E_REGISTRY_URL=""
 
 # ops/e2e/suites/goat/stack.sh
 export E2E_ZENOH_IMAGE=""
-
-# ops/federation-partnerenv/drill/lib/fabric.sh
-export EDGE_PORT=""
-
-# deploy.sh, docs/operations/deploy-guide.md …
-export ENABLE_PROXY=""
 
 # ops/scripts/fresh-peer-probe.sh
 export ENROLL_DNS=""
@@ -1408,20 +808,11 @@ export ENROLWATCH_WINDOW=""
 # ops/scripts/forgejo-mint-pubsub-bot.sh
 export ENVRC=""
 
-# ops/zenoh-path-comparison/metrics-loop.sh
-export ERRS=""
-
 # ops/scripts/rc.sh
 export EVID=""
 
 # ops/bootstrap/drill/run-rapid-bringup-drill.sh, ops/observability/wide-events/spike/run-spike.sh
 export EVIDENCE=""
-
-# docs/findings/F-087-ory-soak-smoke-summarized-stale-historical-evidence.md, ops/replication-observability-fire-test/fire-test.sh
-export EVIDENCE_FILE=""
-
-# ops/wave-34/34D-pg-pool-ceiling/run.sh, ops/wave-34/34F-signal-federation-rate/run.sh …
-export EVIDENCE_PATH=""
 
 # ops/relay/health/zenoh-fabric-sampler.sh
 export FABRIC_JSON=""
@@ -1435,8 +826,155 @@ export FABRIC_TOPN=""
 # ops/ansible/roles/topic-decode-health-guard/files/topic-decode-health-guard.sh
 export FAIL_ON=""
 
-# ops/zenoh-trial-peers/synth-vendor-schemas/bootstrap-notional-schemas.sh
-export FDS_OUT=""
+# ops/federation-e2e/units/nohand.sh, ops/federation-e2e/units/onecmd.sh
+export FE2E_ACC_VALUES=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_CORE=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_DENY_MIRROR=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_DRIVER=""
+
+# ops/federation-e2e/units/solo.sh
+export FE2E_EXCHANGE_IN=""
+
+# ops/federation-e2e/units/solo.sh
+export FE2E_EXCHANGE_OUT=""
+
+# ops/federation-e2e/env, ops/federation-e2e/lib/watch.sh
+export FE2E_HOME=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_HOST_APT=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_HOST_IMAGE=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_HOST_PACKAGES=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_HOST_PREFIX=""
+
+# ops/federation-e2e/units/killresume.sh
+export FE2E_KR_AIM=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_LAB=""
+
+# ops/federation-e2e/units/nohand-loop.sh
+export FE2E_LOOP_BIN=""
+
+# ops/federation-e2e/units/nohand-loop.sh
+export FE2E_LOOP_NOTES=""
+
+# ops/federation-e2e/units/nohand-loop.sh
+export FE2E_LOOP_TREE=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_NET_BASE=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_NET_PREFIX=""
+
+# ops/federation-e2e/units/nohand.sh
+export FE2E_NH_CORE=""
+
+# ops/federation-e2e/units/nohand.sh
+export FE2E_NH_LOOP=""
+
+# ops/federation-e2e/units/nohand.sh
+export FE2E_NH_MODE=""
+
+# ops/federation-e2e/run.sh
+export FE2E_NH_TIMEOUT=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_PARTIES=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_PARTNER=""
+
+# ops/federation-e2e/units/solo.sh
+export FE2E_PARTNER_FACTS=""
+
+# ops/federation-e2e/lib/probe-launcher.sh
+export FE2E_PL_DIR=""
+
+# ops/federation-e2e/lib/probe-launcher.sh
+export FE2E_PL_FAR_IP=""
+
+# ops/federation-e2e/lib/probe-launcher.sh
+export FE2E_PL_HOST=""
+
+# ops/federation-e2e/lib/probe-launcher.sh
+export FE2E_PL_IMAGE=""
+
+# ops/federation-e2e/lib/probe-launcher.sh
+export FE2E_PL_PORT=""
+
+# ops/federation-e2e/lib/probe-launcher.sh
+export FE2E_PL_REST_IP=""
+
+# ops/federation-e2e/lib/probe-launcher.sh
+export FE2E_PL_SSH=""
+
+# ops/federation-e2e/lib/probe-launcher.sh
+export FE2E_PL_TEMPLATE=""
+
+# ops/federation-e2e/units/rollback.sh
+export FE2E_PREV_GB_FROM=""
+
+# ops/federation-e2e/units/rollback.sh
+export FE2E_PREV_GOAT_FROM=""
+
+# ops/federation-e2e/units/rollback.sh
+export FE2E_REF_GB_VERSION=""
+
+# ops/federation-e2e/units/rollback.sh
+export FE2E_REF_GOAT_VERSION=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_RP_TAG=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_SOLO_PUBLIC_ADDR=""
+
+# ops/federation-e2e/lib/engine.sh, ops/federation-e2e/units/solo.sh
+export FE2E_SOLO_PUBLISH=""
+
+# ops/federation-e2e/units/solo.sh
+export FE2E_SOLO_STEP_TIMEOUT=""
+
+# ops/federation-e2e/lib/engine.sh, ops/federation-e2e/units/solo.sh
+export FE2E_SOLO_WAN=""
+
+# ops/federation-e2e/lib/engine.sh
+export FE2E_SOLO_WAN_IP=""
+
+# ops/federation-e2e/env, ops/federation-e2e/lib/unit.sh
+export FE2E_UNIT_TIMEOUT=""
+
+# ops/federation-e2e/units/upgrade.sh
+export FE2E_UPGRADE_FROM=""
+
+# ops/federation-e2e/units/upgrade.sh
+export FE2E_UPGRADE_FROM_REF=""
+
+# ops/federation-e2e/units/upgrade.sh
+export FE2E_UPGRADE_FROM_SHA256=""
+
+# ops/federation-e2e/env
+export FE2E_UP_PARTIES=""
+
+# ops/federation-e2e/env
+export FE2E_UP_UNIT=""
+
+# ops/federation-e2e/lib/engine.sh, ops/federation-e2e/units/forwarder.sh
+export FE2E_WG_APPARMOR=""
 
 # ops/compose/mgmt-host/docker-compose.yml
 export FEDERATION_PEERS=""
@@ -1444,23 +982,68 @@ export FEDERATION_PEERS=""
 # ops/compose/mgmt-host/docker-compose.yml
 export FEDERATION_PROXY_IMAGE=""
 
-# ops/federation/standup/acceptance.sh
-export FED_ACCEPTANCE_STRICT=""
+# ops/compose/mgmt-host/docker-compose.yml
+export FEDERATION_PROXY_MEMORY=""
 
-# ops/federation/standup/mint-peering-leaves.sh, ops/federation/standup/preflight.py
+# ops/compose/mgmt-host/docker-compose.yml
+export FEDERATION_PROXY_MEMORY_RESERVATION=""
+
+# ops/federation/standup/acceptance.sh
+export FED_ACCEPTANCE_GAP=""
+
+# ops/federation/standup/acceptance.sh
+export FED_ACCEPTANCE_RT_TIMEOUT=""
+
+# ops/federation/standup/acceptance.sh
+export FED_ACCEPTANCE_SESSION=""
+
+# ops/federation/standup/acceptance.sh
+export FED_ACCEPTANCE_WAIT=""
+
+# ops/federation/standup/mint-peering-leaves.sh
+export FED_AGE_IDENTITY=""
+
+# ops/federation/standup/mint-peering-leaves.sh, ops/scripts/peering-standup.sh
 export FED_CA_CERT=""
 
 # ops/federation/standup/mint-peering-leaves.sh
 export FED_CORE_CN=""
 
-# ops/federation/standup/mint-peering-leaves.sh, ops/federation/standup/preflight.py
+# ops/federation/standup/acceptance_surfaces.py, ops/federation/standup/preflight.py
+export FED_CORE_GROUP=""
+
+# ops/federation/standup/mint-peering-leaves.sh
 export FED_CORE_SAN=""
+
+# ops/scripts/peering-standup.sh
+export FED_COUNTERPARTY_ID=""
+
+# ops/scripts/peering-standup.sh
+export FED_DECLARATION=""
+
+# ops/scripts/peering-standup.sh
+export FED_DIRECTORY_URL=""
+
+# ops/federation/standup/acceptance_surfaces.py
+export FED_EDGE_GROUP=""
 
 # ops/federation/standup/acceptance.sh
 export FED_EDGE_LOG_OURS=""
 
+# ops/federation/standup/acceptance.sh
+export FED_EVIDENCE_DIR=""
+
+# ops/federation/standup/acceptance.sh
+export FED_EXISTING_REST=""
+
+# ops/federation/standup/acceptance.sh
+export FED_EXISTING_WORKS=""
+
 # ops/federation/standup/mint-peering-leaves.sh
 export FED_LEAF_DAYS=""
+
+# ops/federation/standup/mint-peering-leaves.sh
+export FED_LEAF_MIN_VALID_SECONDS=""
 
 # ops/federation/standup/mint-peering-leaves.sh
 export FED_LINK_IP=""
@@ -1498,6 +1081,12 @@ export FED_LIVE_SCENARIO=""
 # ops/federation-smoke/test-fabric.sh
 export FED_NET=""
 
+# ops/scripts/peering-standup.sh
+export FED_NO_DIRECTORY=""
+
+# ops/scripts/peering-standup.sh
+export FED_PACKAGE_URL=""
+
 # ops/federation/standup/acceptance.sh
 export FED_PROBE_FORGED_REST=""
 
@@ -1511,13 +1100,28 @@ export FED_PROBE_IMPERSONATE_REST=""
 export FED_PROBE_IMPERSONATE_ZID=""
 
 # ops/federation/standup/acceptance.sh
+export FED_PROBE_LAUNCHER=""
+
+# ops/federation/standup/acceptance.sh
 export FED_PROBE_THEIRS_REST=""
 
-# ops/federation-partnerenv/drill/lib/common.sh
-export FED_ROOT=""
+# ops/federation/standup/acceptance.sh
+export FED_PROBE_THEIRS_ZID=""
 
-# ops/federation/standup/preflight.py
-export FED_SKIP_LOCAL_DOCKER_CHECK=""
+# ops/federation/standup/acceptance.sh
+export FED_PROBE_TTL=""
+
+# ops/federation-e2e/live-host.sh
+export FED_REPUBLISHER_IMAGE=""
+
+# ops/scripts/peering-standup.sh
+export FED_ROUTER_CONTAINER=""
+
+# ops/federation/standup/preflight_live.py, ops/federation/standup/test_preflight_live.py
+export FED_ROUTER_DOCKER_HOST_SOURCES=""
+
+# ops/federation/standup/acceptance.sh
+export FED_SESSION_WAIT=""
 
 # ops/federation-e2e/live-host.sh
 export FED_SPIRE_IMAGE=""
@@ -1528,11 +1132,32 @@ export FED_SPIRE_OURS=""
 # ops/federation/standup/acceptance.sh
 export FED_SPIRE_THEIRS=""
 
+# ops/federation/standup/acceptance.sh
+export FED_SSH_KNOWN_HOSTS=""
+
+# ops/federation/standup/acceptance.sh
+export FED_TEST_SUBSCRIBERS_PAUSE_OURS=""
+
+# ops/federation/standup/acceptance.sh
+export FED_TEST_SUBSCRIBERS_PAUSE_THEIRS=""
+
+# ops/federation/standup/acceptance.sh
+export FED_TEST_SUBSCRIBERS_RESUME_OURS=""
+
+# ops/federation/standup/acceptance.sh
+export FED_TEST_SUBSCRIBERS_RESUME_THEIRS=""
+
+# ops/scripts/peering-standup.sh
+export FED_VERBS=""
+
 # ops/federation-e2e/live-host.sh
 export FED_ZENOH_IMAGE=""
 
 # ops/rpi-base-image/05-enable-fips.sh
 export FIPS_PURGE_DROPBEAR=""
+
+# crates/goatbuilder/src/doctor.rs
+export FIXTURE_CLIENT=""
 
 # ops/scripts/test_offboard_subject.py
 export FIXTURE_LOG=""
@@ -1558,14 +1183,8 @@ export FLASH_TARGET=""
 # ops/scripts/rc.sh
 export FLEET=""
 
-# ops/wave-34/multi-pair-relay/run.sh
-export FLOW_DURATION_S=""
-
 # ops/bootstrap/pull-image.sh
 export FORCE_TIER=""
-
-# ops/wave-33/tier-4b/inchworm.sh
-export FORCE_WS=""
 
 # ops/ansible/roles/pubsub-state-repo/defaults/main.yml
 export FORGEJO_URL=""
@@ -1573,151 +1192,46 @@ export FORGEJO_URL=""
 # ops/scripts/kanidm-door-audit.sh
 export FORMAT=""
 
-# ops/wave3/adversarial-upgrade/_ssm.sh
-export FROM_IMAGE=""
+# ops/ci/ansible-galaxy-install.sh
+export GALAXY_ATTEMPTS=""
 
-# docs/design/usareur-af-repo-migration.md, docs/findings/F-362-a-repo-flip-changed-which-registry-namespace-every-deploy-pulls-from.md …
+# ops/ci/ansible-galaxy-install.sh
+export GALAXY_ATTEMPT_SECONDS=""
+
+# ops/ansible/group_vars/all.yml, ops/bootstrap/build-image-ec2.sh …
 export GHCR_ORG=""
 
-# ops/ci/check-image-build-parity.sh, ops/scripts/external-service-finish.py …
+# ops/scripts/external-service-finish.py, ops/scripts/repo-slug.sh
 export GH_REPO=""
+
+# .github/actions/apt-failover/action.yml
+export GITHUB_ACTOR=""
 
 # ops/ci/check-mermaid-renders.sh, ops/ci/check-no-agent-references.sh …
 export GITHUB_BASE_REF=""
 
-# ops/issue-tracks/issue_tracks.py
-export GITHUB_EVENT_PATH=""
-
 # ops/ci/check-cross-pr-id-uniqueness.py
 export GITHUB_GRAPHQL_URL=""
+
+# .github/actions/apt-failover/action.yml
+export GITHUB_REPOSITORY_OWNER=""
 
 # ops/scripts/fresh-source.sh
 export GIT_SSH_COMMAND=""
 
-# ops/goatbuilder/parity-endstate.sh, ops/oss/templates/hello-galaxy-goatenv/run
+# ops/federation-e2e/lib/unit.sh
+export GOAT=""
+
+# ops/goatbuilder/parity-endstate.sh
 export GOATBUILDER=""
+
+# ops/goatbuilder/compat/test_compat.py
+export GOATBUILDER_BIN=""
 
 # ops/scripts/deploy-component.sh, ops/scripts/env-door.sh …
 export GOATBUILDER_PYTHON=""
 
-# ops/goatprivate/assemble.sh, ops/goatprivate/extra-files/.github/scripts/assembled-build/assemble-trees.sh
-export GOATCORE_URL=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_ATTEST_DIR=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_ATTEST_LOG=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_BASEMAP=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_BIND_IP=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_CERT_DIR=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_CONTAINER=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_DISCOVERY_FILE=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_FABRIC_CA=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_FABRIC_CERT=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_FABRIC_ENDPOINT=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_FABRIC_SUBSCRIBE=""
-
-# ops/serve/goat-map/goatmap/scope.py
-export GOATMAP_FULL_GROUPS=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_IMAGE=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_INGEST_MODE=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_LOG_LEVEL=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_NODE_HEALTH_FILE=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_OAUTH2_CONTAINER=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_OAUTH2_PROXY_IMAGE=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_OIDC_HOST_ENTRY=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_PORT=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_PORTAL_URL=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_PRODUCER_ANCHOR=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_PUBLISH_PREFIX=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_RBAC_MODE=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_REGIONS_FILE=""
-
-# ops/serve/goat-map/deploy/deploy.sh
-export GOATMAP_REMOTE_DIR=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_SENSOR=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_SITES_FILE=""
-
-# ops/serve/goat-map/deploy/deploy.sh
-export GOATMAP_STAGE_DIR=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_STALE_AFTER_S=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_STORE_SOURCE=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_SYNTH_CERT_DIR=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_SYNTH_CONTAINER=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_SYNTH_RADIUS_KM=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_SYNTH_SEED=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_SYNTH_TRACKS=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_TTL_S=""
-
-# ops/serve/goat-map/docker-compose.yml
-export GOATMAP_ZOOM=""
-
-# ops/relay/health/canary-publish.sh, ops/scripts/lifecycle-sweep.py …
+# ops/identity/identity-usage.py, ops/relay/health/canary-publish.sh …
 export GOATNET=""
 
 # ops/ci/check-no-goatnet-defaults.sh
@@ -1732,47 +1246,20 @@ export GOATNET_SUMMARY_STALE_AFTER_S=""
 # ops/relay/health/goatnet-summary-publish.sh
 export GOATNET_SUMMARY_TARGETS=""
 
-# ops/goatprivate/assemble.sh, ops/goatprivate/extra-files/.github/scripts/assembled-build/assemble-trees.sh
-export GOATSTUFF_URL=""
-
 # Makefile, ops/scripts/daily-review.sh
 export GOAT_ACK=""
 
-# ops/enrollment/cmd/wg-cp0/bundle_create_invoke.go, ops/secrets/openbao/people.py
+# ops/enrollment/cmd/wg-cp0/bundle_create_invoke.go
 export GOAT_AGE_IDENTITY=""
 
-# ops/goatprivate/check-export-source.py, ops/scripts/ansible-preflight.sh …
+# ops/scripts/ansible-preflight.sh, ops/scripts/fresh-source.sh
 export GOAT_ANSIBLE_TRUNK_REMOTE=""
 
 # ops/scripts/with-aws
 export GOAT_AWS_MODE=""
 
-# ops/goatnets/cross-env-apply.sh, ops/scripts/deploy-component.sh …
+# ops/ansible/inventory/generate-relays.sh, ops/goatbuilder/endstate/endstate.py …
 export GOAT_AWS_PROFILE=""
-
-# ops/secrets/openbao/bootstrap.sh
-export GOAT_BAO_AUTH=""
-
-# ops/secrets/openbao/bootstrap.sh, ops/secrets/openbao/people.py
-export GOAT_BAO_AUTH_PATH=""
-
-# ops/secrets/openbao/bootstrap.sh
-export GOAT_BAO_ENTRA_CLIENT_ID=""
-
-# ops/secrets/openbao/bootstrap.sh
-export GOAT_BAO_ENTRA_TENANT=""
-
-# ops/secrets/openbao/bootstrap.sh
-export GOAT_BAO_ENTRA_TENANTS=""
-
-# ops/secrets/openbao/bootstrap.sh
-export GOAT_BAO_GOOGLE_CLIENT_ID=""
-
-# ops/secrets/openbao/bootstrap.sh
-export GOAT_BAO_SESSION_TTL=""
-
-# ops/secrets/openbao/bootstrap.sh
-export GOAT_BAO_SKIP_AUDIT=""
 
 # ops/ci/check-cli-ui-parity.py, ops/scripts/herd-audit-forward.sh
 export GOAT_BIN=""
@@ -1780,14 +1267,8 @@ export GOAT_BIN=""
 # ops/secrets/posture.py
 export GOAT_BUILDER_CONFIG=""
 
-# ops/goat-client-assay/install-goat-client.sh
-export GOAT_BUNDLE_URL=""
-
-# ops/secrets/posture.py, ops/secrets/vaultwarden/bwlib.py
+# ops/secrets/posture.py
 export GOAT_BW_CLI=""
-
-# ops/secrets/vaultwarden/bwlib.py
-export GOAT_BW_SYNC=""
 
 # ops/enrollment/cmd/wg-cp0/bundle_create_invoke.go
 export GOAT_CA_ID=""
@@ -1798,28 +1279,25 @@ export GOAT_CA_MODE=""
 # ops/enrollment/cmd/bundle-create/prod.go, ops/enrollment/cmd/ca-init/prod.go
 export GOAT_CA_PIN=""
 
-# incubator/goat-moon-open-pod/examples/delivery_reconcile.py
-export GOAT_CA_ROOTS=""
-
-# ops/secrets/openbao/bootstrap.sh
-export GOAT_CI_REPOS=""
-
 # ops/scripts/coldstart
 export GOAT_COLDSTART=""
 
-# ops/federation/standup/preflight.py, ops/scripts/herd-audit-forward.sh
+# ops/federation/standup/directory.py, ops/federation/standup/preflight.py …
 export GOAT_CONTEXT=""
 
-# ops/goat-client-assay/install-goat-client.sh
-export GOAT_DEB_URL=""
+# ops/scripts/peering-standup.sh
+export GOAT_CONTEXT_DIR=""
+
+# ops/backup.sh, ops/relay/deploy-relay.sh …
+export GOAT_DEPLOYMENT=""
 
 # ops/scripts/deploy-component.sh
 export GOAT_DEPLOY_LOG_DIR=""
 
-# ops/ansible/roles/rollback-ledger/tasks/main.yml, ops/goatprivate/check-export-source.py …
+# ops/ansible/roles/rollback-ledger/tasks/main.yml, ops/scripts/fresh-source.sh …
 export GOAT_DEPLOY_OFFLINE=""
 
-# ops/ansible/roles/rollback-ledger/tasks/main.yml
+# ops/ansible/roles/isitup/tasks/rows-build.yml, ops/ansible/roles/rollback-ledger/tasks/main.yml
 export GOAT_DEPLOY_SOURCE_TREE=""
 
 # ops/goat-id-console/internal/handlers/zz_render_dump_test.go
@@ -1828,20 +1306,14 @@ export GOAT_DUMP_HTML=""
 # ops/compose/goat-obs/dormancy-report/dormancy_report.py, ops/compose/goat-obs/identity-reconcile/reconcile.py …
 export GOAT_ENV=""
 
-# ops/goat-client-assay/install-goat-client.sh
-export GOAT_FORCE_RELAY=""
-
-# ops/goatprivate/check-export-source.py, ops/scripts/ansible-preflight.sh …
+# ops/scripts/ansible-preflight.sh, ops/scripts/fresh-source.sh …
 export GOAT_FRESH_SOURCE_TRUNK=""
-
-# ops/scripts/lib/source_of_record.py
-export GOAT_GOATSTUFF_DIR=""
 
 # ops/goat-id-console/internal/onboardlint/onboardlint.go, ops/operators/test_validate_grammar.py …
 export GOAT_GRAMMAR_CUTOVER=""
 
-# ops/goat-client-assay/install-goat-client.sh
-export GOAT_HOSTNAME=""
+# ops/postgres/migrate.sh
+export GOAT_HOST_OPT_DIR=""
 
 # ops/bootstrap/lib-hardware-classes.sh
 export GOAT_HW_CLASSES=""
@@ -1852,10 +1324,10 @@ export GOAT_KEEP_AWAKE=""
 # ops/scripts/lib/keep-awake.sh
 export GOAT_KEEP_AWAKE_ANY_OS=""
 
-# ops/ansible/filter_plugins/goat_leaf.py, ops/ansible/filter_plugins/test_goat_leaf.py
+# ops/ansible/filter_plugins/goat_leaf.py
 export GOAT_LEAF_DIR=""
 
-# ops/oss/templates/_shared/.github/leak-gate/scan-diff.py
+# .github/leak-gate/scan-diff.py
 export GOAT_LEAK_NEEDLES=""
 
 # ops/secrets/posture.py
@@ -1863,15 +1335,6 @@ export GOAT_LITE_CONFIG=""
 
 # ops/e2e/rehearsal.sh, ops/goatbuilder/parity-release.sh …
 export GOAT_MESH_PROBE=""
-
-# ops/goat-client-assay/install-goat-client.sh
-export GOAT_MODE=""
-
-# incubator/goat-moon-open-pod/examples/delivery_reconcile.py
-export GOAT_MTLS_CERT=""
-
-# ops/goat-client-assay/run-assay.sh
-export GOAT_NAMES_LISTEN=""
 
 # ops/scripts/lib/keep-awake.sh
 export GOAT_NO_CAFFEINATE=""
@@ -1882,9 +1345,6 @@ export GOAT_OPERATOR_AGE_RECIPIENTS=""
 # ops/ansible/netbird-role-realign.yml, ops/scripts/offboard_driver.py
 export GOAT_OPERATOR_HANDLE=""
 
-# ops/secrets/openbao/mirror.py
-export GOAT_OP_CMD=""
-
 # ops/scripts/ansible-preflight.sh, ops/scripts/lib/source_of_record.py
 export GOAT_OVERLAY_DIR=""
 
@@ -1894,14 +1354,8 @@ export GOAT_OVERLAY_REMOTE=""
 # ops/scripts/lib/source_of_record.py
 export GOAT_OVERLAY_TRUNK_REMOTE=""
 
-# incubator/goat-moon-open-pod/examples/delivery_reconcile.py
-export GOAT_PREFIX=""
-
-# incubator/goat-moon-open-pod/host/goat-doctor.sh, ops/federation/standup/preflight.py …
+# ops/federation/standup/directory.py, ops/federation/standup/preflight.py …
 export GOAT_PROFILE_DIR=""
-
-# ops/standby/promote-zagros-b.sh
-export GOAT_PROMOTION_DRILL_ENV=""
 
 # ops/scripts/repo-slug.sh
 export GOAT_PR_REPOS=""
@@ -1909,16 +1363,10 @@ export GOAT_PR_REPOS=""
 # ops/oci-substrate/scripts/push-from-host.sh
 export GOAT_PUBLISHER_USER=""
 
-# ops/oss/publish.py
-export GOAT_PUBLISH_REMOTE_PREFIX=""
-
 # ops/e2e/rehearsal.sh, ops/scripts/rc.sh
 export GOAT_RC_ROLE_CHECK=""
 
-# ops/goat-client-assay/install-goat-client.sh
-export GOAT_READY_TIMEOUT=""
-
-# .envrc, ops/goatbuilder/endstate/endstate.py …
+# ops/goatbuilder/endstate/endstate.py, ops/scripts/ansible-preflight.sh
 export GOAT_REFERENCES_ONLY=""
 
 # ops/scripts/goat-image-import.sh
@@ -1951,11 +1399,8 @@ export GOAT_RELAY_IMAGE_ARCHIVE=""
 # ops/relay/metrics-publish.sh
 export GOAT_RELAY_STATS_ADDR=""
 
-# ops/oss/publish.py
-export GOAT_RELEASE_AUTHOR_EMAIL=""
-
-# ops/oss/publish.py
-export GOAT_RELEASE_AUTHOR_NAME=""
+# ops/scripts/create-assay-probe-identity.sh
+export GOAT_RELEASES=""
 
 # ops/scripts/replace-single-use-setup-keys.sh
 export GOAT_REPLACEMENT_TTL_DAYS=""
@@ -1963,13 +1408,10 @@ export GOAT_REPLACEMENT_TTL_DAYS=""
 # ops/scripts/replace-single-use-setup-keys.sh
 export GOAT_REPLACEMENT_USAGE_LIMIT=""
 
-# ops/oss/templates/hello-galaxy-goatenv/run
-export GOAT_REPO=""
+# ops/nat-check.sh
+export GOAT_ROOT=""
 
-# incubator/goat-moon-open-pod/examples/delivery_reconcile.py
-export GOAT_ROUTER=""
-
-# ops/validation/probes.py, ops/validation/run-acceptance.py
+# ops/scripts/onboard-intake-smoke.sh, ops/validation/probes.py …
 export GOAT_ROWS_SSH_JUMP=""
 
 # ops/scripts/ansible-preflight.sh
@@ -2002,14 +1444,14 @@ export GOAT_STORE_PROBE=""
 # ops/enrollment/cmd/wg-cp0/bundle_create_invoke.go
 export GOAT_TLS_TRUST_ANCHOR=""
 
-# ops/secrets/openbao/bootstrap.sh
-export GOAT_TOTP_ISSUER=""
-
 # ops/scripts/goat-image-import.sh
 export GOAT_TRUST_ANCHOR=""
 
-# ops/goat-client-assay/install-goat-client.sh
-export GOAT_TRUST_ROOTS_URL=""
+# ops/federation-e2e/env
+export GOAT_VERSIONS=""
+
+# ops/federation-e2e/env
+export GOAT_VERSIONS_ASKED=""
 
 # ops/e2e/hermetic.sh
 export GOCACHE_DARWIN=""
@@ -2021,10 +1463,19 @@ export GOMODCACHE=""
 export GRAFANA_ADMIN_USER=""
 
 # ops/compose/goat-obs/docker-compose.yml
+export GRAFANA_MEMORY=""
+
+# ops/compose/goat-obs/docker-compose.yml
+export GRAFANA_MEMORY_RESERVATION=""
+
+# ops/compose/goat-obs/docker-compose.yml
 export GRAFANA_SERVER_DOMAIN=""
 
 # ops/grant-crypto/sdk/bindings/python/grant_crypto/_ffi.py
 export GRANT_CRYPTO_CAPI_LIB=""
+
+# ops/ci/check-mesh-reach-overgrant.sh
+export GROUP_PREFIXES=""
 
 # ops/scripts/fresh-peer-probe.sh
 export GROUP_VARS=""
@@ -2049,30 +1500,6 @@ export GUARD_WARRANT_DIR=""
 
 # ops/ci/check-env-coverage.sh, ops/ci/check-site-config-bleed.sh
 export GV_ROOT=""
-
-# ops/gym/generate.py
-export GYM_REV=""
-
-# ops/wave3/adversarial-upgrade/_ssm.sh, ops/wave3/federation-load/scenarios/scenario-1-kill-server.sh …
-export HADEV_AMD64_INSTANCE_ID=""
-
-# ops/wave3/federation-load/scenarios/scenario-1-kill-server.sh, ops/wave3/federation-load/scenarios/scenario-2-latency-inject.sh …
-export HADEV_AMD64_MESH_IP=""
-
-# ops/wave3/adversarial-upgrade/_ssm.sh, ops/wave3/federation-load/scenarios/scenario-1-kill-server.sh …
-export HADEV_AMD64_REGION=""
-
-# ops/wave3/adversarial-upgrade/_ssm.sh, ops/wave3/scripts/bootstrap-hadev-netbird.sh …
-export HADEV_ARM64_INSTANCE_ID=""
-
-# ops/wave3/federation-load/scenarios/scenario-1-kill-server.sh, ops/wave3/federation-load/scenarios/scenario-2-latency-inject.sh …
-export HADEV_ARM64_MESH_IP=""
-
-# ops/wave3/adversarial-upgrade/_ssm.sh, ops/wave3/scripts/bootstrap-hadev-netbird.sh …
-export HADEV_ARM64_REGION=""
-
-# ops/zenoh/wedge-repro/run-stage.sh
-export HANDSHAKE_TIMEOUT_MS=""
 
 # ops/scripts/herd-audit-forward.sh
 export HERD_AUDIT_BATCH=""
@@ -2116,9 +1543,6 @@ export HOSTNET_PING_COUNT=""
 # ops/relay/health/host-net-publish.sh
 export HOSTNET_PING_TARGET=""
 
-# ops/cgnat-validation/peer-swarm/docker-compose.yml
-export HOST_LABEL=""
-
 # ops/compose/mgmt-host/docker-compose.relay-health.yml, ops/compose/relay-health-standalone/docker-compose.public.yml …
 export HOST_NET_ALLOWED_NAMES=""
 
@@ -2150,6 +1574,12 @@ export HYDRA_ADMIN=""
 export HYDRA_ADMIN_HOST_PORT=""
 
 # ops/compose/mgmt-host/docker-compose.ory.yml
+export HYDRA_MEMORY=""
+
+# ops/compose/mgmt-host/docker-compose.ory.yml
+export HYDRA_MEMORY_RESERVATION=""
+
+# ops/compose/mgmt-host/docker-compose.ory.yml
 export HYDRA_PUBLIC_HOST_PORT=""
 
 # ops/ansible/roles/ory/tasks/main.yml
@@ -2170,7 +1600,7 @@ export IDP_TENANT_KRATOS_ADMIN_URL=""
 # ops/ansible/roles/id-admin-console/templates/docker-compose.id-admin-console.yml.j2
 export ID_ADMIN_CONSOLE_HOST_PORT=""
 
-# ops/ansible/roles/id-admin-console/deploy-history.yml, ops/ansible/roles/id-admin-console/templates/docker-compose.id-admin-console.yml.j2
+# ops/ansible/roles/id-admin-console/templates/docker-compose.id-admin-console.yml.j2
 export ID_ADMIN_CONSOLE_IMAGE=""
 
 # ops/compose/mgmt-host/docker-compose.oauth2-proxy-id-console.yml
@@ -2179,26 +1609,17 @@ export ID_ADMIN_CONSOLE_OAUTH2_PROXY_HOST_PORT=""
 # ops/ansible/roles/id-admin-console/templates/docker-compose.id-admin-console.yml.j2
 export ID_ADMIN_CONSOLE_PLATFORM=""
 
-# ops/zenoh/wedge-loadtest/scripts/rig-harness.sh
-export IMAGE=""
-
 # ops/rpi-base-image/00-prerequisites.sh
 export IMAGES_DIR=""
-
-# ops/wave-33/tier-4b/inchworm.sh
-export IMAGE_ARCHIVE=""
 
 # ops/bootstrap/publish-containers.sh, ops/bootstrap/publish-image.sh
 export IMAGE_MIRROR_BUCKET=""
 
+# ops/bootstrap/build-image-orin.sh
+export IMAGE_ORG=""
+
 # ops/rpi-base-image/00-prerequisites.sh
 export IMAGE_PATH=""
-
-# ops/wave-33/tier-4b/inchworm.sh
-export INCHWORM_EVIDENCE_LABEL=""
-
-# ops/wave-33/tier-4b/inchworm-test.sh
-export INCHWORM_TEST_EVIDENCE=""
 
 # ops/relay/health/relay-health-probe.sh
 export INGEST_DIR=""
@@ -2212,26 +1633,14 @@ export INGEST_URLS=""
 # ops/rpi-base-image/03b-headless-dropbear-unlock.sh
 export INITRD_NAME=""
 
-# ops/goat-client-assay/install-goat-client.sh
-export INSTALLED_VER=""
-
 # ops/ansible/roles/isitup/files/check.sh
 export ISITUP_DATA_DIR=""
 
-# docs/project/active-work/recently_completed/easy-rollback-tier0-isitup.yaml, ops/ansible/roles/isitup/deploy-history.yml …
+# ops/ansible/roles/isitup/tasks/main.yml, ops/compose/mgmt-host/docker-compose.isitup.yml.j2
 export ISITUP_IMAGE=""
 
 # ops/ansible/roles/isitup/files/check.sh
 export ISITUP_SERVICES_ENV=""
-
-# ops/zenoh-ingress-gateway/probes/acl-baseline-probe.py, ops/zenoh-ingress-gateway/probes/acl-squat-probe.py
-export NOVA_CERT_DIR=""
-
-# ops/zenoh-ingress-gateway/probes/acl-baseline-probe.py, ops/zenoh-ingress-gateway/probes/acl-squat-probe.py
-export NOVA_ROUTER=""
-
-# ops/zenoh-ingress-gateway/probes/acl-baseline-probe.py, ops/zenoh-ingress-gateway/probes/acl-squat-probe.py
-export NOVA_VENDOR=""
 
 # ops/jetson-flash/flash-jetson-ubuntu.sh, ops/jetson-flash/flash-orin-remote.sh
 export JETSON_FLASH_BOARD=""
@@ -2242,17 +1651,17 @@ export JETSON_FLASH_HOSTNAME=""
 # ops/jetson-flash/flash-jetson-ubuntu.sh, ops/jetson-flash/flash-orin-remote.sh
 export JETSON_FLASH_USER=""
 
+# ops/federation-e2e/env
+export JOBS=""
+
 # ops/scripts/goat-standup.sh
 export JOIN_FOUNDER_GROUP=""
 
 # ops/scripts/goat-standup.sh
 export JOIN_FOUNDER_SITE=""
 
-# ops/federation-partnerenv/drill/drill.sh, ops/zenoh/wedge-repro/run-repro.sh …
+# ops/federation-e2e/lib/unit.sh
 export KEEP=""
-
-# ops/replication-observability-fire-test/run.sh
-export KEEP_STACK=""
 
 # ops/ci/check-alerting-receiver-not-noop.sh, ops/ci/check-partition-render-consistency.sh
 export KNOWN_OPEN_FILE=""
@@ -2272,7 +1681,7 @@ export KRATOS_ADMIN_PORT=""
 # ops/ansible/roles/netbird-admin-reconcile/files/netbird-admin-reconcile.sh, ops/compose/goat-obs/dormancy-report/dormancy_report.py …
 export KRATOS_ADMIN_URL=""
 
-# docs/operations/zagros-selfservice-password-reset.md, ops/ansible/roles/ory/tasks/main.yml …
+# ops/ansible/roles/ory/tasks/main.yml, ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_COURIER_SMTP_URI=""
 
 # ops/compose/mgmt-host/docker-compose.ory.yml
@@ -2280,6 +1689,12 @@ export KRATOS_ICAM_LOCAL_HOST_ENTRY=""
 
 # ops/ci/check-kratos-config-renders.sh
 export KRATOS_IMAGE=""
+
+# ops/compose/mgmt-host/docker-compose.ory.yml
+export KRATOS_MEMORY=""
+
+# ops/compose/mgmt-host/docker-compose.ory.yml
+export KRATOS_MEMORY_RESERVATION=""
 
 # ops/identity/cac-live-test/catcher.py
 export KRATOS_PUBLIC=""
@@ -2293,23 +1708,11 @@ export KRATOS_PUBLIC_URL=""
 # ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SELFSERVICE_UI_IMAGE=""
 
-# ops/ansible/group_vars/all.yml
-export VEGA_C_MINIO_ROOT_USER=""
-
-# ops/ansible/group_vars/all.yml
-export VEGA_C_OPENOBSERVE_ROOT_EMAIL=""
-
-# ops/zenoh-path-comparison/metrics-loop.sh
-export LABEL=""
-
 # ops/loadtest/rca-throughput-decomposition.sh
 export LADDER=""
 
 # ops/scripts/rc.sh
 export LAST=""
-
-# ops/oss/leak-gate.sh
-export LEAK_GATE_HITS=""
 
 # ops/netbird/netbird-boot-selfheal.sh
 export LEDGER_KEEP=""
@@ -2347,12 +1750,6 @@ export LINK_IF_ID=""
 # ops/ansible/roles/goat-peering-edge/templates/goat-peering-link.sh.j2
 export LINK_MTU=""
 
-# ops/federation-partnerenv/drill/lib/common.sh
-export LINK_OURS=""
-
-# ops/federation-partnerenv/drill/lib/common.sh
-export LINK_PARTNER=""
-
 # ops/ansible/roles/goat-peering-edge/templates/goat-peering-link.sh.j2
 export LINK_PREFIX_LEN=""
 
@@ -2365,11 +1762,11 @@ export LISTENER_PID=""
 # ops/e2e/live-canary.sh
 export LIVE_CANARY_AVENUE=""
 
-# ops/wave3/zenoh-soak-snapshot.sh
-export LOADGEN_CONTAINER=""
-
 # ops/loadtest/rca-throughput-decomposition.sh
 export LOADGEN_IMAGE=""
+
+# ops/zenoh/docker-compose.yml
+export LOADGEN_MEMORY=""
 
 # ops/monitoring/prometheus/prometheus.yml
 export LOADGEN_METRICS_TARGET=""
@@ -2377,11 +1774,8 @@ export LOADGEN_METRICS_TARGET=""
 # ops/loadtest/benchmark-ceiling.sh
 export LOADTEST_LOADGEN_IMAGE=""
 
-# ops/loadtest/README.md, ops/oss/docs-public/ops/loadtest/README.md
+# ops/loadtest/README.md
 export LOADTEST_OUT_DIR=""
-
-# docs/reference/compendium/export-compendium.sh
-export LOCALAPPDATA=""
 
 # ops/recipes/local-registry/test.sh
 export LOCAL_REGISTRY_TEST_PORT=""
@@ -2395,14 +1789,11 @@ export MANAGEMENT_A_CPUS=""
 # ops/compose/mgmt-host/docker-compose.yml
 export MANAGEMENT_A_MEMORY=""
 
+# ops/compose/mgmt-host/docker-compose.yml
+export MANAGEMENT_A_MEMORY_RESERVATION=""
+
 # ops/rpi-base-image/03b-headless-dropbear-unlock.sh
 export MASK=""
-
-# ops/zenoh/wedge-repro/ci-regression.sh
-export MAXMS=""
-
-# ops/zenoh/wedge-repro/ci-regression.sh
-export MAX_OPEN_MS=""
 
 # ops/netbird/netbird-boot-selfheal.sh
 export MAX_RESTARTS_PER_BOOT=""
@@ -2419,14 +1810,14 @@ export MEMBERSHIP_GOATNET_PREFIX=""
 # ops/goat-id-console/internal/config/config.go
 export MEMBERSHIP_SCOPE_PATH=""
 
+# ops/federation-e2e/env
+export MERGED=""
+
+# ops/mesh-info.sh
+export MESH_KNOWN_NAMES=""
+
 # ops/relay/health/canary-publish.sh
 export MESH_NAME=""
-
-# ops/obs/mesh-path-quality/mesh-path-quality.sh
-export MESH_PQ_PING_COUNT=""
-
-# ops/obs/mesh-path-quality/mesh-path-quality.sh
-export MESH_PQ_TUNNEL_MTU=""
 
 # ops/ci/check-mesh-reach-overgrant.sh
 export MESH_REACH_DEVIATIONS=""
@@ -2440,13 +1831,13 @@ export METRICS_FILE=""
 # ops/mgmt-host-bootstrap/cmd_integration_test.go
 export MGMT_BOOTSTRAP_DISABLE_GEOLOCATION=""
 
-# docs/operations/ephemeral-env-preflight.md, docs/project/implementation-plan.md …
+# docs/operations/ephemeral-env-preflight.md, ops/ansible/cgnat-validation.yml …
 export MGMT_CONTAINER_HOST_PORT=""
 
 # ops/scripts/create-assay-probe-identity.sh, ops/scripts/create-decode-health-identity.sh …
 export MGMT_HOST=""
 
-# docs/findings/F-025-mgmt-host-bootstrap-ghcr-private-package.md, ops/compose/mgmt-host/docker-compose.yml
+# ops/compose/mgmt-host/docker-compose.yml
 export MGMT_HOST_BOOTSTRAP_IMAGE=""
 
 # ops/ansible/roles/mgmt-host-bootstrap-wrapper/files/mgmt-host-bootstrap, ops/ansible/roles/mgmt-host-compose-watch/files/mgmt-host-compose-watch.sh
@@ -2470,9 +1861,6 @@ export MGMT_PROBE_URL=""
 # ops/scripts/create-assay-probe-identity.sh, ops/scripts/create-decode-health-identity.sh …
 export MGMT_SSH_OPTS=""
 
-# ops/wave-34/34I-enrollment-rate/run.sh
-export MGMT_URL=""
-
 # ops/observability/wide-events/spike/run-spike.sh
 export MINIO_HOST=""
 
@@ -2481,12 +1869,6 @@ export MINIO_USER=""
 
 # ops/netbird/netbird-boot-selfheal.sh
 export MIN_PEERS=""
-
-# provisioning/build.sh
-export MKISO=""
-
-# ops/zenoh/wedge-repro/run-stage.sh
-export MTLS=""
 
 # ops/goat-id-console/internal/config/config.go
 export MTLS_ONBOARD_ALLOWED_CLIENT_IDS=""
@@ -2506,31 +1888,25 @@ export NB_BIN=""
 # ops/ansible/roles/netbird-admin-reconcile/files/netbird-admin-reconcile.sh
 export NB_DB=""
 
-# ops/cgnat-validation/peer-node/install-netbird.sh
-export NB_HOSTNAME=""
-
-# ops/cgnat-validation/peer-node/install-netbird.sh
-export NB_MGMT_URL=""
-
 # ops/compose/mgmt-host/docker-compose.yml
 export NB_PEER_UPDATE_INTERVAL_MS=""
 
 # ops/compose/mgmt-host/docker-compose.yml
 export NB_PEER_UPDATE_STARTUP_PERIOD_S=""
 
-# docs/project/active-work/recently_completed/easy-rollback-tier0-netbird-dashboard.yaml, ops/ansible/roles/netbird-dashboard/deploy-history.yml …
+# ops/ansible/roles/netbird-dashboard/tasks/main.yml, ops/compose/mgmt-host/docker-compose.dashboard-admin.yml …
 export NETBIRD_DASHBOARD_IMAGE=""
 
-# docs/operations/deploy-guide.md, ops/backup.sh …
+# ops/backup.sh, ops/mesh-info.sh …
 export NETBIRD_DOMAIN=""
 
-# ops/cgnat-validation/peer-swarm/docker-compose.yml, ops/cgnat-validation/peer-swarm/entrypoint.sh …
+# ops/preflight-enrollment.sh
 export NETBIRD_MANAGEMENT_URL=""
 
 # ops/ansible/roles/netbird-admin-reconcile/files/netbird-admin-reconcile.sh
 export NETBIRD_MGMT_ADMIN_GROUPS=""
 
-# docs/operations/goat-ha-dev-validation.md, docs/project/active-work/recently_completed/easy-rollback-tier0-netbird-mgmt.yaml …
+# docs/operations/goat-ha-dev-validation.md, ops/ansible/coordinated-upgrade.yml …
 export NETBIRD_MGMT_IMAGE=""
 
 # ops/ansible/roles/netbird-admin-reconcile/files/netbird-admin-reconcile.sh
@@ -2551,62 +1927,32 @@ export NETBIRD_SITE_PREFIX=""
 # ops/netbird/patches/skip-migrations.patch
 export NETBIRD_SKIP_MIGRATIONS=""
 
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_ALERTS_OUT=""
+# ops/backup.sh, ops/relay/deploy-relay.sh …
+export NETHOST_HOST=""
 
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_CANARY_STALE_SECS=""
+# Makefile
+export NETHOST_HOSTNAME=""
 
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_DEGRADED_SECS=""
+# ops/mesh-info.sh, ops/relay/deploy-relay.sh …
+export NETHOST_MESH_ADDRESS=""
 
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_INGEST_DIR=""
+# ops/backup.sh, ops/relay/deploy-relay.sh …
+export NETHOST_NAME=""
 
-# ops/monitoring/net-health/reachability-canary.sh
-export NETHEALTH_INGEST_URLS=""
-
-# ops/monitoring/net-health/netbird-degradation-probe.sh
-export NETHEALTH_NBLOG=""
-
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_ONLINE_STUCK_MAX=""
-
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_OVERLAY_DROP_MAX=""
-
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_RELAY_FWD_ERR_MAX=""
-
-# ops/monitoring/net-health/netbird-degradation-probe.sh
-export NETHEALTH_STATE_DIR=""
-
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_STATE_FILE=""
-
-# ops/monitoring/net-health/reachability-canary.sh
-export NETHEALTH_TARGETS_FILE=""
-
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_UNREACHABLE_SECS=""
-
-# ops/monitoring/net-health/reachability-canary.sh
-export NETHEALTH_VANTAGE=""
-
-# ops/monitoring/net-health/netbird-degradation-probe.sh
-export NETHEALTH_WINDOW=""
-
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_ZENOH_CLOSE_WAIT_MAX=""
-
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_ZENOH_OPEN_MS_MAX=""
-
-# ops/monitoring/net-health/alert-eval.py
-export NETHEALTH_ZENOH_STALE_SECS=""
+# ops/backup.sh, ops/relay/deploy-relay.sh …
+export NETHOST_USER=""
 
 # ops/ansible/roles/icam-mtls-proxy/test_render.py, ops/identity/test_sovereign_pkis.py
 export NGINX_JS_MODULE=""
+
+# ops/federation-e2e/units/nohand-loop.sh, ops/federation-e2e/units/nohand.sh
+export NH_ADMIT_TREE=""
+
+# ops/federation-e2e/units/nohand.sh
+export NH_CORE_CN=""
+
+# ops/federation-e2e/units/nohand.sh
+export NH_DECLARES=""
 
 # ops/rpi-base-image/03b-headless-dropbear-unlock.sh
 export NICDRV=""
@@ -2650,16 +1996,34 @@ export NNH_UNDERLAY_RULES=""
 # ops/compose/goat-obs/docker-compose.yml
 export NODE_EXPORTER_LISTEN_ADDR=""
 
-# .github/workflows/goat-cli-release.yml, .github/workflows/goatbuilder-release.yml …
-export NOTARY_ISSUER_ID=""
+# ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
+export NODE_EXPORTER_MEMORY=""
 
-# ops/ansible/group_vars/zagros_cloud_hosts/vars.yml, ops/ansible/group_vars/zagros_cloud_obs_hosts/vars.yml …
-export NTFY_ALERTMANAGER_WEBHOOK_URL=""
+# ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
+export NODE_EXPORTER_MEMORY_RESERVATION=""
+
+# ops/zenoh-ingress-gateway/probes/acl-baseline-probe.py, ops/zenoh-ingress-gateway/probes/acl-squat-probe.py
+export NOVA_CERT_DIR=""
+
+# ops/zenoh-ingress-gateway/probes/acl-baseline-probe.py, ops/zenoh-ingress-gateway/probes/acl-squat-probe.py
+export NOVA_ROUTER=""
+
+# ops/zenoh-ingress-gateway/probes/acl-baseline-probe.py, ops/zenoh-ingress-gateway/probes/acl-squat-probe.py
+export NOVA_VENDOR=""
+
+# ops/federation-e2e/units/nodesec.sh
+export NS_FOUND=""
+
+# ops/federation-e2e/units/nodesec.sh
+export NS_FW_ON=""
+
+# ops/federation-e2e/units/nodesec.sh
+export NS_PROFILE_REQUIRED=""
 
 # ops/compose/relay-health-standalone/docker-compose.public.yml
 export NTFY_IMAGE=""
 
-# ops/ansible/roles/compliance-proxy/deploy-history.yml, ops/compose/mgmt-host/docker-compose.compliance-proxy.yml
+# ops/compose/mgmt-host/docker-compose.compliance-proxy.yml
 export OAUTH2_PROXY_COMPLIANCE_IMAGE=""
 
 # ops/compose/mgmt-host/docker-compose.compliance-proxy.yml
@@ -2669,9 +2033,12 @@ export OAUTH2_PROXY_COMPLIANCE_OIDC_HOST_ENTRY=""
 export OAUTH2_PROXY_DASHBOARD_ADMIN_IMAGE=""
 
 # ops/compose/mgmt-host/docker-compose.oauth2-proxy-dashboard-admin.yml
+export OAUTH2_PROXY_DASHBOARD_ADMIN_MEMORY=""
+
+# ops/compose/mgmt-host/docker-compose.oauth2-proxy-dashboard-admin.yml
 export OAUTH2_PROXY_DASHBOARD_ADMIN_OIDC_HOST_ENTRY=""
 
-# ops/ansible/roles/oauth2-proxy-dashboard/deploy-history.yml, ops/ansible/roles/oauth2-proxy-dashboard/tasks/main.yml …
+# ops/ansible/roles/oauth2-proxy-dashboard/tasks/main.yml, ops/compose/mgmt-host/docker-compose.oauth2-proxy-dashboard.yml
 export OAUTH2_PROXY_DASHBOARD_IMAGE=""
 
 # ops/compose/mgmt-host/docker-compose.oauth2-proxy-dashboard.yml
@@ -2686,7 +2053,7 @@ export OAUTH2_PROXY_ID_CONSOLE_OIDC_HOST_ENTRY=""
 # ops/compose/mgmt-host/docker-compose.isitup.yml.j2
 export OAUTH2_PROXY_IMAGE=""
 
-# docs/findings/F-127-on-host-containers-cannot-reach-mesh-coredns.md, ops/compose/mgmt-host/docker-compose.isitup.yml.j2
+# ops/compose/mgmt-host/docker-compose.isitup.yml.j2
 export OAUTH2_PROXY_OIDC_HOST_ENTRY=""
 
 # ops/compose/mgmt-host/docker-compose.relay-health.yml
@@ -2698,26 +2065,14 @@ export OAUTH2_PROXY_RELAY_HEALTH_OIDC_HOST_ENTRY=""
 # ops/compose/goat-obs/docker-compose.yml
 export OBS_PREFIX=""
 
-# ops/secrets/openbao/bootstrap.sh
-export OIDC_CALLBACK_MODE=""
+# ops/federation-e2e/units/nohand.sh, ops/federation-e2e/units/onecmd.sh
+export OC_ACC_ADDED=""
 
-# ops/secrets/openbao/bootstrap.sh
-export OIDC_CLIENT_ID=""
+# ops/federation-e2e/units/onecmd.sh
+export OC_PREFIX=""
 
-# ops/secrets/openbao/bootstrap.sh
-export OIDC_ISSUER=""
-
-# ops/secrets/openbao/bootstrap.sh
-export OIDC_MOUNT_PATH=""
-
-# ops/secrets/openbao/bootstrap.sh
-export OIDC_SCOPES=""
-
-# ops/secrets/openbao/bootstrap.sh
-export OIDC_SIGNING_ALGS=""
-
-# ops/secrets/openbao/bootstrap.sh
-export OIDC_USER_CLAIM=""
+# ops/federation-e2e/units/onecmd.sh
+export OC_SCENARIO=""
 
 # ops/goat-id-console/internal/config/config.go
 export ONBOARD_CLAIM_REQUEUE_AFTER=""
@@ -2737,13 +2092,7 @@ export ONBOARD_INVITE_ARCHIVE_AFTER=""
 # ops/onboard-runner/main.go
 export ONBOARD_MTLS_SERVER_ID=""
 
-# ops/secrets/openbao/bootstrap.sh
-export OPENBAO_SOVEREIGN_PKI_DIR=""
-
-# ops/secrets/openbao/bootstrap.sh
-export OPENBAO_USER_CA_FILE=""
-
-# ops/ansible/roles/openobserve/defaults/main.yml, ops/ansible/roles/otel-collector/defaults/main.yml
+# ops/ansible/roles/otel-collector/defaults/main.yml
 export OPENOBSERVE_ROOT_EMAIL=""
 
 # ops/observability/wide-events/spike/run-spike.sh
@@ -2757,9 +2106,6 @@ export OPERATING_SOVEREIGN=""
 
 # ops/identity/identity-usage.py
 export OPERATOR_MANIFEST_DIR=""
-
-# ops/zenoh/wedge-repro/run-stage.sh
-export OPID=""
 
 # ops/secrets/posture.py
 export OP_ACCOUNT=""
@@ -2788,83 +2134,20 @@ export ORY_SSH_HOST=""
 # ops/onboard-runner/docker-entrypoint.sh
 export ORY_SSH_USER=""
 
-# ops/oss/round.sh
-export OSS_REBUILD_WORKFLOWS=""
-
-# ops/oss/round.sh
-export OSS_RELEASE_TAGS=""
-
-# ops/oss/round.sh
-export OSS_WORKDIR=""
-
 # ops/admit-audit/otel.go, ops/mgmt-host-bootstrap/otel.go …
 export OTEL_EXPORTER_OTLP_ENDPOINT=""
-
-# ops/federation-partnerenv/drill/lib/common.sh
-export OURS_AMI_PREFIX=""
-
-# ops/federation-partnerenv/drill/lib/provision.sh
-export OURS_IP=""
-
-# ops/federation-partnerenv/drill/lib/common.sh
-export OURS_REGION=""
-
-# ops/federation-partnerenv/drill/lib/common.sh
-export OURS_RELEASE=""
-
-# ops/federation-partnerenv/drill/lib/common.sh
-export OURS_VERSION=""
-
-# ops/federation-partnerenv/drill/lib/common.sh
-export OUR_SOV=""
 
 # ops/bootstrap/rebuild.sh, ops/goat-relay/canary/iperf3-24h-driver.sh …
 export OUT_DIR=""
 
-# ops/ansible/group_vars/zagros_prod_echo_obs_hosts/vars.yml, ops/ansible/group_vars/zagros_prod_obs_hosts/vars.yml …
+# ops/scripts/rc.sh
+export OVERLAY=""
+
+# ops/ansible/roles/deadman-watch/defaults/main.yml, ops/deadman-watch/deadman-check.sh
 export PAGERDUTY_EVENTS_URL=""
-
-# ops/wave-34/multi-pair-relay/run.sh
-export PAIR_COUNT=""
-
-# ops/compose/nova/docker-compose.yml
-export PANOSCOPE_IMAGE=""
-
-# ops/compose/nova/docker-compose.yml
-export PANOSCOPE_PORTAL_REFRESH_SECS=""
-
-# ops/compose/nova/docker-compose.yml
-export PANOSCOPE_SAMPLING_PER_TOPIC_EPS=""
-
-# ops/zenoh-trial-peers/synth-vendor-schemas/bootstrap-zagros-synth-decode.sh
-export PANOSCOPE_URL=""
-
-# ops/compose/nova/docker-compose.yml
-export PANOSCOPE_WS_COALESCE_MS=""
-
-# ops/federation-partnerenv/drill/lib/provision.sh
-export PARTNER_IP=""
-
-# incubator/goat-moon-open-pod/compose/docker-compose.yml, incubator/goat-moon-open-pod/host/first-boot.sh
-export PARTNER_NAMESPACE=""
-
-# ops/federation-partnerenv/drill/lib/common.sh
-export PARTNER_REGION=""
-
-# ops/federation-partnerenv/drill/lib/common.sh
-export PARTNER_SOV=""
-
-# ops/federation-partnerenv/drill/lib/provision.sh
-export PARTNER_TFDATA=""
-
-# ops/federation-partnerenv/drill/lib/provision.sh
-export PARTNER_TFSTATE=""
 
 # ops/bootstrap/publish-containers.sh
 export PART_MB=""
-
-# ops/zenoh/wedge-loadtest/router/peergen/peergen.py
-export PAYLOAD=""
 
 # ops/loadtest/rca-throughput-decomposition.sh
 export PAYLOAD_BYTES=""
@@ -2872,47 +2155,11 @@ export PAYLOAD_BYTES=""
 # ops/ansible/roles/luks-unlock/files/tpm2-enroll-helper.sh
 export PCRS=""
 
-# ops/federation-partnerenv/drill/lib/common.sh
-export PEERING=""
-
-# ops/wave3/federation-load/scenarios/scenario-1-kill-server.sh, ops/wave3/federation-load/scenarios/scenario-2-latency-inject.sh
-export PEERS_PER_SERVER=""
-
 # ops/relay/metrics-publish.sh
 export PEERS_WINDOW_MIN=""
 
-# ops/peerview/peerview-poll.py
-export PEERVIEW_IDENTITY_URL=""
-
-# ops/peerview/peerview-poll.py
-export PEERVIEW_ID_CONSOLE_URL=""
-
-# ops/peerview/peerview-poll.py
-export PEERVIEW_NETBIRD_URL=""
-
-# ops/peerview/peerview-poll.py
-export PEERVIEW_PORTAL_CONTAINER=""
-
-# ops/peerview/peerview-poll.py
-export PEERVIEW_PORTAL_NET=""
-
-# ops/peerview/peerview-poll.py
-export PEERVIEW_PORTAL_PORT=""
-
-# ops/peerview/peerview-poll.py
-export PEERVIEW_PORTAL_URL=""
-
-# ops/wave3/scripts/check-soak-progress.sh
-export PEER_CADENCE_MIN=""
-
 # ops/goat-id-console/internal/config/config.go
 export PEER_HANDSHAKES_PATH=""
-
-# ops/cgnat-validation/peer-swarm/entrypoint.sh
-export PEER_LOG_LEVEL=""
-
-# ops/cgnat-validation/peer-swarm/entrypoint.sh
-export PEER_NAME=""
 
 # ops/compose/mgmt-host/docker-compose.obs.yml
 export PEER_NODE_EXPORTER_TARGET=""
@@ -2920,11 +2167,14 @@ export PEER_NODE_EXPORTER_TARGET=""
 # ops/compose/mgmt-host/docker-compose.obs.yml
 export PEER_SIGNAL_METRICS_TARGET=""
 
-# ops/wave3/steady-state.sh
-export PEER_TOLERANCE=""
-
 # ops/scripts/kanidm-door-audit.sh
 export PERSONS_JSON=""
+
+# ops/ci/test-peering-forwarder-e2e.sh
+export PF_E2E_IMAGE=""
+
+# ops/federation-e2e/units/preflight.sh
+export PF_INNER_FOR=""
 
 # ops/compose/mgmt-host/docker-compose.pgbackrest.yml
 export PGBACKREST_IMAGE=""
@@ -2935,37 +2185,19 @@ export PGDSN=""
 # ops/ansible/roles/netbird-admin-reconcile/files/netbird-admin-reconcile.sh, ops/scripts/peer-dormancy-report.sh …
 export PG_CONTAINER=""
 
-# ops/wave-34/34D-pg-pool-ceiling/run.sh
-export PG_DBNAME=""
-
-# ops/ansible/roles/netbird-admin-reconcile/files/netbird-admin-reconcile.sh, ops/wave-34/34D-pg-pool-ceiling/run.sh
+# ops/ansible/roles/netbird-admin-reconcile/files/netbird-admin-reconcile.sh
 export PG_USER=""
 
 # ops/loadtest/rca-throughput-decomposition.sh
 export PIPELINE_DEPTH=""
 
-# ops/federation-partnerenv/drill/lib/pki.sh
-export PKI_CA_DAYS=""
-
-# ops/federation-partnerenv/drill/lib/pki.sh
-export PKI_LEAF_DAYS=""
-
 # ops/scripts/kanidm-door-audit.sh
 export PLANE=""
 
-# ops/loadtest/rca-throughput-decomposition.sh, ops/zenoh/wedge-repro/run-stage.sh
+# ops/loadtest/rca-throughput-decomposition.sh
 export PLUGIN_DIR=""
 
-# incubator/goat-moon-open-pod/compose/docker-compose.yml, incubator/goat-moon-open-pod/host/first-boot.sh
-export POD_ID=""
-
-# incubator/goat-moon-open-pod/compose/docker-compose.yml
-export POD_STATE_DIR=""
-
-# ops/zenoh-trial-peers/consolidate-legacy-vendors.sh
-export PORTAL=""
-
-# ops/ci/check-topic-decode-health.py, ops/zenoh-trial-peers/vendor-decode-rca/main.go
+# ops/ci/check-topic-decode-health.py
 export PORTAL_BASE_URL=""
 
 # ops/goat-zenoh-portal/cmd/store-migrate/main.go
@@ -2983,23 +2215,47 @@ export PORTAL_RESOLVE_IP=""
 # ops/ansible/roles/pubsub-state-repo/defaults/main.yml, ops/ci/check-node-class-membership.sh …
 export PORTAL_URL=""
 
-# docs/design/usareur-af-repo-migration.md, ops/compose/mgmt-host/docker-compose.phase2.yml …
+# ops/compose/mgmt-host/docker-compose.yml
+export POSTGRES_A_MEMORY=""
+
+# ops/compose/mgmt-host/docker-compose.yml
+export POSTGRES_A_MEMORY_ARGS=""
+
+# ops/compose/mgmt-host/docker-compose.yml
+export POSTGRES_A_MEMORY_RESERVATION=""
+
+# ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
+export POSTGRES_EXPORTER_MEMORY=""
+
+# ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
+export POSTGRES_EXPORTER_MEMORY_RESERVATION=""
+
+# ops/ansible/roles/postgres-encoding-migrate/tasks/preflight.yml, ops/compose/mgmt-host/docker-compose.yml
+export POSTGRES_INITDB_ARGS=""
+
+# ops/compose/mgmt-host/docker-compose.phase2.yml, ops/compose/mgmt-host/docker-compose.yml
 export POSTGRES_SPOCK_IMAGE=""
 
-# ops/wave-34/34F-signal-federation-rate/run.sh
-export PROBE_BIN=""
+# ops/zenoh/pqc-image/smoke-fips.sh
+export PROBE_IMAGE=""
 
 # ops/goat-relay/canary/ssm-probe-loop.sh
 export PROBE_INTERVAL_S=""
 
-# ops/zenoh/wedge-loadtest/scripts/rig-harness.sh
-export PROBE_READERS=""
-
 # ops/netbird/netbird-boot-selfheal.sh
 export PROBE_TIMEOUT_S=""
 
-# ops/wave-34/34F-signal-federation-rate/run.sh
-export PROM_ADDR=""
+# ops/compose/goat-obs/docker-compose.yml
+export PROCESS_EXPORTER_MEMORY=""
+
+# ops/compose/goat-obs/docker-compose.yml
+export PROCESS_EXPORTER_MEMORY_RESERVATION=""
+
+# ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
+export PROMETHEUS_MEMORY=""
+
+# ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
+export PROMETHEUS_MEMORY_RESERVATION=""
 
 # ops/scripts/kanidm-door-audit.sh
 export PROM_PATH=""
@@ -3019,38 +2275,20 @@ export PR_READINESS_MAX_FILES=""
 # ops/scripts/pr-readiness.sh
 export PR_READINESS_MAX_LINES=""
 
-# ops/rosenpass-canary/zagros-2peer-proof.sh
-export PSK0=""
-
-# ops/rosenpass-canary/zagros-2peer-proof.sh
-export PSK1=""
-
-# ops/rosenpass-canary/notional-2peer-proof.sh
-export PSK1_T0=""
-
-# ops/rosenpass-canary/notional-2peer-proof.sh
-export PSK1_T1=""
-
 # ops/scripts/offboard_driver.py
 export PUBLIC_DOOR_KANIDM_URL=""
 
 # ops/loadtest/benchmark-ceiling.sh
 export PUTHIST=""
 
-# docs/briefs/architecture-in-pictures/build-all.sh, ops/identity/cac-test-pki/gen-test-card.sh …
+# ops/identity/cac-test-pki/gen-test-card.sh, ops/identity/mtls-proxy-proof/run.sh
 export PYTHON=""
 
-# ops/wave3/federation-load/scenarios/scenario-1-kill-server.sh, ops/wave3/federation-load/scenarios/scenario-2-latency-inject.sh …
-export RATE=""
+# ops/federation-e2e/lib/engine.sh, ops/federation-e2e/lib/unit.sh
+export RECORD=""
 
 # ops/scripts/fastlane.sh
 export RECORD_LINE=""
-
-# ops/wave3/steady-state.sh
-export RECV_AMD=""
-
-# ops/wave3/steady-state.sh
-export RECV_ARM=""
 
 # ops/identity/aal2-oidc-repro/repro.sh
 export REDIRECT_URI=""
@@ -3060,9 +2298,6 @@ export REFERENCE_RUNTIME_IMAGE=""
 
 # ops/e2e/live-canary.sh
 export REFS=""
-
-# ops/wave-33/tier-4b/quic-fallback-probe.sh, ops/zenoh/wedge-loadtest/scripts/run.sh
-export REGION=""
 
 # ops/scripts/relay-fleet-healthcheck.py
 export REGIONS=""
@@ -3076,8 +2311,14 @@ export REINVITE=""
 # ops/scripts/rosenpass_revoke_and_reinvite.py
 export REISSUE_MIN_DEVICES=""
 
+# ops/relay/deploy-relay.sh, ops/smoke-test.sh
+export RELAY_AWS_PROFILE=""
+
 # ops/relay/setup-vps.sh
 export RELAY_DNS_NAME=""
+
+# ops/smoke-test.sh
+export RELAY_DNS_NAMES=""
 
 # ops/scripts/relay-fleet-healthcheck.py
 export RELAY_HC_TIMEOUT=""
@@ -3166,9 +2407,6 @@ export RELAY_PEER_NAMES_PORTAL_URL=""
 # ops/relay-probe/publish.go
 export RELAY_STATS_URL=""
 
-# ops/wave-34/multi-pair-relay/run.sh
-export RELAY_TARGET=""
-
 # ops/scripts/pr-readiness.sh
 export REMOTE=""
 
@@ -3181,7 +2419,7 @@ export REPORT_DIR=""
 # ops/ci/check-federated-trust-retirement.sh, ops/ci/check-per-partner-trust-isolation.sh
 export REPO_FILE=""
 
-# ops/bootstrap/first-boot/first-boot.sh, ops/bootstrap/first-boot/integration-test/drive-test.sh …
+# ops/bootstrap/first-boot/first-boot.sh, ops/bootstrap/first-boot/integration-test/drive-test.sh
 export REPO_ROOT=""
 
 # ops/scripts/fresh-peer-probe.sh
@@ -3205,14 +2443,14 @@ export RESTART_CONTAINERS=""
 # ops/loadtest/rca-throughput-decomposition.sh
 export REST_HOST_PORT=""
 
-# deploy.sh, docs/operations/deploy-guide.md …
-export REVERSE_PROXY_TYPE=""
-
 # ops/bootstrap/first-boot/first-boot.sh, ops/wg-cp0-mesh-reach/entrypoint.sh
 export ROLE=""
 
 # ops/ansible/roles/netbird-admin-reconcile/files/netbird-admin-reconcile.sh
 export ROLE_MAP=""
+
+# ops/ci/test-rpi-flash-linux.sh
+export ROOT_DISK=""
 
 # ops/rpi-base-image/04-enroll-yubikey.sh
 export ROOT_PART=""
@@ -3241,62 +2479,32 @@ export RO_RATE=""
 # ops/scripts/rosenpass-revoke-and-reinvite.sh
 export RP_ALLOW_LOCAL_SCRIPT=""
 
+# ops/federation-e2e/lib/unit.sh
+export RP_IMAGE=""
+
 # ops/scripts/rosenpass_revoke_and_reinvite.py
 export RP_LEDGER=""
 
-# ops/compose/nova/docker-compose.yml, ops/grant-crypto/transport-proof/run.sh
+# ops/grant-crypto/transport-proof/run.sh
 export RUST_LOG=""
 
 # ops/zenoh/docker-compose.yml, ops/zenoh/loadgen/main.go
 export SCENARIO=""
 
-# ops/zenoh-trial-peers/bootstrap-airdefenders-portal.sh, ops/zenoh-trial-peers/bootstrap-portal-vendors.sh
-export SCP_TARGET=""
-
 # ops/loadtest/rca-throughput-decomposition.sh
 export SCRATCH_ROCKSDB=""
-
-# ops/serve/airdefenders/spawn-bots.sh
-export SCREEN_H=""
-
-# ops/serve/airdefenders/spawn-bots.sh
-export SCREEN_W=""
-
-# ops/zenoh/wedge-repro/run-slow-consumer.sh, ops/zenoh/wedge-repro/slow_consumer.py
-export SC_LABEL=""
-
-# ops/zenoh/wedge-repro/run-slow-consumer.sh
-export SC_QOS_DROP=""
-
-# ops/zenoh/wedge-repro/run-slow-consumer.sh
-export SC_QSIZE=""
-
-# ops/zenoh/wedge-repro/run-slow-consumer.sh
-export SC_RUST_LOG=""
-
-# ops/zenoh/wedge-repro/run-slow-consumer.sh
-export SC_RX_WORKERS=""
-
-# ops/zenoh/wedge-repro/run-slow-consumer.sh
-export SC_SECS=""
-
-# ops/zenoh/wedge-repro/run-slow-consumer.sh
-export SC_WAIT_BEFORE_CLOSE=""
-
-# ops/ansible/nethost-secwatch.yml, ops/secwatch/cmd/secwatch/main.go …
-export SECWATCH_WEBHOOK_URL=""
 
 # ops/compose/mgmt-host/docker-compose.ory.yml
 export SELFSERVICE_UI_HOST_PORT=""
 
+# ops/compose/mgmt-host/docker-compose.ory.yml
+export SELFSERVICE_UI_MEMORY=""
+
+# ops/compose/mgmt-host/docker-compose.ory.yml
+export SELFSERVICE_UI_MEMORY_RESERVATION=""
+
 # ops/loadtest/benchmark-ceiling.sh
 export SENT=""
-
-# ops/wave3/steady-state.sh
-export SENT_AMD=""
-
-# ops/wave3/steady-state.sh
-export SENT_ARM=""
 
 # ops/scripts/kanidm-reissue-code.sh
 export SERVER_EXPIRY=""
@@ -3304,17 +2512,23 @@ export SERVER_EXPIRY=""
 # ops/scripts/fresh-peer-probe.sh
 export SERVICES=""
 
-# docs/design/easy-rollback.md, ops/oss/docs-public/docs/design/easy-rollback.md
+# docs/design/easy-rollback.md
 export SERVICE_IMAGE=""
 
 # ops/loadtest/rca-throughput-decomposition.sh
 export SESSIONS=""
+
+# ops/federation-e2e/units/shapes.sh
+export SH_CROSS_WAIT=""
 
 # ops/compose/mgmt-host/docker-compose.yml
 export SIGNAL_A_CPUS=""
 
 # ops/compose/mgmt-host/docker-compose.yml
 export SIGNAL_A_MEMORY=""
+
+# ops/compose/mgmt-host/docker-compose.yml
+export SIGNAL_A_MEMORY_RESERVATION=""
 
 # ops/compose/mgmt-host/docker-compose.yml, signal-server/cmd/signal-server/main.go
 export SIGNAL_FEDERATION_AUTHORITY=""
@@ -3324,9 +2538,6 @@ export SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS=""
 
 # ops/signal-federation-probe/docker-compose.yml
 export SIGNAL_FEDERATION_PROBE_IMAGE=""
-
-# ops/wave3/federation-load/scripts/spin-up-third-signal.sh
-export SIGNAL_IMAGE=""
 
 # ops/compose/mgmt-host/docker-compose.yml
 export SIGNAL_NEGATIVE_CACHE_TTL=""
@@ -3346,6 +2557,9 @@ export SIGNERS=""
 # ops/bootstrap/publish-image.sh
 export SIGNER_ID=""
 
+# crates/goatbuilder/src/federate/measure.rs
+export SITE=""
+
 # ops/identity/aal2-oidc-repro/repro.sh
 export SITE_AUTH=""
 
@@ -3364,32 +2578,8 @@ export SITE_OAUTH2=""
 # ops/scripts/fresh-peer-probe.sh
 export SITE_ZONE=""
 
-# ops/ci/check-ghcr-namespace-parity.sh
-export SKIPPED=""
-
-# ops/replication-observability-fire-test/run.sh
-export SKIP_TEARDOWN=""
-
-# ops/ansible/group_vars/zagros_cloud_hosts/vars.yml, ops/ansible/group_vars/zagros_cloud_obs_hosts/vars.yml …
-export SLACK_ALERT_WEBHOOK_URL=""
-
-# ops/zenoh/wedge-loadtest/router/peergen/peergen.py
-export SLOTS=""
-
 # ops/smoketest/cmd/smoketest/main.go
 export SMOKETEST_CONFIG=""
-
-# ops/zenoh-trial-peers/budget-notify/budget-notify.py
-export SMTP_FROM=""
-
-# ops/zenoh-trial-peers/budget-notify/budget-notify.py
-export SMTP_HOST=""
-
-# ops/zenoh-trial-peers/budget-notify/budget-notify.py
-export SMTP_PORT=""
-
-# ops/zenoh-trial-peers/budget-notify/budget-notify.py
-export SMTP_USERNAME=""
 
 # ops/snitch/cmd/snitch/main.go, ops/snitch/install-probe-darwin.sh …
 export SNITCH_COLLECTOR=""
@@ -3399,6 +2589,15 @@ export SNITCH_DB_URL=""
 
 # ops/snitch/internal/server/probe_policy.go
 export SNITCH_DEFAULT_POLICY=""
+
+# ops/snitch/docker-compose.yml
+export SNITCH_DNS=""
+
+# ops/snitch/docker-compose.yml
+export SNITCH_GATE_STATUS_FILE=""
+
+# ops/snitch/docker-compose.yml
+export SNITCH_HOST=""
 
 # ops/snitch/internal/collector/collector.go
 export SNITCH_PEER_DOMAIN_SUFFIXES=""
@@ -3412,17 +2611,8 @@ export SNITCH_RELAY_URLS=""
 # ops/snitch/cmd/snitch/main.go
 export SNITCH_THROUGHPUT_TARGET=""
 
-# ops/goat-client-assay/run-assay.sh
-export SOAK_MIN=""
-
-# ops/wave-33/relay-conformance/run.sh, ops/wave-34/34D-pg-pool-ceiling/run.sh …
-export SOAK_TIER=""
-
 # ops/compose/mgmt-host/docker-compose.spire-agent.yml, ops/compose/mgmt-host/docker-compose.spire.yml
 export SPIRE_AGENT_IMAGE=""
-
-# ops/serve/trust-sandbox/spire/server-entry.sh
-export SPIRE_BUNDLE_REFRESH_S=""
 
 # ops/compose/mgmt-host/docker-compose.spire.yml
 export SPIRE_SERVER_BIND=""
@@ -3432,12 +2622,6 @@ export SPIRE_SERVER_HOST_PORT=""
 
 # ops/compose/mgmt-host/docker-compose.spire.yml
 export SPIRE_SERVER_IMAGE=""
-
-# ops/wave3/steady-state.sh
-export SPOCK_AMD=""
-
-# ops/wave3/steady-state.sh
-export SPOCK_ARM=""
 
 # ops/ansible/roles/spock-drift-watch/files/spock-drift-watch.sh
 export SPOCK_DRIFT_ENV_FILE=""
@@ -3457,29 +2641,11 @@ export SPOCK_DRIFT_TEXTFILE=""
 # ops/identity/register-drift.sh
 export SQLITE_CMD=""
 
-# ops/scripts/peer-dormancy-report.sh, ops/scripts/rosenpass-remediate.sh …
-export SSH_USER=""
+# ops/ansible/roles/goat-host-firewall/tasks/main.yml
+export SSH_CONNECTION=""
 
 # ops/ansible/goat-relay-deploy.yml
 export SSM_BUCKET=""
-
-# ops/secrets/openbao/bootstrap.sh
-export SSO_CLIENT_ID=""
-
-# ops/secrets/openbao/bootstrap.sh
-export SSO_DISCOVERY=""
-
-# ops/secrets/openbao/bootstrap.sh
-export SSO_EXISTING=""
-
-# ops/secrets/openbao/bootstrap.sh
-export SSO_MOUNT=""
-
-# ops/secrets/openbao/bootstrap.sh
-export SSO_SCOPES=""
-
-# ops/secrets/openbao/bootstrap.sh
-export SSO_TENANTS=""
 
 # ops/ansible/roles/topic-decode-health-guard/files/topic-decode-health-guard.sh
 export STALE_AFTER=""
@@ -3487,38 +2653,17 @@ export STALE_AFTER=""
 # ops/loadtest/rca-throughput-decomposition.sh
 export STAMP=""
 
-# ops/federation-partnerenv/drill/lib/common.sh
-export STATE=""
-
-# ops/netbird/netbird-boot-selfheal.sh, ops/relay/health/canary-publish.sh …
+# ops/ansible/inventory/generate-relays.sh, ops/netbird/netbird-boot-selfheal.sh …
 export STATE_DIR=""
 
-# ops/zenoh/wedge-loadtest/scripts/rig-harness.sh, ops/zenoh/wedge-repro/run-stage.sh
-export STORAGES=""
-
-# ops/ansible/roles/goat-zenoh/files/delete-vendor.sh, ops/ansible/roles/nova-lan-zenoh/files/delete-vendor.sh
+# ops/ansible/roles/goat-zenoh/files/delete-vendor.sh
 export STORAGE_PARENT=""
-
-# ops/zenoh/wedge-repro/churn.py, ops/zenoh/wedge-repro/openprobe.py …
-export STORM_CERT=""
 
 # ops/relay/update-stun-config.sh
 export STUN_IPS=""
 
-# ops/zenoh/wedge-loadtest/router/peergen/peergen.py
-export SUSTAINED=""
-
 # ops/netbird/netbird-boot-selfheal.sh
 export SUSTAINED_CHECKS=""
-
-# ops/zenoh-trial-peers/bootstrap-portal-vendors.sh
-export SYNTH_VENDOR_CERT_OUT_DIR=""
-
-# ops/wave3/scripts/stop-partition.sh
-export T0_AMD=""
-
-# ops/wave3/scripts/stop-partition.sh
-export T0_ARM=""
 
 # ops/bootstrap/rebuild.sh
 export T1_BUCKET=""
@@ -3534,18 +2679,6 @@ export T2_BASE_URL=""
 
 # ops/bootstrap/pull-image.sh
 export T3_BASE_URL=""
-
-# terraform-prod/bootstrap.sh
-export TABLE=""
-
-# ops/ansible/inventory/generate.sh, ops/tak/backup-tak.sh …
-export TAK_HOST=""
-
-# ops/tak/enroll-client.sh
-export TAK_HOSTNAME=""
-
-# ops/tak/backup-tak.sh, ops/tak/enroll-client.sh
-export TAK_USER=""
 
 # ops/mgmt-host-bootstrap/Dockerfile, ops/postgres/spock/Dockerfile
 export TARGETARCH=""
@@ -3565,14 +2698,11 @@ export TBD_SENTINELS=""
 # ops/ci/check-test-coverage-wired.py
 export TEST_COVERAGE_ALLOWLIST=""
 
+# ops/snitch/internal/auth/browser_auth_test.go
+export TEST_PG_DSN=""
+
 # ops/ansible/roles/machine-provenance-guard/files/machine-provenance-guard.sh, ops/ansible/roles/mesh-membership-reconcile/files/mesh-membership-reconcile.sh …
 export TEXTFILE_DIR=""
-
-# ops/federation-partnerenv/drill/lib/common.sh
-export TFVARS=""
-
-# ops/scripts/peer-dormancy-report.sh, ops/scripts/rosenpass-remediate.sh …
-export THOR_HOST=""
 
 # ops/ansible/roles/luks-unlock/files/tpm2-enroll-helper.sh
 export TIMEOUT_S=""
@@ -3580,20 +2710,11 @@ export TIMEOUT_S=""
 # ops/ansible/roles/enrolment-watch/files/enrolment-watch.sh
 export TOTAL_FAILS=""
 
-# ops/wave3/adversarial-upgrade/_ssm.sh
-export TO_IMAGE=""
-
 # ops/scripts/ftpm-availability-spike.sh
 export TPM2_TOOLS_AVAILABLE=""
 
 # ops/scripts/ftpm-availability-spike.sh
 export TPM_MODULES_LOADED=""
-
-# ops/zenoh/wedge-repro/ci-adminspace-deadlock.sh, ops/zenoh/wedge-repro/ci-regression.sh …
-export TPORT=""
-
-# deploy.sh, docs/operations/deploy-guide.md …
-export TRAEFIK_ACME_EMAIL=""
 
 # ops/goat-id-console/test/forwardauth/run.sh
 export TRAEFIK_BIN=""
@@ -3607,10 +2728,13 @@ export TRAEFIK_IMAGE=""
 # ops/compose/mgmt-host/docker-compose.yml
 export TRAEFIK_MEMORY=""
 
-# docs/adr/1161-metrics-endpoints-reachable-from-an-off-box-obs-host.md, docs/adr/INDEX.md …
+# ops/compose/mgmt-host/docker-compose.yml
+export TRAEFIK_MEMORY_RESERVATION=""
+
+# ops/compose/mgmt-host/docker-compose.yml
 export TRAEFIK_METRICS_BIND=""
 
-# ops/authelia/docker-compose.yml, ops/gatewatch/docker-compose.yml …
+# ops/serve/docker-compose.yml, ops/smoketest/docker-compose.yml …
 export TRAEFIK_NETWORK=""
 
 # ops/compose/mgmt-host/docker-compose.yml
@@ -3622,23 +2746,14 @@ export TRANSPORT=""
 # ops/scripts/pr-readiness.sh
 export TRUNK=""
 
-# ops/serve/airdefenders/demo_auth.go
-export TRUST_FORWARDED_IDENTITY=""
-
-# ops/serve/trust-sandbox/deploy/docker-compose.hosted.yml
-export TS_GATE_ALLOWED_GROUPS=""
-
-# ops/serve/trust-sandbox/docker-compose.yml
-export TS_PUBLIC_ORIGIN=""
-
 # ops/scripts/kanidm-reissue-code.sh
 export TTL_HOURS=""
 
-# ops/federation-partnerenv/drill/lib/tunnel.sh
-export TUNNEL_WAIVER=""
-
 # ops/vm-image/build.sh
 export UBUNTU_BASE=""
+
+# ops/federation-e2e/lib/unit.sh
+export UNIT_RC=""
 
 # ops/bootstrap/first-boot/integration-test/drive-test.sh
 export USERDATA_OVERRIDE=""
@@ -3646,32 +2761,29 @@ export USERDATA_OVERRIDE=""
 # ops/enrollment/cmd/wg-cp0/audit.go, ops/enrollment/cmd/wg-cp0/coverage_lift_test.go
 export USERNAME=""
 
-# docs/reference/compendium/export-compendium.sh
-export USERPROFILE=""
-
-# docs/reference/compendium/export-compendium.sh
-export USER_OUT=""
-
-# ops/ansible/roles/vaultwarden/defaults/main.yml
-export VAULTWARDEN_SMTP_USERNAME=""
-
-# ops/secrets/openbao/baolib.py
+# ops/scripts/secrets-session
 export VAULT_ADDR=""
 
-# ops/secrets/openbao/baolib.py
-export VAULT_CACERT=""
+# ops/ansible/group_vars/all.yml
+export VEGA_C_MINIO_ROOT_USER=""
 
-# ops/ansible/roles/goat-zenoh/files/delete-vendor.sh, ops/ansible/roles/nova-lan-zenoh/files/delete-vendor.sh
+# ops/ansible/group_vars/all.yml
+export VEGA_C_OPENOBSERVE_ROOT_EMAIL=""
+
+# ops/ansible/roles/goat-zenoh/files/delete-vendor.sh
 export VENDOR=""
 
 # ops/grant-crypto/transport-proof/run.sh
 export VENV=""
 
+# .github/actions/apt-failover/action.yml
+export VERSION_CODENAME=""
+
+# ops/federation-e2e/lib/engine.sh
+export VERSION_ID=""
+
 # ops/vm-image/build.sh
 export VM_IMAGE_SSH_PORT=""
-
-# ops/zenoh/wedge-repro/run-stage.sh
-export VOLUME=""
 
 # ops/scripts/vxlan-rca.sh
 export VXLAN_RCA_CAPTURE_SECONDS=""
@@ -3684,27 +2796,6 @@ export VXLAN_RCA_NO_PCAP=""
 
 # ops/ci/check-node-class-membership.sh
 export WARRANT_MEMBERSHIP_DIR=""
-
-# ops/wave3/scripts/check-soak-progress.sh, ops/wave3/scripts/start-soak.sh …
-export WAVE3_ACCOUNT_ID=""
-
-# ops/wave3/scripts/start-soak.sh
-export WAVE3_DURATION=""
-
-# ops/wave3/scripts/check-soak-progress.sh
-export WAVE3_DURATION_H=""
-
-# ops/wave3/scripts/check-soak-progress.sh, ops/wave3/scripts/start-soak.sh
-export WAVE3_RUN_LABEL=""
-
-# ops/wave3/scripts/start-soak.sh
-export WAVE3_SPEEDUP=""
-
-# ops/wave3/scripts/check-soak-progress.sh, ops/wave3/scripts/start-soak.sh
-export WAVE3_T0=""
-
-# ops/serve/zenoh-sandbox/local/serve.sh
-export WEB_PORT=""
 
 # ops/relay/health/zenoh-health-probe.sh
 export WEDGE_WATCH_LOG=""
@@ -3721,23 +2812,26 @@ export WG_CP0_BUNDLE_CREATE_BIN=""
 # ops/enrollment/cmd/wg-cp0/cmd_reconcile.go, ops/enrollment/cmd/wg-cp0/cmd_reconcile_test.go
 export WG_CP0_OFFLINE=""
 
-# ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
+# ops/ansible/roles/goat-peering-forwarder/templates/goat-peering-forwarder-link.sh.j2, ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
 export WG_IFNAME=""
 
 # ops/ansible/roles/wireguard-kmod/defaults/main.yml
 export WG_KMOD_ARTIFACT_ROOT=""
 
-# ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
+# ops/ansible/roles/goat-peering-forwarder/templates/goat-peering-forwarder-link.sh.j2, ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
 export WG_LINK_ADDR=""
 
-# ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
+# ops/ansible/roles/goat-peering-forwarder/templates/goat-peering-forwarder-link.sh.j2, ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
 export WG_LISTEN_PORT=""
 
-# ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
+# ops/ansible/roles/goat-peering-forwarder/templates/goat-peering-forwarder-link.sh.j2, ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
 export WG_MTU=""
 
-# ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
+# ops/ansible/roles/goat-peering-forwarder/templates/goat-peering-forwarder-link.sh.j2, ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
 export WG_NFT_FILE=""
+
+# ops/ansible/roles/goat-peering-forwarder/templates/goat-peering-forwarder-link.sh.j2
+export WG_PEER_ALLOWED=""
 
 # ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
 export WG_PEER_ENDPOINT=""
@@ -3745,46 +2839,31 @@ export WG_PEER_ENDPOINT=""
 # ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
 export WG_PEER_KEEPALIVE=""
 
-# docs/findings/F-047-tegra-no-wireguard-module-ubuntu-binary-name-divergence.md
-export WG_QUICK_USERSPACE_IMPLEMENTATION=""
+# ops/federation-e2e/lib/unit.sh
+export WORK=""
 
 # ops/ci/check-env-coverage.sh
 export WORKFLOW_DIR=""
 
-# docs/compliance/rmf/build-package.sh, ops/jetson-flash/flash-jetson-ubuntu.sh
+# ops/jetson-flash/flash-jetson-ubuntu.sh
 export WORK_DIR=""
-
-# ops/work/main.go
-export WORK_LEGACY_EMAIL_OWNER=""
-
-# ops/work/main.go
-export WORK_OWNER=""
 
 # ops/enrollment/cmd/wg-cp0/audit.go
 export WORK_TRACK=""
 
-# ops/serve/zenoh-sandbox/local/serve.sh
-export WS_PORT=""
+# ops/rpi-base-image/01-flash.sh
+export WRITE_STARTED=""
 
 # ops/loadtest/rca-throughput-decomposition.sh
 export ZBIN_DIR=""
 
-# MULTIPLAYER_NOTES.md
-export ZENOH_CA_PATH=""
-
-# MULTIPLAYER_NOTES.md
-export ZENOH_CERT_PATH=""
-
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_CLIENT_CERT=""
-
-# ops/wave3/zenoh-soak-snapshot.sh
-export ZENOH_CONTAINER=""
 
 # ops/relay/health/zenoh-fabric-sampler.sh
 export ZENOH_CT=""
 
-# ops/zenoh/loadgen/main.go, ops/zenoh/wedge-loadtest/router/peergen/peergen.py
+# ops/zenoh/loadgen/main.go
 export ZENOH_ENDPOINT=""
 
 # ops/relay/health/zenoh-health-probe.sh
@@ -3799,7 +2878,7 @@ export ZENOH_GOATNET=""
 # ops/compose/mgmt-host/docker-compose.relay-health.yml, ops/compose/relay-health-standalone/docker-compose.public.yml …
 export ZENOH_HEALTH_ALLOWED_NAMES=""
 
-# ops/federation-drill/docker-compose.yml, ops/federation-partnerenv/drill/lib/common.sh …
+# ops/federation-smoke/docker-compose.yml, ops/federation-smoke/test-fabric.sh
 export ZENOH_IMAGE=""
 
 # ops/relay/health/zenoh-health-probe.sh
@@ -3807,12 +2886,6 @@ export ZENOH_INGEST_URLS=""
 
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_INTERVAL_S=""
-
-# incubator/goat-moon-open-pod/compose/docker-compose.yml
-export ZENOH_LOCAL_ENDPOINT=""
-
-# incubator/goat-moon-open-pod/compose/docker-compose.yml, incubator/goat-moon-open-pod/host/first-boot.sh
-export ZENOH_LOG=""
 
 # ops/monitoring/prometheus/prometheus.yml
 export ZENOH_METRICS_TARGET=""
@@ -3823,14 +2896,8 @@ export ZENOH_PIN=""
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_PROM_OUT=""
 
-# MULTIPLAYER_NOTES.md, ops/serve/airdefenders/main.go
-export ZENOH_PUBLISH=""
-
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_QUIC_PORT=""
-
-# ops/serve/airdefenders/main.go
-export ZENOH_REST_ENDPOINT=""
 
 # ops/relay/health/zenoh-fabric-sampler.sh, ops/relay/health/zenoh-health-probe.sh
 export ZENOH_REST_PORT=""
@@ -3841,16 +2908,13 @@ export ZENOH_REST_URL=""
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_ROUTER_CONTAINER=""
 
-# MULTIPLAYER_NOTES.md
-export ZENOH_ROUTER_ENDPOINT=""
-
 # ops/relay/health/zenoh-fabric-sampler.sh, ops/relay/health/zenoh-health-probe.sh
 export ZENOH_ROUTER_NAME=""
 
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_ROUTER_PEER_ALLOW=""
 
-# ops/relay/health/zenoh-health-probe.sh, ops/wave3/zenoh-soak-snapshot.sh
+# ops/relay/health/zenoh-health-probe.sh
 export ZENOH_STORAGE_DIR=""
 
 # ops/relay/health/zenoh-health-probe.sh

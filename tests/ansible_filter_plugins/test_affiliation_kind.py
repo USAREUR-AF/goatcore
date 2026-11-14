@@ -2,15 +2,15 @@
 and mints the same kind the play's inline table did before it moved there.
 
 Needs PyYAML (gen-roster.py imports it), as every Ansible controller has.
-Run directly: `python3 ops/ansible/filter_plugins/test_affiliation_kind.py`.
+Run directly: `python3 tests/ansible_filter_plugins/test_affiliation_kind.py`.
 """
 
 import importlib.util
 import unittest
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-SPEC = importlib.util.spec_from_file_location("affiliation_kind", HERE / "affiliation_kind.py")
+FILTERS = Path(__file__).resolve().parents[2] / "ops" / "ansible" / "filter_plugins"
+SPEC = importlib.util.spec_from_file_location("affiliation_kind", FILTERS / "affiliation_kind.py")
 affiliation_kind = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(affiliation_kind)
 derive = affiliation_kind.affiliation_derive_kind
@@ -47,7 +47,7 @@ class SharedTableTest(unittest.TestCase):
         self.assertEqual(derive("state", "EST", "USA"), "partner")
 
     def test_the_filter_is_registered_under_the_name_the_play_uses(self):
-        play = (HERE.parent / "operator-onboard.yml").read_text()
+        play = (FILTERS.parent / "operator-onboard.yml").read_text()
         self.assertIn("| affiliation_derive_kind", play)
         self.assertIs(affiliation_kind.FilterModule().filters()["affiliation_derive_kind"], derive)
 

@@ -53,7 +53,7 @@ on:
       - 'ops/operators/test_gen_roster_derive_kind.py'
       - 'ops/operators/test_gen_roster_per_goatnet.py'
       - 'ops/ansible/filter_plugins/affiliation_kind.py'
-      - 'ops/ansible/filter_plugins/test_affiliation_kind.py'
+      - 'tests/ansible_filter_plugins/test_affiliation_kind.py'
       - 'ops/identity/orgs/**'
       - 'ops/identity/backfill-aff-trait.py'
       - 'ops/identity/test_backfill_aff_trait.py'
@@ -128,7 +128,7 @@ jobs:
       # operator-onboard.yml reads the same table through this filter, not a copy
       # of its own, so a sector added to derive_kind reaches the play.
       - name: derive_kind filter for operator-onboard.yml (ADR 1151 — one table, no play copy)
-        run: python3 ops/ansible/filter_plugins/test_affiliation_kind.py
+        run: python3 tests/ansible_filter_plugins/test_affiliation_kind.py
 
       - name: ADR 1172 — a goatnet's roster reads only that goatnet's manifests
         run: python3 ops/operators/test_gen_roster_per_goatnet.py

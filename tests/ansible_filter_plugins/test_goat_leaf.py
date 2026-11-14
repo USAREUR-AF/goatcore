@@ -7,7 +7,7 @@ ansible-playbook from that worktree: the play must stat the leaf that sits only
 in the per-operator state dir, which is what a router deploy from a fresh
 checkout needs.
 
-    python3 ops/ansible/filter_plugins/test_goat_leaf.py
+    python3 tests/ansible_filter_plugins/test_goat_leaf.py
 """
 
 import importlib.util
@@ -22,8 +22,8 @@ import unittest
 import unittest.mock as mock
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location("goat_leaf", HERE / "goat_leaf.py")
+FILTERS = Path(__file__).resolve().parents[2] / "ops" / "ansible" / "filter_plugins"
+spec = importlib.util.spec_from_file_location("goat_leaf", FILTERS / "goat_leaf.py")
 gl = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gl)
 
@@ -128,7 +128,7 @@ class FreshWorktreeDeploy(unittest.TestCase):
             repo = tmp / "repo"
             (repo / "ops" / "ansible" / "filter_plugins").mkdir(parents=True)
             (repo / "ops" / "enrollment" / "manifests").mkdir(parents=True)
-            shutil.copy(HERE / "goat_leaf.py", repo / "ops" / "ansible" / "filter_plugins")
+            shutil.copy(FILTERS / "goat_leaf.py", repo / "ops" / "ansible" / "filter_plugins")
             (repo / "ops" / "ansible" / "ansible.cfg").write_text(
                 "[defaults]\nfilter_plugins = ./filter_plugins\n")
             (repo / "ops" / "ansible" / "group_vars").mkdir(parents=True)

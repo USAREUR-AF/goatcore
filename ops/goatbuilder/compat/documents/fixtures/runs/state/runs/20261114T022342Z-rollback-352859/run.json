@@ -1,0 +1,41 @@
+{
+  "schema": "goatbuilder.run/v1",
+  "id": "20261114T022342Z-rollback-352859",
+  "tool_version": "0.6.0",
+  "tree_commit": null,
+  "verb": "rollback",
+  "args": [
+    "-C",
+    "/tmp/goatbuilder-compat/repo",
+    "rollback",
+    "portal",
+    "1",
+    "--env",
+    "dev",
+    "--yes"
+  ],
+  "started": "2026-11-14T02:23:42Z",
+  "ended": "2026-11-14T02:23:42Z",
+  "exit": 2,
+  "error": "ops/scripts/fresh-source.sh: No such file or directory (os error 2)",
+  "phases": [],
+  "commands": [
+    {
+      "phase": null,
+      "command": "/tmp/goatbuilder-compat/repo/ops/scripts/fresh-source.sh --repo /tmp/goatbuilder-compat/repo",
+      "argv": [
+        "/tmp/goatbuilder-compat/repo/ops/scripts/fresh-source.sh",
+        "--repo",
+        "/tmp/goatbuilder-compat/repo"
+      ],
+      "host": null,
+      "log": "/tmp/goatbuilder-compat/home/.goat/state/runs/20261114T022342Z-rollback-352859/logs/001-probe.log",
+      "log_note": "did not start",
+      "started": "2026-11-14T02:23:42Z",
+      "ended": "2026-11-14T02:23:42Z",
+      "exit": null,
+      "secs": 0.0
+    }
+  ],
+  "inputs": []
+}
