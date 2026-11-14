@@ -1,6 +1,6 @@
 # Netbird relay wire protocol — reverse-engineered spec
 
-**Status:** SKELETON (Block 33A — wire-protocol conformance work in progress).
+**Status:** written. Sections 1 to 6 are complete (the checklist at the end records each); section 7, the open questions, is still being resolved. The relay built from this spec, `goat-relay`, is released as `goat-relay/v0.1.0` and is the relay in service.
 **Source-of-truth pin:** upstream `netbirdio/netbird` commit `53b04e512` (2026-04-16) — matches `NETBIRD_REF` pin in [`ops/netbird/Dockerfile`](../../ops/netbird/Dockerfile), which is the version production runs.
 **Authored:** 2026-04-29 by the Block 33 work; updated as each section is filled in from upstream source reading.
 **Companion artifacts:**
