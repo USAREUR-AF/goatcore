@@ -1,0 +1,4 @@
+# alpha mesh DNS — *.zagros.example.org resolution. GENERATED FILE — DO NOT HAND-EDIT.
+# Fixture stand-in for ops/dns/generate-mesh-hosts.py's output: the goatnet's zone.
+100.127.0.1 isitup.alpha.zagros.example.org
+100.127.0.1 dashboard.alpha.zagros.example.org

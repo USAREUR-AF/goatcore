@@ -962,12 +962,46 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let gv = t.path().join("ops/ansible/group_vars");
         std::fs::create_dir_all(gv.join("zagros_b_hosts")).unwrap();
-        std::fs::write(gv.join("zagros_b_hosts/vars.yml"), "goatnet_founder: false\njoin_founder_site: zagros\nsite_enrollment_dns: netbird.example.net\n").unwrap();
+        std::fs::write(gv.join("zagros_b_hosts/vars.yml"), "goatnet_founder: false\njoin_founder_site: zagros\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
         // The site's leaf-cert manifest: the router and one service leaf.
         let m = t.path().join("ops/enrollment/manifests");
         std::fs::create_dir_all(&m).unwrap();
         std::fs::write(m.join("zagros-b-certs.yaml"), "site_id: zagros-b\nout_dir: /s/zagros-b-leaves\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n  - name: portal\n    cn: portal\n").unwrap();
+        // The goatnet's mesh zone, as generate-mesh-hosts.py writes it.
+        std::fs::create_dir_all(t.path().join("ops/dns/zagros")).unwrap();
+        std::fs::write(t.path().join("ops/dns/zagros/mesh-hosts"), "# zagros mesh DNS\n100.127.0.1 isitup.zagros.zagros.example.org\n").unwrap();
         t
+    }
+
+    /// Gate row I3: a joiner's core node runs its own mesh DNS replica in
+    /// phase 13, after Ory and signal federation (ADR 1235). A gate first
+    /// refuses an unset or unresolved founder API token (GB-281); the play
+    /// then serves the goatnet's zone on the node, registers the site's own
+    /// nameserver group through the founder's management, and lists the
+    /// node's replica first and the founder's second. A site with no zone to
+    /// serve is refused when the plan is made (GB-280). Other classes run no
+    /// mesh DNS.
+    #[test]
+    fn a_joiner_core_node_runs_its_mesh_dns_replica_after_ory() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let at = |needle: &str| ph.iter().position(|p| p.cmd.contains(needle)).unwrap_or_else(|| panic!("no phase runs {needle}"));
+        let (ory, fed, gate, dns) = (at("ory-deploy.yml"), at("signal-federation-check.py"), at("GB-281"), at("goat-coredns.yml"));
+        assert!(ory < fed && fed < gate && gate + 1 == dns, "{ory} {fed} {gate} {dns}");
+        assert_eq!((ph[gate].n, ph[gate].kind, ph[dns].n, ph[dns].kind), (13, "GATE", 13, "A"));
+        assert!(ph[gate].cmd.contains("with-secrets") && ph[gate].cmd.contains("ZAGROS_NB_API_TOKEN"), "{}", ph[gate].cmd);
+        let c = &ph[dns].cmd;
+        for want in [" -l node-x ", "-e mesh_dns_zone_dir_name=zagros ", "-e netbird_nameserver_group_name=zagros-b-mesh-dns ", "-e netbird_api=https://zagros.example.org/api ", "-e netbird_api_token_envvar=ZAGROS_NB_API_TOKEN ", "groups['zagros_hosts'][0]"] {
+            assert!(c.contains(want), "{want:?} in {c}");
+        }
+        assert!(c.find("node-x").unwrap() < c.find("groups['zagros_hosts'][0]").unwrap(), "the node's own replica first: {c}");
+        assert!(ph[dns + 1..].iter().all(|p| p.n > 13), "mesh DNS ends phase 13");
+        // Other classes run no mesh DNS.
+        assert!(plan(t.path(), &opts("zagros-b", "obs", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("goat-coredns.yml")));
+        // No zone to serve: refused when the plan is made.
+        std::fs::remove_file(t.path().join("ops/dns/zagros/mesh-hosts")).unwrap();
+        let e = plan(t.path(), &opts("zagros-b", "core", "zagros")).err().expect("refused").to_string();
+        assert!(e.starts_with("GB-280: ") && e.contains("zagros.example.org"), "{e}");
     }
 
     /// The joiner's bootstrap passes carry site_id as a play variable (the
