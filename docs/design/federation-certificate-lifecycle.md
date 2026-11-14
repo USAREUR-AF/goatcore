@@ -63,7 +63,7 @@ private-key/public-certificate match, key mode 0600, validity and chain under on
 explicit own CA. Disable default trust locations for that verification. A changed
 CA, identity, SAN, incomplete pair or invalid material stops the operation and
 leaves certificate/key files unchanged. Existing valid material is reused without
-rewriting it; neither a CA private key nor a new signature is needed for reuse.
+rewriting it; neither a CA private key nor a new signature is needed for reuse. A newly issued leaf's key is written at mode 0600 and its certificate at 0640: whatever uses a pair runs as the working directory's owner or as root, and can already read the key.
 
 The default minimum remaining lifetime is one day, configurable through
 `FED_LEAF_MIN_VALID_SECONDS` or the helper's `--min-valid-seconds`. This is a refusal
@@ -113,7 +113,7 @@ directory is removed. A run killed before the commit leaves only staging, remove
 by the next run, and the old pairs in place. A run killed after it leaves
 `.rotation-pending`: the next run, with or without `--rotate`, finishes that
 rotation from the pairs it holds and mints nothing; if those pairs do not validate,
-it restores the old pairs at their own modes, removes the directory and refuses, so
+it restores the old pairs (keys 0600, certificates 0640), removes the directory and refuses, so
 the next rotation starts afresh. No run mints a third pair. A `.rotation-pending`
 that is a file, an earlier release's journal, is still refused for the operator
 recovery that release described. Status: built, and measured by

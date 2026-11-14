@@ -102,10 +102,19 @@ def validate(cert, key, ca, cn, expected_sans, min_seconds, trust_options):
     openssl('x509', '-in', cert, '-noout', '-checkend', min_seconds)
 
 
+# A leaf's key is 0600 and its certificate 0640: owner read-write, group read,
+# nothing for others. Everything that uses a pair runs as the owner of the
+# working directory or as root (the controller's goatbuilder and Ansible, which
+# copy the files to the edge with their own modes, and the lab's docker exec),
+# and anything that can use the key can already read it, so the certificate
+# needs no wider mode than its owner and group.
+KEY_MODE, CERT_MODE = 0o600, 0o640
+
+
 def mint(folder, name, cn, san, ca, ca_key, days):
     key, cert = folder / (name + '-key.pem'), folder / (name + '.pem')
     openssl('ecparam', '-name', 'prime256v1', '-genkey', '-noout', '-out', key)
-    key.chmod(0o600)
+    key.chmod(KEY_MODE)
     csr, ext = folder / (name + '.csr'), folder / (name + '.ext')
     openssl('req', '-new', '-key', key, '-out', csr, '-subj', '/CN=' + cn)
     ext.write_text('subjectAltName=' + san + '\nbasicConstraints=CA:FALSE\n'
@@ -117,7 +126,7 @@ def mint(folder, name, cn, san, ca, ca_key, days):
     openssl('x509', '-req', '-in', csr, '-CA', ca, '-CAkey', ca_key,
             '-passin', 'pass:', '-set_serial', serial, '-out', cert,
             '-days', days, '-sha256', '-extfile', ext)
-    cert.chmod(0o644)
+    cert.chmod(CERT_MODE)
 
 
 STAGING_PREFIX = '.mint-'
@@ -194,7 +203,6 @@ def place_our_ca(out, ca):
 
 ROTATION = '.rotation-pending'
 JOURNAL = 'journal.json'
-KEY_MODE, CERT_MODE = 0o600, 0o644
 
 
 def leaf_files(name):
