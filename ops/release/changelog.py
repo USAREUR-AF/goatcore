@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -274,6 +275,55 @@ def _entry(repo: Path, name: str, heading: str, title: str, body: str) -> None:
     (repo / ENTRIES / name).write_text(f"---\nheading: {heading}\ntitle: {title}\n---\n\n{body}\n", encoding="utf-8")
 
 
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), "-c", "user.name=self-test", "-c", "user.email=self-test@example.org",
+                           "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args],
+                          check=True, capture_output=True, text=True).stdout
+
+
+def _released_text_cases(expect) -> None:
+    """A released section is never edited after its release: it is held to its text at
+    the tag goatbuilder/v<version>, or, before the tag exists, at the release commit."""
+    with tempfile.TemporaryDirectory() as tmp:
+        r = Path(tmp) / "repo"
+        (r / ENTRIES).mkdir(parents=True)
+        _git(r.parent, "init", "-q", "-b", "main", str(r))
+        cl = r / CHANGELOG
+        cl.write_text("# Changelog\n\n" + UNRELEASED + "\n\n" + BEGIN + "\n" + END + "\n\n## 9.9.9 — 2099-01-02\n\n"
+                      "### For someone deploying\n\n#### Fixed: a thing\n\nIt was fixed.\n", encoding="utf-8")
+        _git(r, "add", "-A")
+        _git(r, "commit", "-q", "-m", "chore(release): goatbuilder 9.9.9")
+        expect("a released section as it was at its release commit passes", check(r) == [])
+
+        text = cl.read_text(encoding="utf-8")
+        cl.write_text(text + "\n#### Fixed: a thing merged after the release\n\nIt landed late.\n", encoding="utf-8")
+        _git(r, "commit", "-q", "-am", "feat: a branch cut before the release, merged after it")
+        problems = check(r)
+        expect("a line added to a released section after its release commit is refused, naming the version",
+               any("9.9.9" in m and "release commit" in m and "merged after the release" in m for m in problems))
+
+        cl.write_text(text, encoding="utf-8")
+        _git(r, "commit", "-q", "-am", "fix: put 9.9.9 back as released")
+        _git(r, "tag", "goatbuilder/v9.9.9", "HEAD~2")
+        cl.write_text(text.replace("It was fixed.", "It was fixed, then reworded."), encoding="utf-8")
+        _git(r, "commit", "-q", "-am", "docs: reword a released line")
+        expect("with the tag, a released section is held to its text at the tag",
+               any("9.9.9" in m and "goatbuilder/v9.9.9" in m for m in check(r)))
+
+        cl.write_text(text.replace("## 9.9.9", "## 9.9.10 — 2099-02-03\n\n### For someone deploying\n\nNothing.\n\n## 9.9.9"), encoding="utf-8")
+        _git(r, "commit", "-q", "-am", "a section with neither a tag nor a release commit")
+        problems, notes = released_text(r, cl.read_text(encoding="utf-8").split("\n"))
+        expect("a version with neither a tag nor a release commit is skipped with a note, not refused",
+               not any("9.9.10" in m for m in problems) and any("9.9.10" in n and "skipped" in n for n in notes))
+
+        shallow = Path(tmp) / "shallow"
+        _git(Path(tmp), "clone", "-q", "--depth", "1", f"file://{r}", str(shallow))
+        (shallow / ENTRIES).mkdir(parents=True, exist_ok=True)
+        problems, notes = released_text(shallow, (shallow / CHANGELOG).read_text(encoding="utf-8").split("\n"))
+        expect("in a shallow clone every released section is skipped with a note, never passed silently",
+               problems == [] and any("shallow" in n for n in notes))
+
+
 def self_test(repo: Path) -> int:
     failures = []
 
@@ -385,6 +435,9 @@ def self_test(repo: Path) -> int:
             expect("a malformed version and date are refused", False)
         except Refused as e:
             expect("a malformed version and date are refused", len(e.args[0]) == 2)
+
+    print("released sections against their release text (a git history of its own):")
+    _released_text_cases(expect)
 
     print("the check, on this repository:")
     problems = check(repo)
