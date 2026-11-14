@@ -84,6 +84,24 @@ class BaseCurrent(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("does not touch", r.stdout)
 
+    def test_a_stale_branch_that_edits_only_the_entries_readme_passes(self):
+        # The entries directory's README is not an entry (changelog.py NOT_ENTRIES): a
+        # release keeps it and `write` never renders it, so editing it alone cannot put
+        # an entry inside a release.
+        head = self.branch("stale-readme", self.cut, {"crates/goatbuilder/changelog.d/README.md": "how to write one\n"})
+        r = self.run_check(head)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("does not touch", r.stdout)
+
+    def test_a_stale_branch_that_edits_the_readme_and_adds_an_entry_is_refused(self):
+        head = self.branch("stale-readme-entry", self.cut,
+                           {"crates/goatbuilder/changelog.d/README.md": "how to write one\n",
+                            ENTRY: "---\nheading: For someone deploying\ntitle: Added: x\n---\n\nx\n"})
+        r = self.run_check(head)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("an-entry.md", r.stderr)
+        self.assertNotIn("README.md", r.stderr)
+
     def test_a_branch_on_the_current_base_that_touches_the_changelog_passes(self):
         head = self.branch("current", "main", {ENTRY: "---\nheading: For someone deploying\ntitle: Added: x\n---\n\nx\n"})
         r = self.run_check(head)
