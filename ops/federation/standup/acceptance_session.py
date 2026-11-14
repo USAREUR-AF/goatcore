@@ -145,16 +145,67 @@ def new_manifest(agreement_path, us, hours=24, policy_path=None, now=None):
     }
 
 
+DERIVED_SCHEMA = "goat-federation-acceptance-session-derived/v1"
+# The first line of the input the derived session id is hashed from, so it can
+# never be confused with any other digest of the agreement.
+DERIVED_DOMAIN = "goat-acceptance-session/v1\n"
+
+
 def canonical_bytes(v):
-    raise NotImplementedError
+    """Sorted keys, no whitespace, UTF-8: the bytes a derived session's digest covers."""
+    return json.dumps(v, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
 def derive_session(agreement_path, us, attempt, policy_path=None):
-    raise NotImplementedError
+    """The session both sides work out from the agreement they hold and the attempt
+    number, with no file passed between them (§6.2). Nothing in it is random or read
+    from a clock, so the two sides get the same bytes. Each side's challenge is not in
+    it: a challenge stays that side's own and random, and travels with its samples."""
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+        raise Refused("the attempt %r is not a whole number from 1" % (attempt,))
+    ag = load(agreement_path, "the agreement")
+    ps = parties(ag)
+    if us not in ps or len(ps) != 2:
+        raise Refused("the agreement is not a two-party agreement naming %s" % us)
+    expires = ag.get("expires")
+    try:
+        end = datetime.datetime.strptime(str(expires), "%Y-%m-%d")
+    except ValueError:
+        raise Refused("the agreement's expires %r is not a date YYYY-MM-DD" % (expires,))
+    agreement_sha = sha256_file(agreement_path)
+    sid = hashlib.sha256(("%s%s\n%d\n" % (DERIVED_DOMAIN, agreement_sha, attempt)).encode()).hexdigest()[:32]
+    hz = [f.get("envelope", {}).get("hz") for f in ag.get("flows", [])]
+    hz = [h for h in hz if isinstance(h, (int, float)) and h > 0]
+    body = {
+        "schema": DERIVED_SCHEMA,
+        "session_id": "ses-" + sid,
+        "attempt": attempt,
+        "agreement_sha256": agreement_sha,
+        "policy": {"name": os.path.basename(policy_path) if policy_path else DEFAULT_POLICY,
+                   "sha256": sha256_file(policy_path) if policy_path else sha256_bytes(DEFAULT_POLICY.encode())},
+        "participants": [{"sovereign_id": s, "trust_domain": p.get("trust_domain"), "peering_cn": p.get("peering_cn")}
+                         for s, p in sorted(ps.items())],
+        # A derived session lasts as long as the agreement it is derived from; each
+        # run's own challenge, not a window, is what makes a result fresh.
+        "expires_at": end.strftime("%Y-%m-%dT23:59:59Z"),
+        "limits": {"samples_per_set": 2, "hz": min(hz) if hz else None},
+    }
+    return dict(body, digest=sha256_bytes(canonical_bytes(body)))
 
 
 def compare_sessions(ours, theirs):
-    raise NotImplementedError
+    """Refuse two derived sessions that are not the same, naming each member that
+    differs, and a session whose digest does not cover its own members."""
+    problems = []
+    for name, s in (("ours", ours), ("theirs", theirs)):
+        body = {k: v for k, v in s.items() if k != "digest"}
+        if s.get("digest") != sha256_bytes(canonical_bytes(body)):
+            problems.append("%s's digest does not cover its own members" % name)
+    differ = sorted(k for k in set(ours) | set(theirs) if k != "digest" and ours.get(k) != theirs.get(k))
+    if differ:
+        problems.append("the two sides derived different sessions: %s differ" % ", ".join(differ))
+    if problems:
+        raise Refused("%s; both sides must hold the same agreement and attempt (GB-274)" % "; ".join(problems))
 
 
 def validate(manifest, agreement_path, us, now=None):
@@ -548,6 +599,12 @@ def main(argv=None):
     n.add_argument("--out", required=True)
     n.add_argument("--hours", type=float, default=24)
     n.add_argument("--policy")
+    dv = sub.add_parser("derive")
+    dv.add_argument("--agreement", required=True)
+    dv.add_argument("--us", required=True)
+    dv.add_argument("--attempt", type=int, required=True)
+    dv.add_argument("--policy")
+    dv.add_argument("--out", required=True)
     g = sub.add_parser("digest")
     g.add_argument("manifest")
     v = sub.add_parser("validate")
@@ -588,6 +645,14 @@ def main(argv=None):
                 f.write("\n")
             print("session %s, valid until %s" % (m["session_id"], m["expires_at"]))
             print("manifest digest %s: read it aloud to the partner and compare" % sha256_file(a.out))
+            return 0
+        if a.cmd == "derive":
+            d = derive_session(a.agreement, a.us, a.attempt, a.policy)
+            with open(a.out, "w") as f:
+                json.dump(d, f, indent=2, sort_keys=True)
+                f.write("\n")
+            print("session %s, attempt %d, valid until %s" % (d["session_id"], d["attempt"], d["expires_at"]))
+            print("session digest %s: the partner derives the same from the same agreement" % d["digest"])
             return 0
         if a.cmd == "digest":
             print(sha256_file(a.manifest))

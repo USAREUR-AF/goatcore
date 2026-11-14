@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, the command publishing and verifying a partner's signed result (the signing library is built, §6.1), and any automatic bilateral gate |
+| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, phase 14 running on a session both sides derive (the derivation is built, §6.2), the command publishing and verifying a partner's signed result (the signing library is built, §6.1), and any automatic bilateral gate |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
@@ -470,8 +470,28 @@ acceptance session to hold current evidence.
 
 The acceptance evidence is the files under `<evidence>/bilateral/` and, while a session runs,
 each side's result and signature under the session's key on its own core. Publishing them on
-the core, deriving the session from the agreement, and the command combining both halves are
-the next parts of B2, not built.
+the core and the command combining both halves are the next parts of B2, not built.
+
+### 6.2 A session both sides derive
+
+**Built, library and command only** (`acceptance_session.py derive`, `derive_session` and
+`compare_sessions`, tests in `test_acceptance_session.py`, class `DerivedSession`); phase 14
+does not run on a derived session yet. It is the second part of gate row B2.
+
+A manifest made by `new` (§6) has to pass from one operator to the other. A derived session
+does not: each side works it out from the agreement it already holds and an attempt number,
+and the two get the same bytes. It holds the agreement's sha256, the policy, both
+participants, the sample limits, the attempt, and a session id that is
+`ses-` and the first 32 hex characters of the sha256 of
+`goat-acceptance-session/v1\n<agreement sha256>\n<attempt>\n`. It lasts until the end of the
+agreement's `expires` day. Nothing in it is random or read from a clock.
+
+It holds no challenge. Each side's challenge stays its own and random, and travels with that
+side's samples; a partner's result must echo ours (§6.1), so each run's challenge, not a time
+window, is what makes a result fresh. The session's `digest` is the sha256 of its other
+members in canonical form (sorted keys, no whitespace). When the two sides' sessions differ,
+`compare_sessions` refuses with GB-274 and names the members that differ: the two sides hold
+different agreements, or are on different attempts.
 
 ## 7. Publishing `exchanging`
 
