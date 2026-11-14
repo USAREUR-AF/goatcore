@@ -23,7 +23,7 @@ the run's working directory on the controller, into the per-peering directory
 `goat_zenoh_edge_cert_dir`, and our CA's certificate too, as `<cert_dir>/our-ca.pem`
 from `<fed_work>/pki/our-ca.pem` (never the CA's key: a source holding a private key
 is refused). A driver that is not the edge host needs this: `goatbuilder federate`
-refuses phase 12 (GB-272) when the edge mounts files from the driver's `<work>/pki`
+refuses phase 12 (GB-275) when the edge mounts files from the driver's `<work>/pki`
 and nothing installs them. With it false (the default for now), a person places
 the files on the edge and sets the five path variables to them.
 

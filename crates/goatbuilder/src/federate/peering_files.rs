@@ -2111,6 +2111,27 @@ mod tests {
         );
     }
 
+    /// With the role's install off, the deployment halves are what the release
+    /// before this change rendered, byte for byte: the two files under
+    /// src/federate/testdata were rendered by goatcore main 607a1244, from the
+    /// same declaration and site values, before our CA's install-mode path existed.
+    #[test]
+    fn with_the_roles_install_off_the_deployment_halves_are_unchanged_byte_for_byte() {
+        let mut a = p("xab", false);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), SITE);
+        run(d.path(), &opts(false)).unwrap();
+        let gv = d.path().join("ops/ansible/group_vars");
+        assert_eq!(
+            std::fs::read_to_string(gv.join("xab_edge/peering-deployment.yml")).unwrap(),
+            include_str!("testdata/peering-deployment-edge-install-off.yml")
+        );
+        assert_eq!(
+            std::fs::read_to_string(gv.join("xab_core/peering-deployment.yml")).unwrap(),
+            include_str!("testdata/peering-deployment-core-install-off.yml")
+        );
+    }
+
     /// The rendered edge half names both CAs the edge router trusts, in the
     /// allocated cert_dir: admission reads goat_zenoh_edge_partner_ca_path from
     /// the edge group's vars to place their CA (GB-194 without it), and the edge

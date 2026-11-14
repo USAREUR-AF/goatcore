@@ -99,20 +99,20 @@
     _ze_certs_our_ca:
       content: "{{ (_ze_certs_our_ca_src if _ze_certs_our_ca_installs | bool else _ze_certs_our_ca_edge).content }}"
 
-# Only certificates go to the edge. A source holding any private key (the CA's
-# own, or anything else) is refused before a byte is written.
-- name: edge certs | our CA's source holds certificates and nothing else
+# Only our CA's certificate goes to the edge: exactly one certificate, and a
+# source holding any private key (the CA's own, or anything else) is refused
+# before a byte is written.
+- name: edge certs | our CA's source is exactly one certificate
   ansible.builtin.assert:
     that:
       - "'PRIVATE KEY' not in _ze_certs_our_ca_text"
-      - _ze_certs_our_ca_blocks | length > 0
-      - _ze_certs_our_ca_blocks | reject('equalto', 'CERTIFICATE') | list | length == 0
+      - _ze_certs_our_ca_blocks == ['CERTIFICATE']
     fail_msg: >-
       {{ goat_zenoh_edge_our_ca_src }}
       {{ 'holds a private key' if 'PRIVATE KEY' in _ze_certs_our_ca_text
-         else 'holds something other than certificates (' ~ (_ze_certs_our_ca_blocks | unique | join(', ') or 'no PEM block') ~ ')' }}.
+         else 'is not exactly one certificate (it holds: ' ~ (_ze_certs_our_ca_blocks | join(', ') or 'no PEM block') ~ ')' }}.
       Only our CA's certificate is installed on the edge, never its key: give
-      goat_zenoh_edge_our_ca_src the certificate alone. Nothing was written.
+      goat_zenoh_edge_our_ca_src that one certificate alone. Nothing was written.
   vars:
     _ze_certs_our_ca_text: "{{ _ze_certs_our_ca.content | b64decode }}"
     _ze_certs_our_ca_blocks: "{{ _ze_certs_our_ca_text | regex_findall('-----BEGIN ([A-Z0-9 ]+)-----') }}"

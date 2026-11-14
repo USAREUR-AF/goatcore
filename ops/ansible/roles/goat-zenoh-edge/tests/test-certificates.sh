@@ -201,6 +201,16 @@ else
   fail "our CA source holding a private key: wrong message or something written"; grep -E 'fatal' -A3 "$LOG" | head -6 || true
 fi
 
+W="$(case_work our-ca-two-certs)"; cat "$T/ours-ca.pem" "$T/root-ca.pem" > "$W/pki/our-ca.pem"
+D="$T/edge/ca-two/tls"
+if play_ca "$W" "$D"; then
+  fail "our CA source holding two certificates: the play passed"
+elif grep -qF "is not exactly one certificate" "$LOG" && [ ! -e "$D/our-ca.pem" ] && [ ! -e "$D/peering-outward.pem" ]; then
+  pass "our CA source holding two certificates: refused, nothing written"
+else
+  fail "our CA source holding two certificates: wrong message or something written"; grep -E 'fatal' -A3 "$LOG" | head -6 || true
+fi
+
 W="$(case_work our-ca-not-the-cert)"; cp "$T/ours-ca.pem" "$W/pki/our-ca.pem"
 D="$T/edge/ca-name/tls"
 if play_ca "$W" "$D" -e "goat_zenoh_edge_our_ca_src=$T/ours-ca-key.pem"; then

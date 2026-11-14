@@ -40,7 +40,7 @@ fn a_driver_that_is_not_the_edge_host_is_refused_before_phase_12_when_nothing_in
     assert!(!out.status.success(), "{}", says(&out));
     let failed = rows(&v, "failed");
     assert_eq!(failed.len(), 1, "{}", says(&out));
-    assert!(failed[0].starts_with("GB-272: "), "{}", failed[0]);
+    assert!(failed[0].starts_with("GB-275: "), "{}", failed[0]);
     assert!(failed[0].contains("edge-1 (192.0.2.10)"), "{}", failed[0]);
     assert!(
         failed[0].contains("goat_zenoh_edge_install_certs: true"),
@@ -59,7 +59,7 @@ fn a_driver_that_is_not_the_edge_host_is_refused_before_phase_12_when_nothing_in
 fn with_the_roles_install_on_phase_12_runs() {
     let w = at_phase_12(true);
     let (out, _) = w.run(&["hello-ally", "--from", "12", "--to", "12"]);
-    assert!(!says(&out).contains("GB-272"), "{}", says(&out));
+    assert!(!says(&out).contains("GB-275"), "{}", says(&out));
     assert!(
         w.log().contains("peering-zenoh-edge.yml"),
         "the edge play did not run: {}",

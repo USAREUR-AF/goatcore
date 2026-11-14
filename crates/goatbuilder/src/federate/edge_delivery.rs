@@ -10,7 +10,7 @@
 //! (`goat_zenoh_edge_install_certs`) copies them there. So when the edge group's
 //! vars point the edge at files in `<work>/pki`, the edge is another machine,
 //! and the install is off, phase 12 is refused first, with the reason and the
-//! one setting that fixes it (GB-272): otherwise the edge starts with nothing to
+//! one setting that fixes it (GB-275): otherwise the edge starts with nothing to
 //! mount and never reaches the core, which its inward-link check reports only
 //! after the fact. Files the operator placed on the edge by hand, at paths of
 //! their own, are not this case and are not refused.
@@ -125,7 +125,7 @@ pub fn refusal(
         .collect::<Vec<_>>()
         .join(", ");
     Some(format!(
-        "GB-272: phase 12 deploys the edge router of {edge_group} on {named}, which is not this machine, \
+        "GB-275: phase 12 deploys the edge router of {edge_group} on {named}, which is not this machine, \
          and goat_zenoh_edge_install_certs is off for {edge_group}: the edge mounts {files}, which phase 8 \
          placed in {pki} on this machine and nothing copies to that host, so the edge would start with \
          nothing to mount and never reach the core. Set goat_zenoh_edge_install_certs: true for \
@@ -199,7 +199,7 @@ mod tests {
             "/var/lib/goat-federation/xab",
         )
         .expect("refused");
-        assert!(r.starts_with("GB-272: "), "{r}");
+        assert!(r.starts_with("GB-275: "), "{r}");
         for part in [
             "xaa-edge-xab (192.0.2.20)",
             "/var/lib/goat-federation/xab/pki/",

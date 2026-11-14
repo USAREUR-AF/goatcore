@@ -150,7 +150,7 @@ The checks and the writes are two task files, included at two points of
 
 A driver that is not the edge host. Phase 8 writes `<work>/pki` on the machine
 `goatbuilder federate` runs on, and the edge mounts each file by path on the edge
-host. Before phase 12, the driver refuses (GB-272,
+host. Before phase 12, the driver refuses (GB-275,
 `crates/goatbuilder/src/federate/edge_delivery.rs`) when the edge group's vars
 point the edge at files in `<work>/pki`, the inventory names the edge as another
 machine (not `ansible_connection=local`, a loopback address or this machine's
@@ -171,12 +171,13 @@ test environment's operator-workspace scenario.
 3. Our CA. With the switch on, `goat_zenoh_edge_our_ca_path` defaults to
    `<cert_dir>/our-ca.pem`, and then the role installs our CA as well, from
    `goat_zenoh_edge_our_ca_src` on the controller (`<work>/pki/our-ca.pem`, where
-   phase 8 places it). The source must be named `our-ca.pem` and hold
-   certificates and nothing else: a file with any `PRIVATE KEY` block is
-   refused, so our CA's key never reaches the edge. Any other
+   phase 8 places it). The source must be named `our-ca.pem` and hold exactly
+   one certificate and nothing else: a file with any `PRIVATE KEY` block, or
+   with more than one certificate, is refused, so our CA's key never reaches the
+   edge. Any other
    `goat_zenoh_edge_our_ca_path` names a CA placed on the edge by hand, and our
    CA is read there, as before. **Built**: `tests/test-certificates.sh` installs
-   it, refuses a source that holds a key or is not `our-ca.pem`, and checks the
+   it, refuses a source that holds a key, holds more than one certificate or is not `our-ca.pem`, and checks the
    edge directory holds no CA key and the compose file mounts the installed file.
 4. `files/check-peering-certs.py` runs on the controller. It reads each file once
    (no symlink, regular files only) into a private temporary directory, runs

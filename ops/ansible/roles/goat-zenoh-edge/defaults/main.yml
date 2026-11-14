@@ -74,7 +74,8 @@ goat_zenoh_edge_partner_ca_src: "{{ fed_work | default('') }}/theirs-ca.pem"
 goat_zenoh_edge_agreement_src: "{{ fed_work | default('') }}/agreement.json"
 # Our CA's certificate, where phase 8 places it beside the leaves. Read only when
 # goat_zenoh_edge_our_ca_path is <cert_dir>/our-ca.pem: the file must be named
-# our-ca.pem and hold certificates and nothing else (a private key is refused).
+# our-ca.pem and hold exactly one certificate and nothing else (a private key is
+# refused).
 goat_zenoh_edge_our_ca_src: "{{ goat_zenoh_edge_cert_src_dir }}/our-ca.pem"
 # Empty: read from the agreement. Set it only to pin the value as well; a value
 # that differs from the agreement is refused.

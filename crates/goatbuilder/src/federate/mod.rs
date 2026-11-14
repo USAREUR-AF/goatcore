@@ -781,10 +781,10 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         }
         // Phase 12 from a driver that is not the edge host: the files phase 8
         // wrote in <work>/pki here reach the edge only through the role's install
-        // (federate/edge_delivery.rs, GB-272).
+        // (federate/edge_delivery.rs, GB-275).
         if ph.n == 12 && executes {
             if let Some(d) = edge_delivery::check(repo, &edge_group, &work) {
-                checks.push(Check { name: "failed".into(), ok: false, detail: d.clone(), fix: Some(format!("set goat_zenoh_edge_install_certs: true for {edge_group}, then resume: {resume} --from 12")) });
+                checks.push(Check { name: "failed".into(), ok: false, detail: d.clone(), fix: Some(format!("set goat_zenoh_edge_install_certs: true in group_vars/{edge_group}, run goatbuilder federate allocate when the deployment is rendered, then resume: {resume} --from 12")) });
                 if let Some(r) = run.as_mut() {
                     r.end(ph, state::Outcome::Failed, &d);
                 }
