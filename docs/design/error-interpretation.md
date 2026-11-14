@@ -11,7 +11,7 @@
 
 An operator who sees an error from `goat` or `goatbuilder` must be able to act on it without asking anyone. Every error either binary prints therefore carries four things: what happened, the likely cause, what to do (a command where one exists), and where to read more. Errors that come from a tool the binary called — ansible, ssh, op, aws-vault, git, gh, cosign, docker, netbird — are carried through and interpreted the same way, because the words an operator is left with are often that tool's, not ours.
 
-One catalog holds all of it: `ops/errors/catalog.yaml`, 88 entries at the time of writing, compiled into both binaries at build time so `goat explain` and `goatbuilder explain` work offline and on a machine with no checkout. Adding an error is a YAML block in that file and nothing else.
+One catalog holds all of it: `ops/errors/catalog.yaml`, compiled into both binaries at build time so `goat explain` and `goatbuilder explain` work offline and on a machine with no checkout. Adding an error is a YAML block in that file and nothing else.
 
 ## What the operator sees
 
