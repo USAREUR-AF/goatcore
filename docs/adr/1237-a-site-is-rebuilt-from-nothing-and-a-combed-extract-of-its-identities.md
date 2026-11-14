@@ -8,7 +8,7 @@
 | Repo scope | goat core (goatbuilder, the identity, mesh and workload-identity planes) |
 | Supersedes | — |
 | Superseded by | — |
-| Related | [ADR 0208](0208-phoenix-native-peer-discipline.md) (phoenix-native peers), [`phoenix-architecture.md`](../design/phoenix-architecture.md) (the April exploration), [ADR 1205](1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md) (the hub; sever and restore), [ADR 1165](1165-island-mode-multi-writer-every-site-admits.md) (island mode), [ADR 1193](1193-revocations-are-absorbing-on-replicated-mesh-and-identity-tables.md) (the revocation ledger), [ADR 1031](1031-credential-revocation-mesh-first-offboarding.md) (offboarding), [ADR 1065](1065-graph-engine-property-graph-read-model.md) (the actor graph), [ADR 1088](1088-membership-transfer-engine.md) and [ADR 1089](1089-probation-isolation-lifecycle.md) (membership lifecycle), gate rows C1 and I5 of [`goatbuilder-v1-gate.md`](../design/goatbuilder-v1-gate.md) |
+| Related | [ADR 0208](0208-phoenix-native-peer-discipline.md) (phoenix-native peers), [`phoenix-architecture.md`](../design/phoenix-architecture.md) (the April exploration), [ADR 1205](1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md), Accepted (the hub; moving it, D8; authorizing joins, D9; sever and restore), [ADR 1165](1165-island-mode-multi-writer-every-site-admits.md) (island mode), [ADR 1193](1193-revocations-are-absorbing-on-replicated-mesh-and-identity-tables.md) (the revocation ledger), [ADR 1031](1031-credential-revocation-mesh-first-offboarding.md) (offboarding), [ADR 1065](1065-graph-engine-property-graph-read-model.md) (the actor graph), [ADR 1088](1088-membership-transfer-engine.md) and [ADR 1089](1089-probation-isolation-lifecycle.md) (membership lifecycle), gate rows C1 and I5 of [`goatbuilder-v1-gate.md`](../design/goatbuilder-v1-gate.md) |
 
 ## TL;DR (for a layperson)
 
@@ -93,13 +93,11 @@ The hub's copy is the last state the goatnet accepted from that site.
 A site is rebuilt by a burn-down (`goatbuilder teardown`), then `goatbuilder standup` (the hub) or
 `goatbuilder join-node` (any other site), as gate row C1 measures them, then
 `goatbuilder import <site> --extract <file>` (not built). No step restores a disk, a database
-dump or a volume. An environment is rebuilt site by site, **hub first**: the hub from its own
-extract, then each other site from the extract the rebuilt hub produces for it. A tactical pod is
-a site, rebuilt the same way with `join-node`.
+dump or a volume. An environment is rebuilt site by site, in one of the two orders of D8. A
+tactical pod is a site, rebuilt the same way with `join-node`.
 
 **Reason.** One path, the one already used to build sites, means the rebuild is exercised every
-time a site is built, and has no separate restore procedure to drift. Hub first, because every
-other site's extract and its approval to rejoin come from the hub.
+time a site is built, and has no separate restore procedure to drift.
 
 ### D4 — The comb: every element is revalidated before it exists on the rebuilt site
 
@@ -167,6 +165,43 @@ section of [`goatbuilder-v1-gate.md`](../design/goatbuilder-v1-gate.md).
 after 1.0. Writing the decision now fixes the pattern before the code that implements it is
 planned.
 
+### D8 — The order of an environment rebuild
+
+**Rolling, the default: one site at a time, while the goatnet keeps running.**
+
+1. The hub stays up. For each other site in turn, the hub takes its extract (D2), the site is
+   burnt down and joined again, and the hub combs its import (D4) and authorizes its rejoin
+   (ADR 1205 D9).
+2. The hub is rebuilt last. Before it is burnt down, hub authority moves to a site already
+   rebuilt and combed: `goatnet_hub_site` is set to that site in every site's configuration, and
+   the hub-directives role is re-applied at each site (ADR 1205 D8).
+3. The old hub is then rebuilt like any other site. Its extract is taken at the interim hub, which
+   combs its import and authorizes its rejoin.
+4. **Authority then moves back** to the rebuilt old hub, by the same configuration change at every
+   site.
+
+*Reason for moving back:* the hub is the goatnet's highest-echelon site (ADR 1205 D1). The interim
+hub holds authority only so the real one can be rebuilt, and keeping it there would leave a
+lower-echelon site with the overrides ADR 1205 gives only to the highest.
+
+**Everything down at once.** The order in which sites are burnt down does not matter. Every
+site's extract is taken before any site is burnt: once the hub is gone, nothing holds another
+site's records. The hub is rebuilt first (`goatbuilder standup`, which makes it the hub by
+default, ADR 1205 D8), because no other site can rejoin without its authorization. Each other
+site then joins and imports its extract as in the rolling case.
+
+**The hub's own extract, in this case, is validated by a named person, outside the system.** No
+running site exists to check it against: "still enrolled at the hub" has no hub to ask. So every
+element of the hub's extract, routine or privileged, needs the approval of a named person on
+`goatnet_rebuild_approvers`, held in the goatnet's configuration and not in any of its databases.
+That person checks the extract's signature and each element's indicators, and signs each
+approval.
+
+**Reason.** Rolling keeps the goatnet in service and keeps a running hub to comb every rebuilt
+site, so the only moment without one is avoided by moving authority first. When everything is
+down there is no running hub to keep, and the hub must exist before any site can be admitted, so
+it comes first, and a person stands in for the checks the system cannot yet make.
+
 ## Alternatives considered
 
 | Alternative | Why not |
@@ -193,6 +228,8 @@ planned.
   machines and processes do not record all of these yet.
 - **A rebuild takes longer than a re-seed**, by the comb, and by the approvals, which wait for a
   named person.
+- **A rolling rebuild moves the hub twice** (D8): to an already rebuilt site before the hub is
+  burnt, and back once it is rebuilt. Each move is a configuration change applied at every site.
 
 ## Assessor view (SCA-R)
 
