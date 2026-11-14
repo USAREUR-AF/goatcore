@@ -1,7 +1,7 @@
 # Federated trust model
 
-How goatnet recognizes and trusts identities from **other** trust domains (partner moon-pods,
-peer goatnets) — and how that recognition is rotated, assured, validated, revoked, graduated, and
+How goatnet recognizes and trusts identities from **other** trust domains (peer goatnets, and
+moon pods in the learning setup, [ADR 1239](../adr/1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md)) — and how that recognition is rotated, assured, validated, revoked, graduated, and
 differentiated per partner. Companion to the SPIRE/SPIFFE design (ADR 0412),
 the federated-peering data-plane trust ([ADR 1020](../adr/1020-zenoh-federated-peering-trust-model.md)),
 revocation ([ADR 1031](../adr/1031-credential-revocation-mesh-first-offboarding.md)) and rotation

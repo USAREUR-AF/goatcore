@@ -13,7 +13,7 @@ A conformance smoke-test suite that walks the 24-hour deployment path against a 
 
 Runs against:
 
-- `goat-moon-open-pod` — continuously in CI on every commit to that repo.
+- `goat-moon-open-pod` — meant to run in CI on every commit to that repository. Not wired yet: the suite is a skeleton (Status above).
 - Vendor-built moon-pods — vendors run locally to self-check before requesting evaluation.
 - Partner-built moon-pods — same as vendor-built.
 - Goat-side at partnership-onboarding time — we run it as part of conformance evaluation.
@@ -39,7 +39,7 @@ tests/moon-pod-conformance/
 │   ├── README.md
 │   ├── wg-or-ipsec-or-mtls.sh
 │   ├── silent-at-public-boundary.sh
-│   └── sovereign-key-custody.sh
+│   └── transport-key-custody.sh
 ├── 03-landing-interface/             # requirement 3
 │   ├── README.md
 │   ├── release-namespace-discoverable.sh
@@ -54,7 +54,7 @@ tests/moon-pod-conformance/
 │   ├── README.md
 │   ├── attest-schema-present.sh
 │   └── undeclared-publish-rejected.sh
-├── 06-sovereignty-floor/             # requirement 6
+├── 06-custody-floor/                # requirement 6
 │   ├── README.md
 │   ├── data-on-partner-infra.sh
 │   ├── identity-in-partner-idp.sh
@@ -106,7 +106,7 @@ A moon-pod with all PASS verdicts on requirements 1-7 plus the 24-hour walk is *
 
 ## Trigger conditions to revise the suite
 
-- **A new edge case for requirement 6 surfaces.** Add a corresponding `06-sovereignty-floor/eN-*.sh` test.
+- **A new edge case for requirement 6 surfaces.** Add a corresponding `06-custody-floor/eN-*.sh` test.
 - **A vendor moon-pod ships with a structurally different shape that the existing tests can't cleanly evaluate.** Add tests; do not loosen existing tests to accommodate.
 - **The contract at [`moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md) gains a new requirement.** Add a new test group `08-*/`.
 

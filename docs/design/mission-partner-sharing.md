@@ -1,6 +1,6 @@
 # Mission partner sharing — design (companion to ADR 0821)
 
-> **Scope: a moon pod is a learning tool.** Partners use it in an exercise environment to learn how goat works. It is not the operational path for sharing data between nations. Operationally, each sovereign runs its own environment and manages its own pods, and data passes between sovereigns only across boundary nodes that federate their environments ([ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md), [ADR 1208](../adr/1208-sovereign-environments-release-namespaces-and-grant-encryption.md)). Where this document describes a pod joining another nation's environment, read it as the learning setup.
+> **A moon pod is a learning tool, not a sovereignty guarantee: [ADR 1239](../adr/1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md).** Where this document describes a pod, read it with that position.
 
 | Field | Value |
 |---|---|
@@ -134,7 +134,7 @@ The PRA deliberately omits everything in our stack that exists for *our* reasons
 
 ## Tier-0 — goat-moon-pod easy button (added 2026-05-04)
 
-The PRA still presumes engineering capacity at the partner side. For partners who don't have it, **Tier-0** is a turnkey containerized appliance — `goat-moon-pod` — that bundles all six required pieces and deploys in 24 hours by a non-engineer.
+The PRA still presumes engineering capacity at the partner side. **Tier-0** is `goat-moon-pod`, a containerized appliance that bundles all six required pieces. It is used today only to learn, in an exercise environment, and is not offered for operational sharing ([ADR 1239](../adr/1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md)).
 
 - **Contract** (the seven requirements any moon-pod must meet): [`moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md).
 - **Abstract spec**: [`goat-moon-pod.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/goat-moon-pod.md).
@@ -144,7 +144,7 @@ The PRA still presumes engineering capacity at the partner side. For partners wh
 
 **Two delivery shapes:** software bundle (partner runs `install.sh` on their existing Linux host) or pre-imaged hardware (we ship a small SFF computer pre-flashed with the bundle; per-partnership decision).
 
-**Sovereignty preservation:** partner's data on partner's hardware, partner's operators in partner's IdP, partner's audit in partner's storage — even though we ship the bundle and host the partner-net coordination plane. See [`moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md) §"Sovereignty floor" for the four edge cases (partner-net coordination, in-flight bridge processing, shipped binaries, pre-imaged hardware).
+**Not a sovereignty guarantee.** A pod joins an environment someone else runs, and that environment's owner controls enrolment, the access rules and what data may leave the pod. It could become a real capability only if the pod's operator treats the environment owner as trusted, and as the authority over the pod's ability to move data outside it. A partner that needs sovereignty runs its own environment and federates across a boundary ([ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md)). See [ADR 1239](../adr/1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md).
 
 Tier-0 and the PRA are both conformant against the same contract. Partner can transition between them without re-onboarding (requirement 7).
 
@@ -163,10 +163,10 @@ Without a signed charter, no `release/<partner>/...` allowlist entries are issue
 
 1. **Initial conversation** — partner expresses interest; we share the ADR, design doc, PRA, [requirements contract](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md), [moon-pod spec](https://github.com/usareur-af/goatstuff/blob/main/docs/design/goat-moon-pod.md), charter template. Partner indicates which tier (PRA / Tier-0 moon-pod / vendor moon-pod / partner-built) they intend to operate at.
 2. **Charter exchange + signature** — partner reviews charter, fills Appendix A (data type + operational requirement) and Appendix B (technical configuration, including tier declaration), signs. We countersign.
-3. **OIDC federation** — partner publishes their IdP discovery URL; we configure the Kratos OIDC connector. Test login. (For Tier-0 moon-pod, the moon-pod's local IdP is the partner's IdP after first-boot enrollment.)
+3. **OIDC federation** — partner publishes their IdP discovery URL; we configure the Kratos OIDC connector. Test login. (For a Tier-0 moon pod, which is exercise only: the moon pod's local IdP is the partner's IdP after first-boot enrollment.)
 4. **Namespace allocation** — partner gets `release/<partner-slug>/`; we get `release/goat/` reciprocally where applicable.
-5. **Bridge configuration** — partner-CIDR allowlist entries, conditioning role applied to bridge VPSes. (For Tier-0, also: partner-net netbird-mgmt setup-key issuance.)
-6. **Conformance evaluation** (Tier-0 only) — for moon-pods (ours, vendor's, or partner-built), run [`../../tests/moon-pod-conformance/`](../../tests/moon-pod-conformance/) against the deployed pod. All seven requirements must PASS.
+5. **Bridge configuration** — partner-CIDR allowlist entries, conditioning role applied to bridge VPSes. (For a Tier-0 moon pod, exercise only, also: partner-net netbird-mgmt setup-key issuance.)
+6. **Conformance evaluation** (Tier-0 only, exercise only) — for moon-pods (ours, vendor's, or partner-built), run [`../../tests/moon-pod-conformance/`](../../tests/moon-pod-conformance/) against the deployed pod. All seven requirements must PASS.
 7. **First per-topic allowlist** — partner requests release of topic X to themselves (or vice versa); the request flows through the policy engine for explicit approval.
 8. **Smoke test** — actual data flow over the boundary, audit log entries verified on both sides.
 9. **Operational** — ongoing per-topic decisions follow the same policy-engine workflow.
