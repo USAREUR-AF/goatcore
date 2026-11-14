@@ -195,22 +195,36 @@ def _holds(lines: list[str], block: list[str]) -> bool:
     return any(lines[i:i + k] == block for i in range(len(lines) - k + 1))
 
 
-def already_released(entries: list[dict], lines: list[str], end: int) -> list[str]:
-    """An entry whose rendered text (its title line and its body) is already inside a
-    released section: a branch cut before a release and merged after it leaves its
-    rendered lines in the release and its entry file behind. A release removes the
-    file, so the file is what goes."""
+def already_released(entries: list[dict], lines: list[str], end: int,
+                     at: dict[str, tuple[str, str, list[str]]] | None = None) -> list[str]:
+    """An entry whose rendered text (its title line, a blank line and its body, the whole
+    block: a title alone can repeat between releases) is inside a released section.
+    When that section's text at its release (`at`, from _release_texts) does not hold
+    it, the entry landed there after the release: a branch cut before the release and
+    merged after it. The section is restored and the entry kept. Otherwise it was
+    released and its file was left behind: the file goes."""
     sections = released_sections(lines, end)
     problems = []
     for e in entries:
         block = [f"#### {e['title']}", ""] + e["body"].split("\n")
         for version, body in sections:
-            if _holds(body, block):
+            if not _holds(body, block):
+                continue
+            if at and version in at and not _holds(at[version][2], block):
+                ref, named, _ = at[version]
+                problems.append(f"{ENTRIES}/{e['name']}: its text landed inside {version} after its release (it is not "
+                                f"in {version} at {named}): restore that section from `git show {_short(ref)}:{CHANGELOG}`, "
+                                f"keep the entry, then run `python3 ops/release/changelog.py write`")
+            else:
                 problems.append(f"{ENTRIES}/{e['name']}: already released in {version}; remove the entry file "
-                                f"(a release folds an entry and removes its file; a branch cut before {version} "
-                                f"and merged after it leaves both)")
-                break
+                                f"(a release folds an entry and removes its file)")
+            break
     return problems
+
+
+def _short(ref: str) -> str:
+    """A commit id cut to 12 characters; a tag as it is."""
+    return ref[:12] if re.fullmatch(r"[0-9a-f]{40}", ref) else ref
 
 
 def _git_out(repo: Path, *args: str) -> str | None:
@@ -239,26 +253,24 @@ def _release_ref(repo: Path, version: str) -> tuple[str, str] | None:
     return None
 
 
-def released_text(repo: Path, lines: list[str]) -> tuple[list[str], list[str]]:
-    """A released section is never edited after its release (outside a release-notes
-    change, which is itself a `chore(release)` commit or moves the tag): each is
-    compared with its text at its release. As (problems, notes); a version whose
-    release cannot be read is skipped with a note, never passed silently."""
-    problems: list[str] = []
+def _release_texts(repo: Path, lines: list[str]) -> tuple[dict[str, tuple[str, str, list[str]]], list[str]]:
+    """Each released section's text at its release, as {version: (ref, how it is named,
+    its lines)}, and a note for each version whose release cannot be read here."""
+    at: dict[str, tuple[str, str, list[str]]] = {}
     notes: list[str] = []
     try:
         _, end = region(lines)
     except Refused:
-        return problems, notes
+        return at, notes
     sections = released_sections(lines, end)
     if not sections:
-        return problems, notes
+        return at, notes
     shallow = _git_out(repo, "rev-parse", "--is-shallow-repository")
     if shallow is None:
         notes.append("released sections not compared with their release: not a git checkout; skipped")
-        return problems, notes
+        return at, notes
     shallow = shallow.strip() == "true"
-    for version, body in sections:
+    for version, _ in sections:
         where = _release_ref(repo, version)
         if where is None:
             notes.append(f"{version}: no tag goatbuilder/v{version} and no `chore(release): goatbuilder {version}` "
@@ -279,19 +291,40 @@ def released_text(repo: Path, lines: list[str]) -> tuple[list[str], list[str]]:
         if version not in released:
             notes.append(f"{version}: {named} has no `## {version}` section; skipped")
             continue
-        if [l.rstrip() for l in body] != [l.rstrip() for l in released[version]] and \
-                [l for l in body if l.strip()] != [l for l in released[version] if l.strip()]:
-            added = [l for l in body if l.strip() and l not in released[version]]
-            gone = [l for l in released[version] if l.strip() and l not in body]
+        at[version] = (ref, named, released[version])
+    return at, notes
+
+
+def released_text(repo: Path, lines: list[str],
+                  at_notes: tuple[dict, list[str]] | None = None) -> tuple[list[str], list[str]]:
+    """A released section is never edited after its release (a release-notes change is
+    itself a `chore(release)` commit, or moves the tag): each is compared with its text
+    at its release, the release commit's text as it was committed, not a re-render. As
+    (problems, notes); a version whose release cannot be read is skipped with a note,
+    never passed silently."""
+    at, notes = at_notes if at_notes is not None else _release_texts(repo, lines)
+    problems: list[str] = []
+    try:
+        _, end = region(lines)
+    except Refused:
+        return problems, notes
+    for version, body in released_sections(lines, end):
+        if version not in at:
+            continue
+        ref, named, then = at[version]
+        if [l.rstrip() for l in body] != [l.rstrip() for l in then] and \
+                [l for l in body if l.strip()] != [l for l in then if l.strip()]:
+            added = [l for l in body if l.strip() and l not in then]
+            gone = [l for l in then if l.strip() and l not in body]
             what = []
             if added:
                 what.append("added: " + " | ".join(added[:3]) + (" …" if len(added) > 3 else ""))
             if gone:
                 what.append("removed: " + " | ".join(gone[:3]) + (" …" if len(gone) > 3 else ""))
             problems.append(f"{CHANGELOG}: the released section {version} differs from its text at {named} "
-                            f"({'; '.join(what) or 'lines moved'}). A released section is never edited after "
-                            f"its release; an entry merged after it belongs in {ENTRIES}/ (rebase onto main and "
-                            f"run `write`)")
+                            f"({'; '.join(what) or 'lines moved'}). A released section is never edited after its "
+                            f"release: restore it from `git show {_short(ref)}:{CHANGELOG}`; an entry merged after the "
+                            f"release stays in {ENTRIES}/ and `write` renders it under Unreleased")
     return problems, notes
 
 
@@ -303,7 +336,10 @@ def check(repo: Path) -> list[str]:
         b, e = region(lines)
     except Refused as r:
         return list(r.args[0])
-    problems = already_released(entries, lines, e) + released_text(repo, lines)[0]
+    at_notes = _release_texts(repo, lines)
+    # The released-entry reasons first: following the generic `write` one alone would
+    # render such an entry a second time, under Unreleased.
+    problems = already_released(entries, lines, e, at_notes[0]) + released_text(repo, lines, at_notes)[0]
     if lines[b:e + 1] != unreleased_lines(entries):
         problems.append(f"{CHANGELOG}: the Unreleased section differs from its render; "
                         f"run `python3 ops/release/changelog.py write` (a hand edit there is lost: edit {ENTRIES}/ instead)")
