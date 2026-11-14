@@ -115,7 +115,11 @@ pub fn summary(p: &Plan, path: &Path) -> String {
         }
     }
     for r in p.readiness.iter().filter(|r| r.outcome != "PASS") {
-        s.push_str(&format!("  readiness:  {} {}\n", r.check, r.outcome));
+        if r.detail.is_empty() {
+            s.push_str(&format!("  readiness:  {} {}\n", r.check, r.outcome));
+        } else {
+            s.push_str(&format!("  readiness:  {} {}: {}\n", r.check, r.outcome, r.detail));
+        }
     }
     if !p.conflicts.is_empty() {
         s.push_str(&format!(

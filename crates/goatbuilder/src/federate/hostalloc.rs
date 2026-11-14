@@ -67,6 +67,11 @@ pub struct Comparison {
     pub claims: Vec<Claim>,
     pub unverified: Vec<String>,
     pub our_hosts: bool,
+    /// This peering's partner and inventory groups, which the readiness row
+    /// names when the inventory has no host in them.
+    pub with: String,
+    pub edge_group: String,
+    pub core_group: String,
 }
 
 /// The label of a peering in claims and conflicts.
@@ -173,12 +178,24 @@ pub(super) fn work_of_other(our_work: &Path, with: &str) -> Option<PathBuf> {
         .find(|c| c.as_path() != our_work && c.join("agreement.json").is_file())
 }
 
+/// One checked value of a peering: what it resolved to, where it was read
+/// (or why not), and the key and group it is declared under.
+#[derive(Clone)]
+struct Value {
+    value: Option<String>,
+    source: String,
+    key: &'static str,
+    group: String,
+}
+
 struct Side {
     label: String,
+    /// The partner, as `goatbuilder federate allocate <with>` names it.
+    with: String,
     edge: Vec<(String, String)>,
     core: Vec<(String, String)>,
-    /// Kind -> value, `None` when it does not resolve.
-    values: BTreeMap<&'static str, Option<String>>,
+    /// Kind -> value; its `value` is `None` when it does not resolve.
+    values: BTreeMap<&'static str, Value>,
     /// `None` before the agreement is composed (or found).
     agreement: Option<(String, Option<String>)>,
     via_forwarder: bool,
@@ -234,12 +251,26 @@ pub fn compare(
         };
         let mut values = BTreeMap::new();
         for (kind, on_core, role, key, _, _) in CHECKED {
-            let g = groups(if *on_core { &core_group } else { &edge_group }, *on_core);
+            let group = if *on_core { &core_group } else { &edge_group };
+            let g = groups(group, *on_core);
             let gs: Vec<&str> = g.iter().map(String::as_str).collect();
             let listed = our_resources.iter().find(|r| r.kind == *kind);
             let v = match (mine, listed) {
-                (true, Some(r)) => r.name.clone(),
-                _ => resolve(repo, kind, None, &gs, role, key).value,
+                (true, Some(r)) => Value {
+                    value: r.name.clone(),
+                    source: r.source.clone(),
+                    key,
+                    group: group.clone(),
+                },
+                _ => {
+                    let r = resolve(repo, kind, None, &gs, role, key);
+                    Value {
+                        value: r.value,
+                        source: r.source,
+                        key,
+                        group: group.clone(),
+                    }
+                }
             };
             values.insert(*kind, v);
         }
@@ -262,6 +293,7 @@ pub fn compare(
         };
         sides.push(Side {
             label: label(p),
+            with: p.with.clone(),
             edge: inventory_hosts(repo, &edge_group),
             core: inventory_hosts(repo, &core_group),
             values,
@@ -276,6 +308,9 @@ pub fn compare(
     let our_core: Vec<&String> = us.core.iter().map(|(_, a)| a).collect();
     let mut cmp = Comparison {
         our_hosts: !us.edge.is_empty() || !us.core.is_empty(),
+        with: ours.with.clone(),
+        edge_group: our_edge_group.to_string(),
+        core_group: format!("{}_core", ours.with),
         ..Default::default()
     };
     for s in &sides {
@@ -295,7 +330,8 @@ pub fn compare(
                 continue;
             }
             let hosts = if *on_core { &s.core } else { &s.edge };
-            match s.values.get(kind).cloned().flatten() {
+            let resolved = s.values.get(kind);
+            match resolved.and_then(|v| v.value.clone()) {
                 Some(v) => {
                     for (_, addr) in hosts {
                         cmp.claims.push(Claim {
@@ -309,9 +345,12 @@ pub fn compare(
                 None if (!theirs && !hosts.is_empty())
                     || (theirs && if *on_core { shares_core } else { shares_edge }) =>
                 {
+                    let (source, key, group) = resolved
+                        .map(|v| (v.source.as_str(), v.key, v.group.as_str()))
+                        .unwrap_or(("not read", "", ""));
                     cmp.unverified.push(format!(
-                        "{kind} of {} does not resolve (unset or templated)",
-                        s.label
+                        "{kind} of {} does not resolve ({source}): set {key} to a value in ops/ansible/group_vars/{group}/, or run goatbuilder federate allocate {}, which renders it",
+                        s.label, s.with
                     ));
                 }
                 None => {}
@@ -332,7 +371,14 @@ pub fn compare(
             // peering on a machine we share, with no agreement found, is
             // not verified.
             _ if theirs && shares_edge && us.agreement.is_some() => {
-                cmp.unverified.push(format!("link subnet of {}: no agreement found beside our working directory or under {DEFAULT_WORK_ROOT}", s.label));
+                let beside = our_work
+                    .parent()
+                    .map(|p| p.join(&s.with).join("agreement.json").display().to_string())
+                    .unwrap_or_default();
+                cmp.unverified.push(format!(
+                    "link subnet of {}: no agreement found at {beside} or {DEFAULT_WORK_ROOT}/{}/agreement.json; it is written when that peering's phases up to 6 run from this machine, or give it the working directory beside ours",
+                    s.label, s.with
+                ));
             }
             _ => {}
         }
@@ -391,7 +437,9 @@ pub fn involving(found: Vec<Conflict>, our_label: &str) -> Vec<Conflict> {
 
 /// The readiness row: FAIL with GB-203 naming each conflict of ours; SKIP
 /// when this peering has no inventory host or a value on a shared machine does
-/// not resolve (nothing, or not everything, was compared); else PASS.
+/// not resolve (nothing, or not everything, was compared); else PASS. A SKIP's
+/// detail says which of the two it is and what clears it: the groups and the
+/// two ways to declare their hosts, or each value with where it is read.
 pub fn readiness(cmp: &Comparison, ours: &[Conflict]) -> Readiness {
     let row = |outcome: &str, code: Option<&str>, detail: String| Readiness {
         check: "host-allocation".into(),
@@ -413,15 +461,22 @@ pub fn readiness(cmp: &Comparison, ours: &[Conflict]) -> Readiness {
         return row(
             "SKIP",
             None,
-            "the peering inventory names no host for this peering, so no machine was compared"
-                .into(),
+            format!(
+                "the peering inventory names no host in {e} or {c} for this peering, so no machine was compared. Declare them: goatbuilder federate allocate {w} renders inventory/peering-{e}.ini, or name them under [{e}] and [{c}] in ops/ansible/inventory/peering-edges.ini; then make a new plan",
+                e = cmp.edge_group,
+                c = cmp.core_group,
+                w = cmp.with
+            ),
         );
     }
     if !cmp.unverified.is_empty() {
         return row(
             "SKIP",
             None,
-            format!("not verified: {}", cmp.unverified.join("; ")),
+            format!(
+                "not verified: {}; then make a new plan",
+                cmp.unverified.join("; ")
+            ),
         );
     }
     row("PASS", None, "no other declared peering shares an inventory name, interface, tunnel or carrier port, link subnet or metrics port with this peering on its machines".into())

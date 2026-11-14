@@ -1500,7 +1500,8 @@ fn plan_max_age_hours() -> i64 {
 }
 
 /// Why a saved plan cannot be approved as it stands: a FAIL or BLOCKED in its
-/// readiness, a SKIP of a check the recheck does not rerun, or its age.
+/// readiness, a SKIP of a check the recheck does not rerun, or its age. Each
+/// row's reason carries the row's detail, which says what clears it.
 fn unready(saved: &Plan) -> Vec<String> {
     unready_at(saved, chrono::Utc::now(), plan_max_age_hours())
 }
@@ -1512,7 +1513,13 @@ fn unready_at(saved: &Plan, now: chrono::DateTime<chrono::Utc>, max_hours: i64) 
         .filter(|r| {
             blocks(&r.outcome) || (r.outcome == "SKIP" && !LIVE_CHECKS.contains(&r.check.as_str()))
         })
-        .map(|r| format!("{} was {} when the plan was made", r.check, r.outcome))
+        .map(|r| {
+            if r.detail.is_empty() {
+                format!("{} was {} when the plan was made", r.check, r.outcome)
+            } else {
+                format!("{} was {} when the plan was made: {}", r.check, r.outcome, r.detail)
+            }
+        })
         .collect();
     match chrono::DateTime::parse_from_rfc3339(&saved.created_at) {
         Ok(t) => {
