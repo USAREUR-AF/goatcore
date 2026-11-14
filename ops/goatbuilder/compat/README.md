@@ -24,7 +24,7 @@ crate, the schema, the catalog or this directory.
 
 ## The last release
 
-`baseline.yaml` names it: `goatbuilder/v0.5.3`, commit `19bdae82`, with the
+`baseline.yaml` names it: `goatbuilder/v0.6.0`, commit `1a77b725`, with the
 SHA-256 of the released `goatbuilder-linux-amd64` binary the baseline was
 recorded from and of the `SHA256SUMS` that listed it. That binary's SHA-256 must
 also be its line in `crates/goatbuilder/tests/upgrade/releases.sha256`, the one
@@ -95,7 +95,7 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
   `documents/manifest.yaml` in the same pull request and give the reason in
   `exit_changed:`. `release_exit` keeps what the release did, and `check`
   refuses an `exit` that differs from it without a reason. The next refresh
-  records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.5.3's exit 2 for this purpose.
+  records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.6.0's exit 2 for this purpose.
 - **A kept document whose shape must change.** It cannot within one version:
   add the new field beside the old one, or publish a new document version.
 - **A field a format carries only on some entries** (conditional fields). The
@@ -129,9 +129,9 @@ fixtures are never changed.
   build knows (`waiting` becomes known in 0.6.0), and `written_by` and
   phase 14's `session` are fields no build writes.
 
-A4 keeps `federate status` of each. 0.5.3, like 0.5.1, reads the first and refuses the
-second as unreadable (GB-182), so the second's kept document is that refusal.
-A build that reads journals from later versions produces a superset of it.
+A4 keeps `federate status` of each. 0.6.0 reads both: it shows the later
+journal's unknown outcomes as written (0.5.1 and 0.5.3 refused it as unreadable,
+GB-182), so the second's kept document is now that reading.
 The rule itself (shown as written, not passed on resume, unknown fields kept
 on rewrite) is proven by `crates/goatbuilder/tests/journal_from_a_later_build.rs`,
 which lands with the reader that passes it.

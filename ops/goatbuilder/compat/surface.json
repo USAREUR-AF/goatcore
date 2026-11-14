@@ -330,6 +330,10 @@
     "table",
     "json",
     "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
    ]
   }
  },
@@ -358,6 +362,10 @@
     "table",
     "json",
     "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
    ]
   }
  },
@@ -385,6 +393,10 @@
     "table",
     "json",
     "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
    ]
   }
  },
@@ -417,6 +429,10 @@
     "table",
     "json",
     "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
    ]
   }
  },
@@ -444,6 +460,10 @@
     "table",
     "json",
     "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
    ]
   }
  },
@@ -467,6 +487,10 @@
     "table",
     "json",
     "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
    ]
   }
  },
@@ -490,6 +514,10 @@
     "table",
     "json",
     "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
    ]
   }
  },
@@ -518,6 +546,10 @@
     "table",
     "json",
     "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
    ]
   }
  },
@@ -543,6 +575,10 @@
     "table",
     "json",
     "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
    ]
   }
  },
@@ -952,10 +988,75 @@
    ]
   }
  },
+ "goatbuilder runs": {
+  "args": [],
+  "flags": {
+   "--last": true,
+   "--verb": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder runs diff": {
+  "args": [
+   {
+    "name": "A",
+    "required": true
+   },
+   {
+    "name": "B",
+    "required": true
+   }
+  ],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
  "goatbuilder secrets": {
   "args": [
    {
     "name": "ARGS",
+    "required": true
+   }
+  ],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
+ },
+ "goatbuilder show": {
+  "args": [
+   {
+    "name": "RUN",
     "required": true
    }
   ],
