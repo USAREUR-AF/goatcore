@@ -375,7 +375,16 @@ policy you did not apply is worse than printing nothing, because it ends the
 investigation.
 
 **Stalled multipart uploads are therefore not cleaned up by this policy.**
-Not fatal, not F-171, but do not assume it is running.
+MinIO cleans them up itself, server-wide: it aborts an upload older than its
+`api` setting `stale_uploads_expiry` (`MINIO_API_STALE_UPLOADS_EXPIRY`,
+default 24h), checked every `stale_uploads_cleanup_interval`. The role reads
+that setting back (`mc admin config get <alias> api`) after the re-export, and
+the deploy **fails** when the clause was dropped and the server's expiry is
+longer than `audit_subscriber_minio_multipart_abort_days`, or cannot be read.
+A deploy that passes therefore has one of the two in place. This check is
+**built** and tested against the task's own templates
+(`tests/test_audit_lifecycle_multipart.py`); it is **not measured** on a
+running MinIO.
 
 ### Alerting
 
