@@ -153,7 +153,7 @@ reads each machine's deploy ledger the way `goatbuilder diff` reads it and grade
 it the way `goatbuilder verify` grades it, so the three agree about every
 machine. It reads only: no play runs and nothing is written. It exits 3 while
 any machine is pending or unknown. GB-026 is retired: no release after this one
-prints it.
+prints it (#648).
 
 ### For someone contributing
 
