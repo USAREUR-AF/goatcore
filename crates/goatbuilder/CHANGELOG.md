@@ -56,6 +56,18 @@ peering's leaf, and our core router's leaf is restored from the earliest
 admission that touched it. An IPsec link's MSS clamp rules are removed by
 their own handles (#554).
 
+#### Fixed: the docker-engine role checks the root the running containerd uses
+
+The `docker-engine` role reads the root directory the running containerd uses
+before it writes `/etc/containerd/config.toml`. When the two differ and
+containers are running, the play fails and writes nothing; with no container
+running, the role writes the file and restarts containerd in the same play.
+A final check compares the running daemon's root with
+`docker_engine_containerd_root`. Before, a restart the handler missed could
+leave containerd on an empty root after its next restart, so `docker exec` and
+every healthcheck answered `NotFound` while the services kept running. The
+data-root migration runbook gives the check by hand (#664).
+
 #### Added: the end state grades federation-proxy where a site turns it on
 
 `goatbuilder endstate` now has a row for `federation-proxy`, the node-local
@@ -76,7 +88,7 @@ federation verb given site flags before it (GB-238) or a flag it does not take
 (GB-239); an unknown `FED_VERBS` (GB-240); `--mock` on a verb that reads the
 checkout (GB-276, new); and a peering that is not declared (GB-149). The
 undeclared peering now exits 1, refused, as GB-149 says and as `federate
-allocate`'s same refusal already did; it exited 2 (gate row C5).
+allocate`'s same refusal already did; it exited 2 (gate row C5) (#656).
 
 #### Fixed: federate status resumes from the first phase it cannot show passed
 
@@ -155,7 +167,7 @@ from `postgres_max_connections`. The roles that schedule jobs with cron
 allowed-ips` and `listen-port`, and a back-out checks that a carrier exists with
 `listen-port`. When a carrier does not hold what the declaration says, the failure
 message lists each peer's public key and allowed address, then the port the
-carrier listens on.
+carrier listens on (#663).
 
 #### Fixed: a phase 11 link that did not come up is named as GB-271
 
@@ -259,7 +271,7 @@ the log, and the command that runs that phase again by hand. With no known
 error in the output, the row gives the phase's own guidance from the phase
 catalog. This covers the numbered phases, the image pull, the observability
 legs and the phase-12 steps that `--parallel` runs in waves, each read from its
-own log.
+own log (#652, #669).
 
 #### Added: goatbuilder status reads real hosts
 
@@ -292,7 +304,8 @@ without installing it, with the checks `goatbuilder update` makes before it
 installs: the keyless signature over `SHA256SUMS` (`SHA256SUMS.cosign-bundle`)
 for the release workflow of `<owner>/<repo>` at `goatbuilder/v<version>`, and
 every other file in `<dir>` against that `SHA256SUMS`. It reads only. A
-refusal names the failed check: GB-261 for the signature, GB-074 for a file.
+refusal names the failed check: GB-261 for the signature, GB-074 for a file
+(#655).
 
 #### Fixed: an edge deployed from a workspace gets the certificates it mounts, or phase 12 says why
 
@@ -305,7 +318,8 @@ machine, and `goat_zenoh_edge_install_certs` is off; the fix is to turn that
 switch on. With it on, the `goat-zenoh-edge` role now also installs our CA's
 certificate as `<cert_dir>/our-ca.pem`, from `<work>/pki/our-ca.pem` (never the
 CA's key: a source holding a private key is refused), and `goatbuilder federate
-allocate` renders our CA's path and the core endpoint's override at that path.
+allocate` renders our CA's path and the core endpoint's override at that path
+(#658).
 
 ### For someone contributing
 
@@ -334,9 +348,9 @@ exit code changes only with a reason in `exit_changed`, and a value a flag
 accepted in the last release is still accepted. The published binaries'
 checksums are one list, `crates/goatbuilder/tests/upgrade/releases.sha256`,
 which the upgrade tests own and the check only reads, and it holds
-v0.6.0's binaries. v0.6.0's configuration files are kept for gate row A2
-beside those of the earlier releases (#566, #617, #562, #563, #631, #634,
-#616).
+v0.6.0's and v0.6.1's binaries. The configuration files of both are kept
+for gate row A2 beside those of the earlier releases (#566, #617, #562,
+#563, #631, #634, #616, #674, #675).
 
 #### Added: contract clause C11, legibility, is written beside C1 to C10
 
@@ -348,6 +362,14 @@ name its conformance test, `crates/goatbuilder/tests/legibility.rs`, and
 say what each of its four checks requires. C11 does not hold yet: the
 checks that fail today are listed in
 `crates/goatbuilder/tests/legibility-known-failing.txt` (#647).
+
+#### Changed: a documents-only pull request runs only the documents' configuration examples
+
+`goatbuilder-pr` decides from the pull request's own diff whether it changes
+documents only (`ops/ci/goatbuilder-pr-scope.sh`). A documents-only pull
+request then runs the check that every whole configuration example in the
+documents validates, and not the whole build, test and macOS jobs; a change
+to the tutorials or to anything else still runs everything (#685).
 
 #### Fixed: the federation test environment's other clones own their objects
 
@@ -418,6 +440,17 @@ co-author trailers added by tooling. The rule is unchanged: ADR 0109 still
 states it, and `pr-readiness` still refuses such a trailer in a commit
 message (#315).
 
+#### Added: the rules that hold while a release is cut
+
+The release procedure (`docs/reference/goatbuilder/02-install.md`) now says
+when the tag goes on, and three rules from the version branch's cut-off to
+the tag: merges freeze except for the version pull request and the changes it
+names; a run on `main` cancelled by a later merge is run again once and is not
+a failure; and an engineering question that comes with a recommended option
+does not hold the release once 30 minutes pass without an answer, while a
+question of policy, cost or people, or about an act that cannot be undone,
+waits (#673).
+
 #### Fixed: standup passes the trunk and the mirror token to its phases as run state
 
 `goatbuilder standup` no longer writes `GOAT_FRESH_SOURCE_TRUNK` and the
@@ -429,6 +462,16 @@ is removed from every other phase's environment, even when the operator's
 own environment holds it: least privilege for child processes. A test
 allows a process-environment write only in `main`, before any thread
 starts (#642).
+
+#### Added: standup's phases are in the phase catalog, and explain answers for them
+
+`ops/phases/catalog.yaml` now describes standup's 14 phases and its named
+steps (the image pull and the observability legs, with their joins), each
+with what it does and why, what it changes, how to tell it worked, what it
+runs, the command by hand and what to do when it failed. A test builds
+standup's plan for six site shapes and holds the catalog to it, so the two
+cannot drift. `goatbuilder explain standup [<phase>]` answers from the
+catalog, by number or name, as it does for federate (gate row F4) (#651).
 
 #### Added: a test that backing out a role-admitted core gives its org fragment back
 

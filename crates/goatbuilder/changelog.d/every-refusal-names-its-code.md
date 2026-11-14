@@ -11,4 +11,4 @@ federation verb given site flags before it (GB-238) or a flag it does not take
 (GB-239); an unknown `FED_VERBS` (GB-240); `--mock` on a verb that reads the
 checkout (GB-276, new); and a peering that is not declared (GB-149). The
 undeclared peering now exits 1, refused, as GB-149 says and as `federate
-allocate`'s same refusal already did; it exited 2 (gate row C5).
+allocate`'s same refusal already did; it exited 2 (gate row C5) (#656).
