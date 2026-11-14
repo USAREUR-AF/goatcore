@@ -284,6 +284,9 @@ jobs:
       - name: the forwarder's carrier read-back lists only public keys, addresses and ports (stand-in wg)
         timeout-minutes: 5
         run: bash ops/ansible/roles/goat-peering-forwarder/tests/test-readback.sh
+      - name: a carrier key rotation sets each key aside once and makes a new one (stand-in wg)
+        timeout-minutes: 5
+        run: bash ops/ansible/roles/goat-peering-wg/tests/test-rotation.sh
 
   peering-host-firewall:
     needs: changes

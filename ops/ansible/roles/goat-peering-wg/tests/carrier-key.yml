@@ -1,0 +1,15 @@
+---
+# Runs the carrier's key tasks of tasks/carrier.yml (the set-aside and the
+# generation, through tasks/carrier-key.yml) on localhost against the stand-in
+# wg that test-rotation.sh puts first on PATH. Its values come as extra vars.
+- name: goat-peering-wg carrier key, against a stand-in wg
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  environment:
+    PATH: "{{ stand_in_bin }}:{{ lookup('env', 'PATH') }}"
+  tasks:
+    - name: The carrier's key
+      ansible.builtin.include_tasks: ../tasks/carrier-key.yml
