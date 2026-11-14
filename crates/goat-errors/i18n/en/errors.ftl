@@ -175,6 +175,10 @@ gb-273-what = The partner's signed acceptance result is for another agreement, s
 gb-273-cause-1 = an earlier session's or attempt's result was read again (a replay, or a result left from before)
 gb-273-cause-2 = the two sides hold different agreements: the digests read aloud at phase 6 differ
 gb-273-cause-3 = our own result was read back as if it were the partner's
+gb-275-title = phase 12 would deploy an edge that has none of the files it mounts
+gb-275-what = Phase 8 mints the peering leaves, and places our CA beside them, in <work>/pki on the machine goatbuilder federate runs on. The edge router mounts each of those files by path on the edge host. The edge group's variables point the edge at files in <work>/pki, the inventory names the edge as another machine, and goat_zenoh_edge_install_certs is off, so nothing copies them there: the edge would start with nothing to mount and never reach the core. Phase 12 is refused before it starts.
+gb-275-cause-1 = goatbuilder federate runs on an operator's workspace, not on the edge host, and the edge group's install of the peering certificates is off
+gb-275-cause-2 = the inventory names this machine by an address of its own, not as ansible_connection=local
 gb-261-title = the release's signature does not verify, so the update refuses
 gb-261-what = `goatbuilder update` verifies the keyless signature over the release's SHA256SUMS (SHA256SUMS.cosign-bundle) itself, offline, against the Sigstore trusted root: the certificate chains to a Fulcio CA, Rekor's signed entry timestamp verifies, the entry names this file, and the certificate is the release signer's goatbuilder-release.yml at the served version's goatbuilder/v<version> tag. One of these failed, or the surface serves no signature. The message names the check. Nothing was installed.
 gb-261-cause-1 = the surface serves a SHA256SUMS or a binary that the release workflow did not sign

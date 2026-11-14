@@ -646,6 +646,21 @@ entries:
       - "^GB-273: "
     exit: 2
 
+  - code: GB-275
+    tool: goatbuilder
+    title: phase 12 would deploy an edge that has none of the files it mounts
+    what: "Phase 8 mints the peering leaves, and places our CA beside them, in <work>/pki on the machine goatbuilder federate runs on. The edge router mounts each of those files by path on the edge host. The edge group's variables point the edge at files in <work>/pki, the inventory names the edge as another machine, and goat_zenoh_edge_install_certs is off, so nothing copies them there: the edge would start with nothing to mount and never reach the core. Phase 12 is refused before it starts."
+    causes:
+      - "goatbuilder federate runs on an operator's workspace, not on the edge host, and the edge group's install of the peering certificates is off"
+      - "the inventory names this machine by an address of its own, not as ansible_connection=local"
+    fixes:
+      - "set goat_zenoh_edge_install_certs: true for the edge group (the role then installs the leaves, the partner's CA and our CA's certificate from this machine, never a CA key); run goatbuilder federate allocate again when the deployment is rendered; then goatbuilder federate <peering> --from 12"
+      - "if this machine is the edge host, mark it ansible_connection=local in the inventory"
+    read: docs/design/federation-certificate-lifecycle.md
+    matches:
+      - "^GB-275: "
+    exit: 1
+
   - code: GB-261
     tool: goatbuilder
     title: the release's signature does not verify, so the update refuses

@@ -60,6 +60,7 @@ pub mod federation_toml;
 pub mod declared;
 pub mod forwarder;
 pub mod hostalloc;
+pub mod edge_delivery;
 pub mod hostfw;
 pub mod peering_files;
 mod admit;
@@ -774,6 +775,19 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 let d = c.detail.clone();
                 checks.push(c);
                 r.end(ph, state::Outcome::Failed, &d);
+                exit = EXIT_REFUSED;
+                break;
+            }
+        }
+        // Phase 12 from a driver that is not the edge host: the files phase 8
+        // wrote in <work>/pki here reach the edge only through the role's install
+        // (federate/edge_delivery.rs, GB-272).
+        if ph.n == 12 && executes {
+            if let Some(d) = edge_delivery::check(repo, &edge_group, &work) {
+                checks.push(Check { name: "failed".into(), ok: false, detail: d.clone(), fix: Some(format!("set goat_zenoh_edge_install_certs: true for {edge_group}, then resume: {resume} --from 12")) });
+                if let Some(r) = run.as_mut() {
+                    r.end(ph, state::Outcome::Failed, &d);
+                }
                 exit = EXIT_REFUSED;
                 break;
             }

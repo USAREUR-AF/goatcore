@@ -19,6 +19,7 @@
   ansible.builtin.set_fact:
     _ze_certs_copied_certs: { results: [] }
     _ze_certs_copied_keys: { results: [] }
+    _ze_certs_copied_ca: { results: [] }
 
 - name: edge certs | a restart a previous run owes
   ansible.builtin.stat:
@@ -66,6 +67,18 @@
         - { src: "{{ goat_zenoh_edge_partner_ca_src }}", dest: "{{ goat_zenoh_edge_partner_ca_path }}" }
       register: _ze_certs_copied_certs
 
+    # Our CA: the certificate the check read, written as those exact bytes, so
+    # what is installed is what was checked. Never the CA's key.
+    - name: edge certs | our CA's certificate
+      ansible.builtin.copy:
+        content: "{{ _ze_certs_our_ca.content | b64decode }}"
+        dest: "{{ goat_zenoh_edge_our_ca_path }}"
+        owner: "{{ goat_zenoh_edge_cert_owner }}"
+        group: "{{ goat_zenoh_edge_cert_group }}"
+        mode: "0644"
+      loop: "{{ [goat_zenoh_edge_our_ca_path] if _ze_certs_our_ca_installs | bool else [] }}"
+      register: _ze_certs_copied_ca
+
     - name: edge certs | the private keys, readable by their owner alone
       ansible.builtin.copy:
         src: "{{ item.src }}"
@@ -95,7 +108,7 @@
 - name: edge certs | did any certificate file change
   ansible.builtin.set_fact:
     _ze_certs_changed: >-
-      {{ (_ze_certs_copied_certs.results + _ze_certs_copied_keys.results)
+      {{ (_ze_certs_copied_certs.results + _ze_certs_copied_ca.results + _ze_certs_copied_keys.results)
          | selectattr('changed', 'defined') | selectattr('changed') | list | length > 0 }}
 
 - name: edge certs | restart the edge for a changed file or a restart an earlier run owes

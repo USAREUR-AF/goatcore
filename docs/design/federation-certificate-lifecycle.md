@@ -148,6 +148,19 @@ the leaves themselves.
 The checks and the writes are two task files, included at two points of
 `roles/goat-zenoh-edge/tasks/main.yml`.
 
+A driver that is not the edge host. Phase 8 writes `<work>/pki` on the machine
+`goatbuilder federate` runs on, and the edge mounts each file by path on the edge
+host. Before phase 12, the driver refuses (GB-272,
+`crates/goatbuilder/src/federate/edge_delivery.rs`) when the edge group's vars
+point the edge at files in `<work>/pki`, the inventory names the edge as another
+machine (not `ansible_connection=local`, a loopback address or this machine's
+name), and the switch is off: nothing would copy those files to the edge. With the
+switch on, `goatbuilder federate allocate` renders our CA's path and the core
+endpoint's `#root_ca_certificate_file=` as `/etc/goat-zenoh-edge-<partner>/tls/our-ca.pem`,
+where the role installs it, instead of the controller's path. **Built**, unit and
+stand-in tests only (`federate_edge_delivery.rs`); not yet run on the federation
+test environment's operator-workspace scenario.
+
 `tasks/certificates-check.yml` runs before the role's first write and only reads:
 
 1. The five path variables must equal `<cert_dir>/<file>` (the defaults derive
@@ -155,7 +168,16 @@ The checks and the writes are two task files, included at two points of
 2. `goat_zenoh_edge_cert_dir` must be an absolute path at least two levels deep,
    and the source directory is refused with a trailing `/` (the checksums are
    keyed by the exact source path).
-3. Our CA is read from the edge (`goat_zenoh_edge_our_ca_path`).
+3. Our CA. With the switch on, `goat_zenoh_edge_our_ca_path` defaults to
+   `<cert_dir>/our-ca.pem`, and then the role installs our CA as well, from
+   `goat_zenoh_edge_our_ca_src` on the controller (`<work>/pki/our-ca.pem`, where
+   phase 8 places it). The source must be named `our-ca.pem` and hold
+   certificates and nothing else: a file with any `PRIVATE KEY` block is
+   refused, so our CA's key never reaches the edge. Any other
+   `goat_zenoh_edge_our_ca_path` names a CA placed on the edge by hand, and our
+   CA is read there, as before. **Built**: `tests/test-certificates.sh` installs
+   it, refuses a source that holds a key or is not `our-ca.pem`, and checks the
+   edge directory holds no CA key and the compose file mounts the installed file.
 4. `files/check-peering-certs.py` runs on the controller. It reads each file once
    (no symlink, regular files only) into a private temporary directory, runs
    every `openssl` call on those copies, and hashes the same bytes. It reports
@@ -191,8 +213,9 @@ The checks and the writes are two task files, included at two points of
 
 `tasks/certificates-install.yml` runs after every other check in the role and
 before the bundle trust mode reads the partner CA. It writes the directory
-(0750), the `.peering` file, the certificates and partner CA (0644) and the keys
-(0600), each with the configured owner. Each copy carries the checksum from step
+(0750), the `.peering` file, the certificates and partner CA (0644), our CA's
+certificate when the role installs it (0644, written as the exact bytes the
+check read) and the keys (0600), each with the configured owner. Each copy carries the checksum from step
 4: a copy that transfers a source file changed after the check (a concurrent
 `--rotate`, for example) fails instead of installing bytes nobody checked. A
 destination already equal to its current source is not transferred, so that

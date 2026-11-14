@@ -418,8 +418,21 @@ fn reviewed_digest(w: &World, plan: &str) -> String {
         .to_string()
 }
 
-/// Admission that places their CA under pki/, a section the plan records.
+/// Admission that places their CA under pki/, a section the plan records. The
+/// edge then mounts a file from the working directory, so the driver runs on the
+/// edge host here (ansible_connection=local): from another machine, phase 12 is
+/// refused unless the role installs the files (GB-272, federate_edge_delivery.rs).
 fn ca_in_pki(w: &World) {
+    let inv = w.repo.join("ops/ansible/inventory/peering-edges.ini");
+    let text = std::fs::read_to_string(&inv).unwrap();
+    std::fs::write(
+        &inv,
+        text.replace(
+            "edge-1 ansible_host=192.0.2.10",
+            "edge-1 ansible_host=192.0.2.10 ansible_connection=local",
+        ),
+    )
+    .unwrap();
     let gv = w
         .repo
         .join("ops/ansible/group_vars/hello-ally_edge/peering.yml");
