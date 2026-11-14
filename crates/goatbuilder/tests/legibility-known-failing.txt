@@ -18,4 +18,3 @@
 
 # (d) every phase that can run has a phase-catalog entry, and every document path the tool prints exists.
 #     Removed by step 6 (ops/phases/catalog.yaml; the missing document).
-d deploy     no phase catalog (ops/phases/catalog.yaml)
