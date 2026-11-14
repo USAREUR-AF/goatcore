@@ -1,6 +1,7 @@
 ---
 # Phase 2. The interface and its key, with no address and no peer. Idempotent, and
-# it never rotates a key: the public half is in a signed package by the next phase.
+# it rotates a key only when a rotation id is passed (tasks/transport-key.yml): the
+# public half is in a signed package by the next phase.
 - name: peering-wg | skip unless this host declared a WireGuard peering edge
   ansible.builtin.meta: end_host
   when: not (peering_wg_enabled | bool)
@@ -32,11 +33,9 @@
     mode: "0700"
 
 # The private key is made here and never leaves this host. Only the public half
-# crosses, inside the signed package.
-- name: peering-wg | make the private key if there is none
-  ansible.builtin.shell:
-    cmd: "umask 077; wg genkey > {{ peering_wg_key_path }}"
-    creates: "{{ peering_wg_key_path }}"
+# crosses, inside the signed package. A rotation sets the old one aside first.
+- name: peering-wg | the private key, set aside first under a rotation
+  ansible.builtin.include_tasks: transport-key.yml
 
 - name: peering-wg | link script
   ansible.builtin.template:
@@ -75,6 +74,9 @@
     state: started
     enabled: true
     daemon_reload: true
+
+- name: peering-wg | under a rotation, the interface holds the new key
+  ansible.builtin.include_tasks: transport-live.yml
 
 - name: peering-wg | flush handlers so the checks below see this run's service
   ansible.builtin.meta: flush_handlers

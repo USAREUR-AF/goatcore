@@ -1,0 +1,33 @@
+---
+# After a peering key rotation (tasks/transport-key.yml), the interface has to hold
+# the new key before phase 3 measures it: `init` reads `wg show <if> public-key`,
+# so an interface still holding the old key would put the old key in the new
+# package. The link is restarted while the interface's public key is not the one
+# of the key on disk; once it is, a rerun changes nothing. Without a rotation
+# nothing here runs, so the interface of a running peering is never restarted by
+# phase 2. Included by tasks/prepare.yml after the interface is brought up.
+
+- name: peering-wg | peering key | the interface holds the key on disk, after a rotation
+  when: peering_wg_transport_rotation | length > 0
+  block:
+    - name: peering-wg | peering key | the public half of the key on disk
+      ansible.builtin.shell:
+        cmd: "wg pubkey < {{ peering_wg_key_path }}"
+      register: _pw_disk_public
+      changed_when: false
+
+    - name: peering-wg | peering key | the public key the interface holds
+      ansible.builtin.command: "wg show {{ peering_wg_interface }} public-key"
+      register: _pw_live_public
+      changed_when: false
+      failed_when: false
+
+    - name: peering-wg | peering key | restart the link onto the new key
+      ansible.builtin.debug:
+        msg: >-
+          {{ peering_wg_interface }} holds '{{ _pw_live_public.stdout | trim }}', and the key
+          on disk is '{{ _pw_disk_public.stdout | trim }}': the link restarts onto the new
+          key. The tunnel is down until the partner's phase 11 takes our new package.
+      changed_when: true
+      notify: Restart goat peering wg
+      when: (_pw_live_public.stdout | trim) != (_pw_disk_public.stdout | trim)
