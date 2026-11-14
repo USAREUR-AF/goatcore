@@ -21,6 +21,11 @@
    alternates and only the objects the source's refs reach. A sha that is not 40 lowercase
    hex (an empty one names the directory of every cached tree) is refused before anything is
    removed.
+5. lib/srctree.sh's src_clone_ref, the clone the preview, the reverts and the upgrade unit
+   check out a ref in: it owns its objects, so it keeps a commit after the source drops that
+   commit's loose objects; it checks out a tag; a shallow source, whose history the merges
+   and reverts read, is refused before anything is removed. No script of the harness makes a
+   --shared clone.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -328,8 +333,73 @@ def srctree_checks():
         check(p.returncode == 0 and holds(broken), f"srctree: an earlier clone with no checkout was reused: {p.stderr.strip()}")
 
 
+def srcclone_checks():
+    """src_clone_ref: a clone at a ref that owns its objects, never from a shallow source."""
+    with tempfile.TemporaryDirectory() as d:
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
+                   GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.org", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.org")
+        git = lambda *a, cwd=d: subprocess.run(["git", *a], cwd=cwd, env=env, capture_output=True, text=True)
+        lib = os.path.join(ROOT, "lib", "srctree.sh")
+
+        def clone(src, ref, dest):
+            return subprocess.run(["bash", "-c", '. "$1"; src_clone_ref "$2" "$3" "$4"', "_", lib, src, ref, dest],
+                                  env=env, capture_output=True, text=True)
+
+        git("init", "-q", "-b", "main", "src")
+        src = os.path.join(d, "src")
+        git("commit", "-q", "--allow-empty", "-m", "one", cwd=src)
+        git("tag", "v1", cwd=src)
+        write_text(os.path.join(src, "f"), "a commit a ref names\n")
+        git("add", "f", cwd=src)
+        git("commit", "-q", "-m", "two", cwd=src)
+        sha = git("rev-parse", "HEAD", cwd=src).stdout.strip()
+        loose = [os.path.join(src, ".git", "objects", o[:2], o[2:]) for o in
+                 git("rev-list", "--objects", sha, "--not", "v1", cwd=src).stdout.split()[::2] if len(o) == 40]
+        check(loose and all(os.path.exists(p) for p in loose), f"srcclone: the commit's objects are not loose in the source ({loose})")
+        dest = os.path.join(d, "preview")
+        p = clone(src, "main", dest)
+        head = git("rev-parse", "-q", "--verify", "HEAD", cwd=dest).stdout.strip() if os.path.isdir(dest) else ""
+        check(p.returncode == 0 and head == sha, f"srcclone: the clone is not checked out at the ref: rc {p.returncode} {p.stderr.strip()}")
+        # A tag, as the upgrade unit checks out a release.
+        tagged = os.path.join(d, "release")
+        p = clone(src, "v1", tagged)
+        check(p.returncode == 0 and git("describe", "--tags", "--exact-match", cwd=tagged).stdout.strip() == "v1",
+              f"srcclone: the clone is not checked out at the tag: {p.stderr.strip()}")
+        # The source drops the commit's loose objects, as git prune or gc may: the clone keeps them.
+        for o in loose:
+            os.remove(o)
+        check(os.path.isdir(dest) and git("cat-file", "-e", f"{sha}^{{tree}}", cwd=dest).returncode == 0
+              and git("log", "-q", "--format=%H", "-n", "2", cwd=dest).returncode == 0,
+              "srcclone: the clone lost a commit when the source dropped its loose objects (it borrows objects it does not hold)")
+        # A shallow source: its history is cut, so a merge or a revert there would read too
+        # little. Refused, and the destination left as it was.
+        git("clone", "-q", "--depth", "1", "file://" + src, "shallow")
+        shallow = os.path.join(d, "shallow")
+        kept = os.path.join(d, "kept")
+        os.makedirs(kept)
+        write_text(os.path.join(kept, "marker"), "an earlier clone\n")
+        p = clone(shallow, "HEAD", kept)
+        check(p.returncode != 0 and "shallow" in p.stderr, f"srcclone: a shallow source was not refused: rc {p.returncode} {p.stderr.strip()}")
+        check(os.path.exists(os.path.join(kept, "marker")), "srcclone: a refused clone removed its destination")
+        # An empty destination is refused before anything is removed.
+        p = clone(src, "main", "")
+        check(p.returncode != 0, "srcclone: an empty destination was not refused")
+    # No script of the harness borrows objects from its source any more.
+    shared = []
+    for base, _, files in os.walk(ROOT):
+        for name in files:
+            if name.endswith(".sh") or name in ("env", "run.sh"):
+                path = os.path.join(base, name)
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    for n, line in enumerate(fh, 1):
+                        if "clone" in line and "--shared" in line and not line.lstrip().startswith("#"):
+                            shared.append(f"{os.path.relpath(path, ROOT)}:{n}")
+    check(not shared, f"srcclone: these make a --shared clone, which reads its objects from the source: {shared}")
+
+
 catalog_checks()
 srctree_checks()
+srcclone_checks()
 verdict_checks()
 fwdeclared_checks()
 handoff_checks()
