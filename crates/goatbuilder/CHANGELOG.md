@@ -113,6 +113,14 @@ from `postgres_max_connections`. The roles that schedule jobs with cron
 `isitup`, `operator-idp-postgres` and the observability play) now install
 `cron` first, so a minimal Debian host runs those jobs (#615).
 
+#### Changed: the forwarder's carrier read-back reads each peer's public key and allowed address
+
+`goat-peering-forwarder` reads each carrier back with `wg show <carrier>
+allowed-ips` and `listen-port`, and a back-out checks that a carrier exists with
+`listen-port`. When a carrier does not hold what the declaration says, the failure
+message lists each peer's public key and allowed address, then the port the
+carrier listens on.
+
 #### Fixed: a phase 11 link that did not come up is named as GB-271
 
 When phase 11 of `goatbuilder federate` fails because the peering's

@@ -260,28 +260,7 @@
 # --- read back --------------------------------------------------------------------
 
 - name: peering-forwarder | read each carrier back
-  ansible.builtin.command: "wg show {{ item.interface }} dump"
-  register: _pf_dump
-  changed_when: false
-  loop: "{{ _pf_peerings }}"
-  loop_control:
-    label: "{{ item.interface }}"
-
-- name: peering-forwarder | each carrier holds exactly the edge, at its carrier address
-  ansible.builtin.assert:
-    that:
-      # Line 1 is the interface, every further line is one peer.
-      - item.stdout_lines | length == 2
-      - item.item.edge_carrier_public_key in item.stdout_lines[1]
-      - (item.item.carrier_remote_ip ~ '/32') in item.stdout_lines[1]
-      - (item.stdout_lines[0].split()[2] | int) == (item.item.carrier_port | int)
-    fail_msg: >-
-      {{ item.item.interface }} does not hold what the declaration says: one peer
-      {{ item.item.edge_carrier_public_key }} allowed {{ item.item.carrier_remote_ip }}/32,
-      listening on {{ item.item.carrier_port }}. Read: {{ item.stdout_lines[1:] }}
-  loop: "{{ _pf_dump.results }}"
-  loop_control:
-    label: "{{ item.item.interface }}"
+  ansible.builtin.include_tasks: readback.yml
 
 - name: peering-forwarder | the forwarding table is loaded
   ansible.builtin.command: "nft list table inet goat_peering_forwarder"

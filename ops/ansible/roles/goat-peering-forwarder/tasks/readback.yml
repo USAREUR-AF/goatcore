@@ -1,0 +1,43 @@
+---
+# The read-back after the carriers converge: each carrier holds exactly its edge.
+# Included by tasks/main.yml; tests/test-readback.sh runs it alone, against a
+# stand-in wg.
+#
+# Each read asks wg for the columns it checks and nothing more: `allowed-ips`
+# gives one line per peer, its public key and its allowed addresses, and
+# `listen-port` the port the carrier listens on, so a result, a log or a failure
+# message holds only public keys, addresses and ports.
+
+- name: peering-forwarder | read each carrier's peers back
+  ansible.builtin.command: "wg show {{ item.interface }} allowed-ips"
+  register: _pf_peers
+  changed_when: false
+  loop: "{{ _pf_peerings }}"
+  loop_control:
+    label: "{{ item.interface }}"
+
+- name: peering-forwarder | read each carrier's listening port back
+  ansible.builtin.command: "wg show {{ item.interface }} listen-port"
+  register: _pf_port
+  changed_when: false
+  loop: "{{ _pf_peerings }}"
+  loop_control:
+    label: "{{ item.interface }}"
+
+- name: peering-forwarder | each carrier holds exactly the edge, at its carrier address
+  ansible.builtin.assert:
+    that:
+      # One line per peer: the carrier holds the edge and no other peer.
+      - item.stdout_lines | length == 1
+      - item.item.edge_carrier_public_key in item.stdout_lines[0]
+      - (item.item.carrier_remote_ip ~ '/32') in item.stdout_lines[0]
+      - (_pf_port.results[i].stdout | trim | int) == (item.item.carrier_port | int)
+    fail_msg: >-
+      {{ item.item.interface }} does not hold what the declaration says: one peer
+      {{ item.item.edge_carrier_public_key }} allowed {{ item.item.carrier_remote_ip }}/32,
+      listening on {{ item.item.carrier_port }}. Its peers (public key, allowed
+      addresses): {{ item.stdout_lines }}; it listens on {{ _pf_port.results[i].stdout | trim }}
+  loop: "{{ _pf_peers.results }}"
+  loop_control:
+    index_var: i
+    label: "{{ item.item.interface }}"

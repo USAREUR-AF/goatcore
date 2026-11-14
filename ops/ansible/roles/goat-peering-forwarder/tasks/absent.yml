@@ -61,8 +61,9 @@
     - name: peering-forwarder | absent | read this peering's carrier
       when: _pbf_mine | length == 1
       block:
+        # Whether the carrier exists: its listening port, the one column read.
         - name: peering-forwarder | absent | the carrier interface
-          ansible.builtin.command: "wg show {{ _pbf_mine[0].interface }} dump"
+          ansible.builtin.command: "wg show {{ _pbf_mine[0].interface }} listen-port"
           register: _pbf_link
           changed_when: false
           failed_when: false
