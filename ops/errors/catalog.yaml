@@ -3359,6 +3359,22 @@ entries:
     matches:
       - "\\(GB-277\\)"
 
+  - code: GB-279
+    tool: goatbuilder
+    title: a peering edge does not have the host firewall baseline switched on
+    what: "The peering plays require the host firewall baseline (roles/goat-host-firewall) on an edge, so the edge is held to the ports its peering declares. Every play a peering standup runs on an edge (peering-prepare.yml in phase 2, peering-wg.yml or peering-edge.yml in phase 11, peering-zenoh-edge.yml in phase 12) checks goat_host_firewall_baseline first, and goat_host_firewall_baseline was not true for this edge. The play refused before changing anything on the host. The baseline itself is applied by phase 11's play once the setting is on. A core host keeps the baseline opt-in."
+    causes:
+      - the edge's group_vars do not set goat_host_firewall_baseline, and the role's default is false
+      - goat_host_firewall_baseline is set to false for the edge's group or host
+    fixes:
+      - "set goat_host_firewall_baseline: true and goat_host_firewall_management_sources in group_vars/<edge group>/host-firewall.yml (copy ops/ansible/group_vars/_examples/peering-host-firewall.example.yml)"
+      - "goatbuilder federate plan <partner>   (the edge's host firewall row renders the ruleset it will load)"
+      - "run the peering again: phase 11's play applies the baseline"
+    read: docs/design/peering-host-firewall.md
+    exit: 1
+    matches:
+      - "goat-host-firewall refuses \\(GB-279\\)"
+
   - code: GB-286
     tool: goatbuilder
     title: a joining site has no leaf-cert manifest join-node can read

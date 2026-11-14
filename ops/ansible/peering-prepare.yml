@@ -12,6 +12,11 @@
   hosts: peering_edges
   gather_facts: true
   become: true
+  pre_tasks:
+    - name: The peering plays require the host firewall baseline on an edge (GB-279)
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+        tasks_from: require.yml
   tasks:
     - name: Prepare the federation interface
       ansible.builtin.include_role:

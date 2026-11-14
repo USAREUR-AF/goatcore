@@ -1,0 +1,19 @@
+---
+# Run first by every play a peering standup runs on an edge (peering-prepare.yml, phase 2;
+# peering-wg.yml and peering-edge.yml, phase 11; peering-zenoh-edge.yml, phase 12), before
+# anything on the host changes. The peering plays require the host firewall baseline on an
+# edge, so the edge is held to the ports its peering declares. The baseline itself is
+# applied by phase 11's play (post_tasks), so switching it on and running the peering again
+# is the whole fix. The role's default stays false; a core host keeps it opt-in.
+# Design: docs/design/peering-host-firewall.md §6.
+- name: host-firewall | an edge requires the host firewall baseline
+  ansible.builtin.fail:
+    msg: >-
+      goat-host-firewall refuses (GB-279): {{ inventory_hostname }} is a peering edge and
+      goat_host_firewall_baseline is not true for it. The peering plays require the host
+      firewall baseline on an edge. Nothing on this host was changed. To go on: set
+      goat_host_firewall_baseline: true and goat_host_firewall_management_sources in the
+      edge's group_vars (group_vars/{{ fed_edge_group | default('<edge group>') }}/host-firewall.yml,
+      from group_vars/_examples/peering-host-firewall.example.yml), then run the peering
+      again; phase 11's play applies the baseline.
+  when: not (goat_host_firewall_baseline | bool)

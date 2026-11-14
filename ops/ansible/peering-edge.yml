@@ -33,10 +33,16 @@
   hosts: peering_edges
   gather_facts: true
   become: true
+  pre_tasks:
+    - name: The peering plays require the host firewall baseline on an edge (GB-279)
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+        tasks_from: require.yml
   roles:
     - role: goat-peering-edge
   post_tasks:
-    # Opt-in (goat_host_firewall_baseline, default false); docs/design/peering-host-firewall.md.
+    # Required on an edge: the first pre_task refuses (GB-279) when goat_host_firewall_baseline
+    # is not true, so this always runs here; docs/design/peering-host-firewall.md §6.
     - name: Host firewall baseline for this edge, with this peering's tunnel
       ansible.builtin.include_role:
         name: goat-host-firewall
@@ -63,8 +69,3 @@
             {{ peering_spire_server_addr | default('')
                if (peering_spire_server_addr | default('') is match('^[0-9.]+$')) else '' }}
       when: goat_host_firewall_baseline | default(false) | bool
-    - name: Host firewall baseline is off; refuse if a host still carries one
-      ansible.builtin.include_role:
-        name: goat-host-firewall
-        tasks_from: off.yml
-      when: not (goat_host_firewall_baseline | default(false) | bool)

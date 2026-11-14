@@ -1,5 +1,6 @@
 ---
-# Run by the peering plays when goat_host_firewall_baseline is false. Turning the switch
+# Run by the core play (peering-republisher.yml) when goat_host_firewall_baseline is
+# false; an edge play refuses earlier instead (require.yml, GB-279). Turning the switch
 # off does not unload a baseline a host already carries: its table stays and
 # goat-host-firewall.service reloads it at boot. Say so instead of leaving the operator
 # believing the host is unfiltered.

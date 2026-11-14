@@ -259,6 +259,18 @@ from `postgres_max_connections`. The roles that schedule jobs with cron
 `isitup`, `operator-idp-postgres` and the observability play) now install
 `cron` first, so a minimal Debian host runs those jobs (#615).
 
+#### Changed: the peering plays require the host firewall baseline on an edge
+
+Every play a peering standup runs on an edge (phases 2, 11 and 12) now checks
+`goat_host_firewall_baseline` first, and refuses with GB-279 when it is not
+true, before anything on the edge changes. Set
+`goat_host_firewall_baseline: true` and `goat_host_firewall_management_sources`
+in the edge's group_vars (copy
+`ops/ansible/group_vars/_examples/peering-host-firewall.example.yml`), then run
+the peering again; phase 11's play applies the baseline. `goatbuilder federate
+plan` shows such an edge as BLOCKED with GB-279. The role's default stays false,
+and a core host keeps the baseline opt-in.
+
 #### Changed: the forwarder's carrier read-back reads each peer's public key and allowed address
 
 `goat-peering-forwarder` reads each carrier back with `wg show <carrier>

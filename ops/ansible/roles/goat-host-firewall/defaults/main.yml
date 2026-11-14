@@ -12,8 +12,9 @@
 # goat-peering-wg, docker's and the mesh client's stay as they are. Outbound is
 # unchanged.
 
-# Off by default: a host that has not switched it on sees no change at all. The
-# plays include this role only when it is true.
+# Off by default. A core host that has not switched it on sees no change at all. A
+# peering edge must switch it on: the edge plays refuse (GB-279, tasks/require.yml)
+# before changing anything while it is not true.
 goat_host_firewall_baseline: false
 
 # edge | core. Set by the play that includes the role, never in group_vars.

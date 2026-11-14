@@ -44,7 +44,7 @@ only writes are `<work>/plan.json` and phase 1's result files under
 | `restarts` | the core router (phase 10), this peering's WireGuard interface (11), edge router (12) and republisher (12, only when we offer a release set) | the phases; the agreement's flows decide the republisher |
 | `acceptance` | the runner, whether `FED_ACCEPTANCE_STRICT=1` is set, and for each flow a reception and a refusal that acceptance must show | the agreement's flows |
 | `readiness` | each phase-1 check's outcome and code | `preflight.py`, run with the derived inputs into `<work>/plan/preflight.json`; `--no-live` skips the live reads (each SKIP) |
-| `host_firewall` | one entry per host of the edge and core groups, with its address. With `goat_host_firewall_baseline` not true (the default): NOT APPLICABLE, "host firewall baseline: off", nothing rendered. With it true: PASS with the `ruleset` text and its `sha256` from the baseline's own renderer, or BLOCKED (and a BLOCKED readiness row with the renderer's GB-21x code) naming why it cannot be shown (below). A host that moves to another address is a changed input | the peering inventory, the vars the role reads, the renderer |
+| `host_firewall` | one entry per host of the edge and core groups, with its address. With `goat_host_firewall_baseline` not true (the default): on an edge, BLOCKED with code GB-279 and a BLOCKED readiness row, because the edge plays refuse it (only when the checkout carries `roles/goat-host-firewall/tasks/require.yml`; an older checkout is NOT APPLICABLE); on a core, NOT APPLICABLE, "host firewall baseline: off", nothing rendered. With it true: PASS with the `ruleset` text and its `sha256` from the baseline's own renderer, or BLOCKED (and a BLOCKED readiness row with the renderer's GB-21x code) naming why it cannot be shown (below). A host that moves to another address is a changed input | the peering inventory, the vars the role reads, the renderer |
 | `conflicts` | each value this peering and another declared peering would bind on one machine (below) | the peering inventory, each peering's group vars and agreement |
 | `verdict` | `READY`, `READY, <n> check(s) not verified` (SKIP is never a pass), or `BLOCKED` (a FAIL or BLOCKED) | the readiness |
 | `created_at` | when the plan was made (RFC 3339, UTC); outside the hash, so the same inputs give the same hash | the clock |
@@ -102,7 +102,10 @@ hash. Ports held by something that is not a declared peering (NetBird on UDP
 
 ## Host firewall
 
-For each host of the edge and core groups with `goat_host_firewall_baseline`
+An edge host with `goat_host_firewall_baseline` not true is BLOCKED with GB-279:
+the peering plays require the baseline on an edge
+([peering-host-firewall.md](peering-host-firewall.md) §6), so the plan says so before
+phase 2 refuses. For each host of the edge and core groups with `goat_host_firewall_baseline`
 true, the plan runs the baseline's own renderer
 (`ops/ansible/roles/goat-host-firewall/files/goat-host-firewall-render.py --input - --format json`,
 [peering-host-firewall.md](peering-host-firewall.md)) and records the ruleset
