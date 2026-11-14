@@ -22,7 +22,9 @@ pull request's number, for example (#597).
 - `heading` is one of "For someone deploying", "For someone contributing"
   or "To be removed".
 - `title` is one line, usually starting with "Added:", "Changed:",
-  "Fixed:" or "Deprecated:".
+  "Fixed:" or "Deprecated:". Write it as plain words after `title:`: the
+  colon after "Added" needs no quotes. A title wrapped in one pair of
+  quotes is read, and rendered, without them.
 - The body has no heading of level 1, 2 or 3; use `####` or deeper.
 
 Then render the changelog's Unreleased section and commit both files:

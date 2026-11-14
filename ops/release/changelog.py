@@ -29,7 +29,8 @@ starts with a header between two `---` lines:
     The body, in Markdown, with no heading of level 1, 2 or 3.
 
 `heading` is one of the three fixed headings below. `title` is the entry's
-one-line heading. Entries under one heading render in file-name order. In the
+one-line heading. A value wrapped in one matching pair of `"` or `'`, as a
+YAML-minded author writes it, is read without that pair. Entries under one heading render in file-name order. In the
 Unreleased section a heading with no entry is left out; in a released section
 all three are written, and one with no entry says "Nothing.".
 
@@ -62,6 +63,13 @@ class Refused(Exception):
     """One or more reasons, each a line."""
 
 
+def _unquote(value: str) -> str:
+    """A header value without one matching pair of surrounding quotes."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1].strip()
+    return value
+
+
 def read_entry(path: Path) -> dict:
     """An entry's heading, title and body, or Refused naming what is wrong."""
     name = path.name
@@ -84,7 +92,7 @@ def read_entry(path: Path) -> dict:
             continue
         if key in fields:
             errors.append(f"{name}: `{key}` is given twice")
-        fields[key] = value.strip()
+        fields[key] = _unquote(value.strip())
     heading = fields.get("heading", "")
     title = fields.get("title", "")
     if heading not in HEADINGS:
@@ -279,6 +287,25 @@ def self_test(repo: Path) -> int:
         r = fresh("no-title")
         (r / ENTRIES / "no-title.md").write_text("---\nheading: To be removed\n---\n\nA body.\n", encoding="utf-8")
         expect("an entry with no title is refused", any("no-title.md: no `title`" in m for m in check(r)))
+
+        r = fresh("quoted")
+        (r / ENTRIES / "zz-quoted.md").write_text(
+            '---\nheading: "For someone contributing"\ntitle: "Added: a quoted title"\n---\n\nQuoted.\n',
+            encoding="utf-8")
+        (r / ENTRIES / "zz-single.md").write_text(
+            "---\nheading: For someone contributing\ntitle: 'Fixed: a single-quoted title'\n---\n\nSingle.\n",
+            encoding="utf-8")
+        write(r)
+        text = (r / CHANGELOG).read_text(encoding="utf-8")
+        expect("a heading and a title in quotes are read without them, and render without them",
+               check(r) == [] and "#### Added: a quoted title\n\nQuoted." in text
+               and "#### Fixed: a single-quoted title\n\nSingle." in text and '#### "' not in text)
+        (r / ENTRIES / "zz-inner.md").write_text(
+            '---\nheading: For someone contributing\ntitle: Fixed: "goat" says "ok"\n---\n\nInner.\n',
+            encoding="utf-8")
+        write(r)
+        expect("quotes inside a title, not around it, are kept",
+               '#### Fixed: "goat" says "ok"\n' in (r / CHANGELOG).read_text(encoding="utf-8"))
 
         r = fresh("level-3")
         _entry(r, "level-3.md", "For someone deploying", "Fixed: x", "### Not allowed\n\ntext")

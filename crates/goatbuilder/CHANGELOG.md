@@ -57,7 +57,7 @@ rotation was refused. If the previous seed is missing, unreadable or of a
 third key, it prints GB-285 and publishes nothing; the step stays advisory
 and phase 5 goes on. The `rotate … signing` stage is not built (#683).
 
-#### "Added: join-node runs mesh DNS at a joining site"
+#### Added: join-node runs mesh DNS at a joining site
 
 A site that joins a goatnet now runs its own mesh DNS, so it still resolves
 the goatnet's service names when it is cut off from its founder. Phase 13
@@ -70,7 +70,7 @@ the secrets injector; an unset or unresolved token is refused before the
 step (GB-281). A site with no zone file to serve is refused when the plan
 is made (GB-280). See ADR 1235 (#678).
 
-#### "Added: join-node builds a node on a phone with --class phone --via usb"
+#### Added: join-node builds a node on a phone with --class phone --via usb
 
 `goatbuilder join-node <environment> --site <site> --node <node> --class phone
 --via usb` joins the Linux VM on an Android phone as a `core` joiner
@@ -97,7 +97,7 @@ is made (GB-280). See ADR 1235 (#678).
 
 Every other class and transport plans and runs as before. (#747)
 
-#### "Fixed: a host-allocation SKIP says which case it is and what clears it"
+#### Fixed: a host-allocation SKIP says which case it is and what clears it
 
 A plan whose host-allocation check was SKIP cannot be deployed: deploy does
 not run that check again, so it refuses the plan (GB-188), and a new plan
@@ -113,6 +113,15 @@ carry the check's detail, which gives the case and the route:
 GB-188's catalog entry gains this cause (#742).
 
 ### For someone contributing
+
+#### Fixed: a changelog entry title written in quotes renders without them
+
+`ops/release/changelog.py` read an entry's `title:` and `heading:` verbatim,
+so a title written YAML-style, `title: "Added: …"`, rendered as a heading
+with its quotes, and a quoted heading was refused as not one of the three.
+A value wrapped in one matching pair of `"` or `'` is now read without that
+pair; quotes inside a title are kept. The entries directory's README says a
+title needs no quotes for its colon.
 
 #### Changed: the compatibility check is held to goatbuilder/v0.7.0
 
