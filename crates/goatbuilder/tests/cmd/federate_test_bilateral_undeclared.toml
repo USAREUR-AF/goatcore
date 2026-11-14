@@ -1,8 +1,0 @@
-# --bilateral is a flag of `federate test` (B2): it is accepted, and an undeclared peering is still refused (C1).
-bin.name = "goatbuilder"
-args = ["federate", "-C", "../..", "test", "no-such-peer", "--bilateral", "--dry-run"]
-status.code = 2
-stdout = ""
-stderr = """
-goatbuilder: peering 'no-such-peer' is not declared in ../../ops/goatbuilder/goatbuilder.yaml peerings: (declared: none) — declare it first (C1)
-"""

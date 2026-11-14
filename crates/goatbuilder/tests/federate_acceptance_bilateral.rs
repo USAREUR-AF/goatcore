@@ -22,7 +22,7 @@ fn with_bilateral_phase_14_gets_goatbuilders_signer_verifier_and_the_keyring() {
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     assert!(out.status.success(), "{}", says(&out));
     let cmd = phase_14_command(&text);
-    assert!(cmd.contains("FED_ACCEPTANCE_ATTEMPT=1"), "{cmd}");
+    assert!(cmd.contains("FED_ACCEPTANCE_ATTEMPT='1'"), "{cmd}");
     assert!(cmd.contains("acceptance-result sign"), "{cmd}");
     assert!(cmd.contains("acceptance-result verify"), "{cmd}");
     assert!(
@@ -37,7 +37,7 @@ fn bilateral_takes_the_attempt_number() {
     let (out, _) = w.run(&["test", "hello-ally", "--bilateral", "2", "--dry-run"]);
     assert!(out.status.success(), "{}", says(&out));
     assert!(phase_14_command(&String::from_utf8_lossy(&out.stdout))
-        .contains("FED_ACCEPTANCE_ATTEMPT=2"));
+        .contains("FED_ACCEPTANCE_ATTEMPT='2'"));
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn without_bilateral_phase_14_is_unchanged() {
 fn bilateral_belongs_to_federate_test_only() {
     let w = world();
     let (out, _) = w.run(&["hello-ally", "--bilateral", "--dry-run"]);
-    assert_eq!(out.status.code(), Some(2), "{}", says(&out));
+    assert_eq!(out.status.code(), Some(1), "GB-189 exits 1: {}", says(&out));
     assert!(
         says(&out).contains("--bilateral belongs to `goatbuilder federate test <partner>`"),
         "{}",

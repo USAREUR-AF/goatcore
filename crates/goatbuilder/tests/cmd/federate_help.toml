@@ -238,6 +238,12 @@ Options:
           Run every phase in range, even ones the run journal shows passed with unchanged inputs
           (the behavior before resuming was the default)
 
+      --bilateral [<ATTEMPT>]
+          `federate test` only: run phase 14 on a session both sides derive from the agreement, each
+          side's result signed and the partner's verified under the key bound at phase 5 (default
+          attempt 1). Both sides start phase 14 within FED_SESSION_WAIT of each other, normally on
+          the same call. Without it, phase 14 is unchanged
+
   -h, --help
           Print help (see a summary with '-h')
 """

@@ -1,0 +1,9 @@
+# --bilateral (B2) is a flag of `federate test <partner>` only; anywhere else it is refused before anything runs (GB-189).
+bin.name = "goatbuilder"
+args = ["federate", "-C", "../..", "no-such-peer", "--bilateral", "--dry-run"]
+status.code = 1
+stdout = ""
+stderr = """
+goatbuilder: --bilateral belongs to `goatbuilder federate test <partner>`: it runs phase 14 on a session both sides derive
+  (GB-189 — goatbuilder explain GB-189)
+"""

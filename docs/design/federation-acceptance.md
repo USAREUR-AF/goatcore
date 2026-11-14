@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, the command running phase 14 on a session both sides derive (the derivation, and the runner's derived mode on the in-process fabric, are built: §6.2, §6.3), the command publishing and verifying a partner's signed result (the signing library is built, §6.1), and any automatic bilateral gate |
+| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, phase 14 on a session both sides derive as the default (it is built behind `federate test --bilateral`, §6.2, §6.3), the command publishing and verifying a partner's signed result (the signing library is built, §6.1), and any automatic bilateral gate |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
@@ -505,9 +505,19 @@ different agreements, or are on different attempts.
 
 ### 6.3 Phase 14 on a derived session
 
-**Built, on the in-process fabric only** (`acceptance.sh` with `FED_ACCEPTANCE_ATTEMPT`; tests
-in `test_acceptance.py`, the `test_derived_` cases). The command does not start it yet:
-goatbuilder's own signer and verifier, and phase 14 run this way, are the next part of B2.
+**Built, tested on the in-process fabric and goatbuilder's stand-in world** (`acceptance.sh`
+with `FED_ACCEPTANCE_ATTEMPT`, tests in `test_acceptance.py`, the `test_derived_` cases;
+`goatbuilder federate test <partner> --bilateral [<attempt>]`, tests in
+`crates/goatbuilder/tests/federate_acceptance_bilateral.rs`). It is opt-in: without
+`--bilateral`, phase 14 runs as before and its exit is the local verdict. Not measured on hosts.
+
+With `--bilateral`, goatbuilder gives phase 14 the attempt, its own hidden commands
+`goatbuilder acceptance-result sign` and `verify` as `FED_ACCEPTANCE_SIGNER` and
+`FED_ACCEPTANCE_VERIFIER`, and `FED_KEYRING`, the peering's keyring (`<work>/keys.txt`) that
+phase 5 writes once the partner's key is confirmed on the call. `sign` signs with our
+federation signing key (`FED_SIGNING_KEY`) and refuses one that is unset, unreadable or still
+an unresolved secret reference with GB-142. `verify` takes the partner's key from that
+keyring only, never from the result.
 
 With `FED_ACCEPTANCE_ATTEMPT=<n>` and no manifest file, a run:
 
