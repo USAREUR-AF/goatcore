@@ -1,0 +1,13 @@
+# explain lists the steps of deploy from the phase catalog.
+bin.name = "goatbuilder"
+args = ["explain", "deploy"]
+stdout = """
+deploy: 6 phases. goatbuilder explain deploy <phase> answers for one, by number or id.
+
+     deploy          A     the play on each group
+     fresh-source    GATE  the checkout is current with the trunk
+     playbook        T     the play and its target mode
+     prep            GATE  the rollout facts and the ack gate
+     transport       T     the secrets, and how the hosts are reached
+     verify          GATE  every host of the group names the declared ref
+"""

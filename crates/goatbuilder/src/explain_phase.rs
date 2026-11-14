@@ -142,10 +142,17 @@ fn list_text(verb: &str) -> String {
         rows.len()
     );
     for r in &rows {
+        // A step with no number (standup's image pull, its observability legs)
+        // is named by its id, so its number column is left blank.
+        let number = if r.phase.parse::<u32>().is_ok() {
+            r.phase.as_str()
+        } else {
+            ""
+        };
         s.push_str(
             format!(
                 "{:>3}  {:<wid$}  {:<wst$}  {:<wk$}  {}",
-                r.phase, r.id, r.stage, r.kind, r.title
+                number, r.id, r.stage, r.kind, r.title
             )
             .trim_end(),
         );

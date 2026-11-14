@@ -1165,6 +1165,23 @@ const DEPLOY_STEPS: [&str; 6] = [
     "verify",
 ];
 
+/// The step names check (d) holds deploy to are the phase catalog's deploy
+/// entries: the list follows the catalog, and check (d) then reads each entry.
+#[test]
+fn deploy_steps_are_the_catalog_s_deploy_entries() {
+    let text = std::fs::read_to_string(repo().join(PHASE_CATALOG)).unwrap();
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+    let catalog: BTreeSet<String> = doc["phases"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .filter(|e| e["verb"].as_str() == Some("deploy"))
+        .filter_map(|e| e["phase"].as_str().map(str::to_string))
+        .collect();
+    let steps: BTreeSet<String> = DEPLOY_STEPS.iter().map(|s| s.to_string()).collect();
+    assert_eq!(catalog, steps);
+}
+
 #[test]
 fn c11_deploy() {
     let h = hollow();
