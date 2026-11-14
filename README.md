@@ -90,6 +90,10 @@ To have a coding agent do it with you, give it this line with your own values: `
 | [goatdocs](https://github.com/usareur-af/goatdocs) | Architecture, strategy, design system and integration guides |
 | [zagros-moon-pod](https://github.com/usareur-af/zagros-moon-pod) | A pod that joins a goat environment, used today only to learn ([ADR 1239](docs/adr/1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md)) |
 
+## Built on goat
+
+Work that other people and organizations build on goat is listed in [awesome-goat](https://github.com/usareur-af/awesome-goat): open-source projects, commercial and proprietary products, feeds and integrations, deployments and research. If you have built something that uses goat as its substrate, add it there.
+
 ## Repository layout
 
 | Path | Contents |
