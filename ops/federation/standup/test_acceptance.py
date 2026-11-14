@@ -596,10 +596,12 @@ class AcceptanceRun(unittest.TestCase):
                              (us, combined["open"], combined["failed"]))
 
     # --- a derived session: no manifest file, each result signed (§6.2, §6.3) ----
-    def derived_env(self, side, evidence, full=False, wait="20", extra=None):
+    def derived_env(self, side, evidence, full=False, wait="20", extra=None, own=False):
         fab = self.fabric.start()
         env = {k: v for k, v in os.environ.items() if k not in SCRUB}
-        if full:
+        if own:
+            env.update(self.fabric.own_env(side))
+        elif full:
             env.update(self.fabric.env_for(side))
         keys = Path(HERE).parents[1] / "federation/vectors/testkeys"
         double = "python3 %s" % (HERE / "acceptance_sig_double.py")
@@ -727,6 +729,107 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(rc_a, 2, out_a)
         self.assertIn("GB-272", out_a)
         self.assertFalse(os.path.isdir(os.path.join(ev["xaa"], "bilateral")), out_a)
+
+    # --- own surfaces only: each side observes its own refusals and SPIRE (§6.4) ----
+    OWN_ROWS = ("refusal/control-allowed", "refusal/out-of-lane-denied", "refusal/spoof-denied",
+                "refusal/forged-name", "refusal/impersonation", "spire/refresh", "spire/bundle-held",
+                "spire/svid-chains")
+
+    def rows_of(self, evidence):
+        with open(os.path.join(evidence, "result.json")) as f:
+            return {c["name"]: c for c in json.load(f)["checks"]}
+
+    def test_own_surfaces_only_both_sides_reach_a_combined_pass(self):
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(own=True)
+        for side, rc, out in (("xaa", rc_a, out_a), ("xab", rc_b, out_b)):
+            combined = self.bilateral(ev[side])
+            self.assertEqual((rc, combined["verdict"]), (0, "PASS"), (side, out, combined["open"], combined["failed"]))
+            rows = self.rows_of(ev[side])
+            for name in self.OWN_ROWS:
+                self.assertEqual(rows[name]["verdict"], "PASS", (side, name, out))
+            with open(os.path.join(ev[side], "result.json")) as f:
+                inputs = json.load(f)["inputs"]
+            for k in ("theirs_rest", "ssh_theirs", "probe_launcher", "spire_theirs"):
+                self.assertFalse(inputs.get(k), (side, k, inputs))
+            self.assertTrue(inputs.get("probe_launcher_ours"), inputs)
+
+    def test_own_surfaces_the_partners_probe_ids_are_read_only_from_its_lane(self):
+        ev, (rc_a, out_a), _ = self.both_derived(own=True)
+        self.assertEqual(rc_a, 0, out_a)
+        key = self.rows_of(ev["xaa"])["refusal/control-allowed"]["observations"]["probes_key"]
+        self.assertTrue(key.startswith("from/xab/"), key)
+        self.assertIn("/acceptance/ses-", key)
+
+    def test_own_surfaces_no_staged_value_is_key_material(self):
+        # The fake spire-server's `x509 mint` prints the workload's private key after its
+        # certificate, as the real one does: only the certificate may be staged.
+        import base64, re
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(own=True)
+        self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
+        staged = [(side, k, v) for side, k, v in self.fabric.puts if "/acceptance/" in k]
+        self.assertTrue(any(k.endswith("/spire-svid") for _, k, _ in staged), [k for _, k, _ in staged])
+
+        def texts(v):
+            yield v
+            for tok in re.findall(rb"[A-Za-z0-9+/=]{16,}", v):
+                try:
+                    yield base64.b64decode(tok + b"=" * (-len(tok) % 4), validate=True)
+                except Exception:
+                    pass
+        for side, k, v in staged:
+            for t in texts(v):
+                self.assertNotIn(b"PRIVATE KEY", t, (side, k))
+            self.assertIsNone(re.search(rb"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", v), (side, k, v[:80]))
+            self.assertIsNone(re.search(rb"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{43}=(?![A-Za-z0-9+/=])", v), (side, k))
+
+    def test_own_surfaces_without_the_partners_probes_our_refusal_rows_are_blocked_naming_them(self):
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(own=True, second={"own": False})
+        rows = self.rows_of(ev["xaa"])
+        self.assertEqual(rows["refusal/acl-trace"]["verdict"], "BLOCKED", out_a)
+        self.assertIn("xab", rows["refusal/acl-trace"]["reason"])
+        self.assertNotEqual(rc_a, 0, out_a)
+
+    def test_own_surfaces_probe_ids_from_an_earlier_run_teach_nothing(self):
+        # xab's probe ids from another run of this session sit on our core; xab runs now
+        # without a launcher. The stale ids carry the other run's challenge: not used.
+        st = "all"
+        path = os.path.join(self.tmp, "agreement.json")
+        with open(path, "w") as f:
+            json.dump(self.ag, f)
+        out = os.path.join(self.tmp, "derived.json")
+        subprocess.run(["python3", str(HERE / "acceptance_session.py"), "derive", "--agreement", path,
+                        "--us", "xaa", "--attempt", "1", "--out", out], capture_output=True, check=True)
+        sid = json.load(open(out))["session_id"]
+        self.fabric.faults.stale["xaa"] = {
+            "from/xab/%s/acceptance/%s/xab/probes" % (st, sid): ("%s agreed=%s forged=%s impersonate=%s" % (
+                "0" * 32, self.fabric.agreed_zid, self.fabric.zids["forged"], self.fabric.zids["impersonate"])).encode()}
+        ev, (rc_a, out_a), _ = self.both_derived(own=True, second={"own": False})
+        rows = self.rows_of(ev["xaa"])
+        for name in ("refusal/acl-trace",):
+            self.assertEqual(rows[name]["verdict"], "BLOCKED", (name, out_a))
+        self.assertNotIn("refusal/control-allowed", [n for n, c in rows.items() if c["verdict"] == "PASS"], out_a)
+
+    def test_own_surfaces_a_forged_probe_our_edge_authorizes_fails_our_row(self):
+        self.fabric.faults.authorize_forged = True
+        ev, (rc_a, out_a), _ = self.both_derived(own=True)
+        self.assertEqual(self.rows_of(ev["xaa"])["refusal/forged-name"]["verdict"], "FAIL", out_a)
+        self.assertEqual(rc_a, 1, out_a)
+
+    def test_own_surfaces_an_svid_their_server_got_from_our_root_fails(self):
+        self.fabric.faults.svid_from_other_ca.add("xab")
+        ev, (rc_a, out_a), _ = self.both_derived(own=True)
+        self.assertEqual(self.rows_of(ev["xaa"])["spire/svid-chains"]["verdict"], "FAIL", out_a)
+
+    def test_both_probe_launchers_at_once_are_refused(self):
+        path = os.path.join(self.tmp, "agreement.json")
+        with open(path, "w") as f:
+            json.dump(self.ag, f)
+        env = self.derived_env("xaa", os.path.join(self.tmp, "ev-both"), own=True,
+                               extra={"FED_PROBE_LAUNCHER": "/bin/false"})
+        p = subprocess.run(["bash", str(SCRIPT), path, "--as", "xaa"], env=env, capture_output=True, text=True,
+                           timeout=60)
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("FED_PROBE_LAUNCHER_OURS", p.stdout + p.stderr)
 
     def test_derived_mode_refuses_without_a_signer_or_a_verifier(self):
         for missing in ("FED_ACCEPTANCE_SIGNER", "FED_ACCEPTANCE_VERIFIER"):

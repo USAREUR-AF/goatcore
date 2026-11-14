@@ -73,6 +73,8 @@ class Faults:
         self.existing_down = set()         # existing partners that no longer receive anything from us
         self.leak_to_existing = set()      # existing partners that receive every set we lift
         self.refuse_put = set()            # sides whose REST surface answers every PUT with HTTP 403
+        self.svid_from_other_ca = set()    # sides whose spire-server mints a workload SVID the OTHER
+        #                                    side's CA issued (a shared or swapped root)
 
 
 class Core:
@@ -106,6 +108,7 @@ class Fabric:
         self.diag_zid = "d" + "3" * 31
         self.agreed_zid = "a" * 32
         self.existing = {}                 # partner id -> (agreement, Core): peerings we already have
+        self.puts = []                     # (side, key, value) for every PUT on a core's REST surface
 
     # --- the agreement -------------------------------------------------------
     def offered(self, side):
@@ -164,6 +167,7 @@ class Fabric:
         # none): a sample staged there goes to the republisher's subscription and is
         # never read back from the core that staged it.
         core = self.cores[side]
+        self.puts.append((side, key, value))
         if not key.startswith("release/"):
             with core.lock:
                 core.store[key] = value
@@ -375,6 +379,31 @@ class Fabric:
             "FED_SPIRE_THEIRS": os.path.join(d, "spire-" + self.other(side)),
         }
 
+    def own_env(self, side):
+        """What `side`'s operator holds with its own surfaces only (§6.4): its core, its
+        edge's trace, a launcher for probe sessions holding ITS OWN identities, judged by
+        the OTHER side's edge, and its own spire-server. Nothing of the partner's."""
+        d = os.path.join(self.tmp, "spire")
+        other = self.other(side)
+        state = os.path.join(self.tmp, "launched-" + side)
+        os.makedirs(state, exist_ok=True)
+        path = os.path.join(self.tmp, "launcher-own-" + side)
+        zid = {"agreed": self.agreed_zid, "forged": self.zids["forged"], "impersonate": self.zids["impersonate"]}
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\nS='%s'\n" % state)
+            f.write('case "$1" in\n  start)\n    case "$2" in\n')
+            for k in ("agreed", "forged", "impersonate"):
+                f.write('      %s) echo "REST=%s"; echo "ZID=%s" ;;\n' % (k, self.probe_urls[other][k], zid[k]))
+            f.write('    esac\n    echo "HANDLE=$2-$3"; echo "$4" > "$S/$2-$3" ;;\n')
+            f.write('  stop) rm -f "$S/$2" ;;\n  alive) test -f "$S/$2" ;;\nesac\n')
+        os.chmod(path, 0o700)
+        return {
+            "FED_OURS_REST": self.surfaces[side],
+            "FED_EDGE_LOG_OURS": "cat '%s'" % self.trace_paths[side],
+            "FED_PROBE_LAUNCHER_OURS": path,
+            "FED_SPIRE_OURS": os.path.join(d, "spire-" + side),
+        }
+
     def stop(self):
         for s in self.servers:
             s.shutdown()
@@ -409,16 +438,17 @@ class Fabric:
         for side, var in ((self.us, "FED_SPIRE_OURS"), (self.them, "FED_SPIRE_THEIRS")):
             script = os.path.join(d, "spire-" + side)
             other = self.other(side)
+            minted = other if side in self.faults.svid_from_other_ca else side
             with open(script, "w") as f:
                 f.write("""#!/bin/sh
 case "$1 $2" in
   "federation refresh") exit 0 ;;
   "bundle list") cat '%(d)s/%(other)s-ca.pem' ;;
   "bundle show") cat '%(d)s/%(side)s-ca.pem' ;;
-  "x509 mint") cat '%(d)s/leaf-%(side)s.pem' '%(d)s/leaf-%(side)s.key' ;;
+  "x509 mint") cat '%(d)s/leaf-%(minted)s.pem' '%(d)s/leaf-%(minted)s.key' ;;
   *) echo "fake spire-server: $*" >&2; exit 1 ;;
 esac
-""" % {"d": d, "other": other, "side": side})
+""" % {"d": d, "other": other, "side": side, "minted": minted})
             os.chmod(script, 0o700)
             env[var] = script
         return env
