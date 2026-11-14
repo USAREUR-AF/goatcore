@@ -741,7 +741,7 @@ class DropPartnerStore(unittest.TestCase):
         with open(f"{bindir}/docker", "w", encoding="utf-8") as f:
             f.write('#!/bin/sh\n[ "$1" = inspect ] || exit 2\n'
                     f'echo "true {started}"\n')
-        os.chmod(f"{bindir}/docker", 0o755)
+        os.chmod(f"{bindir}/docker", 0o700)
         book = f"{self.tmp}/play.yml"
         dump(book, [{
             "hosts": "localhost", "connection": "local", "gather_facts": False,
