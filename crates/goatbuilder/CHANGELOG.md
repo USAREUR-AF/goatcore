@@ -320,7 +320,7 @@ request's merge commit. Before the tag, a diff between the checked commit and th
 commit must name nothing under `crates/`, `ops/ansible/` or `ops/federation-e2e/`, or each
 stage those paths feed runs again on the merge commit (#772).
 
-#### "Added: join-node's peer-groups query is measured against NetBird's own schema"
+#### Added: join-node's peer-groups query is measured against NetBird's own schema
 
 `ops/netbird/tests/peer-groups-query.sh` starts the pinned NetBird management
 on a disposable Postgres, enrols two real clients with keys from

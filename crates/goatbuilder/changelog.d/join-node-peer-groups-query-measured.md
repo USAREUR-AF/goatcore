@@ -1,6 +1,6 @@
 ---
 heading: For someone contributing
-title: "Added: join-node's peer-groups query is measured against NetBird's own schema"
+title: Added: join-node's peer-groups query is measured against NetBird's own schema
 ---
 
 `ops/netbird/tests/peer-groups-query.sh` starts the pinned NetBird management
