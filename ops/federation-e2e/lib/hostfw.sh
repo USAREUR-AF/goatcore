@@ -38,10 +38,11 @@
 # scanner and the loopback session only), $3 file to write the edge's values to, $4 the
 # core's.
 fw_profile_vars() {
-  local s="$1" tight="$2" o gw scan core edge probes="" t
+  local s="$1" tight="$2" o gw scan core edge probes="" reach="" t
   o="$(octet "$s")"; gw="$NB.$o.1"; scan="$NB.$o.30"; core="$(core_ip "$s")"; edge="$(edge_ip "$s")"
   for t in $(partners "$s"); do
     probes="$probes${probes:+, }$(probe_port "$s" "$t" 8101), $(probe_port "$s" "$t" 8102), $(probe_port "$s" "$t" 8103)"
+    reach="$reach $(drill_reach_ip "$s" "$t")"
   done
   {
     echo "# The host firewall baseline on $s's peering edge (roles/goat-host-firewall)."
@@ -50,11 +51,14 @@ fw_profile_vars() {
     echo "  - \"$scan/32\"      # the management host"
     echo "  - \"$core/32\"      # the core host, a second management address"
     echo "  - \"127.0.0.1/32\"  # the play's own SSH session: the inventory reaches this edge at 127.0.0.1"
+    for t in $reach; do
+      echo "  - \"$t/32\"  # drill only: a partner's phase 14 starts its probe sessions from this address over SSH (drill_reach_ip)"
+    done
     echo "goat_host_firewall_override:"
     echo "  other-tcp:"
     echo "    ports: [$probes]"
-    echo "    sources: [\"$gw/32\"]"
-    echo "    reason: \"drill only: the federation test reads the probe sessions' REST ports from the docker host\""
+    echo "    sources: [\"$gw/32\"$(for t in $reach; do printf ', "%s/32"' "$t"; done)]"
+    echo "    reason: \"drill only: the federation test reads the probe sessions' REST ports from the docker host and from a partner's drill reach\""
     if [ "$tight" = 1 ]; then
       echo "  # Tightening: SSH from the management host only (and the play's loopback session)."
       echo "  ssh-management:"
@@ -80,6 +84,14 @@ fw_profile_vars() {
     echo "    reason: \"drill only: the federation test reads the core router's REST port from the docker host\""
   } > "$4"
 }
+
+# drill_reach_ip: the address a partner's driver host takes on this sovereign's network when a
+# unit gives it the drill's reach for phase 14 (units/onecmd.sh, units/nohand-loop.sh). It is
+# fixed, one per partner, so this sovereign's edge firewall admits it by source: the partner's
+# probe launcher reaches the edge over SSH, and its acceptance reads the probe sessions' REST
+# ports. A drill's own surface; a production operator has no reach into the partner's network.
+# $1 this sovereign, $2 the partner.
+drill_reach_ip() { echo "$NB.$(octet "$1").$((40 + $(party_pos "$2")))"; }
 
 # The baseline on for every edge, in a sovereign's clone before its first commit, when the tree
 # carries the role (an older tree's plays never read these values). One file in the parent
