@@ -25,7 +25,13 @@
 //!   4. the restart, through the deployment's play or its own command.
 //!
 //! A failure in 1 to 3 puts the backups back and says whether every one went
-//! back. "Review in a pull request instead" (`pr` at the terminal, or
+//! back. After 4, the journal records the admission as placed, bound to the
+//! digest of what was placed (the approval digest without the plan hash). A
+//! later run whose admission has that digest, with every target byte for
+//! byte what it would place (on a goat-zenoh role core, the fragment fetched
+//! from the host as well), places nothing, restarts nothing and asks for no
+//! approval: there is nothing to approve. A target changed by hand, or a
+//! restart that failed, is admitted again. "Review in a pull request instead" (`pr` at the terminal, or
 //! `--review-in-pr`) writes the summary to `<work>/admission/review.md` and
 //! stops; the next run asks again, or takes `--approve-admission <digest>`.
 //!
@@ -587,8 +593,14 @@ fn fragment_text(fragment: &str) -> String {
     s
 }
 
+/// The journal's record of an admission placed and restarted, bound to the
+/// digest of what was placed (the approval digest without the plan).
+const PLACED: &str = "admission-placed";
+
 /// Phase 10 by the command: stage what our core will load, show it, take the
 /// approval bound to its digest, then place, dry-run, check slots, restart.
+/// An admission already placed and restarted, byte for byte, is not done
+/// again (item 1b of docs/design/federation-key-rotation.md §7).
 #[allow(clippy::too_many_arguments)]
 pub fn admit(
     repo: &Path,
@@ -904,6 +916,31 @@ pub fn admit(
         .map(|(l, b)| (l.as_str(), b.as_slice()))
         .collect();
     let digest = digest(&refs);
+    // What is placed, without the plan it came from: a new plan of the same
+    // admission places the same bytes in the same places.
+    let placed_refs: Vec<(&str, &[u8])> =
+        refs.iter().filter(|(l, _)| *l != "plan").copied().collect();
+    let placed = super::state::digest(&placed_refs);
+    // Already in place (item 1b): the admission placed and restarted under
+    // this digest, and every file on the core byte for byte what it would
+    // place. Nothing is placed and nothing restarted, so a run that only
+    // passes through phase 10 (a partner's --from 5 after our new package,
+    // a new plan of the same peering) leaves our core router running.
+    let same = |to: &Path, bytes: &[u8]| std::fs::read(to).is_ok_and(|b| b == bytes);
+    if st.confirmed(PLACED, 10, &placed).is_some()
+        && plan.iter().all(|(_, bytes, to)| same(to, bytes))
+        && remote
+            .as_ref()
+            .is_none_or(|_| same(&fetched, merged.as_bytes()))
+    {
+        return Step {
+            rows: vec![ok(
+                "unchanged",
+                format!("the admission placed and restarted as {placed} is on our core byte for byte: nothing placed, nothing restarted"),
+            )],
+            verdict: Verdict::Continue,
+        };
+    }
 
     // The summary a person approves.
     let mut sum = format!("What our core will admit for {them}\n\n  The access-control fragment, as rendered from the agreement:\n{}", fragment_text(&fragment));
@@ -1141,6 +1178,15 @@ pub fn admit(
         "restart",
         format!("our core router restarted through {}", core.route()),
     ));
+    // Placed and restarted: a later run with the same bytes changes nothing.
+    st.confirm(
+        run,
+        10,
+        PLACED,
+        "restarted",
+        &placed,
+        BTreeMap::from([("partner".to_string(), them.clone())]),
+    );
     Step {
         rows,
         verdict: Verdict::Continue,
