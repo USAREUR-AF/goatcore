@@ -73,7 +73,10 @@ fn with_bilateral_phase_1_checks_the_clock_alone_before_phase_14() {
         .unwrap_or_else(|| panic!("no phase 14 command in: {text}"));
     assert!(pre < acc, "phase 1 runs before phase 14: {text}");
     let line = text.lines().nth(pre).unwrap();
-    assert!(line.contains("--only clock"), "only the clock check: {line}");
+    assert!(
+        line.contains("--only clock"),
+        "only the clock check: {line}"
+    );
 }
 
 #[test]
