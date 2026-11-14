@@ -19,6 +19,7 @@ on:
       - '**/*.yaml'
       - '**/*.yml'
       - 'ops/scripts/trivy-scan.py'
+      - 'ops/ci/test_trivy_scan_unpullable.py'
       - 'ops/scripts/trivy-images.txt'
       - '.github/workflows/trivy-advisory.yml'
   schedule:
@@ -60,6 +61,11 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$tarball" -C "$HOME/.local/bin" trivy
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/trivy" --version
+
+      # The classifier decides warning versus failure for every image, so its
+      # fixtures run before the scan trusts it.
+      - name: Unpullable classifier fixtures
+        run: python3 ops/ci/test_trivy_scan_unpullable.py
 
       - name: Scan repository and curated images
         id: scan
