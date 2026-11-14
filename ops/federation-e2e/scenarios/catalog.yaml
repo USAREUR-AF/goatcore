@@ -272,26 +272,28 @@ scenarios:
       - {id: handshake, step: "s1-{A}-{B}-a-wireguard-handshake"}
 
   - id: node-ports-declared
-    title: Each edge and core answers on exactly its declared ports, from the partner side and the internal side
+    title: An edge refuses to run at the host firewall's default, and each edge and core answers on exactly its declared ports
     unit: nodesec
     runs_where: local
     pass_condition: >
-      After a full two-party federation, every TCP port (1-65535) and a list of relevant UDP
-      ports is scanned on each edge and each core: from the partner's edge toward our edge's
-      boundary address, toward our edge's tunnel address (the partner's own egress filter
-      lifted for the scan), and toward our core; and from the internal network, from our core
-      host toward our edge and from a scanner (the management source) toward our edge and our
-      core. Each target answers on exactly the declared ports and nothing else, and on every
-      one of them. The declared set is the ref's host firewall profile when it has one, else
-      the operator's baseline: edge boundary, the peering's tunnel UDP port; edge tunnel
-      address, TCP 7448; edge internal, TCP 22 from the management source only (ADR 1219);
-      core internal, TCP 7447 and TCP 22 from the management source; core from the partner,
-      nothing. The SPIRE federation forwards the peering roles open (TCP 8443 on the tunnel
-      address, the outbound forward 18443 on the edge's internal address) and the drill's own
-      surfaces (core REST 8000 and SPIRE server 8443 on the internal network, probe REST
-      ports on the edge's internal side) are allowed at those exact ports and sides only, and
-      each scan lists them separately. Every scan's full record is in RECORD/<step>.json.
+      With {A}'s edge host firewall baseline at the role's default (goat_host_firewall_baseline
+      false), {A}'s phases 1-2 refuse with GB-279, before phase 2 changes the edge. Then, with
+      the baseline on for each edge (as every scenario runs, lib/hostfw.sh) and a full two-party
+      federation up, every TCP port (1-65535) and a list of relevant UDP ports is scanned on each
+      edge and each core: from the partner's edge toward our edge's boundary address, toward our
+      edge's tunnel address (the partner's own egress filter lifted for the scan), and toward our
+      core; and from the internal network, from our core host toward our edge and from a scanner
+      (the management source) toward our edge and our core. Each target answers on exactly the
+      declared ports and nothing else, and on every one of them. An edge's declared set is the
+      rule set the role loaded on it; a core's is the ref's host firewall profile when the core
+      carries one, else the operator's baseline: core internal, TCP 7447 and TCP 22 from the
+      management source (ADR 1219); core from the partner, nothing. The SPIRE federation
+      forwards the peering roles open and the drill's own surfaces (core REST 8000 and SPIRE
+      server 8443 on the internal network, probe REST ports on the edge's internal side) are
+      allowed at those exact ports and sides only, and each scan lists them separately. Every
+      scan's full record is in RECORD/<step>.json.
     checks:
+      - {id: default-refused, step: "ns-{A}-edge-default-refused"}
       - {id: federation-up, step: "s1-{A}-{B}-a-wireguard-handshake"}
       - {id: a-edge-boundary, step: "ns-{A}-edge-from-{B}-edge-boundary"}
       - {id: a-edge-tunnel, step: "ns-{A}-edge-from-{B}-edge-tunnel"}
