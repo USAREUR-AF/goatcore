@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 963 variables, 133 of them secret-bearing by name.
+# 964 variables, 133 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -433,7 +433,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 830 variables.
+# 831 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2229,6 +2229,9 @@ export POSTGRES_EXPORTER_MEMORY=""
 
 # ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
 export POSTGRES_EXPORTER_MEMORY_RESERVATION=""
+
+# ops/compose/mgmt-host/docker-compose.obs.yml
+export POSTGRES_EXPORTER_SPOCK_DATABASES=""
 
 # ops/ansible/roles/postgres-encoding-migrate/tasks/preflight.yml, ops/compose/mgmt-host/docker-compose.yml
 export POSTGRES_INITDB_ARGS=""
