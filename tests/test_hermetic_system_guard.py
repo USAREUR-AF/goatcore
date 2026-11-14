@@ -125,6 +125,21 @@ class UndoneOnExit(unittest.TestCase):
         self.assertEqual((self.s.certs / "ghcr.io" / "ca.crt").read_text(), "someone else's CA\n",
                          "the certificate it replaced is put back")
 
+    def test_a_ca_that_cannot_be_saved_is_left_and_the_run_stops(self):
+        # The CA already there is not readable, so it cannot be saved: the run stops
+        # before replacing it, and the undo never writes anything over it.
+        (self.s.certs / "ghcr.io").mkdir()
+        old = self.s.certs / "ghcr.io" / "ca.crt"
+        old.write_text("the CA this machine already trusts\n")
+        old.chmod(0o200)
+        try:
+            r = self.s.bash("set -e; sys_arm_undo; sys_trust_registry '%s'" % self.ca)
+        finally:
+            old.chmod(0o600)
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(old.read_text(), "the CA this machine already trusts\n",
+                         "a CA that could not be saved is never overwritten")
+
 
 if __name__ == "__main__":
     unittest.main()
