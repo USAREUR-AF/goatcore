@@ -217,6 +217,38 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
             Source::derived("join_founder_site (above)", "inventory/hosts-<founder>.ini"),
         ));
     }
+    // A joining internet site's mesh DNS (ADR 1235), as read_site derived it.
+    if let Some(m) = &s.mesh_dns {
+        let zone_rule = || {
+            Source::derived(
+                format!("site_dns_zone {} (this site's, else the founder's)", m.zone),
+                "the ops/dns/<dir>/mesh-hosts whose records carry the zone, as generate-mesh-hosts.py finds it",
+            )
+        };
+        v.push(Input::new("mesh_dns_zone_dir_name", m.dir.clone(), zone_rule()));
+        v.push(Input::new("mesh_coredns_smoke_test_name", m.first_name.clone(), zone_rule()));
+        v.push(Input::new(
+            "netbird_nameserver_group_name",
+            m.group_name.clone(),
+            site_rule("<site>-mesh-dns, the site's own nameserver group (ADR 1235)"),
+        ));
+        v.push(Input::new(
+            "netbird_api",
+            m.api.clone(),
+            Source::derived(
+                "site_dns_zone of the founder (else this site's)",
+                "https://<zone>/api, the founder's management: the one writer",
+            ),
+        ));
+        v.push(Input::new(
+            "mesh_dns_peer_replica_group",
+            m.peer_group.clone(),
+            Source::derived(
+                "join_founder_site (above)",
+                "<founder, - as _>_hosts: its first host is the second replica",
+            ),
+        ));
+    }
     v.push(Input::new(
         "acl_site",
         s.acl_site.clone(),
@@ -548,6 +580,15 @@ mod tests {
             },
             lite,
             nb_token_available: false,
+            mesh_dns: (joiner && profile == "internet").then(|| crate::joinnode::MeshDns {
+                zone: "zagros.example.org".into(),
+                dir: "zagros-a".into(),
+                first_name: "isitup.zagros-a.zagros.example.org".into(),
+                group_name: "zagros-b-mesh-dns".into(),
+                api: "https://zagros.example.org/api".into(),
+                token: "ZAGROS_A_NB_API_TOKEN".into(),
+                peer_group: "zagros_a_hosts".into(),
+            }),
         }
     }
 

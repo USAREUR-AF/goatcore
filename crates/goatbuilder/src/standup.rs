@@ -106,6 +106,10 @@ pub(crate) struct Site {
     /// `<UPPER>_NB_API_TOKEN` is available under the declared secrets posture,
     /// so a LAN site needs no phase-11 first-login step.
     pub(crate) nb_token_available: bool,
+    /// A joining internet site's mesh DNS (ADR 1235): the goatnet's zone it
+    /// serves as its own nameserver group. `None` for a founder, a LAN site,
+    /// or a joiner that names no founder.
+    pub(crate) mesh_dns: Option<crate::joinnode::MeshDns>,
 }
 
 pub(crate) const INV: &str = "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini";
@@ -339,7 +343,16 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
         let source = if joiner { format!("join_founder_site {acl_site:?} in group_vars/{group}/vars.yml") } else { format!("the site {acl_site:?}") };
         return Err(goat_errors::coded("GB-263", format!("{source} is not a site id: phase 12 reads the token variable {upper_acl}_NB_API_TOKEN named after it, so it may hold only letters, digits, - and _")).into());
     }
+    // A joining internet site serves the goatnet's mesh zone as its own
+    // nameserver group (ADR 1235); a site with no zone to serve is refused
+    // here, before any phase (GB-280).
+    let mesh_dns = if joiner && profile == "internet" && !join_founder_site.is_empty() {
+        Some(crate::joinnode::mesh_dns_values(repo, &gv, &site, &join_founder_site)?)
+    } else {
+        None
+    };
     Ok(Site {
+        mesh_dns,
         repo: repo.display().to_string(),
         group_vars_exists: repo.join("ops/ansible/group_vars").join(&group).is_dir(),
         owner_email,
@@ -589,7 +602,15 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(12, "A", "netbird account baseline (mesh-DNS nameserver group; no policy)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} goat-netbird-account-init.yml --limit {g}")));
     }
     if internet {
-        ev.push(p(12, "A", "[internet] mesh CoreDNS (only if this site has a mesh zone; every site runs its own resolver, ADR 1233)".into(), format!("cd '{r}' && python3 ops/dns/generate-mesh-hosts.py && {{ if [ -f ops/dns/{site}/mesh-hosts ]; then cd ops/ansible && {pre} {inv} goat-coredns.yml --limit {g}; else echo '    no ops/dns/{site}/mesh-hosts — this site declares no mesh zone (a joiner on the founder DNS plane); skipping mesh CoreDNS'; fi; }}")));
+        match &s.mesh_dns {
+            // A joining site's replica of the goatnet's zone, as its own
+            // nameserver group, written through the founder's management.
+            Some(m) => {
+                ev.push(p(12, "GATE", format!("[internet, joiner] the founder's management API token ({}) resolves, before anything registers the site's nameserver group", m.token), crate::joinnode::mesh_dns_token_gate(r, &m.token)));
+                ev.push(p(12, "A", format!("[internet, joiner] mesh CoreDNS: a replica of the goatnet's zone ({}, ops/dns/{}/mesh-hosts), as the site's own nameserver group {}, this replica first and {jfs}'s second, written through {jfs}'s management (ADR 1235)", m.zone, m.dir, m.group_name), format!("cd '{r}/ops/ansible' && {pre} {inv} goat-coredns.yml --limit {g} -e mesh_dns_zone_dir_name={} -e mesh_coredns_smoke_test_name={} -e netbird_nameserver_group_name={} -e netbird_api={} -e netbird_api_token_envvar={} -e mesh_dns_peer_replica_group={}", sh_word(&m.dir), sh_word(&m.first_name), sh_word(&m.group_name), sh_word(&m.api), sh_word(&m.token), sh_word(&m.peer_group))));
+            }
+            None => ev.push(p(12, "A", "[internet] mesh CoreDNS (only if this site has a mesh zone)".into(), format!("cd '{r}' && python3 ops/dns/generate-mesh-hosts.py && {{ if [ -f ops/dns/{site}/mesh-hosts ]; then cd ops/ansible && {pre} {inv} goat-coredns.yml --limit {g}; else echo '    no ops/dns/{site}/mesh-hosts — this site declares no mesh zone; skipping mesh CoreDNS'; fi; }}"))),
+        }
     }
     ev.push(p(12, "A", "portal (registry, certificate minting, grant rows)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} portal-deploy.yml -e target={g} -l 'mgmt-{site}-01*' -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
     if s.obs {
@@ -1757,7 +1778,7 @@ mod tests {
             repo: String::new(), site: "zagros".into(), group: "zagros_hosts".into(), upper: "ZAGROS".into(), obs_group: String::new(),
             state_dir: t.display().to_string(), ansible_pre: String::new(), inv: "", profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "zagros".into(), mgmt_fqdn: String::new(),
-            intra_pair: false, obs: false, obs_why: String::new(), group_vars_exists: true, lite: false, nb_token_available: false,
+            intra_pair: false, obs: false, obs_why: String::new(), group_vars_exists: true, lite: false, nb_token_available: false, mesh_dns: None,
             owner_email: "$OWNER_EMAIL".to_string(),
         };
         let mk = |id: &str, needs: &[&str], cmd: &str| Queued { id: id.into(), needs: needs.iter().map(|x| x.to_string()).collect(), label: id.into(), cmd: cmd.into() };
@@ -1777,18 +1798,60 @@ mod tests {
         let _ = std::fs::remove_dir_all(&t);
     }
 
+    /// A joining site's mesh DNS values, as read_site derives them for
+    /// test_site(true): the founder alpha, the goatnet's zone in ops/dns/alpha.
+    fn test_mesh_dns() -> crate::joinnode::MeshDns {
+        crate::joinnode::MeshDns {
+            zone: "zagros.example.org".into(),
+            dir: "alpha".into(),
+            first_name: "isitup.alpha.zagros.example.org".into(),
+            group_name: "zagros-mesh-dns".into(),
+            api: "https://zagros.example.org/api".into(),
+            token: "ALPHA_NB_API_TOKEN".into(),
+            peer_group: "alpha_hosts".into(),
+        }
+    }
+
     fn test_site(joiner: bool) -> Site {
         Site {
             repo: "/r".into(), site: "zagros".into(), group: "zagros_hosts".into(), upper: "ZAGROS".into(), obs_group: String::new(),
             state_dir: "/s".into(), ansible_pre: "PRE".into(), inv: "INV", profile: "lan".into(), joiner,
             join_founder_site: if joiner { "alpha".into() } else { String::new() }, join_founder_group: if joiner { "alpha_hosts".into() } else { String::new() },
             acl_site: "zagros".into(), mgmt_fqdn: String::new(), intra_pair: false, obs: false, obs_why: String::new(),
-            group_vars_exists: true, lite: false, nb_token_available: false, owner_email: "$OWNER_EMAIL".to_string(),
+            group_vars_exists: true, lite: false, nb_token_available: false, mesh_dns: None, owner_email: "$OWNER_EMAIL".to_string(),
         }
     }
 
     fn phase_lines(s: &Site, o: &Options) -> Vec<(u32, String, String)> {
         plan(&repo_root(), s, o, "RESUME").into_iter().filter_map(|e| match e { Event::Phase(p) => Some((p.n, p.label, p.cmd)), _ => None }).collect()
+    }
+
+    /// A joining internet site runs its own mesh DNS replica at phase 12, as
+    /// its own nameserver group (ADR 1235): a gate on the founder's API token,
+    /// then goat-coredns.yml on the site's group with the goatnet's zone, the
+    /// founder's management and the founder's core group as the second
+    /// replica. A founder site keeps its zone-only step. read_site derives
+    /// the joiner's values from the checkout, and refuses a site with no zone
+    /// to serve (GB-280).
+    #[test]
+    fn a_joining_internet_site_runs_its_mesh_dns_replica_at_phase_12() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let mut s = test_site(true);
+        s.profile = "internet".into();
+        s.mesh_dns = Some(test_mesh_dns());
+        let lines = phase_lines(&s, &o);
+        let gate = lines.iter().position(|l| l.2.contains("require-secret.sh' GB-281 ALPHA_NB_API_TOKEN")).expect("the token gate");
+        assert_eq!(lines[gate].0, 12);
+        let dns = &lines[gate + 1];
+        assert_eq!(dns.0, 12);
+        assert!(dns.2.ends_with("goat-coredns.yml --limit zagros_hosts -e mesh_dns_zone_dir_name=alpha -e mesh_coredns_smoke_test_name=isitup.alpha.zagros.example.org -e netbird_nameserver_group_name=zagros-mesh-dns -e netbird_api=https://zagros.example.org/api -e netbird_api_token_envvar=ALPHA_NB_API_TOKEN -e mesh_dns_peer_replica_group=alpha_hosts"), "{}", dns.2);
+        assert!(!lines.iter().any(|l| l.1.contains("joiners use the founder's DNS")));
+        // A founder site keeps its zone-only step.
+        let mut f = test_site(false);
+        f.profile = "internet".into();
+        let fl = phase_lines(&f, &o);
+        assert!(fl.iter().any(|l| l.1 == "[internet] mesh CoreDNS (only if this site has a mesh zone)" && l.2.contains("goat-coredns.yml --limit zagros_hosts;")));
+        assert!(!fl.iter().any(|l| l.2.contains("require-secret.sh")));
     }
 
     /// Phase 5 no longer stops on purpose and phase 6 no longer re-runs the whole
@@ -2128,7 +2191,7 @@ mod tests {
             repo: "/r".into(), site: "pasture".into(), group: "pasture_hosts".into(), upper: "PASTURE".into(), obs_group: "pasture_obs_hosts".into(),
             state_dir: "/h/.goat/state".into(), ansible_pre: "PRE".into(), inv: INV, profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "pasture".into(), mgmt_fqdn: "mgmt.pasture.lan".into(),
-            intra_pair: false, obs: false, obs_why: String::new(), group_vars_exists: false, lite, nb_token_available,
+            intra_pair: false, obs: false, obs_why: String::new(), group_vars_exists: false, lite, nb_token_available, mesh_dns: None,
             owner_email: if lite { "a.learner@example.org".to_string() } else { "$OWNER_EMAIL".to_string() },
         }
     }
@@ -2142,8 +2205,13 @@ mod tests {
             s.obs_group = "zagros_obs_hosts".into();
             s
         };
+        // A joining internet site always has mesh DNS values: read_site
+        // derives them, or refuses the site (GB-280).
         let internet = |mut s: Site| {
             s.profile = "internet".into();
+            if s.joiner {
+                s.mesh_dns = Some(test_mesh_dns());
+            }
             s
         };
         vec![
