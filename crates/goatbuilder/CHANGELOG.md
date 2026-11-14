@@ -74,6 +74,14 @@ advised a `--from` past those phases, although such an outcome never counts as
 passed. It now advises `--from` the first phase the journal does not show
 passed. After a failure or an operator step, the advice is unchanged (#632).
 
+#### "Added: join-node deploys the data router at a joining site"
+
+`goatbuilder join-node` now runs the site's own Zenoh router on a joining
+site's core node, in phase 13 after signal federation: `zenoh-deploy.yml`
+for the site's core group, limited to the node. It was a hand step after
+the command. The play still needs the node's router leaf certificate,
+which join-node does not stage yet.
+
 #### Added: `join-node` names what the site does not run, and why
 
 The dry-run plan and the summary of a real `join-node` run end with a section
