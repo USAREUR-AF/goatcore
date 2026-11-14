@@ -1,6 +1,6 @@
 # Island mode: the fabric audit of a cut-off site, and a capped spool for a phone
 
-**Status:** designed, not built. Nothing in this note is in code or in configuration. It answers
+**Status:** designed, and only the declared absence (§8) is built. It answers
 one question for [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md) (island
 mode): how does a site that is cut off from the hub keep an audit record of what was published on
 its fabric? Measured against `USAREUR-AF/goatcore` main `2133f4d4` and the audit-subscriber in
@@ -13,7 +13,7 @@ The examples use the synthetic goatnet `zagros`: hub site `zagros-a`, a fixed jo
 |---|---|---|---|
 | A local store | fixed site (`zagros-b`) | its own audit-subscriber and object store with a small quota: existing roles, configuration only (§2) | designed, not built |
 | A capped spool, delivered to the hub | phone (`zagros-c`) | new subscriber code, role settings, reader changes (§3 to §7) | designed, not built |
-| The absence, declared | phone, until the spool is built | one group_var and one end-state catalog row (§8) | designed, not built |
+| The absence, declared | phone, until the spool is built | one group_var and one end-state catalog row (§8) | built (§8) |
 
 ---
 
@@ -242,7 +242,14 @@ audit-spool:
 | `audit_subscriber_spool_enabled: true` (the phone, once built) | present, and graded like any service: deployed, active, healthy, and the fabric grant on `**` |
 
 The phone sets the flag explicitly even while it equals the role default, so the reason the end
-state prints names the phone's own configuration rather than a default every site shares. The
+state prints names the phone's own configuration rather than a default every site shares.
+
+Built: the `audit-spool` row in `ops/goatbuilder/endstate/catalog.yaml`, the role default
+`audit_subscriber_spool_enabled: false`, and two fixtures under `ops/goatbuilder/fixtures/endstate/`
+(`audit-spool-declared-absent`, `audit-spool-on-not-running`) that measure test 11. Because the flag
+must be read by the code that deploys the service (`ops/ci/check-role-honours-presence-flag.py`), and
+nothing deploys a spool yet, the audit-subscriber role refuses `audit_subscriber_spool_enabled: true`
+with GB-296 rather than deploying nothing. The
 reasons are the texts `endstate.py` already prints for a flag
 (`ops/goatbuilder/endstate/endstate.py:232-238`).
 

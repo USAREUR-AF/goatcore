@@ -1,0 +1,10 @@
+{
+ "site": "epsilon",
+ "expect": {
+  "shape": "single-host",
+  "exit": 3,
+  "absent": [],
+  "orphans": [],
+  "fail": ["audit-spool active", "audit-spool healthy"]
+ }
+}

@@ -1,0 +1,2 @@
+{"id": "core-works", "status": "PASS", "requires": ["core"]}
+{"id": "app-works", "status": "PASS", "requires": ["app"]}

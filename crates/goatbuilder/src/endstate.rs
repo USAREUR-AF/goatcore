@@ -374,6 +374,22 @@ mod tests {
     }
 
     #[test]
+    fn a_phone_site_that_declares_no_audit_spool_is_in_its_end_state() {
+        let r = grade("audit-spool-declared-absent", "delta");
+        assert!(r.ok, "{:?}", r.checks);
+        assert!(!r.checks.iter().any(|c| c.name == "service:audit-spool"));
+    }
+
+    #[test]
+    fn an_audit_spool_declared_on_with_no_container_fails_active() {
+        let r = grade("audit-spool-on-not-running", "epsilon");
+        assert_eq!(r.exit, EXIT_NOT_CONVERGED);
+        let spool = r.checks.iter().find(|c| c.name == "service:audit-spool").expect("graded");
+        assert!(!spool.ok, "{}", spool.detail);
+        assert!(spool.detail.contains("no container audit-subscriber"), "{}", spool.detail);
+    }
+
+    #[test]
     fn an_unknown_site_is_refused_before_anything_runs() {
         let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let o = Options { site: "no-such-site", facts: None, assay_rows: None, run_assay: false, strict: false, root: None, stream: false };

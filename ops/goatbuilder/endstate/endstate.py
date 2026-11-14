@@ -1205,6 +1205,17 @@ def self_test():
         failed += bad
         if not bad:
             print(f"ok   {case.name}")
+    # A phone site states that its fabric has no audit (island-mode-audit-spool.md §8): the
+    # reason names the site's own flag, not a role default every site shares.
+    m = model("delta", fx / "audit-spool-declared-absent")
+    facts = json.loads((fx / "audit-spool-declared-absent" / "facts.json").read_text())
+    row = next(r for r in grade(m, facts, None)["services"] if r["service"] == "audit-spool")
+    why = row["presence"]["why"]
+    if row["presence"]["status"] != NA or "audit_subscriber_spool_enabled" not in why or "group_vars" not in why:
+        print(f"FAIL audit-spool declared absent: presence = {row['presence']}")
+        failed += 1
+    else:
+        print("ok   a phone site's own flag declares its audit spool absent, and the reason names it")
     # A serving surface's ledger row carries what it serves (#2138): a payload that differs
     # from main fails `deployed` even when the image is the declared one.
     m = model("alpha", fx / "single-host")

@@ -1,0 +1,45 @@
+# A small catalog for the end-state fixtures (the real one is ops/goatbuilder/endstate/catalog.yaml).
+schema: goatnet-endstate-catalog/v1
+services:
+  core:
+    class: mgmt
+    present: {founder: true}
+    containers: [core, oauth2-proxy-core]
+    ledger: core
+    surfaces: [core]
+    oidc_clients: [core]
+    spiffe: [/core]
+    assay: [core]
+  app:
+    class: mgmt
+    present: {pin: app, var: app_enabled}
+    containers: [app]
+    ledger: app
+    assay: [app]
+  sandbox:
+    class: mgmt
+    present: {var: sandbox_enabled}
+    containers: [sandbox]
+    ledger: sandbox
+  grafana:
+    class: obs
+    present: {var: grafana_enabled, default: true}
+    containers: ["{site}-obs-grafana"]
+    ledger: null
+  prometheus:
+    class: obs
+    present: {var: prometheus_enabled, default: true}
+    containers: ["{site}-obs-prometheus"]
+    ledger: null
+  pub:
+    class: mgmt
+    present: {founder: true}
+    containers: [pub]
+    ledger: null
+    zenoh: {put: ["ops/pub/health/{site}"]}
+  audit-spool:
+    class: mgmt
+    present: {var: audit_subscriber_spool_enabled}
+    containers: [audit-subscriber]
+    ledger: audit-subscriber
+    zenoh: {sub: ["**"]}
