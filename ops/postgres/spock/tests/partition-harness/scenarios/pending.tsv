@@ -1,33 +1,33 @@
 # Inventory §10 scenarios registered but not run yet: <name>TAB<why>.
 # A name moves out of this file when its scenario file lands in this directory.
-portal-c1-schema-upload-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c1-access-request-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c1-grant-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c1-govern-nominate-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c2-slot-claim-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c2-vendor-edit-owner-only	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c2-collect-once-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c2-machine-enroll-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c2-budget-edit-owner-only	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c2-decide-off-owner-refused	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c3-offboard-at-a-edit-at-b	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c3-grant-revoke-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c4-alias-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c4-prefix-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c4-probation-hold-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c5-slot-pool-init-once	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c5-boot-migration-once	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c5-affiliation-repair-hub-only	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-c5-acl-render-after-heal	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-x1-rotate-at-a-edit-at-b	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-x3-quota-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-x3-remove-last-admins-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-x5-revoke-at-a-mint-at-b	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-x6-network-admin-remove-at-a-edit-at-b	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-x7-subject-edit-either-side	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-x8-first-multipub-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-x8-govern-reconcile-both-sides	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
-portal-x9-runtime-write-vs-rekey	portal registry is SQLite (registry.db); runs once the portal port to Postgres lands (ADR 1165 step A, not yet opened)
+portal-c1-schema-upload-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c1-access-request-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c1-grant-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c1-govern-nominate-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c2-slot-claim-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c2-vendor-edit-owner-only	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c2-collect-once-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c2-machine-enroll-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c2-budget-edit-owner-only	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c2-decide-off-owner-refused	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c3-offboard-at-a-edit-at-b	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c3-grant-revoke-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c4-alias-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c4-prefix-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c4-probation-hold-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c5-slot-pool-init-once	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c5-boot-migration-once	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c5-affiliation-repair-hub-only	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-c5-acl-render-after-heal	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-x1-rotate-at-a-edit-at-b	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-x3-quota-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-x3-remove-last-admins-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-x5-revoke-at-a-mint-at-b	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-x6-network-admin-remove-at-a-edit-at-b	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-x7-subject-edit-either-side	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-x8-first-multipub-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-x8-govern-reconcile-both-sides	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
+portal-x9-runtime-write-vs-rekey	scenario not written yet; the portal registry is on Postgres (ADR 1165 step A) and in the harness, see portal-c1-topic-create-both-sides
 console-c1-invite-mint-both-sides	console stores move to Postgres in PR #2076 (open); runs once it merges
 console-c1-reactivation-request-both-sides	console stores move to Postgres in PR #2076 (open); runs once it merges
 console-c1-negative-pair-both-sides	console stores move to Postgres in PR #2076 (open); runs once it merges
