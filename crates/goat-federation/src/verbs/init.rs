@@ -145,9 +145,19 @@ pub fn run_init(site: &Site, a: &InitArgs, out: &mut dyn Write) -> anyhow::Resul
 
 /// What `goat federate init` has always measured: this machine, and the core
 /// router through this machine's container runtime (`DOCKER_HOST`,
-/// `FED_ROUTER_CONTAINER`).
+/// `FED_ROUTER_CONTAINER`, read from the process environment).
 pub fn measure_here(interface: Option<&str>) -> anyhow::Result<derive::Measured> {
-    let (fabric_fips_image, fabric_version) = derive::fabric_capabilities();
+    measure_here_with(&derive::RouterEnv::from_process(), interface)
+}
+
+/// [`measure_here`], with the core router's `DOCKER_HOST` and container given
+/// as values. A driver that runs `init` in its own process passes them here
+/// (to [`run_init_measured`]) instead of writing them into its environment.
+pub fn measure_here_with(
+    router: &derive::RouterEnv,
+    interface: Option<&str>,
+) -> anyhow::Result<derive::Measured> {
+    let (fabric_fips_image, fabric_version) = derive::fabric_capabilities_with(router);
     Ok(derive::Measured {
         transports: derive::transports(),
         fabric_fips_image,

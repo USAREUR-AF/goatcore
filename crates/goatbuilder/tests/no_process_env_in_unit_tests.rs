@@ -10,11 +10,7 @@
 use std::path::{Path, PathBuf};
 
 /// (file, text on the line, why it remains)
-const KNOWN: &[(&str, &str, &str)] = &[(
-    "src/federate/mod.rs",
-    "remove_var(key)",
-    "run_verb_in_process writes the verb's environment into the process (product code); its test clears the key it checks. It goes with the runner's move of federate's process writes into runenv, a separate change",
-)];
+const KNOWN: &[(&str, &str, &str)] = &[];
 
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };

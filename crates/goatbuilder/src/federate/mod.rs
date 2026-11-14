@@ -993,36 +993,19 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
 
 /// One federation verb in process, run in `dir` (the repository, where the
 /// shell phases run, so a relative path means the same thing either way) with
-/// `env` set for its duration (phase 3's DOCKER_HOST). Returns its exit code:
+/// `env` recorded for its duration (phase 3's DOCKER_HOST). Returns its exit code:
 /// 0, a verb's own 20 to 24, 2 for a refused command line, a coded refusal's
 /// catalog code (GB-100: 2), 101 for a panic, or 1 for any other fault, which
 /// is printed.
-/// The names the federation library reads from the process environment itself
-/// (goat-federation's derive.rs, during an in-process `init`); every other value
-/// an in-process verb reads, it reads through [`runenv`].
-const READ_FROM_THE_PROCESS_BY_THE_LIBRARY: [&str; 2] = ["DOCKER_HOST", "FED_ROUTER_CONTAINER"];
-
-/// Of a verb's values, the ones that go into the process environment for its
-/// duration: only those the library reads from the process itself.
-fn for_the_process(all: &[(String, String)]) -> Vec<&(String, String)> {
-    all.iter().filter(|(k, _)| READ_FROM_THE_PROCESS_BY_THE_LIBRARY.contains(&k.as_str())).collect()
-}
-
 fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -> i32 {
     // The verb runs in this process. goatbuilder's verbs read their values
     // through runenv, which is this thread's, so the verb's own values go there
-    // for its duration and are put back after. Only the few names the library
-    // reads from the process environment itself are put there, and restored:
-    // set_var changes process-global state, so this stays the one place it
-    // happens, for a real run's in-process verb, one at a time. So does
-    // set_current_dir. A driver that runs verbs concurrently must pass both to
-    // the verb instead.
-    let all: Vec<(String, String)> = runenv::pairs().into_iter().chain(env.iter().cloned()).collect();
-    let to_process = for_the_process(&all);
-    let saved: Vec<(String, Option<std::ffi::OsString>)> = to_process.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
-    for (k, v) in &to_process {
-        std::env::set_var(k, v);
-    }
+    // for its duration and are put back after. The library's `init` reads the
+    // core router's DOCKER_HOST and FED_ROUTER_CONTAINER from runenv too: they
+    // reach it as values (verbs::router_env, measure_here_with), and the
+    // process environment is never written. set_current_dir is still
+    // process-global, so this stays one verb at a time; a driver that runs
+    // verbs concurrently must pass the directory to the verb instead.
     let saved_run: Vec<(String, Option<String>)> = env.iter().map(|(k, _)| (k.clone(), runenv::recorded(k))).collect();
     for (k, v) in env {
         runenv::set(k, v.clone());
@@ -1036,12 +1019,6 @@ fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -
         match v {
             Some(v) => runenv::set(&k, v),
             None => runenv::unset(&k),
-        }
-    }
-    for (k, v) in saved {
-        match v {
-            Some(v) => std::env::set_var(&k, v),
-            None => std::env::remove_var(&k),
         }
     }
     rc
@@ -1425,19 +1402,6 @@ mod tests {
             assert!(!purpose(n).is_empty(), "phase {n}");
         }
         assert!(purpose(15).is_empty());
-    }
-
-    /// Of a verb's values, DOCKER_HOST and FED_ROUTER_CONTAINER reach the process
-    /// environment during an in-process verb, and nothing else does.
-    #[test]
-    fn only_the_two_names_the_library_reads_go_to_the_process() {
-        let all: Vec<(String, String)> = ["DOCKER_HOST", "FED_ROUTER_CONTAINER", "FED_WORK", "FED_KEYRING", "GOAT_PROFILE_DIR", "FED_ROUTER_DOCKER_HOST"]
-            .iter()
-            .map(|k| (k.to_string(), "v".to_string()))
-            .collect();
-        let names: Vec<&str> = for_the_process(&all).iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(names, ["DOCKER_HOST", "FED_ROUTER_CONTAINER"]);
-        assert!(for_the_process(&[("FED_WORK".into(), "v".into())]).is_empty());
     }
 
     /// An in-process verb returns the verb's own exit code (21 for a malformed

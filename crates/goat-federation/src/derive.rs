@@ -81,6 +81,26 @@ impl Probe for Local {
     }
 }
 
+/// This machine, with values for the commands' environment: the reads
+/// [`Local`] makes, each child started with `env` added to what it inherits.
+/// A caller that holds a value (a driver's DOCKER_HOST) passes it here instead
+/// of writing it into the process environment, which every thread shares.
+pub struct LocalWith {
+    pub env: Vec<(String, String)>,
+}
+
+impl Probe for LocalWith {
+    fn run(&self, bin: &str, args: &[&str]) -> Result<String, String> {
+        run_with(bin, args, &self.env)
+    }
+    fn run_reading_output(&self, bin: &str, args: &[&str]) -> Result<String, String> {
+        run_reading_output_with(bin, args, &self.env)
+    }
+    fn read_file(&self, path: &str) -> std::io::Result<String> {
+        std::fs::read_to_string(path)
+    }
+}
+
 /// Every command `derive` issues, and nothing else. A [`Probe`] that reaches
 /// another host checks each command against this before sending it, so the
 /// derivations cannot be turned into a way to change a host: they read.
@@ -596,13 +616,44 @@ pub fn transports_on(probe: &dyn Probe) -> Derived<Vec<String>> {
     }
 }
 
+/// The two values the core router's measurement reads: the Docker daemon to
+/// ask (`DOCKER_HOST`) and the router container to measure
+/// (`FED_ROUTER_CONTAINER`). `goat` reads them from its environment
+/// ([`RouterEnv::from_process`]); a driver that holds them passes them in.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RouterEnv {
+    /// `DOCKER_HOST` for the container runtime's commands; `None` leaves the
+    /// children's inherited environment as it is.
+    pub docker_host: Option<String>,
+    /// A container name or ID; `None` or empty discovers the one running core.
+    pub container: Option<String>,
+}
+
+impl RouterEnv {
+    /// `DOCKER_HOST` and `FED_ROUTER_CONTAINER` from this process's environment.
+    pub fn from_process() -> Self {
+        RouterEnv {
+            docker_host: std::env::var_os("DOCKER_HOST").map(|v| v.to_string_lossy().into_owned()),
+            container: std::env::var("FED_ROUTER_CONTAINER").ok(),
+        }
+    }
+}
+
 /// Derive both fabric capabilities from one running core container. A pin
 /// says what should be running; the container and its binary say what is.
+/// Reads `DOCKER_HOST` and `FED_ROUTER_CONTAINER` from the process
+/// environment; [`fabric_capabilities_with`] takes them as values.
 pub fn fabric_capabilities() -> (Derived<bool>, Derived<String>) {
-    let selected = std::env::var("FED_ROUTER_CONTAINER")
-        .ok()
-        .filter(|v| !v.is_empty());
-    let target = match selected.as_deref() {
+    fabric_capabilities_with(&RouterEnv::from_process())
+}
+
+/// [`fabric_capabilities`], with the router's values given rather than read
+/// from the process environment. `DOCKER_HOST` reaches the container
+/// runtime's commands as their own environment; this process's is not
+/// written.
+pub fn fabric_capabilities_with(router: &RouterEnv) -> (Derived<bool>, Derived<String>) {
+    let selected = router.container.as_deref().filter(|v| !v.is_empty());
+    let target = match selected {
         Some(name) => RouterTarget::Named {
             name,
             from: "FED_ROUTER_CONTAINER",
@@ -611,8 +662,15 @@ pub fn fabric_capabilities() -> (Derived<bool>, Derived<String>) {
     };
     // DOCKER_HOST explicitly selects a daemon, often remote. Never replace a
     // failed remote Docker read with an unrelated local Podman observation.
-    let tools = router_tools(std::env::var_os("DOCKER_HOST").is_some());
-    fabric_capabilities_on(&Local, target, tools, "FED_ROUTER_CONTAINER")
+    let tools = router_tools(router.docker_host.is_some());
+    let probe = LocalWith {
+        env: router
+            .docker_host
+            .iter()
+            .map(|h| ("DOCKER_HOST".to_string(), h.clone()))
+            .collect(),
+    };
+    fabric_capabilities_on(&probe, target, tools, "FED_ROUTER_CONTAINER")
 }
 
 /// Which core router container to measure.
@@ -1009,8 +1067,18 @@ fn parse_version(out: &str) -> Option<String> {
 /// Still an error when the binary cannot be executed at all, or when it exits
 /// non-zero with nothing on stdout — there is no answer to read in either case.
 fn run_reading_output(bin: &str, args: &[&str]) -> Result<String, String> {
+    run_reading_output_with(bin, args, &[])
+}
+
+/// [`run_reading_output`], with `env` added to the child's environment.
+fn run_reading_output_with(
+    bin: &str,
+    args: &[&str],
+    env: &[(String, String)],
+) -> Result<String, String> {
     let out = Command::new(bin)
         .args(args)
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .output()
         .map_err(|e| format!("{bin}: {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -1026,8 +1094,14 @@ fn run_reading_output(bin: &str, args: &[&str]) -> Result<String, String> {
 }
 
 fn run(bin: &str, args: &[&str]) -> Result<String, String> {
+    run_with(bin, args, &[])
+}
+
+/// [`run`], with `env` added to the child's environment.
+fn run_with(bin: &str, args: &[&str], env: &[(String, String)]) -> Result<String, String> {
     let out = Command::new(bin)
         .args(args)
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .output()
         .map_err(|e| format!("{bin}: {e}"))?;
     if !out.status.success() {
@@ -1044,6 +1118,45 @@ fn run(bin: &str, args: &[&str]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A value given to [`LocalWith`] reaches the child's environment, and this
+    /// process's environment is not written: a driver passes DOCKER_HOST as a
+    /// value instead of setting it for every thread.
+    #[test]
+    fn local_with_gives_the_child_its_env_and_leaves_the_process_alone() {
+        let name = "GOAT_FEDERATION_TEST_LOCAL_WITH";
+        let p = LocalWith {
+            env: vec![(name.to_string(), "tcp://192.0.2.9:2375".to_string())],
+        };
+        let script = format!("printf %s \"${name}\"");
+        assert_eq!(
+            p.run("sh", &["-c", &script]).unwrap(),
+            "tcp://192.0.2.9:2375"
+        );
+        assert_eq!(
+            p.run_reading_output("sh", &["-c", &script]).unwrap(),
+            "tcp://192.0.2.9:2375"
+        );
+        assert!(
+            std::env::var_os(name).is_none(),
+            "the process environment was written"
+        );
+        // Without a value the child inherits as before, with nothing added.
+        assert_eq!(
+            LocalWith { env: Vec::new() }
+                .run("sh", &["-c", &script])
+                .unwrap(),
+            ""
+        );
+    }
+
+    /// A given DOCKER_HOST asks docker only, never a local podman, whether it
+    /// comes from the process or from a driver's value.
+    #[test]
+    fn a_given_docker_host_asks_docker_only() {
+        assert_eq!(router_tools(true), &["docker"]);
+        assert_eq!(router_tools(false), &["docker", "podman"]);
+    }
 
     use crate::anchor::test_pki::{leaf_signed_by, root, Ca};
 

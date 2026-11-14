@@ -43,7 +43,7 @@ mod verify;
 pub use apply::{run_apply, ApplyArgs};
 pub use compose::{run_compose, ComposeArgs};
 pub use diff::{run_diff, DiffArgs};
-pub use init::{measure_here, run_init, run_init_measured, InitArgs};
+pub use init::{measure_here, measure_here_with, run_init, run_init_measured, InitArgs};
 pub use lint::{run_lint, LintArgs};
 pub use verify::{run_verify, VerifyArgs};
 
