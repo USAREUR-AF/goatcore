@@ -89,6 +89,11 @@ peering_wg_packages:
 
 peering_wg_config_dir: /etc/goat-peering-wg
 peering_wg_key_path: "{{ peering_wg_config_dir }}/{{ peering_wg_interface }}.key"
+# A peering key rotation's id (`goatbuilder federate rotate <partner> transport`):
+# the key in place is set aside once in .previous-<id>/, a new one made, and the
+# link restarted onto it (tasks/transport-key.yml, tasks/transport-live.yml).
+# Empty: no rotation.
+peering_wg_transport_rotation: ""
 peering_wg_env_path: "{{ peering_wg_config_dir }}/{{ peering_wg_interface }}.env"
 peering_wg_nft_path: "{{ peering_wg_config_dir }}/{{ peering_wg_interface }}.nft"
 peering_wg_service: "goat-peering-wg@{{ peering_wg_interface }}.service"
