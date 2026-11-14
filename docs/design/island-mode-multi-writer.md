@@ -1,6 +1,6 @@
 # Island mode, every site writes: portal, console, NetBird and Kratos on Spock
 
-**Status:** Step A (§5) built: the portal and console run on Postgres, in no Spock replication set. The partition harness (§6) is built for NetBird, Kratos and Hydra, and carries the portal registry with its step A schema; its first portal scenario, `portal-c1-topic-create-both-sides`, fails as §3.1 predicts (the site that did not create the replicated topics refuses its next topic with a duplicate key on the integer `topics.id`) and is listed in `scenarios/expected-failing.tsv`; the console's first scenario, `console-c2-claim-both-runners`, fails as C7 predicts (§6) and is listed there too; the other portal and console scenarios are listed in `scenarios/pending.tsv`. Step B (§5), the per-class turn-on (gate G3) and the drills (gate G4) are designed, not built. Until a write class passes gate G3, the admin surfaces run at one site per goatnet ([ADR 1084](../adr/1084-block-64r-mgmt-repset-and-two-node-federation.md) D3); the intended placement is every site. Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md) (Proposed 2026-10-29). Execution and resume point: `island-mode-program.md`. Builds on ADR 1193 (revocations are absorbing; Proposed). §2 is the measurement before step A, against `USAREUR-AF/goatcore` main `2aa281381`, 2026-10-28.
+**Status:** Step A (§5) built: the portal and console run on Postgres, in no Spock replication set. The partition harness (§6) is built for NetBird, Kratos and Hydra, and carries the portal registry with its step A schema; its first portal scenario, `portal-c1-topic-create-both-sides`, fails as §3.1 predicts (the site that did not create the replicated topics refuses its next topic with a duplicate key on the integer `topics.id`) and is listed in `scenarios/expected-failing.tsv`; the console's first scenario, `console-c2-claim-both-runners`, fails as C7 predicts (§6) and is listed there too; the other portal and console scenarios are listed in `scenarios/pending.tsv`. Step B (§5), the per-class turn-on (gate G3, §9) and the drills (gate G4) are designed, not built. Until a write class passes gate G3, the admin surfaces run at one site per goatnet ([ADR 1084](../adr/1084-block-64r-mgmt-repset-and-two-node-federation.md) D3); the intended placement is every site. Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md) (Proposed 2026-10-29). Execution and resume point: `island-mode-program.md`. Builds on ADR 1193 (revocations are absorbing; Proposed). §2 is the measurement before step A, against `USAREUR-AF/goatcore` main `2aa281381`, 2026-10-28.
 
 Any site of a goatnet that is cut off from the others must keep working fully —
 admitting people, enrolling machines, changing and revoking access — and merge cleanly
@@ -231,6 +231,81 @@ Gates G2 to G4 are rows of the goatbuilder 1.0 gate, group I ([goatbuilder-v1-ga
 | G2 step B | Migration table at the §3 schema on three goatnets; SQLite gone from main |
 | G3 per class | Harness scenarios for that class green; ADR 1084 D3 lifted for that class in group_vars |
 | G4 drills | Partition drill passes on a two-node dev goatnet, then on preprod |
+
+## 9. Turning on a write class (program step 6)
+
+**Plain:** a class is opened one goatnet at a time and one site at a time, by
+configuration only, after its harness scenarios pass. Closing it again is the same
+setting removed. Nothing in this section is built. Status: designed.
+
+### 9.1 What every class needs first
+
+These are preconditions for opening any class. Each one is safe on its own, because the
+admin surfaces stay single-homed (ADR 1084 §D3) until 9.2's switch names a class.
+
+| # | Precondition | Where it is set | Checked by | Rollback |
+|---|---|---|---|---|
+| P1 | Gate G0: the ADR 1193 revocation guard and the `postgres-spock` image with the apply settings (`discard`, `save_resolutions = on`) on every replicating node | goatnet group_vars, rolled per site with the operator present | `00-verify-config.sql` at start; the harness's own check of the two settings | the previous image pin; the guard stays (it only refuses) |
+| P2 | Every site subscribes to every other site. With `forward_origins` empty, a write made at one non-hub site reaches the hub and not a third site | `spock-mesh-peering` per database, goatnet group_vars | `spock.sub_show_status()` `replicating` for every pair | drop the added subscriptions |
+| P3 | The portal and console databases (`portal_registry`, `id_console_onboard`, `id_console_orgs`) in their own repsets, holding each store's declared `Tables`, as the harness wires them (§6) | `spock-mesh-peering` databases list, goatnet group_vars | drift-watch over every table of the three databases (§4), equal at every pair | remove the databases from the list; each site keeps its rows |
+| P4 | Drift-watch reads `spock.resolutions` as well as rows. A row that last-write-wins replaced on heal compares equal afterwards, so a rows-only compare passes over a lost write (registered as `portal-c1-two-topics-both-sides-loss-reported`) | `spock-drift-watch` role | a harness scenario that loses a row on heal and must fail drift-watch | the previous role version |
+| P5 | Each site's name and the goatnet's hub: the per-host Spock node name (`site_<x>`) and `goatnet_hub_site` (ADR 1205 D1), passed to the portal, console and runner roles | site: host vars; hub: goatnet group_vars | each surface logs its site and the hub at start | unset; the surfaces then run single-site |
+
+The order of P1 to P5 across sites is hub first, then each other site. P3 must precede
+every class; replication with one writer is the state ADR 1084 §D3 already allows.
+
+### 9.2 The switch
+
+One goatnet-level list, `island_write_classes` (default `[]`), in the goatnet's
+group_vars, never in a site's: two sites that disagree about which classes are open would
+each accept writes the other refuses to make. With it empty, every surface behaves as
+today. With a class in it:
+
+- `assert-admin-write-host.yml` lets the admin surfaces install at every site that
+  declares a site name, instead of only on `admin_write_role`. The single-home guard stays
+  in force while the list is empty.
+- At a site that is not the hub, each surface refuses, with a stated reason, every write
+  endpoint whose class (inventory §3 to §6) is not in the list. The hub accepts every
+  write, as the single home does today.
+- A site can be left out by not deploying the surfaces there; the hub can stop a site
+  that misbehaves with `sever` (ADR 1205), which needs no change to the list.
+
+Order across sites, for each class: open it at one site next to the hub, soak, then the
+next site; on a phone-sized site last. Order across classes: 1, 2, 3, 4, 5. A class opens
+on a goatnet only after it is open and soaked on the dev goatnet, as gate G3 states (§8).
+
+Soak, for every class: seven days with drift-watch equal at every pair, no
+`spock.exception_log` or `spock.resolutions` row for that class's tables that its
+scenarios do not account for, and every subscription `replicating`.
+
+### 9.3 Per class
+
+Measured on the harness (`ops/postgres/spock/tests/partition-harness`, both streams
+merged), the state each class starts from:
+
+| Class | Harness today | What blocks it |
+|---|---|---|
+| 1 New rows | NetBird setup keys and service users pass. `portal-c1-topic-create-both-sides` fails: `topics.id` is a per-site integer sequence, so the second site refuses its first topic while cut off. Console class 1 scenarios pending | §3.1 class 1 text ids for the portal; the console class 1 scenarios |
+| 2 Owned records | Kratos owner-only edit and hub transfer pass. `console-c2-claim-both-runners` fails as C7 predicts: a runner at each site claims and mints the same proposal (two setup keys, two identities) | §3.1 class 2: `owner_site` and the owner-filtered claim; the hub-only backfill naming the owner of older rows; the other class 2 scenarios |
+| 3 Revocations | NetBird key revoke and peer delete, Kratos deactivate and delete pass with the ADR 1193 guard | P1 rolled out; the portal and console ledgers (§3.1 class 3) |
+| 4 Unique by value | Kratos same email at both sites passes, resolved by a hub directive | the `value_collisions` view and the console's resolution queue (§4) |
+| 5 Global derived state | NetBird declared state and warrant membership pass; Hydra client passes. `netbird-c5-policy-regenerate-no-duplicates` fails (F-591): the cutover play creates a policy at each site while cut off | a cut-off mode for `netbird-acl-cutover.yml` (PUT existing ids only) |
+
+| Class | Turned on | Also set | Checked on the goatnet | Rollback |
+|---|---|---|---|---|
+| 1 | `1` in `island_write_classes` | none | a write of each class 1 kind at the new site appears at every other site; no exception rows for those tables | remove `1`; rows written stay, as they are new rows no other site claims |
+| 2 | `2` | the site's name in every surface (P5), only after the hub-only backfill has named the owner of every older row: a site name set before it strands those rows, which no site then claims | no row with an empty `owner_site`; a claim or edit at a site that does not own the record is refused; each runner claims only its site's work | remove `2`, then the hub takes over each record the closed site owns (an `ownership_takeovers` row per record, §3.1), so none is left with an owner that may not write |
+| 3 | `3` | none | a revoke at the new site reaches every site's ledger and is in force there; ledger row counts equal at every pair | remove `3`; ledger rows stay, by design (ADR 1193): undoing a revoke is a reinstatement at the hub naming it |
+| 4 | `4` | the resolution queue reachable at the hub | a value created at two sites appears once in the queue; alert on an unresolved entry older than 1 h (§4) | remove `4`; the hub resolves what is in the queue |
+| 5 | `5` | the cut-off mode of each regeneration job | a regeneration at a cut-off site updates existing ids only; creates and deletes happen at the hub after heal | remove `5`; regeneration runs at the hub only, as today |
+
+### 9.4 What this does not cover
+
+- The outbound mail queue (program step 7) and per-site SPIRE (step 8). A class opened
+  without them still needs mail and workload identity from the hub.
+- Drills (gate G4) run after a goatnet has every class open.
+
+---
 
 ## Related
 
