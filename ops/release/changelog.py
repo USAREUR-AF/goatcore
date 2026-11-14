@@ -388,6 +388,15 @@ def _released_text_cases(expect) -> None:
         problems = check(r)
         expect("a line added to a released section after its release commit is refused, naming the version",
                any("9.9.9" in m and "release commit" in m and "merged after the release" in m for m in problems))
+        _entry(r, "late.md", "For someone deploying", "Fixed: a thing merged after the release", "It landed late.")
+        problems = check(r)
+        late = [m for m in problems if "late.md" in m]
+        expect("an entry that landed inside a release after it is told to restore the section and keep the entry",
+               len(late) == 1 and "landed inside 9.9.9 after its release" in late[0] and "restore" in late[0]
+               and "remove the entry file" not in late[0])
+        expect("and that reason comes before the generic `write` one",
+               bool(late) and problems.index(late[0]) < next((i for i, m in enumerate(problems) if "differs from its render" in m), len(problems)))
+        (r / ENTRIES / "late.md").unlink()
 
         cl.write_text(text, encoding="utf-8")
         _git(r, "commit", "-q", "-am", "fix: put 9.9.9 back as released")
