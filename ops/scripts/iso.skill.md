@@ -56,7 +56,7 @@ the PR before rewriting their commit — the session bus is scoped to one
 clone (`docs/design/session-bus.md`) and will not reach a contributor on
 another machine.
 
-Canon: [ADR 0006](../../../docs/adr/0006-multi-agent-human-concurrency-governance.md)
+Canon: [ADR 0006](../../docs/adr/0006-multi-agent-human-concurrency-governance.md)
 · contributor-facing summary in `CONTRIBUTING.md` under **Commits**.
 
 ## Operating-directory directive
