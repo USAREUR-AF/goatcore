@@ -286,7 +286,7 @@ class InterruptedMint(unittest.TestCase):
         self.assertIn('restored', result.stdout + result.stderr)
         self.assertEqual(self.leaves(out), old)
         for name in old:
-            want = 0o600 if name.endswith('-key.pem') else 0o644
+            want = 0o600 if name.endswith('-key.pem') else 0o640
             self.assertEqual((out / name).lstat().st_mode & 0o777, want, name)
         self.assertFalse(pending.exists())
         self.assertEqual(stray_keys(out), [])
