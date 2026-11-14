@@ -2,9 +2,10 @@
 """goatbuilder keeps its promise to the last release (docs/design/goatbuilder-v1-gate.md, group A).
 
 Four surfaces are what other people build on. This script holds a build of
-goatbuilder to three of them, against the baseline kept beside it
-(baseline.yaml names the release it was recorded from). The fourth, A2's
-configuration files, is crates/goatbuilder/tests/config_compat.rs:
+goatbuilder to two of them, against the baseline kept beside it
+(baseline.yaml names the release it was recorded from). A2's configuration
+files are crates/goatbuilder/tests/config_compat.rs, and A5's error codes are
+ops/ci/check-error-codes-kept.py:
 
   surface    A3  every command and flag of the last release is still there
                  (and still takes a value if it took one, and no optional
@@ -13,11 +14,9 @@ configuration files, is crates/goatbuilder/tests/config_compat.rs:
                  is still produced by the same invocation as a superset: the
                  same version, no field removed, no field retyped, no list
                  that held entries now empty
-  errors     A5  every GB-nnn code of the last release is in ops/errors/catalog.yaml
-                 with the same title, unless the entry carries `retired:`
 
 usage:
-  compat.py check   --bin <goatbuilder> [--repo DIR] [--only surface,documents,errors]
+  compat.py check   --bin <goatbuilder> [--repo DIR] [--only surface,documents]
   compat.py refresh --tag goatbuilder/vX.Y.Z --bin <that release's binary> --sums <its SHA256SUMS> [--repo DIR]
 
 `check` prints one row per kept item and exits 0 when every row holds, 1 when
@@ -30,20 +29,23 @@ the documents from the released binary and the error codes from the catalog at
 the tag. It refuses a binary whose
 SHA-256 is not the goatbuilder binary entry of the SHA256SUMS published with
 the tag (`--sums`), or that disagrees with releases.sha256 for a release
-already pinned there; `--version` alone proves nothing.
+already pinned in the upgrade tests' list (PINS); `--version` alone proves nothing.
 
 Needs PyYAML.
 """
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime
 import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 
 try:
     import yaml
@@ -52,7 +54,6 @@ except ImportError:  # pragma: no cover - the CI step installs it
     sys.exit(2)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CATALOG = "ops/errors/catalog.yaml"
 
 # ---------------------------------------------------------------- A3: the command surface
 
@@ -103,7 +104,53 @@ def parse_reference(text: str) -> dict:
     return tree
 
 
-def _deprecated(deps: list, command: str, flag: str | None = None) -> bool:
+OPTION_HEAD = re.compile(r"^ {2,6}(?:-[A-Za-z0-9], )?(--[A-Za-z0-9][A-Za-z0-9-]*)")
+ARG_HEAD = re.compile(r"^ {2}([<\[][A-Z0-9_]+[>\]])(?:\.\.\.)? ")
+VALUES = re.compile(r"\[possible values: ([^\]]+)\]")
+
+
+def parse_values(help_text: str) -> dict:
+    """{"--output": ["table", "json", "yaml"], "<SHELL>": [...]}: each option or
+    argument of one `--help` page that lists its possible values, read across
+    wrapped lines."""
+    entries = []
+    for line in help_text.splitlines():
+        m = OPTION_HEAD.match(line) or ARG_HEAD.match(line)
+        if m:
+            name = m.group(1)
+            if name.startswith("["):
+                name = "<" + name[1:-1] + ">"
+            entries.append([name, line[m.end():]])
+        elif not line.strip():
+            continue  # the long help form leaves blank lines inside an entry
+        elif entries and line.startswith("   "):
+            entries[-1][1] += " " + line.strip()
+        else:
+            entries.append([None, ""])  # a section heading or prose ends the entry
+    out = {}
+    for name, text in entries:
+        m = VALUES.search(" ".join(text.split())) if name else None
+        if m:
+            out[name] = [v.strip() for v in m.group(1).split(",")]
+    return out
+
+
+def surface_values(binary: str, tree: dict) -> dict:
+    """Each command's possible values, from its `--help` (English, its own HOME)."""
+    home = tempfile.mkdtemp(prefix="compat-home-")
+    env = _env(home)
+    try:
+        for cmd in tree:
+            r = subprocess.run([binary, *cmd.split()[1:], "--help"], capture_output=True, text=True, env=env)
+            tree[cmd]["values"] = parse_values(r.stdout) if r.returncode == 0 else {}
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+    return tree
+
+
+def _deprecated(deps: list, command: str, flag: str | None = None, value: str | None = None) -> bool:
+    if value is not None:
+        return any(d.get("command") == command and d.get("flag") == flag and d.get("value") == value for d in deps)
     for d in deps:
         if d.get("command") == command and d.get("flag") == flag:
             return True
@@ -133,6 +180,17 @@ def surface_problems(base: dict, new: dict, deps: list) -> list:
             elif bflags[flag] != nflags[flag]:
                 was = "took a value" if bflags[flag] else "took no value"
                 out.append(f"{cmd} {flag}: the flag {was} in the last release and changes meaning here")
+        bvals, nvals = base[cmd].get("values") or {}, new[cmd].get("values") or {}
+        for flag in sorted(bvals):
+            if flag not in nvals:
+                # A flag that is gone is reported above; one still here, or an
+                # argument, that no longer lists its values changed meaning.
+                if flag in nflags or flag.startswith("<"):
+                    out.append(f"{cmd} {flag}: listed its possible values {', '.join(bvals[flag])} in the last release and lists none now")
+                continue
+            for v in bvals[flag]:
+                if v not in nvals[flag] and not _deprecated(deps, cmd, flag, v):
+                    out.append(f"{cmd} {flag}: the value `{v}` is no longer accepted; restore it, or name it in deprecations.yaml (with `value: {v}`) and its replacement")
         bargs, nargs = base[cmd]["args"], new[cmd]["args"]
         if len(nargs) < len(bargs) and not _deprecated(deps, cmd):
             out.append(f"{cmd}: had {len(bargs)} positional argument(s), now {len(nargs)}")
@@ -151,6 +209,8 @@ def deprecation_problems(deps: list) -> list:
             out.append(f"{where}: `command:` must name a goatbuilder command")
         if not d.get("replacement"):
             out.append(f"{where}: `replacement:` must name what to use instead (the warning prints it)")
+        if "value" in d and not (d.get("flag") and str(d.get("value") or "").strip()):
+            out.append(f"{where}: `value:` deprecates one value of a flag or argument; it needs the `flag:` (or `<ARG>`) it belongs to")
         if not re.match(r"^goatbuilder/v\d+\.\d+\.\d+$", str(d.get("deprecated_in", ""))):
             out.append(f"{where}: `deprecated_in:` must name the release, goatbuilder/vX.Y.Z")
     return out
@@ -234,39 +294,118 @@ def _shape_problems(base, new, path: str) -> list:
     return out
 
 
-def document_problems(base, new) -> list:
-    """What the last release's document carries that this build's does not."""
+def conditional_problems(cond: list) -> list:
+    """What is wrong with conditional.yaml's entries: each names a format, an array
+    of entries, a field, the condition, and why the field is carried only then."""
+    out = []
+    for i, c in enumerate(cond):
+        where = f"conditional.yaml entry {i + 1}"
+        if not isinstance(c, dict):
+            out.append(f"{where}: not a mapping")
+            continue
+        for key in ("format", "items", "field", "reason"):
+            if not (isinstance(c.get(key), str) and c[key].strip()):
+                out.append(f"{where}: `{key}:` is missing or empty")
+        if isinstance(c.get("items"), str) and not c["items"].endswith("[]"):
+            out.append(f"{where}: `items:` names an array of entries, written `name[]`")
+        if not (isinstance(c.get("present_when"), dict) and c["present_when"]):
+            out.append(f"{where}: `present_when:` names the entries that carry the field, as field: value")
+    return out
+
+
+def _formatted(v, fmt: str, path: str = ""):
+    """(path, object) for every object in `v` whose `schema` is `fmt`, the root included."""
+    if isinstance(v, dict):
+        if v.get("schema") == fmt:
+            yield path, v
+        for key, val in v.items():
+            yield from _formatted(val, fmt, f"{path}.{key}" if path else key)
+    elif isinstance(v, list):
+        for i, val in enumerate(v):
+            yield from _formatted(val, fmt, f"{path}[{i}]")
+
+
+def _conditional(base, new, cond: list):
+    """Copies of both documents without each conditional field, and what the new one
+    breaks of the condition: an entry the condition names that lacks the field, or a
+    value whose type differs from the release's."""
+    base, new = copy.deepcopy(base), copy.deepcopy(new)
+    out = []
+    for c in cond:
+        arr, field, when = c["items"][:-2], c["field"], c["present_when"]
+        kinds = set()
+        for _, obj in _formatted(base, c["format"]):
+            for item in obj.get(arr) or []:
+                if isinstance(item, dict) and field in item:
+                    kinds.add(_kind(item.pop(field)))
+        for path, obj in _formatted(new, c["format"]):
+            for i, item in enumerate(obj.get(arr) or []):
+                if not isinstance(item, dict):
+                    continue
+                at = f"{path + '.' if path else ''}{arr}[{i}].{field}"
+                named = all(item.get(k) == v for k, v in when.items())
+                if field in item:
+                    k = _kind(item.pop(field))
+                    if kinds and k not in kinds and k != "null":
+                        out.append(f"{at}: was {'/'.join(sorted(kinds))}, is now {k} (retyped)")
+                elif named:
+                    cond_text = ", ".join(f"{k} is {v}" for k, v in when.items())
+                    out.append(f"{at}: the field is gone from an entry where {cond_text} (conditional.yaml: {c['format']} carries it there)")
+    return base, new, out
+
+
+def document_problems(base, new, conditional=()) -> list:
+    """What the last release's document carries that this build's does not.
+
+    A field `conditional` names (conditional.yaml) is held per entry instead of by
+    the merged shape: it may be absent from an entry its condition does not name."""
     out = []
     # A document that carried no version may gain one (an added field); one that
     # carried a version keeps exactly that version.
     if isinstance(base, dict) and isinstance(new, dict) and "schema" in base and base.get("schema") != new.get("schema"):
         out.append(f"schema: the document's version was {base.get('schema')!r}, is now {new.get('schema')!r}")
-    return out + _shape_problems(shape(base), shape(new), "")
+    base, new, held = _conditional(base, new, list(conditional))
+    return out + held + _shape_problems(shape(base), shape(new), "")
 
 
-# ---------------------------------------------------------------- A5: the error codes
+def exit_problems(d: dict) -> list:
+    """A kept invocation's `exit` is its release's (`release_exit`), or moved with a reason.
+
+    Exit codes are a promised surface: a pull request that changes one edits
+    `exit` and says why in `exit_changed`, so the change is reviewed.
+    """
+    name = d.get("name", "?")
+    if "release_exit" not in d:
+        return [f"{name}: no `release_exit`; rerun compat.py refresh to record the release's exit code"]
+    reason = d.get("exit_changed")
+    if d.get("exit") != d["release_exit"] and not (isinstance(reason, str) and reason.strip()):
+        return [f"{name}: `exit` is {d.get('exit')} but the release exited {d['release_exit']}; "
+                f"give the reason in `exit_changed:`, or restore {d['release_exit']}"]
+    return []
 
 
-def load_catalog(repo: str) -> list:
-    with open(os.path.join(repo, CATALOG)) as f:
-        return yaml.safe_load(f).get("entries") or []
+def release_values_digest(tag: str, docs: list) -> str:
+    """The SHA-256 over what the release did for each kept invocation: its tag,
+    and every (name, format, args, release_exit). refresh records it in
+    baseline.yaml; an `exit` edit with its reason leaves it unchanged."""
+    rows = sorted(
+        [d["name"], d["format"], list(d.get("args") or []), d.get("release_exit")]
+        for d in docs
+    )
+    text = json.dumps({"release": tag, "documents": rows}, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
-def release_codes(entries: list) -> list:
-    """The codes the promise covers: goatbuilder's own, GB-nnn."""
-    return [{"code": e["code"], "title": e["title"]} for e in entries if str(e.get("code", "")).startswith("GB-")]
-
-
-def error_problems(base: list, catalog: list) -> list:
-    now = {e.get("code"): e for e in catalog}
-    out = []
-    for b in base:
-        e = now.get(b["code"])
-        if e is None:
-            out.append(f"{b['code']}: in the last release ({b['title']!r}) and gone from {CATALOG}; a code stays in the catalog, marked `retired:` when it is no longer printed")
-        elif e.get("title") != b["title"] and not e.get("retired"):
-            out.append(f"{b['code']}: the title was {b['title']!r} and is now {e.get('title')!r}; a code is never reused for a different fault: restore the title, or mark the entry `retired:` and give the new fault a new code")
-    return out
+def release_values_problems(tag: str, docs: list, meta: dict) -> list:
+    """The kept release values are the ones refresh recorded from the published binary."""
+    want = meta.get("documents_sha256")
+    if not want:
+        return ["baseline.yaml has no documents_sha256; rerun compat.py refresh with the published binary and SHA256SUMS"]
+    if release_values_digest(tag, docs) != want:
+        return [f"documents/manifest.yaml: a kept name, format, args or release_exit differs from what refresh recorded "
+                f"from {tag} (documents_sha256 in baseline.yaml); change `exit` with `exit_changed:` instead, "
+                f"or rerun compat.py refresh with the published binary"]
+    return []
 
 
 # ---------------------------------------------------------------- the baseline on disk
@@ -290,11 +429,12 @@ class Baseline:
         with open(os.path.join(self.root, "surface.json")) as f:
             return json.load(f)
 
-    def errors(self) -> list:
-        return _read_yaml(os.path.join(self.root, "errors.yaml"))["codes"]
-
     def documents(self) -> list:
         return _read_yaml(os.path.join(self.root, "documents", "manifest.yaml"))["documents"]
+
+    def not_kept(self) -> dict:
+        """The verbs with no kept document, each with the reason."""
+        return _read_yaml(os.path.join(self.root, "documents", "manifest.yaml")).get("not_kept") or {}
 
     def document(self, d: dict):
         with open(os.path.join(self.root, "documents", d["name"] + "." + d["format"])) as f:
@@ -303,19 +443,75 @@ class Baseline:
     def deprecations(self) -> list:
         return _read_yaml(os.path.join(self.root, "deprecations.yaml")).get("deprecations") or []
 
+    def conditional(self) -> list:
+        """The fields a document format carries only on some entries, each with its reason."""
+        path = os.path.join(self.root, "conditional.yaml")
+        return (_read_yaml(path).get("conditional") or []) if os.path.isfile(path) else []
 
-def _env() -> dict:
+
+SCRATCH = "{scratch}"
+
+
+def _env(home: str) -> dict:
+    """The environment of one run: this process's, without the switches that
+    change what a run prints, and with its own HOME and XDG directories, so a
+    verb that keeps state there (`tutor`) neither edits the caller's nor
+    depends on it."""
     env = dict(os.environ)
     for k in ("GOAT_EXPLAIN", "GOATBUILDER_UPDATE_URL", "GOATBUILDER_TIMEOUT", "CLICOLOR_FORCE", "RUST_LOG"):
         env.pop(k, None)
-    env.update({"GOAT_LANG": "en", "NO_COLOR": "1", "LC_ALL": "C.UTF-8"})
+    env.update({"GOAT_LANG": "en", "NO_COLOR": "1", "LC_ALL": "C.UTF-8", "HOME": home})
+    for k, sub in (("XDG_CONFIG_HOME", ".config"), ("XDG_CACHE_HOME", ".cache"), ("XDG_DATA_HOME", ".local/share"), ("XDG_STATE_HOME", ".local/state")):
+        env[k] = os.path.join(home, sub)
     return env
 
 
-def run_document(binary: str, repo: str, d: dict):
-    r = subprocess.run([binary, "-o", d["format"], *d["args"]], capture_output=True, text=True, env=_env(), cwd=repo)
+def _run(cmd: list, cwd=None) -> subprocess.CompletedProcess:
+    """Run a goatbuilder with a fresh HOME, removed afterwards."""
+    home = tempfile.mkdtemp(prefix="compat-home-")
     try:
-        doc = json.loads(r.stdout) if d["format"] == "json" else yaml.safe_load(r.stdout)
+        return subprocess.run(cmd, capture_output=True, text=True, env=_env(home), cwd=cwd)
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def unscratch(text: str, tmp: str) -> str:
+    """`text` with the scratch directory written back as {scratch}, in every
+    form a run can print it: as given, resolved (macOS's /private/var/...),
+    and JSON-escaped."""
+    forms = {tmp, os.path.realpath(tmp)}
+    forms |= {json.dumps(f)[1:-1] for f in list(forms)}
+    for f in sorted(forms, key=len, reverse=True):
+        text = text.replace(f, SCRATCH)
+    return text
+
+
+def invocation_verb(args: list, verbs: list):
+    """The top-level verb an invocation runs: its first argument that names one."""
+    return next((a for a in args if a in verbs), None)
+
+
+def run_document(binary: str, repo: str, d: dict):
+    """Run one kept invocation. A verb that changes state runs on a scratch copy:
+    each fixture named in `scratch:` is copied from documents/fixtures/ into a
+    fresh directory, `{scratch}` in the arguments names it, and its path is
+    written back as `{scratch}` in the output, so the kept document names no
+    machine's directory."""
+    args = list(d["args"])
+    tmp = None
+    if d.get("scratch"):
+        tmp = tempfile.mkdtemp(prefix="compat-scratch-")
+        for f in d["scratch"]:
+            shutil.copytree(os.path.join(HERE, "documents", "fixtures", f), os.path.join(tmp, f))
+        args = [a.replace(SCRATCH, tmp) for a in args]
+    try:
+        r = _run([binary, "-o", d["format"], *args], cwd=repo)
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+    out = unscratch(r.stdout, tmp) if tmp else r.stdout
+    try:
+        doc = json.loads(out) if d["format"] == "json" else yaml.safe_load(out)
     except (ValueError, yaml.YAMLError) as e:
         return r.returncode, None, f"not a {d['format']} document ({e}); stderr: {r.stderr.strip()[:300]}"
     return r.returncode, doc, None
@@ -324,25 +520,32 @@ def run_document(binary: str, repo: str, d: dict):
 # ---------------------------------------------------------------- check
 
 
-def check_all(repo: str, root: str, binary: str, only=("surface", "documents", "errors")) -> list:
+def check_all(repo: str, root: str, binary: str, only=("surface", "documents")) -> list:
     """Rows of (ok, surface, item, detail)."""
     b = Baseline(root)
     rows = []
-    pinned = load_pins(root).get((b.release, b.meta.get("binary")))
+    pinned = load_pins(repo).get((b.release, b.meta.get("binary")))
     if pinned and pinned == b.meta.get("binary_sha256"):
-        rows.append((True, "baseline", b.release, f"recorded from the published {b.meta['binary']} ({pinned[:16]}…)"))
+        rows.append((True, "baseline", b.release, f"recorded from the published {b.meta['binary']} ({pinned[:16]}…), pinned in {PINS}"))
+    elif not pinned:
+        rows.append((False, "baseline", b.release, f"{PINS} pins no {b.meta.get('binary')} of {b.release}; the upgrade tests own that file: add the release's lines there from its SHA256SUMS"))
     else:
-        rows.append((False, "baseline", b.release, f"baseline.yaml names a binary that {PINS} does not pin; rerun compat.py refresh with the release's binary and SHA256SUMS"))
+        rows.append((False, "baseline", b.release, f"baseline.yaml's binary_sha256 is not the {PINS} pin for {b.meta.get('binary')} of {b.release}; rerun compat.py refresh with the published binary and SHA256SUMS"))
+    for p in release_values_problems(b.release, b.documents(), b.meta):
+        rows.append((False, "baseline", "documents/manifest.yaml", p))
     deps = b.deprecations()
     for p in deprecation_problems(deps):
         rows.append((False, "surface", "deprecations.yaml", p))
+    cond = b.conditional()
+    for p in conditional_problems(cond):
+        rows.append((False, "documents", "conditional.yaml", p))
 
     if "surface" in only:
-        r = subprocess.run([binary, "docs", "--markdown"], capture_output=True, text=True, env=_env(), cwd=repo)
+        r = _run([binary, "docs", "--markdown"], cwd=repo)
         if r.returncode != 0:
             rows.append((False, "surface", "docs --markdown", f"exit {r.returncode}: {r.stderr.strip()[:300]}"))
         else:
-            new = parse_reference(r.stdout)
+            new = surface_values(binary, parse_reference(r.stdout))
             problems = surface_problems(b.surface(), new, deps)
             for p in problems:
                 rows.append((False, "surface", p.split(":", 1)[0], p.split(":", 1)[1].strip()))
@@ -356,17 +559,11 @@ def check_all(repo: str, root: str, binary: str, only=("surface", "documents", "
             if err:
                 rows.append((False, "documents", item, err))
                 continue
-            p = document_problems(b.document(d), doc)
+            p = exit_problems(d) + document_problems(b.document(d), doc, cond)
             if rc != d["exit"]:
                 p.append(f"exit {d['exit']} in {b.release}, {rc} now")
             rows.append((not p, "documents", item, "; ".join(p) if p else "a superset of the release's document"))
 
-    if "errors" in only:
-        problems = error_problems(b.errors(), load_catalog(repo))
-        for p in problems:
-            rows.append((False, "errors", p.split(":", 1)[0], p.split(":", 1)[1].strip()))
-        if not problems:
-            rows.append((True, "errors", f"{len(b.errors())} codes", f"every GB code of {b.release} keeps its title"))
     return rows
 
 
@@ -377,7 +574,12 @@ def _git(repo: str, *args: str) -> str:
     return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, check=True).stdout
 
 
-PINS = "releases.sha256"
+# The one list of published release checksums, shared with the upgrade tests
+# (gate E1 to E3), which own it: `<sha256>  vX.Y.Z/goatbuilder-<os>-<arch>`, as
+# SHA256SUMS writes a line. compat reads it and never writes it; adding a
+# release to it is a deliberate step in the pull request that names the release
+# in the upgrade tests.
+PINS = "crates/goatbuilder/tests/upgrade/releases.sha256"
 RELEASE_BINARY = re.compile(r"^goatbuilder-(linux|darwin)-(amd64|arm64)$")
 
 
@@ -386,16 +588,19 @@ def _sha256(path: str) -> str:
         return hashlib.sha256(f.read()).hexdigest()
 
 
-def load_pins(root: str) -> dict:
-    """{(tag, file): sha256} from releases.sha256: one `<sha256>  <tag> <file>` per line."""
+def load_pins(repo: str) -> dict:
+    """{(tag, file): sha256} from the shared pin list, e.g. ("goatbuilder/v0.5.1", "goatbuilder-linux-amd64")."""
     pins = {}
-    path = os.path.join(root, PINS)
+    path = os.path.join(repo, PINS)
     if os.path.exists(path):
         with open(path) as f:
             for line in f:
-                parts = line.split()
-                if len(parts) == 3 and not line.startswith("#"):
-                    pins[(parts[1], parts[2])] = parts[0]
+                if line.startswith("#") or "  " not in line:
+                    continue
+                sha, rel = line.rstrip("\n").split("  ", 1)
+                version, _, asset = rel.partition("/")
+                if version and asset:
+                    pins[(f"goatbuilder/{version}", asset)] = sha
     return pins
 
 
@@ -428,7 +633,7 @@ def release_binary_problem(binary: str, sums: str, tag: str, pins=None):
     pinned = (pins or {}).get((tag, name))
     if pinned and pinned != digest:
         return f"{sums} gives {name} of {tag} the sha256 {digest[:16]}…, but {PINS} pins {pinned[:16]}…"
-    r = subprocess.run([binary, "--version"], capture_output=True, text=True)
+    r = _run([binary, "--version"])
     if r.stdout.split()[-1:] != [tag.split("/", 1)[1].lstrip("v")]:
         return f"{binary} reports {r.stdout.strip()!r}, not {tag}"
     return None
@@ -438,13 +643,14 @@ def refresh(repo: str, root: str, tag: str, binary: str, sums=None) -> int:
     if not sums:
         print(f"compat: refresh needs --sums, the SHA256SUMS published with {tag}", file=sys.stderr)
         return 2
-    problem = release_binary_problem(binary, sums, tag, load_pins(root))
+    problem = release_binary_problem(binary, sums, tag, load_pins(repo))
     if problem:
         print(f"compat: {problem}", file=sys.stderr)
         return 2
     name = [n for n, h in _sums_entries(sums).items() if h == _sha256(binary) and RELEASE_BINARY.match(n)][0]
     commit = _git(repo, "rev-parse", f"{tag}^{{commit}}").strip()
-    _pin(root, tag, name, _sha256(binary))
+    if (tag, name) not in load_pins(repo):
+        print(f"compat: {PINS} pins no {name} of {tag} yet; `check` refuses the baseline until the upgrade tests' owners add the release's lines from its SHA256SUMS", file=sys.stderr)
 
     b = Baseline(root)
     _refresh_last_release(repo, root, tag, binary, b)
@@ -456,6 +662,7 @@ def refresh(repo: str, root: str, tag: str, binary: str, sums=None) -> int:
         "binary": name,
         "binary_sha256": _sha256(binary),
         "sums_sha256": _sha256(sums),
+        "documents_sha256": release_values_digest(tag, Baseline(root).documents()),
         "recorded": datetime.date.today().isoformat(),
     })
     _write_manifest(os.path.join(root, "baseline.yaml"), None, meta)
@@ -464,18 +671,15 @@ def refresh(repo: str, root: str, tag: str, binary: str, sums=None) -> int:
 
 
 def _refresh_last_release(repo: str, root: str, tag: str, binary: str, b: "Baseline") -> None:
-    """Record the surface, the error codes and the documents of the release as the new baseline."""
+    """Record the surface and the documents of the release as the new baseline."""
     # A3: the released binary's command tree.
-    md = subprocess.run([binary, "docs", "--markdown"], capture_output=True, text=True, check=True, env=_env()).stdout
+    r = _run([binary, "docs", "--markdown"])
+    if r.returncode != 0:
+        raise SystemExit(f"compat: {binary} docs --markdown: exit {r.returncode}")
+    md = r.stdout
     with open(os.path.join(root, "surface.json"), "w") as f:
-        json.dump(parse_reference(md), f, indent=1, sort_keys=True)
+        json.dump(surface_values(binary, parse_reference(md)), f, indent=1, sort_keys=True)
         f.write("\n")
-
-    # A5: the catalog the tag carried.
-    entries = yaml.safe_load(_git(repo, "show", f"{tag}:{CATALOG}"))["entries"]
-    with open(os.path.join(root, "errors.yaml"), "w") as f:
-        f.write(f"# The GB codes of {tag} and their titles, read from {CATALOG} at the tag by compat.py refresh.\n")
-        yaml.safe_dump({"codes": release_codes(entries)}, f, sort_keys=False, allow_unicode=True, width=1000)
 
     # A4: the released binary's documents for the kept invocations.
     docs = b.documents()
@@ -484,6 +688,7 @@ def _refresh_last_release(repo: str, root: str, tag: str, binary: str, b: "Basel
         if err:
             raise SystemExit(f"compat: {d['name']}: {err}")
         d["exit"] = rc
+        d["release_exit"] = rc
         d.pop("exit_changed", None)  # the release's own exit now; the reason was for the change before it
         with open(os.path.join(root, "documents", d["name"] + "." + d["format"]), "w") as f:
             if d["format"] == "json":
@@ -491,20 +696,7 @@ def _refresh_last_release(repo: str, root: str, tag: str, binary: str, b: "Basel
                 f.write("\n")
             else:
                 yaml.safe_dump(doc, f, sort_keys=False, allow_unicode=True)
-    _write_manifest(os.path.join(root, "documents", "manifest.yaml"), "documents", docs)
-
-
-def _pin(root: str, tag: str, name: str, digest: str) -> None:
-    """Record a published binary's sha256 in releases.sha256 (once)."""
-    if (tag, name) in load_pins(root):
-        return
-    path = os.path.join(root, PINS)
-    new = not os.path.exists(path)
-    with open(path, "a") as f:
-        if new:
-            f.write("# The published binaries the baseline was recorded from: <sha256>  <tag> <file>,\n"
-                    "# as each release's SHA256SUMS lists them. Written by compat.py refresh.\n")
-        f.write(f"{digest}  {tag} {name}\n")
+    _write_manifest(os.path.join(root, "documents", "manifest.yaml"), None, {"documents": docs, "not_kept": b.not_kept()})
 
 
 def _write_manifest(path: str, key, value) -> None:
@@ -529,7 +721,7 @@ def main(argv=None) -> int:
     c = sub.add_parser("check")
     c.add_argument("--bin", required=True)
     c.add_argument("--repo", default=os.path.abspath(os.path.join(HERE, "..", "..", "..")))
-    c.add_argument("--only", default="surface,documents,errors")
+    c.add_argument("--only", default="surface,documents")
     r = sub.add_parser("refresh")
     r.add_argument("--tag", required=True)
     r.add_argument("--bin", required=True)

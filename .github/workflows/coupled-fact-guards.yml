@@ -98,7 +98,7 @@ on:
       - 'crates/goatbuilder/src/release.rs'
       - 'crates/goatbuilder/src/doctor.rs'
       - 'ops/ansible/filter_plugins/goat_leaf.py'
-      - 'ops/ansible/filter_plugins/test_goat_leaf.py'
+      - 'tests/ansible_filter_plugins/test_goat_leaf.py'
       - 'ops/scripts/mint-site-certs.sh'
       - 'ops/enrollment/manifests/**'
       - 'ops/scripts/create-assay-probe-identity.sh'
@@ -233,7 +233,7 @@ jobs:
       - name: no acceptance row needs an operator context on a host (ADR 1207)
         run: python3 ops/ci/check-no-operator-context-on-hosts.py
       - name: goat_leaf finds a leaf from a brand-new worktree (#2165)
-        run: python3 ops/ansible/filter_plugins/test_goat_leaf.py
+        run: python3 tests/ansible_filter_plugins/test_goat_leaf.py
       - name: the dead-man watcher judges each sender separately
         run: bash ops/deadman-watch/test-deadman.sh
       # The universal-read coverage assert itself can only run on a target host

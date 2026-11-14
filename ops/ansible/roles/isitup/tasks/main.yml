@@ -213,6 +213,12 @@
     or 'Created' in (isitup_compose_up.stderr | default(''))
     or 'Recreated' in (isitup_compose_up.stderr | default(''))
 
+- name: cron is installed (the entry below is a crontab entry; a minimal image has no cron)
+  ansible.builtin.apt:
+    name: cron
+    state: present
+    cache_valid_time: 3600
+
 - name: Install 5-minute cron job (runs check.sh inside the isitup container)
   ansible.builtin.cron:
     name: "isitup-check ({{ site_id }})"

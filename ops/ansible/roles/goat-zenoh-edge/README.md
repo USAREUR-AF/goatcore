@@ -20,7 +20,11 @@ and the partner's CA, which phase 5 places at `<fed_work>/theirs-ca.pem`.
 
 With `goat_zenoh_edge_install_certs: true` the role installs them itself, from
 the run's working directory on the controller, into the per-peering directory
-`goat_zenoh_edge_cert_dir`. With it false (the default for now), a person places
+`goat_zenoh_edge_cert_dir`, and our CA's certificate too, as `<cert_dir>/our-ca.pem`
+from `<fed_work>/pki/our-ca.pem` (never the CA's key: a source holding a private key
+is refused). A driver that is not the edge host needs this: `goatbuilder federate`
+refuses phase 12 (GB-275) when the edge mounts files from the driver's `<work>/pki`
+and nothing installs them. With it false (the default for now), a person places
 the files on the edge and sets the five path variables to them.
 
 | Variable | Default | What |
@@ -54,7 +58,8 @@ private temporary directory and checks those copies:
   outward subject `CN=fed.<us>.<them>.01`, inward `CN=fed.<them>.<us>.01`, the
   same DNS SAN, `CA:FALSE`, and is neither CA certificate itself;
 - each leaf chains to our CA, meaning the certificate in
-  `goat_zenoh_edge_our_ca_path` (read from the edge) whose SHA-256 the agreement
+  `goat_zenoh_edge_our_ca_path` (read from `goat_zenoh_edge_our_ca_src` on the
+  controller when the role installs it, else from the edge) whose SHA-256 the agreement
   names for us, for TLS client and server use, and is valid for at least
   `goat_zenoh_edge_cert_min_valid_seconds`;
 - the partner CA file holds exactly one certificate, a CA (`CA:TRUE`) valid as

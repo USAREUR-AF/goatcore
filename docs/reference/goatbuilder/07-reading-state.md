@@ -203,8 +203,10 @@ With no host reachable it prints the in-repo history, exactly as
 **Purpose.** Grade every machine of an environment as converged, pending or
 unknown, for every component.
 
-**Status:** built on fixtures. On real hosts `status` refuses with GB-026 and
-names `verify` and `diff`, which read real hosts today.
+**Status:** built, on fixtures and on real hosts. Without `--mock` it reads each
+machine's ledger as `diff` does and grades it as `verify` does, so the three agree
+about every machine. It reads only: no play runs. Exit 3 while any machine is
+pending or unknown.
 
 ```bash
 goatbuilder status --mock ops/goatbuilder/fixtures/basic --env dev

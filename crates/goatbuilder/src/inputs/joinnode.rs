@@ -228,6 +228,18 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
         )),
     }
     v.push(Input::new(
+        "mesh_ips_out",
+        format!(
+            "{}/join-node-{site}-{}-mesh-ips.json",
+            crate::settings::state_dir_abs(repo),
+            o.node
+        ),
+        Source::derived(
+            "the project's state directory (deploy.state_dir, else ~/.goat/state)",
+            "join-node-<site>-<node>-mesh-ips.json: phase 10 writes the node's mesh address there, and standup-mesh-record.py reads it",
+        ),
+    ));
+    v.push(Input::new(
         "seed_play",
         crate::standup::site_play(repo, site, "seed-from-peer.yml"),
         site_rule("<site>-seed-from-peer.yml when it keeps one, else site-seed-from-peer.yml"),
@@ -254,11 +266,6 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             true,
             "phase 2 (seed-ssh-key.sh), unless key auth already works",
         ),
-        (
-            format!("{upper}_NB_SETUP_KEY"),
-            true,
-            "phase 9; phase 8 mints it",
-        ),
         (format!("{upper}_PG_PASS"), true, "phase 13 (core)"),
         (format!("{upper}_NB_ENCKEY"), true, "phase 13 (core)"),
         (format!("{upper}_BKP_KEY"), true, "phase 13 (core)"),
@@ -274,7 +281,12 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
                 "read into the phase's environment",
             )
         });
-        let hint = if secret {
+        // The hint is read only for a value nothing supplies: it is shown
+        // only then, and asking the posture for it starts a process.
+        let now = set(env, &name);
+        let hint = if now.is_some() || from_store.is_some() {
+            String::new()
+        } else if secret {
             crate::secrets::hint(repo, std::slice::from_ref(&name))
         } else {
             format!("export {name}")
@@ -282,7 +294,7 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
         v.push(Input::reads_env(
             name.clone(),
             secret,
-            set(env, &name),
+            now,
             from_store,
             format!("read by {when}; {hint}"),
         ));

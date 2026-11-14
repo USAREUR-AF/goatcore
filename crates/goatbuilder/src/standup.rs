@@ -25,7 +25,7 @@ use std::process::Stdio;
 
 use crate::runner::Cmd;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::config;
@@ -129,12 +129,16 @@ pub fn site_for(repo: &Path, fixture: Option<&config::Config>, env: &str, site: 
     let root = repo.join("goatlite.yaml");
     if fixture.is_none() && root.is_file() {
         // A file that does not load is the cause; a missing --site would be a wrong answer.
-        let c = config::load(&root).map_err(|e| anyhow!("{e:#}\n\n(the site is derived from goatlite.yaml when --site is left out, so fix that file or pass --site)"))?;
+        // The config's own code when it carries one, else GB-025 (it does not validate).
+        let c = config::load(&root).map_err(|e| {
+            let code = e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone()).unwrap_or_else(|| "GB-025".into());
+            goat_errors::coded(&code, format!("{e:#}\n\n(the site is derived from goatlite.yaml when --site is left out, so fix that file or pass --site)"))
+        })?;
         if lite_name(&c) {
             return Ok(c.lite.expect("checked").name);
         }
     }
-    Err(anyhow!("the following required arguments were not provided:\n  --site <SITE>\n\n(--site may be omitted only on a goatlite run: {} with preset lite and lite.name {env})", if fixture.is_some() { "the fixture's goatbuilder.yaml" } else { "goatlite.yaml at the checkout root" }))
+    Err(goat_errors::coded("GB-243", format!("the following required arguments were not provided:\n  --site <SITE>\n\n(--site may be omitted only on a goatlite run: {} with preset lite and lite.name {env})", if fixture.is_some() { "the fixture's goatbuilder.yaml" } else { "goatlite.yaml at the checkout root" })).into())
 }
 
 /// The goatlite config for a run (ADR 1213): `<repo>/goatlite.yaml`, when it
@@ -300,12 +304,12 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
         (true, String::new())
     };
     if o.obs_only && !obs {
-        return Err(anyhow!("--obs-only: no obs leg to run — {obs_why}"));
+        return Err(goat_errors::coded("GB-248", format!("--obs-only: no obs leg to run — {obs_why}")).into());
     }
     // Refuse here rather than at phase 2, after the core leg has started beside it.
     if obs {
         if let Some(missing) = obs_play_missing(repo) {
-            return Err(anyhow!("{missing} Re-run with --skip-obs to stand up the site without its obs host."));
+            return Err(goat_errors::coded("GB-248", format!("{missing} Re-run with --skip-obs to stand up the site without its obs host.")).into());
         }
     }
 
@@ -315,7 +319,7 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
         None => if gv_matches(&gv, "dashboard_cert_delivery_mode", "acme") { "internet".to_string() } else { "lan".to_string() },
     };
     if profile != "lan" && profile != "internet" {
-        return Err(anyhow!("bad --profile '{profile}' (want lan|internet)"));
+        return Err(goat_errors::coded("GB-242", format!("bad --profile '{profile}' (want lan|internet)")).into());
     }
     // A LAN site pauses for the first login (phase 11) only while the bootstrap
     // NetBird token is not available under the declared posture (ADR 1204).
@@ -330,7 +334,7 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
     if !acl_site.is_empty() && !upper_acl.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
         // A joiner's ACL site is its founder's (join_founder_site); a founder's is itself.
         let source = if joiner { format!("join_founder_site {acl_site:?} in group_vars/{group}/vars.yml") } else { format!("the site {acl_site:?}") };
-        return Err(anyhow!("{source} is not a site id: phase 12 reads the token variable {upper_acl}_NB_API_TOKEN named after it, so it may hold only letters, digits, - and _"));
+        return Err(goat_errors::coded("GB-263", format!("{source} is not a site id: phase 12 reads the token variable {upper_acl}_NB_API_TOKEN named after it, so it may hold only letters, digits, - and _")).into());
     }
     Ok(Site {
         repo: repo.display().to_string(),
@@ -766,7 +770,7 @@ struct Queued {
 
 /// Run the queued phase-12 steps wave by wave. Returns the ids that failed in the
 /// first failing wave (empty when every wave passed).
-fn flush_waves(repo: &Path, s: &Site, q: &mut Vec<Queued>, checks: &mut Vec<Check>, timings: &mut Vec<(u32, String, u64)>) -> Result<Vec<String>> {
+fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks: &mut Vec<Check>, timings: &mut Vec<(u32, String, u64)>) -> Result<Vec<String>> {
     if q.is_empty() {
         return Ok(Vec::new());
     }
@@ -783,7 +787,7 @@ fn flush_waves(repo: &Path, s: &Site, q: &mut Vec<Queued>, checks: &mut Vec<Chec
             let log = format!("{}/standup-{}-12-{}.log", s.state_dir, s.site, q[*i].id);
             let f = std::fs::File::create(&log)?;
             crate::runner::phase("12", &q[*i].label, "");
-            let child = site_phase_command(repo, s, &q[*i].cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().context("bash")?;
+            let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().context("bash")?;
             kids.push((*i, child, std::time::Instant::now(), log));
         }
         let mut failed = Vec::new();
@@ -867,10 +871,58 @@ fn phase_command(repo: &Path, cmd: &str) -> Cmd {
     c
 }
 
-/// `phase_command` with the site's phase environment (`phase_env`).
-fn site_phase_command(repo: &Path, s: &Site, cmd: &str) -> Cmd {
+/// The mirror bot's Forgejo token, and the phases that read it: the step that
+/// mints it (and skips when it is set), and the mirror play, which can run the
+/// checkout play. No other phase child is given it: least privilege for child
+/// processes.
+const PUBSUB_TOKEN: &str = "FORGEJO_PUBSUB_TOKEN";
+const PUBSUB_TOKEN_READERS: &[&str] = &[
+    "forgejo-mint-pubsub-bot.sh",
+    "pubsub-state-mirror-deploy.yml",
+    "pubsub-state-checkout-deploy.yml",
+];
+
+/// Whether a phase's command runs one of [`PUBSUB_TOKEN_READERS`].
+fn reads_pubsub_token(cmd: &str) -> bool {
+    PUBSUB_TOKEN_READERS.iter().any(|r| cmd.contains(r))
+}
+
+/// What a real run learns as it goes and hands its phase children: the trunk
+/// commit the fresh-source check pinned (every play is judged against it), and
+/// the mirror bot's token once it is known. Kept here and passed to each child
+/// with `Cmd::env`; the process environment, which every thread shares, is never
+/// written.
+#[derive(Debug, Default, Clone, PartialEq)]
+struct RunState {
+    trunk: Option<String>,
+    pubsub_token: Option<String>,
+}
+
+impl RunState {
+    /// A run's state before its first phase: the token, when the operator's
+    /// environment already holds it.
+    fn from_operator() -> Self {
+        RunState {
+            trunk: None,
+            pubsub_token: std::env::var(PUBSUB_TOKEN).ok().filter(|v| !v.is_empty()),
+        }
+    }
+}
+
+/// `phase_command` with the site's phase environment (`phase_env`) and the run's
+/// state: the pinned trunk for every phase, and the mirror bot's token for a
+/// phase that reads it, removed from every other phase's environment.
+fn site_phase_command(repo: &Path, s: &Site, cmd: &str, rs: &RunState) -> Cmd {
     let mut c = phase_command(repo, cmd);
     c.envs(phase_env(s));
+    if let Some(t) = &rs.trunk {
+        c.envs([(crate::fresh::TRUNK_ENV, t.as_str())]);
+    }
+    if !reads_pubsub_token(cmd) {
+        c.env_remove(PUBSUB_TOKEN);
+    } else if let Some(t) = &rs.pubsub_token {
+        c.envs([(PUBSUB_TOKEN, t.as_str())]);
+    }
     c
 }
 
@@ -914,16 +966,21 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     let Some(env) = env else {
         let mut declared: Vec<&str> = cfg.iter().flat_map(|c| c.environments.iter()).map(|e| e.name.as_str()).collect();
         declared.extend(lite_cfg.iter().flat_map(|c| c.environments.iter().map(|e| e.name.as_str())));
-        return Err(anyhow!("unknown environment \"{}\"; declared: {declared:?}", o.env));
+        return Err(goat_errors::coded("GB-241", format!("unknown environment \"{}\"; declared: {declared:?}", o.env)).into());
     };
     if !env.sites.is_empty() && !env.sites.iter().any(|s| s.name == o.site) {
-        return Err(anyhow!("site '{}' is not declared for environment '{}' (declared: {})", o.site, o.env, env.sites.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")));
+        return Err(goat_errors::coded("GB-247", format!("site '{}' is not declared for environment '{}' (declared: {})", o.site, o.env, env.sites.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "))).into());
     }
     let s = read_site(repo, o)?;
     let resume = format!("goatbuilder standup {} --site {}", o.env, s.site);
     let (from, to) = if o.obs_only { (1, 14) } else { (o.from, o.to) };
     let o = &Options { from, to, ..*o };
     let events = plan(repo, &s, o, &resume);
+    // Every value the run uses, with its source (gate row F2): the run record
+    // carries it, and a dry run prints it. A secret by its source only.
+    // Listing reads the secrets posture; a dry run prints those probes too.
+    let (listed, listing_probes) = crate::secrets::probes_of(|| crate::inputs::standup::site_inputs(repo, &s, o, &|k: &str| std::env::var(k).ok()));
+    crate::inputs::record(&listed);
     let mut checks = vec![row("banner", format!(
         "standup: site={}  group={}  profile={}  obs={}  {}",
         s.site, s.group, s.profile,
@@ -943,13 +1000,15 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
         if s.profile == "lan" {
             checks.push(row("probe-ran", crate::secrets::posture_cmd(repo, &["available"]).line()));
         }
+        checks.extend(listing_probes.iter().map(|l| row("probe-ran", l.clone())));
         checks.push(row("probe", crate::fresh::command(repo).line()));
     }
+    let mut rs = RunState::from_operator();
     if !o.dry_run {
         let f = crate::fresh::check(repo)?;
         let refused = f.refused();
         if !f.trunk.is_empty() {
-            std::env::set_var(crate::fresh::TRUNK_ENV, &f.trunk);
+            rs.trunk = Some(f.trunk.clone());
         }
         checks.push(f.check);
         if refused {
@@ -967,7 +1026,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     'run: for ev in &events {
         let leaving_12 = !matches!(ev, Event::Phase(ph) if ph.n == 12);
         if leaving_12 && !queue.is_empty() {
-            let failed = flush_waves(repo, &s, &mut queue, &mut checks, &mut timings)?;
+            let failed = flush_waves(repo, &s, &rs, &mut queue, &mut checks, &mut timings)?;
             if !failed.is_empty() {
                 let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
                 checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase 12 FAILED: {}. Steps in that wave that passed stay done; no later wave has run.", failed.join(", ")), fix: Some(format!("every phase-12 step is idempotent: fix each failure named above, then resume: {resume} --from 12 --parallel{prof}")) });
@@ -994,7 +1053,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let f = std::fs::File::create(log)?;
                 crate::runner::phase(&format!("observability-leg-{leg}"), label, "");
-                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
                 legs.insert(leg, (child, log.clone()));
             }
             Event::PullStart { label, cmd, log } => {
@@ -1009,7 +1068,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let f = std::fs::File::create(log)?;
                 crate::runner::phase("image-pull", label, "");
-                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
                 pulling = Some((child, log.clone()));
             }
             Event::PullJoin { at } => {
@@ -1075,7 +1134,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let t0 = std::time::Instant::now();
                 crate::runner::phase(&ph.n.to_string(), &ph.label, "");
-                let status = site_phase_command(repo, &s, &ph.cmd).current_dir(repo).status().context("bash")?;
+                let status = site_phase_command(repo, &s, &ph.cmd, &rs).current_dir(repo).status().context("bash")?;
                 let secs = t0.elapsed().as_secs();
                 let rc_now = status.code().unwrap_or(1);
                 checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
@@ -1085,17 +1144,28 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
                     checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the site is left partway through phase {}. Read the error above; docs/operations/goatnet-standup.md \"The run\" table has this phase's \"Worked when\" and the Troubleshooting table lists the common failures by symptom + fix.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}{prof}", ph.n)) });
+                    // F5: the failed phase's output, matched against the error catalog
+                    // (explain_phase::failed_phase), as federate does; the runner kept it
+                    // in a log. No row when standup's phase catalog has no such phase.
+                    let phase_id = ph.n.to_string();
+                    let log = crate::runner::commands()
+                        .into_iter()
+                        .rev()
+                        .find(|c| c.phase.as_deref() == Some(phase_id.as_str()) && c.log.is_some())
+                        .and_then(|c| c.log);
+                    let output = log.as_deref().and_then(|l| std::fs::read_to_string(l).ok()).unwrap_or_default();
+                    if let Some(f) = crate::explain_phase::failed_phase("standup", ph.n, &output, log.as_deref()) {
+                        checks.push(Check { name: "interpreted".into(), ok: false, detail: f.detail(), fix: Some(f.fix.clone()) });
+                    }
                     exit = EXIT_REFUSED;
                     break 'run;
                 }
                 // The bot step loaded its token into its own shell; this process runs every
                 // later phase in a fresh one, so load the same one variable here and go on.
-                if ph.stop_after && std::env::var("FORGEJO_PUBSUB_TOKEN").map(|v| v.is_empty()).unwrap_or(true) {
-                    if let Some(v) = envrc_export(repo, "FORGEJO_PUBSUB_TOKEN") {
-                        std::env::set_var("FORGEJO_PUBSUB_TOKEN", v);
-                    }
+                if ph.stop_after && rs.pubsub_token.is_none() {
+                    rs.pubsub_token = envrc_export(repo, PUBSUB_TOKEN);
                 }
-                if ph.stop_after && std::env::var("FORGEJO_PUBSUB_TOKEN").map(|v| v.is_empty()).unwrap_or(true) {
+                if ph.stop_after && rs.pubsub_token.is_none() {
                     checks.push(row("note", format!("stopped after this phase on purpose: reload the environment it wrote, then resume: {resume} --from {}", ph.n)));
                     break 'run;
                 }
@@ -1103,13 +1173,14 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
         }
     }
     if exit == EXIT_OK && !queue.is_empty() {
-        let failed = flush_waves(repo, &s, &mut queue, &mut checks, &mut timings)?;
+        let failed = flush_waves(repo, &s, &rs, &mut queue, &mut checks, &mut timings)?;
         if !failed.is_empty() {
             checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase 12 FAILED: {}.", failed.join(", ")), fix: Some(format!("fix each failure named above, then resume: {resume} --from 12 --parallel")) });
             exit = EXIT_REFUSED;
         }
     }
     if o.dry_run {
+        checks.extend(crate::inputs::rows(&listed));
         checks.push(row("footer", format!("PLAN complete ({} profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first.", s.profile)));
     } else if o.obs_only && exit == EXIT_OK {
         checks.push(row("footer", format!("obs leg complete for {}.", s.site)));
@@ -1221,33 +1292,33 @@ pub fn mock(fixture: &mut Fixture, env: &str, site: &str, actor: &str, run: Mock
     let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section (goatbuilder-conformance.md §\"Rehearsing a standup on the fixture\")")?;
     let m = script.standup;
     if m.env != env {
-        return Err(anyhow!("the fixture rehearses environment '{}', not '{env}'", m.env));
+        return Err(goat_errors::coded("GB-249", format!("the fixture rehearses environment '{}', not '{env}'", m.env)).into());
     }
     if m.site != site {
-        return Err(anyhow!("the fixture rehearses site '{}', not '{site}'", m.site));
+        return Err(goat_errors::coded("GB-249", format!("the fixture rehearses site '{}', not '{site}'", m.site)).into());
     }
     let declared_site = fixture.config.environments.iter().find(|e| e.name == env).and_then(|e| e.sites.iter().find(|s| s.name == site));
     let Some(declared_site) = declared_site else {
-        return Err(anyhow!("site '{site}' is not declared for environment '{env}' in goatbuilder.yaml"));
+        return Err(goat_errors::coded("GB-247", format!("site '{site}' is not declared for environment '{env}' in goatbuilder.yaml")).into());
     };
     let env_sites = &fixture.config.environments.iter().find(|e| e.name == env).expect("found above").sites;
     for ph in &m.phases {
         if let Some((other, class)) = ph.class.split_once('/') {
             // Another site's class: only the founder this joiner attaches to.
             if declared_site.joins.as_deref() != Some(other) {
-                return Err(anyhow!("phase {}: class '{}' names site '{other}', but '{site}' joins {} — a standup may touch only the founder it attaches to", ph.phase, ph.class, declared_site.joins.as_deref().map(|j| format!("'{j}'")).unwrap_or_else(|| "no site".into())));
+                return Err(goat_errors::coded("GB-249", format!("phase {}: class '{}' names site '{other}', but '{site}' joins {} — a standup may touch only the founder it attaches to", ph.phase, ph.class, declared_site.joins.as_deref().map(|j| format!("'{j}'")).unwrap_or_else(|| "no site".into()))).into());
             }
             let Some(founder) = env_sites.iter().find(|s| s.name == other) else {
-                return Err(anyhow!("phase {}: site '{other}' is not declared for environment '{env}'", ph.phase));
+                return Err(goat_errors::coded("GB-247", format!("phase {}: site '{other}' is not declared for environment '{env}'", ph.phase)).into());
             };
             if !founder.classes.contains_key(class) {
-                return Err(anyhow!("phase {}: class '{class}' is not declared at site '{other}' in goatbuilder.yaml", ph.phase));
+                return Err(goat_errors::coded("GB-247", format!("phase {}: class '{class}' is not declared at site '{other}' in goatbuilder.yaml", ph.phase)).into());
             }
         } else if !declared_site.classes.contains_key(&ph.class) {
-            return Err(anyhow!("phase {}: class '{}' is not declared at site '{site}' in goatbuilder.yaml", ph.phase, ph.class));
+            return Err(goat_errors::coded("GB-247", format!("phase {}: class '{}' is not declared at site '{site}' in goatbuilder.yaml", ph.phase, ph.class)).into());
         }
         if !m.classes.contains_key(&ph.class) {
-            return Err(anyhow!("phase {}: class '{}' has no machines in converger.yaml standup.classes", ph.phase, ph.class));
+            return Err(goat_errors::coded("GB-249", format!("phase {}: class '{}' has no machines in converger.yaml standup.classes", ph.phase, ph.class)).into());
         }
     }
     // A dry run records nothing, so it needs no actor.
@@ -1329,7 +1400,7 @@ pub fn teardown_mock(fixture: &mut Fixture, env: &str, site: &str, run: MockRun)
     let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section")?;
     let m = script.standup;
     if m.env != env || m.site != site {
-        return Err(anyhow!("the fixture rehearses {}/{}, not {env}/{site}", m.env, m.site));
+        return Err(goat_errors::coded("GB-249", format!("the fixture rehearses {}/{}, not {env}/{site}", m.env, m.site)).into());
     }
     let started = std::time::Instant::now();
     let mut checks = Vec::new();
@@ -1668,13 +1739,13 @@ mod tests {
         let mut q = vec![mk("a", &[], "sleep 2"), mk("b", &[], "sleep 2"), mk("c", &["a", "b"], "true")];
         let (mut checks, mut timings) = (Vec::new(), Vec::new());
         let t0 = std::time::Instant::now();
-        let failed = flush_waves(&root, &site, &mut q, &mut checks, &mut timings).unwrap();
+        let failed = flush_waves(&root, &site, &RunState::default(), &mut q, &mut checks, &mut timings).unwrap();
         assert!(failed.is_empty(), "{failed:?}");
         // Serial would take 4 s; each step also starts the shared runner, a few hundred ms on a loaded machine.
         assert!(t0.elapsed().as_millis() < 3600, "a and b ran together: {:?}", t0.elapsed());
         assert_eq!(timings.len(), 3);
         let mut q = vec![mk("a", &[], "exit 3"), mk("b", &[], "true"), mk("c", &["a"], "true")];
-        let failed = flush_waves(&root, &site, &mut q, &mut checks, &mut Vec::new()).unwrap();
+        let failed = flush_waves(&root, &site, &RunState::default(), &mut q, &mut checks, &mut Vec::new()).unwrap();
         assert_eq!(failed, vec!["a (wave 1 of 2)".to_string()]);
         let _ = std::fs::remove_dir_all(&t);
     }
@@ -2035,6 +2106,172 @@ mod tests {
         }
     }
 
+    /// The site shapes the plan branches on: a LAN and an internet founder, each
+    /// with an obs host; a LAN and an internet joiner; a goatlite; and an
+    /// obs-only run.
+    fn catalog_shapes() -> Vec<(&'static str, Site, bool)> {
+        let obs = |mut s: Site| {
+            s.obs = true;
+            s.obs_group = "zagros_obs_hosts".into();
+            s
+        };
+        let internet = |mut s: Site| {
+            s.profile = "internet".into();
+            s
+        };
+        vec![
+            ("lan founder", obs(test_site(false)), false),
+            ("internet founder", obs(internet(test_site(false))), false),
+            ("lan joiner", test_site(true), false),
+            ("internet joiner", internet(test_site(true)), false),
+            ("goatlite", lan_site(true, false), false),
+            ("obs only", obs(test_site(false)), true),
+        ]
+    }
+
+    /// A planned step's catalog key, as its dry-run banner names it: a phase by
+    /// its number, every other step by the words of its banner
+    /// (tests/legibility.rs, `step_id`, reads the printed banners the same way).
+    fn catalog_key(e: &Event) -> Option<String> {
+        Some(match e {
+            Event::Phase(p) => p.n.to_string(),
+            Event::Skip { n, .. } => n.to_string(),
+            Event::LegStart { leg, .. } => format!("observability-leg-{leg}"),
+            Event::LegJoin { leg, at } => format!("join-observability-leg-{leg}-before-phase-{at}"),
+            Event::PullStart { .. } => "image-pull".to_string(),
+            Event::PullJoin { at } => format!("join-the-image-pull-before-phase-{at}"),
+        })
+    }
+
+    /// The scripts and plays an entry's `runs` names: each comma-separated part's
+    /// first word, by its file name.
+    fn runs_names(runs: &str) -> Vec<String> {
+        runs.split(", ")
+            .filter_map(|part| part.split_whitespace().next())
+            .filter(|w| {
+                w.contains('/') || w.ends_with(".yml") || w.ends_with(".py") || w.ends_with(".sh")
+            })
+            .map(|w| w.rsplit('/').next().unwrap_or(w).to_string())
+            .collect()
+    }
+
+    /// The scripts and plays a planned command runs: every `*.yml`, `*.py` and
+    /// `*.sh` word it names, by file name, except the group_vars files a step
+    /// only reads (`group_vars/<g>/pubsub-state.yml`).
+    fn command_runs(cmd: &str) -> std::collections::BTreeSet<String> {
+        let re = regex::Regex::new(r"[A-Za-z0-9_./-]+\.(?:yml|py|sh)\b").unwrap();
+        re.find_iter(cmd)
+            .map(|m| m.as_str())
+            .filter(|w| !w.contains("group_vars/"))
+            .map(|w| w.rsplit('/').next().unwrap_or(w).to_string())
+            .collect()
+    }
+
+    /// The phase catalog (ops/phases/catalog.yaml) describes standup as its plan
+    /// is: every step any site shape plans has an entry, and every entry is a step
+    /// some shape plans; a phase's `kind` is the kinds of its steps; and its
+    /// `runs` names exactly the scripts and plays its steps run (each one in a
+    /// planned command, or, for a step only a declared node plans, named by this
+    /// file).
+    #[test]
+    fn the_phase_catalog_describes_standups_plan() {
+        let cat = goat_errors::phases::phases();
+        let entries = cat.of("standup");
+        let mut planned: BTreeMap<String, (std::collections::BTreeSet<String>, Vec<String>)> =
+            BTreeMap::new();
+        for (_, s, obs_only) in catalog_shapes() {
+            let o = Options {
+                env: "dev",
+                site: "zagros",
+                profile: None,
+                from: 1,
+                to: 14,
+                skip_obs: false,
+                obs_only,
+                dry_run: true,
+                parallel: false,
+                check: false,
+            };
+            for e in plan(&repo_root(), &s, &o, "RESUME") {
+                let key = catalog_key(&e).unwrap();
+                let slot = planned.entry(key).or_default();
+                match &e {
+                    Event::Phase(p) => {
+                        slot.0.insert(p.kind.to_string());
+                        if p.kind != "MANUAL" {
+                            slot.1.push(p.cmd.clone());
+                        }
+                    }
+                    Event::Skip { kind, .. } => {
+                        slot.0.insert(kind.to_string());
+                    }
+                    Event::LegStart { cmd, .. } | Event::PullStart { cmd, .. } => {
+                        slot.1.push(cmd.clone())
+                    }
+                    Event::LegJoin { .. } | Event::PullJoin { .. } => {}
+                }
+            }
+        }
+        let keys: std::collections::BTreeSet<String> =
+            entries.iter().map(|e| e.phase.to_string()).collect();
+        let want: std::collections::BTreeSet<String> = planned.keys().cloned().collect();
+        assert_eq!(
+            keys, want,
+            "the catalog's standup entries are the steps the plan can hold"
+        );
+        let source = include_str!("standup.rs");
+        let mut wrong = Vec::new();
+        for e in &entries {
+            let key = e.phase.to_string();
+            let (kinds, cmds) = &planned[&key];
+            if e.phase.to_string().parse::<u32>().is_ok() {
+                let said: std::collections::BTreeSet<String> =
+                    e.kind.split(" + ").map(str::to_string).collect();
+                if &said != kinds {
+                    wrong.push(format!(
+                        "phase {key}: kind `{}`, the plan's steps are {kinds:?}",
+                        e.kind
+                    ));
+                }
+            }
+            let names = runs_names(&e.runs);
+            for c in cmds {
+                for n in command_runs(c) {
+                    if !names.contains(&n) {
+                        wrong.push(format!(
+                            "phase {key}: a planned step runs {n}, which its `runs` does not name"
+                        ));
+                    }
+                }
+            }
+            for n in &names {
+                if !cmds.iter().any(|c| c.contains(n.as_str())) && !source.contains(n.as_str()) {
+                    wrong.push(format!(
+                        "phase {key}: `runs` names {n}, which no planned step runs"
+                    ));
+                }
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "the catalog does not match standup's plan:\n  {}",
+            wrong.join("\n  ")
+        );
+    }
+
+    /// `explain standup <phase>` answers from the catalog, by number or id.
+    #[test]
+    fn explain_answers_for_a_standup_phase() {
+        let by_number =
+            goat_errors::phases::explain_phase("standup", "12").expect("standup phase 12");
+        let by_id = goat_errors::phases::explain_phase("standup", &by_number.id).unwrap();
+        assert_eq!(by_number, by_id);
+        assert!(goat_errors::phases::render_text(by_number)
+            .contains("goatbuilder standup <env> --site <site> --from 12 --to 12 --dry-run"));
+        assert!(goat_errors::phases::explain_phase("standup", "image-pull").is_some());
+        assert!(goat_errors::phases::explain_phase("standup", "15").is_none());
+    }
+
     fn phases_of(ev: &[Event]) -> Vec<&Phase> {
         ev.iter().filter_map(|e| if let Event::Phase(p) = e { Some(p) } else { None }).collect()
     }
@@ -2151,7 +2388,7 @@ mod tests {
             for c in &cmds {
                 let file = out.join("owner");
                 let probe = format!("printf '%s' {} > '{}'", owner_word(c), file.display());
-                let mut run = site_phase_command(&repo, &site, &probe);
+                let mut run = site_phase_command(&repo, &site, &probe, &RunState::default());
                 run.current_dir(&repo).env_remove("OWNER_EMAIL").env("GOAT_SECRET_STORE", "env");
                 let st = run.status().unwrap();
                 assert!(st.success(), "the runner ran the probe for {raw:?}");
@@ -2161,6 +2398,77 @@ mod tests {
         let cmds: Vec<String> = phases_of(&plan(Path::new("/r"), &lan_site(false, false), &o, "R")).iter().filter(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).collect();
         assert!(!cmds.is_empty() && cmds.iter().all(|c| owner_word(c) == "\"$OWNER_EMAIL\""), "an undeclared owner is unchanged");
         assert!(phase_env(&lan_site(false, false)).is_empty(), "and adds nothing to the environment");
+    }
+
+    /// The run's state reaches its phase children as their own environment: the
+    /// pinned trunk every phase, and the mirror bot's token only a phase that
+    /// reads it (the mint step and the mirror play). Every other phase child is
+    /// started without the token, even when the operator's environment holds it.
+    /// Least privilege for child processes; the process environment is not
+    /// written.
+    #[test]
+    fn the_pubsub_token_reaches_only_the_phases_that_read_it() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let site = lan_site(false, false);
+        let out = crate::testdir::path("gb-run-state-");
+        let rs = RunState {
+            trunk: Some("0123abcd".into()),
+            pubsub_token: Some("t0ken".into()),
+        };
+        let seen = |cmd_prefix: &str, rs: &RunState| {
+            let file = out.join("seen");
+            let probe = format!(
+                "{cmd_prefix}printf '%s|%s' \"${{{PUBSUB_TOKEN}:-}}\" \"${{{}:-}}\" > '{}'",
+                crate::fresh::TRUNK_ENV,
+                file.display()
+            );
+            let mut run = site_phase_command(&repo, &site, &probe, rs);
+            run.current_dir(&repo).env("GOAT_SECRET_STORE", "env");
+            assert!(run.status().unwrap().success(), "the runner ran the probe");
+            std::fs::read_to_string(&file).unwrap()
+        };
+        // A phase that is not a reader: the trunk, no token.
+        assert_eq!(seen("", &rs), "|0123abcd");
+        // The readers: the token and the trunk.
+        for reader in PUBSUB_TOKEN_READERS {
+            assert_eq!(
+                seen(&format!(": {reader}; "), &rs),
+                "t0ken|0123abcd",
+                "{reader}"
+            );
+        }
+        // Before the token is known, a reader gets none; nothing is written to the process.
+        assert_eq!(
+            seen(": pubsub-state-mirror-deploy.yml; ", &RunState::default()),
+            "|"
+        );
+        assert_ne!(std::env::var(PUBSUB_TOKEN).ok().as_deref(), Some("t0ken"));
+        assert_ne!(
+            std::env::var(crate::fresh::TRUNK_ENV).ok().as_deref(),
+            Some("0123abcd")
+        );
+    }
+
+    /// Of the planned phases, exactly the mint step and the mirror play read the
+    /// token: the plays that never use it are not on the list.
+    #[test]
+    fn only_the_mint_step_and_the_mirror_play_are_token_readers() {
+        assert!(reads_pubsub_token(
+            "'/r/ops/scripts/forgejo-mint-pubsub-bot.sh' obs-1"
+        ));
+        assert!(reads_pubsub_token(
+            "cd /r/ops/ansible && x pubsub-state-mirror-deploy.yml -e target=g"
+        ));
+        for other in [
+            "cd /r/ops/ansible && x onboard-intake-deploy.yml -e target=g",
+            "cd /r/ops/ansible && x grant-keyd-deploy.yml",
+            "python3 /r/ops/scripts/standup-required-inputs.py zagros",
+        ] {
+            assert!(!reads_pubsub_token(other), "{other}");
+        }
     }
 
     /// A bootstrap command run without the owner variable (copied by hand from a
@@ -2257,7 +2565,10 @@ mod tests {
             let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
             match (read_site(&repo, &o), ok) {
                 (Ok(s), true) => assert_eq!(s.acl_site, jfs),
-                (Err(e), false) => assert!(e.to_string().contains("join_founder_site") && e.to_string().contains(jfs), "{e}"),
+                (Err(e), false) => {
+                    assert!(e.to_string().contains("join_founder_site") && e.to_string().contains(jfs), "{e}");
+                    assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-263"), "{jfs}: {e}");
+                }
                 (r, _) => panic!("{jfs}: {:?}", r.map(|s| s.acl_site)),
             }
         }
@@ -2273,6 +2584,7 @@ mod tests {
             match (read_site(&repo, &o), ok) {
                 (Ok(s), true) => assert_eq!(s.acl_site, site),
                 (Err(e), false) => {
+                    assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-263"), "{site}: {e}");
                     let e = e.to_string();
                     assert!(e.contains(&format!("the site {site:?}")) && !e.contains("join_founder_site"), "{e}");
                 }

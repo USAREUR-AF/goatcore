@@ -5,4 +5,5 @@ status.code = 2
 stdout = ""
 stderr = """
 goatbuilder: N must be 1..7 (got: 9)
+  (GB-246 — goatbuilder explain GB-246)
 """

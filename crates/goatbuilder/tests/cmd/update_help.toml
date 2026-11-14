@@ -10,15 +10,25 @@ The surface: `GOATBUILDER_UPDATE_URL`, else `--site` from its group_vars, else t
 update used
 
 Usage: goatbuilder update [OPTIONS]
+       goatbuilder update <COMMAND>
+
+Commands:
+  verify-release  Verify a downloaded goatbuilder release without installing it: the keyless
+                  signature over `<DIR>/SHA256SUMS` (`SHA256SUMS.cosign-bundle`), with the checks
+                  `update` makes before it installs, for the release workflow of `--signer` at
+                  `goatbuilder/v<version>`; then every other file in `<DIR>` against that
+                  `SHA256SUMS`. Reads only. Exit 0 verified; 1 refused (GB-261 the signature, GB-074
+                  a file)
+  help            Print this message or the help of the given subcommand(s)
 
 Options:
   -o, --output <OUTPUT>  Output format: a table for a person; JSON or YAML for a program [default:
                          table] [possible values: table, json, yaml]
-      --site <SITE>      The goatnet that serves goatbuilder (its group_vars site)
   -C, --repo <DIR>       The repository root. Defaults to the checkout this binary is run in
+      --site <SITE>      The goatnet that serves goatbuilder (its group_vars site)
       --check            Report running against served; change nothing
-      --force            Reinstall even when already current (re-verifies the checksum)
       --yes              Confirm a declarative verb without prompting (for automation)
+      --force            Reinstall even when already current (re-verifies the checksum)
       --frozen           Refuse any run that would need to fast-forward the checkout (strict C3)
       --offline          An islanded site: do not fetch the trunk; judge the checkout against the
                          cached one, and record the run as offline (C3; ops/scripts/fresh-source.sh)

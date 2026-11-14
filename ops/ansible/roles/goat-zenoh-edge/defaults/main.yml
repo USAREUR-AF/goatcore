@@ -72,6 +72,11 @@ goat_zenoh_edge_cert_dir: "/etc/goat-zenoh-edge-{{ goat_zenoh_edge_partner_id }}
 goat_zenoh_edge_cert_src_dir: "{{ fed_work | default('') }}/pki"
 goat_zenoh_edge_partner_ca_src: "{{ fed_work | default('') }}/theirs-ca.pem"
 goat_zenoh_edge_agreement_src: "{{ fed_work | default('') }}/agreement.json"
+# Our CA's certificate, where phase 8 places it beside the leaves. Read only when
+# goat_zenoh_edge_our_ca_path is <cert_dir>/our-ca.pem: the file must be named
+# our-ca.pem and hold exactly one certificate and nothing else (a private key is
+# refused).
+goat_zenoh_edge_our_ca_src: "{{ goat_zenoh_edge_cert_src_dir }}/our-ca.pem"
 # Empty: read from the agreement. Set it only to pin the value as well; a value
 # that differs from the agreement is refused.
 goat_zenoh_edge_partner_ca_fingerprint: ""
@@ -278,7 +283,12 @@ goat_zenoh_edge_inward_settle_seconds: 8
 # inward-link check at the end of this role catches a wrong choice, so a mismatch
 # is reported rather than served silently.
 goat_zenoh_edge_trust_mode: fragment        # fragment | bundle
-goat_zenoh_edge_our_ca_path: ""             # required when trust_mode is bundle
+# Our CA's certificate ON THE EDGE. With goat_zenoh_edge_install_certs on, it is
+# <cert_dir>/our-ca.pem and the role installs it there from goat_zenoh_edge_our_ca_src
+# (the certificate alone, never the CA's key); set it to another path only for a CA
+# placed on the edge by hand, which the role then reads where it is. With the switch
+# off it must be set (fragment and bundle both read it) and placed by hand.
+goat_zenoh_edge_our_ca_path: "{{ (goat_zenoh_edge_cert_dir ~ '/our-ca.pem') if goat_zenoh_edge_install_certs | bool else '' }}"
 goat_zenoh_edge_bundle_path: "/etc/goat-zenoh-edge-{{ goat_zenoh_edge_partner_id }}/trust-bundle.pem"
 
 # The Common Name our OWN core presents on the inward link. Without it the edge

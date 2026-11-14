@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Open decision.** The options are designed; none is built. Today's behavior is stated under "What happens today" |
+| Status | **Decided, 13 November 2026: option (a)** ([ADR 1234](../adr/1234-a-partners-data-lives-in-its-own-store-dropped-whole-when-the-peering-ends.md)), under the rule in "The decision". To be reviewed later; no date is set. The back-out that carries it out is built on a goat-zenoh role core and measured (run `e8d6bd79cd35-20261114T040902-1443309`); "What happened before the build" is the behavior before it
 | Decides | What `goatbuilder federate backout <partner>` does with the core's receive stores for that partner, above all when it is the last peering |
 | Gate row | B7 of the goatbuilder 1.0 gate: "Backing a peering out removes everything the command created and nothing else", proven by the back-out scenario and a comparison of both hosts with their state before the peering |
 | Related | [sovereign-federation-runbook.md](../operations/sovereign-federation-runbook.md), Step 9 · [federation-package-spec.md](federation-package-spec.md), "Receiving storage interests" · [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md) |
@@ -10,8 +10,105 @@
 A partner's data is the one class of data on our core that we did not
 generate. Admission makes the core store it; a back-out today does not remove
 that store or the data in it. Gate row B7 says a back-out removes everything
-the command created and nothing else. This paper sets out three ways to make
-the back-out and that row agree, and what each costs.
+the command created and nothing else. This paper set out three ways to make
+the back-out and that row agree, and what each costs. Option (a) was chosen.
+
+## The decision
+
+**Plain:** a partner's data is kept in a store of its own. While the peering
+runs, the only thing that deletes it is the 7-day retention every store has.
+When the peering ends, the back-out drops that store whole. We never delete
+one partner's records one by one.
+
+The rule:
+
+  1. A partner's data lives in its own store, separated by structure.
+  2. While a peering is live, the only deletion is the 7-day retention, the same for everyone.
+  3. When a peering ends, the partner's store is dropped whole.
+  4. We never build deletion by record, by key or by person. Agreements state what the mechanism does; the mechanism does not bend to each agreement.
+
+The operator's words, recorded with it: "okay let's do this and note that it
+warrants a review and consideration at some point but we move out with this
+design to get somewhere working for now".
+
+- **To be reviewed.** The decision is to be reviewed and reconsidered later.
+  No date is set.
+- **Why.** Machinery that finds and cleanses one customer's data, once it is
+  started for one contractual case, grows until it is as large as the data
+  system itself. A store per partner, dropped whole, keeps deletion a property
+  of the structure instead.
+- **Option (c) is not built**, now or as a follow-up. Deleting a partner's
+  samples by key is rule 4's deletion by key.
+- **What the back-out does** (built, unit-tested, measured): on a
+  goat-zenoh role core with no route of its own, behind the back-out's typed
+  confirmation and after the core step, it takes the partner's entry out of
+  `zenoh_sovereign_peerings` in `group_vars/<core router group>/peerings.yml`
+  (`admit_role::remove_peering`), and runs the role's play, which restarts the
+  router on the configuration without `sovereign_from_<partner>`. Only then
+  does a play of its own, `ops/ansible/zenoh-drop-partner-store.yml`, delete
+  that directory (`roles/goat-zenoh/tasks/drop-partner-store.yml`). GB-227 ("a
+  back-out never edits configuration") and the F-447 rule that the role never
+  deletes a store directory changed with it: GB-227 now names an entry the
+  back-out did not write or could not take out, and the role deletes the one
+  store it is told to drop. A core admitted through the deployment's own route
+  (`FED_CORE_*`) keeps its role entry, reported as GB-227.
+  Measured in the federation test environment's back-out scenario, run
+  `e8d6bd79cd35-20261114T040902-1443309`, 58 of 58 checks on e8d6bd79 (#629's eight commits, identical on
+  b97071b9): the core's `acl-org-fragment.json5` and `config.json5` were byte
+  for byte the files before the peering, with no grant and no
+  `sovereign_from_<partner>` store, and the store drop ran as its own step.
+- **A store directory nothing declares** (an entry removed by hand, outside a
+  back-out) has no retention. The role reports it, as it does today
+  (`.undeclared-stores`); no automatic deletion is added for it.
+
+## Can the shared `sovereign_from` store go?
+
+**Plain:** yes. Every partner's samples in the shared store are also in that
+partner's own store, and nothing reads the shared one. Removing it from the
+role is what makes rule 1 hold: today each partner's samples are kept twice,
+once mixed with every other partner's.
+
+Checked against `main` at 2133f4d4 by reading the role and rendering its
+template; not measured on a running core.
+
+- **Every write under `from/` on a role core is one of two kinds.** Rendering
+  `config.json5.j2` with the role's own test helper
+  (`ops/ansible/roles/goat-zenoh/tests/render-check.py`, `render`) for two
+  partners, `xaa` with an outbound republisher and `xab` without, with and
+  without `goat_zenoh_legacy_system_namespace`, and scanning all 50 rules,
+  the only rules that allow an ingress `put` on a key under `from/` (or on
+  `**`) are `sovereign-<partner>-w` on `from/<partner>/**`, one per partner,
+  and `sovereign-<partner>-rp-w` on our own wire name (`from/<us>/<set>/**`,
+  the republisher, the only writer of that name). The access rules deny by
+  default.
+- **So the shared store holds nothing of a partner's that its own store does
+  not.** A sample from a partner is on `from/<partner>/**`, which
+  `sovereign_from_<partner>` covers. The role has rendered a store per
+  partner since 29c6ec8f (#235, 9 November 2026). A sample a core received
+  before it first ran that role is in the shared store alone, until the
+  deployment's retention (`zenoh_from_retention_days`, 7 days by default) has
+  passed since then. That retention is not measured here (see "Retention").
+- **The shared store also holds our own outbound wire name**, `from/<us>/**`,
+  because `from/**` covers it. Nothing in this repository reads that copy: the
+  federation test environment's checks read what the receiving core stored
+  under the sender's name (`stored_at` in `ops/federation-e2e/units/pair.sh`).
+  After the removal, a query that reaches our core for our own wire name is
+  answered by no store on our core. A record of what we sent, if one is
+  wanted, is a separate decision.
+- **Nothing else names the shared store.** Outside the template, only the
+  role's render test (`render-check.py`, "existing store path retained") and
+  the storage-restart test's copy of the stores
+  (`tests/zenoh-core-storage-restart.sh`) name `sovereign_from`; both change
+  with the removal. The preflight and the edge's ingress check already treat a
+  `from/**` store as insufficient on its own (GB-136).
+- **What the removal leaves on a core that has the store today.** The
+  directory `<storage path>/sovereign_from` stays on disk, with no retention.
+  The role lists it in `.undeclared-stores` and never deletes it; disposing of
+  it is a person's step, named in the runbook. A core built after the removal,
+  such as the federation test environment's, never has it, so a back-out there
+  leaves no residue.
+
+The role no longer renders the shared store (built, `roles/goat-zenoh/tests/render-check.py`).
 
 ## Where the store comes from
 
@@ -49,7 +146,7 @@ no longer declares has no `time_to_live` applied to it. This repository has no
 measurement of the pinned router dropping samples by `time_to_live`; the
 options below that rely on it inherit that gap.
 
-## What happens today
+## What happened before the build
 
 **Plain:** a back-out takes the partner's access rules out of the core, but the
 partner's entry in the role's list and both stores stay. Removing the entry by
@@ -97,6 +194,10 @@ The back-out removes the partner's role entry and runs the core play. It then
 deletes `sovereign_from_<partner>`. On the last peering it also deletes
 `sovereign_from`. A directory is deleted only after the router has restarted
 without the store.
+
+As decided, the shared `sovereign_from` is removed from the role instead (see
+"Can the shared `sovereign_from` store go?"), so no back-out has a shared
+store to deal with, and the partner's samples are only in its own store.
 
 | | |
 |---|---|
@@ -148,9 +249,11 @@ empty store, or is removed as in (a).
 | B7 comparison | exact | with a named exception | with a named exception while the shared store stays |
 | Changes to today's rules | back-out edits configuration; role deletes a directory | new declaration state; template change | a temporary delete grant or an on-host deletion; role deletes a directory |
 
-## The question
+## The question, as it was put
 
 When the last peering is backed out, should the back-out remove the partner
 store and its data (a), keep both under the retention policy as a named
 exception to B7 (b), or delete the partner's data by key and keep only what
 other peerings still need (c)?
+
+Answered: (a), under the rule in "The decision".

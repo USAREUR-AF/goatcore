@@ -40,6 +40,10 @@ pr_capture() {
     for x in "$s" "$them"; do
       echo "### $x core router, since $since"; docker exec "$HP-$x-core" docker logs --since "$since" "$x-zenoh-router" 2>&1
       echo "### $x edge router toward $(other "$x"), since $since"; docker exec "$HP-$x-edge" docker logs --since "$since" "goat-zenoh-edge-$(other "$x")" 2>&1
+      echo "### $x edge: TCP sessions on the fabric ports (7448 to the partner, 7447 to its core)"
+      docker exec "$HP-$x-edge" ss -tn '( sport = :7448 or dport = :7448 or sport = :7447 or dport = :7447 )' 2>&1 | head -20
+      echo "### $x edge: the tunnel's nft table"
+      docker exec "$HP-$x-edge" nft list table inet "goat_peering_wg_$(iface "$x" "$(other "$x")" | sed 's/^wg-//')" 2>&1 | head -40
       echo "### $x republisher toward $(other "$x"): dropped"
       docker exec "$HP-$x-core" curl -s -m 5 "http://127.0.0.1:$(rp_metrics "$x" "$(other "$x")")/metrics" 2>&1 | grep -E 'dropped' || echo '(no dropped series)'
     done

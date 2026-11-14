@@ -310,6 +310,39 @@ def deploy_play(root, name, spec, pins):
     return None
 
 
+# The admin mutation surfaces ADR 1084 §D3 single-homes at the site that holds the
+# writer: the NetBird dashboard, the portal, the id console and the onboarding engine.
+# ADR 1165 lifts that one write class at a time, by a change to group_vars, and the
+# lift reaches this model through the same flags and pins it already reads. This
+# list only words the reason a joiner's model marks one absent; it never decides
+# presence, so nothing here makes an admin surface impossible at any site.
+D3_ADMIN_SURFACES = ("netbird-dashboard", "portal", "id-admin-console", "onboard-runner")
+D3_REASON = "single-homed at the founder (ADR 1084 §D3); every site once ADR 1165 lifts it for this class"
+
+
+def declaration_reason(d):
+    """One declaration that says absent, in the words a plan prints."""
+    if d["kind"] == "var":
+        why = d["why"]
+        if why.startswith("group_vars/"):
+            return f"`{d['name']}` is false in group_vars"
+        if why.startswith("role default "):
+            return f"`{d['name']}` is unset in group_vars and false by its role default"
+        return why
+    return d["why"]
+
+
+def absent_reason(svc, decls, founder):
+    """Why the model marks `svc` absent at this site: the declarations that say so,
+    and for an admin surface at a joiner, the single-homing they carry out. The
+    plan of `goatbuilder join-node` prints this, and the grade's N/A row reads it,
+    so the two cannot disagree."""
+    said = "; ".join(declaration_reason(d) for d in decls if d.get("says") is False) or "no declaration says present"
+    if svc in D3_ADMIN_SURFACES and not founder:
+        return f"{D3_REASON} (declared by: {said})"
+    return said
+
+
 def model(site, root=REPO):
     root = Path(root)
     group = group_of(site)
@@ -353,6 +386,8 @@ def model(site, root=REPO):
             "present": present,
             "contradiction": contradiction,
             "declarations": decls,
+            # why it is absent here, in the words the join-node plan prints; None unless absent
+            "reason": absent_reason(name, decls, truthy(v.get("goatnet_founder", True)) is not False) if present is False else None,
             "class": cls,
             "hosts": hosts["obs" if cls == "obs" else "mgmt"],
             "containers": [render(c, v) for c in (spec.get("containers") or [])],
@@ -805,7 +840,8 @@ def grade(m, facts, assay_rows=None, strict=False):
             rows.append(res)
             continue
         if s["present"] is False:
-            res["presence"] = _grade(NA, "declared absent: " + "; ".join(d["why"] for d in s["declarations"]))
+            # The model's reason, the one the join-node plan prints for this service.
+            res["presence"] = _grade(NA, "declared absent: " + (s.get("reason") or "; ".join(d["why"] for d in s["declarations"])))
             rows.append(res)
             continue
         res["presence"] = _grade(PASS, "declared present: " + "; ".join(d["why"] for d in s["declarations"]))

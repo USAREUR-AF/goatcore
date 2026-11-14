@@ -681,7 +681,18 @@ fn plan_page(report: &Report, color: bool) -> Option<String> {
     let mut how: Vec<String> = Vec::new();
     // Each phase's command, as the run executes it (step 3 of the legibility work).
     let mut runs: Vec<(String, String, String)> = Vec::new();
+    // What the site does not run: the heading, then one line per service.
+    let mut not_run: Vec<String> = Vec::new();
+    // Every value the run uses, with its source (gate row F2). An input nothing
+    // gave a value to is a row that is not ok, and the page still shows it.
+    let mut inputs: Vec<String> = Vec::new();
+    // The probes the plan itself ran to read those values, in the order they ran.
+    let mut probes: Vec<String> = Vec::new();
     for c in &report.checks {
+        if c.name == "input" {
+            inputs.push(c.detail.trim().to_string());
+            continue;
+        }
         if !c.ok {
             return None;
         }
@@ -717,6 +728,8 @@ fn plan_page(report: &Report, color: bool) -> Option<String> {
                 }
             }
             "footer" => footer = plain(&flat),
+            "probe-ran" => probes.push(c.detail.trim().to_string()),
+            "not-run-heading" | "not-run" => not_run.push(c.detail.trim().to_string()),
             "note" if flat == "needs: nothing" => {}
             "note" if flat.starts_with("needs: ") => needs.push((rows.last()?[0].clone(), flat.trim_start_matches("needs: ").to_string())),
             // A teardown's note opens with how the step comes down.
@@ -751,6 +764,13 @@ fn plan_page(report: &Report, color: bool) -> Option<String> {
         out.push_str(fill(&r[2], &first, &hang).trim_end());
         out.push('\n');
     }
+    if !probes.is_empty() {
+        // They ran before any phase would, so they come first; verbatim, as run.
+        out.push_str(&format!("\n{}\n", bold("What the plan ran to read its values:")));
+        for p in &probes {
+            out.push_str(&format!("    {p}\n"));
+        }
+    }
     if !runs.is_empty() {
         // Verbatim and unwrapped, so a line can be pasted to run one phase by hand.
         out.push_str(&format!("\n{}\n", bold("What each phase runs:")));
@@ -782,6 +802,14 @@ fn plan_page(report: &Report, color: bool) -> Option<String> {
             out.push_str(&hand_step(num, title, command.as_deref(), &note, color));
         }
     }
+    if let Some((head, lines)) = not_run.split_first() {
+        out.push_str(&format!("\n{}\n", bold(head)));
+        for l in lines {
+            out.push_str(fill(l, "  ", "    ").trim_end());
+            out.push('\n');
+        }
+    }
+    out.push_str(&crate::inputs::section(&inputs, &bold));
     out.push_str(&format!("\n{} -o json lists every row of the plan.\n", bold("To see more:")));
     if !footer.is_empty() {
         let footer = footer.replace("PLAN complete. ", "").replace("Remove --dry-run to execute (needs --address).", "Remove --dry-run and add --address.").replace("Manual steps (", "The run pauses at the steps you do yourself (").replace(") pause the run; resume with --from <next>.", "). After each one, continue with --from and the next phase number.");
@@ -1325,6 +1353,14 @@ fn phased(report: &Report, color: bool) -> String {
             "measured" => {
                 out.push_str(&format!("\n{}\n", fill(&format!("Measured: {detail}"), "", "  ").trim_end()));
             }
+            // What the site does not run: its own heading, then a line per service.
+            "not-run-heading" => {
+                out.push_str(&format!("\n{}\n", bold(c.detail.trim())));
+            }
+            "not-run" => {
+                out.push_str(fill(c.detail.trim(), "  ", "    ").trim_end());
+                out.push('\n');
+            }
             name => {
                 let mut parts = name.rsplit('/');
                 let last = parts.next().unwrap_or(name);
@@ -1785,6 +1821,12 @@ mod tests {
         assert!(!page.contains('\u{2717}'), "a plan owes nothing, so it marks nothing: {page}");
         // Each phase's command, verbatim, under the table; the manual one is spelled out above.
         assert!(page.contains("What each phase runs:\n\n2  seed the SSH key\n    '/long/path/seed-ssh-key.sh' goat@<address>\n\n5  host baseline\n    cd x && ansible-playbook y\n"), "{page}");
+        // What the site does not run: its own heading after the commands, a line per service.
+        let mut with = rows.clone();
+        with.insert(with.len() - 1, row("not-run-heading", "What s does not run: every catalog service the end-state model marks absent here"));
+        with.insert(with.len() - 1, row("not-run", "isitup \u{2014} `isitup_enabled` is false in group_vars"));
+        let page = plan_page(&Report::new("join-node", with, EXIT_OK), false).unwrap();
+        assert!(page.contains("\nWhat s does not run: every catalog service the end-state model marks absent here\n  isitup \u{2014} `isitup_enabled` is false in group_vars\n"), "{page}");
         rows[0] = row("banner", "join-node: real run");
         assert!(plan_page(&Report::new("join-node", rows, EXIT_OK), false).is_none());
     }

@@ -60,11 +60,39 @@ pub fn posture_cmd(repo: &Path, args: &[&str]) -> Cmd {
     cmd
 }
 
+// The posture probes started while [`probes_of`] runs its closure, on this
+// thread: each command line, in the order it started.
+thread_local! {
+    static PROBES: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` and return, with its result, the command line of every posture probe
+/// it started, in order. A dry run prints them as the probes it ran, where the
+/// real run starts them, so its plan names every process the run starts (C11).
+pub fn probes_of<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+    let outer = PROBES.with(|p| p.borrow_mut().replace(Vec::new()));
+    let out = f();
+    let ran = PROBES
+        .with(|p| std::mem::replace(&mut *p.borrow_mut(), outer))
+        .unwrap_or_default();
+    PROBES.with(|p| {
+        if let Some(o) = p.borrow_mut().as_mut() {
+            o.extend(ran.iter().cloned());
+        }
+    });
+    (out, ran)
+}
+
 fn ask_with(repo: &Path, args: &[&str], probe: bool) -> Option<(i32, String)> {
     let mut cmd = posture_cmd(repo, args);
     if !probe {
         cmd.env("GOAT_STORE_PROBE", "0");
     }
+    PROBES.with(|p| {
+        if let Some(v) = p.borrow_mut().as_mut() {
+            v.push(posture_cmd(repo, args).line());
+        }
+    });
     let out = cmd.output().ok()?;
     Some((out.status.code().unwrap_or(2), String::from_utf8_lossy(&out.stdout).to_string()))
 }

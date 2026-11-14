@@ -217,19 +217,58 @@ fn slot_anchor_file(repo: &Path, env_name: &str) -> PathBuf {
         .join("zenoh-lazy-storage.yml")
 }
 
-struct Core {
+/// The goat-zenoh role core admission restarts through, when the deployment
+/// names no restart of its own (FED_CORE_PLAY and FED_CORE_RESTART unset): the
+/// role group whose address is FED_CORE_GROUP's, else `<with>_core`'s. The
+/// back-out decides the same way (backout.rs `driver_core`).
+pub(super) fn role_core(
+    repo: &Path,
+    with: &str,
+    var: impl Fn(&str) -> Option<String>,
+) -> Result<Option<super::admit_role::RoleCore>, String> {
+    let env = |k: &str| var(k).filter(|v| !v.trim().is_empty());
+    if env("FED_CORE_PLAY").is_some() || env("FED_CORE_RESTART").is_some() {
+        return Ok(None);
+    }
+    let core_group = env("FED_CORE_GROUP").unwrap_or_else(|| format!("{with}_core"));
+    super::admit_role::find(repo, &core_group)
+}
+
+/// Where our core router's leaf goes: FED_CORE_CERT and FED_CORE_KEY, else,
+/// on a goat-zenoh role core, where the role reads it (admit_leaf.rs
+/// `router_leaf`). The one composition, for admission's `Core` and the
+/// back-out's `role_leaf`, so the two never disagree.
+pub(super) fn router_leaf_paths(
+    repo: &Path,
+    role: Option<&super::admit_role::RoleCore>,
+    var: impl Fn(&str) -> Option<String>,
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    let env = |k: &str| var(k).filter(|v| !v.trim().is_empty());
+    let (cert, key) = match role {
+        Some(r) => super::admit_leaf::router_leaf(repo, r),
+        None => (None, None),
+    };
+    (
+        env("FED_CORE_CERT")
+            .map(PathBuf::from)
+            .or(cert.map(|c| c.0)),
+        env("FED_CORE_KEY").map(PathBuf::from).or(key.map(|k| k.0)),
+    )
+}
+
+pub(super) struct Core {
     /// The org fragment as a file on this machine (FED_CORE_ACL_ORG); `None`
     /// on a goat-zenoh role core, whose fragment is read and placed on the core
     /// host at the role's goat_zenoh_acl_org_path.
-    org: Option<PathBuf>,
-    seed: Option<PathBuf>,
-    out: Option<PathBuf>,
-    cert: Option<PathBuf>,
-    key: Option<PathBuf>,
-    play: Option<String>,
-    group: String,
-    restart: Option<String>,
-    dry_run: Option<String>,
+    pub(super) org: Option<PathBuf>,
+    pub(super) seed: Option<PathBuf>,
+    pub(super) out: Option<PathBuf>,
+    pub(super) cert: Option<PathBuf>,
+    pub(super) key: Option<PathBuf>,
+    pub(super) play: Option<String>,
+    pub(super) group: String,
+    pub(super) restart: Option<String>,
+    pub(super) dry_run: Option<String>,
     slot: Slot,
     /// The goat-zenoh role core, when the deployment names no route of its own
     /// (federate/admit_role.rs).
@@ -244,6 +283,19 @@ impl Core {
         env_name: &str,
         role: Option<super::admit_role::RoleCore>,
     ) -> Result<Core, Vec<&'static str>> {
+        Core::from_vars(repo, with, env_name, role, env)
+    }
+
+    /// [`Core::from_env`], with each variable read through `var` (the
+    /// back-out reads the same route the same way: backout.rs `driver_core`).
+    pub(super) fn from_vars(
+        repo: &Path,
+        with: &str,
+        env_name: &str,
+        role: Option<super::admit_role::RoleCore>,
+        var: impl Fn(&str) -> Option<String>,
+    ) -> Result<Core, Vec<&'static str>> {
+        let env = |k: &str| var(k).filter(|v| !v.trim().is_empty());
         let mut missing = Vec::new();
         let (org, seed, out) = (
             env("FED_CORE_ACL_ORG").map(PathBuf::from),
@@ -291,21 +343,15 @@ impl Core {
         if !missing.is_empty() {
             return Err(missing);
         }
-        let leaf = match &role {
-            Some(r) => {
-                let (c, k) = super::admit_leaf::router_leaf(repo, r);
-                (c.map(|x| x.0), k.map(|x| x.0))
-            }
-            None => (None, None),
-        };
+        // On a goat-zenoh role core the router leaf goes where the role
+        // reads it (federate/admit_leaf.rs); FED_CORE_CERT/KEY override.
+        let (cert, key) = router_leaf_paths(repo, role.as_ref(), &var);
         Ok(Core {
             org,
             seed,
             out,
-            // On a goat-zenoh role core the router leaf goes where the role
-            // reads it (federate/admit_leaf.rs); FED_CORE_CERT/KEY override.
-            cert: env("FED_CORE_CERT").map(PathBuf::from).or_else(|| leaf.0.clone()),
-            key: env("FED_CORE_KEY").map(PathBuf::from).or_else(|| leaf.1.clone()),
+            cert,
+            key,
             play,
             group: env("FED_CORE_GROUP").unwrap_or_else(|| format!("{with}_core")),
             restart,
@@ -315,7 +361,7 @@ impl Core {
         })
     }
 
-    fn play_cmd(&self, repo: &Path, work: &Path, check: bool) -> Option<String> {
+    pub(super) fn play_cmd(&self, repo: &Path, work: &Path, check: bool) -> Option<String> {
         let Some(play) = self.play.as_ref() else {
             return self.role.as_ref().map(|r| r.play_cmd(repo, check));
         };
@@ -334,7 +380,7 @@ impl Core {
         ))
     }
 
-    fn route(&self) -> String {
+    pub(super) fn route(&self) -> String {
         match (&self.play, &self.restart) {
             (Some(p), _) => format!("the play {p} on {}", self.group),
             (None, Some(c)) => format!("FED_CORE_RESTART ({c})"),
@@ -397,35 +443,56 @@ fn write_in_place(to: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, to)
 }
 
+/// One file [`publish`] placed: where, the backup of what was there (none
+/// when nothing was), and the record it left beside the backups.
+pub(super) type Placed = (PathBuf, Option<PathBuf>, PathBuf);
+
+/// The second line of a `<n>-<file name>.target` record when admission
+/// placed the file where nothing was (see [`publish`]).
+pub(super) const ABSENT: &str = "absent";
+
 /// Place `bytes` at `to`, keeping what was there in `backups` (in `dir`).
-fn publish(
+///
+/// Every file placed leaves a record beside the backups,
+/// `<n>-<file name>.target`: its first line is the path placed, and its
+/// second is [`ABSENT`] when nothing was there, else the backup is
+/// `<n>-<file name>`. The back-out puts a path back by the earliest record of
+/// it (backout.rs `CoreLeaf::first_record`).
+pub(super) fn publish(
     bytes: &[u8],
     to: &Path,
-    backups: &mut Vec<(PathBuf, Option<PathBuf>)>,
+    backups: &mut Vec<Placed>,
     dir: &Path,
 ) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
+    let name = format!(
+        "{}-{}",
+        backups.len(),
+        to.file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default()
+    );
+    let record = dir.join(format!("{name}.target"));
     let kept = if to.exists() {
-        let b = dir.join(format!(
-            "{}-{}",
-            backups.len(),
-            to.file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_default()
-        ));
+        let b = dir.join(&name);
         std::fs::copy(to, &b)?;
+        std::fs::write(&record, format!("{}\n", to.display()))?;
         Some(b)
     } else {
+        std::fs::write(&record, format!("{}\n{ABSENT}\n", to.display()))?;
         None
     };
-    backups.push((to.to_path_buf(), kept));
+    backups.push((to.to_path_buf(), kept, record));
     write_in_place(to, bytes)
 }
 
-/// Put every backup back; the files that could not be, by name.
-fn restore(backups: &[(PathBuf, Option<PathBuf>)]) -> Vec<String> {
+/// Put every backup back; the files that could not be, by name. When every
+/// one is put back, the run never took effect: its records and backups are
+/// deleted, so a later back-out is not decided by them (backout.rs
+/// `CoreLeaf::first_record`). When one is not, they stay, to copy by hand.
+fn restore(backups: &[Placed]) -> Vec<String> {
     let mut failed = Vec::new();
-    for (to, kept) in backups.iter().rev() {
+    for (to, kept, _) in backups.iter().rev() {
         let r = match kept {
             Some(b) => std::fs::read(b).and_then(|bytes| write_in_place(to, &bytes)),
             None => std::fs::remove_file(to).or_else(|e| {
@@ -440,10 +507,25 @@ fn restore(backups: &[(PathBuf, Option<PathBuf>)]) -> Vec<String> {
             failed.push(format!("{} ({e})", to.display()));
         }
     }
+    if failed.is_empty() {
+        for (to, kept, record) in backups {
+            for f in kept.iter().chain(std::iter::once(record)) {
+                if let Err(e) = std::fs::remove_file(f) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        failed.push(format!(
+                            "the record of {} at {} ({e})",
+                            to.display(),
+                            f.display()
+                        ));
+                    }
+                }
+            }
+        }
+    }
     failed
 }
 
-fn put_back(backups: &[(PathBuf, Option<PathBuf>)]) -> String {
+pub(super) fn put_back(backups: &[Placed]) -> String {
     match restore(backups).as_slice() {
         [] => "every file placed is put back".into(),
         f => format!(
@@ -610,16 +692,9 @@ pub fn admit(
             "do not admit the edge; ask the partner which CA is current",
         );
     }
-    // A core the goat-zenoh role deploys is restarted by the role's own play,
-    // found from its declarations, unless the deployment names a route.
-    let role = if env("FED_CORE_PLAY").is_none() && env("FED_CORE_RESTART").is_none() {
-        let core_group = env("FED_CORE_GROUP").unwrap_or_else(|| format!("{with}_core"));
-        match super::admit_role::find(repo, &core_group) {
-            Ok(r) => r,
-            Err(e) => return fail("GB-236", e, "declare what it names, or set FED_CORE_PLAY or FED_CORE_RESTART, make a new plan, and deploy again"),
-        }
-    } else {
-        None
+    let role = match role_core(repo, with, env) {
+        Ok(r) => r,
+        Err(e) => return fail("GB-236", e, "declare what it names, or set FED_CORE_PLAY or FED_CORE_RESTART, make a new plan, and deploy again"),
     };
     let core = match Core::from_env(repo, with, env_name, role) {
         Ok(c) => c,
@@ -959,7 +1034,7 @@ pub fn admit(
         }
     }
     // Put back the local backups and, on a role core, the fetched fragment.
-    let back_all = |backups: &[(PathBuf, Option<PathBuf>)]| -> String {
+    let back_all = |backups: &[Placed]| -> String {
         let local = put_back(backups);
         match &remote {
             None => local,
@@ -1160,7 +1235,11 @@ mod tests {
             !fresh.exists(),
             "a file that was not there is removed again"
         );
-        let gone = vec![(target.clone(), Some(d.path().join("no-such-backup")))];
+        let gone = vec![(
+            target.clone(),
+            Some(d.path().join("no-such-backup")),
+            d.path().join("no-such-record"),
+        )];
         assert_eq!(restore(&gone).len(), 1);
     }
 }

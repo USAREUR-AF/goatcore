@@ -388,6 +388,17 @@ class AdmissionMarkers(unittest.TestCase):
             bc.plan(broken, "xab")
         self.assertIn("never ends", str(caught.exception))
 
+    def test_another_partners_marker_inside_the_block_is_refused_naming_both(self):
+        fx, before = self.org_before()
+        admitted = admit(before, fragment("xaa", "xab"), "xab")
+        for stray in ("      // END peering xac\n", "      // BEGIN peering xac (goatbuilder federate)\n"):
+            with self.subTest(stray=stray.strip()):
+                nested = admitted.replace("      // END peering xab\n", stray + "      // END peering xab\n", 1)
+                with self.assertRaises(ValueError) as caught:
+                    bc.plan(nested, "xab")
+                self.assertIn("xab", str(caught.exception))
+                self.assertIn("xac", str(caught.exception))
+
     def test_a_block_holding_a_line_that_is_not_the_partners_is_refused(self):
         fx, before = self.org_before()
         admitted = admit(before, fragment("xaa", "xab"), "xab")
@@ -396,6 +407,65 @@ class AdmissionMarkers(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             bc.plan(foreign, "xab")
         self.assertIn("not xab's", str(caught.exception))
+
+
+class OrgOnly(unittest.TestCase):
+    """`plan --org` alone: the shape where the driver holds only the org fragment
+    (FED_CORE_ACL_ORG with no seed or assembled output)."""
+
+    def run_main(self, *argv):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            try:
+                rc = bc.main(list(argv))
+            except SystemExit as e:
+                rc = e.code
+        return rc, out.getvalue()
+
+    def test_org_alone_writes_the_candidate_and_says_the_live_proof_was_not_possible(self):
+        fx = Fixture(fragment("xaa", "xab"), fragment("xaa", "xac"))
+        out = os.path.join(fx.dir, "org-only")
+        rc, _ = self.run_main("plan", "--partner", "xac", "--org", fx.org, "--out-dir", out)
+        self.assertEqual(rc, 0)
+        result = json.loads(fx.text(os.path.join(out, "plan.json")))
+        self.assertEqual(result["live_proof"], "not possible: no seed or live configuration given")
+        self.assertNotIn("live_is_seed_plus_org", result)
+        self.assertIsNone(result["role_declared"])
+        self.assertNotIn("candidate_sha256", result)
+        self.assertFalse(os.path.exists(os.path.join(out, "live.candidate")))
+        cand = fx.text(os.path.join(out, "org.candidate"))
+        self.assertEqual(result["org_candidate_sha256"], bc.sha256(cand))
+        self.assertNotIn("fed-xac", cand)
+        self.assertIn("fed-xab", cand)
+
+    def test_org_alone_still_refuses_what_is_not_the_partners_alone(self):
+        fx = Fixture(fragment("xaa", "xab"), fragment("xaa", "interest-xab"))
+        out = os.path.join(fx.dir, "org-only")
+        rc, _ = self.run_main("plan", "--partner", "interest-xab", "--org", fx.org, "--out-dir", out)
+        self.assertEqual(rc, 1)
+        self.assertIn("share the ids", json.loads(fx.text(os.path.join(out, "plan.json")))["refused"])
+        self.assertFalse(os.path.exists(os.path.join(out, "org.candidate")))
+
+    def test_a_seed_without_a_live_file_or_the_reverse_is_a_usage_error(self):
+        fx = Fixture(fragment("xaa", "xab"))
+        for extra in (["--seed", fx.seed], ["--live", fx.live]):
+            with self.subTest(extra=extra):
+                rc, _ = self.run_main("plan", "--partner", "xab", "--org", fx.org,
+                                      "--out-dir", os.path.join(fx.dir, "x"), *extra)
+                self.assertEqual(rc, 2)
+
+    def test_the_full_form_is_unchanged(self):
+        fx = Fixture(fragment("xaa", "xab"), fragment("xaa", "xac"))
+        out = os.path.join(fx.dir, "full")
+        rc, _ = self.run_main("plan", "--partner", "xac", "--seed", fx.seed, "--org", fx.org,
+                              "--live", fx.live, "--out-dir", out)
+        self.assertEqual(rc, 0)
+        result = json.loads(fx.text(os.path.join(out, "plan.json")))
+        self.assertTrue(result["live_is_seed_plus_org"])
+        self.assertNotIn("live_proof", result)
+        self.assertTrue(os.path.exists(os.path.join(out, "live.candidate")))
 
 
 if __name__ == "__main__":

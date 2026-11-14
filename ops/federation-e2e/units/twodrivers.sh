@@ -66,6 +66,9 @@ unit_main() {
   say "two drivers per sovereign: the topology the contract asks for, enforced by the network"
   for s in "$A" "$B"; do td_topology_checks "$s"; done
 
+  # The operator's declaration that this peering is run from two drivers: `drivers: two` on
+  # its peerings: entry, in the controller's checkout, committed (a hand-off needs a clean tree).
+  for s in "$A" "$B"; do td_declare_two "$s" "$(other "$s")"; done
   say "two drivers per sovereign: the controller hands off what only the edge reaches"
   local f0="$FAILS"
   for s in "$A" "$B"; do
@@ -79,6 +82,22 @@ unit_main() {
 }
 
 TD_HANDOFF="$HERE/lib/handoff.py"
+
+td_declare_two() { # $1 us, $2 them
+  local s="$1" them="$2"
+  docker exec -i "$HP-$s-ops" python3 - "$them" <<'PY'
+import sys, yaml
+p = "/opt/goat/ops/goatbuilder/goatbuilder.yaml"
+cfg = yaml.safe_load(open(p)); them = sys.argv[1]
+peers = [e for e in (cfg.get("peerings") or []) if e.get("with") == them]
+if len(peers) != 1:
+    sys.exit(f"no single peerings: entry with {them} in {p}")
+peers[0]["drivers"] = "two"
+open(p, "w").write(yaml.safe_dump(cfg, sort_keys=False))
+print(f"declared drivers: two for the peering with {them}")
+PY
+  docker exec "$HP-$s-ops" sh -c "cd /opt/goat && git config user.name '$s operator' && git config user.email 'ops@$s.test' && git add ops/goatbuilder/goatbuilder.yaml && git commit -q -m '$s: the peering with $them is run from two drivers' && git log --oneline -1"
+}
 
 # The controller's goatbuilder, as an operator runs it there; $1 us, $2 them, then arguments.
 td_ctl() {

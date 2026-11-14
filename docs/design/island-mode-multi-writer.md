@@ -225,6 +225,7 @@ Gates G2 to G4 are rows of the goatbuilder 1.0 gate, group I ([goatbuilder-v1-ga
 
 ## Related
 
+- [`island-mode-preminted-certificates.md`](island-mode-preminted-certificates.md) — a pre-minted certificate batch for a site that holds no signing key, such as a phone (designed, not built)
 - [`island-mode-write-inventory.md`](island-mode-write-inventory.md) — every write path of the four stores with its class and harness scenario, and the corrections to this doc (program step 5)
 - [`portal-console-multisite-readiness.md`](portal-console-multisite-readiness.md) — the 2026-09-06 review §2.1 replaces
 - [`hub-spoke-admit-split.md`](hub-spoke-admit-split.md) §2 — the write taxonomy class 3 adopts

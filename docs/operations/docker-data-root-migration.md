@@ -258,6 +258,27 @@ neither retrofit is needed. This section covers the **retrofit
 case** for sites that already migrated Docker's data-root but
 still have containerd on eMMC.
 
+### What the role checks
+
+Before it writes `/etc/containerd/config.toml`, the `docker-engine` role reads
+the root the running containerd uses, from the metadata database the daemon
+holds open. If that root differs from `docker_engine_containerd_root`:
+
+- with containers running, the play stops and writes nothing. A containerd
+  restart on a different root loses track of every running container:
+  `docker exec` and every healthcheck fail `NotFound` while the services keep
+  running. Set the variable to the root in use, or run the ceremony below.
+- with no container running, the role writes the file and restarts containerd
+  in the same play, then asserts the running daemon uses the configured root.
+
+To check a host by hand, as root:
+
+```
+readlink /proc/$(pidof containerd)/fd/* | grep meta.db
+```
+
+The path must start with the `root` in `/etc/containerd/config.toml`.
+
 ### When to run the containerd retrofit
 
 Any mgmt-host where:

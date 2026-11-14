@@ -41,10 +41,11 @@
       changed_when: false
       failed_when: false
 
-    # Active or enabled. A template instance that was never started reads
-    # "disabled" from is-enabled, so that alone is not presence.
+    # Active or enabled, read from its properties (backout_probe_state 'systemd'):
+    # a template instance that was never started loads from the template but is
+    # neither, so that alone is not presence; a bus that cannot be reached is unknown.
     - name: peering-wg | absent | the unit
-      ansible.builtin.shell: "systemctl is-active {{ _pb_names.wg.service }}; systemctl is-enabled {{ _pb_names.wg.service }}"
+      ansible.builtin.command: "systemctl show -p LoadState -p ActiveState -p UnitFileState {{ _pb_names.wg.service }}"
       register: _pbw_unit
       changed_when: false
       failed_when: false
@@ -98,6 +99,19 @@
           {{ ours.transport_offer.public_key | default('') if (ours.sovereign_id | default('')) not in ['', peering_backout_id] else '' }}
         _pbw_has_key: "{{ (_pbw_pub.stdout | default('') | trim) is match('^[A-Za-z0-9+/]{43}=$') }}"
         _pbw_peer_list: "{{ _pbw_peers.stdout_lines | default([]) if _pbw_peers.rc == 0 else [] }}"
+        # present, absent or unknown (filter_plugins/backout_probe.py): a probe that
+        # could not tell is never read as a link or table that is not there.
+        _pbw_link_probe: "{{ _pbw_peers | backout_probe_state('wg', _pb_names.wg.interface) }}"
+        _pbw_unit_probe: "{{ _pbw_unit | backout_probe_state('systemd', _pb_names.wg.service) }}"
+        # A table that is there is shared or not by the list of links; when that list
+        # could not be read the table cannot be shown to be this peering's alone.
+        _pbw_table_probe: >-
+          {%- set t = _pbw_table | backout_probe_state('nft', _pb_names.wg.nft_table) -%}
+          {%- if t.state == 'present' and _pbw_links.rc != 0 -%}
+          {{ {'state': 'unknown', 'note': 'rc %d: %s (the links were not listed, so whether another link shares the table is not known)' % (_pbw_links.rc, ((_pbw_links.stderr | default('', true)).splitlines() | first | default('no error text', true)) | truncate(200, true, ''))} }}
+          {%- else -%}
+          {{ t }}
+          {%- endif -%}
         _pbw_link_exists: "{{ _pbw_peers.rc == 0 }}"
         _pbw_other_carriers: >-
           {{ _pbw_other_states_raw.results | default([]) | map(attribute='content') | map('b64decode') | map('from_json')
@@ -134,24 +148,29 @@
           {%- set own = _pbw_owner -%}
           {%- set bad = own.startswith('other') or own.startswith('unproven') -%}
           {%- set items = [
-                ['interface ' ~ _pb_names.wg.interface, _pbw_link_exists],
-                ['unit ' ~ _pb_names.wg.service, ('active' in (_pbw_unit.stdout_lines | default([]))) or ('enabled' in (_pbw_unit.stdout_lines | default([])))],
-                ['nft table inet ' ~ _pb_names.wg.nft_table, _pbw_table.rc == 0 and not (_pbw_table_shared | bool)],
+                ['interface ' ~ _pb_names.wg.interface, _pbw_link_exists, _pbw_link_probe],
+                ['unit ' ~ _pb_names.wg.service, _pbw_unit_probe.state == 'present', _pbw_unit_probe],
+                ['nft table inet ' ~ _pb_names.wg.nft_table, _pbw_table.rc == 0 and not (_pbw_table_shared | bool), _pbw_table_probe],
               ] -%}
           {%- for f in _pbw_files.results -%}
-          {%-   set _ = items.append(['file ' ~ f.item, f.stat.exists]) -%}
+          {%-   set _ = items.append(['file ' ~ f.item, f.stat.exists, none]) -%}
           {%- endfor -%}
           {%- for i in items -%}
-          {%-   set present = i[1] | bool -%}
-          {%-   set state = ('not-ours' if (bad and present) else ('present' if present else 'absent')) -%}
-          {%-   set action = ('kept' if state == 'not-ours' else (('removed' if _pb_apply else 'remove') if present else 'none')) -%}
-          {%-   set _ = out.append({'component': 'tunnel', 'resource': i[0], 'state': state, 'action': action, 'note': own}) -%}
+          {%-   if i[2] and i[2].state == 'unknown' -%}
+          {%-     set _ = out.append({'component': 'tunnel', 'resource': i[0], 'state': 'unknown', 'action': 'none', 'note': i[2].note}) -%}
+          {%-   else -%}
+          {%-     set present = i[1] | bool -%}
+          {%-     set state = ('not-ours' if (bad and present) else ('present' if present else 'absent')) -%}
+          {%-     set action = ('kept' if state == 'not-ours' else (('removed' if _pb_apply else 'remove') if present else 'none')) -%}
+          {%-     set _ = out.append({'component': 'tunnel', 'resource': i[0], 'state': state, 'action': action, 'note': own}) -%}
+          {%-   endif -%}
           {%- endfor -%}
           {%- if _pbw_table.rc == 0 and (_pbw_table_shared | bool) -%}
           {%-   set _ = out.append({'component': 'tunnel', 'resource': 'nft table inet ' ~ _pb_names.wg.nft_table, 'state': 'present', 'action': 'kept', 'note': 'another link maps to the same table name'}) -%}
           {%- endif -%}
           {{ out }}
-        _pbw_remove: "{{ _pbw_owner == 'ours' }}"
+        # Nothing is removed while the link, its table or its unit could not be read.
+        _pbw_remove: "{{ _pbw_owner == 'ours' and _pbw_link_probe.state != 'unknown' and _pbw_table_probe.state != 'unknown' and _pbw_unit_probe.state != 'unknown' }}"
 
     - name: peering-wg | absent | the carrier interface
       ansible.builtin.command: "wg show {{ _pb_names.wg.carrier }} peers"
@@ -170,6 +189,7 @@
              and (_pb_names.wg.carrier != _pb_names.wg.interface)
              and ((_pbw_state.transport.via_forwarder.carrier_interface | default(_pb_names.wg.carrier)) == _pb_names.wg.carrier) }}
         _pbw_carrier_exists: "{{ (_pbw_carrier_link.rc | default(1)) == 0 }}"
+        _pbw_carrier_probe: "{{ _pbw_carrier_link | backout_probe_state('wg', _pb_names.wg.carrier) }}"
 
     - name: peering-wg | absent | record the carrier
       ansible.builtin.set_fact:
@@ -180,6 +200,9 @@
                          'state': (('present' if ours else 'not-ours') if exists else 'absent'),
                          'action': ((('removed' if _pb_apply else 'remove') if ours else 'kept') if exists else 'none'),
                          'note': ('this peering\'s carrier' if ours else 'another peering\'s state file names it, or this peering\'s names another')} -%}
+          {%- if _pbw_carrier_probe.state == 'unknown' -%}
+          {%-   set row = {'component': 'tunnel', 'resource': 'carrier ' ~ _pb_names.wg.carrier, 'state': 'unknown', 'action': 'none', 'note': _pbw_carrier_probe.note} -%}
+          {%- endif -%}
           {{ _pb_rows + [row] }}
       when: _pb_names.wg.via_forwarder
 
@@ -218,14 +241,14 @@
         state: stopped
         enabled: false
       failed_when: false
-      when: _pb_apply and (_pbw_remove | bool) and (_pbw_carrier_ours | bool)
+      when: _pb_apply and (_pbw_remove | bool) and (_pbw_carrier_ours | bool) and _pbw_carrier_probe.state != 'unknown'
 
     - name: peering-wg | absent | the carrier's files are gone
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
       loop: "{{ _pb_names.wg.carrier_files }}"
-      when: _pb_apply and (_pbw_remove | bool) and (_pbw_carrier_ours | bool)
+      when: _pb_apply and (_pbw_remove | bool) and (_pbw_carrier_ours | bool) and _pbw_carrier_probe.state != 'unknown'
 
     - name: peering-wg | absent | forget the failed units
       ansible.builtin.command: "systemctl reset-failed {{ _pb_names.wg.service }}"

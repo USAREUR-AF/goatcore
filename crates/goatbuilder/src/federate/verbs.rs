@@ -161,9 +161,32 @@ fn goat_toml_field(toml: &str, key: &str) -> Option<String> {
 }
 
 /// Run one verb, its report on `out`. Returns the verb's exit code.
+///
+/// `init` measures the core router with this run's `DOCKER_HOST` and
+/// `FED_ROUTER_CONTAINER` ([`router_env`]), passed to the library as values,
+/// so an in-process `init` never writes them into the process environment.
 pub fn run_to(cmd: FederateCmd, site: &SiteArgs, out: &mut dyn Write) -> Result<i32> {
-    let resolve = || resolve_site(site);
-    verbs::run(cmd, &resolve, out)
+    match cmd {
+        FederateCmd::Init(a) => {
+            let router = router_env();
+            let measure = |interface: Option<&str>| verbs::measure_here_with(&router, interface);
+            verbs::run_init_measured(&resolve_site(site)?, &a, out, &measure)
+        }
+        cmd => {
+            let resolve = || resolve_site(site);
+            verbs::run(cmd, &resolve, out)
+        }
+    }
+}
+
+/// The core router's `DOCKER_HOST` and `FED_ROUTER_CONTAINER` as this run sees
+/// them: the value the run recorded (runenv), else the process environment's,
+/// as `goat federate init` reads them.
+pub fn router_env() -> goat_federation::derive::RouterEnv {
+    goat_federation::derive::RouterEnv {
+        docker_host: super::runenv::var_os("DOCKER_HOST").map(|v| v.to_string_lossy().into_owned()),
+        container: super::runenv::var("FED_ROUTER_CONTAINER").ok(),
+    }
 }
 
 /// [`run_to`], with init measuring over SSH when `measure` says
@@ -256,6 +279,25 @@ pub fn run_argv(argv: &[String]) -> Result<i32> {
 mod tests {
     use super::*;
     use anyhow::anyhow;
+
+    /// An in-process init reads the core router's DOCKER_HOST and container
+    /// from the run (runenv), as values, and the process environment holds
+    /// neither, during or after.
+    #[test]
+    fn init_gets_the_routers_values_from_the_run_not_the_process() {
+        super::super::runenv::set("DOCKER_HOST", "ssh://goat@192.0.2.20");
+        super::super::runenv::set("FED_ROUTER_CONTAINER", "zagros-zenoh-router");
+        let r = router_env();
+        super::super::runenv::unset("DOCKER_HOST");
+        super::super::runenv::unset("FED_ROUTER_CONTAINER");
+        assert_eq!(r.docker_host.as_deref(), Some("ssh://goat@192.0.2.20"));
+        assert_eq!(r.container.as_deref(), Some("zagros-zenoh-router"));
+        assert_ne!(
+            std::env::var("DOCKER_HOST").ok().as_deref(),
+            Some("ssh://goat@192.0.2.20"),
+            "the process environment was written"
+        );
+    }
 
     /// The context name is read from config.toml the way goat reads it, so a
     /// file a TOML parser reads differently (or refuses) names the same

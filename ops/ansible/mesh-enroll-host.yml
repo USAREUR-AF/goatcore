@@ -24,13 +24,27 @@
 # Then one JSON object {host: mesh IP} is written on the operator machine at
 # `mesh_ips_out`; ops/scripts/standup-mesh-record.py reads it to fill the
 # site's group_vars, mesh inventory and router certificate (phase 8, second step).
+#
+# join-node (phase 10) runs it for one node, with two more variables:
+#   mesh_enroll_mint_group        the group whose first host holds the NetBird
+#                                 database the node enrols into (default: target).
+#                                 A joiner site has no database yet, so join-node
+#                                 names the founder's core group.
+#   mesh_enroll_groups_from_peer  true: the key carries the groups the minting
+#                                 host's own peer holds, read from that database
+#                                 (All left out), and the play refuses before any
+#                                 key exists when that peer holds none. Without
+#                                 groups the node lands in All only, which grants
+#                                 no peers. Designed; the query is not measured
+#                                 against a live database
+#                                 (docs/design/goatbuilder.md, join-node "(f)").
 - name: mesh-enroll — each host joins its own goatnet
   hosts: "{{ target | mandatory }}"
   become: true
   gather_facts: false
   serial: 1
   vars:
-    _me_first_host: "{{ groups[target][0] }}"
+    _me_first_host: "{{ groups[mesh_enroll_mint_group | default(target)][0] }}"
     _me_url_parts: "{{ (mesh_enrollment_url | default('')) | regex_search('^https://([^/:]+):(443|8443)$', '\\1', '\\2') }}"
   tasks:
     - name: mesh-enroll | the site declares where its hosts enrol
@@ -101,21 +115,68 @@
               NetBird account(s); phase 8 enrols into exactly one. Phase 6 seeds it.
             quiet: true
 
+        - name: mesh-enroll | the minting host's own mesh address (groups from a live peer)
+          when: mesh_enroll_groups_from_peer | default(false) | bool
+          ansible.builtin.command: netbird status --json
+          delegate_to: "{{ _me_first_host }}"
+          register: _me_mint_status
+          changed_when: false
+
+        - name: mesh-enroll | the groups the minting host's peer holds, All left out
+          when: mesh_enroll_groups_from_peer | default(false) | bool
+          vars:
+            _me_mint_ip: "{{ ((_me_mint_status.stdout | from_json).netbirdIp | default('')).split('/') | first }}"
+          block:
+            - name: mesh-enroll | the minting host has a mesh address to read its peer by
+              ansible.builtin.assert:
+                that:
+                  - _me_mint_ip is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
+                fail_msg: >-
+                  {{ _me_first_host }} reports no mesh address, so the groups a live
+                  peer holds cannot be read off it. No key was minted.
+                quiet: true
+
+            - name: mesh-enroll | read the groups off that peer
+              ansible.builtin.command:
+                argv:
+                  - docker
+                  - exec
+                  - postgres-a
+                  - psql
+                  - -U
+                  - postgres
+                  - -d
+                  - netbird
+                  - -tAc
+                  - >-
+                    SELECT gp.group_id FROM group_peers gp
+                    JOIN peers p ON p.id = gp.peer_id
+                    JOIN groups g ON g.id = gp.group_id
+                    WHERE p.account_id = '{{ _me_accounts.stdout_lines | select | first | trim }}'
+                    AND p.ip = '"{{ _me_mint_ip }}"' AND g.name <> 'All'
+                    ORDER BY gp.group_id
+              delegate_to: "{{ _me_first_host }}"
+              register: _me_groups
+              changed_when: false
+
+            - name: mesh-enroll | the peer holds a group to give the node
+              ansible.builtin.assert:
+                that:
+                  - (_me_groups.stdout_lines | select | list | length) > 0
+                fail_msg: >-
+                  The peer of {{ _me_first_host }} ({{ _me_mint_ip }}) holds no group but All,
+                  so a key minted from it would give the node no peers. No key was minted.
+                quiet: true
+
         - name: mesh-enroll | mint a single-use setup key (one use, one hour)
           ansible.builtin.command:
-            argv:
-              - mgmt-host-bootstrap
-              - create-setup-key
-              - --account
-              - "{{ _me_accounts.stdout_lines | select | first | trim }}"
-              - --role
-              - bootstrap
-              - --ttl
-              - 1h
-              - --usage
-              - "1"
-              - --name
-              - "phase8-{{ inventory_hostname }}-{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+            argv: >-
+              {{ ['mgmt-host-bootstrap', 'create-setup-key',
+                  '--account', _me_accounts.stdout_lines | select | first | trim,
+                  '--role', 'bootstrap', '--ttl', '1h', '--usage', '1',
+                  '--name', 'phase8-' ~ inventory_hostname ~ '-' ~ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ')]
+                 + (['--auto-groups', _me_groups.stdout_lines | select | map('trim') | join(',')]
+                    if (mesh_enroll_groups_from_peer | default(false) | bool) else []) }}
           delegate_to: "{{ _me_first_host }}"
           register: _me_key
           changed_when: true

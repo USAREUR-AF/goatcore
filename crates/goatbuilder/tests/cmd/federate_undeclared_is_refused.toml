@@ -1,8 +1,9 @@
-# C1: the repository's own config declares no peering, and an empty list refuses every name.
+# C1: the repository's own config declares no peering, and an empty list refuses every name (GB-149, exit 1).
 bin.name = "goatbuilder"
 args = ["federate", "-C", "../..", "no-such-peer", "--dry-run"]
-status.code = 2
+status.code = 1
 stdout = ""
 stderr = """
 goatbuilder: peering 'no-such-peer' is not declared in ../../ops/goatbuilder/goatbuilder.yaml peerings: (declared: none) — declare it first (C1)
+  (GB-149 — goatbuilder explain GB-149)
 """

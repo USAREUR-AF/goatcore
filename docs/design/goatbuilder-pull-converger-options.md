@@ -53,9 +53,9 @@ would read ([goatbuilder.md](goatbuilder.md), "The model": "for a pull converger
 would be made from: `goatbuilder pins` renders `ops/consistency/intent/<goatnet>/intent.json`
 (IntentV1) and verifies its detached signature (`crates/goatbuilder/src/pins.rs`).
 
-**`status` on real hosts is not built either** (`GB-026`, "the push converger's status path is not
-built yet"). It is in 1.0's scope as gate row C3, and its read path is the same `read_record` a
-pull converger needs.
+**`status` on real hosts is built for the push converger** (gate row C3): it reads the hosts as
+`diff` does and grades them as `verify` does. GB-026, its earlier refusal, is retired. Its read
+path is the same `read_record` a pull converger needs.
 
 **The decisions behind both are proposed, not accepted.** [ADR 1109](../adr/1109-fleet-management-dimension-and-pull-convergence.md)
 (convergence is pulled) and [ADR 1198](../adr/1198-goatbuilder-config-driven-deploy-release-cli.md)

@@ -1,0 +1,98 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "tutor",
+  "ok": true,
+  "exit": 0,
+  "checks": [
+    {
+      "name": "lesson 1",
+      "ok": true,
+      "detail": "Check your setup                                               next"
+    },
+    {
+      "name": "lesson 2",
+      "ok": true,
+      "detail": "Read state: converged, pending, unknown                        locked"
+    },
+    {
+      "name": "lesson 3",
+      "ok": true,
+      "detail": "Deploy: plan it, run it, prove it                              locked"
+    },
+    {
+      "name": "lesson 4",
+      "ok": true,
+      "detail": "Drift and history                                              locked"
+    },
+    {
+      "name": "lesson 5",
+      "ok": true,
+      "detail": "Roll back, and see an unsafe rollback refused                  locked"
+    },
+    {
+      "name": "lesson 6",
+      "ok": true,
+      "detail": "Release a new version: dev, then preprod, then prod            locked"
+    },
+    {
+      "name": "lesson 7",
+      "ok": true,
+      "detail": "Fastlane, and when not to use it                               locked"
+    },
+    {
+      "name": "lesson 8",
+      "ok": true,
+      "detail": "Pins: find drift and fix it the right way                      locked"
+    },
+    {
+      "name": "lesson 9",
+      "ok": true,
+      "detail": "Explain an error                                               locked"
+    },
+    {
+      "name": "lesson 10",
+      "ok": true,
+      "detail": "Tutorial 1: build a new goatnet's first site                   locked"
+    },
+    {
+      "name": "lesson 11",
+      "ok": true,
+      "detail": "Tutorial 2: add a second site                                  locked"
+    },
+    {
+      "name": "lesson 12",
+      "ok": true,
+      "detail": "Add a machine to a running site                                locked"
+    },
+    {
+      "name": "lesson 13",
+      "ok": true,
+      "detail": "Connect to another organization's goatnet                      locked"
+    },
+    {
+      "name": "lesson 14",
+      "ok": true,
+      "detail": "Keep goatbuilder up to date                                    locked"
+    },
+    {
+      "name": "lesson 15",
+      "ok": true,
+      "detail": "Assay: check how a goatnet was built                           locked"
+    },
+    {
+      "name": "lesson 16",
+      "ok": true,
+      "detail": "Survey: are the versions consistent?                           locked"
+    },
+    {
+      "name": "lesson 17",
+      "ok": true,
+      "detail": "Endstate: does a goatnet run exactly what it declares?         locked"
+    },
+    {
+      "name": "lesson 18",
+      "ok": true,
+      "detail": "Bonus: be curious                                              locked"
+    }
+  ]
+}

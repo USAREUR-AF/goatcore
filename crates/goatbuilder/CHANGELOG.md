@@ -6,6 +6,465 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+<!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+
+### For someone deploying
+
+#### Changed: a back-out drops the partner's store whole on a goat-zenoh role core
+
+`goatbuilder federate backout <partner>` now takes the partner's entry out of
+`zenoh_sovereign_peerings` in `group_vars/<core router group>/peerings.yml`,
+keeping every other line, runs the role's play, which restarts the router
+without the partner's store, and then runs `ops/ansible/zenoh-drop-partner-store.yml`,
+which deletes `<storage path>/sovereign_from_<partner>` once the router runs
+without it (ADR 1234). Commit the edited `peerings.yml` through review. A store
+the role kept because the router does not yet run without it is reported as
+GB-270. The role no longer renders the shared `sovereign_from` store on
+`from/**`: on a core that had it, its directory stays on disk with no retention
+and is listed in `.undeclared-stores` until you dispose of it. The federation
+partner bundle changed with the specification; partners holding the previous
+bundle need the new one (#629).
+
+#### Fixed: a back-out stops on a probe that cannot tell, and takes back what admission placed
+
+`goatbuilder federate backout` reads a thing as absent only on the exact
+"not found" line its tool prints for that name (docker, podman, `wg`, `ip`,
+`nft` and SPIRE). A probe that failed any other way, such as a folder it
+could not list or a system bus it could not reach, reads `unknown`, and an
+`unknown` row stops the back-out instead of counting as absent.
+**Behaviour change:** a back-out that used to pass over such a probe now
+stops on it.
+
+The back-out also takes back what admission placed, by the route admission
+took. A core fragment the driver placed (`FED_CORE_*`) is removed the same
+way. On a core deployed by the goat-zenoh role, the core router's
+certificate and key are deleted only where they are byte for byte this
+peering's leaf, and our core router's leaf is restored from the earliest
+admission that touched it. An IPsec link's MSS clamp rules are removed by
+their own handles (#554).
+
+#### Added: the end state grades federation-proxy where a site turns it on
+
+`goatbuilder endstate` now has a row for `federation-proxy`, the node-local
+proxy signal federation dials its partner through. A site that sets
+`signal_federation_proxy_enabled` and does not run it, or runs it without
+the flag, is now reported. The flag defaults to false, so a site that does
+not set it is graded as not running the proxy. A site without the
+`signal-federation-transport` ledger grades its deployment as unknown, never
+as failed (#637).
+
+#### "Changed: every refusal names its catalog code, and an undeclared peering exits 1"
+
+The refusals that printed no catalog code now print one, on the line after
+the message (`(GB-NNN — goatbuilder explain GB-NNN)`): a command line goatbuilder
+cannot parse (GB-242); a mutation without `--yes` and without a terminal for
+`apply`, `standup`, `teardown`, `join-node` and `federate` (GB-008); a
+federation verb given site flags before it (GB-238) or a flag it does not take
+(GB-239); an unknown `FED_VERBS` (GB-240); `--mock` on a verb that reads the
+checkout (GB-276, new); and a peering that is not declared (GB-149). The
+undeclared peering now exits 1, refused, as GB-149 says and as `federate
+allocate`'s same refusal already did; it exited 2 (gate row C5).
+
+#### Fixed: federate status resumes from the first phase it cannot show passed
+
+`goatbuilder federate status` named the next command from the phase the last
+run ended on, plus one. On a journal a later goatbuilder wrote, with phases
+recorded as an outcome this build does not know (for example `deferred`), it
+advised a `--from` past those phases, although such an outcome never counts as
+passed. It now advises `--from` the first phase the journal does not show
+passed. After a failure or an operator step, the advice is unchanged (#632).
+
+#### Added: `join-node` names what the site does not run, and why
+
+The dry-run plan and the summary of a real `join-node` run end with a section
+headed "What <site> does not run". It lists every catalog service the
+end-state model (`endstate.py model <site>`) marks absent at the site, each
+with the model's reason. A service the site turns off reads its flag, for
+example "`isitup_enabled` is false in group_vars". At a joining site, the
+NetBird dashboard, the portal, the id console and the onboarding engine read
+"single-homed at the founder (ADR 1084 §D3); every site once ADR 1165 lifts
+it for this class", followed by the declaration that keeps each one off.
+`goatbuilder endstate` gives an absent service the same reason, so the plan
+and the grade cannot disagree. When the model cannot be read, the section
+says so in one line and lists nothing; the run is not stopped. (#612)
+
+#### "Changed: join-node has no manual phase after reaching the node"
+
+`goatbuilder join-node` stopped at phase 8, to mint a setup key, and at
+phase 10, to enrol the node by hand. Now phase 10 enrols the node itself. It
+mints a single-use, one-hour key where the NetBird database is (for a joiner
+site, the founder's first host), hands it to `netbird up` through a 0600 file
+on the node, and checks that the node is on the kernel ACL plane. The key
+never reaches your machine and is not stored. Phase 10 then writes the node's
+mesh address into your checkout; the run's summary and its run record name
+each file it wrote, for you to review and commit. Phase 8 now checks that the
+site declares `mesh_enrollment_url`, and phase 9 sends no setup key. Phase 2
+resolves the first-login password through the secrets injector and refuses
+one that still holds a reference (GB-269); the password reaches `sudo` on
+standard input. Only phase 1, reaching the node, stops the run (#661).
+
+#### Fixed: join-node adds a node at a third site, phases 1 to 15
+
+Three refusals stopped `goatbuilder join-node` for a node not yet enrolled at
+a goatnet that already has a joiner. Phases 3 and 7 refused the mesh-address
+placeholder that phase 12 fills: they now run the config preflight with
+`--before-enrolment`, which warns on that one placeholder and still fails on
+any other. Pass 1 of phase 13 waited for a management service that needs
+the Ory deployed by the next step: it now runs the stack plays only, as
+`standup` does. A third site that declares signal federation off, with its
+reason, was refused because its founder federates with another site: it now
+passes, unless the founder's federation names it (#613).
+
+#### Changed: container memory limits and Postgres memory are settable, and cron is installed
+
+Every container memory limit and reservation in the roles and compose files
+is now a variable whose default is the value it had, so a small host can
+lower them in its group_vars. Postgres `shared_buffers` and
+`max_connections` keep the image's values unless
+`mgmt_postgres_shared_buffers` or `mgmt_postgres_max_connections` is set;
+`mgmt-host.yml` refuses an `mgmt_postgres_max_connections` that differs
+from `postgres_max_connections`. The roles that schedule jobs with cron
+(`apt-cacher-ng`, `docker-registry-mirror`, `oci-substrate-t2-sync`,
+`isitup`, `operator-idp-postgres` and the observability play) now install
+`cron` first, so a minimal Debian host runs those jobs (#615).
+
+#### Changed: the forwarder's carrier read-back reads each peer's public key and allowed address
+
+`goat-peering-forwarder` reads each carrier back with `wg show <carrier>
+allowed-ips` and `listen-port`, and a back-out checks that a carrier exists with
+`listen-port`. When a carrier does not hold what the declaration says, the failure
+message lists each peer's public key and allowed address, then the port the
+carrier listens on.
+
+#### Fixed: a phase 11 link that did not come up is named as GB-271
+
+When phase 11 of `goatbuilder federate` fails because the peering's
+WireGuard interface does not hold the agreed peer and address, the failure's
+`interpreted` row now names GB-271 instead of X-ANSIBLE-003, which pointed
+at an empty secret and `deploy --dry-run`. The likely causes, most likely
+first: the link unit is still running as it was before phase 11 and was not
+restarted; the unit was restarted but its link script stopped partway; or
+something else changed the interface afterwards. The next step: restart
+`goat-peering-wg@<interface>.service` on the edge and check the interface
+again, read the unit's journal if it still does not match, then resume with
+`goatbuilder federate <peering> --from 11`. `goatbuilder explain GB-271`
+gives the same. Every other failed assertion still reads X-ANSIBLE-003
+(#646).
+
+#### Fixed: the command reference lists federate's own flags
+
+`goatbuilder docs --markdown` and `docs/reference/goatbuilder/command-reference.md`
+documented a global flag only on the root command. The flags `federate`
+declares for all its verbs (`--over-ssh`, `--side`, `--half-out`,
+`--edge-half`, `--edge-half-sha`, the host, group and router-container flags,
+and the goat context flags) appeared on no command. They are now documented
+once, on `goatbuilder federate`, so the compatibility check also holds them
+against the last release (#633).
+
+#### Changed: a refusal names its error code
+
+A refusal from `standup`, `join-node`, `release`, `rollback`, `pins`,
+`doctor`, `promote`, `fastlane`, the fresh-source check, the converger,
+`inspect` and the configuration loader now prints its `GB-nnn` code, so
+`goatbuilder explain <code>` gives its causes and fixes. The error catalog gains
+GB-238 to GB-260, GB-263 and GB-264 for refusals that had no code. A
+refused `release` step ends its row with the code instead of dropping it,
+and GB-008 names every verb that asks for `--yes`. A few refusals of the
+command line itself and two of `federate`'s still print no code; they get
+theirs in a later change (#560).
+
+#### Fixed: a release re-run on a later day opens no dev-pin PR
+
+`goatbuilder release` declares a candidate on the dev rung with a reason that
+carries the day. Re-running a dev step that had already landed, on a later
+day, rewrote that reason and landed a pin PR that changed nothing but the
+date. A rung that already declares the candidate now keeps its deviation as
+it stands, reason and date included (#622). The script avenue,
+`ops/scripts/rc.sh`, does the same (#621).
+
+#### Fixed: rollback reaches a goatnet through its door, as deploy does
+
+`goatbuilder rollback --site <goatnet>`, on a site whose map is one host,
+tries the host directly. When it does not answer, rollback goes through the
+env door that `deploy` uses for that site (the netbird profile, the mesh
+host on tcp/22, then the door registry). The connection still goes to the
+ledger's own host and checks that host's key: the door only carries it,
+so a door that lands on another host can never stand in for it. A door that
+does not open falls back to direct ssh. Without `--site`, or for a site of
+several hosts, nothing goes through a door. `ops/scripts/rollback.sh` now
+reaches the ledger's host the same way, where it used to reach whatever
+host the door landed on, and the live canary passes `--site` to both
+rollback avenues and to `rollback --list` (#644).
+
+#### Added: a run lists every value it uses and where each came from
+
+`goatbuilder standup`, `join-node`, `deploy` and `federate` now record every
+value their commands use in the run record's `inputs` (`goatbuilder show <run>`,
+`goatbuilder runs diff`), each with its source: a file and line, the
+declaration and rule it was derived from, an environment variable, a default,
+an allocation or an argument. A dry run prints the same list, as `input` rows
+under `-o json` and as a section of the plan page, and names the secrets
+posture probes it ran to read them. A secret is shown by its source only,
+never its value (#649).
+
+#### Added: a failed standup phase names the error in its output
+
+When a standup phase fails, its output (the log the run kept of it) is matched
+against the error catalog, as `goatbuilder federate` already does. The failure
+then carries an `interpreted` row: the error's code, its likely cause and fix,
+the log, and the command that runs that phase again by hand. With no known
+error in the output, the row gives the phase's own guidance from the phase
+catalog. This covers the numbered phases; the image pull, the observability
+legs and phase 12's parallel steps are not covered yet.
+
+#### Added: goatbuilder status reads real hosts
+
+`goatbuilder status --env <env>` without `--mock` refused with GB-026. It now
+reads each machine's deploy ledger the way `goatbuilder diff` reads it and grades
+it the way `goatbuilder verify` grades it, so the three agree about every
+machine. It reads only: no play runs and nothing is written. It exits 3 while
+any machine is pending or unknown. GB-026 is retired: no release after this one
+prints it (#648).
+
+#### "Added: `goatbuilder update verify-release` verifies a downloaded goatbuilder release without installing it"
+
+`goatbuilder update verify-release <dir> --signer <owner>/<repo> --version
+<x.y.z> [--trusted-root <file>]` verifies a downloaded goatbuilder release
+without installing it, with the checks `goatbuilder update` makes before it
+installs: the keyless signature over `SHA256SUMS` (`SHA256SUMS.cosign-bundle`)
+for the release workflow of `<owner>/<repo>` at `goatbuilder/v<version>`, and
+every other file in `<dir>` against that `SHA256SUMS`. It reads only. A
+refusal names the failed check: GB-261 for the signature, GB-074 for a file.
+
+#### Fixed: an edge deployed from a workspace gets the certificates it mounts, or phase 12 says why
+
+`goatbuilder federate` run from a machine that is not the edge host (an operator's
+workspace) used to deploy an edge whose leaves and CAs lived only on the
+workspace, in `<work>/pki`: the edge started, mounted nothing and never reached
+the core. Phase 12 now refuses first (GB-275) when the edge group's vars point
+the edge at files in `<work>/pki`, the inventory names the edge as another
+machine, and `goat_zenoh_edge_install_certs` is off; the fix is to turn that
+switch on. With it on, the `goat-zenoh-edge` role now also installs our CA's
+certificate as `<cert_dir>/our-ca.pem`, from `<work>/pki/our-ca.pem` (never the
+CA's key: a source holding a private key is refused), and `goatbuilder federate
+allocate` renders our CA's path and the core endpoint's override at that path.
+
+### For someone contributing
+
+#### Fixed: CI runs on main to the end, and several checks say why they fail
+
+- A run on `main` is no longer cancelled by the next push to `main`, so the
+  commit a release is tagged on keeps its own complete run (#618).
+- The playbook syntax step prints each failing playbook's error, and an
+  Ansible collection that a timed-out install left half written is
+  installed again (#625).
+- `.envrc.example` is regenerated, and a check holds it to the environment
+  variables the repository reads (#627).
+- The filter plugin tests moved out of `ops/ansible/filter_plugins`, so
+  Ansible no longer imports them on every playbook run (#626).
+- The hermetic deploy job's release re-run and soak cases pass on a run
+  that crosses midnight UTC (#621).
+
+#### Changed: the compatibility check holds more of the last release, now goatbuilder/v0.6.0
+
+`ops/ci/check-goatbuilder-compat.sh` compares each build with the last
+published release, now `goatbuilder/v0.6.0`. It keeps `-o json` documents
+for the verbs that change state (`deploy`, `rollback`, `plan`, `standup`,
+`teardown`) and for run journals, and holds a field that only some entries
+of a list carry from a reviewed list (`conditional.yaml`). A kept command's
+exit code changes only with a reason in `exit_changed`, and a value a flag
+accepted in the last release is still accepted. The published binaries'
+checksums are one list, `crates/goatbuilder/tests/upgrade/releases.sha256`,
+which the upgrade tests own and the check only reads, and it holds
+v0.6.0's binaries. v0.6.0's configuration files are kept for gate row A2
+beside those of the earlier releases (#566, #617, #562, #563, #631, #634,
+#616).
+
+#### Added: contract clause C11, legibility, is written beside C1 to C10
+
+Clause C11 is now in the deploy contract, in `docs/design/goatbuilder.md`
+and the contract chapter (`docs/reference/goatbuilder/06-contract.md`):
+for every action the tool takes, its command, its inputs with their
+sources, and its reason can be read before, during and after the run. Both
+name its conformance test, `crates/goatbuilder/tests/legibility.rs`, and
+say what each of its four checks requires. C11 does not hold yet: the
+checks that fail today are listed in
+`crates/goatbuilder/tests/legibility-known-failing.txt` (#647).
+
+#### Fixed: the federation test environment's other clones own their objects
+
+The watcher's preview and reverts and the upgrade unit made `--shared`
+clones, which read every object from the source and lose a commit once the
+source prunes it. They now use `src_clone_ref` in
+`ops/federation-e2e/lib/srctree.sh`: a plain local clone at a branch, tag
+or sha, which keeps its objects and refuses a shallow source or an empty
+argument before anything is removed. No harness script makes a `--shared`
+clone any more (#643).
+
+#### Fixed: the federation test environment's source clone holds every object of the commit under test
+
+The federation test environment builds each commit under test from its own
+clone. From a shallow source repository, that clone could miss a commit
+that no ref held, so the checkout failed with `fatal: unable to read tree`
+and the build found no `crates/` directory. The clone
+(`ops/federation-e2e/lib/srctree.sh`, used for goatcore and for the
+saltlick directory) is now a plain clone, and fetches the commit by sha
+when it cannot read its tree, so it holds the commit's objects itself. A
+clone from an earlier run is reused only when it is checked out at that
+commit and can read its tree. A failure stops with `no tree for <sha>`
+instead of going on to build nothing, and a sha that is not 40 lower-case
+hex characters is refused before anything is removed: an empty one would
+have named the directory of every cached tree (#638).
+
+#### Fixed: the goat client's doctor tests write their fake netbird from a child process
+
+Two tests of `goat doctor` failed at random: each wrote a fake `netbird`
+script and ran it at once, and when another test thread forked while the
+script was still open for writing, running it failed with ETXTBSY. A test
+helper now writes the script and sets its mode from a short-lived child
+process, so the test process never holds it open. Only test code changes
+(#314).
+
+#### Fixed: an in-process federation verb no longer writes the process environment
+
+When goatbuilder runs a federation verb in process, phase 3's `init` used
+to read `DOCKER_HOST` and `FED_ROUTER_CONTAINER` from the process
+environment, so goatbuilder wrote both into it with `std::env::set_var` for
+the verb's duration, which every thread shares. The values are now passed
+to the measurement (`derive::RouterEnv` in goat-federation), and
+`DOCKER_HOST` reaches the container runtime's commands as their own
+environment. `goat federate init` reads its environment as before. A test
+refuses any `set_var` or `remove_var` under `crates/goatbuilder/src/federate/`
+(#641).
+
+#### Changed: the federation test environment's kill-resume aims phase 11's kill
+
+The kill-resume scenario kills phase 11 once the WireGuard role has written
+the link's files and before its handler restarts the link, instead of a
+fixed delay after the phase starts. The gap that 0.6.1 fixed (#597) is now
+found on every run, not by chance (#620).
+
+#### Changed: a changelog entry is a file of its own, and a new ADR's index row is rendered
+
+A pull request adds its goatbuilder changelog entry as a file in
+`crates/goatbuilder/changelog.d/` instead of editing `CHANGELOG.md`;
+`ops/release/changelog.py` renders the Unreleased section and folds the
+entries into a release. The index row of an ADR above 1234 is
+rendered from the ADR's own header by `ops/release/adr_index.py`, so adding
+an ADR edits no shared file. `docs-guards` checks both (#623, #636).
+
+#### Changed: the pull request template drops its co-author trailer line
+
+The pull request template no longer carries a checklist line about
+co-author trailers added by tooling. The rule is unchanged: ADR 0109 still
+states it, and `pr-readiness` still refuses such a trailer in a commit
+message (#315).
+
+#### Fixed: standup passes the trunk and the mirror token to its phases as run state
+
+`goatbuilder standup` no longer writes `GOAT_FRESH_SOURCE_TRUNK` and the
+pub/sub-state mirror bot's token into its own process environment in the
+middle of a run. Both are run state, given to each phase's process as its
+own environment. The trunk goes to every phase, as before. The token goes
+only to the two phases that read it, the mint step and the mirror play, and
+is removed from every other phase's environment, even when the operator's
+own environment holds it: least privilege for child processes. A test
+allows a process-environment write only in `main`, before any thread
+starts (#642).
+
+#### Added: a test that backing out a role-admitted core gives its org fragment back
+
+A unit test holds the back-out to the federation test environment's real
+fixtures: admission's `merge_org` turns the core's org fragment from before
+the peering into the admitted one, and `backout_core.py plan` turns the
+admitted one back into the fragment from before, byte for byte
+(`crates/goatbuilder/tests/fixtures/backout-role-core/`) (#547).
+
+#### Added: every whole configuration example in the docs is validated
+
+`crates/goatbuilder/tests/doc_configs.rs` runs every `yaml` block under
+`docs/` that holds `schema: goatbuilder/v1` through this build's
+`goatbuilder validate`. An example meant to be refused says so, with its
+code, on its first line. The two examples that their own release refused,
+in the configuration reference and tutorial 00, are fixed, and the test
+runs on every pull request that touches goatbuilder or a document (#568).
+
+<!-- END generated: changelog unreleased -->
+
+## 0.6.1 — 2026-11-13
+
+The fix for 0.6.0's known issue: a `goatbuilder federate` run killed in phase
+11 now resumes and brings the WireGuard link up. It also carries the first
+piece of the two-driver run (gate row B10), which changes `--side edge` on a
+peering run and reserves the peering name `import`; see below.
+
+### For someone deploying
+
+#### Fixed: a federate run killed in phase 11 resumes and brings the link up
+
+A run killed after phase 11 wrote the WireGuard link's files, and before it
+restarted the link, left the interface with no peer. Resuming with `--from 11`
+changed no file, so the link was never restarted and phase 11 refused, then
+phase 12. The `goat-peering-wg` role now reads the interface and restarts the
+link whenever the interface does not hold the agreed peer and address (#597).
+
+#### Added: a two-driver peering stops at the first phase that needs the edge
+
+A peering may declare `drivers: two` on its own `peerings:` entry (schema
+`peering.drivers`, `one` or `two`, default `one`), for a site where no one
+machine reaches both the edge host and the core host. Such a run stops before
+acting at phase 1 or 2 and hands the edge driver a printed object naming every
+command it runs (GB-265, exit 0; with `-o json`, the report's `handoff`
+member). A two-driver run that would reach phase 3 or 11 to 14, and a
+two-driver `federate deploy`, are refused before acting (GB-267). A controller
+whose checkout is not clean gives no object (GB-266). Nothing after the stop
+is built yet: the edge driver's run and `import` are refused with GB-267
+(#601).
+
+Behaviour changes for every peering:
+
+- `goatbuilder federate <partner> --side edge`, with no other measure flag, is
+  refused with GB-267 (exit 1) instead of the uncoded measure-flag message
+  (exit 2).
+- `import` is a reserved peering name, and a declared peering named `import`
+  is refused by the configuration check.
+- `goatbuilder federate` gains the subcommand `import` (refused, GB-267) and
+  the flag `--expect-commit`.
+
+A peering without `drivers: two` runs as before.
+
+#### Images and roles built from this repository
+
+- `ory-deploy.yml` reads the Postgres superuser password from the site's
+  `<SITE>_PG_PASS` in the deploy environment when no `-e` gives it, and checks
+  it is set before anything reaches the host. The sign-in provider's secret is
+  checked before its file is written, and the migrations and the start carry
+  `--no-deps`, so an Ory deploy never recreates `postgres-a` (#593).
+- The audit-subscriber role's lifecycle steps run `mc` with a writable `HOME`,
+  so they no longer stop at the first step on a host with a new MinIO
+  container (#595).
+
+### For someone contributing
+
+- The federation test environment's two-sovereign job runs as a build job, a
+  job per scenario and the required check over them, under its unchanged
+  name (#602). A script gives each stage a key from its whole input
+  directories (#603); reusing a stage's result by that key is not built.
+- CONTRIBUTING: a fix shows its failure on main before its pull request
+  opens (#588).
+- Tests: deploy's success path is held to what it prints and records (#606);
+  the federation test environment records a link that does not re-form
+  (#600), declares `drivers: two` in its two-driver scenario (#608), and its
+  hermetic job bounds and retries its package installs (#548).
+- Designs: one path for faults on peers we do not own, ADR 1232 (#594);
+  `join-node` builds the whole declared site, designed (#604); island mode's
+  pre-minted certificate batch (#605); ADR 1233, a joiner runs the
+  replication core, proposed (#607).
+
+### To be removed
+
+Nothing new. `goat federate <verb>` remains announced for removal as in 0.6.0.
+
 ## 0.6.0 — 2026-11-13
 
 What changed since 0.5.3, the previous release. Every run that drives hosts
@@ -263,6 +722,27 @@ documents now give the release's own identity:
   declaration, writing nothing.
 - **The pgbackrest role installs `cron`** before writing its backup schedule,
   so a minimal Debian 13 host no longer stops at the schedule task.
+
+#### Known issue: a federate run killed in phase 11 does not bring the link up on resume
+
+If a `goatbuilder federate` run is killed in phase 11 after it wrote the
+WireGuard link's files and before it restarted the link, the interface is
+left with no peer. Resuming with `--from 11` changes no file, so the link is
+not restarted: phase 11 refuses with "The interface does not hold what the
+agreement says", then phase 12 refuses. To recover, restart the peering
+WireGuard unit on the edge host (`systemctl restart` on the unit the role
+names in `peering_wg_service`), then resume with `--from 11`. A run that is
+not killed is not affected. 0.5.3 has the same gap. Fixed in the next
+release (#597).
+
+#### Fixed: the pre-deploy source check accepts a fix carried in two repositories
+
+The check that runs before every deploy (`ops/scripts/lib/source_of_record.py`,
+run by `fresh-source.sh` and by goatbuilder) refused a valid assembled tree
+when a pre-disclosure fix carried one patch in goatcore and one in goatstuff
+and both touched a file the two repositories share. Each patch is now judged
+against its own repository (#368). This shipped in 0.6.0 and was missing
+from its notes.
 
 #### Not in 0.6.0
 

@@ -915,7 +915,7 @@ fn run_phase1(
     let out = cmd
         .output()
         .with_context(|| format!("python3 {}", script.display()))?;
-    let (ready, rows) = read_readiness(result).with_context(|| {
+    let (written, _, _) = read_result(result).with_context(|| {
         format!(
             "phase 1 exited {}: {}",
             out.status,
@@ -923,10 +923,12 @@ fn run_phase1(
         )
     })?;
     anyhow::ensure!(
-        out.status.success() == ready,
-        "phase 1 exited {} but its result says ready={ready}; not trusting either",
+        out.status.success() == written,
+        "phase 1 exited {} but its result says ready={written}; not trusting either",
         out.status
     );
+    // Read again for the verdict: a one-sided result is not ready on its own.
+    let (_, rows) = read_readiness(result)?;
     anyhow::ensure!(
         !rows.is_empty(),
         "phase 1 wrote no results to {}",
@@ -940,14 +942,34 @@ fn blocks(outcome: &str) -> bool {
 }
 
 /// Whether a phase-1 result file (`goat-federation-preflight/v1`) says ready,
-/// and its outcomes.
+/// and its outcomes. Phase 1 passes only when both sides' results are ready:
+/// a result that carries `side` `edge` or `core` (written by the phase-1
+/// sides change, #558) is never ready on its own, and a `sides` row says why. Combining it with the other side's result
+/// is the two-driver import, which is not built.
 pub fn read_readiness(path: &Path) -> Result<(bool, Vec<Readiness>)> {
+    let (ready, side, mut rows) = read_result(path)?;
+    if let Some(side) = side.filter(|s| s != "both") {
+        rows.push(Readiness {
+            check: "sides".into(),
+            outcome: "BLOCKED".into(),
+            code: None,
+            detail: format!("this phase 1 result holds only the {side} side's checks; phase 1 passes only when both sides' results are ready, and a one-sided result is never ready on its own"),
+        });
+        return Ok((false, rows));
+    }
+    Ok((ready, rows))
+}
+
+/// A phase-1 result file as written: its own ready flag, its side (absent in
+/// a result written before sides), and its outcomes.
+fn read_result(path: &Path) -> Result<(bool, Option<String>, Vec<Readiness>)> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("no phase 1 result at {}", path.display()))?;
     let doc: serde_json::Value =
         serde_json::from_str(&text).with_context(|| format!("{} is not JSON", path.display()))?;
     let s = |v: &serde_json::Value| v.as_str().unwrap_or_default().to_string();
     let ready = doc["ready"].as_bool() == Some(true);
+    let side = doc["side"].as_str().map(String::from);
     let rows = doc["results"]
         .as_array()
         .map(|rs| {
@@ -964,7 +986,7 @@ pub fn read_readiness(path: &Path) -> Result<(bool, Vec<Readiness>)> {
                 .collect()
         })
         .unwrap_or_default();
-    Ok((ready, rows))
+    Ok((ready, side, rows))
 }
 
 /// The declared peering (C1), and every declared peering (for the host check),
@@ -981,11 +1003,14 @@ fn declared(repo: &Path, o: &PlanOptions) -> Result<(config::Peering, config::Co
         .find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true))
         .cloned()
         .ok_or_else(|| {
-            anyhow!(
-                "peering '{}' is not declared in {} peerings: — declare it first (C1)",
-                o.with,
-                cfg_path.display()
-            )
+            anyhow::Error::from(goat_errors::coded(
+                "GB-149",
+                format!(
+                    "peering '{}' is not declared in {} peerings: — declare it first (C1)",
+                    o.with,
+                    cfg_path.display()
+                ),
+            ))
         })?;
     Ok((found, cfg))
 }
@@ -1893,6 +1918,10 @@ pub enum Stage {
     /// admission, and leave every other peering and the core as they were.
     #[command(name = super::backout::VERB)]
     Backout(super::backout::BackoutArgs),
+    /// A two-driver peering's import of an edge result, as a hand-off object
+    /// names it. Not built yet: refuses with GB-267
+    /// (docs/design/federation-two-drivers.md).
+    Import(super::handoff::ImportArgs),
 }
 
 /// Run one stage.
@@ -1902,6 +1931,7 @@ pub fn run(repo: &Path, stage: &Stage, mock: Option<&Path>) -> Result<Report> {
         Stage::Verb(_) | Stage::Backout(_) => {
             Err(anyhow!("the federation verbs and backout are run before this point"))
         }
+        Stage::Import(a) => Err(super::handoff::import_not_built(a)),
         Stage::Plan {
             with,
             env,
@@ -2358,6 +2388,30 @@ mod tests {
         assert_eq!(rows[0].code.as_deref(), Some("GB-131"));
         assert_eq!(rows[1].code, None);
         assert!(read_readiness(&d.path().join("none.json")).is_err());
+    }
+
+    /// Phase 1 passes only when both sides' results are ready: a result that
+    /// carries `side` `edge` or `core` (written by the phase-1 sides change,
+    /// #558) is never ready on its own, however its own checks went. A result for both, or with no side, reads as before.
+    #[test]
+    fn a_one_sided_phase_1_result_is_never_ready_on_its_own() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("r.json");
+        let doc = |side: &str| format!(r#"{{"schema":"goat-federation-preflight/v1","ready":true,{side}"results":[{{"check":"inputs","outcome":"PASS","code":"","detail":""}}]}}"#);
+        for side in ["edge", "core"] {
+            std::fs::write(&f, doc(&format!(r#""side":"{side}","#))).unwrap();
+            let (ready, rows) = read_readiness(&f).unwrap();
+            assert!(!ready, "a {side}-only result read as ready");
+            let row = rows.iter().find(|r| r.check == "sides").expect("a row saying why");
+            assert_eq!(row.outcome, "BLOCKED");
+            assert!(row.detail.contains(side) && row.detail.contains("both sides"), "{}", row.detail);
+        }
+        for side in [r#""side":"both","#, ""] {
+            std::fs::write(&f, doc(side)).unwrap();
+            let (ready, rows) = read_readiness(&f).unwrap();
+            assert!(ready, "{side}");
+            assert!(rows.iter().all(|r| r.check != "sides"));
+        }
     }
 
     /// A plan that was not ready cannot be approved later: a FAIL, a BLOCKED,

@@ -225,34 +225,684 @@ pub fn target(o: &Options) -> Result<Target> {
     })
 }
 
-/// The variables admission honours that name another route to our core
-/// (admit.rs: FED_CORE_PLAY with FED_CORE_GROUP, FED_CORE_RESTART, and
-/// FED_CORE_ACL_ORG for the org fragment). The back-out does not follow them,
-/// so a back-out with one set would survey and replace another core's files:
-/// it is refused (GB-221), naming the variable. `var` reads one variable.
-pub fn hand_core_route(var: impl Fn(&str) -> Option<String>) -> Result<()> {
-    let set: Vec<&str> = [
-        "FED_CORE_PLAY",
-        "FED_CORE_RESTART",
-        "FED_CORE_GROUP",
-        "FED_CORE_ACL_ORG",
-    ]
-    .into_iter()
-    .filter(|k| var(k).is_some_and(|v| !v.is_empty()))
-    .collect();
-    if set.is_empty() {
-        return Ok(());
+/// The variables that name the deployment's own route to our core. When one
+/// is set, admission works on the driver (admit.rs: the org fragment at
+/// FED_CORE_ACL_ORG, the seed and assembled output at FED_CORE_ACL_SEED and
+/// FED_CORE_ACL_OUT, a dry run, then FED_CORE_RESTART or FED_CORE_PLAY on
+/// FED_CORE_GROUP), and the back-out follows the same route there.
+const CORE_ROUTE: [&str; 4] = [
+    "FED_CORE_PLAY",
+    "FED_CORE_RESTART",
+    "FED_CORE_GROUP",
+    "FED_CORE_ACL_ORG",
+];
+
+/// Our core, reached the way the deployment names: what admission placed, on
+/// the driver, and how it restarted the core router.
+pub struct DriverCore {
+    core: super::admit::Core,
+    tool: PathBuf,
+    /// The peering's working folder: phase 8's leaves and admission's backups
+    /// are here, and the play admission ran is passed it as fed_work.
+    work: PathBuf,
+    leaf: CoreLeaf,
+}
+
+/// The deployment's own route to our core, read with `var` the way admission
+/// reads it (admit.rs `Core::from_vars`). `None` when none of its variables is
+/// set: the core is the play's to survey (a goat-zenoh role core). A route
+/// named but incomplete is refused (GB-221), naming what is missing.
+pub fn driver_core(
+    repo: &Path,
+    partner: &str,
+    env_name: &str,
+    work: &Path,
+    var: impl Fn(&str) -> Option<String>,
+) -> Result<Option<DriverCore>> {
+    let set = |k: &str| var(k).is_some_and(|v| !v.trim().is_empty());
+    if !CORE_ROUTE.iter().any(|k| set(k)) {
+        return Ok(None);
     }
-    Err(goat_errors::coded(
-        "GB-221",
+    // The role core exactly as admission decides it (admit.rs `role_core`).
+    let role = super::admit::role_core(repo, partner, &var)
+        .map_err(|e| anyhow::Error::from(goat_errors::coded("GB-221", format!("{e} (GB-221)"))))?;
+    let core = super::admit::Core::from_vars(repo, partner, env_name, role, &var).map_err(|missing| {
+        anyhow::Error::from(goat_errors::coded(
+            "GB-221",
+            format!(
+                "the deployment names its own route to our core ({}), but not all of it: set {} (GB-221)",
+                CORE_ROUTE.iter().filter(|k| set(k)).copied().collect::<Vec<_>>().join(", "),
+                missing.join("; ")
+            ),
+        ))
+    })?;
+    // Without FED_CORE_ACL_ORG, admission placed the org fragment on the role
+    // core's host: the play surveys it there, as it does with no route named.
+    if core.org.is_none() {
+        return Ok(None);
+    }
+    let leaf = CoreLeaf::new(work, core.cert.clone(), core.key.clone());
+    Ok(Some(DriverCore {
+        core,
+        tool: repo.join("ops/federation/standup/backout_core.py"),
+        work: work.to_path_buf(),
+        leaf,
+    }))
+}
+
+/// backout_core.py's plan of the org fragment alone, for a deployment that
+/// names no seed or assembled output (the host assembles them): the same
+/// `plan()`, without the proof that the output is seed plus org.
+const ORG_ONLY_PLAN: &str = r#"import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("backout_core", sys.argv[1])
+bc = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(bc)
+org = open(sys.argv[2], encoding="utf-8").read()
+try:
+    cand, rep = bc.plan(org, sys.argv[3])
+    rep["refused"] = None
+except ValueError as e:
+    cand, rep = None, {"refused": str(e)}
+if cand is not None:
+    open(sys.argv[4] + "/org.candidate", "w", encoding="utf-8").write(cand)
+    rep["org_candidate_sha256"] = bc.sha256(cand)
+    rep["candidate_sha256"] = rep["org_candidate_sha256"]
+rep["proof"] = "org fragment only: the host assembles it"
+print(json.dumps(rep, sort_keys=True))
+"#;
+
+/// The candidate the driver's files give without `partner`: backout_core.py
+/// plans it, from the seed, org fragment and assembled output when the
+/// deployment names all three (proving the output is seed plus org), else
+/// from the org fragment alone (the host assembles it). Writes into `dir`;
+/// returns the plan.
+fn driver_plan(dc: &DriverCore, partner: &str, dir: &Path) -> Result<serde_json::Value> {
+    let _ = std::fs::create_dir_all(dir);
+    let org = dc.core.org.as_ref().expect("driver_core requires it");
+    let out = match (&dc.core.seed, &dc.core.out) {
+        (Some(seed), Some(live)) => crate::federate::runenv::command("python3")
+            .arg(&dc.tool)
+            .args(["plan", "--partner", partner, "--seed"])
+            .arg(seed)
+            .arg("--org")
+            .arg(org)
+            .arg("--live")
+            .arg(live)
+            .arg("--out-dir")
+            .arg(dir)
+            .output(),
+        // The org fragment alone: the same plan, without the assembled proof.
+        _ => crate::federate::runenv::command("python3")
+            .args(["-c", ORG_ONLY_PLAN])
+            .arg(&dc.tool)
+            .arg(org)
+            .arg(partner)
+            .arg(dir)
+            .output(),
+    }
+    .with_context(|| format!("run {}", dc.tool.display()))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str(text.trim()).with_context(|| {
         format!(
-            "{} {} set: admission reaches our core that way, and the back-out does not, so it would survey and replace other files than admission wrote (GB-221). Unset {} and back out through the core the declarations name, or remove this peering from that core by hand",
-            set.join(", "),
-            if set.len() == 1 { "is" } else { "are" },
-            if set.len() == 1 { "it" } else { "them" }
-        ),
-    )
-    .into())
+            "{} gave no plan: {}",
+            dc.tool.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )
+    })
+}
+
+/// Our core router's leaf as admission placed it (FED_CORE_CERT and
+/// FED_CORE_KEY, or where a goat-zenoh role core reads it on this machine:
+/// admit_leaf.rs `router_leaf`), each path with phase 8's file it was placed
+/// from, in the peering's working folder.
+pub struct CoreLeaf {
+    work: PathBuf,
+    targets: Vec<(PathBuf, PathBuf)>,
+    /// The goat-zenoh role core that delivers the leaf to its host, when the
+    /// leaf is the one the role reads (`role_leaf`).
+    role: Option<super::admit_role::RoleCore>,
+}
+
+/// What a leaf path holds, and what the back-out does with it.
+enum Leaf {
+    /// Nothing at the path, and no admission backup of it: left alone.
+    Missing,
+    /// Another's bytes at the path (or this peering's leaf cannot be read to
+    /// compare): left alone.
+    Foreign,
+    /// This peering's, and another peering's working folder holds the same
+    /// leaf: kept, because that peering uses it too.
+    Shared(String),
+    /// This peering's: put back to what was there before its first
+    /// admission, from this backup.
+    Restore(Vec<u8>, PathBuf),
+    /// This peering's, and admission recorded that nothing was there
+    /// before, in this record: removed.
+    Remove(PathBuf),
+    /// This peering's, and what was there before cannot be read from the
+    /// admission records (none, a corrupt one, an unreadable backup): left
+    /// alone, and the back-out stops on it.
+    Unknown(String),
+}
+
+/// The earliest admission record of a path.
+enum Record {
+    /// What was there, kept as this backup.
+    Backup(PathBuf),
+    /// Nothing was there: this record says so.
+    Absent(PathBuf),
+}
+
+impl CoreLeaf {
+    fn new(work: &Path, cert: Option<PathBuf>, key: Option<PathBuf>) -> CoreLeaf {
+        let pki = work.join("pki");
+        CoreLeaf {
+            work: work.to_path_buf(),
+            targets: [(cert, "core.pem"), (key, "core-key.pem")]
+                .into_iter()
+                .filter_map(|(t, ours)| t.map(|t| (t, pki.join(ours))))
+                .collect(),
+            role: None,
+        }
+    }
+
+    /// How many leaf paths go back to what was there, and how many are
+    /// removed.
+    fn counts(&self) -> (usize, usize) {
+        let plans = self.plans();
+        (
+            plans
+                .iter()
+                .filter(|l| matches!(l, Leaf::Restore(..)))
+                .count(),
+            plans
+                .iter()
+                .filter(|l| matches!(l, Leaf::Remove(_)))
+                .count(),
+        )
+    }
+
+    /// The earliest record of `target` in this peering's admission runs, in
+    /// order (admit.rs `publish`). `Ok(None)` when no run recorded it; `Err`
+    /// naming the record when the earliest one cannot be read as a backup or
+    /// as an explicit [`super::admit::ABSENT`] of exactly this path. A backup
+    /// with no record beside it (an older admission) is taken as of a file of
+    /// its name.
+    fn first_record(&self, target: &Path) -> Result<Option<Record>, String> {
+        let Some(base) = target.file_name().map(|f| f.to_string_lossy().to_string()) else {
+            return Ok(None);
+        };
+        let side = format!("{base}.target");
+        // (path it is of, its second line), or why it cannot be read.
+        let read = |p: &Path| -> Result<(PathBuf, Option<String>), String> {
+            let t = std::fs::read_to_string(p).map_err(|e| {
+                format!("the admission record {} cannot be read ({e})", p.display())
+            })?;
+            let mut lines = t.lines().map(str::trim);
+            let of = lines
+                .next()
+                .filter(|l| !l.is_empty())
+                .ok_or_else(|| format!("the admission record {} names no path", p.display()))?;
+            Ok((
+                PathBuf::from(of),
+                lines.next().filter(|l| !l.is_empty()).map(String::from),
+            ))
+        };
+        // The runs in the order they started: the run journal's list, which
+        // a clock stepping back or two runs in one second cannot reorder.
+        let journal: Vec<String> = match super::state::State::read(&self.work) {
+            Ok(st) => st.map(|s| s.runs.into_iter().map(|r| r.id).collect()).unwrap_or_default(),
+            Err(e) => {
+                return Err(format!(
+                    "the run journal in {} cannot be read, so the admission runs cannot be ordered ({e:#})",
+                    self.work.display()
+                ))
+            }
+        };
+        let runs: Vec<PathBuf> = std::fs::read_dir(self.work.join("admission"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path().join("backup"))
+            .filter(|p| p.is_dir())
+            .collect();
+        let mut earliest: Option<(usize, u64, Result<Record, String>)> = None;
+        for backup in runs {
+            let mut found: Vec<(u64, Result<Record, String>)> = Vec::new();
+            for p in std::fs::read_dir(&backup).into_iter().flatten().flatten() {
+                let p = p.path();
+                let Some((n, rest)) = p
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .and_then(|f| f.split_once('-'))
+                else {
+                    continue;
+                };
+                if n.is_empty() || !n.chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
+                let n: u64 = n.parse().unwrap_or(u64::MAX);
+                if rest == base {
+                    // A backup: of this path when its record says so, or
+                    // when it has none (an older admission).
+                    let rec = p.with_file_name(format!("{n}-{side}"));
+                    if !rec.exists() {
+                        found.push((n, Ok(Record::Backup(p))));
+                        continue;
+                    }
+                    match read(&rec) {
+                        Ok((of, _)) if of != target => {}
+                        Ok((_, None)) => found.push((n, Ok(Record::Backup(p)))),
+                        Ok((_, Some(w))) => found.push((
+                            n,
+                            Err(format!(
+                                "the admission record {} says '{w}' beside a backup",
+                                rec.display()
+                            )),
+                        )),
+                        Err(e) => found.push((n, Err(e))),
+                    }
+                } else if rest == side {
+                    match read(&p) {
+                        Ok((of, _)) if of != target => {}
+                        Ok((_, Some(w))) if w == super::admit::ABSENT => {
+                            found.push((n, Ok(Record::Absent(p.clone()))))
+                        }
+                        // A record with a backup is decided beside the backup.
+                        Ok((_, None)) if p.with_file_name(format!("{n}-{base}")).exists() => {}
+                        Ok((_, w)) => found.push((
+                            n,
+                            Err(format!(
+                                "the admission record {} is neither a backup's nor '{}' ({})",
+                                p.display(),
+                                super::admit::ABSENT,
+                                w.unwrap_or_else(|| "no second line".into())
+                            )),
+                        )),
+                        Err(e) => found.push((n, Err(e))),
+                    }
+                }
+            }
+            found.sort_by_key(|(n, _)| *n);
+            let Some((n, r)) = found.into_iter().next() else {
+                continue;
+            };
+            let folder = backup.parent().unwrap_or(&backup);
+            let name = folder.file_name().unwrap_or_default().to_string_lossy();
+            let Some(at) = journal.iter().position(|id| *id == name) else {
+                return Err(format!(
+                    "the admission folder {} is not in the run journal, so which run touched this path first is not known",
+                    folder.display()
+                ));
+            };
+            if earliest.as_ref().is_none_or(|(a, ..)| at < *a) {
+                earliest = Some((at, n, r));
+            }
+        }
+        earliest.map(|(_, _, r)| r.map(Some)).unwrap_or(Ok(None))
+    }
+
+    fn plan(&self, target: &Path, ours: &Path) -> Leaf {
+        let Ok(now) = std::fs::read(target) else {
+            // Gone since admission (deleted by hand): what was there before
+            // comes back when admission kept it; with no backup the half is
+            // left missing.
+            // A record that cannot be read leaves what was there unknown.
+            if target.symlink_metadata().is_err() {
+                match self.first_record(target) {
+                    Ok(Some(Record::Backup(b))) => {
+                        return match std::fs::read(&b) {
+                            Ok(bytes) => Leaf::Restore(bytes, b),
+                            Err(e) => Leaf::Unknown(format!(
+                                "the admission backup {} cannot be read ({e})",
+                                b.display()
+                            )),
+                        }
+                    }
+                    Err(e) => return Leaf::Unknown(e),
+                    Ok(_) => {}
+                }
+            }
+            return Leaf::Missing;
+        };
+        let Ok(mine) = std::fs::read(ours) else {
+            return Leaf::Foreign;
+        };
+        if now != mine {
+            return Leaf::Foreign;
+        }
+        let name = ours.file_name().unwrap_or_default();
+        if let Some(parent) = self.work.parent() {
+            let shared = std::fs::read_dir(parent)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| *p != self.work)
+                .find(|p| std::fs::read(p.join("pki").join(name)).is_ok_and(|b| b == mine));
+            if let Some(p) = shared {
+                return Leaf::Shared(p.display().to_string());
+            }
+        }
+        // What was there before the peering: what the earliest admission that
+        // touched this path found there. A later run's backup is this
+        // peering's own earlier leaf (phase 8 renews it), never what was there.
+        // Only an explicit record removes the leaf; anything else is a guess.
+        match self.first_record(target) {
+            Ok(Some(Record::Backup(b))) => match std::fs::read(&b) {
+                Ok(bytes) => Leaf::Restore(bytes, b),
+                Err(e) => Leaf::Unknown(format!(
+                    "the admission backup {} cannot be read ({e})",
+                    b.display()
+                )),
+            },
+            Ok(Some(Record::Absent(r))) => Leaf::Remove(r),
+            Ok(None) => Leaf::Unknown(format!(
+                "holds this peering's leaf, and no admission run in {} recorded what was there before",
+                self.work.join("admission").display()
+            )),
+            Err(e) => Leaf::Unknown(e),
+        }
+    }
+
+    /// Each path's plan, with the certificate and key taken as one unit: if
+    /// one would be put back and the other removed, or one is unknown or
+    /// holds another's bytes beside a half that would change, the leaf could
+    /// not serve afterwards, so both read unknown and nothing changes. A
+    /// missing half is neutral.
+    fn plans(&self) -> Vec<Leaf> {
+        let plans: Vec<Leaf> = self.targets.iter().map(|(t, o)| self.plan(t, o)).collect();
+        let restore = plans.iter().any(|l| matches!(l, Leaf::Restore(..)));
+        let remove = plans.iter().any(|l| matches!(l, Leaf::Remove(_)));
+        let unknown = plans
+            .iter()
+            .any(|l| matches!(l, Leaf::Unknown(_) | Leaf::Foreign));
+        if !(restore && remove) && !(unknown && (restore || remove)) {
+            return plans;
+        }
+        let said: Vec<String> = self
+            .targets
+            .iter()
+            .zip(&plans)
+            .map(|((t, _), l)| match l {
+                Leaf::Restore(_, b) => {
+                    format!("{} would be put back from {}", t.display(), b.display())
+                }
+                Leaf::Remove(r) => format!("{} would be removed by {}", t.display(), r.display()),
+                Leaf::Unknown(why) => format!("{}: {why}", t.display()),
+                Leaf::Foreign => format!("{} holds another leaf", t.display()),
+                Leaf::Missing | Leaf::Shared(_) => format!("{} is left as it is", t.display()),
+            })
+            .collect();
+        let why = format!(
+            "the certificate and key are one leaf, and its two halves would not be left as one: {}",
+            said.join("; ")
+        );
+        plans
+            .into_iter()
+            .map(|l| match l {
+                Leaf::Restore(..) | Leaf::Remove(_) | Leaf::Unknown(_) | Leaf::Foreign => {
+                    Leaf::Unknown(why.clone())
+                }
+                other => other,
+            })
+            .collect()
+    }
+
+    /// One survey row per leaf path.
+    fn rows(&self) -> Vec<Row> {
+        let mut rows = Vec::new();
+        for ((target, ours), plan) in self.targets.iter().zip(self.plans()) {
+            let t = target.display().to_string();
+            let row = |state: &str, action: &str, note: String| Row {
+                component: "core leaf".into(),
+                resource: t.clone(),
+                state: state.into(),
+                action: action.into(),
+                note,
+            };
+            rows.push(match plan {
+                Leaf::Missing => row("absent", "none", String::new()),
+                Leaf::Foreign => row(
+                    "present",
+                    "kept",
+                    format!("does not hold {}", ours.display()),
+                ),
+                Leaf::Shared(p) => row(
+                    "present",
+                    "kept",
+                    format!("the same leaf is in {p}, another peering's"),
+                ),
+                Leaf::Restore(..) => row(
+                    "present",
+                    "remove",
+                    "put back to what was there before the peering".into(),
+                ),
+                Leaf::Remove(_) => row(
+                    "present",
+                    "remove",
+                    "nothing was there before the peering".into(),
+                ),
+                Leaf::Unknown(why) => row(
+                    "unknown",
+                    "kept",
+                    format!("{why}; nothing is changed: decide by hand"),
+                ),
+            });
+        }
+        rows
+    }
+
+    /// Put each leaf path back, or remove it, keeping what was there in
+    /// `backups` (in `bdir`). Run again, it changes nothing: a path put back
+    /// no longer holds this peering's leaf.
+    fn take_back(
+        &self,
+        backups: &mut Vec<super::admit::Placed>,
+        bdir: &Path,
+    ) -> Result<(), String> {
+        for ((target, _), plan) in self.targets.iter().zip(self.plans()) {
+            let r = match plan {
+                Leaf::Restore(bytes, _) => super::admit::publish(&bytes, target, backups, bdir),
+                Leaf::Remove(_) => super::admit::publish(b"", target, backups, bdir)
+                    .and_then(|_| std::fs::remove_file(target)),
+                Leaf::Missing | Leaf::Foreign | Leaf::Shared(_) | Leaf::Unknown(_) => Ok(()),
+            };
+            r.map_err(|e| format!("cannot take back {} ({e})", target.display()))?;
+        }
+        Ok(())
+    }
+}
+
+/// Our core router's leaf on a goat-zenoh role core admitted with no route of
+/// its own (no FED_CORE_ACL_ORG): admission placed it on this machine where
+/// the role reads it (admit_leaf.rs `router_leaf`, FED_CORE_CERT and
+/// FED_CORE_KEY overriding), so the back-out takes it back there. `None`
+/// when no leaf path resolves.
+pub fn role_leaf(
+    repo: &Path,
+    partner: &str,
+    work: &Path,
+    var: impl Fn(&str) -> Option<String>,
+) -> Result<Option<CoreLeaf>> {
+    let role = super::admit::role_core(repo, partner, &var)
+        .map_err(|e| anyhow::Error::from(goat_errors::coded("GB-221", format!("{e} (GB-221)"))))?;
+    let (cert, key) = super::admit::router_leaf_paths(repo, role.as_ref(), &var);
+    let mut leaf = CoreLeaf::new(work, cert, key);
+    leaf.role = role;
+    Ok((!leaf.targets.is_empty()).then_some(leaf))
+}
+
+/// The driver's part of the survey, as one more host record (`driver`): the
+/// partner's subjects, rules and policies in the org fragment, and the restart
+/// it needs, with the candidate's digest; or why the fragment cannot be shown
+/// to change by this peering alone (refused).
+pub fn driver_survey(dc: &DriverCore, partner: &str, dir: &Path) -> Result<HostRecord> {
+    let plan = driver_plan(dc, partner, dir)?;
+    let leaf_rows = dc.leaf.rows();
+    let org = dc.core.org.as_ref().expect("checked").display().to_string();
+    let r = |component: &str, resource: String, state: &str, action: &str, note: String| Row {
+        component: component.into(),
+        resource,
+        state: state.into(),
+        action: action.into(),
+        note,
+    };
+    let mut rows = Vec::new();
+    if let Some(why) = plan["refused"].as_str() {
+        rows.push(r(
+            "core admission",
+            format!("fragment {org}"),
+            "refused",
+            "kept",
+            why.to_string(),
+        ));
+    } else if plan["absent"].as_bool().unwrap_or(true) {
+        rows.push(r(
+            "core admission",
+            format!("fragment {org}"),
+            "absent",
+            "none",
+            format!("no block of {partner} is spliced; no restart"),
+        ));
+    } else {
+        let list = |k: &str| -> Vec<String> {
+            plan["removed"][k]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        for (k, what) in [
+            ("subjects", "subject"),
+            ("rules", "rule"),
+            ("policies", "policy for"),
+        ] {
+            for id in list(k) {
+                rows.push(r(
+                    "core admission",
+                    format!("{what} {id}"),
+                    "present",
+                    "remove",
+                    String::new(),
+                ));
+            }
+        }
+        let digest = plan["candidate_sha256"].as_str().unwrap_or_default();
+        rows.push(r(
+            "core admission",
+            format!("router restart through {}", dc.core.route()),
+            "present",
+            "restart",
+            format!(
+                "{} lines leave; candidate {digest}; stays admitted: {}",
+                plan["removed_lines"].as_u64().unwrap_or(0),
+                plan["others"]
+                    .as_array()
+                    .map(|a| a
+                        .iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "))
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "no other peering".into())
+            ),
+        ));
+    }
+    rows.extend(leaf_rows);
+    Ok(HostRecord {
+        host: "driver".into(),
+        peering: partner.into(),
+        rows,
+    })
+}
+
+/// Take `partner` out of the driver's files and restart our core the way
+/// admission did: plan again and refuse unless the candidate is the reviewed
+/// one (`expect`), place the org fragment (and the assembled output) with
+/// backups, dry-run, then restart; a failed dry run puts every file back.
+/// Commands run through `exec`, as the plays do.
+pub fn driver_apply(
+    repo: &Path,
+    dc: &DriverCore,
+    partner: &str,
+    dir: &Path,
+    expect: &str,
+    exec: &mut dyn FnMut(&Path, &str) -> Result<bool>,
+) -> Result<()> {
+    let plan = driver_plan(dc, partner, &dir.join("plan"))?;
+    let got = plan["candidate_sha256"].as_str().unwrap_or_default();
+    if got != expect {
+        return Err(goat_errors::coded(
+            "GB-224",
+            format!("our core's files changed since the survey: the candidate is now {got}, and {expect} was reviewed; nothing was placed (GB-224)"),
+        )
+        .into());
+    }
+    let mut placed = vec![(
+        std::fs::read(dir.join("plan").join("org.candidate"))?,
+        dc.core.org.clone().expect("checked"),
+    )];
+    if let Some(out) = &dc.core.out {
+        placed.push((
+            std::fs::read(dir.join("plan").join("live.candidate"))?,
+            out.clone(),
+        ));
+    }
+    let mut backups = Vec::new();
+    let bdir = dir.join("backup");
+    for (bytes, to) in &placed {
+        if let Err(e) = super::admit::publish(bytes, to, &mut backups, &bdir) {
+            let back = super::admit::put_back(&backups);
+            return Err(goat_errors::coded(
+                "GB-224",
+                format!("cannot place {} ({e}); {back} (GB-224)", to.display()),
+            )
+            .into());
+        }
+    }
+    // The router leaf, under the same backups: put back, or removed.
+    if let Err(e) = dc.leaf.take_back(&mut backups, &bdir) {
+        let back = super::admit::put_back(&backups);
+        return Err(goat_errors::coded("GB-224", format!("{e}; {back} (GB-224)")).into());
+    }
+    // The play admission ran is passed the peering's working folder, as
+    // admission passes it; it converges the core to what the files now hold.
+    let work = dc.work.as_path();
+    let dry = match (
+        dc.core.play_cmd(repo, work, true),
+        dc.core.dry_run.as_deref(),
+    ) {
+        (Some(cmd), _) => Some(cmd),
+        (None, Some("skip")) | (None, None) => None,
+        (None, Some(cmd)) => Some(cmd.to_string()),
+    };
+    if let Some(cmd) = dry {
+        if !exec(repo, &cmd)? {
+            let back = super::admit::put_back(&backups);
+            return Err(goat_errors::coded(
+                "GB-224",
+                format!("the core router's dry run failed; {back} (GB-224)"),
+            )
+            .into());
+        }
+    }
+    let restart = dc
+        .core
+        .play_cmd(repo, work, false)
+        .or_else(|| dc.core.restart.clone())
+        .unwrap_or_default();
+    if !exec(repo, &restart)? {
+        return Err(goat_errors::coded(
+            "GB-224",
+            format!("the core restart through {} failed; the candidate is in place, and what was there before is in {} (GB-224)", dc.core.route(), bdir.display()),
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// The files of a goat-zenoh role core, resolved by the code admission uses
@@ -270,7 +920,12 @@ pub fn core_files(repo: &Path, t: &mut Target) -> Result<()> {
         )
         .into()
     };
-    let Some(core) = super::admit_role::find(repo, &t.core_group).map_err(refuse)? else {
+    // The role core exactly as admission decides it (admit.rs `role_core`):
+    // FED_CORE_GROUP's group when it is set, else <partner>_core's.
+    let Some(core) =
+        super::admit::role_core(repo, &t.partner, |k| crate::federate::runenv::var(k).ok())
+            .map_err(refuse)?
+    else {
         return Ok(());
     };
     for (var, key) in [
@@ -547,6 +1202,46 @@ pub fn slot_recheck(repo: &Path, env: Option<&str>, run: bool) -> (String, bool,
     }
 }
 
+/// A role core the back-out takes a partner out of: the role, and either the
+/// rewritten `peerings.yml` with the command that drops the store, or why
+/// the entry is kept.
+type RoleDrop = (
+    super::admit_role::RoleCore,
+    Result<(String, String), String>,
+);
+
+/// The play that drops a backed-out partner's store whole on a goat-zenoh
+/// role core (ADR 1234), on the role's own inventory group, after the role's
+/// play has restarted the router without it. The role's store and
+/// configuration paths and its stack name are passed as the role resolves
+/// them, since the play reads the task file by path and not the role's
+/// defaults. Refused (GB-236) when one does not resolve to a plain value.
+fn store_drop_cmd(
+    repo: &Path,
+    role: &super::admit_role::RoleCore,
+    partner: &str,
+) -> Result<String, String> {
+    let mut extra = format!(" -e goat_zenoh_drop_partner_store='{partner}'");
+    for key in [
+        "goat_zenoh_storage_path",
+        "goat_zenoh_config_path",
+        "zenoh_stack",
+    ] {
+        let v = role.role_value(repo, key)?;
+        if !plain(&v) {
+            return Err(format!(
+                "{key} '{v}' holds characters a plan line cannot carry safely (GB-236)"
+            ));
+        }
+        extra.push_str(&format!(" -e {key}='{v}'"));
+    }
+    let play = super::admit_role::RoleCore {
+        play: "zenoh-drop-partner-store.yml".into(),
+        ..role.clone()
+    };
+    Ok(format!("{}{extra}", play.play_cmd(repo, false)))
+}
+
 fn run_bash(repo: &Path, cmd: &str) -> Result<bool> {
     Ok(crate::federate::runenv::command("bash")
         .args(["-euo", "pipefail", "-c", cmd])
@@ -643,8 +1338,6 @@ pub fn backout_with(
     exec: &mut dyn FnMut(&Path, &str) -> Result<bool>,
 ) -> Result<Report> {
     let mut t = target(o)?;
-    hand_core_route(|k| crate::federate::runenv::var(k).ok())?;
-    core_files(repo, &mut t)?;
     if let Err(e) = work_belongs_to(&t.work, &t.partner) {
         return Err(goat_errors::coded("GB-220", e).into());
     }
@@ -671,6 +1364,87 @@ pub fn backout_with(
     let env = declared
         .map(|p| p.environment.clone())
         .or_else(|| Some(env_or("FED_SLOT_ENV", String::new())).filter(|v| !v.is_empty()));
+    // Our core: the deployment's own route, on the driver, when it names one
+    // (the way admission went); else a goat-zenoh role core, surveyed by the
+    // play at the paths admission resolved.
+    let driver = driver_core(
+        repo,
+        &t.partner,
+        env.as_deref().unwrap_or_default(),
+        Path::new(&t.work),
+        |k| crate::federate::runenv::var(k).ok(),
+    )?;
+    if driver.is_some() {
+        t.core_files
+            .push(("peering_backout_core_by_driver", "true".into()));
+    } else {
+        core_files(repo, &mut t)?;
+    }
+    // A role core admitted with no route of its own: the router leaf
+    // admission placed on this machine, where the role reads it.
+    let role_leaf = match &driver {
+        Some(_) => None,
+        None => role_leaf(repo, &t.partner, Path::new(&t.work), |k| {
+            crate::federate::runenv::var(k).ok()
+        })?,
+    };
+    // A leaf that goes, placed where nothing was: the role's play cannot
+    // deliver what is not there (it refuses, GB-071), so every back-out play
+    // is told to delete the host's copy in the role's TLS folder, where it
+    // still holds this peering's leaf.
+    if let Some((leaf, role)) = role_leaf
+        .as_ref()
+        .and_then(|l| l.role.as_ref().map(|r| (l, r)))
+    {
+        if leaf.counts().1 > 0 {
+            let tls = role.role_value(repo, "goat_zenoh_tls_dir").map_err(|e| {
+                anyhow::Error::from(goat_errors::coded(
+                    "GB-221",
+                    format!("the back-out cannot find where the role keeps our core's leaf on its host: {e} (GB-221)"),
+                ))
+            })?;
+            if !plain(&tls) {
+                return Err(goat_errors::coded(
+                    "GB-221",
+                    format!("goat_zenoh_tls_dir '{tls}' holds characters a plan line cannot carry safely (GB-221)"),
+                )
+                .into());
+            }
+            t.core_files
+                .push(("peering_backout_core_leaf_remove", "true".into()));
+            t.core_files.push(("peering_backout_core_tls_dir", tls));
+        }
+    }
+    // ADR 1234: on a goat-zenoh role core with no route of its own, the
+    // partner leaves the role's list in the file admission wrote it into; the
+    // role's play restarts the router without the partner's store, and then
+    // ops/ansible/zenoh-drop-partner-store.yml deletes that store whole. An
+    // entry the back-out cannot take out (GB-237), or a store path the role's
+    // declarations do not resolve (GB-236), is reported and kept.
+    let role_drop: Option<RoleDrop> = match &driver {
+        Some(_) => None,
+        None => super::admit::role_core(repo, &t.partner, |k| crate::federate::runenv::var(k).ok())
+            .map_err(|e| {
+                anyhow::Error::from(goat_errors::coded("GB-221", format!("{e} (GB-221)")))
+            })?
+            .and_then(|role| {
+                match super::admit_role::remove_peering(repo, &role.group, &t.partner) {
+                    Ok(None) => None,
+                    Ok(Some(text)) => {
+                        let store = store_drop_cmd(repo, &role, &t.partner).map(|c| (text, c));
+                        Some((role, store))
+                    }
+                    Err(e) => Some((role, Err(e))),
+                }
+            }),
+    };
+    let drop_cmd = |role: &super::admit_role::RoleCore, check: bool| {
+        format!(
+            "{} -e goat_zenoh_drop_partner_store='{}'",
+            role.play_cmd(repo, check),
+            t.partner
+        )
+    };
     let mut checks = vec![row(
         "banner",
         true,
@@ -732,6 +1506,23 @@ pub fn backout_with(
             ),
         ]
         .into_iter()
+        .chain(
+            role_drop
+                .iter()
+                .filter(|(_, plan)| plan.is_ok())
+                .flat_map(|(role, plan)| {
+                    [
+                        (
+                            "take the partner out of the role's list and restart the core router without its store",
+                            drop_cmd(role, false),
+                        ),
+                        (
+                            "drop the partner's store whole, once the router runs without it",
+                            plan.as_ref().map(|(_, c)| c.clone()).unwrap_or_default(),
+                        ),
+                    ]
+                }),
+        )
         .enumerate()
         {
             checks.push(row("step", true, format!("{} {label}", n + 1), None));
@@ -770,11 +1561,27 @@ pub fn backout_with(
         r.exit = EXIT_REFUSED;
         return Ok(r);
     }
-    let recs = read_records(&survey_dir)?;
+    let mut recs = read_records(&survey_dir)?;
+    if let Some(dc) = &driver {
+        recs.push(driver_survey(
+            dc,
+            &t.partner,
+            &base.join("core/driver/survey"),
+        )?);
+    }
+    if let Some(leaf) = &role_leaf {
+        recs.push(HostRecord {
+            host: "driver".into(),
+            peering: t.partner.clone(),
+            rows: leaf.rows(),
+        });
+    }
     // No host answered, yet this working folder holds the peering's agreement:
     // the play matched no host (an inventory that does not name them), which
     // is not the same as nothing being deployed.
-    if recs.is_empty() && Path::new(&t.work).join("agreement.json").is_file() {
+    if recs.iter().all(|r| r.host == "driver")
+        && Path::new(&t.work).join("agreement.json").is_file()
+    {
         checks.push(row(
             "survey",
             false,
@@ -855,6 +1662,21 @@ pub fn backout_with(
             Some(false) => format!("keep {}: it is not the file apply generates for {}", rec_path.display(), t.partner),
         },
     ));
+    if let Some((role, plan)) = &role_drop {
+        let file = super::admit_role::peerings_file(repo, &role.group);
+        let shown = file
+            .strip_prefix(repo)
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+        extra.push((
+            "Partner's store".into(),
+            match plan {
+                Ok(_) => format!("take {} out of zenoh_sovereign_peerings in {shown} (commit the change through review), then run the role's play on [{}], dry run then deploy: the core router restarts without sovereign_from_{} and that store is then deleted whole (ADR 1234)", t.partner, role.group, t.partner),
+                Err(e) => format!("kept: {e}"),
+            },
+        ));
+    }
     if !s.kept.is_empty() {
         extra.push((
             "Kept: another peering's, or the deployment's configuration to remove by review".into(),
@@ -989,35 +1811,64 @@ pub fn backout_with(
                 format!("{slot_word}: {slot_said}"),
                 None,
             ));
-            let core_cmd = play_cmd(
-                repo,
-                &t,
-                &[
-                    ("peering_backout_core_apply", "true".into()),
-                    ("peering_backout_core_expect", digest.clone()),
-                ],
-            );
-            checks.push(row("cmd", true, core_cmd.clone(), None));
-            let core_dir = base.join("core-apply");
-            let _ = std::fs::create_dir_all(&core_dir);
-            clear(&core_dir);
-            if !exec(repo, &core_cmd)? {
-                core_done = false;
-                checks.push(row("core", false, "the core router was not restarted on the reviewed candidate (GB-224): its configuration changed since the survey, or the restart failed".into(), Some(format!("goatbuilder federate backout {} --dry-run, review the new candidate, then run it again", t.partner))));
-                exit = EXIT_NOT_CONVERGED;
+            if let Some(dc) = &driver {
+                // The way admission went: the driver's files, then its restart.
+                match driver_apply(
+                    repo,
+                    dc,
+                    &t.partner,
+                    &base.join("core/driver/apply"),
+                    digest,
+                    exec,
+                ) {
+                    Ok(()) => checks.push(row(
+                        "core",
+                        true,
+                        format!(
+                            "core router restarted through {} on {digest}",
+                            dc.core.route()
+                        ),
+                        None,
+                    )),
+                    Err(e) => {
+                        core_done = false;
+                        checks.push(row("core", false, format!("{e:#}"), Some(format!("goatbuilder federate backout {} --dry-run, review the new candidate, then run it again", t.partner))));
+                        exit = EXIT_NOT_CONVERGED;
+                    }
+                }
             } else {
-                // Say what the core step did, from its own record, not from the plan.
-                let restarted = read_records(&core_dir)
-                    .unwrap_or_default()
-                    .iter()
-                    .flat_map(|r| r.rows.iter())
-                    .any(|r| r.resource.starts_with("router restart") && r.action == "restarted");
-                checks.push(row(
+                let core_cmd = play_cmd(
+                    repo,
+                    &t,
+                    &[
+                        ("peering_backout_core_apply", "true".into()),
+                        ("peering_backout_core_expect", digest.clone()),
+                    ],
+                );
+                checks.push(row("cmd", true, core_cmd.clone(), None));
+                let core_dir = base.join("core-apply");
+                let _ = std::fs::create_dir_all(&core_dir);
+                clear(&core_dir);
+                if !exec(repo, &core_cmd)? {
+                    core_done = false;
+                    checks.push(row("core", false, "the core router was not restarted on the reviewed candidate (GB-224): its configuration changed since the survey, or the restart failed".into(), Some(format!("goatbuilder federate backout {} --dry-run, review the new candidate, then run it again", t.partner))));
+                    exit = EXIT_NOT_CONVERGED;
+                } else {
+                    // Say what the core step did, from its own record, not from the plan.
+                    let restarted = read_records(&core_dir)
+                        .unwrap_or_default()
+                        .iter()
+                        .flat_map(|r| r.rows.iter())
+                        .any(|r| {
+                            r.resource.starts_with("router restart") && r.action == "restarted"
+                        });
+                    checks.push(row(
                     "core",
                     true,
                     if restarted { format!("core router restarted on {digest}") } else { "the core held no block of this peering any more at the restart step; nothing was restarted".to_string() },
                     None,
                 ));
+                }
             }
         }
     } else if s.core_candidate.is_some() {
@@ -1030,6 +1881,150 @@ pub fn backout_with(
             None,
         ));
         exit = EXIT_NOT_CONVERGED;
+    }
+    // The router leaf admission placed on this machine: put back, or removed,
+    // whether or not the core still held a block (a second run changes
+    // nothing). On the deployment's own route driver_apply did it already.
+    if core_done {
+        if let Some(leaf) = driver.as_ref().map(|d| &d.leaf).or(role_leaf.as_ref()) {
+            let (restored, removed) = leaf.counts();
+            let todo: Vec<String> = leaf
+                .rows()
+                .into_iter()
+                .filter(|r| r.action == "remove")
+                .map(|r| r.resource)
+                .collect();
+            let bdir = base.join("core/driver/leaf/backup");
+            let mut backups = Vec::new();
+            let taken = leaf.take_back(&mut backups, &bdir);
+            // The host's copy: the role's play delivers what was put back,
+            // the route admission took (dry run, then deploy).
+            let taken = match (&taken, &leaf.role) {
+                (Ok(()), Some(role)) if restored > 0 && removed == 0 => {
+                    let mut ok = true;
+                    for check in [true, false] {
+                        let cmd = role.play_cmd(repo, check);
+                        checks.push(row("cmd", true, cmd.clone(), None));
+                        if !exec(repo, &cmd)? {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if ok {
+                        taken
+                    } else {
+                        Err(format!(
+                            "the role's play on [{}] did not deliver the leaf put back",
+                            role.group
+                        ))
+                    }
+                }
+                _ => taken,
+            };
+            match taken {
+                Ok(()) if todo.is_empty() => {}
+                Ok(()) => checks.push(row(
+                    "core leaf",
+                    true,
+                    format!(
+                        "taken back: {}; what each held before this back-out is in {}",
+                        todo.join(", "),
+                        bdir.display()
+                    ),
+                    None,
+                )),
+                Err(e) => {
+                    let back = super::admit::put_back(&backups);
+                    core_done = false;
+                    checks.push(row(
+                        "core leaf",
+                        false,
+                        format!("{e}; {back} (GB-224)"),
+                        Some(format!(
+                            "goatbuilder federate backout {} --dry-run, then run it again",
+                            t.partner
+                        )),
+                    ));
+                    exit = EXIT_NOT_CONVERGED;
+                }
+            }
+        }
+    }
+    // ADR 1234: the partner leaves the role's list, and the role's play
+    // restarts the router without its store, then deletes that store whole.
+    // A play that fails puts the list back, so running the back-out again
+    // repeats this step.
+    if core_done {
+        if let Some((role, Ok((text, store_cmd)))) = &role_drop {
+            let file = super::admit_role::peerings_file(repo, &role.group);
+            let shown = file
+                .strip_prefix(repo)
+                .unwrap_or(&file)
+                .display()
+                .to_string();
+            let mut backups = Vec::new();
+            let mut done = super::admit::publish(
+                text.as_bytes(),
+                &file,
+                &mut backups,
+                &base.join("core/role/backup"),
+            )
+            .map_err(|e| format!("cannot write {shown} ({e})"));
+            if done.is_ok() {
+                for check in [true, false] {
+                    let cmd = drop_cmd(role, check);
+                    checks.push(row("cmd", true, cmd.clone(), None));
+                    if !exec(repo, &cmd)? {
+                        done = Err(if check {
+                            format!(
+                                "the role's play on [{}] failed its dry run (GB-224)",
+                                role.group
+                            )
+                        } else {
+                            format!(
+                                "the role's play on [{}] did not restart the router without sovereign_from_{} and drop it; the store was kept (GB-270)",
+                                role.group, t.partner
+                            )
+                        });
+                        break;
+                    }
+                }
+            }
+            if done.is_ok() {
+                checks.push(row("cmd", true, store_cmd.clone(), None));
+                if !exec(repo, store_cmd)? {
+                    done = Err(format!(
+                        "the core router does not yet run without sovereign_from_{}, or its store could not be deleted; the store was kept (GB-270)",
+                        t.partner
+                    ));
+                }
+            }
+            match done {
+                Ok(()) => checks.push(row(
+                    "core store",
+                    true,
+                    format!(
+                        "{} left zenoh_sovereign_peerings in {shown}: commit that change through review; the core router restarted without sovereign_from_{} and that store was deleted whole",
+                        t.partner, t.partner
+                    ),
+                    None,
+                )),
+                Err(e) => {
+                    let back = super::admit::put_back(&backups);
+                    core_done = false;
+                    checks.push(row(
+                        "core store",
+                        false,
+                        format!("{e}; {back}"),
+                        Some(format!(
+                            "read the play output above, then goatbuilder federate backout {}",
+                            t.partner
+                        )),
+                    ));
+                    exit = EXIT_NOT_CONVERGED;
+                }
+            }
+        }
     }
     if !core_done {
         // The partner is still admitted on the core: keep its directory slot and
@@ -1088,7 +2083,21 @@ pub fn backout_with(
     }
     clear(&survey_dir);
     let after_ok = exec(repo, &survey_cmd)?;
-    let after = read_records(&survey_dir).unwrap_or_default();
+    let mut after = read_records(&survey_dir).unwrap_or_default();
+    if let Some(dc) = &driver {
+        after.push(driver_survey(
+            dc,
+            &t.partner,
+            &base.join("core/driver/after"),
+        )?);
+    }
+    if let Some(leaf) = &role_leaf {
+        after.push(HostRecord {
+            host: "driver".into(),
+            peering: t.partner.clone(),
+            rows: leaf.rows(),
+        });
+    }
     let left = summarize(&after, &t.partner);
     if !after_ok || left.to_remove > 0 {
         checks.push(row(
@@ -1109,10 +2118,10 @@ pub fn backout_with(
                 "the core still admits {} through zenoh_sovereign_peerings (GB-227)",
                 t.partner
             ),
-            Some(
-                "remove the entry from the core's configuration by review and run the core play"
-                    .into(),
-            ),
+            Some(match &role_drop {
+                Some((_, Err(e))) => format!("the back-out could not take the entry out: {e}"),
+                _ => "the entry is declared where admission did not write it: remove it there by review and run the core play".into(),
+            }),
         ));
         exit = EXIT_NOT_CONVERGED;
     } else {
@@ -1707,7 +2716,7 @@ mod tests {
     fn role_core_checkout() -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();
         for (rel, text) in [
-            ("ops/ansible/roles/goat-zenoh/defaults/main.yml", "zenoh_router_image: \"x\"\nzenoh_stack: \"{{ site_id }}-zenoh\"\ngoat_zenoh_config_path: \"/etc/{{ zenoh_stack }}/config.json5\"\ngoat_zenoh_acl_seed_path: \"/etc/{{ zenoh_stack }}/config.seed.json5\"\ngoat_zenoh_acl_org_path: \"/etc/{{ zenoh_stack }}/acl-org-fragment.json5\"\nzenoh_sovereign_peerings: []\n"),
+            ("ops/ansible/roles/goat-zenoh/defaults/main.yml", "zenoh_router_image: \"x\"\nzenoh_stack: \"{{ site_id }}-zenoh\"\ngoat_zenoh_config_path: \"/etc/{{ zenoh_stack }}/config.json5\"\ngoat_zenoh_acl_seed_path: \"/etc/{{ zenoh_stack }}/config.seed.json5\"\ngoat_zenoh_acl_org_path: \"/etc/{{ zenoh_stack }}/acl-org-fragment.json5\"\ngoat_zenoh_tls_dir: \"/etc/{{ zenoh_stack }}/tls\"\ngoat_zenoh_storage_path: \"/var/lib/{{ zenoh_stack }}/rocksdb\"\nzenoh_sovereign_peerings: []\n"),
             ("ops/ansible/zenoh-deploy.yml", "- hosts: \"{{ target | mandatory }}\"\n"),
             ("ops/pins/fleet-pins.yaml", "components:\n  zenoh-router:\n    var: zenoh_router_image\n    ledger_component: xaa-zenoh\n    deploy_playbook: zenoh-deploy.yml\n"),
             ("ops/ansible/inventory/core-router.ini", "[core_router]\nxaa-core ansible_host=192.0.2.10\n"),
@@ -1718,6 +2727,345 @@ mod tests {
             std::fs::write(f, text).unwrap();
         }
         d
+    }
+
+    /// A goat-zenoh role core admitted with no route of its own, its leaf
+    /// paths declared by the role's group; admission placed our core's router
+    /// leaf there, on this machine, over `prior` (or where nothing was). The
+    /// back-out runs with every play answering that nothing of the peering is
+    /// left; returns the plays it ran, the two leaf paths and the report.
+    fn role_leaf_back_out(
+        prior: Option<&[u8]>,
+    ) -> (Vec<String>, PathBuf, PathBuf, Report, tempfile::TempDir) {
+        role_back_out(prior, None, false)
+    }
+
+    /// As `role_leaf_back_out`, with the role group's `peerings.yml` holding
+    /// `peerings` when given (the file admission writes the partner into).
+    fn role_back_out(
+        prior: Option<&[u8]>,
+        peerings: Option<&str>,
+        drop_fails: bool,
+    ) -> (Vec<String>, PathBuf, PathBuf, Report, tempfile::TempDir) {
+        let d = tempfile::tempdir().unwrap();
+        let (repo, work) = stand_in(d.path());
+        let role = role_core_checkout();
+        for rel in [
+            "ops/ansible/roles/goat-zenoh/defaults/main.yml",
+            "ops/ansible/zenoh-deploy.yml",
+            "ops/pins/fleet-pins.yaml",
+            "ops/ansible/inventory/core-router.ini",
+            "ops/ansible/group_vars/core_router/zenoh.yml",
+        ] {
+            let to = repo.join(rel);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::copy(role.path().join(rel), &to).unwrap();
+        }
+        if let Some(text) = peerings {
+            std::fs::write(
+                repo.join("ops/ansible/group_vars/core_router/peerings.yml"),
+                text,
+            )
+            .unwrap();
+        }
+        let leaves = d.path().join("xaa-leaves");
+        std::fs::create_dir_all(&leaves).unwrap();
+        let (cert, key) = (
+            leaves.join("router-cert.pem"),
+            leaves.join("router-key.pem"),
+        );
+        std::fs::write(
+            repo.join("ops/ansible/group_vars/core_router/leaf.yml"),
+            format!(
+                "zenoh_router_leaf_cert_path: \"{}\"\nzenoh_router_leaf_key_path: \"{}\"\n",
+                cert.display(),
+                key.display()
+            ),
+        )
+        .unwrap();
+        let pki = Path::new(&work).join("pki");
+        std::fs::create_dir_all(&pki).unwrap();
+        std::fs::write(pki.join("core.pem"), b"CERT-OF-HELLO-ALLY").unwrap();
+        std::fs::write(pki.join("core-key.pem"), b"KEY-OF-HELLO-ALLY").unwrap();
+        if let Some(p) = prior {
+            std::fs::write(&cert, p).unwrap();
+            std::fs::write(&key, p).unwrap();
+        }
+        let mut backups = Vec::new();
+        journal_run(Path::new(&work), "run-20261112T000000Z-1");
+        let bdir = Path::new(&work).join("admission/run-20261112T000000Z-1/backup");
+        super::super::admit::publish(b"CERT-OF-HELLO-ALLY", &cert, &mut backups, &bdir).unwrap();
+        super::super::admit::publish(b"KEY-OF-HELLO-ALLY", &key, &mut backups, &bdir).unwrap();
+        let w = work.clone();
+        let ran = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let r2 = ran.clone();
+        let mut exec = move |_: &Path, cmd: &str| -> Result<bool> {
+            r2.borrow_mut().push(cmd.to_string());
+            let survey = Path::new(&w).join("backout/survey");
+            std::fs::create_dir_all(&survey).unwrap();
+            std::fs::write(
+                survey.join("core-x.json"),
+                r#"{"host":"core-x","peering":"hello-ally","rows":[]}"#,
+            )
+            .unwrap();
+            Ok(!(drop_fails
+                && cmd.contains("goat_zenoh_drop_partner_store")
+                && !cmd.contains("--check")))
+        };
+        let o = Options {
+            partner: "hello-ally",
+            env: None,
+            r#as: None,
+            edge_group: None,
+            work: Some(&work),
+            mock: None,
+            dry_run: false,
+            yes: true,
+            table: false,
+        };
+        let r = backout_with(&repo, &o, &mut exec).unwrap();
+        let ran = ran.borrow().clone();
+        (ran, cert, key, r, d)
+    }
+
+    #[test]
+    fn the_router_leaf_on_a_role_core_without_fed_core_acl_org_is_taken_back() {
+        // Something was there: both paths get it back, and the role's play,
+        // dry run then deploy, delivers it to the core host as admission's
+        // role play delivered the peering's leaf.
+        let (ran, cert, key, r, _d) = role_leaf_back_out(Some(b"THE-LEAF-BEFORE"));
+        assert_eq!(
+            std::fs::read(&cert).unwrap(),
+            b"THE-LEAF-BEFORE",
+            "{:?}",
+            r.checks
+        );
+        assert_eq!(
+            std::fs::read(&key).unwrap(),
+            b"THE-LEAF-BEFORE",
+            "{:?}",
+            r.checks
+        );
+        assert!(
+            r.checks.iter().find(|c| c.name == "converged").unwrap().ok,
+            "{:?}",
+            r.checks
+        );
+        let plays: Vec<&String> = ran
+            .iter()
+            .filter(|c| c.contains("zenoh-deploy.yml"))
+            .collect();
+        assert_eq!(plays.len(), 2, "the role's dry run and deploy: {ran:?}");
+        assert!(
+            plays[0].contains("--check") && !plays[1].contains("--check"),
+            "{plays:?}"
+        );
+        assert!(
+            ran.iter()
+                .all(|c| !c.contains("peering_backout_core_leaf_remove")),
+            "{ran:?}"
+        );
+        // Nothing was there: both are removed here, the role's play is not run
+        // (it refuses a controller with no leaf), and every back-out play is
+        // told to delete the host's copy in the role's TLS folder.
+        let (ran, cert, key, r, _d) = role_leaf_back_out(None);
+        assert!(!cert.exists(), "{:?}", r.checks);
+        assert!(
+            !key.exists(),
+            "no private key is left behind: {:?}",
+            r.checks
+        );
+        assert!(
+            r.checks.iter().find(|c| c.name == "converged").unwrap().ok,
+            "{:?}",
+            r.checks
+        );
+        assert!(
+            ran.iter().all(|c| !c.contains("zenoh-deploy.yml")),
+            "{ran:?}"
+        );
+        let backout: Vec<&String> = ran
+            .iter()
+            .filter(|c| c.contains("peering-backout.yml"))
+            .collect();
+        assert!(!backout.is_empty());
+        for c in backout {
+            assert!(
+                c.contains("-e peering_backout_core_leaf_remove='true'")
+                    && c.contains("-e peering_backout_core_tls_dir='/etc/xaa-zenoh/tls'"),
+                "{c}"
+            );
+        }
+    }
+
+    #[test]
+    fn on_a_role_core_the_partner_leaves_the_roles_list_and_its_store_is_dropped() {
+        // ADR 1234: the back-out takes the partner's entry out of the file
+        // admission wrote it into, keeping every other line, then runs the
+        // role's play (dry run, then deploy), which restarts the router without
+        // the partner's store and only then deletes that store's directory.
+        let before = "# Each partner this core admits.\nzenoh_sovereign_peerings:\n- sovereign: hello-ally\n  cn: fed.hello-ally.zagros.01\n- sovereign: xab\n  cn: fed.xab.zagros.01\nzenoh_from_retention_days: 7 # kept as written\n";
+        let (ran, _cert, _key, r, d) = role_back_out(Some(b"THE-LEAF-BEFORE"), Some(before), false);
+        let file = d
+            .path()
+            .join("repo/ops/ansible/group_vars/core_router/peerings.yml");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "# Each partner this core admits.\nzenoh_sovereign_peerings:\n- sovereign: xab\n  cn: fed.xab.zagros.01\nzenoh_from_retention_days: 7 # kept as written\n",
+            "{:?}",
+            r.checks
+        );
+        let drops: Vec<&String> = ran
+            .iter()
+            .filter(|c| c.contains("goat_zenoh_drop_partner_store"))
+            .collect();
+        assert_eq!(
+            drops.len(),
+            3,
+            "the role's dry run and deploy, then the store's own play: {ran:?}"
+        );
+        assert!(
+            drops[0].contains("--check") && !drops[1].contains("--check"),
+            "{drops:?}"
+        );
+        for c in &drops[..2] {
+            assert!(
+                c.contains("zenoh-deploy.yml")
+                    && c.contains("-e goat_zenoh_drop_partner_store='hello-ally'"),
+                "{c}"
+            );
+        }
+        assert!(
+            drops[2].contains("zenoh-drop-partner-store.yml")
+                && !drops[2].contains("--check")
+                && drops[2].contains("-e goat_zenoh_drop_partner_store='hello-ally'")
+                && drops[2].contains("-e goat_zenoh_storage_path='/var/lib/xaa-zenoh/rocksdb'")
+                && drops[2].contains("-e goat_zenoh_config_path='/etc/xaa-zenoh/config.json5'")
+                && drops[2].contains("-e zenoh_stack='xaa-zenoh'")
+                && drops[2].contains("-e target='core_router'"),
+            "{}",
+            drops[2]
+        );
+        let core = ran
+            .iter()
+            .position(|c| c.contains("peering_backout_apply"))
+            .expect("the removal play");
+        let first = ran
+            .iter()
+            .position(|c| c.contains("goat_zenoh_drop_partner_store"))
+            .unwrap();
+        assert!(core < first, "the edge goes first: {ran:?}");
+        assert!(
+            r.checks.iter().find(|c| c.name == "converged").unwrap().ok,
+            "{:?}",
+            r.checks
+        );
+        // The last partner: the list is left empty, not dropped.
+        let only =
+            "zenoh_sovereign_peerings:\n- sovereign: hello-ally\n  cn: fed.hello-ally.zagros.01\n";
+        let (_ran, _c, _k, r, d) = role_back_out(Some(b"THE-LEAF-BEFORE"), Some(only), false);
+        assert_eq!(
+            std::fs::read_to_string(
+                d.path()
+                    .join("repo/ops/ansible/group_vars/core_router/peerings.yml")
+            )
+            .unwrap(),
+            "zenoh_sovereign_peerings: []\n",
+            "{:?}",
+            r.checks
+        );
+    }
+
+    #[test]
+    fn a_store_drop_that_fails_puts_the_partner_back_in_the_list() {
+        // The role kept the store (it refuses while the router still serves
+        // it): the list is as it was, so running the back-out again repeats
+        // the step, and the run is not converged, naming GB-270.
+        let before =
+            "zenoh_sovereign_peerings:\n- sovereign: hello-ally\n  cn: fed.hello-ally.zagros.01\n";
+        let (_ran, _c, _k, r, d) = role_back_out(Some(b"THE-LEAF-BEFORE"), Some(before), true);
+        assert_eq!(
+            std::fs::read_to_string(
+                d.path()
+                    .join("repo/ops/ansible/group_vars/core_router/peerings.yml")
+            )
+            .unwrap(),
+            before,
+            "{:?}",
+            r.checks
+        );
+        let row = r.checks.iter().find(|c| c.name == "core store").unwrap();
+        assert!(!row.ok && row.detail.contains("(GB-270)"), "{row:?}");
+        assert_eq!(r.exit, EXIT_NOT_CONVERGED, "{:?}", r.checks);
+    }
+
+    #[test]
+    fn a_role_core_that_does_not_list_the_partner_runs_no_store_drop() {
+        let (ran, _c, _k, r, _d) = role_back_out(
+            Some(b"THE-LEAF-BEFORE"),
+            Some("zenoh_sovereign_peerings:\n- sovereign: xab\n  cn: fed.xab.zagros.01\n"),
+            false,
+        );
+        assert!(
+            ran.iter()
+                .all(|c| !c.contains("goat_zenoh_drop_partner_store")),
+            "{ran:?}"
+        );
+        assert!(
+            r.checks.iter().find(|c| c.name == "converged").unwrap().ok,
+            "{:?}",
+            r.checks
+        );
+    }
+
+    #[test]
+    fn admission_and_the_back_out_compose_the_leaf_paths_with_one_function() {
+        let repo = role_core_checkout();
+        std::fs::write(
+            repo.path().join("ops/ansible/group_vars/core_router/leaf.yml"),
+            "zenoh_router_leaf_cert_path: \"/srv/leaves/router-cert.pem\"\nzenoh_router_leaf_key_path: \"/srv/leaves/router-key.pem\"\n",
+        )
+        .unwrap();
+        let role = super::super::admit::role_core(repo.path(), "xab", |_| None)
+            .unwrap()
+            .expect("the role core");
+        let work = Path::new("/nonexistent/peerings/xab");
+        for vars in [
+            vec![],
+            vec![("FED_CORE_CERT", "/etc/x/cert.pem")],
+            vec![
+                ("FED_CORE_CERT", "/etc/x/cert.pem"),
+                ("FED_CORE_KEY", "/etc/x/key.pem"),
+            ],
+            vec![("FED_CORE_KEY", "  ")],
+        ] {
+            let var = |k: &str| {
+                vars.iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| v.to_string())
+                    .or_else(|| (k == "FED_SLOT_CHECK").then(|| "skip".into()))
+            };
+            let paths = super::super::admit::router_leaf_paths(repo.path(), Some(&role), var);
+            let core = super::super::admit::Core::from_vars(
+                repo.path(),
+                "xab",
+                "zagros",
+                Some(role.clone()),
+                var,
+            )
+            .unwrap_or_else(|m| panic!("{m:?}"));
+            assert_eq!(
+                (core.cert.clone(), core.key.clone()),
+                paths,
+                "admission, {vars:?}"
+            );
+            let leaf = role_leaf(repo.path(), "xab", work, var)
+                .unwrap()
+                .expect("a leaf");
+            let got: Vec<PathBuf> = leaf.targets.iter().map(|(t, _)| t.clone()).collect();
+            let want: Vec<PathBuf> = [paths.0, paths.1].into_iter().flatten().collect();
+            assert_eq!(got, want, "the back-out, {vars:?}");
+        }
     }
 
     #[test]
@@ -1784,29 +3132,837 @@ mod tests {
         assert_eq!(s.absent, 1);
     }
 
-    /// The core variables admission honours name another route to our core.
-    /// The back-out does not follow them, so it refuses while one is set.
+    /// The probe contract the roles follow (ops/ansible/filter_plugins/
+    /// backout_probe.py): a probe that could not read gives `unknown`, and
+    /// every such row, for each of the five probes, stops the back-out.
     #[test]
-    fn a_core_route_set_by_hand_is_refused_by_name() {
-        for var in [
-            "FED_CORE_PLAY",
-            "FED_CORE_RESTART",
-            "FED_CORE_GROUP",
-            "FED_CORE_ACL_ORG",
-        ] {
-            let e = hand_core_route(|k| (k == var).then(|| "x".to_string())).unwrap_err();
-            assert!(e.to_string().contains(var), "{var}: {e}");
-            assert_eq!(
-                e.downcast_ref::<goat_errors::Coded>()
-                    .map(|c| c.code.as_str()),
-                Some("GB-221")
+    fn every_probe_that_could_not_read_stops_the_back_out() {
+        let unknown = [
+            ("edge router", "container goat-zenoh-edge-xab"),
+            ("republisher", "container goat-fed-republisher-xab"),
+            ("forwarder", "carrier wg-carry0"),
+            ("spire", "federation xab.fed.test"),
+            ("spire", "bundle xab.fed.test"),
+        ];
+        for (component, resource) in unknown {
+            let recs = vec![rec(
+                "h",
+                "xab",
+                &[(
+                    component,
+                    resource,
+                    "unknown",
+                    "none",
+                    "rc 1: permission denied",
+                )],
+            )];
+            let s = summarize(&recs, "xab");
+            assert_eq!(s.refused.len(), 1, "{component} {resource}: {s:?}");
+            assert_eq!((s.to_remove, s.absent), (0, 0), "{component} {resource}");
+        }
+    }
+
+    /// Admission through the deployment's own route (FED_CORE_ACL_ORG, with
+    /// FED_CORE_ACL_SEED/OUT, restarted by FED_CORE_RESTART or FED_CORE_PLAY on
+    /// FED_CORE_GROUP) keeps our core's files on the driver. The back-out
+    /// follows the same route: it surveys those files, places the candidate,
+    /// dry-runs and restarts the way admission did, and the files are what they
+    /// were before the peering, byte for byte.
+    struct RouteCase {
+        dir: tempfile::TempDir,
+        vars: BTreeMap<String, String>,
+        before_org: String,
+        before_live: Option<String>,
+        repo: PathBuf,
+    }
+
+    impl RouteCase {
+        fn work(&self) -> PathBuf {
+            self.dir.path().join("peerings/xab")
+        }
+    }
+
+    /// Admission placing our core router's leaf (FED_CORE_CERT/KEY) from
+    /// phase 8's pki/core.pem and core-key.pem, with a backup of what was at
+    /// each path before, as admit.rs `publish` keeps it.
+    fn place_leaf(c: &mut RouteCase, prior: Option<&[u8]>) {
+        let leaves = c.dir.path().join("leaves");
+        std::fs::create_dir_all(&leaves).unwrap();
+        if let Some(p) = prior {
+            std::fs::write(leaves.join("router-cert.pem"), p).unwrap();
+            std::fs::write(leaves.join("router-key.pem"), p).unwrap();
+        }
+        place_leaf_over(c);
+    }
+
+    /// [`place_leaf`] over whatever the leaf paths already hold.
+    fn place_leaf_over(c: &mut RouteCase) {
+        let pki = c.work().join("pki");
+        std::fs::create_dir_all(&pki).unwrap();
+        std::fs::write(pki.join("core.pem"), b"CERT-OF-XAB").unwrap();
+        std::fs::write(pki.join("core-key.pem"), b"KEY-OF-XAB").unwrap();
+        let leaves = c.dir.path().join("leaves");
+        std::fs::create_dir_all(&leaves).unwrap();
+        let (cert, key) = (
+            leaves.join("router-cert.pem"),
+            leaves.join("router-key.pem"),
+        );
+        let mut backups = Vec::new();
+        journal_run(&c.work(), "run-20261112T000000Z-1");
+        let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+        super::super::admit::publish(b"CERT-OF-XAB", &cert, &mut backups, &bdir).unwrap();
+        super::super::admit::publish(b"KEY-OF-XAB", &key, &mut backups, &bdir).unwrap();
+        c.vars
+            .insert("FED_CORE_CERT".into(), cert.display().to_string());
+        c.vars
+            .insert("FED_CORE_KEY".into(), key.display().to_string());
+    }
+
+    const SEED: &str = "{\n  // BEGIN: per-vendor storages\n  // END: per-vendor storages\n  // BEGIN: per-vendor write rules\n  // END: per-vendor write rules\n  // BEGIN: per-vendor subjects\n  // END: per-vendor subjects\n  // BEGIN: per-vendor policies\n  // END: per-vendor policies\n}\n";
+    const BEFORE_ORG: &str = "##ACL-ORG-REGION storages\n##ACL-ORG-REGION write-rules\n      { id: \"vendor-a\", messages: [\"put\"], flows: [\"ingress\"], permission: \"allow\", key_exprs: [\"vendor/a/**\"] },\n##ACL-ORG-REGION subjects\n##ACL-ORG-REGION policies\n";
+    const FRAGMENT: &str = "##ACL-ORG-REGION storages\n##ACL-ORG-REGION write-rules\n      {\n        id: \"fed-w-xab\",\n        messages: [\"put\", \"delete\"],\n        flows: [\"ingress\"],\n        permission: \"allow\",\n        key_exprs: [\n          \"from/xab/**\",\n        ],\n      },\n##ACL-ORG-REGION subjects\n      {\n        id: \"fed-xab\",\n        cert_common_names: [\"fed.xab.xaa.01\"],\n      },\n##ACL-ORG-REGION policies\n      { rules: [\"fed-w-xab\"], subjects: [\"fed-xab\"] },\n";
+
+    fn real() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn assemble(seed: &Path, org: &Path, out: &Path) {
+        let st = std::process::Command::new("python3")
+            .arg(real().join("ops/ansible/roles/goat-zenoh/files/acl-assemble.py"))
+            .args(["assemble", "--seed"])
+            .arg(seed)
+            .arg("--org")
+            .arg(org)
+            .arg("--out")
+            .arg(out)
+            .status()
+            .unwrap();
+        assert!(st.success());
+    }
+
+    /// A core admitted xab on the driver's files, as admission writes them.
+    fn admitted(with_seed: bool, route: &[(&str, &str)]) -> RouteCase {
+        let dir = tempfile::tempdir().unwrap();
+        let org = dir.path().join("org.json5");
+        std::fs::write(&org, BEFORE_ORG).unwrap();
+        let mut vars: BTreeMap<String, String> = BTreeMap::new();
+        vars.insert("FED_CORE_ACL_ORG".into(), org.display().to_string());
+        let mut before_live = None;
+        if with_seed {
+            let seed = dir.path().join("seed.json5");
+            let out = dir.path().join("config.json5");
+            std::fs::write(&seed, SEED).unwrap();
+            assemble(&seed, &org, &out);
+            before_live = Some(std::fs::read_to_string(&out).unwrap());
+            vars.insert("FED_CORE_ACL_SEED".into(), seed.display().to_string());
+            vars.insert("FED_CORE_ACL_OUT".into(), out.display().to_string());
+        }
+        // Admission: admit.rs merge_org, then the assembler.
+        let merged = super::super::admit::merge_org(BEFORE_ORG, FRAGMENT, "xab").unwrap();
+        std::fs::write(&org, &merged).unwrap();
+        if with_seed {
+            assemble(
+                Path::new(&vars["FED_CORE_ACL_SEED"]),
+                &org,
+                Path::new(&vars["FED_CORE_ACL_OUT"]),
             );
         }
-        assert!(hand_core_route(|_| None).is_ok());
+        for (k, v) in route {
+            vars.insert(
+                k.to_string(),
+                v.replace("{log}", &dir.path().join("log").display().to_string()),
+            );
+        }
+        vars.insert("FED_SLOT_CHECK".into(), "skip".into());
+        RouteCase {
+            dir,
+            vars,
+            before_org: BEFORE_ORG.into(),
+            before_live,
+            repo: real(),
+        }
+    }
+
+    fn back_out(c: &RouteCase) -> Vec<String> {
+        let var = |k: &str| c.vars.get(k).cloned();
+        let core = driver_core(&c.repo, "xab", "zagros", &c.work(), var)
+            .unwrap()
+            .expect("the deployment's own route");
+        let work = c.dir.path().join("backout");
+        let rec = driver_survey(&core, "xab", &work.join("survey")).unwrap();
+        let s = summarize(&[rec], "xab");
+        assert!(s.refused.is_empty(), "{s:?}");
+        let digest = s.core_candidate.clone().expect("a candidate to restart on");
+        let ran = std::cell::RefCell::new(Vec::new());
+        let mut exec = |_: &Path, cmd: &str| -> Result<bool> {
+            ran.borrow_mut().push(cmd.to_string());
+            // A play is recorded, not run: this checkout's plays reach no host here.
+            if cmd.contains("ansible-preflight.sh") {
+                return Ok(true);
+            }
+            Ok(std::process::Command::new("bash")
+                .args(["-c", cmd])
+                .status()?
+                .success())
+        };
+        driver_apply(
+            &c.repo,
+            &core,
+            "xab",
+            &work.join("core-apply"),
+            &digest,
+            &mut exec,
+        )
+        .unwrap();
+        // Run again: nothing of xab is left, nothing restarts.
+        let again = driver_survey(&core, "xab", &work.join("survey-after")).unwrap();
+        let left = summarize(&[again], "xab");
         assert!(
-            hand_core_route(|_| Some(String::new())).is_ok(),
-            "an empty value is unset"
+            left.core_candidate.is_none() && left.to_remove == 0,
+            "{left:?}"
         );
+        ran.into_inner()
+    }
+
+    #[test]
+    fn the_back_out_follows_fed_core_acl_org_with_its_seed_and_restart() {
+        let c = admitted(
+            true,
+            &[
+                ("FED_CORE_RESTART", "echo restart >> {log}"),
+                ("FED_CORE_DRY_RUN", "echo dry >> {log}"),
+            ],
+        );
+        back_out(&c);
+        assert_eq!(
+            std::fs::read_to_string(&c.vars["FED_CORE_ACL_ORG"]).unwrap(),
+            c.before_org
+        );
+        assert_eq!(
+            std::fs::read_to_string(&c.vars["FED_CORE_ACL_OUT"]).unwrap(),
+            c.before_live.clone().unwrap()
+        );
+        assert_eq!(
+            std::fs::read_to_string(c.dir.path().join("log")).unwrap(),
+            "dry\nrestart\n"
+        );
+    }
+
+    #[test]
+    fn the_back_out_follows_fed_core_acl_org_alone_when_the_host_assembles() {
+        // The role-core shape: a driver copy of the org fragment, carried to the
+        // core and assembled there by FED_CORE_RESTART.
+        let c = admitted(
+            false,
+            &[
+                ("FED_CORE_RESTART", "echo restart >> {log}"),
+                ("FED_CORE_DRY_RUN", "skip"),
+            ],
+        );
+        back_out(&c);
+        assert_eq!(
+            std::fs::read_to_string(&c.vars["FED_CORE_ACL_ORG"]).unwrap(),
+            c.before_org
+        );
+        assert_eq!(
+            std::fs::read_to_string(c.dir.path().join("log")).unwrap(),
+            "restart\n"
+        );
+    }
+
+    #[test]
+    fn the_back_out_follows_fed_core_play_on_fed_core_group() {
+        let c = admitted(
+            true,
+            &[
+                ("FED_CORE_PLAY", "core-deploy.yml"),
+                ("FED_CORE_GROUP", "core_x"),
+            ],
+        );
+        let ran = back_out(&c);
+        assert_eq!(
+            std::fs::read_to_string(&c.vars["FED_CORE_ACL_ORG"]).unwrap(),
+            c.before_org
+        );
+        let plays: Vec<&String> = ran
+            .iter()
+            .filter(|r| r.contains("core-deploy.yml"))
+            .collect();
+        assert_eq!(plays.len(), 2, "a dry run and the deploy: {ran:?}");
+        assert!(
+            plays[0].contains("--check") && plays.iter().all(|p| p.contains("--limit 'core_x'")),
+            "{plays:?}"
+        );
+    }
+
+    #[test]
+    fn the_router_leaf_admission_placed_goes_back_to_what_was_there() {
+        // Nothing there before: the leaf and its key are removed.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        back_out(&c);
+        assert!(!Path::new(&c.vars["FED_CORE_CERT"]).exists());
+        assert!(
+            !Path::new(&c.vars["FED_CORE_KEY"]).exists(),
+            "no private key is left behind"
+        );
+        // Another leaf there before: its bytes come back.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+    }
+
+    #[test]
+    fn the_leafs_backup_is_found_in_whichever_admission_run_kept_it() {
+        // An earlier admission run stopped after the org fragment, before the
+        // leaf: its backup folder holds no leaf. The leaf's own backup, the
+        // core's previous leaf, is in the later run, and is what comes back.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        journal_run(&c.work(), "run-20261111T000000Z-1");
+        let early = c.work().join("admission/run-20261111T000000Z-1/backup");
+        std::fs::create_dir_all(&early).unwrap();
+        std::fs::write(early.join("0-org.json5"), BEFORE_ORG).unwrap();
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+        // A later admission's backup of this peering's own leaf is not what was
+        // there before: the first run placed it where nothing was, so it goes.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        let mut backups = Vec::new();
+        journal_run(&c.work(), "run-20261113T000000Z-1");
+        let again = c.work().join("admission/run-20261113T000000Z-1/backup");
+        super::super::admit::publish(
+            b"CERT-OF-XAB",
+            Path::new(&c.vars["FED_CORE_CERT"]),
+            &mut backups,
+            &again,
+        )
+        .unwrap();
+        back_out(&c);
+        assert!(!Path::new(&c.vars["FED_CORE_CERT"]).exists());
+    }
+
+    #[test]
+    fn a_leaf_renewed_after_it_was_placed_where_nothing_was_is_removed() {
+        // The first admission placed the leaf where nothing was. Phase 8 then
+        // renewed it, and a later admission placed the new leaf, keeping the
+        // first one as its backup. That backup is this peering's own old leaf,
+        // not what was there before: the earliest admission that touched the
+        // path decides, and it found nothing, so the leaf and its key go.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        let pki = c.work().join("pki");
+        std::fs::write(pki.join("core.pem"), b"CERT-OF-XAB-2").unwrap();
+        std::fs::write(pki.join("core-key.pem"), b"KEY-OF-XAB-2").unwrap();
+        let mut backups = Vec::new();
+        journal_run(&c.work(), "run-20261113T000000Z-1");
+        let again = c.work().join("admission/run-20261113T000000Z-1/backup");
+        for (bytes, var) in [
+            (&b"CERT-OF-XAB-2"[..], "FED_CORE_CERT"),
+            (&b"KEY-OF-XAB-2"[..], "FED_CORE_KEY"),
+        ] {
+            super::super::admit::publish(bytes, Path::new(&c.vars[var]), &mut backups, &again)
+                .unwrap();
+        }
+        back_out(&c);
+        assert!(!Path::new(&c.vars["FED_CORE_CERT"]).exists());
+        assert!(
+            !Path::new(&c.vars["FED_CORE_KEY"]).exists(),
+            "no private key is left behind"
+        );
+    }
+
+    /// The `core leaf` rows a survey of `c` gives, by path.
+    fn leaf_rows(c: &RouteCase) -> BTreeMap<String, Row> {
+        let var = |k: &str| c.vars.get(k).cloned();
+        let core = driver_core(&c.repo, "xab", "zagros", &c.work(), var)
+            .unwrap()
+            .expect("the deployment's own route");
+        let rec = driver_survey(&core, "xab", &c.dir.path().join("probe")).unwrap();
+        rec.rows
+            .into_iter()
+            .filter(|r| r.component == "core leaf")
+            .map(|r| (r.resource.clone(), r))
+            .collect()
+    }
+
+    #[test]
+    fn a_leaf_is_removed_only_on_an_explicit_absent_record_of_its_path() {
+        let route = [("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")];
+        let unknown = |c: &RouteCase, why: &str| {
+            let rows = leaf_rows(c);
+            for var in ["FED_CORE_CERT", "FED_CORE_KEY"] {
+                let r = &rows[&c.vars[var]];
+                assert_eq!(r.state, "unknown", "{why}: {rows:?}");
+                assert!(r.note.contains("admission"), "{why}: {}", r.note);
+                assert!(
+                    Path::new(&c.vars[var]).exists(),
+                    "{why}: nothing is deleted"
+                );
+            }
+            let recs: Vec<HostRecord> = vec![HostRecord {
+                host: "driver".into(),
+                peering: "xab".into(),
+                rows: rows.into_values().collect(),
+            }];
+            assert!(
+                !summarize(&recs, "xab").refused.is_empty(),
+                "{why}: the back-out stops"
+            );
+        };
+        // No record at all: admission's placing was not recorded.
+        let mut c = admitted(true, &route);
+        place_leaf(&mut c, None);
+        std::fs::remove_dir_all(c.work().join("admission")).unwrap();
+        unknown(&c, "no record");
+        // A corrupt record.
+        let mut c = admitted(true, &route);
+        place_leaf(&mut c, None);
+        let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+        for (n, var) in [(0, "FED_CORE_CERT"), (1, "FED_CORE_KEY")] {
+            let name = Path::new(&c.vars[var])
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            std::fs::write(
+                bdir.join(format!("{n}-{name}.target")),
+                format!("{}\nabsen\n", c.vars[var]),
+            )
+            .unwrap();
+        }
+        unknown(&c, "a corrupt record");
+        // A record of another path only.
+        let mut c = admitted(true, &route);
+        place_leaf(&mut c, None);
+        let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+        for (n, var) in [(0, "FED_CORE_CERT"), (1, "FED_CORE_KEY")] {
+            let name = Path::new(&c.vars[var])
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            std::fs::write(
+                bdir.join(format!("{n}-{name}.target")),
+                "/elsewhere/router.pem\nabsent\n",
+            )
+            .unwrap();
+        }
+        unknown(&c, "a record of another path");
+        // An unreadable backup.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut c = admitted(true, &route);
+            place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+            let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+            for n in [0, 1] {
+                let name = if n == 0 {
+                    "router-cert.pem"
+                } else {
+                    "router-key.pem"
+                };
+                let b = bdir.join(format!("{n}-{name}"));
+                std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o000)).unwrap();
+            }
+            // Not when this runs with rights to read it anyway.
+            if std::fs::read(bdir.join("0-router-cert.pem")).is_err() {
+                unknown(&c, "an unreadable backup");
+            }
+        }
+        // An older admission's backup without a record is still put back.
+        let mut c = admitted(true, &route);
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+        for f in ["0-router-cert.pem.target", "1-router-key.pem.target"] {
+            std::fs::remove_file(bdir.join(f)).unwrap();
+        }
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+    }
+
+    #[test]
+    fn a_rolled_back_admission_leaves_no_record_that_decides_the_back_out() {
+        // A first admission placed the leaf where nothing was, then failed and
+        // put everything back. Someone else's leaf was placed there; a second
+        // admission kept it as its backup and placed ours. The rolled-back run
+        // never took effect, so the other leaf is what comes back.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        let pki = c.work().join("pki");
+        std::fs::create_dir_all(&pki).unwrap();
+        std::fs::write(pki.join("core.pem"), b"CERT-OF-XAB").unwrap();
+        std::fs::write(pki.join("core-key.pem"), b"KEY-OF-XAB").unwrap();
+        let leaves = c.dir.path().join("leaves");
+        std::fs::create_dir_all(&leaves).unwrap();
+        let (cert, key) = (
+            leaves.join("router-cert.pem"),
+            leaves.join("router-key.pem"),
+        );
+        let admit_run = |run: &str| {
+            journal_run(&c.work(), run);
+            let mut backups = Vec::new();
+            let bdir = c.work().join(format!("admission/{run}/backup"));
+            super::super::admit::publish(b"CERT-OF-XAB", &cert, &mut backups, &bdir).unwrap();
+            super::super::admit::publish(b"KEY-OF-XAB", &key, &mut backups, &bdir).unwrap();
+            backups
+        };
+        let first = admit_run("run-20261112T000000Z-1");
+        let said = super::super::admit::put_back(&first);
+        assert!(said.starts_with("every file placed is put back"), "{said}");
+        assert!(!cert.exists() && !key.exists());
+        std::fs::write(&cert, b"ANOTHER-CERT").unwrap();
+        std::fs::write(&key, b"ANOTHER-KEY").unwrap();
+        admit_run("run-20261112T000001Z-1");
+        c.vars
+            .insert("FED_CORE_CERT".into(), cert.display().to_string());
+        c.vars
+            .insert("FED_CORE_KEY".into(), key.display().to_string());
+        back_out(&c);
+        assert_eq!(std::fs::read(&cert).unwrap(), b"ANOTHER-CERT");
+        assert_eq!(std::fs::read(&key).unwrap(), b"ANOTHER-KEY");
+    }
+
+    /// Record admission run `id` in the peering's run journal, after the
+    /// runs already there, as `State::open_run` does.
+    fn journal_run(work: &Path, id: &str) {
+        let mut st = super::super::state::State::load(work, "xab").unwrap();
+        if st.runs.iter().all(|r| r.id != id) {
+            st.runs.push(super::super::state::RunEntry {
+                id: id.into(),
+                stage: "federate".into(),
+                started: super::super::state::now(),
+                ended: String::new(),
+                from: 1,
+                to: 14,
+                resume: false,
+                plan: String::new(),
+                outcome: String::new(),
+                extra: Default::default(),
+            });
+        }
+        st.save(work).unwrap();
+    }
+
+    #[test]
+    fn admission_runs_are_ordered_by_the_run_journal() {
+        // Two runs in one second: the one with the higher pid ran first and
+        // placed the leaf where nothing was; the second renewed it and kept
+        // the first leaf as its backup. By folder name the second sorts first.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        let pki = c.work().join("pki");
+        std::fs::create_dir_all(&pki).unwrap();
+        let leaves = c.dir.path().join("leaves");
+        std::fs::create_dir_all(&leaves).unwrap();
+        let (cert, key) = (
+            leaves.join("router-cert.pem"),
+            leaves.join("router-key.pem"),
+        );
+        for (run, n) in [
+            ("run-20261112T000000Z-9", ""),
+            ("run-20261112T000000Z-10", "-2"),
+        ] {
+            journal_run(&c.work(), run);
+            std::fs::write(pki.join("core.pem"), format!("CERT-OF-XAB{n}")).unwrap();
+            std::fs::write(pki.join("core-key.pem"), format!("KEY-OF-XAB{n}")).unwrap();
+            let mut backups = Vec::new();
+            let bdir = c.work().join(format!("admission/{run}/backup"));
+            super::super::admit::publish(
+                format!("CERT-OF-XAB{n}").as_bytes(),
+                &cert,
+                &mut backups,
+                &bdir,
+            )
+            .unwrap();
+            super::super::admit::publish(
+                format!("KEY-OF-XAB{n}").as_bytes(),
+                &key,
+                &mut backups,
+                &bdir,
+            )
+            .unwrap();
+        }
+        c.vars
+            .insert("FED_CORE_CERT".into(), cert.display().to_string());
+        c.vars
+            .insert("FED_CORE_KEY".into(), key.display().to_string());
+        // An admission folder the journal does not list cannot be ordered.
+        let stray = c.work().join("admission/run-20261111T000000Z-1/backup");
+        std::fs::create_dir_all(&stray).unwrap();
+        std::fs::write(stray.join("0-router-cert.pem"), b"A-STRAY-CERT").unwrap();
+        let rows = leaf_rows(&c);
+        assert_eq!(rows[&c.vars["FED_CORE_CERT"]].state, "unknown", "{rows:?}");
+        assert!(
+            rows[&c.vars["FED_CORE_CERT"]]
+                .note
+                .contains("run-20261111T000000Z-1"),
+            "{rows:?}"
+        );
+        std::fs::remove_dir_all(c.work().join("admission/run-20261111T000000Z-1")).unwrap();
+        back_out(&c);
+        assert!(!cert.exists(), "the first run found nothing there");
+        assert!(!key.exists(), "no private key is left behind");
+    }
+
+    #[test]
+    fn a_certificate_and_key_whose_records_disagree_are_left_as_they_are() {
+        // Admission found a certificate there but no key: one would be put
+        // back and the other removed, which leaves a leaf that cannot serve.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        let leaves = c.dir.path().join("leaves");
+        std::fs::create_dir_all(&leaves).unwrap();
+        std::fs::write(leaves.join("router-cert.pem"), b"THE-CERT-BEFORE").unwrap();
+        place_leaf_over(&mut c);
+        let rows = leaf_rows(&c);
+        for var in ["FED_CORE_CERT", "FED_CORE_KEY"] {
+            let r = &rows[&c.vars[var]];
+            assert_eq!(r.state, "unknown", "{rows:?}");
+            assert!(
+                r.note.contains("0-router-cert.pem") && r.note.contains("1-router-key.pem.target"),
+                "the note names both records: {}",
+                r.note
+            );
+        }
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"KEY-OF-XAB"
+        );
+    }
+
+    #[test]
+    fn a_leaf_another_peering_uses_is_left_in_place() {
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        // Peering xac minted the same leaf: it is theirs too.
+        let other = c.dir.path().join("peerings/xac/pki");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("core.pem"), b"CERT-OF-XAB").unwrap();
+        std::fs::write(other.join("core-key.pem"), b"KEY-OF-XAB").unwrap();
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        // And a leaf that is no longer ours (another admission since) is left.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        std::fs::write(&c.vars["FED_CORE_CERT"], b"A-LATER-LEAF").unwrap();
+        std::fs::write(&c.vars["FED_CORE_KEY"], b"A-LATER-KEY").unwrap();
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"A-LATER-LEAF"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"A-LATER-KEY"
+        );
+    }
+
+    #[test]
+    fn a_leaf_half_of_which_now_holds_another_s_bytes_is_left_as_it_is() {
+        // The certificate is still ours, with a backup to put back; the key
+        // now holds someone else's. Putting the certificate back beside a
+        // foreign key, or removing ours beside it, leaves a leaf that cannot
+        // serve: both read unknown and nothing changes. A half that is
+        // missing stays neutral.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        std::fs::write(&c.vars["FED_CORE_KEY"], b"SOMEONE-ELSES-KEY").unwrap();
+        let rows = leaf_rows(&c);
+        for var in ["FED_CORE_CERT", "FED_CORE_KEY"] {
+            assert_eq!(rows[&c.vars[var]].state, "unknown", "{rows:?}");
+        }
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"SOMEONE-ELSES-KEY"
+        );
+    }
+
+    #[test]
+    fn a_missing_half_whose_record_cannot_be_read_blocks_its_partner() {
+        // The key was deleted by hand, and its admission record is corrupt:
+        // what was there before is not known, so the certificate is not put
+        // back alone. Both read unknown and nothing changes.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        std::fs::remove_file(&c.vars["FED_CORE_KEY"]).unwrap();
+        let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+        std::fs::write(
+            bdir.join("1-router-key.pem.target"),
+            format!("{}\nabsen\n", c.vars["FED_CORE_KEY"]),
+        )
+        .unwrap();
+        let rows = leaf_rows(&c);
+        for var in ["FED_CORE_CERT", "FED_CORE_KEY"] {
+            assert_eq!(rows[&c.vars[var]].state, "unknown", "{rows:?}");
+        }
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        assert!(!Path::new(&c.vars["FED_CORE_KEY"]).exists());
+    }
+
+    #[test]
+    fn a_missing_half_comes_back_from_its_backup_and_is_neutral_without_one() {
+        // The key was deleted by hand after admission. Admission kept what was
+        // there before for both halves, so both come back to their backups.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        std::fs::remove_file(&c.vars["FED_CORE_KEY"]).unwrap();
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"THE-LEAF-BEFORE",
+            "the missing key comes back from its backup"
+        );
+        // Nothing was there before: the missing key has no backup and stays
+        // missing, and the certificate is removed.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        std::fs::remove_file(&c.vars["FED_CORE_KEY"]).unwrap();
+        back_out(&c);
+        assert!(!Path::new(&c.vars["FED_CORE_CERT"]).exists());
+        assert!(!Path::new(&c.vars["FED_CORE_KEY"]).exists());
+    }
+
+    #[test]
+    fn fed_core_acl_org_alone_on_a_role_core_is_restarted_by_the_roles_play() {
+        // Admission takes the role's own play whenever FED_CORE_PLAY and
+        // FED_CORE_RESTART are unset; the back-out decides the same way.
+        let mut c = admitted(false, &[]);
+        let role = role_core_checkout();
+        let tool = role.path().join("ops/federation/standup/backout_core.py");
+        std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        std::fs::copy(real().join("ops/federation/standup/backout_core.py"), &tool).unwrap();
+        c.repo = role.path().to_path_buf();
+        let ran = back_out(&c);
+        assert_eq!(
+            std::fs::read_to_string(&c.vars["FED_CORE_ACL_ORG"]).unwrap(),
+            c.before_org
+        );
+        let plays: Vec<&String> = ran
+            .iter()
+            .filter(|r| r.contains("zenoh-deploy.yml"))
+            .collect();
+        assert_eq!(plays.len(), 2, "the role's dry run and deploy: {ran:?}");
+        assert!(plays[0].contains("--check"), "{plays:?}");
+    }
+
+    #[test]
+    fn fed_core_play_is_run_with_the_peerings_working_folder() {
+        let c = admitted(
+            true,
+            &[
+                ("FED_CORE_PLAY", "core-deploy.yml"),
+                ("FED_CORE_GROUP", "core_x"),
+            ],
+        );
+        let ran = back_out(&c);
+        let want = format!("-e fed_work='{}'", c.work().display());
+        assert!(
+            ran.iter()
+                .filter(|r| r.contains("core-deploy.yml"))
+                .all(|r| r.contains(&want)),
+            "{ran:?}"
+        );
+    }
+
+    #[test]
+    fn without_a_route_of_its_own_the_role_core_is_the_plays_to_survey() {
+        assert!(driver_core(
+            &real(),
+            "xab",
+            "zagros",
+            Path::new("/nonexistent/w"),
+            |_| None
+        )
+        .unwrap()
+        .is_none());
+        // A route named but incomplete is refused, naming what is missing.
+        let e = driver_core(&real(), "xab", "zagros", Path::new("/nonexistent/w"), |k| {
+            (k == "FED_CORE_RESTART").then(|| "x".into())
+        })
+        .err()
+        .unwrap();
+        assert!(e.to_string().contains("FED_CORE_ACL_ORG"), "{e}");
     }
 
     /// The back-out reads the core route the run holds (runenv), not only the
@@ -1848,6 +4004,61 @@ mod tests {
             ran.borrow().is_empty(),
             "no host was read: {:?}",
             ran.borrow()
+        );
+    }
+
+    /// The federation test environment's org fragment before the peering and
+    /// as admission left it on a role core (run 586a2a706d1b-20261112T190954):
+    /// admission's merge_org makes the second from the first, and the back-out's
+    /// candidate (backout_core.py, the code the core tasks run) must give the
+    /// first back, byte for byte.
+    #[test]
+    fn backing_out_a_role_admitted_core_gives_back_the_fragment_before_the_peering() {
+        let fixtures =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/backout-role-core");
+        let before = std::fs::read_to_string(fixtures.join("org-before.json5")).unwrap();
+        let admitted = std::fs::read_to_string(fixtures.join("org-admitted.json5")).unwrap();
+        // The partner's fragment, as apply rendered it: each region's lines
+        // between the markers.
+        let mut fragment = String::new();
+        let mut inside = false;
+        for line in admitted.lines() {
+            if let Some(r) = line.strip_prefix("##ACL-ORG-REGION ") {
+                fragment.push_str(&format!("##ACL-ORG-REGION {r}\n"));
+            } else if line.trim() == "// BEGIN peering xab (goatbuilder federate)" {
+                inside = true;
+            } else if line.trim() == "// END peering xab" {
+                inside = false;
+            } else if inside {
+                fragment.push_str(line);
+                fragment.push('\n');
+            }
+        }
+        assert_eq!(
+            super::super::admit::merge_org(&before, &fragment, "xab").unwrap(),
+            admitted,
+            "the fixture is what admission writes"
+        );
+        let tool = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ops/federation/standup/backout_core.py");
+        let out = std::process::Command::new("python3")
+            .args([
+                "-c",
+                "import importlib.util,sys\nspec=importlib.util.spec_from_file_location('bc', sys.argv[1])\nbc=importlib.util.module_from_spec(spec); spec.loader.exec_module(bc)\ncand, rep = bc.plan(open(sys.argv[2]).read(), 'xab')\nsys.stdout.write(cand)",
+            ])
+            .arg(&tool)
+            .arg(fixtures.join("org-admitted.json5"))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let candidate = String::from_utf8(out.stdout).unwrap();
+        assert_eq!(
+            candidate, before,
+            "the back-out gives back the fragment before the peering"
         );
     }
 

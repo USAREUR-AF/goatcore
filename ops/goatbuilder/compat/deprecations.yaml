@@ -5,6 +5,7 @@
 #
 #   - command: goatbuilder deploy        # the command, as `goatbuilder docs --markdown` heads it
 #     flag: --env                        # the flag; leave it out to deprecate the whole command
+#     value: door                        # optional: one value of the flag (or of an <ARG> named in flag:)
 #     replacement: --environment         # what to use instead; the warning names it
 #     deprecated_in: goatbuilder/v0.6.0  # the first release that warns
 deprecations: []

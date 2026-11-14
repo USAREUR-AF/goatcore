@@ -10,11 +10,7 @@
 use std::path::{Path, PathBuf};
 
 /// (file, text on the line, why it remains)
-const KNOWN: &[(&str, &str, &str)] = &[(
-    "src/federate/mod.rs",
-    "remove_var(key)",
-    "run_verb_in_process writes the verb's environment into the process (product code); its test clears the key it checks. It goes with the runner's move of federate's process writes into runenv, a separate change",
-)];
+const KNOWN: &[(&str, &str, &str)] = &[];
 
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
@@ -112,4 +108,79 @@ fn the_scan_finds_a_write_in_a_test_module_of_any_name() {
     let in_tests = scan("tests/x.rs", "fn t() {\n    std::env::set_var(\"D\", \"4\");\n}\n");
     assert_eq!(in_tests.len(), 1, "anywhere in tests/");
     assert_eq!(test_modules("#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {}\n}\n"), vec![(2, 5)]);
+}
+
+/// federate drives phases and, in process, the federation library's verbs, on
+/// one thread while the rest of the process keeps running. A `set_var` there is
+/// unsound in a multi-threaded process, so nothing under `src/federate/` writes
+/// the process environment, product code included: a verb's values reach it as
+/// values (runenv, and the library's `_with` hooks), never through the process.
+#[test]
+fn federate_never_writes_the_process_environment() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    sources(&root.join("src/federate"), &mut files);
+    files.sort();
+    let mut found = Vec::new();
+    for f in &files {
+        let rel = f.strip_prefix(root).unwrap().display().to_string();
+        for (n, l) in std::fs::read_to_string(f).unwrap().lines().enumerate() {
+            if writes_env(l) {
+                found.push(format!("{rel}:{}: {}", n + 1, l.trim()));
+            }
+        }
+    }
+    assert!(found.is_empty(), "federate writes the process environment; pass the value in instead:\n{}", found.join("\n"));
+}
+
+/// The product code that may write the process environment: in `main`, before any
+/// thread starts, where `set_var` is sound. Each line names the file, the text on
+/// the line, and what reads the value.
+const MAIN_ONLY: &[(&str, &str, &str)] = &[
+    (
+        "src/main.rs",
+        "set_var(\"GOAT_DEPLOY_OFFLINE\"",
+        "--offline: the plays and scripts every child runs read it",
+    ),
+    (
+        "src/awake.rs",
+        "set_var(MARKER",
+        "the keep-awake marker a nested goatbuilder reads, so it holds no second assertion",
+    ),
+];
+
+/// goatbuilder runs threads once a verb starts (the runner's output copies, survey),
+/// and `set_var` while another thread runs is unsound. So outside `main`'s first
+/// lines, product code passes a value to the child that reads it (`Cmd::env`,
+/// run state) and never writes the process environment. This covers
+/// `src/federate/` too, which also has its own, stricter test
+/// (`federate_never_writes_the_process_environment`).
+#[test]
+fn product_code_writes_the_process_environment_only_in_main_before_threads() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    sources(&root.join("src"), &mut files);
+    files.sort();
+    let mut found = Vec::new();
+    for f in &files {
+        let rel = f.strip_prefix(root).unwrap().display().to_string();
+        for (n, l) in std::fs::read_to_string(f).unwrap().lines().enumerate() {
+            if writes_env(l)
+                && !MAIN_ONLY
+                    .iter()
+                    .any(|(file, needle, _)| rel == *file && l.contains(needle))
+            {
+                found.push(format!("{rel}:{}: {}", n + 1, l.trim()));
+            }
+        }
+    }
+    assert!(found.is_empty(), "product code writes the process environment while threads may run; pass the value to the child instead:\n{}", found.join("\n"));
+    // Each allowed site is still there: an entry that matches nothing is removed.
+    for (file, needle, _) in MAIN_ONLY {
+        let text = std::fs::read_to_string(root.join(file)).unwrap();
+        assert!(
+            text.lines().any(|l| writes_env(l) && l.contains(needle)),
+            "{file}: no `{needle}` left; remove it from MAIN_ONLY"
+        );
+    }
 }

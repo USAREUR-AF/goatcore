@@ -762,14 +762,23 @@ Then, in this order:
    re-adds their certificate authority within minutes and quietly undoes you.
 2. Remove their CA from the edge router's configuration and re-apply.
 3. Restart the edge router.
-4. On a core configured from `roles/goat-zenoh`, review the orphan-store policy,
-   remove their entry from `zenoh_sovereign_peerings`, and apply the reviewed
-   core change. The per-partner directory `<storage path>/sovereign_from_<them>`
-   remains on disk and is listed in `.undeclared-stores`; the role never deletes
-   it. Historical copies can also remain in the shared legacy `sovereign_from`
-   store. Follow the agreed retention/deletion procedure for all copies, while
-   preserving other partners' data. With `zenoh_orphan_stores_fail: true`, an
-   approved disposition or migration is needed before the deploy can proceed.
+4. On a core configured from `roles/goat-zenoh`, their entry leaves
+   `zenoh_sovereign_peerings` and their store is dropped whole (ADR 1234,
+   [federation-backout-partner-data.md](../design/federation-backout-partner-data.md)).
+   `goatbuilder federate backout <them>` does it: it takes the entry out of
+   `group_vars/<core router group>/peerings.yml`, runs the role's play, which
+   restarts the router without `<storage path>/sovereign_from_<them>`, and then
+   runs `ops/ansible/zenoh-drop-partner-store.yml`, which deletes that directory.
+   Commit the edited `peerings.yml` through review. By hand, do the same: remove
+   the entry, apply the reviewed core change with
+   `-e goat_zenoh_drop_partner_store=<them>`, then run that play with the same
+   variable. Without it the directory stays on disk, listed in `.undeclared-stores`;
+   nothing deletes a store it was not told to drop. Earlier releases also
+   kept every partner's samples in a shared `sovereign_from` store; the role no
+   longer renders it, so on a core that had it, `<storage path>/sovereign_from`
+   stays on disk with no retention and is listed in `.undeclared-stores`. Dispose
+   of it by hand. With `zenoh_orphan_stores_fail: true`, a deploy refuses until
+   that is done.
 
 There is no certificate revocation list and no way to revoke a single certificate. Cutting the
 tunnel is the control that actually works; the rest is cleanup.

@@ -41,7 +41,7 @@ on:
 
 concurrency:
   group: cargo-deny-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   cargo-deny:

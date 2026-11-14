@@ -282,3 +282,8 @@ audit_subscriber_local_ndjson_dir: ""
 # data it never consumed; the WORM copy is unaffected either way. Only consulted
 # when audit_subscriber_local_ndjson_dir is set.
 audit_subscriber_local_ndjson_retain_days: 7
+
+# Container memory ceilings. The defaults are the values these limits had
+# when they were written into the compose template; a small host lowers them
+# in group_vars. ops/ci/check-compose-memory-is-variable.sh refuses a literal.
+audit_subscriber_memory_limit: 28224M  # the audit-subscriber container

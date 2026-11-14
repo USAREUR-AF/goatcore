@@ -150,6 +150,97 @@ else
   fail "intermediate CA: the play failed"; grep -E 'refused' "$LOG" | head -4
 fi
 
+# --- our CA, from the working directory -------------------------------------------
+# When goat_zenoh_edge_our_ca_path is the role's own <cert_dir>/our-ca.pem (its
+# default with the switch on), the role installs our CA itself, from
+# <fed_work>/pki/our-ca.pem where phase 8 places it, so a driver that is not the
+# edge host leaves the edge everything it mounts. Only the CA's certificate: never
+# its key.
+play_ca() { # $1 work dir, $2 cert dir, rest: extra arguments (no our_ca_path: derived)
+  local work="$1" dir="$2"; shift 2
+  ANSIBLE_NOCOLOR=1 ANSIBLE_RETRY_FILES_ENABLED=0 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
+    ansible-playbook -i localhost, "$HERE/certificates.yml" \
+    -e goat_zenoh_edge_partner_id=xab -e goat_zenoh_edge_install_certs=true \
+    -e "fed_work=$work" -e "goat_zenoh_edge_cert_dir=$dir" \
+    -e "goat_zenoh_edge_cert_owner=$(id -un)" -e "goat_zenoh_edge_cert_group=$(id -gn)" \
+    -e "restart_log=$RESTARTS" "$@" > "$LOG" 2>&1
+}
+no_ca_key() { # $1 cert dir: no file there is our CA's key, and only the two leaf keys hold a key
+  local f
+  for f in "$1"/* "$1"/.[!.]*; do
+    [ -f "$f" ] || continue
+    cmp -s "$f" "$T/ours-ca-key.pem" && return 1
+    if grep -q 'PRIVATE KEY' "$f"; then
+      case "$(basename "$f")" in peering-outward-key.pem|peering-inward-key.pem) ;; *) return 1 ;; esac
+    fi
+  done
+  return 0
+}
+
+W="$(case_work our-ca)"; cp "$T/ours-ca.pem" "$W/pki/our-ca.pem"
+D="$T/edge/ca/tls"
+if play_ca "$W" "$D" && cmp -s "$D/our-ca.pem" "$T/ours-ca.pem" && [ "$(mode_of "$D/our-ca.pem")" = 644 ] \
+   && [ "$(mode_of "$D/peering-outward-key.pem")" = 600 ] && [ "$(mode_of "$D/peering-inward-key.pem")" = 600 ] && no_ca_key "$D"; then
+  pass "our CA installed from the working directory: the certificate alone, 0644, keys 0600, no CA key on the edge"
+else
+  fail "our CA from the working directory: not installed, wrong mode, or a CA key on the edge"; ls -la "$D" 2>/dev/null || true; grep -E 'fatal|FAILED' -A3 "$LOG" | head -8 || true
+fi
+if play_ca "$W" "$D" && [ "$(changed)" = 0 ]; then
+  pass "our CA: a re-run changes nothing"
+else
+  fail "our CA re-run: changed=$(changed)"
+fi
+
+W="$(case_work our-ca-with-key)"; cat "$T/ours-ca.pem" "$T/ours-ca-key.pem" > "$W/pki/our-ca.pem"
+D="$T/edge/ca-key/tls"
+if play_ca "$W" "$D"; then
+  fail "our CA source holding a private key: the play passed"
+elif grep -qF "holds a private key" "$LOG" && [ ! -e "$D/our-ca.pem" ] && [ ! -e "$D/peering-outward.pem" ] && no_ca_key "$D"; then
+  pass "our CA source holding a private key: refused, nothing written"
+else
+  fail "our CA source holding a private key: wrong message or something written"; grep -E 'fatal' -A3 "$LOG" | head -6 || true
+fi
+
+W="$(case_work our-ca-two-certs)"; cat "$T/ours-ca.pem" "$T/root-ca.pem" > "$W/pki/our-ca.pem"
+D="$T/edge/ca-two/tls"
+if play_ca "$W" "$D"; then
+  fail "our CA source holding two certificates: the play passed"
+elif grep -qF "is not exactly one certificate" "$LOG" && [ ! -e "$D/our-ca.pem" ] && [ ! -e "$D/peering-outward.pem" ]; then
+  pass "our CA source holding two certificates: refused, nothing written"
+else
+  fail "our CA source holding two certificates: wrong message or something written"; grep -E 'fatal' -A3 "$LOG" | head -6 || true
+fi
+
+W="$(case_work our-ca-not-the-cert)"; cp "$T/ours-ca.pem" "$W/pki/our-ca.pem"
+D="$T/edge/ca-name/tls"
+if play_ca "$W" "$D" -e "goat_zenoh_edge_our_ca_src=$T/ours-ca-key.pem"; then
+  fail "our CA source that is not our-ca.pem: the play passed"
+elif grep -qF "is not our CA's certificate file" "$LOG" && [ ! -e "$D/our-ca.pem" ] && no_ca_key "$D"; then
+  pass "our CA source that is not our-ca.pem: refused, nothing written"
+else
+  fail "our CA source that is not our-ca.pem: wrong message or something written"; grep -E 'fatal' -A3 "$LOG" | head -6 || true
+fi
+
+# The compose file mounts our CA where the role installed it, in fragment mode.
+cat > "$T/render.yml" <<'YML'
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files: ["{{ role_dir }}/defaults/main.yml"]
+  tasks:
+    - ansible.builtin.template:
+        src: "{{ role_dir }}/templates/docker-compose.yml.j2"
+        dest: "{{ out }}"
+YML
+if ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 ansible-playbook -i localhost, "$T/render.yml" \
+     -e "role_dir=$HERE/.." -e "out=$T/compose.yml" -e goat_zenoh_edge_partner_id=xab -e goat_zenoh_edge_install_certs=true \
+     -e "goat_zenoh_edge_cert_dir=$T/edge/ca/tls" -e "goat_zenoh_edge_image=example.org/zenoh@sha256:$(printf '0%.0s' $(seq 64))" \
+     > "$T/render.log" 2>&1 && grep -qF -- "- \"$T/edge/ca/tls/our-ca.pem:$T/edge/ca/tls/our-ca.pem:ro\"" "$T/compose.yml"; then
+  pass "the compose file mounts the installed our-ca.pem"
+else
+  fail "the compose file does not mount <cert_dir>/our-ca.pem"; grep -n 'our-ca\|fatal' "$T/compose.yml" "$T/render.log" | head -6 || true
+fi
+
 # --- refusals ---------------------------------------------------------------------
 W="$(case_work mismatched-key)"
 openssl ecparam -name prime256v1 -genkey -noout -out "$W/pki/peering-outward-key.pem"; chmod 0600 "$W/pki/peering-outward-key.pem"

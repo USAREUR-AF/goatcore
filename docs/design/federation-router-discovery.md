@@ -90,6 +90,14 @@ package back. goatbuilder instead measures both hosts from the operator's machin
   parity gate compares both avenues with `FED_MEASURE` unset and set. Phase 1's local
   `docker compose` check still reads the machine the run is on (set
   `FED_SKIP_LOCAL_DOCKER_CHECK=1` when that is not the edge).
+  With `FED_MEASURE=here` and the verbs in process, phase 3's `DOCKER_HOST` (from
+  `FED_ROUTER_DOCKER_HOST`) and `FED_ROUTER_CONTAINER` reach the library's measurement as
+  values: `goatbuilder federate init` passes them to `measure_here_with`
+  (`crates/goat-federation/src/verbs/init.rs`), which gives `DOCKER_HOST` to the container
+  runtime's commands as their own environment. goatbuilder never writes either into its
+  process environment, which every thread shares (built;
+  `crates/goatbuilder/tests/no_process_env_in_unit_tests.rs` refuses any write under
+  `src/federate/`). `goat federate init` still reads both from its environment.
 
 - **Which hosts.** The single host of the edge group and of the core group (`<partner>_core`)
   in `ops/ansible/inventory/peering-edges.ini`, the inventory the peering plays use, read with

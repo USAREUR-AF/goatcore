@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use jsonschema::{Draft, JSONSchema};
 use serde::Deserialize;
 use serde_json::Value;
@@ -239,6 +239,11 @@ pub struct Peering {
     /// peering already runs from hand-written files (`federate::switches`).
     #[serde(default)]
     pub federation_toml: Option<String>,
+    /// `one` (absent) or `two`: whether a single machine drives this peering,
+    /// or an edge driver and a controller (docs/design/federation-two-drivers.md;
+    /// federate/handoff.rs reads it).
+    #[serde(default)]
+    pub drivers: Option<String>,
     /// Present when a peering forwarder relays the partner to our edge (ADR 1218).
     #[serde(default)]
     #[allow(dead_code)] // read where the forwarder is rendered and applied
@@ -271,19 +276,20 @@ pub struct PeeringForwarder {
 /// subcommand, so a peering declared with one could never be run: the six
 /// federation verbs, clap's `help`, the stages of the one command (`status`,
 /// `plan`, `deploy`, `test`), `allocate`, `backout` (one peering backed
-/// out) and `rotate` (one key of a peering replaced). The one list; ops/goatbuilder/validate.py's RESERVED_PEERING_NAMES
+/// out), `rotate` (one key of a peering replaced) and `import` (a two-driver
+/// peering's edge result taken in). The one list; ops/goatbuilder/validate.py's RESERVED_PEERING_NAMES
 /// mirrors it.
 pub const RESERVED_PEERING_NAMES: &[&str] = &[
     "init", "lint", "compose", "diff", "verify", "apply", "help", "status", "plan", "deploy",
-    "test", "allocate", "backout", "rotate",
+    "test", "allocate", "backout", "rotate", "import",
 ];
 
 /// Read a YAML config file into a JSON value (the form the schema validates).
 pub fn load_value(path: &Path) -> Result<Value> {
     let text = std::fs::read_to_string(path)
-        .with_context(|| format!("cannot read config {}", path.display()))?;
+        .map_err(|e| goat_errors::coded("GB-244", format!("cannot read config {}: {e}", path.display())))?;
     let yaml: serde_yaml::Value = serde_yaml::from_str(&text)
-        .with_context(|| format!("{} is not valid YAML", path.display()))?;
+        .map_err(|e| goat_errors::coded("GB-245", format!("{} is not valid YAML: {e}", path.display())))?;
     serde_json::to_value(yaml)
         .with_context(|| format!("{} does not convert to JSON", path.display()))
 }
@@ -579,11 +585,11 @@ pub fn load(path: &Path) -> Result<Config> {
     let checkout = checkout_for(path);
     let problems = problems_at(&value, checkout.as_ref(), path.parent())?;
     if !problems.is_empty() {
-        return Err(anyhow!(
-            "{} does not validate:\n  {}",
-            path.display(),
-            problems.join("\n  ")
-        ));
+        return Err(goat_errors::coded(
+            REFUSED_CODE,
+            format!("{} does not validate:\n  {}", path.display(), problems.join("\n  ")),
+        )
+        .into());
     }
     serde_json::from_value(derive_lite(&value, checkout.as_ref())).context("config does not match the typed model")
 }
@@ -799,6 +805,7 @@ mod tests {
         }
         assert!(RESERVED_PEERING_NAMES.contains(&crate::federate::backout::VERB), "backout is a subcommand and must be reserved");
         assert!(RESERVED_PEERING_NAMES.contains(&crate::federate::rotation::VERB), "rotate is a subcommand and must be reserved");
+        assert!(RESERVED_PEERING_NAMES.contains(&"import"), "import is a subcommand and must be reserved");
     }
 
     #[test]

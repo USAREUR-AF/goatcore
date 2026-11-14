@@ -228,8 +228,12 @@ if [ -n "${GB_REC_SAY_FOR:-}" ] && [ "$name ${1:-}" = "$GB_REC_SAY_FOR" ]; then
 ' "${GB_REC_SAY:?}"
 fi
 if [ -n "${GB_REC_SAY_WHEN:-}" ]; then
-  case " $* " in *"$GB_REC_SAY_WHEN"*) printf '%s
-' "${GB_REC_SAY:?}" ;; esac
+  case " $* " in *"$GB_REC_SAY_WHEN"*)
+    printf '%s
+' "${GB_REC_SAY:?}"
+    # A command made to fail: it says GB_REC_SAY and exits GB_REC_SAY_EXIT.
+    if [ -n "${GB_REC_SAY_EXIT:-}" ]; then exit "$GB_REC_SAY_EXIT"; fi ;;
+  esac
 fi
 if [ "${GB_REC_MODE:-stub}" = pass ]; then
   ifs=$IFS; IFS=:
@@ -1041,6 +1045,78 @@ fn json(o: &Output) -> serde_json::Value {
 
 // --- the four verb families ---------------------------------------------------
 
+/// Gate row F5 for standup: a standup phase made to fail with a known error
+/// carries that error's code and fix, the log of its output, and the command
+/// that runs the phase by hand (docs/design/goatbuilder-legibility.md, step 7),
+/// as `federate_failed_phase.rs` proves for federate. Through the real binary on
+/// the hollow world: the first phase that runs a play fails the way a host that
+/// refuses our key fails.
+#[test]
+fn f5_a_failed_standup_phase_carries_its_known_error_s_code_and_fix() {
+    let h = hollow();
+    // The first phase whose command runs a play prints ansible's line for a host
+    // that refuses our key, and exits 4 as ansible does.
+    let out = h
+        .command(&["-o", "json", "standup", "-C", h.repo(), "dev", "--site", "alpha", "--ack", "A Person", "--yes"])
+        .env("GB_REC_SAY_WHEN", "ansible-preflight.sh")
+        .env(
+            "GB_REC_SAY",
+            "fatal: [mgmt-alpha-01]: UNREACHABLE! => {\"msg\": \"Failed to connect to the host via ssh: goat@192.0.2.10: Permission denied (publickey).\"}",
+        )
+        .env("GB_REC_SAY_EXIT", "4")
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "a phase fails: {}", text(&out));
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(&out)));
+    let rows = |name: &str| -> Vec<String> {
+        v["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["name"] == name)
+            .map(|c| c["detail"].as_str().unwrap_or("").to_string())
+            .collect()
+    };
+    // The phase that failed, from its own failure row.
+    let failed = rows("failed");
+    let phase: u32 = failed
+        .iter()
+        .find_map(|d| {
+            d.strip_prefix("!! Phase ")
+                .and_then(|r| r.split_whitespace().next())
+                .and_then(|n| n.parse().ok())
+        })
+        .unwrap_or_else(|| panic!("no failed phase row: {failed:?}"));
+    let interpreted = rows("interpreted");
+    assert_eq!(
+        interpreted.len(),
+        1,
+        "phase {phase} failed with a known error and carries no interpreted row: {}",
+        text(&out)
+    );
+    let d = &interpreted[0];
+    let e = goat_errors::explain("X-SSH-001").unwrap();
+    assert!(d.starts_with(&format!("X-SSH-001: {}", e.title)), "{d}");
+    assert!(d.contains(&e.fixes[0]), "the fix: {d}");
+    assert!(d.contains("goatbuilder explain X-SSH-001"), "{d}");
+    // The log of the phase's output, which holds the error.
+    let log = d
+        .split(". Its output: ")
+        .nth(1)
+        .and_then(|r| r.split(". By hand: ").next())
+        .unwrap_or_else(|| panic!("no log path: {d}"));
+    let logged = std::fs::read_to_string(log).unwrap_or_else(|e| panic!("{log}: {e}"));
+    assert!(
+        logged.contains("Permission denied (publickey)"),
+        "{log}: {logged}"
+    );
+    // The command that runs the phase by hand, from standup's phase catalog.
+    let p = goat_errors::phases::explain_phase("standup", &phase.to_string())
+        .unwrap_or_else(|| panic!("standup phase {phase} has no phase-catalog entry"));
+    assert!(d.contains(&format!("By hand: {}", p.by_hand)), "{d}");
+}
+
 #[test]
 fn c11_standup() {
     let h = hollow();
@@ -1086,7 +1162,8 @@ fn c11_standup() {
 fn c11_join_node() {
     let h = hollow();
     let r = h.repo();
-    // Phase 1 is manual; the run goes from 2 to the next manual step (8).
+    // Phase 1 is manual and the only manual step (gate row H2): the run goes
+    // from 2 to the end.
     let args = [
         "join-node",
         "-C",
@@ -1106,11 +1183,7 @@ fn c11_join_node() {
     let real: Vec<&str> = args.iter().copied().chain(["--yes"]).collect();
     let (out, procs) = run_recorded(h.command(&real), &h.root.path().join("rec/real"));
     ran("join-node", &out, &procs, &[0]);
-    let dry: Vec<&str> = args
-        .iter()
-        .copied()
-        .chain(["--to", "8", "--dry-run"])
-        .collect();
+    let dry: Vec<&str> = args.iter().copied().chain(["--dry-run"]).collect();
     let page = at_a_terminal(&h.command(&dry)).unwrap_or_else(|e| panic!("{e}"));
     let plan = h
         .command(&[

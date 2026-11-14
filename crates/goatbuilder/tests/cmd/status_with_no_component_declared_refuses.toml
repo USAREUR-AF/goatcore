@@ -1,0 +1,10 @@
+# status without --mock reads real hosts; a checkout that declares no component on the
+# environment is refused before any host is read, as diff refuses it.
+bin.name = "goatbuilder"
+args = ["status", "-C", "../..", "--env", "dev"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: no component is declared on dev
+  (GB-050 — goatbuilder explain GB-050)
+"""

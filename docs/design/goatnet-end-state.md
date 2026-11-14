@@ -45,6 +45,8 @@ The end state therefore uses each source only for what it is authoritative for:
 
 Every presence declaration consulted must give the same answer: an `absent: true` against a flag that says on is a **contradiction**; none at all is **undeclared**. Neither is guessed.
 
+A service the model marks absent carries a `reason`: the declarations that say so, worded for a person ("`isitup_enabled` is false in group_vars"), and for an admin surface at a joining site, the single-homing they carry out ("single-homed at the founder (ADR 1084 §D3); every site once ADR 1165 lifts it for this class"). The grade's N/A row and the `join-node` plan both print it, so they cannot disagree. Built (`absent_reason` in `endstate.py`).
+
 **The flag is what the deploy obeys.** Each role (or play) that deploys a catalog service reads the service's flag: the role's `tasks/main.yml` imports its tasks under `when: <name>_enabled | default(true) | bool`, its rollback-ledger dependency carries the same condition (so a skipped deploy writes no ledger row, F-530), and the observability plays bring up only the services the site's `prometheus_enabled`, `alertmanager_enabled`, `grafana_enabled` and `obs_exporters_enabled` select. Unset means on, so no site's deploy changed when the guards landed. `ops/ci/check-role-honours-presence-flag.py` refuses a catalog service whose flag no deploying code reads.
 
 ## Declaring a goatnet's shape

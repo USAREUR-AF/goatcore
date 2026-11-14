@@ -3,7 +3,7 @@ bin.name = "goatbuilder"
 args = ["explain", "GB-008"]
 stdout = """
 GB-008 — a mutation needs --yes when there is no terminal
-  what: deploy, release, rollback and fastlane change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10).
+  what: deploy, release, rollback, fastlane, standup, teardown, join-node, federate and apply change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10).
   why:  run from a script, CI or a pipe
   fix:  add --yes
         add --dry-run to see the plan without changing anything

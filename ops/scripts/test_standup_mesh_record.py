@@ -122,6 +122,29 @@ class Run(unittest.TestCase):
         self.assertEqual(self.run_it("--no-mint"), 0)
         self.assertFalse(self.log.exists())
 
+    def test_a_second_node_joining_keeps_the_first_hosts_address(self):
+        # join-node records only the node it enrolled: the second host of the
+        # pair takes mesh_ip_b, and mesh_ip_a stays the first host's.
+        self.ips.write_text(json.dumps({"mgmt-demo-02": "100.127.0.51"}))
+        self.assertEqual(self.run_it("--no-mint"), 0)
+        gv = (self.repo / "ops/ansible/group_vars/demo_hosts/vars.yml").read_text()
+        self.assertIn('mesh_ip_a: "100.127.0.41"', gv)
+        self.assertIn('mesh_ip_b: "100.127.0.51"', gv)
+
+    def test_a_node_of_another_class_sets_only_its_inventory_line(self):
+        (self.repo / "ops/ansible/inventory/mgmt-hosts-mesh.ini").write_text(INV + "\n[demo_obs_hosts]\nobs-demo-01 ansible_host=TBD_DEMO_OBS_MESH_IP\n")
+        smr.site_hosts = lambda repo, group: ["obs-demo-01"] if group == "demo_obs_hosts" else ["mgmt-demo-01", "mgmt-demo-02"]
+        self.ips.write_text(json.dumps({"obs-demo-01": "100.127.0.60"}))
+        self.assertEqual(self.run_it("--group", "demo_obs_hosts"), 0)
+        self.assertEqual((self.repo / "ops/ansible/group_vars/demo_hosts/vars.yml").read_text(), GV)
+        self.assertIn("obs-demo-01 ansible_host=100.127.0.60", (self.repo / "ops/ansible/inventory/mgmt-hosts-mesh.ini").read_text())
+        self.assertFalse(self.log.exists(), "nothing is minted for another class")
+
+    def test_no_mint_with_no_manifest_is_not_a_refusal(self):
+        (self.repo / "ops/enrollment/manifests/demo-certs.yaml").unlink()
+        self.assertEqual(self.run_it("--no-mint"), 0)
+        self.assertEqual(self.run_it(), 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

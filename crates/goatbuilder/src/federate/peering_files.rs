@@ -568,7 +568,7 @@ fn hand_group_files(repo: &Path, group: &str) -> Vec<PathBuf> {
 /// Whether hand-written group_vars turn on `goat_zenoh_edge_install_certs` for
 /// an edge group: the group's own files, else its parent `peering_edges`, else
 /// `all`, the way Ansible's group precedence reads them.
-fn installs_certs(repo: &Path, edge_group: &str) -> bool {
+pub(super) fn installs_certs(repo: &Path, edge_group: &str) -> bool {
     let read = |f: &Path| -> Option<bool> {
         let text = std::fs::read_to_string(f).ok()?;
         let v: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
@@ -927,12 +927,31 @@ pub fn deployment_halves(
         // admission places there once its fingerprint matches the agreement.
         // When the role installs the certificates itself, it derives the
         // partner CA's path from goat_zenoh_edge_cert_dir and refuses any other.
-        edge.push_str(&format!(
-            "\n# Our CA: phase 8 places it here (peering_leaf_material.py).\n\
-             goat_zenoh_edge_our_ca_path: {}\n",
-            q(&our_ca)
-        ));
-        if !installs_certs(repo, &v.edge_group) {
+        // With the role's install on, our CA is installed on the edge at
+        // <cert_dir>/our-ca.pem, from the controller's copy, and mounted there; the
+        // controller's <work>/pki path exists only on the machine phase 8 ran on.
+        let installs = installs_certs(repo, &v.edge_group);
+        let our_ca_on_edge = if installs {
+            format!("/etc/goat-zenoh-edge-{}/tls/our-ca.pem", v.peering)
+        } else {
+            our_ca.clone()
+        };
+        if installs {
+            edge.push_str(&format!(
+                "\n# Our CA: phase 8 places it in {} (peering_leaf_material.py); the role\n\
+                 # installs the certificate alone here and mounts it.\n\
+                 goat_zenoh_edge_our_ca_path: {}\n",
+                v.cert_dir,
+                q(&our_ca_on_edge)
+            ));
+        } else {
+            edge.push_str(&format!(
+                "\n# Our CA: phase 8 places it here (peering_leaf_material.py).\n\
+                 goat_zenoh_edge_our_ca_path: {}\n",
+                q(&our_ca)
+            ));
+        }
+        if !installs {
             edge.push_str(&format!(
                 "# Their CA: admission places it here, checked against the agreement's fingerprint.\n\
                  goat_zenoh_edge_partner_ca_path: {}\n",
@@ -946,7 +965,7 @@ pub fn deployment_halves(
         {
             edge.push_str(&format!(
                 "goat_zenoh_edge_core_endpoints:\n  - {}\n",
-                q(&format!("{ep}#root_ca_certificate_file={our_ca}"))
+                q(&format!("{ep}#root_ca_certificate_file={our_ca_on_edge}"))
             ));
         }
         let mut core = header(&format!(
@@ -2056,11 +2075,69 @@ mod tests {
         let _: serde_yaml::Value = serde_yaml::from_str(&core).unwrap();
     }
 
+    /// With goat_zenoh_edge_install_certs on for the edge group, the role installs
+    /// our CA on the edge itself, at <cert_dir>/our-ca.pem, and mounts it there. So
+    /// the rendered edge half names that path for our CA and in the core endpoint's
+    /// override, never the controller's <work>/pki/our-ca.pem, which a driver that
+    /// is not the edge host never places on the edge. The core half keeps the
+    /// controller's path: it is the republisher's source, read on the controller.
+    #[test]
+    fn with_the_roles_install_on_the_edge_names_our_ca_where_the_role_installs_it() {
+        let mut a = p("xab", false);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), SITE);
+        let g = d.path().join("ops/ansible/group_vars/xab_edge");
+        std::fs::create_dir_all(&g).unwrap();
+        std::fs::write(g.join("certs.yml"), "goat_zenoh_edge_install_certs: true\n").unwrap();
+        run(d.path(), &opts(false)).unwrap();
+        let gv = d.path().join("ops/ansible/group_vars");
+        let edge = std::fs::read_to_string(gv.join("xab_edge/peering-deployment.yml")).unwrap();
+        for frag in [
+            "goat_zenoh_edge_our_ca_path: \"/etc/goat-zenoh-edge-xab/tls/our-ca.pem\"",
+            "goat_zenoh_edge_core_endpoints:\n  - \"tls/192.0.2.10:7447#root_ca_certificate_file=/etc/goat-zenoh-edge-xab/tls/our-ca.pem\"",
+        ] {
+            assert!(edge.contains(frag), "{frag}\n---\n{edge}");
+        }
+        assert!(
+            !edge.contains("/var/lib/goat-federation/xab/pki/our-ca.pem"),
+            "{edge}"
+        );
+        let core = std::fs::read_to_string(gv.join("xab_core/peering-deployment.yml")).unwrap();
+        assert!(
+            core.contains(
+                "goat_fed_republisher_core_ca_src: \"/var/lib/goat-federation/xab/pki/our-ca.pem\""
+            ),
+            "{core}"
+        );
+    }
+
+    /// With the role's install off, the deployment halves are what the release
+    /// before this change rendered, byte for byte: the two files under
+    /// src/federate/testdata were rendered by goatcore main 607a1244, from the
+    /// same declaration and site values, before our CA's install-mode path existed.
+    #[test]
+    fn with_the_roles_install_off_the_deployment_halves_are_unchanged_byte_for_byte() {
+        let mut a = p("xab", false);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), SITE);
+        run(d.path(), &opts(false)).unwrap();
+        let gv = d.path().join("ops/ansible/group_vars");
+        assert_eq!(
+            std::fs::read_to_string(gv.join("xab_edge/peering-deployment.yml")).unwrap(),
+            include_str!("testdata/peering-deployment-edge-install-off.yml")
+        );
+        assert_eq!(
+            std::fs::read_to_string(gv.join("xab_core/peering-deployment.yml")).unwrap(),
+            include_str!("testdata/peering-deployment-core-install-off.yml")
+        );
+    }
+
     /// The rendered edge half names both CAs the edge router trusts, in the
     /// allocated cert_dir: admission reads goat_zenoh_edge_partner_ca_path from
     /// the edge group's vars to place their CA (GB-194 without it), and the edge
     /// role asserts both. When the role installs the certificates itself, it
-    /// derives the partner CA's path, so only ours is rendered.
+    /// derives the partner CA's path, so only ours is rendered, at the path on
+    /// the edge where the role installs it.
     #[test]
     fn the_rendered_edge_half_names_both_ca_paths_in_the_cert_dir() {
         let mut a = p("xab", false);
@@ -2095,7 +2172,7 @@ mod tests {
         .unwrap();
         assert!(
             edge.contains(
-                "goat_zenoh_edge_our_ca_path: \"/var/lib/goat-federation/xab/pki/our-ca.pem\""
+                "goat_zenoh_edge_our_ca_path: \"/etc/goat-zenoh-edge-xab/tls/our-ca.pem\""
             ),
             "{edge}"
         );

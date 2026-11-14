@@ -207,7 +207,7 @@ lite:
   name: pasture            # the goatnet's name; its zone is pasture.lan
   host: 192.0.2.50         # the box's LAN address or hostname
   ssh_user: ubuntu         # the user your SSH key logs in as
-  admin: <your-email>      # the first and only administrator: you
+  admin: me@example.org    # the first and only administrator: you, by your own address
   zone: pasture.lan        # optional; defaults to <name>.lan
   disk_encryption: false   # optional; defaults to true. false for a VM
   data_disk: /dev/nvme0n1  # optional; the disk to encrypt, when disk_encryption is true
@@ -303,7 +303,7 @@ Phase 11 needs a person, once: the goatnet's first login creates your account, a
 2. **Read your one-time password. On the box over SSH:**
 
    ```text
-   sudo cat /opt/mgmt-host/.bootstrap-passwords/<your-email>.txt
+   sudo cat /opt/mgmt-host/.bootstrap-passwords/<your admin address>.txt   # e.g. me@example.org.txt
    ```
 3. **Accept the goatnet's certificates in the browser, in this order.** Until section 8 installs the goatnet's root certificate, the browser trusts none of its pages, and it only shows the warning for pages you open yourself. The login also makes calls you cannot see, so open each of these once and accept the warning: `https://oauth2.<name>.<zone>/.well-known/openid-configuration`, `https://auth.<name>.<zone>/welcome`, and `https://mgmt.<name>.<zone>/api/users` (a small error page there is the expected answer).
 4. **Sign in** at `https://dashboard.<name>.<zone>` with your email and that password.

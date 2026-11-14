@@ -461,6 +461,8 @@ pub enum Cmd {
         site: Box<federate::verbs::SiteArgs>,
         #[command(flatten)]
         measure: Box<federate::measure::MeasureArgs>,
+        #[command(flatten)]
+        edge_run: Box<federate::handoff::EdgeRunArgs>,
         /// The peering name (the counterparty, as declared), or a stage run
         /// alone: `status [<partner>]`, `deploy <partner>`, `test <partner>`,
         /// `allocate [<peering>]`.
@@ -812,7 +814,10 @@ pub enum Cmd {
     /// swap is atomic. Already current: one row, exit 0. `--check` reads only
     /// (exit 3 when behind). The surface: `GOATBUILDER_UPDATE_URL`, else `--site`
     /// from its group_vars, else the one the last update used.
+    #[command(args_conflicts_with_subcommands = true)]
     Update {
+        #[command(subcommand)]
+        action: Option<UpdateAction>,
         /// The goatnet that serves goatbuilder (its group_vars site).
         #[arg(long)]
         site: Option<String>,
@@ -897,6 +902,10 @@ pub struct Report {
     pub ok: bool,
     pub exit: i32,
     pub checks: Vec<Check>,
+    /// A federate run that stopped to hand a phase to the other driver: the
+    /// hand-off object (docs/design/federation-two-drivers.md).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<serde_json::Value>,
     /// The verb already printed its own human view (a federate dry run's plan
     /// table), so the rows are not printed again as a table. They still go to
     /// -o json and to the tutor's log.
@@ -913,6 +922,7 @@ impl Report {
             ok,
             exit: if ok { EXIT_OK } else { exit_when_refused },
             checks,
+            handoff: None,
             printed: false,
         }
     }
@@ -1079,6 +1089,31 @@ fn takes_fixture(cmd: &Cmd) -> bool {
     )
 }
 
+/// `goatbuilder update`'s subcommands.
+#[derive(Subcommand, Debug)]
+pub enum UpdateAction {
+    /// Verify a downloaded goatbuilder release without installing it: the keyless
+    /// signature over `<DIR>/SHA256SUMS` (`SHA256SUMS.cosign-bundle`), with the
+    /// checks `update` makes before it installs, for the release workflow of
+    /// `--signer` at `goatbuilder/v<version>`; then every other file in `<DIR>`
+    /// against that `SHA256SUMS`. Reads only. Exit 0 verified; 1 refused (GB-261
+    /// the signature, GB-074 a file)
+    #[command(name = "verify-release")]
+    VerifyRelease {
+        /// The downloaded release: its files, SHA256SUMS and SHA256SUMS.cosign-bundle.
+        dir: PathBuf,
+        /// `<owner>/<repo>` the release was built and signed in.
+        #[arg(long, value_name = "OWNER/REPO")]
+        signer: String,
+        /// The release's version: its tag is `goatbuilder/v<version>`.
+        #[arg(long)]
+        version: String,
+        /// A Sigstore trusted_root.json trusted beside the embedded public one.
+        #[arg(long, value_name = "FILE")]
+        trusted_root: Option<PathBuf>,
+    },
+}
+
 #[derive(Subcommand, Debug)]
 pub enum RunsCmd {
     /// Compare two recorded runs: their arguments, their inputs (value and
@@ -1179,14 +1214,31 @@ fn long_running(cmd: &Cmd) -> bool {
     )
 }
 
+/// A command line clap cannot parse: its own message, then the catalog code
+/// (GB-242, gate row C5), and clap's exit code (2). Help and version are not
+/// refusals: they print and exit as clap does.
+fn usage_exit(e: clap::Error) -> ! {
+    use clap::error::ErrorKind;
+    if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+        e.exit()
+    }
+    let _ = e.print();
+    eprintln!("  (GB-242 — goatbuilder explain GB-242)");
+    std::process::exit(e.exit_code())
+}
+
 fn main() {
     // The language is chosen before clap builds the command, so the help clap
     // prints is already localized (goat's order, docs/design/goat-cli-i18n.md).
     i18n::select_language(i18n::preparse_lang().as_deref());
-    let matches = i18n::localize_command(Cli::command()).get_matches();
-    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    let matches = i18n::localize_command(Cli::command())
+        .try_get_matches()
+        .unwrap_or_else(|e| usage_exit(e));
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| usage_exit(e));
     if cli.offline {
         // The plays and the ledger row read it from the environment, as from the script avenue.
+        // main only, before any thread starts, so set_var is sound here; nowhere else in
+        // goatbuilder writes the process environment (tests/no_process_env_in_unit_tests.rs).
         std::env::set_var("GOAT_DEPLOY_OFFLINE", "1");
     }
     // `-v` (or RUST_LOG) raises goatbuilder's own events to stderr; off by default.
@@ -1215,6 +1267,7 @@ fn main() {
                  the verbs read only the files they are named and the party's context, and run for real; \
                  drop the flag (the verbs take --json for a JSON report; -C/--repo is taken only by init --over-ssh)"
             );
+            eprintln!("  (GB-239 — goatbuilder explain GB-239)");
             std::process::exit(2);
         }
         if let Cmd::Federate { verb: Some(federate::plan::Stage::Verb(verb)), site, measure, .. } = cli.cmd {
@@ -1267,7 +1320,9 @@ fn main() {
         );
         eprintln!("goatbuilder: {text}");
         if goat_errors::explain_on_stderr() {
-            eprint!("{}", goat_errors::render_human(&goat_errors::interpret_coded("GB-039", &text), "goatbuilder"));
+            eprint!("{}", goat_errors::render_human(&goat_errors::interpret_coded("GB-276", &text), "goatbuilder"));
+        } else {
+            eprintln!("  (GB-276 — goatbuilder explain GB-276)");
         }
         std::process::exit(EXIT_USAGE);
     }
@@ -1353,7 +1408,8 @@ fn main() {
             }
             r
         }),
-        Cmd::Update { site, check, force } => update::run(&repo, &update::Options { site: site.as_deref(), check: *check, force: *force, output: cli.output, timeout: cli.timeout }),
+        Cmd::Update { action: Some(UpdateAction::VerifyRelease { dir, signer, version, trusted_root }), .. } => update::verify_release(&update::VerifyRelease { dir, repo: signer, version, trusted_root: trusted_root.as_deref() }),
+        Cmd::Update { action: None, site, check, force } => update::run(&repo, &update::Options { site: site.as_deref(), check: *check, force: *force, output: cli.output, timeout: cli.timeout }),
         Cmd::Status { env, component } => match &cli.mock {
             Some(dir) => verbs::Fixture::open(dir).and_then(|f| verbs::status(&f, env, component.as_deref())).map(|mut r| {
                 // The rows stay on the report for -o json and the tutor's log.
@@ -1363,11 +1419,8 @@ fn main() {
                 }
                 r
             }),
-            None => Err(goat_errors::coded(
-                "GB-026",
-                "status reads hosts only through a converger, and the push converger's status path is not built yet: run it with --mock <fixture>, or read the ledgers with `goatbuilder deploy --env <env> --component <c> --verify-only`",
-            )
-            .into()),
+            // Real hosts, read as diff reads them and graded as verify grades them (gate row C3).
+            None => inspect::status(&repo, env, component.as_deref()),
         },
         Cmd::Deploy { env, component, ack, group, dry_run, verify_only } => match &cli.mock {
             Some(dir) => {
@@ -1464,7 +1517,7 @@ fn main() {
         Cmd::Plan { verb, component, env, group, n, site, out } => inspect::plan(&repo, cli.mock.as_deref(), &inspect::PlanOpts { verb, component, env: env.as_deref(), group: group.as_deref(), n: *n, site: site.as_deref(), out }),
         Cmd::Apply { plan } => {
             if !cli.yes && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                Err(anyhow::anyhow!("apply is a mutation: pass --yes without a terminal (C10)"))
+                Err(goat_errors::coded("GB-008", "apply is a mutation: pass --yes without a terminal (C10)").into())
             } else {
                 inspect::apply(&repo, cli.mock.as_deref(), plan)
             }
@@ -1506,7 +1559,7 @@ fn main() {
             }),
             None => standup::site_for(&repo, None, env, site.as_deref()).and_then(|site| {
                 if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                    Err(anyhow::anyhow!("standup is a mutation: pass --yes without a terminal (C10)"))
+                    Err(goat_errors::coded("GB-008", "standup is a mutation: pass --yes without a terminal (C10)").into())
                 } else {
                     standup::standup(&repo, &standup::Options { env, site: &site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: *skip_obs, obs_only: *obs_only, dry_run: *dry_run, parallel: *parallel, check: *check })
                 }
@@ -1515,13 +1568,13 @@ fn main() {
         Cmd::Teardown { env, site, profile, dry_run, services, from, to } => match &cli.mock {
             Some(dir) => verbs::Fixture::open(dir).and_then(|mut f| standup::teardown_mock(&mut f, env, site, standup::MockRun { dry_run: *dry_run, from: *from, to: *to })),
             None if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) => {
-                Err(anyhow::anyhow!("teardown is a mutation: pass --yes without a terminal (C10)"))
+                Err(goat_errors::coded("GB-008", "teardown is a mutation: pass --yes without a terminal (C10)").into())
             }
             None => standup::teardown(&repo, &standup::Options { env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false, check: false }, *services),
         },
         Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run } => {
             if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                Err(anyhow::anyhow!("join-node is a mutation: pass --yes without a terminal (C10)"))
+                Err(goat_errors::coded("GB-008", "join-node is a mutation: pass --yes without a terminal (C10)").into())
             } else {
                 joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
             }
@@ -1542,10 +1595,23 @@ fn main() {
                 federate::plan::run(&repo, stage, cli.mock.as_deref())
             }
         }
-        Cmd::Federate { verb: None, site, measure, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
+        Cmd::Federate { verb: None, site, measure, edge_run, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
-            if with == "status" {
+            // `--side edge` alone on a peering run is the edge driver's run of
+            // a two-driver peering (federate/handoff.rs). `--side` is also init's
+            // phase-3 half (federate/measure.rs): beside another measure flag,
+            // after a verb's name, or on status or allocate, it is a misplaced
+            // init flag or ignored, and gets the message it always got below.
+            let side_edge_alone = measure.side.as_deref() == Some("edge")
+                && federate::measure::MeasureArgs { side: None, ..(**measure).clone() }.is_empty()
+                && !goat_federation::verbs::VERB_NAMES.contains(&with)
+                && !matches!(with, "status" | "allocate");
+            if side_edge_alone {
+                Err(federate::handoff::edge_side_not_built())
+            } else if edge_run.expect_commit.is_some() {
+                Err(goat_errors::coded("GB-189", "--expect-commit belongs to the edge driver's run, `goatbuilder federate <partner> --side edge`").into())
+            } else if with == "status" {
                 let format = match cli.output {
                     OutputFormat::Table => federate::status::Format::Table,
                     OutputFormat::Json => federate::status::Format::Json,
@@ -1573,13 +1639,13 @@ fn main() {
             // A mock executes nothing, with or without --dry-run, so it mutates nothing.
             } else if !site.is_empty() && goat_federation::verbs::VERB_NAMES.contains(&with) {
                 // `federate --context-dir D init`: clap read the verb as a partner.
-                Err(anyhow::anyhow!("put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate {with} --context-dir <dir> ..."))
+                Err(goat_errors::coded("GB-238", format!("put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate {with} --context-dir <dir> ...")).into())
             } else if !site.is_empty() {
                 Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run"))
             } else if !measure.is_empty() {
                 Err(anyhow::anyhow!("--over-ssh and its host flags apply to `goatbuilder federate init`; a peering run measures phase 3 over SSH with FED_MEASURE=ssh (for init, put the flags after the word init)"))
             } else if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
+                Err(goat_errors::coded("GB-008", "federate is a mutation: pass --yes without a terminal (C10)").into())
             } else {
                 let name = partner.as_deref().unwrap_or(with);
                 let o = federate::Options { with: name, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) };

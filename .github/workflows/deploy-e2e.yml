@@ -99,14 +99,20 @@ jobs:
             crates/target
           key: deploy-e2e-cargo-${{ runner.os }}-${{ hashFiles('crates/Cargo.lock') }}
       - name: Install the controller's tools (apt, age, yq, ansible + collections)
+        # Each input is bounded and retried, and names itself in an annotation when it
+        # still fails, so an unanswering mirror, index or Galaxy reads as the input it is
+        # (docs/design/ci-results-follow-inputs.md, rule 1). apt goes through the mirror
+        # the apt-failover step above chose; Galaxy through ops/ci/ansible-galaxy-install.sh.
         timeout-minutes: 8
         run: |
-          set -euo pipefail
-          sudo apt-get update -qq
+          set -uo pipefail
+          dep() { what="$1"; shift; "$@" || { rc=$?; echo "::error title=controller tools::$what failed (exit $rc)"; exit "$rc"; }; }
+          apt_o=(-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+          dep "apt-get update" sudo apt-get "${apt_o[@]}" -o APT::Update::Error-Mode=any update -qq
           # libpcsclite-dev: ca-init links piv-go (the YubiKey path) even in dev mode
-          sudo apt-get install -y -qq --no-install-recommends age jq openssh-client netcat-openbsd libpcsclite-dev pkg-config
-          python3 -m pip install --quiet pyyaml jsonschema yq 'ansible-core>=2.16,<2.21'
-          ansible-galaxy collection install -r ops/ansible/requirements.yml >/dev/null
+          dep "apt-get install" sudo apt-get "${apt_o[@]}" install -y -qq --no-install-recommends age jq openssh-client netcat-openbsd libpcsclite-dev pkg-config
+          dep "pip install" python3 -m pip install --quiet --retries 5 --timeout 30 pyyaml jsonschema yq 'ansible-core>=2.16,<2.21'
+          dep "ansible collections" ops/ci/ansible-galaxy-install.sh -r ops/ansible/requirements.yml
       - name: Every prerequisite the hermetic tier needs is present (seconds, not a failed run)
         run: ops/e2e/prereqs.sh
       - name: Build goatbuilder

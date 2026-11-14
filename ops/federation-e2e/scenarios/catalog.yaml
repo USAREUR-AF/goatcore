@@ -375,7 +375,10 @@ scenarios:
       key matching its certificate, one agreement digest on both sides, a handshake, and
       strict acceptance (FED_ACCEPTANCE_STRICT=1, fail=0, skip=0) from both sides. Whether
       each kill landed inside its phase is recorded (optional checks), with its timing in
-      kills.tsv.
+      kills.tsv. Phase 11's kill is aimed, not timed: it lands once the WireGuard peering
+      role has written its firewall table (after the link environment) and before the
+      handler restarts the link; kr-phase-11-kill.txt records both files' write times and
+      the interface's peers at the kill.
     checks:
       - {id: phase-1-resumed, step: "kr-phase-1-resumed"}
       - {id: phase-2-resumed, step: "kr-phase-2-resumed"}
@@ -1035,8 +1038,9 @@ scenarios:
     pass_condition: >
       The contract in docs/design/federation-two-drivers.md. On each side a controller holds the
       CA key and reaches the core host only, and an edge driver holds no CA key and reaches the
-      edge host only, both enforced by the network. Each side follows the hand-offs the command
-      gives, from phase 1 to phase 14: the controller's run stops at what only the edge
+      edge host only, both enforced by the network. Each controller's peering entry declares
+      `drivers: two`, the operator's opt-in, committed. Each side follows the hand-offs the
+      command gives, from phase 1 to phase 14: the controller's run stops at what only the edge
       reaches and names the edge driver's `--side edge` run, and the edge driver's goatbuilder
       offers it. Then every required acceptance check passes on both sides; no private key is
       present on a machine other than the one that made it; the controller's journal holds

@@ -2,9 +2,11 @@
 # `-o <format>` in front, against the fixtures kept beside this file, and its
 # output must stay a superset of the release's document of the same name. The
 # exit codes, and the documents, are written by `compat.py refresh` from the
-# released binary. A change that moves a kept exit code edits it here in the
-# same pull request, with its reason in `exit_changed`, so every change to a
-# promised exit code is a reviewed baseline change. To keep another document,
+# released binary. A change that moves a kept exit code edits `exit` here in
+# the same pull request, with its reason in `exit_changed`; `release_exit` is
+# what the release did, and the check refuses an `exit` that differs from it
+# without a reason. So every change to a promised exit code is a reviewed
+# baseline change. To keep another document,
 # add its invocation here and rerun the refresh against the last release's
 # binary.
 documents:
@@ -16,6 +18,7 @@ documents:
   - .
   - ops/goatbuilder/compat/documents/fixtures/basic/goatbuilder.yaml
   exit: 0
+  release_exit: 0
 - name: validate-basic
   format: yaml
   args:
@@ -24,6 +27,7 @@ documents:
   - .
   - ops/goatbuilder/compat/documents/fixtures/basic/goatbuilder.yaml
   exit: 0
+  release_exit: 0
 - name: validate-refused
   format: json
   args:
@@ -32,6 +36,7 @@ documents:
   - .
   - ops/goatbuilder/compat/documents/fixtures/refused/unknown-field.yaml
   exit: 1
+  release_exit: 1
 - name: validate-not-yaml
   format: json
   args:
@@ -40,6 +45,7 @@ documents:
   - .
   - ops/goatbuilder/compat/documents/fixtures/refused/not-yaml.yaml
   exit: 2
+  release_exit: 2
 - name: status-dev
   format: json
   args:
@@ -51,6 +57,7 @@ documents:
   - --env
   - dev
   exit: 3
+  release_exit: 3
 - name: status-preprod
   format: json
   args:
@@ -62,6 +69,7 @@ documents:
   - --env
   - preprod
   exit: 0
+  release_exit: 0
 - name: diff-dev-all
   format: json
   args:
@@ -74,6 +82,7 @@ documents:
   - dev
   - --all
   exit: 3
+  release_exit: 3
 - name: history-dev-portal
   format: json
   args:
@@ -86,6 +95,7 @@ documents:
   - dev
   - portal
   exit: 0
+  release_exit: 0
 - name: verify-dev-portal
   format: json
   args:
@@ -98,6 +108,7 @@ documents:
   - dev
   - portal
   exit: 3
+  release_exit: 3
 - name: adopt-dev
   format: json
   args:
@@ -109,6 +120,7 @@ documents:
   - --env
   - dev
   exit: 0
+  release_exit: 0
 - name: preflight-netvis
   format: json
   args:
@@ -121,6 +133,7 @@ documents:
   - --env
   - zagros-dev
   exit: 0
+  release_exit: 0
 - name: preflight-undeclared
   format: json
   args:
@@ -133,6 +146,7 @@ documents:
   - --env
   - zagros-dev
   exit: 3
+  release_exit: 3
 - name: survey
   format: json
   args:
@@ -142,24 +156,28 @@ documents:
   - --mock
   - ops/goatbuilder/compat/documents/fixtures/survey
   exit: 3
+  release_exit: 3
 - name: explain-code
   format: json
   args:
   - explain
   - GB-008
   exit: 0
+  release_exit: 0
 - name: explain-ssh-text
   format: json
   args:
   - explain
   - Permission denied (publickey).
   exit: 0
+  release_exit: 0
 - name: explain-unrecognised
   format: json
   args:
   - explain
   - zxqv frobnicated the flux capacitor
   exit: 1
+  release_exit: 1
 - name: error-update-unknown-site
   format: json
   args:
@@ -169,12 +187,234 @@ documents:
   - --site
   - nowhere
   exit: 1
+  release_exit: 1
 - name: error-federate-undeclared
   format: json
   args:
   - federate
   - -C
-  - .
+  - ops/goatbuilder/compat/documents/fixtures/journal/repo
   - no-such-peer
   - --dry-run
+  exit: 1
+  release_exit: 2
+  exit_changed: "the refusal now names its catalog code, GB-149 (gate row C5), and takes that entry's exit: 1, refused, a precondition failed (the peering is not declared), as federate allocate's same refusal already exits; it was 2, the exit of an error with no code"
+- name: deploy-dev-portal
+  format: json
+  scratch:
+  - basic
+  args:
+  - deploy
+  - -C
+  - .
+  - --mock
+  - '{scratch}/basic'
+  - --env
+  - dev
+  - --component
+  - portal
+  - --ack
+  - Reader
+  - --yes
+  exit: 3
+  release_exit: 3
+- name: deploy-dev-all
+  format: json
+  scratch:
+  - basic
+  args:
+  - deploy
+  - -C
+  - .
+  - --mock
+  - '{scratch}/basic'
+  - --env
+  - dev
+  - --ack
+  - Reader
+  - --yes
+  exit: 1
+  release_exit: 1
+- name: rollback-dev-portal
+  format: json
+  scratch:
+  - basic
+  args:
+  - rollback
+  - -C
+  - .
+  - --mock
+  - '{scratch}/basic'
+  - portal
+  - '1'
+  - --env
+  - dev
+  - --ack
+  - Reader
+  - --yes
+  exit: 3
+  release_exit: 3
+- name: plan-deploy-portal
+  format: json
+  scratch:
+  - basic
+  args:
+  - plan
+  - -C
+  - .
+  - --mock
+  - '{scratch}/basic'
+  - deploy
+  - portal
+  - --env
+  - dev
+  - --out
+  - '{scratch}/plan.json'
+  exit: 0
+  release_exit: 0
+- name: standup-dev-alpha
+  format: json
+  scratch:
+  - standup
+  args:
+  - standup
+  - -C
+  - .
+  - --mock
+  - '{scratch}/standup'
+  - dev
+  - --site
+  - alpha
+  - --ack
+  - Reader
+  - --yes
+  exit: 0
+  release_exit: 0
+- name: teardown-dev-alpha
+  format: json
+  scratch:
+  - standup
+  args:
+  - teardown
+  - -C
+  - .
+  - --mock
+  - '{scratch}/standup'
+  - dev
+  - --site
+  - alpha
+  - --yes
+  exit: 0
+  release_exit: 0
+- name: tutor-list
+  format: json
+  args:
+  - tutor
+  - --list
+  exit: 0
+  release_exit: 0
+- name: error-apply-missing-plan
+  format: json
+  args:
+  - apply
+  - -C
+  - .
+  - /nonexistent/goatbuilder-plan.json
   exit: 2
+  release_exit: 2
+- name: error-assay-unknown-site
+  format: json
+  args:
+  - assay
+  - -C
+  - .
+  - nowhere
+  exit: 1
+  release_exit: 1
+- name: error-endstate-unknown-site
+  format: json
+  args:
+  - endstate
+  - -C
+  - .
+  - nowhere
+  - --no-assay
+  exit: 1
+  release_exit: 1
+- name: error-join-node-unknown-env
+  format: json
+  args:
+  - join-node
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/journal/repo
+  - nowhere
+  - --site
+  - zagros
+  - --node
+  - n
+  - --class
+  - core
+  - --dry-run
+  exit: 2
+  release_exit: 2
+- name: federate-status-journal-v1
+  format: json
+  args:
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/journal/repo
+  - federate
+  - status
+  - hello-ally
+  - --work
+  - ops/goatbuilder/compat/documents/fixtures/journal/v1
+  exit: 0
+  release_exit: 0
+- name: federate-status-journal-later
+  format: json
+  args:
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/journal/repo
+  - federate
+  - status
+  - hello-ally
+  - --work
+  - ops/goatbuilder/compat/documents/fixtures/journal/later
+  exit: 0
+  release_exit: 0
+- name: runs-list
+  format: json
+  args:
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/runs/repo
+  - runs
+  exit: 0
+  release_exit: 0
+- name: show-run
+  format: json
+  args:
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/runs/repo
+  - show
+  - 20261114T022342Z-rollback-352859
+  exit: 0
+  release_exit: 0
+- name: runs-diff
+  format: json
+  args:
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/runs/repo
+  - runs
+  - diff
+  - 20261114T022342Z-deploy-352854
+  - 20261114T022342Z-rollback-352859
+  exit: 0
+  release_exit: 0
+not_kept:
+  completion: prints a shell script, not a document
+  docs: prints the command reference as Markdown, not a document
+  doctor: its rows are this machine's tools, credentials and network, so its document differs from machine to machine
+  pins: reads the checkout's ops/pins/fleet-pins.yaml and the goatnets it lists, and refuses --mock, so a fixture's declared/pins.yaml (as in the kept standup fixture) cannot stand in for it; this repository declares no deployment
+  promote: reads the checkout's release records and ladder; there is no fixture for it yet
+  release: reads git tags and the checkout's release records; a shallow CI clone differs from a full one, and there is no fixture for it yet
+  fastlane: reads git refs and the checkout's pins; a shallow CI clone differs from a full one, and there is no fixture for it yet
+  secrets: prints no -o json document

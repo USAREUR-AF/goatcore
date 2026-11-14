@@ -16,7 +16,11 @@
 # inside the validator sidecar and the device-side consumer — not this script.
 #
 # Usage:
-#   bash ops/preflight-enrollment.sh
+#   bash ops/preflight-enrollment.sh [--key-at-enrolment]
+#
+#   --key-at-enrolment  the setup key is minted at enrolment, where it is used
+#                       (join-node phase 10, mesh-enroll-host.yml), so no key is
+#                       given here: check 3 reports SKIP instead of FAIL
 #   NETBIRD_MANAGEMENT_URL=https://netbird.example bash ops/preflight-enrollment.sh
 #
 # Exit codes:
@@ -28,6 +32,10 @@ set -uo pipefail
 
 MGMT_URL="${NETBIRD_MANAGEMENT_URL:-https://netbird.legacy.example}"
 SETUP_KEY="${NETBIRD_SETUP_KEY:-}"
+KEY_AT_ENROLMENT=0
+for arg in "$@"; do
+    [[ "${arg}" == --key-at-enrolment ]] && KEY_AT_ENROLMENT=1
+done
 
 PASS=0
 FAIL=0
@@ -67,7 +75,9 @@ fi
 # 3. setup key presence and format
 echo
 echo "3. setup key"
-if [[ -z "${SETUP_KEY}" ]]; then
+if [[ "${KEY_AT_ENROLMENT}" == 1 ]]; then
+    printf '  [SKIP] %s\n' "no setup key here: it is minted at enrolment, where it is used, and never leaves the hosts"
+elif [[ -z "${SETUP_KEY}" ]]; then
     bad "NETBIRD_SETUP_KEY env var not set — export it or pass via --setup-key"
 elif [[ ! "${SETUP_KEY}" =~ ^[A-Z0-9]{8}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{12}$ ]]; then
     bad "NETBIRD_SETUP_KEY format looks wrong (expected UUID-like AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA). Got: ${SETUP_KEY:0:8}…"

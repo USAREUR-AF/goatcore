@@ -48,6 +48,18 @@ if [[ -z "$pass" ]]; then
   exit 65
 fi
 
+# A value that still holds a secret store's reference was not resolved: run
+# through ops/scripts/with-secrets, which resolves it. Sent as it is, the node
+# would take the reference as its password. Refused before anything reaches the
+# host, naming the variable and the scheme, never the reference itself (GB-269).
+for scheme in op:// bao:// bw:// ${GOAT_SECRET_REF_PREFIX:+"$GOAT_SECRET_REF_PREFIX"}; do
+  if [[ "$pass" == "$scheme"* ]]; then
+    echo "GB-269: $pass_var still holds a $scheme secret reference: it was not resolved, so nothing was sent to $target." >&2
+    echo "  run through ops/scripts/with-secrets with the store signed in (goatbuilder join-node does), or export the value itself." >&2
+    exit 1
+  fi
+done
+
 if ! command -v sshpass >/dev/null 2>&1; then
   echo "error: sshpass not installed (brew install sshpass on macOS)." >&2
   exit 66
@@ -88,8 +100,9 @@ else
   # Use sshpass for the one-time sudo password since key auth doesn't grant
   # us NOPASSWD yet. Write to a temp file then move atomically with
   # `visudo -c -f` validation to avoid leaving a malformed sudoers file.
-  SSHPASS="$pass" sshpass -e ssh -o BatchMode=no "$target" \
-    "echo '$pass' | sudo -S bash -c '
+  # The password reaches sudo on stdin, never in ssh's argument list.
+  printf '%s\n' "$pass" | SSHPASS="$pass" sshpass -e ssh -o BatchMode=no "$target" \
+    "sudo -S -p '' bash -c '
       tmpf=\$(mktemp)
       echo \"$remote_user ALL=(ALL) NOPASSWD:ALL\" > \"\$tmpf\"
       chmod 0440 \"\$tmpf\"

@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::runner::Finished;
@@ -36,6 +36,9 @@ struct Record<'a> {
     phases: &'a [crate::runner::PhaseEntry],
     commands: &'a [crate::runner::CommandEntry],
     inputs: &'a serde_json::Value,
+    /// Files in the checkout the run wrote; absent when it wrote none.
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    wrote: &'a [String],
 }
 
 /// Write the record of a run that ended with `exit` (and `error`, if it failed
@@ -62,6 +65,7 @@ pub fn write(run: &Finished, exit: i32, error: Option<&str>) -> Result<PathBuf> 
         phases: &run.phases,
         commands: &run.commands,
         inputs: &inputs,
+        wrote: &run.wrote,
     };
     std::fs::create_dir_all(&run.dir).with_context(|| format!("{}", run.dir.display()))?;
     let path = run.dir.join("run.json");
@@ -171,10 +175,12 @@ fn all(state: &Path) -> Vec<(String, serde_json::Value)> {
 fn find(state: &Path, which: &str) -> Result<(String, serde_json::Value)> {
     let runs = all(state);
     if which == "last" {
-        return runs
-            .into_iter()
-            .last()
-            .ok_or_else(|| anyhow!("no run is recorded under {}/runs", state.display()));
+        return runs.into_iter().last().ok_or_else(|| {
+            anyhow::Error::from(goat_errors::coded(
+                "GB-264",
+                format!("no run is recorded under {}/runs", state.display()),
+            ))
+        });
     }
     let hits: Vec<_> = runs
         .into_iter()
@@ -182,17 +188,25 @@ fn find(state: &Path, which: &str) -> Result<(String, serde_json::Value)> {
         .collect();
     match hits.len() {
         1 => Ok(hits.into_iter().next().unwrap()),
-        0 => Err(anyhow!(
-            "no run {which} under {}/runs; `goatbuilder runs` lists them",
-            state.display()
-        )),
-        n => Err(anyhow!(
-            "{n} runs start with {which}: {}; give more of the id",
-            hits.iter()
-                .map(|h| h.0.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+        0 => Err(goat_errors::coded(
+            "GB-264",
+            format!(
+                "no run {which} under {}/runs; `goatbuilder runs` lists them",
+                state.display()
+            ),
+        )
+        .into()),
+        n => Err(goat_errors::coded(
+            "GB-264",
+            format!(
+                "{n} runs start with {which}: {}; give more of the id",
+                hits.iter()
+                    .map(|h| h.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )
+        .into()),
     }
 }
 
@@ -509,6 +523,36 @@ mod tests {
     }
     use crate::runner::{CommandEntry, PhaseEntry};
 
+    /// Each run `find` cannot name is refused with GB-264: `last` with no run
+    /// recorded, an id that matches none, and a prefix several runs share.
+    #[test]
+    fn a_run_find_cannot_name_is_gb_264() {
+        let code = |r: Result<(String, serde_json::Value)>| {
+            r.unwrap_err()
+                .downcast_ref::<goat_errors::Coded>()
+                .map(|c| c.code.to_string())
+        };
+        let state = tempfile::tempdir().unwrap();
+        assert_eq!(code(find(state.path(), "last")).as_deref(), Some("GB-264"));
+        for id in ["20261112T000000Z-aaa", "20261112T000000Z-aab"] {
+            let d = state.path().join("runs").join(id);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("run.json"), "{}").unwrap();
+        }
+        assert_eq!(
+            code(find(state.path(), "nosuch")).as_deref(),
+            Some("GB-264")
+        );
+        assert_eq!(
+            code(find(state.path(), "20261112")).as_deref(),
+            Some("GB-264")
+        );
+        assert_eq!(
+            find(state.path(), "20261112T000000Z-aab").unwrap().0,
+            "20261112T000000Z-aab"
+        );
+    }
+
     fn finished(dir: &Path, cmds: &[(&str, i32)], target: &str) -> Finished {
         Finished {
             dir: dir.to_path_buf(),
@@ -545,7 +589,22 @@ mod tests {
                 { "name": "target", "value": target, "secret": false, "source": "derived from --site by <site>_hosts" },
                 { "name": "ZAGROS_PG_PASS", "value": null, "secret": true, "source": "environment" }
             ]),
+            wrote: Vec::new(),
         }
+    }
+
+    /// The files in the checkout a run wrote are in its record, so a person
+    /// sees the checkout changed; a run that wrote none has no such field.
+    #[test]
+    fn a_record_names_the_checkout_files_the_run_wrote() {
+        let t = tempfile::tempdir().unwrap();
+        let mut a = finished(&t.path().join("runs/a"), &[("true", 0)], "zagros_hosts");
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(write(&a, 0, None).unwrap()).unwrap()).unwrap();
+        assert!(v.get("wrote").is_none(), "{v}");
+        a.dir = t.path().join("runs/b");
+        a.wrote = vec!["ops/ansible/group_vars/gamma_hosts/vars.yml".into(), "ops/ansible/inventory/mgmt-hosts-mesh.ini".into()];
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(write(&a, 0, None).unwrap()).unwrap()).unwrap();
+        assert_eq!(v["wrote"], serde_json::json!(["ops/ansible/group_vars/gamma_hosts/vars.yml", "ops/ansible/inventory/mgmt-hosts-mesh.ini"]));
     }
 
     #[test]

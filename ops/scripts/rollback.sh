@@ -97,16 +97,22 @@ SSH_OPTS=(-o StrictHostKeyChecking=no -o ConnectTimeout=4 -o BatchMode=yes)
 # env door, docs/design/env-doors.md) is reached through the --site goatnet's
 # door when that goatnet's map is one host: a door lands on one host, so a
 # multi-host map never guesses which. ops/scripts/door-open.sh opens or reuses
-# the door and proves ssh lands before the port is used.
-DIRECT_OK=" "; DIRECT_NO=" "; DOOR_PORT=""
-door_port() {
+# the door and proves ssh lands before the port is used. The ssh still goes to
+# the host's own address and checks its key: the door (env-door.sh
+# --ssh-target, user@127.0.0.1:port) only carries the TCP connection, as a
+# ProxyCommand, and only that tunnel hop skips the host-key check
+# (ops/validation/probes.py _ssh_jump). A door that lands on another host can
+# therefore never stand in for this one.
+DIRECT_OK=" "; DIRECT_NO=" "; DOOR_JUMP=""
+door_jump() {
   [ -n "$SITE" ] && [ "$HOST_COUNT" -eq 1 ] || return 1
-  [ -n "$DOOR_PORT" ] && return 0
-  local door; door="$(dirname "$0")/door-open.sh"
-  [ -x "$door" ] || [ -f "$door" ] || return 1
-  bash "$door" "$SITE" >/dev/null 2>&1 || return 1
-  DOOR_PORT="$(bash "$door" "$SITE" --status 2>/dev/null | sed -n 's/.*(127\.0\.0\.1:\([0-9]*\)).*/\1/p' | head -1)"
-  [ -n "$DOOR_PORT" ]
+  [ -n "$DOOR_JUMP" ] && return 0
+  local here; here="$(dirname "$0")"
+  [ -f "$here/door-open.sh" ] && [ -f "$here/env-door.sh" ] || return 1
+  bash "$here/door-open.sh" "$SITE" >/dev/null 2>&1 || return 1
+  DOOR_JUMP="$(bash "$here/env-door.sh" "$SITE" --ssh-target 2>/dev/null)" || DOOR_JUMP=""
+  case "$DOOR_JUMP" in ?*@127.0.0.1:[0-9]*) return 0 ;; esac
+  DOOR_JUMP=""; return 1
 }
 rssh() {
   local user="$1" host="$2"; shift 2
@@ -117,9 +123,11 @@ rssh() {
     fi
     DIRECT_NO="$DIRECT_NO$host " ;;
   esac
-  if door_port; then
-    note "$host is not reachable directly; using the $SITE door (127.0.0.1:$DOOR_PORT)"
-    ssh "${SSH_OPTS[@]}" -p "$DOOR_PORT" "${user}@127.0.0.1" "$@"; return
+  if door_jump; then
+    note "$host is not reachable directly; jumping through the $SITE door ($DOOR_JUMP)"
+    ssh -o ConnectTimeout=4 -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+      -o "ProxyCommand=ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p ${DOOR_JUMP##*:} -W %h:%p ${DOOR_JUMP%:*}" \
+      "${user}@${host}" "$@"; return
   fi
   ssh "${SSH_OPTS[@]}" "${user}@${host}" "$@"
 }

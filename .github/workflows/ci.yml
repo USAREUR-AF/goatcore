@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # Decides whether a pull request changes anything the build jobs read. A
@@ -201,6 +201,10 @@ jobs:
           python3 ops/ci/check_go_vuln_coverage.py
       - name: .envrc.example generation reads an assembled tree's layers
         run: python3 ops/scripts/test_envrc_example_assembled.py
+      # The file is generated from what the repo reads; a change that adds or drops an
+      # environment variable regenerates it in the same pull request.
+      - name: .envrc.example documents exactly the variables the repo reads
+        run: python3 ops/scripts/generate-envrc-example.py --check
       # Runs the obs-host role's real read-only scrape-input preflight against
       # loopback HTTP fixtures; a rejected endpoint must stop before a write.
       - name: obs-host scrape inputs need a consumable sample
@@ -210,17 +214,15 @@ jobs:
         run: bash ops/ci/test-source-of-record.sh
       - name: Ansible roles and templates resolve
         run: bash ops/ci/check-role-template-refs-resolve.sh
-      - name: playbooks parse
+      - name: Container memory limits are variables with defaults
         run: |
-          cd ops/ansible
-          rc=0
-          for p in *.yml; do
-            # Not playbooks: data files and a tasks file imported by relay-server.yml.
-            # site-bootstrap, site-bootstrap-for (imports it) and site-resume index a group named from site_id, which needs an inventory.
-            case "$p" in netbird_acl_matrix.yml|netbird_acl_taxonomy.yml|requirements.yml|relay-server-rathole.yml|site-bootstrap.yml|site-bootstrap-for.yml|site-resume.yml) continue;; esac
-            ansible-playbook --syntax-check -i localhost, -e target=all -e mgmt_host_target=all -e migrator_host=all -e rathole_client_target=all -e site_id=zagros "$p" >/dev/null 2>&1 || { echo "syntax: $p"; rc=1; }
-          done
-          exit $rc
+          bash ops/ci/check-compose-memory-is-variable.sh --self-test
+          bash ops/ci/check-compose-memory-is-variable.sh
+      - name: playbooks parse
+        # Each failure prints ansible's own error (ops/ci/check-playbooks-parse.sh).
+        run: |
+          bash ops/ci/check-playbooks-parse.sh --self-test
+          bash ops/ci/check-playbooks-parse.sh
       - name: shell and YAML lint
         run: |
           bash ops/ci/check-bash-portability.sh
@@ -279,6 +281,9 @@ jobs:
       - name: the forwarder play, run on a systemd host, converges and refuses
         timeout-minutes: 10
         run: bash ops/ci/test-peering-forwarder-role.sh
+      - name: the forwarder's carrier read-back lists only public keys, addresses and ports (stand-in wg)
+        timeout-minutes: 5
+        run: bash ops/ansible/roles/goat-peering-forwarder/tests/test-readback.sh
 
   peering-host-firewall:
     needs: changes

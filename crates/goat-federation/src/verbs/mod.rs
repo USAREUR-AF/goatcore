@@ -43,7 +43,7 @@ mod verify;
 pub use apply::{run_apply, ApplyArgs};
 pub use compose::{run_compose, ComposeArgs};
 pub use diff::{run_diff, DiffArgs};
-pub use init::{measure_here, run_init, run_init_measured, InitArgs};
+pub use init::{measure_here, measure_here_with, run_init, run_init_measured, InitArgs};
 pub use lint::{run_lint, LintArgs};
 pub use verify::{run_verify, VerifyArgs};
 
@@ -374,6 +374,14 @@ pub(crate) fn sign_with(path: &Path, message: &[u8]) -> anyhow::Result<String> {
     use base64::Engine as _;
     use ed25519_dalek::{Signer, SigningKey};
 
+    // This key also signs acceptance results, under their own domain line
+    // (acceptance_sig.rs). A package's signing input is a JSON object and the
+    // attestation line begins `conformance`, so neither begins with it; this
+    // signer refuses the domain outright, so no caller can make it sign a
+    // result statement.
+    if message.starts_with(crate::acceptance_sig::RESULT_DOMAIN.as_bytes()) {
+        anyhow::bail!("refusing to sign an acceptance-result statement with the package signer");
+    }
     let text =
         std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     let text = text.trim();

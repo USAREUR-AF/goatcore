@@ -6,8 +6,6 @@ baseline of the last release (baseline.yaml names it):
   A3  no command or flag of the last release is gone without a deprecation entry
   A4  every kept `-o json` / `-o yaml` document of the last release is still
       produced, as a superset: no field removed or retyped, the same version
-  A5  every GB-nnn code of the last release is still in the catalog with its
-      title, unless the entry is marked retired
 
 The unit tests build a violation of each rule and show the check refuses it.
 The whole check against a build runs when GOATBUILDER_BIN names one:
@@ -21,6 +19,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import re
 import os
 import unittest
 
@@ -158,6 +157,90 @@ class A3CommandSurface(unittest.TestCase):
         self.assertTrue(compat.deprecation_problems(deps))
 
 
+HELP = """Print a shell completion script
+
+Usage: goatbuilder completion [OPTIONS] <SHELL>
+
+Arguments:
+  <SHELL>  The shell to generate for [possible values: bash, elvish, fish, powershell,
+           zsh]
+
+Options:
+  -o, --output <OUTPUT>  Output format: a table for a person; JSON or YAML for a program [default:
+                         table] [possible values: table, json, yaml]
+      --yes              Confirm a declarative verb without prompting (for automation)
+      --color <COLOR>    Color the table's ok/FAIL glyph and verdict [default: auto] [possible
+                         values: auto, always, never]
+  -h, --help             Print help
+"""
+
+
+class A3FlagValues(unittest.TestCase):
+    """A value a flag or argument accepted in the last release is still accepted."""
+
+    def test_the_help_s_possible_values_are_read_even_when_wrapped(self):
+        self.assertEqual(compat.parse_values(HELP), {
+            "<SHELL>": ["bash", "elvish", "fish", "powershell", "zsh"],
+            "--output": ["table", "json", "yaml"],
+            "--color": ["auto", "always", "never"],
+        })
+
+    def test_the_long_help_form_is_read_too(self):
+        long_form = """Options:
+  -o, --output <OUTPUT>
+          Output format: a table for a person; JSON or YAML for a program
+          
+          [default: table]
+          [possible values: table, json, yaml]
+
+  -C, --repo <DIR>
+          The repository root
+"""
+        self.assertEqual(compat.parse_values(long_form), {"--output": ["table", "json", "yaml"]})
+
+    def surfaces(self):
+        base = {"goatbuilder completion": {"flags": {"--output": True}, "args": [{"name": "SHELL", "required": True}],
+                                           "values": {"--output": ["table", "json", "yaml"], "<SHELL>": ["bash", "zsh"]}}}
+        return base, copy.deepcopy(base)
+
+    def test_the_same_values_pass_and_an_added_value_passes(self):
+        base, new = self.surfaces()
+        new["goatbuilder completion"]["values"]["--output"].append("csv")
+        self.assertEqual(compat.surface_problems(base, new, []), [])
+
+    def test_a_removed_value_is_refused(self):
+        base, new = self.surfaces()
+        new["goatbuilder completion"]["values"]["--output"].remove("yaml")
+        p = compat.surface_problems(base, new, [])
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("--output", p[0])
+        self.assertIn("yaml", p[0])
+
+    def test_a_removed_argument_value_is_refused(self):
+        base, new = self.surfaces()
+        new["goatbuilder completion"]["values"]["<SHELL>"] = ["bash"]
+        self.assertIn("zsh", compat.surface_problems(base, new, [])[0])
+
+    def test_a_flag_that_stops_listing_values_is_refused(self):
+        base, new = self.surfaces()
+        del new["goatbuilder completion"]["values"]["--output"]
+        self.assertTrue(compat.surface_problems(base, new, []))
+
+    def test_a_deprecation_entry_names_the_value_and_it_passes(self):
+        base, new = self.surfaces()
+        new["goatbuilder completion"]["values"]["--output"].remove("yaml")
+        deps = [{"command": "goatbuilder completion", "flag": "--output", "value": "yaml", "replacement": "json", "deprecated_in": "goatbuilder/v0.6.0"}]
+        self.assertEqual(compat.surface_problems(base, new, deps), [])
+
+    def test_a_value_entry_without_its_flag_is_refused(self):
+        self.assertTrue(compat.deprecation_problems([{"command": "goatbuilder join-node", "value": "door", "replacement": "mesh", "deprecated_in": "goatbuilder/v0.6.0"}]))
+
+    def test_the_kept_surface_holds_the_release_s_values(self):
+        s = compat.Baseline(HERE).surface()
+        self.assertEqual(s["goatbuilder"]["values"]["--output"], ["table", "json", "yaml"])
+        self.assertIn("zsh", s["goatbuilder completion"]["values"]["<SHELL>"])
+
+
 class A4Documents(unittest.TestCase):
     BASE = {
         "schema": "goatbuilder.output/v1",
@@ -219,40 +302,206 @@ class A4Documents(unittest.TestCase):
         self.assertIn("schema", compat.document_problems(self.BASE, new)[0])
 
 
-class A5ErrorCodes(unittest.TestCase):
-    BASE = [{"code": "GB-001", "title": "unknown component"}, {"code": "GB-002", "title": "no plan"}]
+class A4ConditionalFields(unittest.TestCase):
+    """A field a format carries only on some entries (conditional.yaml) may be absent
+    from the others, and must stay on every entry its condition names."""
 
-    def catalog(self):
-        return [
-            {"code": "GB-001", "tool": "goatbuilder", "title": "unknown component"},
-            {"code": "GB-002", "tool": "goatbuilder", "title": "no plan"},
-        ]
+    @staticmethod
+    def _lexical(code: str, at: int, score: float) -> dict:
+        entry = {"code": code, "tool": "goatbuilder", "title": "t", "what": "w", "causes": ["c"], "fixes": ["f"], "read": "r", "exit": 1, "matches": ["m"]}
+        return {"code": code, "layer": "lexical", "evidence": f"3 shared words, score {score:.2f}", "at": at, "score": score, "entry": entry}
 
-    def test_the_same_codes_pass(self):
-        self.assertEqual(compat.error_problems(self.BASE, self.catalog()), [])
+    def setUp(self):
+        # A refusal with no code of its own, as an earlier release printed it: its
+        # interpretation holds lexical guesses, each with its score. The tests own
+        # this sample, so a refresh of a kept document cannot change what they test.
+        self.base = {
+            "schema": "goatbuilder.error/v1",
+            "error": "the peering is not declared",
+            "interpretation": {
+                "schema": "goat-errors.interpretation/v1",
+                "summary": "the peering is not declared",
+                "hits": [self._lexical("GB-066", 0, 0.56), self._lexical("GB-025", 1, 0.50)],
+                "unrecognised": True,
+            },
+        }
+        self.cond = compat.Baseline(HERE).conditional()
 
-    def test_a_new_code_passes(self):
-        c = self.catalog() + [{"code": "GB-003", "tool": "goatbuilder", "title": "new"}]
-        self.assertEqual(compat.error_problems(self.BASE, c), [])
+    def _coded(self, doc):
+        """The same refusal once it has its own code: one hit of layer `code`, no score."""
+        new = copy.deepcopy(doc)
+        hit = copy.deepcopy(new["interpretation"]["hits"][0])
+        hit.update({"code": "GB-999", "layer": "code", "evidence": "goatbuilder: GB-999 the peering is not declared", "at": 0})
+        hit.pop("score")
+        new["interpretation"]["hits"] = [hit]
+        new["interpretation"]["unrecognised"] = False
+        return new
 
-    def test_an_absent_code_is_refused(self):
-        p = compat.error_problems(self.BASE, self.catalog()[:1])
+    def test_a_refusal_that_gains_its_own_code_keeps_the_promise(self):
+        self.assertEqual(compat.document_problems(self.base, self._coded(self.base), self.cond), [])
+
+    def test_a_lexical_hit_that_loses_its_score_is_refused(self):
+        new = copy.deepcopy(self.base)
+        new["interpretation"]["hits"][1].pop("score")
+        p = compat.document_problems(self.base, new, self.cond)
         self.assertEqual(len(p), 1, p)
-        self.assertIn("GB-002", p[0])
+        self.assertIn("interpretation.hits[1].score", p[0])
+        self.assertIn("lexical", p[0])
 
-    def test_a_retitled_code_is_refused(self):
-        c = self.catalog()
-        c[1]["title"] = "the plan file is missing"
-        self.assertIn("GB-002", compat.error_problems(self.BASE, c)[0])
+    def test_a_field_the_list_does_not_name_is_still_refused(self):
+        new = self._coded(self.base)
+        new["interpretation"]["hits"][0].pop("evidence")
+        p = compat.document_problems(self.base, new, self.cond)
+        self.assertEqual(p, ["interpretation.hits[].evidence: the field is gone"])
 
-    def test_a_retitled_code_marked_retired_passes(self):
-        c = self.catalog()
-        c[1]["title"] = "retired: no plan"
-        c[1]["retired"] = "goatbuilder/v0.6.0"
-        self.assertEqual(compat.error_problems(self.BASE, c), [])
+    def test_a_score_that_changes_type_is_refused(self):
+        new = copy.deepcopy(self.base)
+        new["interpretation"]["hits"][0]["score"] = "high"
+        p = compat.document_problems(self.base, new, self.cond)
+        self.assertTrue(any("interpretation.hits[0].score" in x and "number" in x for x in p), p)
 
-    def test_a_retired_code_is_still_refused_when_absent(self):
-        self.assertTrue(compat.error_problems(self.BASE, self.catalog()[:1]))
+    def test_the_list_is_well_formed_and_names_its_reason(self):
+        self.assertEqual(compat.conditional_problems(self.cond), [])
+        self.assertTrue(compat.conditional_problems([{"format": "x/v1", "items": "hits[]", "field": "score", "present_when": {"layer": "lexical"}}]))
+        self.assertTrue(compat.conditional_problems([{"format": "x/v1", "items": "hits", "field": "score", "present_when": {"layer": "lexical"}, "reason": "r"}]))
+
+
+class A4ExitCodes(unittest.TestCase):
+    """A kept exit code moves only with its reason (README, "Changing a surface on purpose")."""
+
+    def test_the_release_s_exit_passes(self):
+        self.assertEqual(compat.exit_problems({"name": "d", "exit": 2, "release_exit": 2}), [])
+
+    def test_an_edited_exit_with_no_reason_is_refused(self):
+        p = compat.exit_problems({"name": "validate-not-yaml", "exit": 1, "release_exit": 2})
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("validate-not-yaml", p[0])
+        self.assertIn("exit_changed", p[0])
+
+    def test_an_edited_exit_with_its_reason_passes(self):
+        d = {"name": "d", "exit": 1, "release_exit": 2, "exit_changed": "a config that is not YAML is GB-025"}
+        self.assertEqual(compat.exit_problems(d), [])
+
+    def test_an_empty_reason_is_no_reason(self):
+        self.assertTrue(compat.exit_problems({"name": "d", "exit": 1, "release_exit": 2, "exit_changed": " "}))
+
+    def test_a_kept_document_without_the_release_s_exit_is_refused(self):
+        self.assertTrue(compat.exit_problems({"name": "d", "exit": 1}))
+
+    def test_a_reason_must_be_words(self):
+        for reason in (True, [""], ["x"], 1, {"why": "x"}):
+            self.assertTrue(compat.exit_problems({"name": "d", "exit": 1, "release_exit": 2, "exit_changed": reason}), reason)
+
+    def test_a_hand_edited_release_exit_is_refused(self):
+        b = compat.Baseline(HERE)
+        docs = copy.deepcopy(b.documents())
+        d = next(x for x in docs if x["name"] == "validate-not-yaml")
+        d["exit"], d["release_exit"] = 1, 1
+        p = compat.release_values_problems(b.release, docs, b.meta)
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("release_exit", p[0])
+
+    def test_the_kept_release_values_match_their_digest(self):
+        b = compat.Baseline(HERE)
+        self.assertEqual(compat.release_values_problems(b.release, b.documents(), b.meta), [])
+
+    def test_editing_exit_alone_does_not_touch_the_digest(self):
+        b = compat.Baseline(HERE)
+        docs = copy.deepcopy(b.documents())
+        d = next(x for x in docs if x["name"] == "validate-not-yaml")
+        d["exit"], d["exit_changed"] = 1, "a config that is not YAML is GB-025"
+        self.assertEqual(compat.release_values_problems(b.release, docs, b.meta), [])
+
+    def test_every_kept_document_records_the_release_s_exit(self):
+        for d in compat.Baseline(HERE).documents():
+            self.assertEqual(compat.exit_problems(d), [], d)
+
+
+class A4EveryVerbIsKept(unittest.TestCase):
+    """Every verb of the last release has a kept -o json document, or says why not.
+
+    The kept set is the promise made checkable: a verb with no kept document
+    could drop or retype a field unseen. `not_kept:` in documents/manifest.yaml
+    names each verb without one and the reason; it only shrinks.
+    """
+
+    def verbs(self):
+        return sorted(k.split()[1] for k in compat.Baseline(HERE).surface() if len(k.split()) == 2)
+
+    def test_every_verb_has_a_kept_document_or_a_reason(self):
+        b = compat.Baseline(HERE)
+        kept = {compat.invocation_verb(d["args"], self.verbs()) for d in b.documents()}
+        not_kept = b.not_kept()
+        missing = [v for v in self.verbs() if v not in kept and v not in not_kept]
+        self.assertEqual(missing, [], "verbs with no kept document and no reason in not_kept")
+        for v, why in not_kept.items():
+            self.assertTrue(str(why).strip(), v)
+            self.assertNotIn(v, kept, f"{v} is kept; remove it from not_kept")
+
+    def test_the_verbs_that_change_state_are_kept(self):
+        kept = {compat.invocation_verb(d["args"], self.verbs()) for d in compat.Baseline(HERE).documents()}
+        for v in ("deploy", "rollback", "plan", "standup", "teardown"):
+            self.assertIn(v, kept)
+
+    def test_an_invocation_on_a_scratch_copy_names_only_kept_fixtures(self):
+        for d in compat.Baseline(HERE).documents():
+            for f in d.get("scratch") or []:
+                self.assertTrue(os.path.isdir(os.path.join(HERE, "documents", "fixtures", f)), (d["name"], f))
+
+
+class RunsAreIsolated(unittest.TestCase):
+    """A kept invocation runs with its own HOME and XDG directories, and its
+    scratch path is written back as {scratch} in every form it can take."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp(prefix="compat-iso-")
+        # The test's own stand-in for the developer's HOME, so that a run that is
+        # not isolated writes here and never into a real one.
+        self.home = os.path.join(self.tmp, "home")
+        os.makedirs(self.home)
+        self.saved = {k: os.environ.get(k) for k in ("HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME")}
+        os.environ["HOME"] = self.home
+        for k in list(self.saved)[1:]:
+            os.environ.pop(k, None)
+        self.bin = os.path.join(self.tmp, "fake-goatbuilder")
+        # Writes into $HOME as `tutor` does, and prints a document naming its
+        # scratch argument raw, through realpath, and JSON-escaped.
+        with open(self.bin, "w") as f:
+            f.write("""#!/bin/sh
+mkdir -p "$HOME/.goatbuilder/tutor" && echo x > "$HOME/.goatbuilder/tutor/progress.json"
+last=""; for a in "$@"; do last="$a"; done
+real=$(cd "$last" && pwd -P)
+printf '{"schema":"t/v1","home":"%s","xdg":"%s","raw":"%s","real":"%s"}\\n' "$HOME" "$XDG_STATE_HOME" "$last" "$real"
+""")
+        os.chmod(self.bin, 0o700)
+
+    def tearDown(self):
+        import shutil
+        for k, v in self.saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_run_writes_nothing_into_the_callers_home(self):
+        rc, doc, err = compat.run_document(self.bin, REPO, {"name": "t", "format": "json", "args": ["{scratch}/basic"], "scratch": ["basic"]})
+        self.assertIsNone(err)
+        self.assertNotEqual(doc["home"], self.home)
+        self.assertTrue(doc["xdg"] and not doc["xdg"].startswith(self.home), doc)
+        self.assertEqual(os.listdir(self.home), [], "the run wrote into the caller's HOME")
+
+    def test_every_form_of_the_scratch_path_is_written_back(self):
+        rc, doc, err = compat.run_document(self.bin, REPO, {"name": "t", "format": "json", "args": ["{scratch}/basic"], "scratch": ["basic"]})
+        self.assertIsNone(err)
+        self.assertEqual(doc["raw"], "{scratch}/basic")
+        self.assertEqual(doc["real"], "{scratch}/basic")
+        self.assertNotIn(self.tmp, json.dumps(doc))
+
+    def test_a_json_escaped_scratch_path_is_written_back(self):
+        out = compat.unscratch('{"p": "C:\\\\x\\\\y/basic"}', "C:\\x\\y")
+        self.assertEqual(json.loads(out)["p"], "{scratch}/basic")
 
 
 class TheKeptBaseline(unittest.TestCase):
@@ -274,12 +523,6 @@ class TheKeptBaseline(unittest.TestCase):
         self.assertGreaterEqual(len(docs), 5)
         for d in docs:
             self.assertTrue(os.path.isfile(os.path.join(HERE, "documents", d["name"] + "." + d["format"])), d)
-
-    def test_the_error_codes_of_the_release_are_kept(self):
-        self.assertGreaterEqual(len(self.b.errors()), 100)
-
-    def test_the_current_catalog_keeps_every_code(self):
-        self.assertEqual(compat.error_problems(self.b.errors(), compat.load_catalog(REPO)), [])
 
     def test_the_deprecation_list_is_well_formed(self):
         self.assertEqual(compat.deprecation_problems(self.b.deprecations()), [])
@@ -339,8 +582,54 @@ class RefreshRecordsOnlyThePublishedBinary(unittest.TestCase):
 
     def test_the_kept_baseline_is_the_pinned_published_binary(self):
         b = compat.Baseline(HERE)
-        pins = compat.load_pins(HERE)
+        pins = compat.load_pins(REPO)
         self.assertEqual(pins[(b.release, b.meta["binary"])], b.meta["binary_sha256"])
+
+    def test_refresh_never_writes_the_pin_list(self):
+        before = open(os.path.join(REPO, compat.PINS), "rb").read()
+        compat.refresh(REPO, self.root, "goatbuilder/v0.5.1", self.bin, sums=self.sums("f" * 64))
+        self.assertEqual(open(os.path.join(REPO, compat.PINS), "rb").read(), before)
+
+
+class OnePinList(unittest.TestCase):
+    """compat and the upgrade tests (gate E1 to E3) read one list of published checksums.
+
+    crates/goatbuilder/tests/upgrade/releases.sha256 is that list. fetch.sh reads
+    it with `read -r want path` (any whitespace), released.rs with
+    `split_once("  ")` (exactly two spaces), compat with load_pins: all three
+    must read the same thing, so every line has exactly the shape SHA256SUMS writes.
+    """
+
+    LINE = re.compile(r"^[0-9a-f]{64}  v\d+\.\d+\.\d+/goatbuilder-(linux|darwin)-(amd64|arm64)$")
+
+    def lines(self):
+        with open(os.path.join(REPO, compat.PINS)) as f:
+            return [l.rstrip("\n") for l in f if l.strip() and not l.startswith("#")]
+
+    def test_the_list_is_the_upgrade_tests_and_compat_keeps_none_of_its_own(self):
+        self.assertEqual(compat.PINS, "crates/goatbuilder/tests/upgrade/releases.sha256")
+        self.assertFalse(os.path.exists(os.path.join(HERE, "releases.sha256")))
+
+    def test_every_line_has_the_shape_both_readers_accept(self):
+        lines = self.lines()
+        self.assertTrue(lines)
+        for l in lines:
+            self.assertRegex(l, self.LINE)
+        paths = [l.split("  ", 1)[1] for l in lines]
+        self.assertEqual(len(paths), len(set(paths)), "a path is pinned twice")
+
+    def test_fetch_sh_released_rs_and_compat_read_the_same_pins(self):
+        lines = self.lines()
+        as_fetch = {}
+        as_released = {}
+        for l in lines:
+            want, path = l.split(None, 1)  # read -r want path
+            as_fetch[path.strip()] = want
+            sha, p = l.split("  ", 1)  # split_once("  ")
+            as_released[p] = sha
+        as_compat = {f"{tag.split('/', 1)[1]}/{asset}": sha for (tag, asset), sha in compat.load_pins(REPO).items()}
+        self.assertEqual(as_fetch, as_released)
+        self.assertEqual(as_compat, as_released)
 
 
 @unittest.skipUnless(os.environ.get("GOATBUILDER_BIN"), "set GOATBUILDER_BIN to a built goatbuilder")
@@ -349,6 +638,19 @@ class TheBuildKeepsThePromise(unittest.TestCase):
         rows = compat.check_all(REPO, HERE, os.environ["GOATBUILDER_BIN"])
         failed = [r for r in rows if not r[0]]
         self.assertEqual(failed, [], json.dumps(failed, indent=1))
+
+    def test_a_whole_check_leaves_the_callers_home_as_it_was(self):
+        import shutil
+        import tempfile
+        home = tempfile.mkdtemp(prefix="compat-caller-home-")
+        saved = os.environ.get("HOME")
+        os.environ["HOME"] = home
+        try:
+            compat.check_all(REPO, HERE, os.environ["GOATBUILDER_BIN"])
+            self.assertEqual(os.listdir(home), [], "a check wrote into the caller's HOME")
+        finally:
+            os.environ["HOME"] = saved
+            shutil.rmtree(home, ignore_errors=True)
 
 
 if __name__ == "__main__":

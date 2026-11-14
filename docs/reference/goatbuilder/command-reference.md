@@ -273,6 +273,22 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 
 | Flag | Description | Default |
 |---|---|---|
+| `--context-dir <CONTEXT_DIR>` | The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it) |  |
+| `--cert <CERT>` | The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory) |  |
+| `--ca-roots <CA_ROOTS>` | The six verbs: the CA roots (default: ca-roots.pem in the context directory) |  |
+| `--context <CONTEXT>` | The six verbs: the goat context to read, as `goat --context` (default: $GOAT_CONTEXT, else current_context in the profile's config.toml, else default) |  |
+| `--profile-dir <PROFILE_DIR>` | The six verbs: the goat profile directory, as `goat --profile-dir` (default: $GOAT_PROFILE_DIR, else ~/.goat) |  |
+| `--over-ssh <OVER_SSH>` | init: measure this peering's edge and core over SSH from this machine, reaching the hosts of inventory groups <PEERING>_edge and <PEERING>_core in ops/ansible/inventory/peering-edges.ini as the plays reach them. Only read-only commands run there; nothing is copied to either host |  |
+| `--ssh-edge-group <SSH_EDGE_GROUP>` | init --over-ssh: the edge's inventory group (default <PEERING>_edge) |  |
+| `--ssh-core-group <SSH_CORE_GROUP>` | init --over-ssh: the core's inventory group (default <PEERING>_core) |  |
+| `--edge-host <EDGE_HOST>` | init --over-ssh: the edge host to measure, when its group has several |  |
+| `--core-host <CORE_HOST>` | init --over-ssh: the core host to measure, when its group has several |  |
+| `--router-container <ROUTER_CONTAINER>` | init --over-ssh: the core router container, by hand (default: the name the core host's variables give, else the one discovery finds there) |  |
+| `--side <SIDE>` | init --over-ssh: measure one half of phase 3 on this machine, for a peering no one machine reaches both hosts of (docs/design/federation-router-discovery.md): `edge` measures only the edge and writes the result to --half-out; `core` measures only the core, joins the edge half read from --edge-half, and builds the package. Without it, both hosts are measured here, as always. On a peering run, `--side edge` is the edge driver's run of a two-driver peering (`drivers: two`): not built yet, and refused with GB-267 (docs/design/federation-two-drivers.md) |  |
+| `--half-out <HALF_OUT>` | init --over-ssh --side edge: the file the edge half is written to |  |
+| `--edge-half <EDGE_HALF>` | init --over-ssh --side core: the edge half the edge driver wrote |  |
+| `--edge-half-sha256 <EDGE_HALF_SHA256>` | init --over-ssh --side core: the edge half's sha256 as the edge driver printed it, read from there and confirmed here (the full digest, or its first 32 hex digits; spaces and dashes are ignored) |  |
+| `--expect-commit <EXPECT_COMMIT>` | With --side edge: the commit the edge driver's checkout must be at, as a hand-off object names it. The edge driver's run is not built yet: refused with GB-267 (docs/design/federation-two-drivers.md) |  |
 | `--plan <PLAN>` | deploy: the plan to execute (default <work>/plan.json) |  |
 | `--approve-plan <APPROVE_PLAN>` | deploy: approve exactly this plan hash, after reading the plan. --yes never approves a plan |  |
 | `--confirm` | Phases 5, 6 and 10: confirm the keys, the agreement digest and the admission here, at this terminal, instead of stopping for them by hand. The default when both stdin and stderr are a terminal |  |
@@ -303,6 +319,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 - [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
 - [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
 - [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
+- [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it. Not built yet: refuses with GB-267 (docs/design/federation-two-drivers.md)
 
 ## `goatbuilder federate init`
 
@@ -487,6 +504,24 @@ Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federa
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |
 | `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<partner>) |  |
 | `--dry-run` | Survey the peering's hosts read-only and print every resource the back-out would remove, per host; change nothing |  |
+
+## `goatbuilder federate import`
+
+A two-driver peering's import of an edge result, as a hand-off object names it. Not built yet: refuses with GB-267 (docs/design/federation-two-drivers.md)
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<WITH>` | The peering name (the counterparty, as declared) |
+| `<PHASE>` | The phase whose edge result this is |
+| `<RESULT>` | The result file the edge driver wrote |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--sha256 <SHA256>` | The confirm code the edge driver printed (the result's sha256, or its first digits) |  |
 
 ## `goatbuilder pins`
 
@@ -885,6 +920,27 @@ Replace this binary with the release its goatnet serves at `get.<site>.<zone>/go
 | `--site <SITE>` | The goatnet that serves goatbuilder (its group_vars site) |  |
 | `--check` | Report running against served; change nothing |  |
 | `--force` | Reinstall even when already current (re-verifies the checksum) |  |
+
+**Subcommands**
+
+- [`goatbuilder update verify-release`](#goatbuilder-update-verify-release) — Verify a downloaded goatbuilder release without installing it: the keyless signature over `<DIR>/SHA256SUMS` (`SHA256SUMS.cosign-bundle`), with the checks `update` makes before it installs, for the release workflow of `--signer` at `goatbuilder/v<version>`; then every other file in `<DIR>` against that `SHA256SUMS`. Reads only. Exit 0 verified; 1 refused (GB-261 the signature, GB-074 a file)
+
+## `goatbuilder update verify-release`
+
+Verify a downloaded goatbuilder release without installing it: the keyless signature over `<DIR>/SHA256SUMS` (`SHA256SUMS.cosign-bundle`), with the checks `update` makes before it installs, for the release workflow of `--signer` at `goatbuilder/v<version>`; then every other file in `<DIR>` against that `SHA256SUMS`. Reads only. Exit 0 verified; 1 refused (GB-261 the signature, GB-074 a file)
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<DIR>` | The downloaded release: its files, SHA256SUMS and SHA256SUMS.cosign-bundle |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--signer <SIGNER>` | `<owner>/<repo>` the release was built and signed in |  |
+| `--trusted-root <TRUSTED_ROOT>` | A Sigstore trusted_root.json trusted beside the embedded public one |  |
 
 ## `goatbuilder completion`
 

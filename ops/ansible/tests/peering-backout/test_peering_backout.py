@@ -108,11 +108,29 @@ def leaves(v):
         yield v
 
 
-def run(argv, tmp):
+def run(argv, tmp, path_prefix=None):
     env = dict(os.environ, ANSIBLE_CONFIG=str(ANSIBLE / "ansible.cfg"), ANSIBLE_NOCOLOR="1",
                ANSIBLE_FACT_CACHING="memory", ANSIBLE_LOCAL_TEMP=f"{tmp}/ansible-tmp",
                ANSIBLE_REMOTE_TEMP=f"{tmp}/ansible-tmp")
+    if path_prefix:
+        env["PATH"] = path_prefix + os.pathsep + env["PATH"]
     return subprocess.run(argv, cwd=ANSIBLE, env=env, capture_output=True, text=True, check=False)
+
+
+# Measured, nftables 1.1.6: a missing table or chain is exit 1, then nft's own
+# not-found line, then the command it could not run.
+NFT_NOT_FOUND = ('[ "$1" = -a ] && shift\n'
+                 'echo "Error: No such file or directory" >&2; echo "$*" >&2; exit 1')
+# The tools every survey test puts on PATH unless it gives its own, so a survey does
+# not depend on what this machine's ip, nft and systemctl say without privilege.
+NETWORK_NOT_FOUND = {
+    "ip": ('case "$*" in\n'
+           '  "-o link show") exit 0 ;;\n'
+           '  *) eval "name=\\${$#}"; echo "Device \\"$name\\" does not exist." >&2; exit 1 ;;\n'
+           'esac'),
+    "nft": NFT_NOT_FOUND,
+    "systemctl": 'printf "LoadState=not-found\\nActiveState=inactive\\nUnitFileState=\\n"',
+}
 
 
 @unittest.skipUnless(shutil.which("ansible-playbook"), "ansible-playbook not on PATH")
@@ -150,12 +168,20 @@ class TwoPeeringsOneHost(unittest.TestCase):
     def test_a_survey_of_one_peering_names_nothing_of_the_other(self):
         fx = tbc.Fixture(tbc.fragment("xaa", "xab"), tbc.fragment("xaa", "xac"))
         work = f"{self.tmp}/work/xac"
+        # nft as this user cannot read any table; fakes that say each table, chain and
+        # link does not exist let the forwarder row carry its note about the other entries.
+        bindir = f"{self.tmp}/fake-net"
+        os.makedirs(bindir, exist_ok=True)
+        for name, body in NETWORK_NOT_FOUND.items():
+            with open(f"{bindir}/{name}", "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\n" + body + "\n")
+            os.chmod(f"{bindir}/{name}", 0o700)
         r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_edge:xac_core:peering_forwarders",
                  str(ANSIBLE / "peering-backout.yml"),
                  "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
                  "-e", "ansible_become=false",
                  "-e", f"peering_backout_core_seed={fx.seed}", "-e", f"peering_backout_core_org={fx.org}",
-                 "-e", f"peering_backout_core_config={fx.live}"], self.tmp)
+                 "-e", f"peering_backout_core_config={fx.live}"], self.tmp, path_prefix=bindir)
         self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
         records = {}
         for host in ("edge-xac", "core-xac", "fwd"):
@@ -183,6 +209,334 @@ class TwoPeeringsOneHost(unittest.TestCase):
         # The core files were read, never written.
         self.assertEqual(Path(fx.org).read_text(), fx.vendor + tbc.fragment("xaa", "xab") + tbc.fragment("xaa", "xac"))
 
+    def survey_with_tools(self, tools):
+        """A survey of xac with fake tools on PATH: {name: shell body}; ip, nft and
+        systemctl answer with their own not-found answers unless the test gives its own."""
+        bindir = f"{self.tmp}/fake-bin"
+        os.makedirs(bindir, exist_ok=True)
+        for name, body in {**NETWORK_NOT_FOUND, **tools}.items():
+            path = f"{bindir}/{name}"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\n" + body + "\n")
+            os.chmod(path, 0o700)
+        fx = tbc.Fixture(tbc.fragment("xaa", "xab"), tbc.fragment("xaa", "xac"))
+        work = f"{self.tmp}/work/xac"
+        r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_edge:xac_core:peering_forwarders",
+                 str(ANSIBLE / "peering-backout.yml"),
+                 "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                 "-e", "ansible_become=false",
+                 "-e", f"peering_backout_core_seed={fx.seed}", "-e", f"peering_backout_core_org={fx.org}",
+                 "-e", f"peering_backout_core_config={fx.live}"], self.tmp, path_prefix=bindir)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        rows = {}
+        for host in ("edge-xac", "core-xac", "fwd"):
+            for row in jload(f"{work}/backout/survey/{host}.json")["rows"]:
+                rows[host + ": " + row["resource"]] = row
+        return rows
+
+    PROBES = ("edge-xac: container goat-zenoh-edge-xac", "core-xac: container goat-fed-republisher-xac",
+              "fwd: carrier wg-carry1", "edge-xac: federation spiffe://xac.example.org",
+              "edge-xac: bundle spiffe://xac.example.org")
+
+    def test_a_probe_that_fails_for_another_reason_is_unknown_not_absent(self):
+        denied = 'echo "permission denied while trying to connect to the docker daemon socket" >&2; exit 1'
+        rows = self.survey_with_tools({
+            "docker": denied,
+            "wg": 'echo "Unable to access interface: Operation not permitted" >&2; exit 1'})
+        for resource in self.PROBES:
+            with self.subTest(resource=resource):
+                row = rows[resource]
+                self.assertEqual(row["state"], "unknown", row)
+                self.assertEqual(row["action"], "none", row)
+                self.assertIn("rc 1", row["note"], row)
+        self.assertIn("permission denied", rows["edge-xac: container goat-zenoh-edge-xac"]["note"])
+        self.assertIn("Operation not permitted", rows["fwd: carrier wg-carry1"]["note"])
+
+    def test_a_missing_tool_is_unknown(self):
+        rows = self.survey_with_tools({"docker": "exit 127", "wg": "exit 127"})
+        for resource in self.PROBES:
+            with self.subTest(resource=resource):
+                self.assertEqual(rows[resource]["state"], "unknown", rows[resource])
+
+    def test_each_tools_own_not_found_is_absent(self):
+        rows = self.survey_with_tools({
+            "docker": ('case "$*" in\n'
+                       '  *"federation show"*) echo "rpc error: code = NotFound desc = federation'
+                       ' relationship does not exist" >&2; exit 1 ;;\n'
+                       '  *"bundle list"*) echo "rpc error: code = NotFound desc = bundle not found" >&2; exit 1 ;;\n'
+                       '  *) eval "name=\\${$#}"; echo "Error response from daemon: No such container: $name" >&2; exit 1 ;;\n'
+                       'esac'),
+            "wg": 'echo "Unable to access interface: No such device" >&2; exit 1'})
+        for resource in self.PROBES:
+            with self.subTest(resource=resource):
+                self.assertEqual(rows[resource]["state"], "absent", rows[resource])
+                self.assertEqual(rows[resource]["action"], "none", rows[resource])
+
+    TUNNEL_PROBES = ("edge-xac: interface wg-fed1", "edge-xac: nft table inet goat_peering_wg_fed1",
+                     "edge-xac: carrier wg-carry1", "edge-xac: interface ipsec-xaa-xac",
+                     "edge-xac: nft clamp rules for ipsec-xaa-xac",
+                     "fwd: nft rules for wg-carry1 in the forwarder table")
+
+    UNITS = ("edge-xac: unit goat-peering-wg@wg-fed1.service", "edge-xac: unit goat-peering-link@xaa-xac.service")
+
+    def test_a_unit_whose_bus_cannot_be_reached_is_unknown(self):
+        rows = self.survey_with_tools({
+            "systemctl": 'echo "Failed to connect to system scope bus via local transport: No such file or directory" >&2; exit 1'})
+        for resource in self.UNITS:
+            with self.subTest(resource=resource):
+                self.assertEqual(rows[resource]["state"], "unknown", rows[resource])
+                self.assertEqual(rows[resource]["action"], "none", rows[resource])
+                self.assertIn("rc 1", rows[resource]["note"], rows[resource])
+
+    def test_a_unit_that_is_not_loaded_is_absent_and_a_running_one_present(self):
+        rows = self.survey_with_tools({})
+        for resource in self.UNITS:
+            with self.subTest(resource=resource):
+                self.assertEqual(rows[resource]["state"], "absent", rows[resource])
+        rows = self.survey_with_tools({"systemctl": 'printf "LoadState=loaded\\nActiveState=active\\nUnitFileState=enabled\\n"'})
+        self.assertEqual(rows["edge-xac: unit goat-peering-link@xaa-xac.service"]["state"], "present")
+
+    def test_the_survey_shows_this_links_clamp_rules_and_only_them(self):
+        clamp = ('table inet goat_peering {', 'chain clamp {',
+                 'oifname "ipsec-xaa-xac" tcp flags syn tcp option maxseg size set rt mtu # handle 7',
+                 'iifname "ipsec-xaa-xac" tcp flags syn tcp option maxseg size set rt mtu # handle 8',
+                 'oifname "ipsec-xaa-xab" tcp flags syn tcp option maxseg size set rt mtu # handle 9', '}', '}')
+        rows = self.survey_with_tools({
+            "docker": 'eval "name=\\${$#}"; echo "Error response from daemon: No such container: $name" >&2; exit 1',
+            "wg": 'echo "Unable to access interface: No such device" >&2; exit 1',
+            "nft": ('case "$*" in\n'
+                    '  *"chain inet goat_peering clamp"*) cat <<\'EOF\'\n' + "\n".join(clamp) + '\nEOF\n ;;\n'
+                    '  *) ' + NFT_NOT_FOUND.replace("\n", "; ") + ' ;;\n'
+                    'esac')})
+        row = rows["edge-xac: nft clamp rules for ipsec-xaa-xac"]
+        self.assertEqual(row["state"], "present", row)
+        self.assertEqual(row["action"], "remove", row)
+        self.assertIn("handles 7, 8", row["note"], row)
+
+    def test_tunnel_and_table_probes_that_fail_otherwise_are_unknown(self):
+        rows = self.survey_with_tools({
+            "docker": 'echo "Error response from daemon: No such container: x" >&2; exit 1',
+            "wg": 'echo "Unable to access interface: Operation not permitted" >&2; exit 1',
+            "nft": 'echo "Operation not permitted (you must be root)" >&2; exit 1',
+            "ip": ('case "$*" in *"link show "*) echo "RTNETLINK answers: Operation not permitted" >&2; exit 2 ;; '
+                   '*) exit 0 ;; esac')})
+        for resource in self.TUNNEL_PROBES:
+            with self.subTest(resource=resource):
+                self.assertIn(resource, rows, sorted(rows))
+                self.assertEqual(rows[resource]["state"], "unknown", rows[resource])
+                self.assertEqual(rows[resource]["action"], "none", rows[resource])
+                self.assertRegex(rows[resource]["note"], r"rc \d+: ", rows[resource])
+
+    def test_a_table_whose_sharing_cannot_be_checked_is_unknown(self):
+        # The table answers, but the list of links that says whether another link
+        # shares its name could not be read: removing it could take another's.
+        rows = self.survey_with_tools({
+            "docker": 'eval "name=\\${$#}"; echo "Error response from daemon: No such container: $name" >&2; exit 1',
+            "wg": 'echo "Unable to access interface: No such device" >&2; exit 1',
+            "nft": 'printf "table inet x {\\n}\\n"',
+            "ip": 'echo "RTNETLINK answers: Operation not permitted" >&2; exit 2'})
+        row = rows["edge-xac: nft table inet goat_peering_wg_fed1"]
+        self.assertEqual(row["state"], "unknown", row)
+        self.assertEqual(row["action"], "none", row)
+        self.assertIn("rc 2", row["note"], row)
+
+    def test_tunnel_and_table_probes_read_each_tools_not_found(self):
+        rows = self.survey_with_tools({
+            "docker": 'eval "name=\\${$#}"; echo "Error response from daemon: No such container: $name" >&2; exit 1',
+            "wg": 'echo "Unable to access interface: No such device" >&2; exit 1',
+            "nft": NFT_NOT_FOUND,
+            "ip": ('case "$*" in *"link show "*) eval "name=\\${$#}"; '
+                   'echo "Device \\"$name\\" does not exist." >&2; exit 1 ;; *) exit 0 ;; esac')})
+        for resource in self.TUNNEL_PROBES:
+            with self.subTest(resource=resource):
+                self.assertIn(resource, rows, sorted(rows))
+                self.assertEqual(rows[resource]["state"], "absent", rows[resource])
+                self.assertEqual(rows[resource]["action"], "none", rows[resource])
+
+    def test_a_probe_that_answers_is_present(self):
+        rows = self.survey_with_tools({
+            "docker": ('case "$*" in\n'
+                       '  *"bundle list"*) echo "-----BEGIN CERTIFICATE-----" ;;\n'
+                       '  *) echo "/x running" ;;\n'
+                       'esac'),
+            "wg": 'echo "Unable to access interface: No such device" >&2; exit 1'})
+        # The carrier is left absent here: an interface that answers on this one host
+        # is also the edge's carrier, which the WireGuard back-out rightly refuses to
+        # claim. ProbeState covers a carrier that answers.
+        for resource in self.PROBES[:2] + self.PROBES[3:]:
+            with self.subTest(resource=resource):
+                self.assertEqual(rows[resource]["state"], "present", rows[resource])
+                self.assertEqual(rows[resource]["action"], "remove", rows[resource])
+
+    def test_a_core_backed_out_by_the_driver_is_one_row_and_nothing_runs_on_it(self):
+        # FED_CORE_*: admission placed the core's fragment from the driver, so the
+        # driver backs it out. The play reports that in one row and reads nothing on
+        # the core host, even with core paths that do not exist.
+        work = f"{self.tmp}/work/xac"
+        missing = f"{self.tmp}/no-such-core"
+        r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_core",
+                 str(ANSIBLE / "peering-backout.yml"),
+                 "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                 "-e", "ansible_become=false", "-e", "peering_backout_core_by_driver=true",
+                 "-e", f"peering_backout_core_seed={missing}/seed", "-e", f"peering_backout_core_org={missing}/org",
+                 "-e", f"peering_backout_core_config={missing}/live"], self.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        rows = jload(f"{work}/backout/survey/core-xac.json")["rows"]
+        core = [row for row in rows if row["component"] == "core admission"]
+        self.assertEqual(core, [{"component": "core admission", "resource": "the driver (FED_CORE_*)",
+                                 "state": "present", "action": "kept",
+                                 "note": "surveyed and removed by the driver, the way admission placed it"}])
+        # Every core-admission task but the one that writes that row was skipped.
+        ran = []
+        for section in r.stdout.split("\nTASK [")[1:]:
+            name, _, body = section.partition("]")
+            if name.startswith("core | absent |") and re.search(r"^(ok|changed|fatal|failed): \[core-xac", body, re.M):
+                ran.append(name)
+        self.assertEqual(ran, ["core | absent | the core is backed out by the driver"], r.stdout[-4000:])
+        self.assertFalse(os.path.exists(f"{work}/backout/core/core-xac"))
+
+    def test_by_the_driver_a_role_declared_peering_is_still_reported(self):
+        # A core that also declares the partner in zenoh_sovereign_peerings keeps
+        # admitting it after the driver backs out the splice: the row that says so
+        # (GB-227) must survive by_driver, read from the core host's declarations
+        # without touching the host.
+        cv = f"{self.tmp}/inventory/group_vars/xac_core.yml"
+        with open(cv, encoding="utf-8") as f:
+            values = yaml.safe_load(f)
+        values["zenoh_sovereign_peerings"] = [{"sovereign": "xac", "cn": "xac-peer", "release_key_exprs": []},
+                                              {"sovereign": "xab", "cn": "xab-peer", "release_key_exprs": []}]
+        dump(cv, values)
+        work = f"{self.tmp}/work/xac"
+        r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_core",
+                 str(ANSIBLE / "peering-backout.yml"),
+                 "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                 "-e", "ansible_become=false", "-e", "peering_backout_core_by_driver=true"], self.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        core = [row for row in jload(f"{work}/backout/survey/core-xac.json")["rows"]
+                if row["component"] == "core admission"]
+        self.assertEqual(core, [
+            {"component": "core admission", "resource": "the driver (FED_CORE_*)", "state": "present",
+             "action": "kept", "note": "surveyed and removed by the driver, the way admission placed it"},
+            {"component": "core admission", "resource": "zenoh_sovereign_peerings[sovereign=xac]",
+             "state": "present", "action": "kept",
+             "note": "configuration: remove the entry by review and run the core play (a router restart)"}])
+        ran = []
+        for section in r.stdout.split("\nTASK [")[1:]:
+            name, _, body = section.partition("]")
+            if name.startswith("core | absent |") and re.search(r"^(ok|changed|fatal|failed): \[core-xac", body, re.M):
+                ran.append(name)
+        self.assertEqual(ran, ["core | absent | the core is backed out by the driver"], r.stdout[-4000:])
+
+    def leaf_backout(self, host_cert, apply, unreadable=()):
+        """The core play told that the router leaf admission placed on the controller
+        went (goatbuilder federate backout: peering_backout_core_leaf_remove with the
+        role's goat_zenoh_tls_dir). The host's copy holds `host_cert` and this peering's
+        key; returns the core rows and the TLS folder."""
+        work = f"{self.tmp}/work/xac"
+        tls = f"{self.tmp}/core-tls"
+        os.makedirs(f"{work}/pki", exist_ok=True)
+        os.makedirs(tls, exist_ok=True)
+        for name, text in (("core.pem", "CERT-OF-XAC"), ("core-key.pem", "KEY-OF-XAC")):
+            dump(f"{work}/pki/{name}", text)
+        for name in ("router-cert.pem", "router-key.pem"):
+            if os.path.exists(f"{tls}/{name}"):
+                os.chmod(f"{tls}/{name}", 0o600)
+        dump(f"{tls}/router-cert.pem", host_cert)
+        dump(f"{tls}/router-key.pem", "KEY-OF-XAC")
+        for name in unreadable:
+            os.chmod(f"{tls}/{name}", 0)
+            self.addCleanup(os.chmod, f"{tls}/{name}", 0o600)
+        missing = f"{self.tmp}/no-such-core"
+        argv = ["ansible-playbook", "-i", self.inv, "--limit", "xac_core",
+                str(ANSIBLE / "peering-backout.yml"),
+                "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                "-e", "ansible_become=false", "-e", "peering_backout_core_by_driver=true",
+                "-e", f"peering_backout_core_seed={missing}/seed", "-e", f"peering_backout_core_org={missing}/org",
+                "-e", f"peering_backout_core_config={missing}/live",
+                "-e", "peering_backout_core_leaf_remove=true", "-e", f"peering_backout_core_tls_dir={tls}"]
+        if apply:
+            argv += ["-e", "peering_backout_apply=true"]
+        r = run(argv, self.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        stage = "apply" if apply else "survey"
+        rows = jload(f"{work}/backout/{stage}/core-xac.json")["rows"]
+        return {row["resource"]: row for row in rows if row["component"] == "core leaf"}, tls
+
+    def test_the_host_copy_of_a_leaf_placed_where_nothing_was_is_deleted(self):
+        rows, tls = self.leaf_backout("CERT-OF-XAC", apply=False)
+        for name in ("router-cert.pem", "router-key.pem"):
+            with self.subTest(survey=name):
+                self.assertEqual((rows[f"{tls}/{name}"]["state"], rows[f"{tls}/{name}"]["action"]),
+                                 ("present", "remove"), rows)
+                self.assertTrue(os.path.exists(f"{tls}/{name}"), "the survey changes nothing")
+        rows, tls = self.leaf_backout("CERT-OF-XAC", apply=True)
+        for name in ("router-cert.pem", "router-key.pem"):
+            with self.subTest(apply=name):
+                self.assertEqual(rows[f"{tls}/{name}"]["action"], "removed", rows)
+                self.assertFalse(os.path.exists(f"{tls}/{name}"), "no private key is left on the host")
+        # Run again: nothing is there, nothing is removed.
+        rows, tls = self.leaf_backout("CERT-OF-XAC", apply=True)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
+    def test_a_host_copy_that_cannot_be_read_is_unknown_and_kept(self):
+        # stat finds the file but gives no checksum for one it cannot read: that is
+        # not this peering's leaf proven, and not absent either.
+        for apply in (False, True):
+            with self.subTest(apply=apply):
+                rows, tls = self.leaf_backout("CERT-OF-XAC", apply=apply, unreadable=("router-key.pem",))
+                key = rows[f"{tls}/router-key.pem"]
+                self.assertEqual((key["state"], key["action"]), ("unknown", "none"), rows)
+                self.assertIn("not readable", key["note"])
+                self.assertTrue(os.path.exists(f"{tls}/router-key.pem"), "an unreadable copy is never deleted")
+
+    def test_a_host_copy_that_is_not_this_peerings_leaf_is_kept(self):
+        rows, tls = self.leaf_backout("ANOTHER-CERT", apply=True)
+        self.assertEqual(open(f"{tls}/router-cert.pem", encoding="utf-8").read(), "ANOTHER-CERT")
+        self.assertEqual((rows[f"{tls}/router-cert.pem"]["state"], rows[f"{tls}/router-cert.pem"]["action"]),
+                         ("present", "kept"), rows)
+        self.assertFalse(os.path.exists(f"{tls}/router-key.pem"))
+
+    def test_without_the_flag_the_host_leaf_is_not_read(self):
+        work = f"{self.tmp}/work/xac"
+        missing = f"{self.tmp}/no-such-core"
+        r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_core",
+                 str(ANSIBLE / "peering-backout.yml"),
+                 "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                 "-e", "ansible_become=false", "-e", "peering_backout_core_by_driver=true",
+                 "-e", f"peering_backout_core_seed={missing}/seed", "-e", f"peering_backout_core_org={missing}/org",
+                 "-e", f"peering_backout_core_config={missing}/live"], self.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        rows = jload(f"{work}/backout/survey/core-xac.json")["rows"]
+        self.assertEqual([row for row in rows if row["component"] == "core leaf"], [])
+
+    @unittest.skipIf(os.geteuid() == 0, "root lists a directory whatever its mode")
+    def test_spire_units_in_a_directory_that_cannot_be_listed_are_unknown(self):
+        # find reports a directory it cannot read as skipped and succeeds with no
+        # files: that is not "no forward units", it is "could not tell".
+        units = f"{self.tmp}/systemd-unreadable"
+        os.makedirs(units)
+        dump(f"{units}/goat-peering-bundle-in-xac.socket", "[Socket]\n")
+        os.chmod(units, 0)
+        self.addCleanup(os.chmod, units, 0o700)
+        work = f"{self.tmp}/work/xac"
+        r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_edge",
+                 str(ANSIBLE / "peering-backout.yml"),
+                 "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                 "-e", "ansible_become=false", "-e", f"peering_backout_systemd_dir={units}"], self.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        rows = [row for row in jload(f"{work}/backout/survey/edge-xac.json")["rows"]
+                if row["component"] == "spire" and row["resource"].startswith("unit ")]
+        self.assertTrue(rows, "the SPIRE forward units have rows")
+        # The four fixed-name forwards, which another peering's layout may use, are
+        # reported too: every unit that might be in that folder has a row.
+        fixed = {"unit goat-peering-bundle-in.socket", "unit goat-peering-bundle-in.service",
+                 "unit goat-peering-bundle-out.socket", "unit goat-peering-bundle-out.service"}
+        self.assertEqual(fixed - {row["resource"] for row in rows}, set(), rows)
+        for row in rows:
+            with self.subTest(resource=row["resource"]):
+                self.assertEqual((row["state"], row["action"]), ("unknown", "none"), row)
+                self.assertIn(units, row["note"])
+
     def test_a_survey_without_the_rendered_values_or_agreement_still_runs(self):
         # A peering backed out before phase 9: no agreement, no applied values.
         shutil.rmtree(f"{self.tmp}/work/xac")
@@ -195,6 +549,146 @@ class TwoPeeringsOneHost(unittest.TestCase):
         rec = jload(f"{self.tmp}/work/xac/backout/survey/edge-xac.json")
         spire = [r for r in rec["rows"] if r["component"] == "spire" and r["resource"].startswith("federation")]
         self.assertEqual(spire[0]["state"], "unknown")
+
+
+FILTER = ANSIBLE / "filter_plugins/backout_probe.py"
+
+
+class ProbeState(unittest.TestCase):
+    """The rule every back-out probe follows: present on rc 0, absent only on the
+    tool's own not-found line for the probed name, unknown with the rc and the
+    error otherwise."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("backout_probe", FILTER)
+        cls.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.mod)
+
+    def state(self, kind, rc, stderr="", stdout="", name="goat-zenoh-edge-xac"):
+        return self.mod.backout_probe_state({"rc": rc, "stdout": stdout, "stderr": stderr}, kind, name)
+
+    def test_each_tools_own_not_found_line_is_absent(self):
+        for kind, rc, err, name in (
+                # Measured: docker 29 and podman 5.7 against a container that does not exist.
+                ("docker", 1, "\nError response from daemon: No such container: goat-zenoh-edge-xac", "goat-zenoh-edge-xac"),
+                ("docker", 1, "Error: No such object: goat-zenoh-edge-xac", "goat-zenoh-edge-xac"),
+                ("docker", 125, 'Error: no such container "goat-zenoh-edge-xac"', "goat-zenoh-edge-xac"),
+                ("wg", 1, "Unable to access interface: No such device", "wg-carry1"),
+                ("spire", 1, "rpc error: code = NotFound desc = federation relationship does not exist", "xac.example.org"),
+                ("spire", 1, "Error: rpc error: code = NotFound desc = bundle not found", "xac.example.org"),
+                ("spire-bundle", 1, "rpc error: code = NotFound desc = bundle not found", "xac.example.org")):
+            with self.subTest(kind=kind, err=err):
+                self.assertEqual(self.state(kind, rc, err, name=name)["state"], "absent")
+
+    def test_a_not_found_that_is_not_the_tools_own_line_is_unknown(self):
+        for kind, rc, err, name in (
+                # Another error that mentions the words, or another name.
+                ("docker", 1, "Error response from daemon: error while inspecting: No such object: layer sha256:ab",
+                 "goat-zenoh-edge-xac"),
+                ("docker", 1, "Error response from daemon: No such container: goat-zenoh-edge-xab", "goat-zenoh-edge-xac"),
+                ("docker", 1, "Error response from daemon: No such container: goat-zenoh-edge-xac-old",
+                 "goat-zenoh-edge-xac"),
+                ("docker", 125, "Error response from daemon: No such container: goat-zenoh-edge-xac",
+                 "goat-zenoh-edge-xac"),
+                ("docker", 1, 'Error: no such container "goat-zenoh-edge-xac"', "goat-zenoh-edge-xac"),
+                ("docker", 2, "Error: No such container: goat-zenoh-edge-xac", "goat-zenoh-edge-xac"),
+                ("wg", 1, "Unable to access interface: No such device or address", "wg-carry1"),
+                ("wg", 1, "Impossible d'acceder a l'interface : Aucun peripherique de ce type", "wg-carry1"),
+                ("spire", 1, "rpc error: code = Unavailable desc = connection error: code = NotFound", "xac.example.org"),
+                ("spire", 1, "dial failed\nrpc error: code = NotFound desc = x", "xac.example.org")):
+            with self.subTest(kind=kind, err=err, name=name):
+                got = self.state(kind, rc, err, name=name)
+                self.assertEqual(got["state"], "unknown", got)
+                self.assertIn("rc %d" % rc, got["note"])
+
+    def test_anything_else_is_unknown_with_the_rc_and_first_error_line(self):
+        for kind, rc, err in (("docker", 1, "permission denied while trying to connect\nmore"),
+                              ("docker", 127, ""), ("docker", 255, "ssh: connect to host"),
+                              ("wg", 1, "Unable to access interface: Operation not permitted"),
+                              ("spire", 1, "Error: No such container: spire-server"),
+                              ("spire", 126, "OCI runtime exec failed")):
+            with self.subTest(kind=kind, rc=rc, err=err):
+                got = self.state(kind, rc, err)
+                self.assertEqual(got["state"], "unknown")
+                self.assertIn("rc %d" % rc, got["note"])
+                self.assertNotIn("\n", got["note"])
+
+    def test_a_unit_is_read_by_its_load_state(self):
+        # Measured: systemd 259, `systemctl show -p LoadState -p ActiveState -p
+        # UnitFileState <unit>`. A unit that does not exist is LoadState=not-found
+        # with exit 0; a bus that cannot be reached is exit 1 and an error line.
+        def unit(rc, out="", err=""):
+            return self.state("systemd", rc, err, stdout=out, name="goat-peering-wg@wg-fed1.service")
+        missing = unit(0, "LoadState=not-found\nActiveState=inactive\nUnitFileState=\n")
+        self.assertEqual(missing["state"], "absent", missing)
+        bus = unit(1, err="Failed to connect to system scope bus via local transport: No such file or directory")
+        self.assertEqual(bus["state"], "unknown", bus)
+        self.assertIn("rc 1", bus["note"])
+        self.assertEqual(unit(0, "LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n")["state"], "present")
+        self.assertEqual(unit(0, "LoadState=loaded\nActiveState=inactive\nUnitFileState=enabled\n")["state"], "present")
+        self.assertEqual(unit(0, "LoadState=loaded\nActiveState=activating\nUnitFileState=disabled\n")["state"], "present")
+        # Running from a unit file that was since deleted: still there.
+        self.assertEqual(unit(0, "LoadState=not-found\nActiveState=active\nUnitFileState=\n")["state"], "present")
+        # A template instance that was never started loads from its template but is
+        # neither running nor enabled: not this peering's link (as before).
+        self.assertEqual(unit(0, "LoadState=loaded\nActiveState=inactive\nUnitFileState=disabled\n")["state"], "absent")
+        for out in ("LoadState=masked\nActiveState=inactive\nUnitFileState=masked\n",
+                    "LoadState=error\nActiveState=inactive\n", "ActiveState=inactive\n", ""):
+            with self.subTest(out=out):
+                self.assertEqual(unit(0, out)["state"], "unknown", out)
+
+    def test_a_loaded_unit_that_is_not_a_template_instance_is_present(self):
+        # LoadState=loaded means a unit file is on disk. For a template instance
+        # (name@instance) that file is the shared template, not this peering's; for
+        # any other unit it is the file itself, which a back-out must remove: idle,
+        # disabled and still there is present, never absent.
+        idle = "LoadState=loaded\nActiveState=inactive\nUnitFileState=disabled\n"
+        for name in ("goat-peering-bundle-in-xac.socket", "goat-peering-bundle-out-xac.service"):
+            with self.subTest(name=name):
+                got = self.state("systemd", 0, stdout=idle, name=name)
+                self.assertEqual(got["state"], "present", got)
+                self.assertIn("unit file", got["note"])
+        self.assertEqual(self.state("systemd", 0, stdout=idle, name="goat-peering-link@xaa-xac.service")["state"],
+                         "absent")
+        self.assertEqual(self.state("systemd", 0, stdout="LoadState=not-found\nActiveState=inactive\n",
+                                    name="goat-peering-bundle-in-xac.socket")["state"], "absent")
+
+    def test_a_probe_that_did_not_run_is_unknown(self):
+        self.assertEqual(self.mod.backout_probe_state({"skipped": True}, "docker", "x")["state"], "unknown")
+        self.assertEqual(self.mod.backout_probe_state(None, "docker", "x")["state"], "unknown")
+
+    def test_nft_and_ip_not_found_lines(self):
+        # Measured in a user and network namespace: nft 1.1 and iproute2.
+        nft_missing = "Error: No such file or directory\nlist table inet goat_x\n                ^^^^^^"
+        self.assertEqual(self.state("nft", 1, nft_missing, name="goat_x")["state"], "absent")
+        chain_missing = "Error: No such file or directory\nlist chain inet goat_x clamp\n                   ^^^^^"
+        self.assertEqual(self.state("nft", 1, chain_missing, name="goat_x")["state"], "absent")
+        self.assertEqual(self.state("ip-link", 1, 'Device "wg-fed1" does not exist.', name="wg-fed1")["state"],
+                         "absent")
+        for kind, rc, err, name in (
+                ("nft", 1, "Operation not permitted (you must be root)\nnetlink: Error: cache initialization failed",
+                 "goat_x"),
+                ("nft", 1, "Error: Could not process rule: No such file or directory", "goat_x"),
+                # nft writes the command it could not run on the next line: absent
+                # only when that command names the probed table.
+                ("nft", 1, "Error: No such file or directory\nlist table inet goat_y", "goat_x"),
+                ("nft", 1, "Error: No such file or directory\nlist table inet goat_x_old", "goat_x"),
+                ("nft", 1, "Error: No such file or directory", "goat_x"),
+                ("nft", 127, "", "goat_x"),
+                ("ip-link", 1, 'Device "wg-fed2" does not exist.', "wg-fed1"),
+                ("ip-link", 255, "RTNETLINK answers: Operation not permitted", "wg-fed1")):
+            with self.subTest(kind=kind, err=err):
+                self.assertEqual(self.state(kind, rc, err, name=name)["state"], "unknown")
+
+    def test_a_spire_bundle_list_reads_its_answer(self):
+        self.assertEqual(self.state("spire-bundle", 0, stdout="-----BEGIN CERTIFICATE-----")["state"], "present")
+        # A bundle holding only JWT authorities lists no certificate: it is there,
+        # so it is not absent; the probe cannot show it, so it is unknown.
+        jwt_only = self.state("spire-bundle", 0, stdout="")
+        self.assertEqual(jwt_only["state"], "unknown")
+        self.assertIn("bundle has no X.509 authority", jwt_only["note"])
+        self.assertEqual(self.state("spire-bundle", 1, "permission denied")["state"], "unknown")
 
 
 class RoleDefaults(unittest.TestCase):
@@ -222,6 +716,78 @@ class RoleDefaults(unittest.TestCase):
         role = yaml.safe_load((ANSIBLE / "roles/goat-peering-forwarder/defaults/main.yml").read_text())
         self.assertEqual(repeated, role["peering_forwarder_peering_defaults"])
 
+
+
+@unittest.skipUnless(shutil.which("ansible-playbook"), "ansible-playbook not on PATH")
+class DropPartnerStore(unittest.TestCase):
+    """ADR 1234: the goat-zenoh role deletes a backed-out partner's store directory,
+    sovereign_from_<partner>, and only after the router runs on a configuration
+    that no longer declares it (roles/goat-zenoh/tasks/drop-partner-store.yml)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="drop-partner-store-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store = f"{self.tmp}/rocksdb"
+        for name in ("sovereign_from_xab", "sovereign_from_xac"):
+            dump(f"{self.store}/{name}/CURRENT", "MANIFEST-000001\n")
+        self.cfg = f"{self.tmp}/config.json5"
+        dump(self.cfg, '{ "sovereign_from_xab": { dir: "' + self.store + '/sovereign_from_xab" } }\n')
+
+    def play(self, started, peerings=("xab",), check=False):
+        """Run the role's task file for partner xac; the router container reports
+        `started` as its start time (docker inspect), and is running."""
+        bindir = f"{self.tmp}/fake-bin"
+        os.makedirs(bindir, exist_ok=True)
+        with open(f"{bindir}/docker", "w", encoding="utf-8") as f:
+            f.write('#!/bin/sh\n[ "$1" = inspect ] || exit 2\n'
+                    f'echo "true {started}"\n')
+        os.chmod(f"{bindir}/docker", 0o700)
+        book = f"{self.tmp}/play.yml"
+        dump(book, [{
+            "hosts": "localhost", "connection": "local", "gather_facts": False,
+            "vars": {"ansible_python_interpreter": sys.executable,
+                     "goat_zenoh_storage_path": self.store, "goat_zenoh_config_path": self.cfg,
+                     "zenoh_stack": "zagros-zenoh",
+                     "zenoh_sovereign_peerings": [{"sovereign": p, "cn": f"fed.{p}.zagros.01"} for p in peerings],
+                     "goat_zenoh_drop_partner_store": "xac"},
+            "tasks": [{"name": "the role's task file",
+                       "ansible.builtin.include_tasks": str(ANSIBLE / "roles/goat-zenoh/tasks/drop-partner-store.yml")}],
+        }])
+        argv = ["ansible-playbook", "-i", "localhost,", "-e", "ansible_become=false", book]
+        if check:
+            argv.append("--check")
+        return run(argv, self.tmp, path_prefix=bindir)
+
+    def test_after_the_router_restarted_without_it_the_store_is_deleted(self):
+        r = self.play("2099-01-01T00:00:00.000000000Z")
+        self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
+        self.assertFalse(os.path.exists(f"{self.store}/sovereign_from_xac"))
+        self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xab/CURRENT"), "another partner's store stays")
+        # Again: nothing is there, nothing fails.
+        r = self.play("2099-01-01T00:00:00.000000000Z")
+        self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
+
+    def test_a_router_started_before_the_configuration_keeps_the_store(self):
+        r = self.play("2000-01-01T00:00:00.000000000Z")
+        self.assertNotEqual(r.returncode, 0, r.stdout[-4000:])
+        self.assertIn("(GB-270)", r.stdout, "the refusal names its catalog code")
+        self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xac/CURRENT"))
+
+    def test_a_configuration_that_still_declares_the_store_keeps_it(self):
+        dump(self.cfg, '{ "sovereign_from_xac": { dir: "' + self.store + '/sovereign_from_xac" } }\n')
+        r = self.play("2099-01-01T00:00:00.000000000Z")
+        self.assertNotEqual(r.returncode, 0, r.stdout[-4000:])
+        self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xac/CURRENT"))
+
+    def test_a_partner_still_declared_keeps_its_store(self):
+        r = self.play("2099-01-01T00:00:00.000000000Z", peerings=("xab", "xac"))
+        self.assertNotEqual(r.returncode, 0, r.stdout[-4000:])
+        self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xac/CURRENT"))
+
+    def test_the_dry_run_deletes_nothing(self):
+        r = self.play("2099-01-01T00:00:00.000000000Z", check=True)
+        self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
+        self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xac/CURRENT"))
 
 if __name__ == "__main__":
     unittest.main()

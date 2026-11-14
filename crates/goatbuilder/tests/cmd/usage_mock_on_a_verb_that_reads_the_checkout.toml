@@ -8,4 +8,5 @@ status.code = 2
 stdout = ""
 stderr = """
 goatbuilder: --mock reads a fixture instead of hosts, and pins reads this checkout, so the fixture would have been ignored. The verbs that take one: status, diff, history, deploy, verify, rollback, preflight, plan, apply, adopt, standup, teardown, federate, survey.
+  (GB-276 — goatbuilder explain GB-276)
 """

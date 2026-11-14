@@ -59,10 +59,64 @@
       goat_zenoh_edge_our_ca_path is unset. The leaves are checked against our CA
       as the edge holds it, before anything is installed.
 
+# Our CA at the role's own path (<cert_dir>/our-ca.pem, the default with the
+# switch on) is installed by this role, from the controller, like the leaves: a
+# driver that is not the edge host then leaves the edge everything it mounts. Any
+# other path names a CA placed on the edge by hand, read where it is.
+- name: edge certs | whether this role installs our CA
+  ansible.builtin.set_fact:
+    _ze_certs_our_ca_installs: "{{ goat_zenoh_edge_our_ca_path == goat_zenoh_edge_cert_dir ~ '/our-ca.pem' }}"
+
+- name: edge certs | our CA's source is its certificate file
+  ansible.builtin.assert:
+    that:
+      - goat_zenoh_edge_our_ca_src is match('^/.+')
+      - goat_zenoh_edge_our_ca_src | basename == 'our-ca.pem'
+    fail_msg: >-
+      goat_zenoh_edge_our_ca_src '{{ goat_zenoh_edge_our_ca_src }}' is not our CA's
+      certificate file. The role installs our CA only from <fed_work>/pki/our-ca.pem,
+      where phase 8 places the CA's certificate beside the leaves, and never the CA's
+      key. Nothing was written.
+  when: _ze_certs_our_ca_installs | bool
+
+- name: edge certs | read our CA on the controller (read-only)
+  ansible.builtin.slurp:
+    src: "{{ goat_zenoh_edge_our_ca_src }}"
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  register: _ze_certs_our_ca_src
+  when: _ze_certs_our_ca_installs | bool
+
 - name: edge certs | read our CA from this host (read-only)
   ansible.builtin.slurp:
     src: "{{ goat_zenoh_edge_our_ca_path }}"
-  register: _ze_certs_our_ca
+  register: _ze_certs_our_ca_edge
+  when: not (_ze_certs_our_ca_installs | bool)
+
+- name: edge certs | our CA as the checks read it
+  ansible.builtin.set_fact:
+    _ze_certs_our_ca:
+      content: "{{ (_ze_certs_our_ca_src if _ze_certs_our_ca_installs | bool else _ze_certs_our_ca_edge).content }}"
+
+# Only our CA's certificate goes to the edge: exactly one certificate, and a
+# source holding any private key (the CA's own, or anything else) is refused
+# before a byte is written.
+- name: edge certs | our CA's source is exactly one certificate
+  ansible.builtin.assert:
+    that:
+      - "'PRIVATE KEY' not in _ze_certs_our_ca_text"
+      - _ze_certs_our_ca_blocks == ['CERTIFICATE']
+    fail_msg: >-
+      {{ goat_zenoh_edge_our_ca_src }}
+      {{ 'holds a private key' if 'PRIVATE KEY' in _ze_certs_our_ca_text
+         else 'is not exactly one certificate (it holds: ' ~ (_ze_certs_our_ca_blocks | join(', ') or 'no PEM block') ~ ')' }}.
+      Only our CA's certificate is installed on the edge, never its key: give
+      goat_zenoh_edge_our_ca_src that one certificate alone. Nothing was written.
+  vars:
+    _ze_certs_our_ca_text: "{{ _ze_certs_our_ca.content | b64decode }}"
+    _ze_certs_our_ca_blocks: "{{ _ze_certs_our_ca_text | regex_findall('-----BEGIN ([A-Z0-9 ]+)-----') }}"
+  when: _ze_certs_our_ca_installs | bool
 
 - name: edge certs | check the leaves and the partner CA on the controller
   ansible.builtin.command:
@@ -161,6 +215,7 @@
       peering-inward.pem: "{{ _ze_certs_sums[goat_zenoh_edge_cert_src_dir ~ '/peering-inward.pem'] }}"
       peering-inward-key.pem: "{{ _ze_certs_sums[goat_zenoh_edge_cert_src_dir ~ '/peering-inward-key.pem'] }}"
       partner-ca.pem: "{{ _ze_certs_sums[goat_zenoh_edge_partner_ca_src] }}"
+      our-ca.pem: "{{ (_ze_certs_our_ca.content | b64decode | hash('sha1')) if _ze_certs_our_ca_installs | bool else '' }}"
     _ze_certs_foreign: >-
       {%- set out = [] -%}
       {%- for f in _ze_certs_existing.files | default([]) -%}

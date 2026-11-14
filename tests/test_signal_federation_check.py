@@ -175,3 +175,49 @@ def test_cli_exit_codes(tmp_path, capsys):
     repo2 = checkout(tmp_path / "r", joiner=dict(JOINER, federation_peers_for_a=""))
     assert sfc.main(["zagros-b", "--repo", str(repo2)]) == 1
     assert "REFUSED" in capsys.readouterr().out
+
+
+# A third site at a goatnet whose founder already federates with another
+# joiner (zagros-b): zagros-c declares federation off with its reason.
+THIRD = {
+    "goatnet_founder": False,
+    "join_founder_site": "zagros",
+    "mesh_ip_a": "100.127.0.30",
+    "signal_federation_absent_reason": "one management node at zagros-c holds every peer that signals through it",
+}
+
+
+def third_checkout(tmp_path, third=None, founder=None):
+    import yaml
+    repo = checkout(tmp_path, founder=founder)
+    d = repo / "ops" / "ansible" / "group_vars" / "zagros_c_hosts"
+    d.mkdir(parents=True)
+    (d / "vars.yml").write_text(yaml.safe_dump(third or THIRD))
+    return repo
+
+
+def test_a_third_site_that_declares_federation_off_passes(tmp_path):
+    repo = third_checkout(tmp_path)
+    assert sfc.check(repo, "zagros-c", resolve_dns=True, require_env=True, lookup=lambda n: set(), environ={}) == ("off", [])
+
+
+def test_a_third_site_off_with_no_reason_is_still_refused(tmp_path):
+    t = dict(THIRD)
+    del t["signal_federation_absent_reason"]
+    state, defects = sfc.check(third_checkout(tmp_path, third=t), "zagros-c")
+    assert state == "refused"
+    assert any("one direction alone" in d and "zagros_c_hosts" in d for d in defects), defects
+
+
+def test_a_third_site_off_is_refused_when_the_founder_names_it(tmp_path):
+    f = dict(FOUNDER, federation_peer_mesh_addr="100.127.0.30:10000")
+    state, defects = sfc.check(third_checkout(tmp_path, founder=f), "zagros-c")
+    assert state == "refused"
+    assert any("names group_vars/zagros_c_hosts's mesh_ip_a" in d for d in defects), defects
+
+
+def test_a_third_site_off_with_a_half_configured_proxy_is_refused(tmp_path):
+    t = dict(THIRD, signal_federation_proxy_enabled=True)
+    state, defects = sfc.check(third_checkout(tmp_path, third=t), "zagros-c")
+    assert state == "refused"
+    assert any("zagros_c_hosts" in d and "federation_peer_mesh_addr is empty" in d for d in defects), defects

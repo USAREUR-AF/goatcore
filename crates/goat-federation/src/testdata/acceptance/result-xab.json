@@ -1,0 +1,39 @@
+{
+  "schema": "goat-federation-acceptance/v1",
+  "run": {
+    "id": "acc-xab-1",
+    "started_at": "2026-11-09T12:05:00Z",
+    "ended_at": "2026-11-09T12:06:00Z",
+    "us": "xab",
+    "them": "xaa",
+    "observed_by": "xab"
+  },
+  "agreement": {
+    "sha256": "3d2bd7e59ac1d1cdb4fe6a7b4e3a85f0cba0ddd04a4ab1a63e64ab1a8b7b0f5d"
+  },
+  "session": {
+    "id": "ses-xaa-xab-20261109-1",
+    "manifest_sha256": null,
+    "challenge": "9b8a7c6d5e4f30211203f4e5d6c7b8a9"
+  },
+  "checks": [
+    {
+      "name": "delivery/inbound/release/all",
+      "required": true,
+      "verdict": "PASS",
+      "tier": null,
+      "duration_s": 0.84,
+      "observations": {
+        "received": "xaa-6f1c2a9e4b7d03e5a8c1f2b3d4e5f607-all"
+      }
+    },
+    {
+      "name": "republisher-boundary/inbound",
+      "required": true,
+      "verdict": "PASS",
+      "tier": null,
+      "duration_s": 0.12,
+      "observations": {}
+    }
+  ]
+}

@@ -39,7 +39,8 @@
     _pb_rows: >-
       {%- set out = _pb_rows -%}
       {%- set act = 'removed' if _pb_apply else 'remove' -%}
-      {%- set _ = out.append({'component': 'edge router', 'resource': 'container ' ~ _pb_names.edge.stack, 'state': ('present' if _pbe_ctr.rc == 0 else 'absent'), 'action': (act if _pbe_ctr.rc == 0 else 'none'), 'note': (_pbe_ctr.stdout | default('') | trim)}) -%}
+      {%- set probe = _pbe_ctr | backout_probe_state('docker', _pb_names.edge.stack) -%}
+      {%- set _ = out.append({'component': 'edge router', 'resource': 'container ' ~ _pb_names.edge.stack, 'state': probe.state, 'action': (act if probe.state == 'present' else 'none'), 'note': probe.note}) -%}
       {%- for p in _pbe_paths.results[:2] -%}
       {%-   set _ = out.append({'component': 'edge router', 'resource': 'dir ' ~ p.item, 'state': ('present' if p.stat.exists else 'absent'), 'action': (act if p.stat.exists else 'none'), 'note': ''}) -%}
       {%- endfor -%}

@@ -1,6 +1,6 @@
 ---
 name: adr
-description: "Propose an architecture decision record (ADR) in goatcore: claim a number, write the file from the template, add its INDEX.md row in the same change, and supersede or amend rather than rewrite. Use BEFORE creating any file under docs/adr/, whenever a decision needs recording, whenever asked for the next free ADR number, and whenever an existing decision is changing. Names the CI checks that gate ADRs so each one can be run locally first."
+description: "Propose an architecture decision record (ADR) in goatcore: claim a number, write the file from the template, render its INDEX.md row with the renderer, and supersede or amend rather than rewrite. Use BEFORE creating any file under docs/adr/, whenever a decision needs recording, whenever asked for the next free ADR number, and whenever an existing decision is changing. Names the CI checks that gate ADRs so each one can be run locally first."
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write
 audience: both
 ---
@@ -43,26 +43,35 @@ layperson), Context, Decision, Alternatives considered, Consequences, Assessor v
 - Examples name the synthetic goatnet `zagros`, documentation addresses (RFC 5737) and
   `example.org` mail. No real deployment's names, hosts, addresses or people.
 
-## 3. Add the INDEX row in the same change
+## 3. Render the INDEX row; do not write it
 
-Every ADR has exactly one row in `docs/adr/INDEX.md`, under its series heading (new
-1000-and-up numbers go at the end of the 1000-series table):
+Every ADR has exactly one row in `docs/adr/INDEX.md`. The row of an ADR above 1234 is
+rendered from the ADR file itself. Write the ADR's header as `docs/adr/TEMPLATE.md`
+gives it, then run the renderer and commit both files:
 
-```markdown
-| 1221 | [One-sentence decision](1221-one-sentence-decision.md) | Proposed | |
+```bash
+python3 ops/release/adr_index.py write
 ```
 
-Columns: `#` · Title · Status · Repo scope · Diagram (`📊` when the ADR embeds a
-diagram). The Status cell must agree with the ADR's own Status line.
+The renderer reads the number from the file name, the title from the first line
+(`# ADR NNNN — <title>`), the Status from the header table's `| Status | ... |` row,
+verbatim, and the ADR numbers in its `| Amends | ... |` and `| Supersedes | ... |`
+rows. A Status written as a `**Status:**` line or in YAML front matter is refused;
+use the table row. Never write or edit a row in the rendered table by hand:
+`adr_index.py check` refuses it.
+
+The rows of ADR 1234 and below are kept by hand, as they always were.
 
 ## 4. Change a decision by superseding or amending, never by rewriting
 
 An accepted ADR is not edited except for typo fixes and its `Superseded by` field.
 
 - **Replacing a decision:** write a new ADR with `Supersedes | ADR-NNNN`; set the old
-  ADR's `Superseded by` field and its Status to `Superseded`; update both INDEX rows.
-- **Changing part of one:** write a new ADR with an `Amends` row, and note the amendment
-  in the old ADR's INDEX Status cell (`Accepted; amended by 1220 (…)`).
+  ADR's `Superseded by` field and its Status to `Superseded`. Run the renderer. If the
+  old ADR is 1234 or below, change its hand-kept INDEX row's Status to match; if it is
+  above 1234, the renderer does it.
+- **Changing part of one:** write a new ADR with an `Amends` row. The renderer puts
+  `Amends NNNN` in the new ADR's row; the old ADR's row does not change.
 
 ## 5. Run the gates before pushing
 
@@ -70,6 +79,7 @@ All run in `.github/workflows/docs-guards.yml`; each runs locally:
 
 | Script | Refuses |
 |---|---|
+| `python3 ops/release/adr_index.py --self-test`, then `check` | an ADR above 1234 the renderer cannot read, or a rendered row that differs from its ADR |
 | `ops/ci/check-adr-number-uniqueness.sh` | two ADR files with one number |
 | `ops/ci/check-adr-index-complete.sh` | an ADR with no INDEX row |
 | `ops/ci/check-adr-index-status-agrees.sh` | an INDEX Status that disagrees with the ADR |

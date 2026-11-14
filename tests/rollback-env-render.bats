@@ -220,3 +220,30 @@ PYTHON
   [[ "$output" == *"NO known history"* ]]
   [[ "$(cat "$COMPOSE_DIR/docker-compose.yml")" == *"$PREV_IMAGE"* ]]
 }
+
+# A goatnet this laptop reaches only through its door (#261): the direct ssh
+# does not answer, so rollback.sh --site jumps through the door to the host's
+# own address. The door (env-door.sh --ssh-target) is only the ProxyCommand's
+# tunnel hop; the destination stays the ledger's host, whose key is checked.
+@test "rollback --site jumps through the door to the ledger's host, never to the door" {
+  L="$FIXTURE/ops/ansible/roles/microscope/deploy-history.yml"
+  awk '{ print } /^    ssh_user: testuser$/ { print "    site: zagros-dev" }' "$L" > "$L.new" && mv "$L.new" "$L"
+  printf '#!/bin/sh\nexit 0\n' > "$FIXTURE/ops/scripts/door-open.sh"
+  printf '#!/bin/sh\n[ "$2" = --ssh-target ] && echo doorkeeper@127.0.0.1:12203\n' > "$FIXTURE/ops/scripts/env-door.sh"
+  export SSH_LOG="$BATS_TEST_TMPDIR/ssh.log" SSH_PATH="$BIN:$GNU_SED_DIR"
+  cat > "$BIN/ssh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$SSH_LOG"
+case "$*" in *ProxyCommand=*) ;; *) exit 255 ;; esac
+cmd="${*: -1}"
+PATH="$SSH_PATH:$PATH" bash -c "$cmd"
+SH
+  chmod +x "$BIN/ssh"
+  run_rollback microscope 1 --site zagros-dev
+
+  [ "$status" -eq 0 ] || { printf "%s\n" "$output" >&3; return 1; }
+  [[ "$output" == *"jumping through the zagros-dev door (doorkeeper@127.0.0.1:12203)"* ]]
+  grep -F -- "-p 12203 -W %h:%p doorkeeper@127.0.0.1 testuser@${HOST_IP}" "$SSH_LOG" | grep -qF "StrictHostKeyChecking=accept-new"
+  ! grep -qF "testuser@127.0.0.1" "$SSH_LOG"
+  [[ "$(cat "$COMPOSE_DIR/docker-compose.yml")" == *"$TARGET_IMAGE"* ]]
+}

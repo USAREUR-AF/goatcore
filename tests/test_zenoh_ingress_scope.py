@@ -148,7 +148,7 @@ class ScopeInspection(unittest.TestCase):
             with self.subTest(scopes=scopes):
                 self.assertTrue(check(config(*REQUIRED), scopes)['error'])
 
-    def test_real_template_retains_history_and_satisfies_each_peer(self):
+    def test_real_template_satisfies_each_peer_with_no_shared_store(self):
         path = ROOT / 'ops/ansible/roles/goat-zenoh/tests/render-check.py'
         spec = importlib.util.spec_from_file_location('ingress_render_test', path)
         renderer = importlib.util.module_from_spec(spec)
@@ -164,7 +164,9 @@ class ScopeInspection(unittest.TestCase):
             report = check(text, ['from/' + p['sovereign'] + '/**' for p in peers])
             self.assertEqual(report['error'], '')
             self.assertEqual(report['missing'], [])
-            self.assertIn('from/**', report['observed'])
+            # ADR 1234: a partner's samples are in its own store only; no store on
+            # from/** holds every partner's a second time.
+            self.assertNotIn('from/**', report['observed'])
 
 
 class RolePreflight(unittest.TestCase):

@@ -1,0 +1,25 @@
+TASK [goat-peering-wg : peering-wg | read the interface back] ******************
+ok: [xaa-edge-xab]
+
+TASK [goat-peering-wg : peering-wg | read the link address back] ***************
+ok: [xaa-edge-xab]
+
+TASK [goat-peering-wg : peering-wg | the interface holds the agreed peer and the agreed address] ***
+[ERROR]: Task failed: Action failed: The interface does not hold what the agreement says: peer SyntheticKeyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=, allowed 169.254.77.1/32, address 169.254.77.0/31. Read: ['SyntheticKeyBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=\tSyntheticKeyCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=\t51820\toff'] []
+Origin: /opt/goat/ops/ansible/roles/goat-peering-wg/tasks/main.yml:170:3
+
+168   changed_when: false
+169
+170 - name: peering-wg | the interface holds the agreed peer and the agreed address
+      ^ column 3
+
+fatal: [xaa-edge-xab]: FAILED! => {
+    "assertion": "_pw_peer_key in _pw_dump.stdout",
+    "changed": false,
+    "evaluated_to": false,
+    "msg": "The interface does not hold what the agreement says: peer SyntheticKeyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=, allowed 169.254.77.1/32, address 169.254.77.0/31. Read: ['SyntheticKeyBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=\\tSyntheticKeyCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=\\t51820\\toff'] []"
+}
+
+PLAY RECAP *********************************************************************
+xaa-edge-xab               : ok=44   changed=1    unreachable=0    failed=1    skipped=18   rescued=0    ignored=0   
+

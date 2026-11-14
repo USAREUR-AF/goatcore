@@ -6,6 +6,7 @@ status.code = 2
 stdout = ""
 stderr = """
 goatbuilder: FED_VERBS is goat or goatbuilder, not 'goatbuidler'
+  (GB-240 — goatbuilder explain GB-240)
 """
 
 [env.add]

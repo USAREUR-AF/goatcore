@@ -295,16 +295,16 @@ rec release-rerun-dev-step-opens-no-pr --expect-in "pins already current on main
 # opening a second one for the same ref (#2086).
 rec release-rerun-reuses-the-preprod-record --expect-in "open records for the rc.1 digest: 1" \
   -- bash -c "cd '$CLONE' && git fetch -q origin && git merge -q --ff-only origin/main && echo \"open records for the rc.1 digest: \$(grep -l 'state: candidate' ops/release/records/e2e-canary/*-${RC_DIGEST:7:12}.yaml 2>/dev/null | wc -l | tr -d ' ')\""
-rec soak-elapses --note "the soak gate is the real one (min_days 1); the candidate record's opened date is set to yesterday and committed, so a day has passed" \
+rec soak-elapses --note "the soak gate is the real one (min_days 1); the candidate record's opened date is moved one day earlier than the day it opened and committed, so a day has passed whatever day the case runs on" \
   -- bash -c "cd '$CLONE' && git fetch -q origin && git merge -q --ff-only origin/main && python3 - <<'PY'
 import datetime, glob, yaml
 for f in glob.glob('ops/release/records/e2e-canary/*.yaml'):
     r = yaml.safe_load(open(f))
     if r.get('state') == 'candidate' and r.get('class') != 'hotfix':
-        s = open(f).read().replace(\"opened: '%s'\" % r['opened'], \"opened: '%s'\" % (datetime.date.today() - datetime.timedelta(days=1)).isoformat())
+        s = open(f).read().replace(\"opened: '%s'\" % r['opened'], \"opened: '%s'\" % (datetime.date.fromisoformat(str(r['opened'])) - datetime.timedelta(days=1)).isoformat())
         open(f, 'w').write(s); print('dated back:', f)
 PY
-git add -A && git commit -q -m 'e2e: the soak elapses (the record opened yesterday)' && git push -q origin main"
+git add -A && git commit -q -m 'e2e: the soak elapses (the record opened a day earlier)' && git push -q origin main"
 
 rec release-prod-graduate --expect-in "graduated:" --expect-in "converged on $RC_DIGEST" --expect-in "fleet ghcr.io" \
   -- "$SCR/rc.sh" e2e-canary --tag e2e-canary/v0.1.0-rc.1 --from prod --ack "e2e harness"
@@ -358,16 +358,16 @@ if [ -n "$GB" ]; then
     -- "$GB" release e2e-canary --tag e2e-canary/v0.1.0-rc.3 --from dev --ack "e2e harness" --yes
   rec goatbuilder-one-open-record-for-rc3 --expect-in "open records for the rc.3 digest: 1" \
     -- bash -c "cd '$CLONE' && git fetch -q origin && git merge -q --ff-only origin/main && echo \"open records for the rc.3 digest: \$(grep -l 'state: candidate' ops/release/records/e2e-canary/*-${RC3_DIGEST:7:12}.yaml 2>/dev/null | wc -l | tr -d ' ')\""
-  rec goatbuilder-soak-elapses --note "the record opened yesterday" \
+  rec goatbuilder-soak-elapses --note "the record opened one day earlier than it did" \
     -- bash -c "cd '$CLONE' && git fetch -q origin && git merge -q --ff-only origin/main && python3 - <<'PY'
 import datetime, glob, yaml
 for f in glob.glob('ops/release/records/e2e-canary/*.yaml'):
     r = yaml.safe_load(open(f))
     if r.get('state') == 'candidate' and r.get('class') != 'hotfix':
-        s = open(f).read().replace(\"opened: '%s'\" % r['opened'], \"opened: '%s'\" % (datetime.date.today() - datetime.timedelta(days=1)).isoformat())
+        s = open(f).read().replace(\"opened: '%s'\" % r['opened'], \"opened: '%s'\" % (datetime.date.fromisoformat(str(r['opened'])) - datetime.timedelta(days=1)).isoformat())
         open(f, 'w').write(s); print('dated back:', f)
 PY
-git add -A && git commit -q -m 'e2e: the soak elapses (the record opened yesterday)' && git push -q origin main"
+git add -A && git commit -q -m 'e2e: the soak elapses (the record opened a day earlier)' && git push -q origin main"
   rec goatbuilder-release-prod-graduate --expect-in "converged on $RC3_DIGEST" \
     -- "$GB" release e2e-canary --tag e2e-canary/v0.1.0-rc.3 --from prod --ack "e2e harness" --yes
   rec goatbuilder-every-rung-reads-rc3 -- bash -c "$(declare -f ledger_row); for g in e2e_dev e2e_preprod e2e_prod; do ledger_row \$g e2e-canary | grep -q '$RC3_DIGEST' || exit 1; done"

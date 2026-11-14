@@ -52,13 +52,18 @@
 #
 # usage: ops/federation-e2e/run.sh --goat BIN --goatbuilder BIN [--work DIR] [--record DIR]
 #                                  [--scenario 1|2|3|4] [--keep] [--prepare-only] [--src DIR]
+#                                  [--images-only DIR | --images DIR]
+#
+# --images-only DIR builds the host and republisher images, saves them to DIR with the ids
+# they are named by (images.env) and stops: the CI build stage. --images DIR loads those
+# instead of building them: each scenario stage runs on the images the build stage made.
 #
 # --src names the goatcore tree under test (default: this checkout): its driver, plays,
 # roles and scripts are what run; the harness is this directory. The names, subnets and
 # party ids the run creates come from FE2E_* (lib/engine.sh).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
-WORK=""; RECORD=""; GOAT=""; GB=""; KEEP=0; ONLY=""; PREPARE=0; SRC=""
+WORK=""; RECORD=""; GOAT=""; GB=""; KEEP=0; ONLY=""; PREPARE=0; SRC=""; IMAGES_OUT=""; IMAGES_IN=""
 # KEEP is read by lib/engine.sh (final); exported for the units it starts.
 export KEEP
 while [ $# -gt 0 ]; do
@@ -71,11 +76,21 @@ while [ $# -gt 0 ]; do
     --scenario) ONLY="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     --prepare-only) PREPARE=1; shift ;;
+    --images-only) IMAGES_OUT="$2"; shift 2 ;;
+    --images) IMAGES_IN="$2"; shift 2 ;;
     -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
     *) echo "run.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
-if [ "$PREPARE" = 1 ]; then
+if [ -n "$IMAGES_OUT" ] && { [ -n "$IMAGES_IN$ONLY" ] || [ "$PREPARE" = 1 ]; }; then
+  echo "run.sh: --images-only takes no --images, --scenario or --prepare-only" >&2; exit 2
+fi
+if [ -n "$IMAGES_IN" ] && [ "$PREPARE" = 1 ]; then
+  echo "run.sh: --prepare-only builds and loads no images; it takes no --images" >&2; exit 2
+fi
+if [ -n "$IMAGES_OUT" ]; then
+  :
+elif [ "$PREPARE" = 1 ]; then
   [ -x "$GB" ] || { echo "run.sh: --goatbuilder must name a built binary" >&2; exit 2; }
 else
   [ -x "$GOAT" ] && [ -x "$GB" ] || { echo "run.sh: --goat and --goatbuilder must name built binaries" >&2; exit 2; }
@@ -94,16 +109,19 @@ export GIT_LFS_SKIP_SMUDGE=1
 trap final EXIT
 
 # --- what needs no hosts: the driver's own refusals ------------------------------------
-say "the driver's refusals, no hosts"
-FX="$SRC/ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node"
-SENT="$WORK/mock-ran"; printf '#!/bin/sh\ntouch %s\n' "$SENT" > "$WORK/mock-goat"; chmod +x "$WORK/mock-goat"
-rec mock-executes-nothing --expect-in "MOCK" --expect-in "not executed" -- bash -c \
-  "GOAT_BIN='$WORK/mock-goat' '$GB' -C '$SRC' --mock '$FX' federate hello-ally --as zagros --work '$WORK/mock-work' && [ ! -e '$SENT' ] && [ ! -e '$WORK/mock-work' ]"
-rec an-undeclared-peering-is-refused --expect-in "declare it first (C1)" -- bash -c \
-  "if '$GB' -C '$SRC' --mock '$FX' federate no-such-peer --dry-run 2>&1; then exit 1; fi"
-mkdir -p "$WORK/quic"; printf '{"transport":{"kind":"quic"}}' > "$WORK/quic/agreement.json"
-rec an-unknown-transport-refuses-and-substitutes-nothing --expect-in "REFUSED, no play for 'quic'" --expect-in "Do NOT substitute" --expect-not-in "ansible-preflight" -- bash -c \
-  "'$GB' -C '$SRC' --mock '$FX' federate hello-ally --work '$WORK/quic' --from 11 --to 11 --dry-run 2>&1; FED_WORK='$WORK/quic' '$SRC/ops/scripts/peering-standup.sh' hello-ally --from 11 --to 11 2>&1 && exit 1; exit 0"
+# Not in the image build stage (--images-only), which has no binaries: each scenario stage runs them.
+if [ -z "$IMAGES_OUT" ]; then
+  say "the driver's refusals, no hosts"
+  FX="$SRC/ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node"
+  SENT="$WORK/mock-ran"; printf '#!/bin/sh\ntouch %s\n' "$SENT" > "$WORK/mock-goat"; chmod +x "$WORK/mock-goat"
+  rec mock-executes-nothing --expect-in "MOCK" --expect-in "not executed" -- bash -c \
+    "GOAT_BIN='$WORK/mock-goat' '$GB' -C '$SRC' --mock '$FX' federate hello-ally --as zagros --work '$WORK/mock-work' && [ ! -e '$SENT' ] && [ ! -e '$WORK/mock-work' ]"
+  rec an-undeclared-peering-is-refused --expect-in "declare it first (C1)" -- bash -c \
+    "if '$GB' -C '$SRC' --mock '$FX' federate no-such-peer --dry-run 2>&1; then exit 1; fi"
+  mkdir -p "$WORK/quic"; printf '{"transport":{"kind":"quic"}}' > "$WORK/quic/agreement.json"
+  rec an-unknown-transport-refuses-and-substitutes-nothing --expect-in "REFUSED, no play for 'quic'" --expect-in "Do NOT substitute" --expect-not-in "ansible-preflight" -- bash -c \
+    "'$GB' -C '$SRC' --mock '$FX' federate hello-ally --work '$WORK/quic' --from 11 --to 11 --dry-run 2>&1; FED_WORK='$WORK/quic' '$SRC/ops/scripts/peering-standup.sh' hello-ally --from 11 --to 11 2>&1 && exit 1; exit 0"
+fi
 
 if [ "$PREPARE" = 1 ]; then
   say "the two sovereigns, generated and planned, no hosts"
@@ -119,6 +137,31 @@ if [ "$PREPARE" = 1 ]; then
   [ "$FAILS" = 0 ] && exit 0 || exit 1
 fi
 
+# An image's config digest: the id a classic image store (each host's dockerd) gives it after
+# `docker load`. A containerd image store on the runner reports the manifest digest as .Id
+# instead, so ids are always read from `docker save`'s manifest.
+config_digest() { echo "sha256:$(docker save "$1" | tar -xO manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["Config"].rsplit("/", 1)[-1].removesuffix(".json").removeprefix("sha256:"))')"; }
+
+if [ -n "$IMAGES_IN" ]; then
+  # The images a build stage made (--images-only), loaded as they are: every scenario runs on
+  # exactly the image the build job produced.
+  say "the host and republisher images, from $IMAGES_IN"
+  [ -s "$IMAGES_IN/images.env" ] || die "--images $IMAGES_IN holds no images.env (make it with --images-only)"
+  HOST_IMAGE=""; HOST_IMAGE_ID=""; RP_TAG=""; RP_IMAGE=""
+  # shellcheck source=/dev/null
+  . "$IMAGES_IN/images.env"
+  # All four, or the engine's default tags would quietly name whatever local image carries them.
+  [ -n "$HOST_IMAGE" ] && [ -n "$RP_TAG" ] || die "$IMAGES_IN/images.env does not name both images (HOST_IMAGE, RP_TAG)"
+  [[ "$HOST_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] && [[ "$RP_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || die "$IMAGES_IN/images.env does not record both images' digests (HOST_IMAGE_ID, RP_IMAGE)"
+  docker load -q -i "$IMAGES_IN/host.tar" >/dev/null || die "the host image in $IMAGES_IN did not load"
+  got="$(config_digest "$HOST_IMAGE")"
+  [ "$got" = "$HOST_IMAGE_ID" ] || die "the host image loaded from $IMAGES_IN is $got, not the $HOST_IMAGE_ID the build recorded"
+  docker load -q -i "$IMAGES_IN/republisher.tar" >/dev/null || die "the republisher image in $IMAGES_IN did not load"
+  got="$(config_digest "$RP_TAG")"
+  [ "$got" = "$RP_IMAGE" ] || die "the republisher image loaded from $IMAGES_IN is $got, not the $RP_IMAGE the build recorded"
+  echo "host image: $HOST_IMAGE ($HOST_IMAGE_ID); republisher image: $RP_IMAGE"
+else
 say "the host image"
 ctx="$WORK/host-context"; rm -rf "$ctx"; cp -R "$HERE/host" "$ctx"
 # Not -q: a failed build has to say why in the job log.
@@ -140,9 +183,22 @@ docker build --progress=plain -t "$RP_TAG" "$SRC/ops/federation/republisher"
 # The image's config digest: the id a classic image store (each host's dockerd) gives
 # it after `docker load`. A containerd image store on the runner reports the manifest
 # digest as .Id instead, which the hosts would not know.
-RP_IMAGE="sha256:$(docker save "$RP_TAG" | tar -xO manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["Config"].rsplit("/", 1)[-1].removesuffix(".json").removeprefix("sha256:"))')"
+RP_IMAGE="$(config_digest "$RP_TAG")"
 [[ "$RP_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || die "the republisher image has no content-addressed id: '$RP_IMAGE'"
 echo "republisher image: $RP_IMAGE"
+fi
+
+if [ -n "$IMAGES_OUT" ]; then
+  # The build stage: both images saved for the scenario stages, with the ids they are named by.
+  mkdir -p "$IMAGES_OUT"
+  docker save -o "$IMAGES_OUT/host.tar" "$HOST_IMAGE"
+  docker save -o "$IMAGES_OUT/republisher.tar" "$RP_TAG"
+  HOST_IMAGE_ID="$(config_digest "$HOST_IMAGE")"
+  [[ "$HOST_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || die "the host image has no content-addressed id: '$HOST_IMAGE_ID'"
+  printf 'HOST_IMAGE=%q\nHOST_IMAGE_ID=%q\nRP_TAG=%q\nRP_IMAGE=%q\n' "$HOST_IMAGE" "$HOST_IMAGE_ID" "$RP_TAG" "$RP_IMAGE" > "$IMAGES_OUT/images.env"
+  echo "images saved to $IMAGES_OUT: host $HOST_IMAGE_ID, republisher $RP_IMAGE"
+  exit 0
+fi
 
 if [ -z "$ONLY" ] || [ "$ONLY" = 1 ]; then scenario 1 "$A" goatbuilder; fi
 if [ -z "$ONLY" ] || [ "$ONLY" = 2 ]; then scenario 2 "$B" script; fi

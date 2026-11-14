@@ -6,15 +6,16 @@ Thank you for working on goat. This page is the whole process; nothing else is r
 
 1. Fork, or branch from `main` if you have write access. Branch names: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`.
 2. Make the change. Run the gates that apply (below). Add or update the design document in the same change when behaviour or topology changes.
-3. Commit with a [Conventional Commits](https://www.conventionalcommits.org/) subject and a DCO sign-off: `git commit -s -m "fix(zenoh): …"`.
+3. Commit with a [Conventional Commits](https://www.conventionalcommits.org/) subject, a DCO sign-off (`-s`) and a verified signature (`-S`): `git commit -S -s -m "fix(zenoh): …"`. Set up commit signing once before your first commit; [Commits](#commits) says how. A pull request with an unsigned commit cannot merge.
 4. Open a pull request against `main`. Fill the template. One approving review from a code owner merges it, by squash.
 
 ## Commits
 
 - **Conventional Commits.** `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, with a scope in parentheses naming the component (`feat(goatbuilder): …`). The subject is ≤ 100 characters and says what changed, in the imperative.
 - **DCO sign-off on every commit** (`git commit -s`). By signing off you certify the [Developer Certificate of Origin 1.1](https://developercertificate.org/): you wrote the change or have the right to submit it under this project's licence. There is no CLA. The policy is in [Policy](#policy).
-- **Every commit is signed and verified.** Set up [SSH or GPG commit signing](https://docs.github.com/en/authentication/managing-commit-signature-verification) once and register the key on your GitHub account as a *signing* key. The required check `verified-commits` refuses a pull request while any of its commits is unsigned or signed with an unregistered key; re-sign with `git rebase --exec 'git commit --amend --no-edit -S' origin/main` and `git push --force-with-lease`. Automation commits through the GitHub API, which signs them, never by pushing unsigned commits. The decision is [ADR 1226](docs/adr/1226-every-commit-in-a-pull-request-is-signed-and-verified.md).
+- **Every commit is signed and verified.** Set up [SSH or GPG commit signing](https://docs.github.com/en/authentication/managing-commit-signature-verification) once and register the key on your GitHub account as a *signing* key. The required check `verified-commits` refuses a pull request while any of its commits is unsigned or signed with an unregistered key; re-sign with `git rebase --exec 'git commit --amend --no-edit -S' origin/main` and `git push --force-with-lease`. When the check refuses a pull request it also comments on it, naming each unverified commit and GitHub's reason, and adds the label `needs-signed-commits`; the comment updates and the label goes when a push fixes it. Automation commits through the GitHub API, which signs them, never by pushing unsigned commits. The decision is [ADR 1226](docs/adr/1226-every-commit-in-a-pull-request-is-signed-and-verified.md).
 - One logical change per pull request. Refactors and behaviour changes are separate pull requests.
+- **A fix shows its failure on `main`.** Before opening a `fix` pull request, reproduce the fault on a plain checkout of this repository's `main`, with a test or a command that fails there and passes with the change. A tree or host built from anything more than `main` (a local overlay, unmerged patches, another branch) can behave differently from `main`; a fault that does not appear on `main` is not fixed here, and describing it here misstates what `main` does.
 
 ## Gates
 

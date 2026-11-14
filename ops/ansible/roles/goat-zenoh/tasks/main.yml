@@ -738,13 +738,21 @@
   ansible.builtin.fail:
     msg: >-
       F-447: zenoh_orphan_stores_fail is set for this goatnet, and
-      {{ _zenoh_orphan_stores.stdout_lines | default([]) | length }} undeclared
+      {{ _orphans_left | length }} undeclared
       store directory/ies remain:
-      {{ _zenoh_orphan_stores.stdout_lines | default([]) | join(', ') }}.
+      {{ _orphans_left | join(', ') }}.
       Dispose of them (or clear the flag) before deploying.
+  vars:
+    # The store of a partner the back-out is dropping (goat_zenoh_drop_partner_store,
+    # ADR 1234) is undeclared until ops/ansible/zenoh-drop-partner-store.yml deletes
+    # it, right after this play.
+    _orphans_left: >-
+      {{ _zenoh_orphan_stores.stdout_lines | default([])
+         | reject('equalto', 'sovereign_from_' ~ (goat_zenoh_drop_partner_store | default('')))
+         | list }}
   when:
     - zenoh_orphan_stores_fail | default(false) | bool
-    - (_zenoh_orphan_stores.stdout_lines | default([]) | length) > 0
+    - (_orphans_left | length) > 0
 
 # ===== PER-VENDOR MODE: F-258 seed + org fragment reconciliation ===========
 - name: F-258 | install acl-assemble.py reconciler on host

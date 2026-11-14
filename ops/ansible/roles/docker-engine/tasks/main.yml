@@ -171,6 +171,62 @@
       restart docker manually (`sudo systemctl restart docker`) to pick up the new daemon.json.
   when: docker_engine_data_root | length > 0
 
+# containerd's record of every container lives in a metadata database under
+# its root. A containerd that starts on a different root no longer knows the
+# running containers: `docker exec` and every healthcheck fail NotFound while
+# the services keep running. So the root the RUNNING daemon uses is read
+# before the file is written. The open metadata database is the only source
+# that states it: `ctr version` prints no root, and config.toml states what
+# the next start will use, not what this one uses.
+- name: Read the root the running containerd uses (its open metadata database)
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      pid="$(pidof containerd || true)"
+      [ -n "$pid" ] || exit 0
+      for fd in /proc/"$pid"/fd/*; do
+        target="$(readlink "$fd" 2>/dev/null || true)"
+        case "$target" in
+          */io.containerd.metadata.v1.bolt/meta.db)
+            printf '%s\n' "${target%/io.containerd.metadata.v1.bolt/meta.db}"
+            exit 0 ;;
+        esac
+      done
+    executable: /bin/bash
+  register: containerd_running_root
+  changed_when: false
+  when: docker_engine_containerd_root | length > 0
+
+- name: Count running container shims
+  ansible.builtin.shell:
+    cmd: pgrep -fc containerd-shim || true
+    executable: /bin/bash
+  register: containerd_shim_count
+  changed_when: false
+  when: docker_engine_containerd_root | length > 0
+
+- name: Record whether the running containerd must move to the configured root
+  ansible.builtin.set_fact:
+    containerd_root_must_move: >-
+      {{ (containerd_running_root.stdout | default('') | trim | length > 0)
+         and (containerd_running_root.stdout | trim != docker_engine_containerd_root) }}
+  when: docker_engine_containerd_root | length > 0
+
+- name: Refuse to change containerd's root under running containers
+  ansible.builtin.assert:
+    that:
+      - not (containerd_root_must_move | bool)
+        or (containerd_shim_count.stdout | trim | int == 0)
+    fail_msg: |
+      The running containerd uses root `{{ containerd_running_root.stdout | trim }}`
+      but `docker_engine_containerd_root` is `{{ docker_engine_containerd_root }}`,
+      and {{ containerd_shim_count.stdout | trim }} container(s) are running.
+      Nothing was written. A containerd restart on the configured root would
+      lose track of every running container. Either set
+      `docker_engine_containerd_root` to the root in use, or migrate first:
+      docs/operations/docker-data-root-migration.md §"containerd root migration".
+  when: docker_engine_containerd_root | length > 0
+
 - name: Render /etc/containerd/config.toml (containerd root on NVMe)
   # Closes the second half of the disk-fill class: containerd
   # stores image layers + snapshots under its OWN root directory,
@@ -215,52 +271,45 @@
   when: docker_engine_containerd_root | length > 0
   notify: restart containerd
 
-- name: Pre-flight — fail loud if containerd root is configured but doesn't match running daemon
-  args:
-    executable: /bin/bash
-  # Same pattern as the data-root assertion above. Catches recurrence
-  # of the "configured-but-not-migrated" class — if an operator forgets
-  # to migrate /var/lib/containerd to the new path, this fails before
-  # any Docker-touching phase runs (forces the migration ceremony).
+# With no container running, the move happens here and not from the handler:
+# a play that stops before its handlers run must not leave a daemon on one
+# root and a file naming another.
+- name: Restart containerd onto the configured root (no container is running)
+  ansible.builtin.systemd:
+    name: containerd
+    state: restarted
+  when:
+    - docker_engine_containerd_root | length > 0
+    - containerd_root_must_move | bool
+
+- name: Re-read the root the running containerd uses
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
-      ctr --address /run/containerd/containerd.sock version 2>/dev/null \
-        | awk '/^Server:/{found=1} found && /Root:/{print $2; exit}' \
-        || true
-      # If ctr isn't on PATH or socket isn't responding, fall back to
-      # parsing /proc to find containerd's --root flag (or default).
+      pid="$(pidof containerd || true)"
+      [ -n "$pid" ] || exit 0
+      for fd in /proc/"$pid"/fd/*; do
+        target="$(readlink "$fd" 2>/dev/null || true)"
+        case "$target" in
+          */io.containerd.metadata.v1.bolt/meta.db)
+            printf '%s\n' "${target%/io.containerd.metadata.v1.bolt/meta.db}"
+            exit 0 ;;
+        esac
+      done
     executable: /bin/bash
-  register: containerd_root_probe
-  changed_when: false
-  failed_when: false
-  when: docker_engine_containerd_root | length > 0
-
-- name: Read containerd root from config.toml (authoritative)
-  args:
-    executable: /bin/bash
-  # ctr binary may not be on PATH on every Ubuntu Docker install
-  # (containerd ships ctr but apt's docker-ce may not). Grep the
-  # rendered config.toml as the authoritative source — what's in the
-  # file is what containerd will use after the handler restarts it.
-  ansible.builtin.shell:
-    cmd: |
-      set -euo pipefail
-      awk -F '"' '/^root = /{print $2; exit}' /etc/containerd/config.toml
-    executable: /bin/bash
-  register: containerd_root_from_config
+  register: containerd_running_root_final
   changed_when: false
   when: docker_engine_containerd_root | length > 0
 
-- name: Assert containerd config root matches configured (or fail with migration runbook pointer)
+- name: Assert the running containerd uses the configured root
   ansible.builtin.assert:
     that:
-      - containerd_root_from_config.stdout | trim == docker_engine_containerd_root
+      - (containerd_running_root_final.stdout | trim | length == 0)
+        or (containerd_running_root_final.stdout | trim == docker_engine_containerd_root)
     fail_msg: |
-      containerd config.toml has root `{{ containerd_root_from_config.stdout | trim }}`
-      but `docker_engine_containerd_root` is configured to `{{ docker_engine_containerd_root }}`.
-      Run the migration ceremony: docs/operations/docker-data-root-migration.md
-      §"containerd root migration" before re-running.
+      The running containerd uses root `{{ containerd_running_root_final.stdout | trim }}`
+      but `docker_engine_containerd_root` is `{{ docker_engine_containerd_root }}`.
+      See docs/operations/docker-data-root-migration.md §"containerd root migration".
   when: docker_engine_containerd_root | length > 0
 
 - name: Enable + start docker.service

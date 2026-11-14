@@ -1,0 +1,78 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "teardown",
+  "ok": true,
+  "exit": 0,
+  "checks": [
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Teardown of phase 14 [breakglass] breakglass-node ==="
+    },
+    {
+      "name": "dev/alpha/breakglass/alpha-breakglass-1/breakglass-node",
+      "ok": true,
+      "detail": "never deployed here — nothing to do"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Teardown of phase 12 [core] portal ==="
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-1/portal",
+      "ok": true,
+      "detail": "never deployed here — nothing to do"
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-2/portal",
+      "ok": true,
+      "detail": "never deployed here — nothing to do"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Teardown of phase 9 [obs] obs-stack ==="
+    },
+    {
+      "name": "dev/alpha/obs/alpha-obs-1/obs-stack",
+      "ok": true,
+      "detail": "never deployed here — nothing to do"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Teardown of phase 9 [core] zenoh-router ==="
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-1/zenoh-router",
+      "ok": true,
+      "detail": "never deployed here — nothing to do"
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-2/zenoh-router",
+      "ok": true,
+      "detail": "never deployed here — nothing to do"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Teardown of phase 5 [core] netbird-mgmt ==="
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-1/netbird-mgmt",
+      "ok": true,
+      "detail": "never deployed here — nothing to do"
+    },
+    {
+      "name": "dev/alpha/core/alpha-core-2/netbird-mgmt",
+      "ok": true,
+      "detail": "never deployed here — nothing to do"
+    },
+    {
+      "name": "measured",
+      "ok": true,
+      "detail": "verified → torn down: 0 records appended in 0 ms; no record removed"
+    }
+  ]
+}

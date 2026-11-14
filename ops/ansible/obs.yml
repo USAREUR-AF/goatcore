@@ -459,6 +459,30 @@
           # the mgmt host's mesh IP (F-282; same F-188 idiom as the Hydra host
           # above). Portal-less goatnets render the no-op .invalid entry.
           BLACKBOX_EXTRA_PROBE_HOST={{ (portal_traefik_host ~ ':' ~ mesh_ip_a) if (portal_traefik_host is defined and (portal_traefik_host | length) > 0) else 'blackbox-extra-probe-host-unused.invalid:127.0.0.1' }}
+          {# Container memory limits and reservations. Unset -> the compose file's #}
+          {# default, today's value; an obs_*_memory group_var overrides it.      #}
+          {% for _k, _v in [
+               ['PROMETHEUS_MEMORY', 'obs_prometheus_memory'],
+               ['PROMETHEUS_MEMORY_RESERVATION', 'obs_prometheus_memory_reservation'],
+               ['NODE_EXPORTER_MEMORY', 'obs_node_exporter_memory'],
+               ['NODE_EXPORTER_MEMORY_RESERVATION', 'obs_node_exporter_memory_reservation'],
+               ['CADVISOR_MEMORY', 'obs_cadvisor_memory'],
+               ['CADVISOR_MEMORY_RESERVATION', 'obs_cadvisor_memory_reservation'],
+               ['PROCESS_EXPORTER_MEMORY', 'obs_process_exporter_memory'],
+               ['PROCESS_EXPORTER_MEMORY_RESERVATION', 'obs_process_exporter_memory_reservation'],
+               ['BLACKBOX_EXPORTER_MEMORY', 'obs_blackbox_exporter_memory'],
+               ['BLACKBOX_EXPORTER_MEMORY_RESERVATION', 'obs_blackbox_exporter_memory_reservation'],
+               ['POSTGRES_EXPORTER_MEMORY', 'obs_postgres_exporter_memory'],
+               ['POSTGRES_EXPORTER_MEMORY_RESERVATION', 'obs_postgres_exporter_memory_reservation'],
+               ['GRAFANA_MEMORY', 'obs_grafana_memory'],
+               ['GRAFANA_MEMORY_RESERVATION', 'obs_grafana_memory_reservation'],
+               ['ALERTMANAGER_MEMORY', 'obs_alertmanager_memory'],
+               ['ALERTMANAGER_MEMORY_RESERVATION', 'obs_alertmanager_memory_reservation'],
+             ] %}
+          {% if lookup('vars', _v, default='') | string | length > 0 %}
+          {{ _k }}={{ lookup('vars', _v) }}
+          {% endif %}
+          {% endfor %}
       no_log: true
 
     # ---------------------------------------------------------------------
@@ -468,6 +492,12 @@
     # never-built minio-quota-scraper sidecar) and goat_container_info (the
     # id→name join for raw-cgroup cadvisor series) into the textfile dir
     # node-exporter already mounts. Script lives in the synced compose tree.
+    - name: cron is installed (the entry below is a crontab entry; a minimal image has no cron)
+      ansible.builtin.apt:
+        name: cron
+        state: present
+        cache_valid_time: 3600
+
     - name: Install goat-obs textfile cron (*/5)
       ansible.builtin.cron:
         name: "goat-obs-textfile ({{ obs_prefix }})"

@@ -1,0 +1,27 @@
+# explain lists the phases of standup from the phase catalog: the numbered phases, then the named steps.
+bin.name = "goatbuilder"
+args = ["explain", "standup"]
+stdout = """
+standup: 20 phases. goatbuilder explain standup <phase> answers for one, by number or id.
+
+  1  preflight                                       GATE          gates: config, inputs, declared ACL, env-door, hosts
+  2  baseline                                        A             host baseline + LUKS
+  3  secrets                                         T             generate per-instance secrets
+  4  certs                                           T             mint leaf certs + name snapshot
+  5  mgmt-stack                                      A             mgmt-stack (+ relay-connect on an internet site)
+  6  ory                                             A             identity stack (Ory), then the rest of site-bootstrap
+  7  public-tls                                      A + T         [internet] public TLS + relay tier
+  8  mesh-enroll                                     A + T         [internet] mesh-enroll the hosts
+  9  router                                          A             zenoh router + SPIRE server
+ 10  surfaces                                        A             dashboard and the site's service surface
+ 11  first-login                                     MANUAL        first login, admin-promote, the bootstrap NetBird token
+ 12  control-plane                                   A + T + GATE  declared ACL, service identities, and the services
+ 13  acceptance                                      GATE          acceptance suite
+ 14  rescue-and-cross-goatnet                        A             rescue nodes + cross-goatnet surfaces
+     image-pull                                      A ∥           image pull, in the background from phase 2 to phase 5
+     join-observability-leg-host-before-phase-12     A ∥           join observability leg `host` before phase 12
+     join-observability-leg-stack-before-phase-13    A ∥           join observability leg `stack` before phase 13
+     join-the-image-pull-before-phase-5              A ∥           join the image pull before phase 5
+     observability-leg-host                          A ∥           observability leg `host`: the obs host's baseline, LUKS and Forgejo
+     observability-leg-stack                         A ∥           observability leg `stack`: Prometheus, Alertmanager, Grafana
+"""

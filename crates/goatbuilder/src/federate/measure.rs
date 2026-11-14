@@ -1056,7 +1056,10 @@ pub struct MeasureArgs {
     /// (docs/design/federation-router-discovery.md): `edge` measures only the edge
     /// and writes the result to --half-out; `core` measures only the core,
     /// joins the edge half read from --edge-half, and builds the package.
-    /// Without it, both hosts are measured here, as always.
+    /// Without it, both hosts are measured here, as always. On a peering run,
+    /// `--side edge` is the edge driver's run of a two-driver peering
+    /// (`drivers: two`): not built yet, and refused with GB-267
+    /// (docs/design/federation-two-drivers.md).
     #[arg(long, value_name = "SIDE", value_parser = ["edge", "core"], global = true)]
     pub side: Option<String>,
     /// init --over-ssh --side edge: the file the edge half is written to.

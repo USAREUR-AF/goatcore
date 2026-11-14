@@ -36,6 +36,8 @@ Commands:
   backout  Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation,
            edge router, republisher, forwarder mapping and core admission, and leave every other
            peering and the core as they were
+  import   A two-driver peering's import of an edge result, as a hand-off object names it. Not built
+           yet: refuses with GB-267 (docs/design/federation-two-drivers.md)
   help     Print this message or the help of the given subcommand(s)
 
 Arguments:
@@ -84,17 +86,14 @@ Options:
           [default: auto]
           [possible values: auto, always, never]
 
-      --context-dir <DIR>
-          The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem
-          (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it)
-
   -v, --verbose
           Log what a run does — the external commands it shells out to, and the network phase of
           `update` — to stderr, so `-o json|yaml` stays a clean document. Or set
           RUST_LOG=goatbuilder=debug
 
-      --cert <FILE>
-          The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory)
+      --context-dir <DIR>
+          The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem
+          (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it)
 
       --timeout <SECS>
           Seconds to bound the connect/reach phase before failing fast — the one phase that can
@@ -102,6 +101,9 @@ Options:
           play's own run or the binary download (stall-bounded). Also reads GOATBUILDER_TIMEOUT
           
           [env: GOATBUILDER_TIMEOUT=]
+
+      --cert <FILE>
+          The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory)
 
       --ca-roots <FILE>
           The six verbs: the CA roots (default: ca-roots.pem in the context directory)
@@ -141,7 +143,9 @@ Options:
           reaches both hosts of (docs/design/federation-router-discovery.md): `edge` measures only
           the edge and writes the result to --half-out; `core` measures only the core, joins the
           edge half read from --edge-half, and builds the package. Without it, both hosts are
-          measured here, as always
+          measured here, as always. On a peering run, `--side edge` is the edge driver's run of a
+          two-driver peering (`drivers: two`): not built yet, and refused with GB-267
+          (docs/design/federation-two-drivers.md)
           
           [possible values: edge, core]
 
@@ -155,6 +159,11 @@ Options:
           init --over-ssh --side core: the edge half's sha256 as the edge driver printed it, read
           from there and confirmed here (the full digest, or its first 32 hex digits; spaces and
           dashes are ignored)
+
+      --expect-commit <COMMIT>
+          With --side edge: the commit the edge driver's checkout must be at, as a hand-off object
+          names it. The edge driver's run is not built yet: refused with GB-267
+          (docs/design/federation-two-drivers.md)
 
       --plan <FILE>
           deploy: the plan to execute (default <work>/plan.json)

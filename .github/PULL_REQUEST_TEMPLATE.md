@@ -101,7 +101,6 @@ See docs/adr/1005-monorepo-separation-map.md and CONTRIBUTING.md
 - [ ] Used `git commit <path>` form for staging (not `git add` + `git commit`) — concurrent-staging window bypassed (ADR 1015 §D Row 12).
 - [ ] CI is green (or I have a tracked plan to fix what's red).
 - [ ] CODEOWNERS auto-requested reviewers — I haven't bypassed.
-- [ ] No `Co-Authored-By:` trailers added by AI tooling.
 
 ## Security-sensitive?
 

@@ -88,9 +88,19 @@ A repository administrator tags a commit on `main`. The tag is the whole
 nomination. `.github/workflows/goatbuilder-release.yml` refuses a tag pushed by
 anyone else or on a commit that is not on `main`.
 
-First bump `version` in `crates/goatbuilder/Cargo.toml` and add the release's
-entry to `crates/goatbuilder/CHANGELOG.md`. The current release is
-`goatbuilder/v0.4.1`.
+First, in the version pull request:
+
+1. Bump `version` in `crates/goatbuilder/Cargo.toml` and `crates/Cargo.lock`.
+2. Fold the changelog's entries into the release's section, which removes
+   the entry files from `crates/goatbuilder/changelog.d/`:
+
+   ```bash
+   python3 ops/release/changelog.py release <version> <date>   # for example: release 0.7.0 2026-11-20
+   ```
+
+3. Add the release's opening summary under its new heading in
+   `crates/goatbuilder/CHANGELOG.md`, and its paragraph to
+   `.github/release-notes/goatbuilder.md`.
 
 ```bash
 git tag -s goatbuilder/v<semver> <sha on main> && git push origin goatbuilder/v<semver>

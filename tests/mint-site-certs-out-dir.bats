@@ -4,7 +4,7 @@
 # Plays read a leaf from the manifest's out_dir through the goat_leaf filter
 # (#2165), so the mint writes the pair there and copies nothing into the
 # checkout: a fresh worktree finds the leaf, and no private key sits in a
-# working tree. ops/ansible/filter_plugins/test_goat_leaf.py covers the reader.
+# working tree. tests/ansible_filter_plugins/test_goat_leaf.py covers the reader.
 #
 # The script resolves REPO_ROOT from its own location, so each test copies it
 # into a throwaway tree and swaps cert-sign for a stub.

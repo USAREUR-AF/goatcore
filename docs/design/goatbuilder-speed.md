@@ -112,7 +112,10 @@ after its wave, and the message names every failed step and its log.
 
 The bot step in phase 12 used to stop the run so a person could export
 `FORGEJO_PUBSUB_TOKEN` and resume. It now reads the token from the operator's
-envrc with `ops/scripts/envrc-var.sh` and continues. `goatbuilder` does the same.
+envrc with `ops/scripts/envrc-var.sh` and continues. `goatbuilder` does the same,
+and keeps the token as the run's own state (`RunState` in `crates/goatbuilder/src/standup.rs`):
+only the phases that read it, the mint step and the mirror play, receive it, and
+every other phase child is started without it (built).
 
 ### Phase 8 enrolment as a scripted step (sink 3)
 
@@ -124,6 +127,8 @@ certificate. It is two steps now, in both avenues, on an internet site:
 |---|---|
 | 8 A `mesh-enroll-host.yml -e target=<site>_hosts` | per host, one at a time: nothing if `netbird status --json` already shows the management connection and a mesh IP. Otherwise it checks the site's declared `mesh_enrollment_url` against where the host resolves the name and refuses a pair that disagrees; mints a single-use key (one use, one hour, role bootstrap) with `mgmt-host-bootstrap create-setup-key` on the site's first host; hands it to `netbird up --setup-key-file` through a 0600 file under `/run`, removed afterwards; adds the rosenpass flags when `rosenpass_enabled`; waits up to `mesh_enroll_wait_seconds` (180 s) for the connection and a mesh IP. It writes each host's IP to `~/.goat/state/standup-<site>-mesh-ips.json` |
 | 8 T `standup-mesh-record.py <site> --ips <file>` | `mesh_ip_a` / `mesh_ip_b` in the site's group_vars (the manifest's mesh-IP placeholders resolve from them), each host's `ansible_host` in its `mgmt-hosts-mesh.ini` line (a host with no line keeps its transport), a literal old IP in the manifest's router leaf, then the router pair re-minted. A second run with the same IPs mints nothing |
+
+`join-node` runs the same two steps for one node at its phase 10. For a joiner it mints on the founder's first host (`mesh_enroll_mint_group`), with the groups that host's peer holds (`mesh_enroll_groups_from_peer`; the query is designed and not measured on a live database). `standup-mesh-record.py` sets `mesh_ip_a`/`mesh_ip_b` by each host's place in the inventory, so recording one node leaves the other's address alone. See [goatbuilder.md](goatbuilder.md), join-node part "(f)".
 
 `mesh_enrollment_url` is declared per site in group_vars. The key
 is minted on the first host because that is where the NetBird database is; for

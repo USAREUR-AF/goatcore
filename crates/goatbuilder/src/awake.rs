@@ -69,7 +69,8 @@ pub fn hold(long_running: bool) {
         .stderr(Stdio::null())
         .spawn();
     if started.is_ok() {
-        // Single-threaded here (main, before any verb runs), so set_var is sound.
+        // main only, before any thread starts (main.rs calls this before the run begins),
+        // so set_var is sound here (tests/no_process_env_in_unit_tests.rs allows this site).
         std::env::set_var(MARKER, &me);
     }
 }
