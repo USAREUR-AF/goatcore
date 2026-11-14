@@ -158,7 +158,7 @@ class TwoPeeringsOneHost(unittest.TestCase):
         os.makedirs(bindir, exist_ok=True)
         with open(f"{bindir}/nft", "w", encoding="utf-8") as f:
             f.write('#!/bin/sh\nprintf "Error: No such file or directory\\n" >&2\nexit 1\n')
-        os.chmod(f"{bindir}/nft", 0o755)
+        os.chmod(f"{bindir}/nft", 0o700)
         r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_edge:xac_core:peering_forwarders",
                  str(ANSIBLE / "peering-backout.yml"),
                  "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
