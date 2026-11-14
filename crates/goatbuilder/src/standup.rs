@@ -976,6 +976,11 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     let (from, to) = if o.obs_only { (1, 14) } else { (o.from, o.to) };
     let o = &Options { from, to, ..*o };
     let events = plan(repo, &s, o, &resume);
+    // Every value the run uses, with its source (gate row F2): the run record
+    // carries it, and a dry run prints it. A secret by its source only.
+    // Listing reads the secrets posture; a dry run prints those probes too.
+    let (listed, listing_probes) = crate::secrets::probes_of(|| crate::inputs::standup::site_inputs(repo, &s, o, &|k: &str| std::env::var(k).ok()));
+    crate::inputs::record(&listed);
     let mut checks = vec![row("banner", format!(
         "standup: site={}  group={}  profile={}  obs={}  {}",
         s.site, s.group, s.profile,
@@ -995,6 +1000,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
         if s.profile == "lan" {
             checks.push(row("probe-ran", crate::secrets::posture_cmd(repo, &["available"]).line()));
         }
+        checks.extend(listing_probes.iter().map(|l| row("probe-ran", l.clone())));
         checks.push(row("probe", crate::fresh::command(repo).line()));
     }
     let mut rs = RunState::from_operator();
@@ -1161,6 +1167,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
         }
     }
     if o.dry_run {
+        checks.extend(crate::inputs::rows(&listed));
         checks.push(row("footer", format!("PLAN complete ({} profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first.", s.profile)));
     } else if o.obs_only && exit == EXIT_OK {
         checks.push(row("footer", format!("obs leg complete for {}.", s.site)));

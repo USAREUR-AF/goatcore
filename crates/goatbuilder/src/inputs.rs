@@ -30,8 +30,9 @@
 //! `declare`; an input read from the environment that is not set now carries
 //! `unset`, where to set it.
 
-// `goatbuilder inputs` and the run record read these; until the change that
-// wires the verb in main.rs, only the tests do.
+// Each verb hands its list to the run record (`record`) and prints it in its
+// dry run (`rows`, and `section` on a plan page); `why` and the rest wait for
+// `goatbuilder inputs`, which no change wires yet.
 #![allow(dead_code)]
 
 use std::path::Path;
@@ -505,6 +506,29 @@ pub fn rows(inputs: &[Input]) -> Vec<crate::Check> {
             fix: i.unset.clone(),
         })
         .collect()
+}
+
+/// Hand the run's inputs to its run record (runner::set_inputs), in the shape
+/// above: a secret by its source only.
+pub fn record(inputs: &[Input]) {
+    crate::runner::set_inputs(serde_json::to_value(inputs).unwrap_or_default());
+}
+
+/// The section a plan page prints from a dry run's input rows: a heading, then
+/// each row's line (`NAME=value  <source>`, a secret by its source only).
+pub fn section(lines: &[String], bold: &dyn Fn(&str) -> String) -> String {
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "\n{}\n",
+        bold("What it reads, and where each value comes from:")
+    );
+    for l in lines {
+        out.push_str(crate::tutor::fill(l, "  ", "      ").trim_end());
+        out.push('\n');
+    }
+    out
 }
 
 /// `goatbuilder why <value>`: the inputs a query names, each with the chain of

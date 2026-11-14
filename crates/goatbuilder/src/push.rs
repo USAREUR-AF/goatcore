@@ -61,6 +61,9 @@ pub struct Plan {
     pub resolved: Resolved,
     pub secrets: BTreeMap<String, String>,
     pub secrets_missing: Vec<String>,
+    /// What the declared posture said is available when the plan was made, so
+    /// a reader of the plan (the run's inputs) need not ask it again.
+    pub available: std::collections::HashSet<String>,
     pub transport: Transport,
     pub wants: BTreeMap<String, String>,
 }
@@ -350,7 +353,7 @@ pub fn plan(repo: &Path, o: &Options) -> Result<Plan> {
             wants.insert(g.clone(), w);
         }
     }
-    Ok(Plan { component: o.component.into(), goatnet: o.goatnet.into(), name, resolved, secrets, secrets_missing, transport, wants })
+    Ok(Plan { component: o.component.into(), goatnet: o.goatnet.into(), name, resolved, secrets, secrets_missing, available: have, transport, wants })
 }
 
 fn ok(name: &str, detail: String) -> Check {
@@ -548,6 +551,11 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
     }
     crate::runner::phase("transport", "the secrets, and how the hosts are reached", "");
     let p = plan(repo, o)?;
+    // Every value the run uses, with its source (gate row F2): the run record
+    // carries it, and a dry run prints it. A secret by its source only.
+    // Listing reads the secrets posture; a dry run prints those probes too.
+    let (listed, listing_probes) = crate::secrets::probes_of(|| crate::inputs::deploy::plan_inputs(repo, o, &p, &|k: &str| std::env::var(k).ok()));
+    crate::inputs::record(&listed);
     let r = &p.resolved;
     if !r.skipped.is_empty() {
         checks.push(ok(&format!("{}/skipped", p.name), format!("absent: true, topology not skew: {}", r.skipped.join(" "))));
@@ -578,6 +586,8 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
     if o.dry_run {
         checks.push(ok("probe-ran", crate::secrets::posture_cmd(repo, &["available"]).line()));
         checks.push(ok("probe-ran", netbird_status_cmd().line()));
+        checks.extend(listing_probes.iter().map(|l| ok("probe-ran", l.clone())));
+        checks.extend(crate::inputs::rows(&listed));
     }
     let logdir = std::env::var("GOAT_DEPLOY_LOG_DIR").or_else(|_| std::env::var("TMPDIR")).unwrap_or_else(|_| "/tmp".into());
     let ts = stamp();

@@ -274,7 +274,12 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
                 "read into the phase's environment",
             )
         });
-        let hint = if secret {
+        // The hint is read only for a value nothing supplies: it is shown
+        // only then, and asking the posture for it starts a process.
+        let now = set(env, &name);
+        let hint = if now.is_some() || from_store.is_some() {
+            String::new()
+        } else if secret {
             crate::secrets::hint(repo, std::slice::from_ref(&name))
         } else {
             format!("export {name}")
@@ -282,7 +287,7 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
         v.push(Input::reads_env(
             name.clone(),
             secret,
-            set(env, &name),
+            now,
             from_store,
             format!("read by {when}; {hint}"),
         ));

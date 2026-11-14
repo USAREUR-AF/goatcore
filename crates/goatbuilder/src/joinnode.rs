@@ -409,8 +409,16 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         return Err(goat_errors::coded("GB-251", "this checkout declares no SSH user for a new machine: set deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml; --dry-run plans without it").into());
     }
     let phases = plan(repo, o)?;
+    // Every value the run uses, with its source (gate row F2): the run record
+    // carries it, and a dry run prints it. A secret by its source only.
+    // Listing reads the secrets posture; a dry run prints those probes too.
+    let (listed, listing_probes) = crate::secrets::probes_of(|| crate::inputs::joinnode::inputs(repo, o, &|k: &str| std::env::var(k).ok()));
+    crate::inputs::record(&listed);
     let resume = format!("goatbuilder join-node {} --site {} --node {} --class {}{}{}", o.env, o.site, o.node, o.class, o.address.map(|a| format!(" --address {a}")).unwrap_or_default(), if o.via == "door" { " --via door" } else { "" });
     let mut checks = vec![row("banner", format!("join-node: site={}  node={}  class={}  via={}  {}", o.site, o.node, o.class, o.via, if o.dry_run { "(DRY RUN — nothing executes)" } else { "" }))];
+    if o.dry_run {
+        checks.extend(listing_probes.iter().map(|l| row("probe-ran", l.clone())));
+    }
     let mut exit = EXIT_OK;
     if o.via == "door" {
         let open = door_open_cmd(repo, o.env);
@@ -453,6 +461,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
     // What the site does not run, in the plan and in a real run's summary alike.
     checks.extend(not_run(repo, o.site));
     if o.dry_run {
+        checks.extend(crate::inputs::rows(&listed));
         checks.push(row("footer", "PLAN complete. Remove --dry-run to execute (needs --address). Manual steps (1, 8, 10) pause the run; resume with --from <next>. docs/tutorials/02-first-federated-node.md walks through it.".into()));
     }
     let mut r = Report::new("join-node", checks, EXIT_REFUSED);
@@ -809,9 +818,12 @@ mod tests {
         let t = joiner_checkout();
         let o = Options { via: "door", ..opts("zagros-b", "core", "zagros") };
         let r = execute(t.path(), &o).unwrap();
-        assert_eq!(r.checks[1].name, "door", "{:?}", r.checks.iter().map(|c| &c.name).collect::<Vec<_>>());
-        assert!(r.checks[1].detail.contains("open the env door to zagros"), "{}", r.checks[1].detail);
-        assert!(r.checks[2].detail.ends_with("/ops/scripts/door-open.sh' zagros"), "{}", r.checks[2].detail);
+        // After the banner and the local probes that read the run's inputs, the
+        // door is the first step: before any phase reaches a host.
+        let first = r.checks.iter().position(|c| c.name != "banner" && c.name != "probe-ran").unwrap();
+        assert_eq!(r.checks[first].name, "door", "{:?}", r.checks.iter().map(|c| &c.name).collect::<Vec<_>>());
+        assert!(r.checks[first].detail.contains("open the env door to zagros"), "{}", r.checks[first].detail);
+        assert!(r.checks[first + 1].detail.ends_with("/ops/scripts/door-open.sh' zagros"), "{}", r.checks[first + 1].detail);
         // (Phase 12 still reads the mesh inventory for TBD_: the node's mesh row
         // is owed whichever way this machine reaches it. No play is given it.)
         let plays: Vec<Phase> = plan(t.path(), &o).unwrap().into_iter().filter(|p| p.cmd.contains("ansible-preflight.sh")).collect();

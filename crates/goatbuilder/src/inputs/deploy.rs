@@ -197,7 +197,8 @@ pub fn plan_inputs(repo: &Path, o: &Options, p: &Plan, env: Env) -> Vec<Input> {
     ));
 
     // What the play templates from the environment.
-    let store = crate::secrets::available(repo);
+    // The plan asked the posture already; its answer is the run's.
+    let store = &p.available;
     let store_name = if store.is_empty() {
         String::new()
     } else {
@@ -210,11 +211,18 @@ pub fn plan_inputs(repo: &Path, o: &Options, p: &Plan, env: Env) -> Vec<Input> {
                 "read into the play's environment",
             )
         });
-        let hint = crate::secrets::hint(repo, std::slice::from_ref(from));
+        // The hint is read only for a value nothing supplies: it is shown
+        // only then, and asking the posture for it starts a process.
+        let now = set(env, from);
+        let hint = if now.is_some() || from_store.is_some() {
+            String::new()
+        } else {
+            crate::secrets::hint(repo, std::slice::from_ref(from))
+        };
         v.push(Input::reads_env(
             from.clone(),
             true,
-            set(env, from),
+            now,
             from_store,
             format!("the play templates {var} from it; {hint}"),
         ));

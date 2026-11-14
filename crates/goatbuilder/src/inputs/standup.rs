@@ -435,11 +435,18 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
                 "loaded into each phase's environment by ops/scripts/standup-phase-run",
             )
         });
-        let hint = crate::secrets::hint(repo, std::slice::from_ref(&name));
+        // The hint is read only for a value nothing supplies: it is shown
+        // only then, and asking the posture for it starts a process.
+        let now = set(env, &name);
+        let hint = if now.is_some() || from_store.is_some() {
+            String::new()
+        } else {
+            crate::secrets::hint(repo, std::slice::from_ref(&name))
+        };
         v.push(Input::reads_env(
             name.clone(),
             secret,
-            set(env, &name),
+            now,
             from_store,
             format!("read by {when}; {hint}"),
         ));

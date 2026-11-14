@@ -440,7 +440,7 @@ fn purpose(n: u32) -> &'static str {
 /// header, one aligned table of phases with this checkout's path and the home
 /// folder shortened, then each phase's command verbatim and unwrapped, so a
 /// line pastes as the command it runs.
-fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[Phase]) -> String {
+fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[Phase], listed: &[crate::inputs::Input]) -> String {
     let home = runenv::var("HOME").unwrap_or_default();
     // The resolved path: with `-C ../..` the literal "../../" must not be
     // stripped from paths that merely contain it.
@@ -575,6 +575,8 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             None => w,
         }
     };
+    let lines: Vec<String> = listed.iter().map(|i| short(&i.line())).collect();
+    s.push_str(&crate::inputs::section(&lines, &bold));
     let manual = shown.iter().find(|p| p.kind == "MANUAL").map(|p| p.n);
     match manual {
         Some(n) => s.push_str(&format!("\n{} remove --dry-run. The run stops at phase {n} for you. When you\nfinish those steps, carry on with:\n\n{}\n", bold("To run it for real:"), bold(laid(again(n + 1)).trim_end()))),
@@ -697,6 +699,13 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     let peering = cfg.peerings.iter().find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true)).expect("C1 found it");
     // With what goatbuilder.yaml itself declares for the run merged in (federate/declared.rs).
     let inputs = preflight::derive_inputs(repo, &cfg, peering, &work, &edge_group, None);
+    // Every value the run uses, with its source (gate row F2), read before the
+    // phase-1 exports below change the environment: the run record carries it,
+    // and a dry run prints it. A secret by its source only.
+    let listed = crate::inputs::federate::inputs(repo, o, &|k: &str| runenv::var(k).ok());
+    if let Ok(l) = &listed {
+        crate::inputs::record(l);
+    }
     // `drivers: two`: an edge driver and a controller (federate/handoff.rs).
     let two_drivers = handoff::two(peering.drivers.as_deref());
     let mut handed: Option<serde_json::Value> = None;
@@ -977,10 +986,14 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     if printed {
         // The plan is the human answer; the rows still go to -o json and the
         // tutor's log, but are not printed again as a table.
-        print!("{}", plan_view(repo, o, &work, &edge_group, &phases));
+        print!("{}", plan_view(repo, o, &work, &edge_group, &phases, listed.as_deref().unwrap_or_default()));
     }
     if o.dry_run {
         checks.extend(preflight::plan_rows(&inputs));
+        match &listed {
+            Ok(l) => checks.extend(crate::inputs::rows(l)),
+            Err(e) => checks.push(Check { name: "input".into(), ok: false, detail: format!("the values this run uses could not be listed: {e:#}"), fix: None }),
+        }
         checks.push(row("footer", "PLAN ONLY — nothing above executed. Phases 5 and 10 are MANUAL and stop the run; resume with --from 6 and --from 11. Acceptance criteria for every phase: docs/operations/sovereign-federation-runbook.md. The shape and why: https://github.com/usareur-af/goatdocs/blob/main/docs/design/staged-delivery-pattern.md".into()));
     }
     let mut r = Report::new("federate", checks, EXIT_REFUSED);
@@ -1267,7 +1280,7 @@ mod tests {
         let work_s = work.path().display().to_string();
         let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: true };
         let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
-        let full = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases);
+        let full = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases, &[]);
         // The commands, verbatim: each phase that runs one, by its number.
         let (head, rest) = full.split_once("What each phase runs:\n").expect("the commands section");
         let (cmds, tail) = rest.split_once("\nWhat a real run would leave").map(|(c, t)| (c, format!("\nWhat a real run would leave{t}"))).unwrap_or((rest, String::new()));
@@ -1303,7 +1316,7 @@ mod tests {
         let work_s = work.path().display().to_string();
         let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
         let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
-        let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases);
+        let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases, &[]);
         assert!(view.contains("refused, the agreement chose 'quic'"), "{view}");
         assert!(view.contains("a real run stops at phase 11"), "{view}");
         assert!(!view.contains("Open the connection the agreement chooses"), "{view}");
@@ -1317,7 +1330,7 @@ mod tests {
         let work_s = work.path().display().to_string();
         let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
         let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
-        let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases);
+        let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases, &[]);
         assert!(view.contains("Open the connection the agreement chooses") && !view.contains("Refused"), "{view}");
     }
 

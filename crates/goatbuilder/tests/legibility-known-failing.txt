@@ -11,11 +11,7 @@
 #     Removed by step 2 (one runner, per-phase logs) with step 4 (run.json).
 
 # (b) every value in a command line has an entry in `inputs`, with a source.
-#     Removed by step 5, verb by verb (federate first).
-b standup    the run record is written, but its `inputs` is empty until standup hands its list to the runner (runner::set_inputs)
-b join-node  the run record is written, but its `inputs` is empty until join-node hands its list to the runner (runner::set_inputs)
-b deploy     the run record is written, but its `inputs` is empty until deploy hands its list to the runner (runner::set_inputs)
-b federate   the run record is written, but its `inputs` is empty until federate hands its list to the runner (runner::set_inputs)
+#     Removed by step 5: each verb hands its inputs to the run record.
 
 # (c) the commands a terminal dry run prints are the commands the real run executes, in order.
 #     Removed by step 3 (with step 2 for the probes that print nothing today).
