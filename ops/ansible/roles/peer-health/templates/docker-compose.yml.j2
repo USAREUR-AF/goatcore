@@ -30,6 +30,7 @@ services:
       PEER_HEALTH_SILENCE_AFTER_SECS: "{{ peer_health_silence_after_secs }}"
 {% if peer_health_router_admin_url %}
       PEER_HEALTH_SESSIONS_FILE: "/feed/sessions.json"
+      PEER_HEALTH_TLS_ALERTS_LOGGED: "{{ peer_health_tls_alerts_logged | bool | lower }}"
 {% endif %}
 {% if peer_health_peering %}
       PEER_HEALTH_PEERING: "{{ peer_health_peering }}"

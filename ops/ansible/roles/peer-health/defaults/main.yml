@@ -79,3 +79,11 @@ peer_health_rust_log: "goat_peer_health=info,zenoh=warn"
 # Container memory ceiling. Per-host values go in group_vars.
 # ops/ci/check-compose-memory-is-variable.sh refuses a literal in the template.
 peer_health_memory_limit: 256M  # the peer-health container
+
+# Does this site's router log a TLS handshake a client ended ("received fatal
+# alert") at its log level? Stock Zenoh 1.9.0 does, as a warning. A router build
+# that logs it only at debug does when goat_zenoh_rust_log carries
+# "zenoh_link_tls::unicast=debug". While false, and until the reader has read a
+# first such line, the reader reports the trust part of its reading as not
+# measured, never as clean.
+peer_health_tls_alerts_logged: false
