@@ -512,3 +512,213 @@ phases:
   read: docs/operations/goatnet-standup.md#the-obs-leg--built-in-parallel
   failed_because: the obs leg `stack` failed
   then: read <state>/standup-<site>-obs-stack.log, fix it, re-run with --obs-only, then resume
+- verb: join-node
+  phase: 1
+  id: reach
+  kind: MANUAL
+  title: reach the box on the site LAN
+  what: 'A person''s step: find the box''s real LAN address and reach it over ssh, then pass that address as --address. On a Jetson the address first handed over may be the USB device-mode bridge, not the LAN.'
+  why: Every later phase reaches the node at this address; a wrong one makes the baseline and enrolment act on another machine or none.
+  changes: Nothing; a person reaches the box.
+  verify: '`ssh <user>@<address>` reaches the box on the site LAN'
+  runs: 'nothing: a step for a person, with the instructions the run prints'
+  by_hand: ssh <user>@<the node's LAN address>, then run goatbuilder join-node again with --address <that address>
+  read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
+  failed_because: the box is not reachable at the address given
+  then: find its LAN address on the site network, then pass it as --address
+- verb: join-node
+  phase: 2
+  id: seed-key
+  kind: T
+  title: seed the SSH key
+  what: Probes whether the node already takes key auth and passwordless sudo; when it does not, seeds the operator's key and NOPASSWD sudo with the first-login password, read from its environment variable (<SITE>_NODE_PASS by default), never from the command line.
+  why: Every play after it reaches the node with key auth and sudo; a password prompt would stop them.
+  changes: The node's authorized_keys and sudoers, when the probe fails; nothing when it passes.
+  verify: it prints that key auth and NOPASSWD sudo already work, or the seed ends without error
+  runs: ops/scripts/seed-ssh-key.sh
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 2 --to 2 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#before-the-real-run
+  failed_because: the first-login password is wrong or its variable is empty
+  then: set the password variable (--pass-var names it), then resume with --from 2
+- verb: join-node
+  phase: 3
+  id: repo-work
+  kind: GATE
+  title: 'repo work first: group, inventory, pins, exclusions'
+  what: 'Runs the config preflight on the node''s group before it enrols: the node is in the inventory group, the pins and exclusions are declared. The mesh-address placeholder is allowed until phase 12.'
+  why: A node that is not declared in the repository cannot be converged or graded; checking first means nothing on the node changes for an undeclared node.
+  changes: Nothing.
+  verify: the config preflight passes for the node's group
+  runs: ops/scripts/standup-config-preflight.py
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 3 --to 3 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#before-the-real-run
+  failed_because: the node or one of its declared values is missing from the repository
+  then: declare it in the inventory and group_vars, then resume with --from 3
+- verb: join-node
+  phase: 4
+  id: quiet-apt
+  kind: T
+  title: quiet apt on the node
+  what: Masks the apt-daily timers on the node over ssh, so the baseline does not stall on the dpkg lock. Phase 14 unmasks them.
+  why: An unattended apt run holding the dpkg lock makes the baseline's package steps hang.
+  changes: The node's apt-daily timers, masked until phase 14.
+  verify: the ssh command exits 0
+  runs: 'nothing from the repository: an ssh command on the node (systemctl mask)'
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 4 --to 4 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
+  failed_because: the node is not reachable over ssh
+  then: check the address and the key from phase 2, then resume with --from 4
+- verb: join-node
+  phase: 5
+  id: baseline
+  kind: A
+  title: host baseline, narrowed to the node
+  what: 'Runs the host baseline on the node only: packages and apt upgrade, the docker and containerd data roots, sysctls, and reboot waves.'
+  why: Every service phase 13 deploys runs on this baseline.
+  changes: 'The node: packages, sysctls, systemd units, its data roots; it may reboot.'
+  verify: the play ends `failed=0`
+  runs: ops/scripts/ansible-preflight.sh, ops/ansible/mgmt-host-baseline.yml
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 5 --to 5 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
+  failed_because: the session dropped during a reboot wave, or a package step failed
+  then: run it detached if the session may drop, then resume with --from 5
+- verb: join-node
+  phase: 6
+  id: wireguard-first
+  kind: A
+  title: WireGuard kernel modules, first pass
+  what: Installs the WireGuard kernel modules on the node. Its check that wt0 is kernel WireGuard fails before enrolment, because wt0 does not exist yet; that one failure is expected and the run goes on. Any other failure stops it. Phase 11 runs it again.
+  why: The mesh client needs the kernel modules before it enrols, or it falls back to a userspace interface.
+  changes: The node's kernel modules.
+  verify: the only failure is the wt0 check under `verify wt0 is kernelspace wireguard`
+  runs: ops/scripts/ansible-preflight.sh, ops/ansible/wireguard-kmod.yml
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 6 --to 6 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
+  failed_because: a module could not be built or loaded
+  then: read the play's log, fix the kernel headers or the package, then resume with --from 6
+- verb: join-node
+  phase: 7
+  id: ca
+  kind: GATE
+  title: the CA this site trusts is its own
+  what: Runs the config preflight and checks that the site's group_vars name the site's own CA, not the shared dev root.
+  why: A node that silently trusts the dev CA is a production node on the dev CA.
+  changes: Nothing.
+  verify: the preflight passes and no ca_id names a shared dev root
+  runs: ops/scripts/standup-config-preflight.py
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 7 --to 7 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#before-the-real-run
+  failed_because: the site's group_vars name the shared dev CA
+  then: set the site's own ca_id, then resume with --from 7
+- verb: join-node
+  phase: 8
+  id: setup-key
+  kind: MANUAL
+  title: mint a setup key carrying the site's mgmt group
+  what: 'A person''s step: in the NetBird dashboard of the site the node enrols at (a joiner''s founder), make a setup key whose auto_groups is the group a live mgmt host of the site holds, read off that peer, and keep it for phase 10.'
+  why: A key with the wrong group puts the node in a group the ACL does not admit, so it reaches nothing.
+  changes: A NetBird setup key, made by the person.
+  verify: the key's auto_groups match a live mgmt host's group
+  runs: 'nothing: a step for a person, with the instructions the run prints'
+  by_hand: 'in the NetBird dashboard (or goat admin) of the site the node enrols at: Setup Keys, new key, auto_groups = the group a live mgmt host holds; export it as <SITE>_NB_SETUP_KEY, then resume with --from 9'
+  read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
+  failed_because: no key, or a key with a group no live host holds
+  then: read the group off a live mgmt peer, mint the key again, then resume with --from 9
+- verb: join-node
+  phase: 9
+  id: enrol-preflight
+  kind: GATE
+  title: enrollment preflight on the node
+  what: 'Runs the enrollment preflight on the node over ssh, with the setup key and the management URL passed on stdin: clock skew, a stale wt0, an unreachable apex. It prints the `netbird up` line for phase 10.'
+  why: Each of these turns enrolment into a hang with no error.
+  changes: Nothing on the node.
+  verify: the preflight passes and prints the `netbird up` line
+  runs: ops/preflight-enrollment.sh
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 9 --to 9 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
+  failed_because: the node's clock is skewed, a stale wt0 exists, or the apex is unreachable
+  then: fix what it names, then resume with --from 9
+- verb: join-node
+  phase: 10
+  id: enrol
+  kind: MANUAL
+  title: enrol the node
+  what: 'A person''s step: on the node, run the `netbird up` line phase 9 printed. The gate is the kernel ACL plane, not "Connected": `netbird status` must show a kernel interface.'
+  why: A userspace interface reads as Connected but does not carry the ACL plane.
+  changes: The node's NetBird client, enrolled.
+  verify: '`netbird status` shows Interface type: Kernel and a mesh IP'
+  runs: 'nothing: a step for a person, with the instructions the run prints'
+  by_hand: 'on the node: sudo netbird up <the line phase 9 printed> --enable-rosenpass=false, then resume with --from 11'
+  read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
+  failed_because: the interface is userspace, or enrolment hangs
+  then: re-run phase 6 and 9, then enrol again
+- verb: join-node
+  phase: 11
+  id: wireguard-again
+  kind: A
+  title: WireGuard kernel modules again
+  what: Runs the WireGuard kernel module play again now that wt0 exists; changed=0 proves the modules took.
+  why: The first pass could not check wt0; this one can.
+  changes: Nothing, when the first pass took.
+  verify: the play ends `failed=0` with `changed=0`
+  runs: ops/scripts/ansible-preflight.sh, ops/ansible/wireguard-kmod.yml
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 11 --to 11 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
+  failed_because: wt0 is not kernel WireGuard
+  then: re-run phase 6, enrol again, then resume with --from 11
+- verb: join-node
+  phase: 12
+  id: mesh-ip
+  kind: GATE
+  title: mesh_ip and the mesh inventory filled in one change
+  what: 'Runs the config preflight without the placeholder allowance and checks that no TBD_ remains in the group''s vars or the mesh inventory: the node''s mesh IP is recorded in both, in one change.'
+  why: Mesh IPs are not stable across re-enrolment; a value recorded in one place and not the other sends plays to the wrong address.
+  changes: Nothing.
+  verify: the preflight passes and no TBD_ is left
+  runs: ops/scripts/standup-config-preflight.py
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 12 --to 12 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
+  failed_because: a TBD_ remains, or the mesh IP is in one file only
+  then: record the mesh IP in both, then resume with --from 12
+- verb: join-node
+  phase: 13
+  id: converge
+  kind: A + GATE + SKIP
+  title: converge the node's class
+  what: Converges what the node's class runs. A core node at the founder site runs site-bootstrap. A joiner's core node bootstraps in three passes (without Spock, then a data-only seed from the founder, then with Spock), deploys Ory, wires the founder-side mirror and its own Spock wiring again, then turns on signal federation with its founder behind a gate, or prints a SKIP when the site declares it off. An obs node gets its baseline and LUKS, its utility half (Forgejo; skipped on a joiner, whose state of record stays with the founder) and its monitoring stack. A breakglass or network-jump node gets its own play.
+  why: The node is part of the site only once its class's services run and, for a joiner's core node, replicate both ways with the founder.
+  changes: The node's services; on a joiner, the founder's Spock subscriptions, its signal-federation proxy and its relays' backends.
+  verify: each play ends `failed=0`; the signal-federation gate proves an offer forwarded and delivered both ways
+  runs: ops/scripts/ansible-preflight.sh, ops/ansible/site-bootstrap.yml, ops/ansible/site-bootstrap-for.yml, ops/ansible/ory-deploy.yml, ops/ansible/site-seed-from-peer.yml, ops/ansible/spock-mesh-wire.yml, ops/scripts/signal-federation-check.py, ops/ansible/signal-federation-transport.yml, ops/ansible/traefik-acme.yml, ops/ansible/site-rathole-client.yml, ops/ansible/inventory/generate-relays.sh, ops/ansible/relay-ingress-add-site.yml, ops/ansible/signal-federation-verify.yml, ops/ansible/mgmt-host-baseline.yml, ops/ansible/tang-server.yml, ops/ansible/mgmt-host-luks.yml, ops/ansible/utility-host-bootstrap.yml (an assembled tree's play; goatcore has none), ops/ansible/obs-host-bootstrap.yml, ops/ansible/breakglass-nodes.yml, ops/ansible/herd-connector-deploy.yml (an assembled tree's play; goatcore has none)
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 13 --to 13 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#what-join-node-runs-for-a-joiners-core-machine
+  failed_because: a pass of the bootstrap, the seed or the Spock wiring failed, or the signal-federation gate found the repository incomplete
+  then: read the play's output, fix it; every pass is idempotent, so resume with --from 13
+- verb: join-node
+  phase: 14
+  id: unmask-apt
+  kind: T
+  title: unmask the apt timers
+  what: Unmasks the apt-daily timers on the node over ssh, now that the node is finished.
+  why: Phase 4 masked them only for the run; a finished node takes its updates again.
+  changes: The node's apt-daily timers, unmasked.
+  verify: the ssh command exits 0
+  runs: 'nothing from the repository: an ssh command on the node (systemctl unmask)'
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 14 --to 14 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
+  failed_because: the node is not reachable over ssh
+  then: check the address and the key, then resume with --from 14
+- verb: join-node
+  phase: 15
+  id: proven
+  kind: GATE
+  title: done means proven
+  what: Derives the acceptance values and runs every eligible acceptance row; every applicable row must PASS, never UNKNOWN. A joiner adds the replicating-both-ways evidence.
+  why: A node is joined when its acceptance rows are green, not when its plays exit 0.
+  changes: Nothing on a host; it writes the acceptance values.
+  verify: '`run-acceptance.py` reports every applicable row PASS'
+  runs: ops/validation/generate-values.py, ops/validation/run-acceptance.py
+  by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 15 --to 15 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
+  read: docs/tutorials/02-first-federated-node.md#done-means-proven-not-deployed
+  failed_because: an applicable row is not PASS
+  then: read the report for the failing rows, fix them, then resume with --from 15
