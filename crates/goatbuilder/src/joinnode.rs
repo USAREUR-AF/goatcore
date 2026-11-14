@@ -1089,6 +1089,20 @@ mod tests {
         assert!(e.to_string().contains("ops/enrollment/manifests/zagros-b-certs.yaml"), "{e}");
     }
 
+    /// A site that declares its own audit-subscriber mints its leaf from the
+    /// manifest like any other service leaf, so the staging step stages it
+    /// too, into the directory the audit-subscriber role reads.
+    #[test]
+    fn a_manifests_audit_subscriber_leaf_is_staged() {
+        let t = joiner_checkout();
+        let m = t.path().join("ops/enrollment/manifests/zagros-b-certs.yaml");
+        std::fs::write(&m, "site_id: zagros-b\nout_dir: /s/zagros-b-leaves\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n  - name: audit-subscriber\n    cn: audit-subscriber\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let stage = ph.iter().find(|p| p.cmd.contains("stage-service-leaves.yml")).expect("a staging step");
+        assert!(stage.cmd.ends_with(r#"-e '{"leaf_only": ["fabric-health", "audit-subscriber"]}'"#), "{}", stage.cmd);
+        assert!(stage.label.contains("audit-subscriber"), "{}", stage.label);
+    }
+
     /// Gate row I3, the data router: a joiner's core node runs zenoh-deploy.yml
     /// for its site's core group, limited to the node, in phase 13 after the
     /// Spock wiring and signal federation (on, or declared off). A founder's
