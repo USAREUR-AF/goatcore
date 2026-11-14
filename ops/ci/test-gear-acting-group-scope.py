@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Negative tests for check-gear-acting-group-scope.py.
 
-A guard that cannot fail proves nothing. The load-bearing test here is
-test_catches_the_real_regression: it replays the tree as it stood at
-a09f17962^ and requires the guard to name NETWORK-JUMP. That defect was live
-on zagros-prod for two days, so this is not a synthetic case.
+A guard that cannot fail proves nothing. The load-bearing cases rebuild the
+real defect it was written for: NETWORK-JUMP declared only at goatnet altitude
+while a rule aims it at NETWORK gear in a scope. They use the real taxonomy
+and a small rule set for the goatnet that hosts its scope, because this
+repository's own intents hold only the hello-galaxy example, which hosts no
+scopes.
 """
 
 import copy
@@ -50,69 +52,67 @@ def stage(tax_text, intents_text):
     return d
 
 
-def git_show(rev, path):
-    return subprocess.run(
-        ["git", "-C", str(ROOT), "show", f"{rev}:{path}"],
-        capture_output=True, text=True, check=True,
-    ).stdout
-
-
 # --- 1. the repo as it stands -------------------------------------------------
 rc, out = run(ROOT)
 check("the tree as committed passes", rc == 0, out.strip().splitlines()[-1] if out else "")
 
-# --- 2. the real regression ---------------------------------------------------
-# a09f17962 is the NETWORK-JUMP fix; its parent is the broken state that shipped.
-try:
-    pre = stage(git_show("a09f17962^", TAXONOMY), git_show("a09f17962^", INTENTS))
-    rc, out = run(pre)
-    check(
-        "catches the real regression (NETWORK-JUMP at a09f17962^)",
-        rc == 1 and "NETWORK-JUMP" in out,
-        f"rc={rc}, NETWORK-JUMP in output: {'NETWORK-JUMP' in out}",
-    )
-    check(
-        "names the gear class it cannot reach",
-        "NETWORK" in out and "scope template" in out,
-    )
-except subprocess.CalledProcessError:
-    check("catches the real regression (NETWORK-JUMP at a09f17962^)", False,
-          "a09f17962 not in this clone — fetch full history")
-
-# --- 3. synthetic: pull a gear-acting group out of the scope template ---------
+# --- 2. the regression shape, on the real taxonomy ---------------------------
+# The guard was written for a real defect: NETWORK-JUMP declared only at goatnet
+# altitude while its rule aimed at NETWORK gear enrolled in scopes. The commit
+# that fixed it predates this repository's history, so the shape is rebuilt
+# here: the real taxonomy (whose ex-demo scope is hosted on zagros) with a
+# zagros rule from NETWORK-JUMP to NETWORK. This repository's own intents hold
+# only the hello-galaxy example, which hosts no scopes, so case 1 judges no
+# scope-hosting goatnet; these cases are what make the guard bite.
 tax = yaml.safe_load((ROOT / TAXONOMY).read_text())
-intents_text = (ROOT / INTENTS).read_text()
+host = sorted({s["host_site"] for s in tax["netbird_exercises"].values()})[0]
 
+
+def intents_with(*rules):
+    return yaml.safe_dump({"netbird_acl_matrix": {host: {"rules": list(rules)}}})
+
+
+JUMP_TO_NETWORK = {
+    "name": "network-jump -> network (shell)",
+    "sources": ["NETWORK-JUMP"],
+    "destinations": ["NETWORK"],
+    "protocol": "tcp",
+    "action": "accept",
+}
+
+rc, out = run(stage(yaml.safe_dump(tax), intents_with(JUMP_TO_NETWORK)))
+check("the fixed shape passes: NETWORK-JUMP is in the scope template", rc == 0, out.strip())
+
+# --- 3. pull NETWORK-JUMP out of the scope template: the defect returns -------
 mutated = copy.deepcopy(tax)
 mutated["netbird_exercise_template"]["groups"] = [
     g for g in mutated["netbird_exercise_template"]["groups"]
     if g["suffix"] != "NETWORK-JUMP"
 ]
-rc, out = run(stage(yaml.safe_dump(mutated), intents_text))
+rc, out = run(stage(yaml.safe_dump(mutated), intents_with(JUMP_TO_NETWORK)))
 check(
     "removing NETWORK-JUMP from the scope template fails the guard",
     rc == 1 and "NETWORK-JUMP" in out,
     f"rc={rc}",
 )
+check(
+    "names the gear class it cannot reach",
+    "aimed at gear class: NETWORK" in out and "scope template" in out,
+)
 
 # --- 4. a qualified cross-scope source is not a violation ---------------------
-mutated = copy.deepcopy(tax)
-gear_suffixes = {g["suffix"] for g in mutated["netbird_exercise_gear_template"]["groups"]}
-intents = yaml.safe_load(intents_text)
-for goatnet in ("zagros", "zagros-prod"):
-    sec = intents["netbird_acl_matrix"].get(goatnet)
-    if not sec or "rules" not in sec:
-        continue
-    sec["rules"] = list(sec["rules"]) + [{
-        "name": "synthetic qualified source",
-        "sources": ["HOST:INFRA"],
-        "destinations": [sorted(gear_suffixes)[0]],
-        "protocol": "tcp",
-        "action": "accept",
-    }]
-    break
-rc, out = run(stage(yaml.safe_dump(tax), yaml.safe_dump(intents)))
+gear = sorted(g["suffix"] for g in tax["netbird_exercise_gear_template"]["groups"])[0]
+qualified = {
+    "name": "synthetic qualified source",
+    "sources": ["HOST:INFRA"],
+    "destinations": [gear],
+    "protocol": "tcp",
+    "action": "accept",
+}
+rc, out = run(stage(yaml.safe_dump(mutated), intents_with(qualified)))
 check("an ADR 1124 qualified source (HOST:INFRA) is not flagged", rc == 0, out.strip())
+
+intents_text = (ROOT / INTENTS).read_text()
 
 # --- 5. malformed input is refused, not traced back ---------------------------
 rc, out = run(stage("netbird_acl_taxonomy: [", intents_text))

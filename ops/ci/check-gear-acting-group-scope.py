@@ -31,8 +31,9 @@ a gear-bearing class: each unqualified SOURCE must be declared in a scope-local
 group template. A source that exists ONLY in that goatnet's own group set is a
 failure -- it can never reach a scope's gear.
 
-Validated against history: run against a09f17962^ it reports NETWORK-JUMP ->
-NETWORK, the real regression. Run against main it reports nothing.
+Validated against the real regression (NETWORK-JUMP -> NETWORK, fixed before
+this repository's history begins): ops/ci/test-gear-acting-group-scope.py
+rebuilds that shape on the real taxonomy and requires this guard to name it.
 
 Exit 1 on a violation. Advisory findings are printed and do NOT fail.
 """
@@ -174,8 +175,7 @@ def main(argv):
             "a site toward the host substrate, never the reverse.\n\n"
             "Fix: declare the group in netbird_exercise_template.groups and give\n"
             "it its rules in netbird_exercise_rules_template, so every scope\n"
-            "inherits it. See a09f17962 (#2630) for the worked example and\n"
-            "docs/design/subordinate-scope-substrate.md §5.2c for why."
+            "inherits it."
         )
         return 1
 
