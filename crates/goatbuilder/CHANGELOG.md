@@ -278,6 +278,11 @@ the peering again; phase 11's play applies the baseline. `goatbuilder federate
 plan` shows such an edge as BLOCKED with GB-279. The role's default stays false,
 and a core host keeps the baseline opt-in.
 
+`goatbuilder federate allocate` no longer reads an edge group's file that
+holds only `goat_host_firewall_*` keys as a peering already running from
+hand-written files (GB-230), so the baseline can be set before the peering
+is allocated.
+
 #### Added: goatbuilder federate plan --accept host-allocation records a judged SKIP
 
 A deployment that declares its other peerings by hand may not be able to make

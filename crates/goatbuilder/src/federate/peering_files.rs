@@ -622,15 +622,19 @@ fn runs_by_hand(repo: &Path, edge_group: &str) -> bool {
 /// group's hand group_vars, else the hand inventory naming the group), or
 /// `None` when it does not.
 pub(super) fn hand_run_reason(repo: &Path, edge_group: &str) -> Option<String> {
-    // A file that only turns on goat-zenoh-edge's certificate install is a
-    // setting for the peering to come, not evidence that it runs.
+    // A file that only turns on goat-zenoh-edge's certificate install, or only
+    // sets the host firewall baseline the peering plays require on an edge
+    // (GB-279), is a setting for the peering to come, not evidence that it runs.
     let evidence: Vec<String> = hand_group_files(repo, edge_group)
         .iter()
         .filter(|f| {
             let keys = std::fs::read_to_string(f)
                 .map(|t| yaml_keys(&t))
                 .unwrap_or_default();
-            keys.is_empty() || keys.iter().any(|k| k != "goat_zenoh_edge_install_certs")
+            keys.is_empty()
+                || keys.iter().any(|k| {
+                    k != "goat_zenoh_edge_install_certs" && !k.starts_with("goat_host_firewall_")
+                })
         })
         .map(|f| f.strip_prefix(repo).unwrap_or(f).display().to_string())
         .collect();
