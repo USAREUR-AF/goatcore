@@ -8,7 +8,9 @@ acceptance with --endstate reads no row N/A for one of them".
 What a live joiner runs was measured on 2026-11-13 by reading the running
 containers on the management hosts of two joined sites of a standing goatnet.
 Both run the services in LIVE_JOINER_RUNS. Neither runs the NetBird dashboard,
-the portal, the id console, the onboarding engine or mesh DNS yet.
+the portal, the id console, the onboarding engine or mesh DNS yet. join-node
+now runs mesh DNS at a joining site (gate row I3, ADR 1235), so mesh DNS is no
+longer a gap (BUILT_AT_A_JOINER); the other four are.
 
 Every site is declared fully island-mode capable (ADR 1165, gate group I), so
 the end state declares every one of those present at every site that
@@ -58,14 +60,16 @@ LIVE_JOINER_RUNS = (
 )
 # Run by neither joiner yet: each a gap, with the gate row that closes it. The
 # admin surfaces wait for the multi-writer schema (I1) and their write class's
-# switch (I4); mesh DNS waits for join-node to deploy it (I3).
+# switch (I4).
 GAPS_AT_A_JOINER = {
     "netbird-dashboard": "I1, I4",
     "portal": "I1, I4",
     "id-admin-console": "I1, I4",
     "onboard-runner": "I1, I4",
-    "mesh-coredns": "I3",
 }
+# Absent on both joiners in the read, and since built: join-node runs a joining
+# site's mesh DNS replica (gate row I3, ADR 1235), so it is present with no gap.
+BUILT_AT_A_JOINER = ("mesh-coredns",)
 # The services a site cut off from the others needs, declared at every site.
 EVERY_SITE = ("traefik", "netbird-mgmt", "signal-server", "ory", "kratos-selfservice-ui")
 
@@ -145,6 +149,15 @@ class AJoinerRunsTheReplicationCore(unittest.TestCase):
             for wrong in ("founder-only", "single-homed", "by design"):
                 self.assertNotIn(wrong, r["presence"]["why"], r["service"])
 
+    def test_what_join_node_now_builds_is_present_with_no_gap(self):
+        s = self.model["services"]
+        for n in BUILT_AT_A_JOINER:
+            self.assertIs(s[n]["present"], True, n)
+            self.assertIsNone(s[n]["gap"], f"{n}: join-node builds it at a joining site")
+        cat = ENDSTATE.catalog(ROOT)["services"]
+        for n in BUILT_AT_A_JOINER:
+            self.assertNotIn("gap", cat[n], f"{n}: no gap mark in the catalog")
+
     def test_acceptance_reads_a_gap_as_a_gap_never_na(self):
         path = Path(self.tmp.name) / "endstate.json"
         path.write_text(json.dumps(self.model))
@@ -162,7 +175,7 @@ class AJoinerRunsTheReplicationCore(unittest.TestCase):
         for n, spec in cat.items():
             self.assertNotIn("founder", spec.get("present") or {}, f"{n}: founder-only is not a presence rule")
             self.assertNotIn("admin_surface", spec, n)
-        for n in list(EVERY_SITE) + list(GAPS_AT_A_JOINER):
+        for n in list(EVERY_SITE) + list(GAPS_AT_A_JOINER) + list(BUILT_AT_A_JOINER):
             self.assertTrue(
                 (cat[n].get("present") or {}).get("every_site"),
                 f"{n} is declared at every site that replicates",
@@ -177,7 +190,7 @@ class AJoinerRunsTheReplicationCore(unittest.TestCase):
 
     def test_a_founder_is_graded_the_same_way(self):
         m = ENDSTATE.model("zagros", self.root)["services"]
-        for n in list(EVERY_SITE) + list(GAPS_AT_A_JOINER):
+        for n in list(EVERY_SITE) + list(GAPS_AT_A_JOINER) + list(BUILT_AT_A_JOINER):
             self.assertIs(m[n]["present"], True, n)
             self.assertIsNone(m[n]["gap"], f"{n}: a founder that runs it has no gap")
 

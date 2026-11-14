@@ -115,9 +115,8 @@ fn text(o: &Output) -> String {
     )
 }
 
-/// The gap text the catalog gives an admin surface at a joining site, and mesh DNS.
+/// The gap text the catalog gives an admin surface at a joining site.
 const ADMIN_GAP: &str = "declared, not yet built at this site: an admin surface cannot be turned on at a second site before its store is at the multi-writer schema and its write class is switched on there (gate row I1, I4)";
-const MESH_DNS_GAP: &str = "declared, not yet built at this site: join-node does not deploy mesh DNS yet, and a site cut off from the others needs its own resolver (gate row I3)";
 
 #[test]
 fn a_joiners_dry_run_lists_what_it_does_not_run_with_the_models_reasons() {
@@ -165,7 +164,7 @@ fn a_joiners_dry_run_lists_what_it_does_not_run_with_the_models_reasons() {
             .find(|d| d.starts_with(&format!("{svc} \u{2014} ")))
             .unwrap_or_else(|| panic!("{svc} not listed: {listed:#?}"))
     };
-    // Each admin surface, and mesh DNS, is a named gap with its gate row.
+    // Each admin surface is a named gap with its gate row.
     assert_eq!(
         line("netbird-dashboard"),
         format!("netbird-dashboard \u{2014} {ADMIN_GAP}")
@@ -174,9 +173,12 @@ fn a_joiners_dry_run_lists_what_it_does_not_run_with_the_models_reasons() {
         line("id-admin-console"),
         format!("id-admin-console \u{2014} {ADMIN_GAP}")
     );
-    assert_eq!(
-        line("mesh-coredns"),
-        format!("mesh-coredns \u{2014} {MESH_DNS_GAP}")
+    // join-node runs mesh DNS at a joining site (gate row I3, ADR 1235): no gap.
+    assert!(
+        !listed
+            .iter()
+            .any(|d| d.starts_with("mesh-coredns \u{2014} ")),
+        "{listed:#?}"
     );
     // Nothing reads as a design to leave a service out.
     for d in &listed {
