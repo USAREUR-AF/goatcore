@@ -153,16 +153,12 @@ services:
     surfaces: [zenoh-router]
     assay: [zenoh-router, goat-zenoh]
   # Declared at every site: a site cut off from the others needs its own resolver.
-  # The 2026-11-13 read of two joined sites of a standing goatnet found no
-  # mesh-dns container on either joiner: a defect, closed when join-node deploys
-  # it (gate row I3).
+  # join-node runs it at a joining site's core node, as a replica of the
+  # goatnet's zone (phase 13, ADR 1235), so it carries no gap (gate row I3).
   mesh-coredns:
     class: mgmt
     play: goat-coredns.yml
     present: {every_site: true}
-    gap:
-      row: I3
-      why: join-node does not deploy mesh DNS yet, and a site cut off from the others needs its own resolver
     containers: [mesh-dns]
     ledger: mesh-coredns
     mesh: {reach: [udp/53, tcp/53, udp/5353], from: [PLATFORM-ADMIN, OBSERVER]}

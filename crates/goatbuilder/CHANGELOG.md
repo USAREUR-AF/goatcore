@@ -25,6 +25,13 @@ service owns as `SKIPPED` with the same text instead of N/A. `goatbuilder
 join-node` lists the gaps under "What <site> does not run yet", from the
 catalog, before the services the site turns off (ADR 1233, #671).
 
+#### Changed: mesh DNS is no longer a gap at a joining site
+
+`goatbuilder join-node` runs a joining site's own mesh DNS replica, so the
+end state no longer grades mesh DNS `GAP` at a joining site and
+`join-node`'s list of what the site does not run yet no longer names it. The
+admin surfaces stay gaps, with gate rows I1 and I4 (ADR 1233, ADR 1235).
+
 #### "Added: join-node runs mesh DNS at a joining site"
 
 A site that joins a goatnet now runs its own mesh DNS, so it still resolves

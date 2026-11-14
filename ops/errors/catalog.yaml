@@ -1462,7 +1462,7 @@ entries:
       - the limit assumes the mgmt-<site>-01 host naming and this site names its hosts differently
       - the step installs a service this joining site does not run yet, which its end state names as a gap with the gate row that closes it
     fixes:
-      - "goatbuilder endstate <site> names each gap with its gate row (I1, I4 for an admin surface, I3 for mesh DNS); a gap is work still to build, not a reason to skip the step"
+      - "goatbuilder endstate <site> names each gap with its gate row (I1, I4 for an admin surface); a gap is work still to build, not a reason to skip the step"
       - "if it should, fix the limit in goat-standup.sh and goatbuilder standup together"
     read: docs/design/goatbuilder-speed.md
     matches:

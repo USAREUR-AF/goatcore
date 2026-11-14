@@ -33,7 +33,7 @@ This ADR amends ADR 1206 item 2 only. ADR 1206's other items and its body are un
 2. **No row is founder-only.** The catalog has no `founder` presence rule and no mark that means "present at the founder". `endstate.py check` refuses a row that declares either.
 3. **What a joining site does not run yet is a named gap.** A row the end state declares at every site but that a joining site does not run yet carries `gap: {row, why}` in the catalog. At a joining site it is graded `GAP`: "declared, not yet built at this site: <why> (gate row <row>)". It is never N/A and never "not run here by design". The site's own flag turning the service on closes the gap; a pin, which only names a version, does not. The gaps today:
    - **The admin surfaces** (netbird-dashboard, portal, id-admin-console, onboard-runner), gate rows **I1** and **I4**: an admin surface cannot be turned on at a second site before its store is at the multi-writer schema (I1) and its write class is switched on there (I4).
-   - **Mesh DNS** (mesh-coredns), gate row **I3**: join-node does not deploy mesh DNS yet, and a site cut off from the others needs its own resolver. Its absence on both joined sites read above is a defect, closed when `join-node` deploys it.
+   - Mesh DNS (mesh-coredns), absent on both joined sites in the read above, is no longer a gap: `join-node` runs a joining site's own mesh DNS replica (gate row I3, ADR 1235), so its gap mark was removed.
 4. **The gap reaches every reader from the catalog.** The end-state grade, acceptance (a row a gap service owns reads `SKIPPED` with the gap's text, not N/A), and `join-node`'s list of what the site does not run yet all print the catalog's text and gate row. Nothing in code names the gaps.
 5. **A service a site turns off is still a declared absence.** An add-on a site's flag turns off (`isitup_enabled: false`) stays N/A with its flag as the reason. That is the site's own declaration, not a gap.
 6. **The gate.** The change lands with a test holding: the model of a joiner fixture marks present every service a live joiner runs, and acceptance with `--endstate` reads no row N/A for one of them; every gap is graded `GAP` with its gate row, in the grade, in acceptance and in `join-node`'s list; and no catalog row is founder-only.
@@ -59,6 +59,5 @@ The configuration baseline (CM-2, CM-8) describes what each site must run to ope
 
 ## Trigger conditions for revisit
 
-- `join-node` deploys mesh DNS (I3): its gap mark is removed.
 - An admin surface's store reaches the multi-writer schema and its class is switched on (I1, I4): its gap mark is removed, and its flag turns it on at every site.
 - A live read finds a joined site running a service the catalog marks as a gap there, or not running one it declares built.
