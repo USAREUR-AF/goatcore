@@ -27,6 +27,14 @@ const DEBIAN_KERNEL: &str = "6.12.0-cloud-arm64";
 // Two words, as a public key file holds them; not a key.
 const PUBKEY: &str = "stand-in-key-type stand-in-key-material";
 
+/// The file a shell would run for `tool` on `path`: the first one of that name
+/// in the path's directories.
+fn host_tool(path: &std::ffi::OsStr, tool: &str) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .map(|d| d.join(tool))
+        .find(|p| p.is_file())
+}
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -206,9 +214,7 @@ fn site(prepared: bool) -> Site {
         "find", "sort", "head", "tail", "seq", "sleep", "sync", "wc", "tr", "df", "cksum",
         "python3", "test", "true",
     ] {
-        let real = std::env::split_paths(&host_path)
-            .map(|d| d.join(tool))
-            .find(|p| p.is_file())
+        let real = host_tool(std::ffi::OsStr::new(&host_path), tool)
             .unwrap_or_else(|| panic!("this machine has no {tool}"));
         executable(
             &vmhost.join(tool),
@@ -950,4 +956,23 @@ fn the_phone_class_and_the_usb_transport_go_together() {
         assert!(all.contains(names), "{args:?}: {all}");
         assert!(s.log().is_empty(), "{args:?} ran something:\n{}", s.log());
     }
+}
+
+/// A shim passes each general tool to the file a shell would run, so a
+/// non-executable file of the same name earlier on PATH (a 0644 `env` that an
+/// installer left in a home directory) is passed over, as the shell does, and
+/// the executable one after it is taken.
+#[test]
+fn a_shim_takes_the_executable_tool_and_not_an_earlier_file_of_its_name() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().unwrap();
+    let (plain, real) = (t.path().join("first"), t.path().join("second"));
+    std::fs::create_dir_all(&plain).unwrap();
+    std::fs::create_dir_all(&real).unwrap();
+    std::fs::write(plain.join("env"), "# a shell snippet, not a program\n").unwrap();
+    std::fs::set_permissions(plain.join("env"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    executable(&real.join("env"), "#!/bin/sh\nexit 0\n");
+    let path = std::env::join_paths([&plain, &real]).unwrap();
+    assert_eq!(host_tool(&path, "env"), Some(real.join("env")));
+    assert_eq!(host_tool(&path, "no-such-tool"), None);
 }
