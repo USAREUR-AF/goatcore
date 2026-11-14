@@ -88,7 +88,7 @@
           that no longer declares it before it is deleted. {{ goat_zenoh_config_path }}
           (written {{ _written }} UTC) {{ 'still names it' if ('sovereign_from_' ~ goat_zenoh_drop_partner_store ~ '"') in (_zdps_cfg.content | b64decode) else 'does not name it' }};
           {{ zenoh_stack }}-router answers '{{ _zdps_router.stdout | default('') | trim }}'
-          (running, started). Run the back-out again once the router has restarted.
+          (running, started). Run the back-out again once the router has restarted (GB-270).
         quiet: true
 
     - name: Drop a partner's store | delete it whole

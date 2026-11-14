@@ -868,6 +868,11 @@ gb-227-title = the core still admits the partner through its own configuration
 gb-227-what = The core router was configured by roles/goat-zenoh from zenoh_sovereign_peerings, which declares the partner's subject and grants as sovereign-<partner> ids. The back-out takes the partner's entry out of group_vars/<core router group>/peerings.yml, the file admission writes it into, and runs the role's play, which restarts the router without the partner's store and then deletes that store whole (ADR 1234). After the back-out the core still declares the partner: the entry is in a file admission does not write, the back-out could not rewrite peerings.yml (GB-237), the core was admitted through the deployment's own route (FED_CORE_*), or the role's play failed. The partner has no edge left to reach the core through.
 gb-227-cause-1 = the core admits the peering from a zenoh_sovereign_peerings entry the back-out did not write, or could not take out
 gb-227-cause-2 = the role's play failed after the entry was taken out, and the entry was put back
+gb-270-title = a backed-out partner's store was kept because the router does not yet run without it
+gb-270-what = On a goat-zenoh role core, the back-out took the partner out of zenoh_sovereign_peerings and ran the role's play with goat_zenoh_drop_partner_store=<partner>, which deletes <storage path>/sovereign_from_<partner> only after the router runs without it (ADR 1234). The play did not get there: the partner is still declared, the live configuration still names the store, the router is not running, or it started before that configuration was written. The store was kept, and the back-out put the partner's entry back in peerings.yml, so running it again repeats the step.
+gb-270-cause-1 = the role's play failed before or during the router's restart
+gb-270-cause-2 = the router did not restart after the configuration without the store was written
+gb-270-cause-3 = the partner is declared in another of the core router group's files
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened

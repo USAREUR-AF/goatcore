@@ -1924,15 +1924,17 @@ pub fn backout_with(
                     let cmd = drop_cmd(role, check);
                     checks.push(row("cmd", true, cmd.clone(), None));
                     if !exec(repo, &cmd)? {
-                        done = Err(format!(
-                            "the role's play on [{}] {}",
-                            role.group,
-                            if check {
-                                "failed its dry run"
-                            } else {
-                                "did not restart the router without the partner's store and drop it"
-                            }
-                        ));
+                        done = Err(if check {
+                            format!(
+                                "the role's play on [{}] failed its dry run (GB-224)",
+                                role.group
+                            )
+                        } else {
+                            format!(
+                                "the role's play on [{}] did not restart the router without sovereign_from_{} and drop it; the store was kept (GB-270)",
+                                role.group, t.partner
+                            )
+                        });
                         break;
                     }
                 }
@@ -1953,7 +1955,7 @@ pub fn backout_with(
                     checks.push(row(
                         "core store",
                         false,
-                        format!("{e}; {back} (GB-224)"),
+                        format!("{e}; {back}"),
                         Some(format!(
                             "read the play output above, then goatbuilder federate backout {}",
                             t.partner
@@ -2675,7 +2677,7 @@ mod tests {
     fn role_leaf_back_out(
         prior: Option<&[u8]>,
     ) -> (Vec<String>, PathBuf, PathBuf, Report, tempfile::TempDir) {
-        role_back_out(prior, None)
+        role_back_out(prior, None, false)
     }
 
     /// As `role_leaf_back_out`, with the role group's `peerings.yml` holding
@@ -2683,6 +2685,7 @@ mod tests {
     fn role_back_out(
         prior: Option<&[u8]>,
         peerings: Option<&str>,
+        drop_fails: bool,
     ) -> (Vec<String>, PathBuf, PathBuf, Report, tempfile::TempDir) {
         let d = tempfile::tempdir().unwrap();
         let (repo, work) = stand_in(d.path());
@@ -2745,7 +2748,9 @@ mod tests {
                 r#"{"host":"core-x","peering":"hello-ally","rows":[]}"#,
             )
             .unwrap();
-            Ok(true)
+            Ok(!(drop_fails
+                && cmd.contains("goat_zenoh_drop_partner_store")
+                && !cmd.contains("--check")))
         };
         let o = Options {
             partner: "hello-ally",
@@ -2840,7 +2845,7 @@ mod tests {
         // role's play (dry run, then deploy), which restarts the router without
         // the partner's store and only then deletes that store's directory.
         let before = "# Each partner this core admits.\nzenoh_sovereign_peerings:\n- sovereign: hello-ally\n  cn: fed.hello-ally.zagros.01\n- sovereign: xab\n  cn: fed.xab.zagros.01\nzenoh_from_retention_days: 7 # kept as written\n";
-        let (ran, _cert, _key, r, d) = role_back_out(Some(b"THE-LEAF-BEFORE"), Some(before));
+        let (ran, _cert, _key, r, d) = role_back_out(Some(b"THE-LEAF-BEFORE"), Some(before), false);
         let file = d
             .path()
             .join("repo/ops/ansible/group_vars/core_router/peerings.yml");
@@ -2883,7 +2888,7 @@ mod tests {
         // The last partner: the list is left empty, not dropped.
         let only =
             "zenoh_sovereign_peerings:\n- sovereign: hello-ally\n  cn: fed.hello-ally.zagros.01\n";
-        let (_ran, _c, _k, r, d) = role_back_out(Some(b"THE-LEAF-BEFORE"), Some(only));
+        let (_ran, _c, _k, r, d) = role_back_out(Some(b"THE-LEAF-BEFORE"), Some(only), false);
         assert_eq!(
             std::fs::read_to_string(
                 d.path()
@@ -2897,10 +2902,34 @@ mod tests {
     }
 
     #[test]
+    fn a_store_drop_that_fails_puts_the_partner_back_in_the_list() {
+        // The role kept the store (it refuses while the router still serves
+        // it): the list is as it was, so running the back-out again repeats
+        // the step, and the run is not converged, naming GB-270.
+        let before =
+            "zenoh_sovereign_peerings:\n- sovereign: hello-ally\n  cn: fed.hello-ally.zagros.01\n";
+        let (_ran, _c, _k, r, d) = role_back_out(Some(b"THE-LEAF-BEFORE"), Some(before), true);
+        assert_eq!(
+            std::fs::read_to_string(
+                d.path()
+                    .join("repo/ops/ansible/group_vars/core_router/peerings.yml")
+            )
+            .unwrap(),
+            before,
+            "{:?}",
+            r.checks
+        );
+        let row = r.checks.iter().find(|c| c.name == "core store").unwrap();
+        assert!(!row.ok && row.detail.contains("(GB-270)"), "{row:?}");
+        assert_eq!(r.exit, EXIT_NOT_CONVERGED, "{:?}", r.checks);
+    }
+
+    #[test]
     fn a_role_core_that_does_not_list_the_partner_runs_no_store_drop() {
         let (ran, _c, _k, r, _d) = role_back_out(
             Some(b"THE-LEAF-BEFORE"),
             Some("zenoh_sovereign_peerings:\n- sovereign: xab\n  cn: fed.xab.zagros.01\n"),
+            false,
         );
         assert!(
             ran.iter()

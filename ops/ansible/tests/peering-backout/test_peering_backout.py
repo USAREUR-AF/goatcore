@@ -770,6 +770,7 @@ class DropPartnerStore(unittest.TestCase):
     def test_a_router_started_before_the_configuration_keeps_the_store(self):
         r = self.play("2000-01-01T00:00:00.000000000Z")
         self.assertNotEqual(r.returncode, 0, r.stdout[-4000:])
+        self.assertIn("(GB-270)", r.stdout, "the refusal names its catalog code")
         self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xac/CURRENT"))
 
     def test_a_configuration_that_still_declares_the_store_keeps_it(self):
