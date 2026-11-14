@@ -15,7 +15,9 @@
 #                       ops/scripts/lib/source_of_record.py describes them:
 #                       {"commit": …} for a plain clone, {"goatcore": …,
 #                       "overlay": …, …} for an assembled tree. {} when the
-#                       tree is neither.
+#                       tree is neither. Only the entries that are one commit
+#                       each are kept: the stamp is served to every signed-in
+#                       reader of the page, and names commits, nothing else.
 
 - name: Require the row-list inputs
   ansible.builtin.assert:
@@ -81,9 +83,11 @@
   ansible.builtin.set_fact:
     isitup_rows_sha256: "{{ isitup_rows | to_json(sort_keys=True, separators=(',', ':'), ensure_ascii=True) | hash('sha256') }}"
     isitup_rows_source: >-
+      {{ _isitup_src | dict2items | selectattr('value', 'string') | items2dict }}
+  vars:
+    _isitup_src: >-
       {{ (_isitup_src_env | from_json) if (_isitup_src_env is match('[{].+[}]$'))
          else (lookup('ansible.builtin.pipe', _isitup_src_cmd) | default('{}', true) | from_json) }}
-  vars:
     _isitup_src_env: "{{ lookup('env', 'GOAT_DEPLOY_SOURCE_TREE') | trim }}"
     _isitup_tree: "{{ role_path }}/../../../.."
     _isitup_src_cmd: >-
