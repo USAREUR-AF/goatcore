@@ -203,7 +203,11 @@ impl Proc {
 /// (`stub`) or runs the real program of the same name from `GB_REC_PATH` (`pass`);
 /// a `pass` with no real program fails loudly. When the program and its first
 /// argument are `GB_REC_SAY_FOR`, or its arguments contain `GB_REC_SAY_WHEN`,
-/// it first prints `GB_REC_SAY` on stdout, as a child that talks would. Its own tools come from
+/// it first prints `GB_REC_SAY` on stdout, as a child that talks would; a
+/// command whose arguments contain `GB_REC_SAY_WHEN` then exits
+/// `GB_REC_SAY_EXIT`, when set, as a command that fails would. When the program
+/// and its first argument are `GB_REC_ANSWER_FOR`, it prints `GB_REC_ANSWER`
+/// (a second program's answer in the same run). Its own tools come from
 /// `GB_REC_PATH`, since the tool's PATH holds only recorders.
 const RECORDER: &str = r#"#!/bin/sh
 # goatbuilder C11 recorder (crates/goatbuilder/tests/legibility.rs)
@@ -226,6 +230,9 @@ printf '%s
 if [ -n "${GB_REC_SAY_FOR:-}" ] && [ "$name ${1:-}" = "$GB_REC_SAY_FOR" ]; then
   printf '%s
 ' "${GB_REC_SAY:?}"
+fi
+if [ -n "${GB_REC_ANSWER_FOR:-}" ] && [ "$name ${1:-}" = "$GB_REC_ANSWER_FOR" ]; then
+  printf '%s\n' "${GB_REC_ANSWER:?}"
 fi
 if [ -n "${GB_REC_SAY_WHEN:-}" ]; then
   case " $* " in *"$GB_REC_SAY_WHEN"*)
@@ -1115,6 +1122,163 @@ fn f5_a_failed_standup_phase_carries_its_known_error_s_code_and_fix() {
     let p = goat_errors::phases::explain_phase("standup", &phase.to_string())
         .unwrap_or_else(|| panic!("standup phase {phase} has no phase-catalog entry"));
     assert!(d.contains(&format!("By hand: {}", p.by_hand)), "{d}");
+}
+
+/// The ssh refusal the F5 standup tests make a command print: ansible's line
+/// for a host that refuses our key.
+const SSH_REFUSED: &str = "fatal: [mgmt-alpha-01]: UNREACHABLE! => {\"msg\": \"Failed to connect to the host via ssh: goat@192.0.2.10: Permission denied (publickey).\"}";
+
+/// The one `interpreted` row of a standup run in which one step failed with
+/// [`SSH_REFUSED`]: it names X-SSH-001 with its fix, the log of that step's
+/// output, which holds the error, and the command by hand that standup's phase
+/// catalog gives for `key`. Returns the log's path.
+fn the_step_s_ssh_refusal_is_interpreted(out: &Output, key: &str) -> String {
+    assert!(!out.status.success(), "a step fails: {}", text(out));
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(out)));
+    let interpreted: Vec<String> = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"] == "interpreted")
+        .map(|c| c["detail"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(
+        interpreted.len(),
+        1,
+        "{key} failed with a known error and carries no interpreted row: {}",
+        text(out)
+    );
+    let d = &interpreted[0];
+    let e = goat_errors::explain("X-SSH-001").unwrap();
+    assert!(d.starts_with(&format!("X-SSH-001: {}", e.title)), "{d}");
+    assert!(d.contains(&e.fixes[0]), "the fix: {d}");
+    assert!(d.contains("goatbuilder explain X-SSH-001"), "{d}");
+    let log = d
+        .split(". Its output: ")
+        .nth(1)
+        .and_then(|r| r.split(". By hand: ").next())
+        .unwrap_or_else(|| panic!("no log path: {d}"));
+    let logged = std::fs::read_to_string(log).unwrap_or_else(|e| panic!("{log}: {e}"));
+    assert!(
+        logged.contains("Permission denied (publickey)"),
+        "{log}: {logged}"
+    );
+    let p = goat_errors::phases::explain_phase("standup", key)
+        .unwrap_or_else(|| panic!("standup step {key} has no phase-catalog entry"));
+    assert!(d.contains(&format!("By hand: {}", p.by_hand)), "{d}");
+    log.to_string()
+}
+
+/// F5 for standup's image pull, which runs beside phases 3 and 4: a pull that
+/// fails with a known error carries its code and fix, the pull's own log, and
+/// the image pull's command by hand.
+#[test]
+fn f5_a_failed_image_pull_carries_its_known_error_s_code_and_fix() {
+    let h = hollow();
+    let out = h
+        .command(&[
+            "-o",
+            "json",
+            "standup",
+            "-C",
+            h.repo(),
+            "dev",
+            "--site",
+            "alpha",
+            "--ack",
+            "A Person",
+            "--yes",
+        ])
+        .env("GB_REC_SAY_WHEN", "standup-image-pull.yml")
+        .env("GB_REC_SAY", SSH_REFUSED)
+        .env("GB_REC_SAY_EXIT", "4")
+        .output()
+        .unwrap();
+    let log = the_step_s_ssh_refusal_is_interpreted(&out, "image-pull");
+    assert!(log.ends_with("/standup-alpha-images.log"), "{log}");
+}
+
+/// F5 for a phase-12 step run in a wave (`--parallel`): the step that fails
+/// with a known error carries its code and fix, that step's own log, and phase
+/// 12's command by hand.
+#[test]
+fn f5_a_failed_phase_12_wave_step_carries_its_known_error_s_code_and_fix() {
+    let h = hollow();
+    std::fs::copy(
+        repo().join("ops/goatbuilder/standup-dag.yaml"),
+        h.repo.join("ops/goatbuilder/standup-dag.yaml"),
+    )
+    .unwrap();
+    let out = h
+        .command(&[
+            "-o",
+            "json",
+            "standup",
+            "-C",
+            h.repo(),
+            "dev",
+            "--site",
+            "alpha",
+            "--from",
+            "12",
+            "--parallel",
+            "--ack",
+            "A Person",
+            "--yes",
+        ])
+        .env("GB_REC_SAY_WHEN", "portal-deploy.yml")
+        .env("GB_REC_SAY", SSH_REFUSED)
+        .env("GB_REC_SAY_EXIT", "4")
+        .output()
+        .unwrap();
+    let log = the_step_s_ssh_refusal_is_interpreted(&out, "12");
+    assert!(log.ends_with("/standup-alpha-12-portal.log"), "{log}");
+}
+
+/// F5 for standup's observability leg on its own host, which runs beside the
+/// core phases and is joined before phase 12: a leg that fails with a known
+/// error carries its code and fix, the leg's own log, and the leg's command by
+/// hand. The hollow world gains an obs host for it.
+#[test]
+fn f5_a_failed_observability_leg_carries_its_known_error_s_code_and_fix() {
+    let h = hollow();
+    let a = h.repo.join("ops/ansible");
+    exe(
+        &a.join("group_vars/alpha_hosts/vars.yml"),
+        "has_obs_host: true\n",
+    );
+    exe(&a.join("group_vars/alpha_obs_hosts/vars.yml"), "{}\n");
+    exe(
+        &a.join("utility-host-bootstrap.yml"),
+        "- hosts: all\n  tasks: []\n",
+    );
+    let inventory = format!("python3 {}/ops/scripts/inventory-hosts.py", h.repo());
+    let out = h
+        .command(&[
+            "-o",
+            "json",
+            "standup",
+            "-C",
+            h.repo(),
+            "dev",
+            "--site",
+            "alpha",
+            "--from",
+            "12",
+            "--ack",
+            "A Person",
+            "--yes",
+        ])
+        .env("GB_REC_ANSWER_FOR", &inventory)
+        .env("GB_REC_ANSWER", "obs-alpha-01")
+        .env("GB_REC_SAY_WHEN", "utility-host-bootstrap.yml")
+        .env("GB_REC_SAY", SSH_REFUSED)
+        .env("GB_REC_SAY_EXIT", "4")
+        .output()
+        .unwrap();
+    let log = the_step_s_ssh_refusal_is_interpreted(&out, "observability-leg-host");
+    assert!(log.ends_with("/standup-alpha-obs-host.log"), "{log}");
 }
 
 #[test]

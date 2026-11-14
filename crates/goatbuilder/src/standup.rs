@@ -803,6 +803,8 @@ fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks
                 for l in tail {
                     checks.push(row("log", format!("| {l}")));
                 }
+                // F5: a wave step is recorded under phase 12, with its own log.
+                checks.extend(interpreted("12", Some(&log)));
                 failed.push(q[i].id.clone());
             }
         }
@@ -825,6 +827,18 @@ fn envrc_export(repo: &Path, name: &str) -> Option<String> {
     let v = line.strip_prefix(&format!("export {name}="))?;
     let v = v.trim_matches('"').trim_matches('\'').to_string();
     (!v.is_empty()).then_some(v)
+}
+
+/// F5 (docs/design/goatbuilder-legibility.md, step 7): the `interpreted` row
+/// for a failed step, its output in `log` matched against the error catalog
+/// (explain_phase::failed_phase), as federate does. `key` is the step's key in
+/// standup's phase catalog, the one the runner recorded it under: a phase
+/// number, `image-pull` or `observability-leg-<leg>`. None when the catalog has
+/// no such step.
+fn interpreted(key: &str, log: Option<&str>) -> Option<Check> {
+    let output = log.and_then(|l| std::fs::read_to_string(l).ok()).unwrap_or_default();
+    let f = crate::explain_phase::failed_phase("standup", key, &output, log)?;
+    Some(Check { name: "interpreted".into(), ok: false, detail: f.detail(), fix: Some(f.fix.clone()) })
 }
 
 fn row(name: &str, detail: String) -> Check {
@@ -1087,6 +1101,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
                     checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Image pull FAILED — exit {rc} (full log: {log}). Phase {at} and every later phase run these images, so the run stops here; the log names each image that could not be pulled."), fix: Some(format!("a private package needs GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it); a pin naming an image the registry no longer has needs a new pin in ops/pins/. Then resume: {resume} --from {at}{prof}")) });
+                    checks.extend(interpreted("image-pull", Some(&log)));
                     exit = EXIT_REFUSED;
                     break 'run;
                 }
@@ -1106,6 +1121,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
                     checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Observability leg \"{leg}\" FAILED — exit {rc} (full log: {log}). The core phases up to {at} have run; phase {at} needs this leg, so the run stops here."), fix: Some(format!("fix the cause (the log names it; obs_scrape_targets unset is the usual one for the stack leg), then: {resume} --obs-only && {resume} --from {at}")) });
+                    checks.extend(interpreted(&format!("observability-leg-{leg}"), Some(&log)));
                     exit = EXIT_REFUSED;
                     break 'run;
                 }
@@ -1153,10 +1169,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                         .rev()
                         .find(|c| c.phase.as_deref() == Some(phase_id.as_str()) && c.log.is_some())
                         .and_then(|c| c.log);
-                    let output = log.as_deref().and_then(|l| std::fs::read_to_string(l).ok()).unwrap_or_default();
-                    if let Some(f) = crate::explain_phase::failed_phase("standup", &phase_id, &output, log.as_deref()) {
-                        checks.push(Check { name: "interpreted".into(), ok: false, detail: f.detail(), fix: Some(f.fix.clone()) });
-                    }
+                    checks.extend(interpreted(&phase_id, log.as_deref()));
                     exit = EXIT_REFUSED;
                     break 'run;
                 }
