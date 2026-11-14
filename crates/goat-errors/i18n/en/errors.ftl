@@ -934,6 +934,12 @@ gb-293-title = the back-out cannot tell what our core router's leaf held before 
 gb-293-what = Our core router's leaf (its certificate and key) holds the leaf this peering's admission placed, and no admission run in the peering's working folder recorded what was there before (both peerings admitted by hand, say), so the back-out can neither put it back nor remove it. No other peering is set up from this machine (no working folder beside this one holds an agreement); when one is, the leaf is kept for it and the back-out goes on. Nothing was changed on any host.
 gb-293-cause-1 = the leaf was placed by hand, not by goatbuilder federate admission
 gb-293-cause-2 = the admission folder of the peering's working folder was removed or moved
+gb-295-title = a cut-off site's access-rule cutover would have created or deleted a policy
+gb-295-what = ops/ansible/netbird-acl-cutover.yml ran with cut_off=true, for a site cut off from the others. While cut off, a site may only update the access-rule policies it already has, by their ids: NetBird assigns a created policy's id, so two cut-off sites that each create the same rule leave two policies after the heal, and a delete at one site is undone or doubled by the other. This run would have created or deleted at least one policy (the message names each policy it would have created and each id it would have deleted), so it stopped before it wrote anything, updates included.
+gb-295-cause-1 = the access-rule matrix names a rule the site has no policy for yet
+gb-295-cause-2 = reap_orphans=true, and the site holds a generated policy the matrix no longer names
+gb-295-cause-3 = enforce with the Default policy action delete
+gb-295-cause-4 = the teardown play, which only deletes
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened
