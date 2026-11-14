@@ -7,7 +7,7 @@
 # below is the static scan of what the tier invokes: hermetic.sh, overlay.py,
 # the stubs, the drivers it runs (rc.sh, deploy-component.sh, rollback.sh,
 # fastlane.sh, pr-land.sh, ansible-preflight.sh), the plays and roles it applies,
-# the two Dockerfiles, and the Go tools the overlay builds (ca-init, intent-sign).
+# the Dockerfiles (the canary and the host, Ubuntu and Debian), and the Go tools the overlay builds (ca-init, intent-sign).
 #
 # usage: ops/e2e/prereqs.sh [--no-hosts]     exit 0 ready; 1 something is missing (all named)
 set -uo pipefail
