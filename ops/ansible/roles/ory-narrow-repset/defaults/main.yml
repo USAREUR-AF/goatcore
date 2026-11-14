@@ -146,3 +146,15 @@ ory_spock_preflight_wait_seconds: 60
 ory_spock_revocation_guard: true
 ory_spock_revocation_guard_sql:
   kratos: "{{ role_path }}/../../../postgres/spock/revocation-guard/kratos.sql"
+
+# Platform-admin ceiling (ADR 1205 D10): only the goatnet's hub makes a
+# platform admin. A PLATFORM-ADMIN grant in identities.metadata_public that a
+# site other than the hub made is refused at that site, and applied without the
+# group everywhere else and logged in goat_ceiling_refused. The guard reads the
+# hub's name from the server setting goat.hub_site, which this role writes with
+# ALTER SYSTEM from goatnet_hub_site (the hub's Spock node name, ADR 1205 D8),
+# never from a replicated row. With goatnet_hub_site unset the role removes the
+# setting, and the guard refuses every platform-admin grant at this site until
+# the hub is named. Installed after the revocation guard.
+ory_spock_platform_admin_ceiling: true
+ory_spock_platform_admin_ceiling_sql: "{{ role_path }}/../../../postgres/spock/hub-authority/kratos.sql"

@@ -218,7 +218,8 @@ wire() { # wire <db> <repset> [sql file ...]   (the files the roles install befo
 }
 wire netbird netbird_mgmt "$REPO/ops/postgres/spock/revocation-guard/netbird.sql" \
                           "$REPO/ops/postgres/spock/hub-authority/netbird.sql"
-wire kratos  ory_narrow   "$REPO/ops/postgres/spock/revocation-guard/kratos.sql"
+wire kratos  ory_narrow   "$REPO/ops/postgres/spock/revocation-guard/kratos.sql" \
+                          "$REPO/ops/postgres/spock/hub-authority/kratos.sql"
 wire hydra   ory_narrow
 ts_wait_replicating "${DBS[@]}"
 echo "  replicating: ${DBS[*]}"
