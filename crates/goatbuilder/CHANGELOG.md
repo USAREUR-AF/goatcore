@@ -264,7 +264,7 @@ major that first warned has had two minor releases since, and 90 days have
 passed since that release was tagged. A refusal names the date it compared
 against (today, UTC) and the date the 90 days end. Before 1.0 an entry
 excuses a removal at once, as before. goatbuilder-pr fetches the release tags
-for this check.
+for this check (#800).
 
 #### Added: the release check starts at the cut-off, and the tag's tree check decides a rerun
 
