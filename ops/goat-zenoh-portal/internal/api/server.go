@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -157,7 +158,14 @@ func (s *Server) Routes() http.Handler {
 	// handler carries its own precomputed encoding and is skipped by the
 	// already-has-Content-Encoding check. conditionalMiddleware sits inside
 	// gzip so its ETag covers the identity body (cache.go).
-	return s.middleware(gzipMiddleware(conditionalMiddleware(s.mux())))
+	return s.chain(s.mux())
+}
+
+// chain wraps h in the middleware stack Routes serves, outermost first. Split
+// out so tests can put a handler of their own behind the exact production
+// chain.
+func (s *Server) chain(h http.Handler) http.Handler {
+	return s.middleware(gzipMiddleware(conditionalMiddleware(h)))
 }
 
 // mux is the bare route table. Split from Routes so the OpenAPI contract test
@@ -537,46 +545,78 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			// writer, so an oversize body also closes the connection.
 			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 		}
+		ww := &statusWriter{ResponseWriter: w, status: http.StatusOK, principal: "anon", api: api}
+		// One deferred exit for every request, panic or not, so a panicking
+		// request still gets its access-log line (it used to skip it: the log
+		// call sat after ServeHTTP and the unwind jumped over it).
 		defer func() {
-			if rec := recover(); rec != nil {
+			rec := recover()
+			if rec == http.ErrAbortHandler {
+				// The handler aborted the response on purpose; net/http
+				// expects to see this panic to drop the connection quietly.
+				// Writing a 500 here would corrupt a half-sent body.
+				s.logAccess(r, ww, reqID, start)
+				panic(rec)
+			}
+			if rec != nil {
 				slog.Error("handler panic",
 					"request_id", reqID,
 					"path", r.URL.Path,
 					"method", r.Method,
 					"panic", rec,
+					"stack", string(debug.Stack()),
 				)
-				writeError(w, http.StatusInternalServerError, "panic", "internal server error")
+				if ww.wroteHeader {
+					// Status and part of the body are already on the wire, so
+					// there is no answering with a problem now. Returning
+					// normally would let net/http finish the response as if
+					// it had succeeded (a 200 with a cut-off body and nothing
+					// to say so). Record the failure, then abort the way
+					// net/http understands, so the connection is dropped and
+					// the client sees the truncation as an error. With gzip in
+					// the chain this is the common case: its deferred Close
+					// commits the buffered bytes during the unwind.
+					ww.status = http.StatusInternalServerError
+					s.logAccess(r, ww, reqID, start)
+					panic(http.ErrAbortHandler)
+				} else {
+					writeError(ww, http.StatusInternalServerError, "panic", "internal server error")
+				}
 			}
+			s.logAccess(r, ww, reqID, start)
 		}()
-		ww := &statusWriter{ResponseWriter: w, status: http.StatusOK, principal: "anon", api: api}
 		if api && !apiVersionAccepted(r.Header.Get("Api-Version")) {
 			// The supplied value is not echoed; the constant names what is served.
 			writeError(ww, http.StatusBadRequest, "unsupported_api_version",
 				"this portal serves Api-Version "+APIVersion)
-		} else {
-			next.ServeHTTP(ww, r)
+			return
 		}
-		// principal is stashed on ww by the auth layer (the context the
-		// auth middleware augments rides on the request handed *down* the
-		// chain, so the outer middleware's r never sees it — ww is the
-		// single object shared by pointer, so it does). F-207.
-		//
-		// A refusal is logged at Info so the instance a caller quotes from a
-		// problem body meets a line in a production log; a success stays at
-		// Debug.
-		level := slog.LevelDebug
-		if ww.status >= http.StatusBadRequest {
-			level = slog.LevelInfo
-		}
-		slog.Log(r.Context(), level, "access",
-			"request_id", reqID,
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", ww.status,
-			"principal", ww.principal,
-			"latency_ms", time.Since(start).Milliseconds(),
-		)
+		next.ServeHTTP(ww, r)
 	})
+}
+
+// logAccess writes the access-log line for a finished request.
+//
+// principal is stashed on ww by the auth layer (the context the auth
+// middleware augments rides on the request handed *down* the chain, so the
+// outer middleware's r never sees it — ww is the single object shared by
+// pointer, so it does). F-207.
+//
+// A refusal or failure is logged at Info so the instance a caller quotes from
+// a problem body meets a line in a production log; a success stays at Debug.
+func (s *Server) logAccess(r *http.Request, ww *statusWriter, reqID string, start time.Time) {
+	level := slog.LevelDebug
+	if ww.status >= http.StatusBadRequest {
+		level = slog.LevelInfo
+	}
+	slog.Log(r.Context(), level, "access",
+		"request_id", reqID,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"status", ww.status,
+		"principal", ww.principal,
+		"latency_ms", time.Since(start).Milliseconds(),
+	)
 }
 
 // scopedHandler is the operator-or-matching-vendor wrapper for routes
@@ -633,6 +673,9 @@ type statusWriter struct {
 	// replaced is set once that rewrite has happened; the stdlib body that
 	// follows is dropped.
 	replaced bool
+	// wroteHeader is set once a status has gone to the client (explicitly or
+	// by a first Write), so panic recovery knows whether it can still answer.
+	wroteHeader bool
 	// principal is the access-log label the auth layer stamps once it
 	// resolves a Principal ("operator:<actor>" / "vendor:<prefix>"); it
 	// stays "anon" for unauthenticated requests. F-207. ww is shared by
@@ -643,6 +686,13 @@ type statusWriter struct {
 }
 
 func (sw *statusWriter) WriteHeader(code int) {
+	if sw.wroteHeader {
+		return // net/http ignores a second WriteHeader; so does the log
+	}
+	if code >= 200 {
+		// 1xx is informational: the final status is still to come.
+		sw.wroteHeader = true
+	}
 	sw.status = code
 	if sw.api && stdlibErrorPage(sw.Header(), code) {
 		sw.replaced = true
@@ -672,6 +722,10 @@ func (sw *statusWriter) Write(b []byte) (int, error) {
 	if sw.replaced {
 		return len(b), nil
 	}
+	if !sw.wroteHeader {
+		// An implicit 200, exactly as net/http would send it.
+		sw.WriteHeader(http.StatusOK)
+	}
 	return sw.ResponseWriter.Write(b)
 }
 
@@ -691,6 +745,9 @@ func (sw *statusWriter) Unwrap() http.ResponseWriter { return sw.ResponseWriter 
 // 200 with an empty body and no event would reach a client.
 func (sw *statusWriter) Flush() {
 	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
+		// A flush sends an implicit 200 if nothing was written yet. A writer
+		// that cannot flush sends nothing, so it leaves wroteHeader alone.
+		sw.wroteHeader = true
 		f.Flush()
 	}
 }
