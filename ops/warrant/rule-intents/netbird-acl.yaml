@@ -26,7 +26,7 @@
 netbird_acl_matrix:
 
   hello-galaxy:
-    site_prefix: ZAGROS
+    site_prefix: HELLO-GALAXY
     rules:
 
       # ----------------------------------------------------------------
@@ -133,3 +133,76 @@ netbird_acl_matrix:
         port_set: fabric
         action: accept
         bidirectional: false
+
+    # ADR 1185: the rules above are the whole surface, so NetBird's own
+    # Default All->All policy is removed at cutover, never kept or disabled.
+    cutover:
+      default_policy_action: delete
+      default_policy_name_pattern: "Default"
+
+  # zagros: goatenv's rendered goatlite entry (one box, LAN P2P), copied
+  # verbatim so this repository and its example environment declare the
+  # same ACL for the goatnet that hosts the ex-demo scope.
+  zagros:
+    # goatlite (ADR 1213): the zagros posture (operator intent 2026-07-15) shrunk
+    # to one box. A: everyone <-> INFRA (the box). B: participants <->
+    # participants (a goatlite's mesh is LAN P2P). The administrator keeps
+    # any-port reach to the box, because the cutover deletes the Default
+    # policy, and a rule set that locks out the only administrator is the
+    # known mistake this file warns about. PROPOSED with the preset: a goatlite had no declared
+    # ACL at all, and ADR 1185 refuses a goatnet without one.
+    site_prefix: ZAGROS
+    rules:
+      - name: "infra → all (host reaches everyone)"
+        description: "The box can initiate to every peer (probes, health, admin)."
+        sources: [INFRA]
+        destinations: [PLATFORM-ADMIN, DEVELOPER]
+        protocol: all
+        action: accept
+        bidirectional: false
+
+      - name: "all → infra (web/dns/fabric tcp)"
+        description: "Every peer reaches the box's peer-facing TCP services: traefik :443, DNS, zenoh."
+        sources: [PLATFORM-ADMIN, DEVELOPER]
+        destinations: [INFRA]
+        protocol: tcp
+        port_set: substrate
+        action: accept
+        bidirectional: false
+
+      - name: "all → infra (dns/fabric udp)"
+        description: "Every peer reaches the box's peer-facing UDP services: DNS, zenoh."
+        sources: [PLATFORM-ADMIN, DEVELOPER]
+        destinations: [INFRA]
+        protocol: udp
+        port_set: substrate
+        action: accept
+        bidirectional: false
+
+      - name: "all → infra (icmp)"
+        description: "Every peer can ping the box (health, diagnostics)."
+        sources: [PLATFORM-ADMIN, DEVELOPER]
+        destinations: [INFRA]
+        protocol: icmp
+        action: accept
+        bidirectional: false
+
+      - name: "platform-admin → infra (any port)"
+        description: "The administrator reaches the box on any port (SSH :22, direct service diagnosis)."
+        sources: [PLATFORM-ADMIN]
+        destinations: [INFRA]
+        protocol: all
+        action: accept
+        bidirectional: false
+
+      - name: "participants ↔ participants"
+        description: "Participants reach one another directly (LAN P2P)."
+        sources: [PLATFORM-ADMIN, DEVELOPER]
+        destinations: [PLATFORM-ADMIN, DEVELOPER]
+        protocol: all
+        action: accept
+        bidirectional: true
+    cutover:
+      # ADR 1185: only delete. The explicit permits above are the whole surface.
+      default_policy_action: delete
+      default_policy_name_pattern: "Default"

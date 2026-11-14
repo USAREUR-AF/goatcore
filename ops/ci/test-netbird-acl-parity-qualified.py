@@ -6,6 +6,13 @@ ADR 1124 refuses something that would otherwise apply cleanly and silently
 widen — or silently sever — a cross-scope grant. This mutates a COPY of the
 real taxonomy/matrix one defect at a time and asserts the guard rejects each.
 
+The real files carry no exercise rule templates and no gear-bearing scope, so
+the copy gains a small synthetic set first: a base and a gear rules template
+whose rules reach the local INFRA and `HOST:INFRA` on a port (plus one gear
+rule that reaches no substrate), and a
+`site-one` scope (`gear: true`) hosted on the real `zagros`. The unmutated
+copy must pass the guard; each mutation below must then be refused.
+
 Standalone (no pytest — the repo's CI runs bats and plain python); exits
 non-zero if any mutation slips through. Run:
 
@@ -37,6 +44,28 @@ BASE_TAX = yaml.safe_load((ANSIBLE / "netbird_acl_taxonomy.yml").read_text())
 
 GEAR_T = "netbird_exercise_gear_rules_template"
 BASE_T = "netbird_exercise_rules_template"
+HOST = "zagros"  # the real taxonomy's scope host
+
+BASE_MAT[BASE_T] = {"rules": [
+    {"name": "site admin -> site infra (web)", "sources": ["PLATFORM-ADMIN"],
+     "destinations": ["INFRA"], "protocol": "tcp", "ports": ["443"],
+     "action": "accept", "bidirectional": False},
+    {"name": "site infra -> host infra (web)", "sources": ["INFRA"],
+     "destinations": ["HOST:INFRA"], "protocol": "tcp", "ports": ["443"],
+     "action": "accept", "bidirectional": False},
+]}
+BASE_MAT[GEAR_T] = {"rules": [
+    {"name": "gear -> host infra (web)", "sources": ["KID"],
+     "destinations": ["HOST:INFRA"], "protocol": "tcp", "ports": ["443"],
+     "action": "accept", "bidirectional": False},
+    # Reaches no substrate: what is left when every substrate path is cut.
+    {"name": "gear -> control (web)", "sources": ["KID"],
+     "destinations": ["CONTROL"], "protocol": "tcp", "ports": ["443"],
+     "action": "accept", "bidirectional": False},
+]}
+BASE_TAX["netbird_exercises"]["site-one"] = {
+    "site_prefix": "SITE-ONE", "host_site": HOST, "kind": "operational", "gear": True,
+}
 
 failures: list[str] = []
 
@@ -77,7 +106,7 @@ def m_dest_outside_allowlist(mat):
 
 def m_concrete_scope_in_template(mat):
     """A shared template cannot name one scope — each has a different host."""
-    mat[GEAR_T]["rules"][0]["destinations"] = ["zagros-prod:INFRA"]
+    mat[GEAR_T]["rules"][0]["destinations"] = [f"{HOST}:INFRA"]
 
 
 def m_any_port_upward(mat):
@@ -121,14 +150,14 @@ def m_dangling_host_site(tax):
 
 def m_colon_in_suffix(tax):
     """':' is reserved for the qualifier namespace."""
-    tax["netbird_acl_taxonomy"]["zagros-prod"]["groups"].append(
+    tax["netbird_acl_taxonomy"][HOST]["groups"].append(
         {"suffix": "BAD:NAME", "description": "must be refused"}
     )
 
 
 def m_bad_default_policy_action(mat):
     """A typo'd action value silently makes the site un-enforceable."""
-    mat["netbird_acl_matrix"]["zagros"]["cutover"]["default_policy_action"] = "dsable"
+    mat["netbird_acl_matrix"][HOST]["cutover"]["default_policy_action"] = "dsable"
 
 
 CASES = [
@@ -145,6 +174,16 @@ CASES = [
 
 print("ADR 1124 guard negative tests — each mutation must be REFUSED:")
 with tempfile.TemporaryDirectory() as tmp:
+    # The unmutated fixture must pass, or every refusal below proves nothing.
+    (Path(tmp) / "netbird_acl_matrix.yml").write_text(yaml.safe_dump(BASE_MAT))
+    (Path(tmp) / "netbird_acl_taxonomy.yml").write_text(yaml.safe_dump(BASE_TAX))
+    base = subprocess.run([sys.executable, str(GUARD), tmp], capture_output=True, text=True, check=False)
+    if base.returncode != 0:
+        failures.append("the unmutated fixture passes the guard")
+        print("  MISS  the unmutated fixture passes the guard", file=sys.stderr)
+        print("        " + (base.stdout + base.stderr).strip().replace("\n", "\n        "), file=sys.stderr)
+    else:
+        print("  ok    the unmutated fixture passes the guard")
     for label, expect, mm, mt in CASES:
         run_case(tmp, label, expect, mm, mt)
 

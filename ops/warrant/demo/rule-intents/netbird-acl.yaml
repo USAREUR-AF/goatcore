@@ -26,7 +26,7 @@
 netbird_acl_matrix:
 
   hello-galaxy:
-    site_prefix: ZAGROS
+    site_prefix: HELLO-GALAXY
     rules:
 
       # ----------------------------------------------------------------
@@ -133,3 +133,9 @@ netbird_acl_matrix:
         port_set: fabric
         action: accept
         bidirectional: false
+
+    # ADR 1185: the rules above are the whole surface, so NetBird's own
+    # Default All->All policy is removed at cutover, never kept or disabled.
+    cutover:
+      default_policy_action: delete
+      default_policy_name_pattern: "Default"
