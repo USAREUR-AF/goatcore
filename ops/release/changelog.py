@@ -434,8 +434,24 @@ def _released_text_cases(expect) -> None:
                bool(late) and problems.index(late[0]) < next((i for i, m in enumerate(problems) if "differs from its render" in m), len(problems)))
         (r / ENTRIES / "late.md").unlink()
 
+        # A release-notes change: the edit, and its line in the baseline, in one change.
+        (r / BASELINE).parent.mkdir(parents=True, exist_ok=True)
+        edited = cl.read_text(encoding="utf-8").split("\n")
+        _, end = region(edited)
+        section = dict(released_sections(edited, end))["9.9.9"]
+        (r / BASELINE).write_text(f"9.9.9 {section_hash(section)}\n", encoding="utf-8")
+        expect("a released section edited after its release passes with its line in the baseline", check(r) == [])
+        (r / BASELINE).write_text("9.9.9 sha256:" + "0" * 64 + "\n", encoding="utf-8")
+        expect("a baseline line whose hash is not the section's is refused, naming the version",
+               any("9.9.9" in m and BASELINE in m and "hash" in m for m in check(r)))
+        (r / BASELINE).unlink()
+
         cl.write_text(text, encoding="utf-8")
         _git(r, "commit", "-q", "-am", "fix: put 9.9.9 back as released")
+        (r / BASELINE).write_text(f"9.9.9 {section_hash(dict(released_sections(text.split(chr(10)), region(text.split(chr(10)))[1]))['9.9.9'])}\n", encoding="utf-8")
+        expect("a baseline line for a section that is as released is refused as stale (the baseline only shrinks)",
+               any("9.9.9" in m and "stale" in m for m in check(r)))
+        (r / BASELINE).unlink()
         _git(r, "tag", "goatbuilder/v9.9.9", "HEAD~2")
         cl.write_text(text.replace("It was fixed.", "It was fixed, then reworded."), encoding="utf-8")
         _git(r, "commit", "-q", "-am", "docs: reword a released line")
