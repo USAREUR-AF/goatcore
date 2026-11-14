@@ -7,10 +7,12 @@ from those files, between two marker lines. A release folds them into a dated
 section and removes them. A released section is never rendered again, and is
 never edited after its release: the check holds it to its text at the tag
 goatbuilder/v<version>, or, before the tag exists, at the release commit (the
-newest `chore(release): goatbuilder <version>` commit on HEAD's first-parent
-history). A release-notes change, which edits a released section on purpose, adds or
-updates that section's line in ops/release/changelog-released-baseline.txt in the
-same change; a line for a section that is as released is refused as stale. A version
+oldest `chore(release): goatbuilder <version>` commit on HEAD's first-parent
+history that does not touch the baseline file). A release-notes change, which
+edits a released section on purpose, adds or updates that section's line in
+ops/release/changelog-released-baseline.txt in the same change, so it is never
+taken for the release commit; a line for a section that is as released is refused
+as stale. A version
 whose release cannot be read here (no tag and no release commit, or cut off in a
 shallow clone) is skipped with a note.
 
@@ -214,11 +216,16 @@ def already_released(entries: list[dict], lines: list[str], end: int,
     sections = released_sections(lines, end)
     problems = []
     for e in entries:
-        block = [f"#### {e['title']}", ""] + e["body"].split("\n")
+        body_lines = e["body"].split("\n")
+        # A title may be written quoted in an older section (`#### "Added: x"`), or
+        # quoted in the entry and unquoted in the section: either way is the same entry.
+        bare = e["title"][1:-1] if len(e["title"]) > 1 and e["title"][0] == e["title"][-1] == '"' else e["title"]
+        blocks = [[f"#### {t}", ""] + body_lines for t in dict.fromkeys((e["title"], bare, f'"{bare}"'))]
         for version, body in sections:
-            if not _holds(body, block):
+            block = next((bl for bl in blocks if _holds(body, bl)), None)
+            if block is None:
                 continue
-            if at and version in at and not _holds(at[version][2], block):
+            if at and version in at and not any(_holds(at[version][2], bl) for bl in blocks):
                 ref, named, _ = at[version]
                 problems.append(f"{ENTRIES}/{e['name']}: its text landed inside {version} after its release (it is not "
                                 f"in {version} at {named}): restore that section from `git show {_short(ref)}:{CHANGELOG}`, "
@@ -246,17 +253,21 @@ def _git_out(repo: Path, *args: str) -> str | None:
 
 def _release_ref(repo: Path, version: str) -> tuple[str, str] | None:
     """Where version's released text is: the tag goatbuilder/v<version>, or, before the
-    tag exists, the newest commit on HEAD's first-parent history whose subject begins
-    `chore(release): goatbuilder <version>` (the release, or a later release-notes
-    change, which uses the same subject). As (ref, how it is named), or None."""
+    tag exists, the version commit: the OLDEST commit on HEAD's first-parent history
+    whose subject begins `chore(release): goatbuilder <version>` and that does not touch
+    the baseline file. A later release-notes change may use the same subject and adds
+    its baseline line, so it is never the reference: its edit is measured against the
+    version commit. As (ref, how it is named), or None."""
     tag = f"goatbuilder/v{version}"
     if _git_out(repo, "rev-parse", "--verify", "-q", f"refs/tags/{tag}^{{commit}}"):
         return tag, f"the tag {tag}"
-    log = _git_out(repo, "log", "--first-parent", "--format=%H %s", "HEAD") or ""
+    log = _git_out(repo, "log", "--first-parent", "--reverse", "--format=%H %s", "HEAD") or ""
     for line in log.splitlines():
         sha, _, subject = line.partition(" ")
         rest = subject[len(f"chore(release): goatbuilder {version}"):]
         if subject.startswith(f"chore(release): goatbuilder {version}") and (not rest or not rest[0].isalnum() and rest[0] != "."):
+            if (_git_out(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", sha, "--", BASELINE) or "").strip():
+                continue
             return sha, f"the release commit {sha[:8]} (no tag {tag} here)"
     return None
 
