@@ -1920,8 +1920,8 @@ pub enum Stage {
     Backout(super::backout::BackoutArgs),
     /// A two-driver peering's import of an edge result, as a hand-off object
     /// names it: checked against the edge driver's confirm code, placed under
-    /// the working directory and journaled. Built for phase 1; a later phase's
-    /// import refuses with GB-267 (docs/design/federation-two-drivers.md).
+    /// the working directory and journaled. Built for phases 1 and 3; another
+    /// phase's import refuses with GB-267 (docs/design/federation-two-drivers.md).
     Import(super::handoff::ImportArgs),
 }
 
@@ -1934,7 +1934,7 @@ pub fn run(repo: &Path, stage: &Stage, mock: Option<&Path>) -> Result<Report> {
         }
         Stage::Import(a) => {
             let work = a.work.clone().unwrap_or_else(|| super::env_or("FED_WORK", format!("/var/lib/goat-federation/{}", a.with)));
-            super::handoff::import(a, Path::new(&work))
+            super::handoff::import(a, Path::new(&work), repo)
         }
         Stage::Plan {
             with,
