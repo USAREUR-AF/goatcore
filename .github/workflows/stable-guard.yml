@@ -22,9 +22,15 @@ on:
 permissions:
   contents: read
 
+# One group per pull request, and one per pushed commit. Keyed on github.ref,
+# every push to `stable` shared one group, and since that ref is not main the
+# group cancelled in progress: a second push cancelled the check of the first,
+# and GitHub keeps one pending run per group, so a burst could leave a pushed
+# head never checked. Each push is now its own group and is never cancelled; a
+# pull request's reopen still replaces its own earlier run.
 concurrency:
-  group: stable-guard-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: stable-guard-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   close:
