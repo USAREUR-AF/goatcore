@@ -167,6 +167,31 @@ peering_edge_key_path: "{{ peering_edge_swanctl_dir }}/private/{{ peering_edge_n
 peering_edge_remote_ca_path: "{{ peering_edge_swanctl_dir }}/x509ca/{{ peering_edge_name }}-partner-ca.pem"
 
 # --------------------------------------------------------------------------
+# Credential rotation (K6, docs/design/federation-key-rotation.md §8)
+# --------------------------------------------------------------------------
+# Off unless a rotation id is given. The role still writes no secret: the offline
+# ceremony issues the new material and an operator stages it beside the live files
+# (the paths below). The role checks it, sets the live pair aside once per id in
+# .previous-<id>/, switches, re-authenticates the IKE SA and puts the old pair back
+# if the SA does not come up.
+peering_edge_rotation: ""              # rotation id; letters, digits, '-' and '_'
+peering_edge_rotation_kind: leaf       # leaf (same CA) | ca (new per-peering CA and leaf)
+peering_edge_rotation_retire: false    # after both sides pass phase 14: remove the set-aside key
+# Our current per-peering IPsec CA certificate (public), to check the new leaf's chain.
+peering_edge_local_ca_path: ""
+peering_edge_min_valid_days: 30
+# ipsec-ca only: the sha256 fingerprint of our new CA as the partner read it back
+# after placing it. The switch is refused without it, or when it differs.
+peering_edge_rotation_ca_readback: ""
+# Seconds to wait for an established SA on the new leaf; default: the DPD timeout.
+peering_edge_rotation_confirm_seconds: "{{ peering_edge_dpd_timeout | regex_replace('s$', '') | int }}"
+peering_edge_cert_next_path: "{{ peering_edge_cert_path | regex_replace('\\.pem$', '.next.pem') }}"
+peering_edge_key_next_path: "{{ peering_edge_key_path | regex_replace('\\.pem$', '.next.pem') }}"
+peering_edge_local_ca_next_path: "{{ peering_edge_swanctl_dir }}/x509ca/{{ peering_edge_name }}-local-ca.next.pem"
+# A partner's new CA during THEIR rotation's overlap: accepted beside the current one.
+peering_edge_remote_ca_next_path: ""
+
+# --------------------------------------------------------------------------
 # FIPS posture — ready, not assuming
 # --------------------------------------------------------------------------
 # The strongSwan configuration is IDENTICAL whether or not the host can provide
