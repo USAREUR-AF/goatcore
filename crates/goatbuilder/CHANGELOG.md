@@ -10,6 +10,52 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Added: a two-driver peering's phase 2 runs on the edge driver and the controller
+
+A peering declared `drivers: two` used to stop at phase 2's hand-off with
+nothing to run on the other side. Now the edge driver runs the hand-off's
+command, `goatbuilder federate <peering> --side edge --from 2 --to 2
+--expect-commit <commit>`. It makes the federation interface on the edge and
+prints the way back with a confirm code. The result holds the interface's
+public key, and no private key leaves the edge. On the controller,
+`goatbuilder federate import <peering> 2 <file> --sha256 <code>` takes it in,
+and `--from 2` runs the controller's half: the SPIRE bundle export on the
+SPIRE server host, which never reaches the edge host. Phase 3's import then
+refuses an edge half that measured another interface or another public key
+than phase 2's result handed over (GB-114). When there is nothing to compare,
+the import says in a row of its own that the key was not checked, and why. A phase 2 that also runs
+a forwarder's steps is refused as not built (GB-267), as are the edge's own
+leaf keys, which phase 8 still makes on the controller.
+
+<!-- END generated: changelog unreleased -->
+
+## 0.7.1 — 2026-11-15
+
+What changed since 0.7.0, the previous release. `join-node` builds a node on a
+phone with `--class phone --via usb`, on a fixture and not yet measured on a
+phone, runs a joining site's own mesh DNS, and refuses a node whose clock is
+off. `standup` for a joiner turns signal federation on, and standup,
+join-node and teardown keep timings files whose rows name their cause. Every
+site's end state declares every service a cut-off site needs, and what a
+joining site does not run yet is named as a gap. `federate rotate <partner>
+leaves` replaces a running peering's leaves; `federate test
+--bilateral` completes the partner's half of acceptance, opt-in; on a
+two-driver peering the edge driver runs phases 1 and 3. A back-out keeps the
+core leaf another peering still uses and removes the peering's host-firewall
+entry. After a signing-key rotation, phase 5 hands the peering directory over
+to the new key, and a host-allocation SKIP says what clears it or is accepted
+into the plan. `goatbuilder.yaml` takes three optional `deploy` fields,
+`cloud`, `owner` and `cross_goatnet`; undeclared, nothing changes.
+
+Three behaviour changes: an environment that declares `converger: pull-agent` is
+refused by `doctor` and by every verb that pushes to real hosts, with GB-307;
+`join-node` refuses a node whose clock is unsynchronized or more than 250 ms
+off, with GB-297; and a back-out with no other peering set up, and no record
+of what the core leaf's paths held before, stops with GB-293 where it stopped
+with GB-221.
+
+### For someone deploying
+
 #### Fixed: phase 14's round trip sends a fresh probe until one is acknowledged, so one dropped probe does not fail it
 
 In a bilateral acceptance session both sides run the round trip at once.
@@ -153,23 +199,6 @@ edge checks into `<work>/handoff/1/edge.json` and prints the way back: the
 confirm code, and the `import` and `then` commands for the controller. The
 edge driver's run of phase 3 is built too; phase 2's and those of 11 and
 later are not yet (gate row B10).
-
-#### Added: a two-driver peering's phase 2 runs on the edge driver and the controller
-
-A peering declared `drivers: two` used to stop at phase 2's hand-off with
-nothing to run on the other side. Now the edge driver runs the hand-off's
-command, `goatbuilder federate <peering> --side edge --from 2 --to 2
---expect-commit <commit>`. It makes the federation interface on the edge and
-prints the way back with a confirm code. The result holds the interface's
-public key, and no private key leaves the edge. On the controller,
-`goatbuilder federate import <peering> 2 <file> --sha256 <code>` takes it in,
-and `--from 2` runs the controller's half: the SPIRE bundle export on the
-SPIRE server host, which never reaches the edge host. Phase 3's import then
-refuses an edge half that measured another interface or another public key
-than phase 2's result handed over (GB-114). When there is nothing to compare,
-the import says in a row of its own that the key was not checked, and why. A phase 2 that also runs
-a forwarder's steps is refused as not built (GB-267), as are the edge's own
-leaf keys, which phase 8 still makes on the controller.
 
 #### Added: a two-driver peering hands phase 3 to the edge driver and joins its edge half
 
@@ -442,7 +471,9 @@ request's merge commit. Before the tag, a diff between the checked commit and th
 commit must name nothing under `crates/`, `ops/ansible/` or `ops/federation-e2e/`, or each
 stage those paths feed runs again on the merge commit (#772).
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.0 — 2026-11-14
 

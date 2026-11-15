@@ -59,7 +59,8 @@ pinned commit plus its patches) is goatcore's in the tree, so a goatstuff patch
 to that path is judged this way: where it leaves the same bytes as goatcore's
 file, the tree is checked against those bytes; where the path is one each
 repository carries for itself (repo_own: root documents, .github/, the crates
-workspace manifest and lockfile, docs/RELEASE-CONTENTS.md) or the goatstuff
+workspace manifest and lockfile, docs/RELEASE-CONTENTS.md, the CI manifest
+allowlist and version exceptions under ops/ci/) or the goatstuff
 patch deletes it, goatcore's file stays and the goatstuff change is not looked
 for in the tree; any other difference is refused (GB-064, naming the path).
 
@@ -172,7 +173,8 @@ def read_ref(repo, name):
 
 def repo_own(path):
     """True for a file each public repository carries for itself; the assemble step keeps goatcore's."""
-    if path.startswith(".github/") or path in ("crates/Cargo.toml", "crates/Cargo.lock", "docs/RELEASE-CONTENTS.md"):
+    if path.startswith(".github/") or path in ("crates/Cargo.toml", "crates/Cargo.lock", "docs/RELEASE-CONTENTS.md",
+                                               "ops/ci/manifest-allowlist.txt", "ops/ci/manifest-version-exceptions.txt"):
         return True
     return "/" not in path
 
@@ -234,6 +236,8 @@ def tree_matches_layer(repo, sd, commit, overlay_paths, patched_paths=()):
         want.pop(p, None)  # copied after goatstuff: the overlay's bytes win, checked against the overlay
     for p in patched_paths:
         want.pop(p, None)  # changed by a pre-disclosure patch: judged against the patched result
+    for p in [p for p in want if repo_own(p)]:
+        want.pop(p)  # one of each repository's own files: the tree keeps goatcore's, judged as goatcore's
     return differing(repo, want)
 
 
@@ -497,7 +501,7 @@ def check(repo, offline, quiet):
                    ["changed or missing:\n    " + shown,
                     f"A change to {name} lands in {name} and reaches the tree by moving {name}.ref.", reassemble])
         lw, _ = blobs(dirs[name], lref, ["ops"])
-        layered |= set(lw or {})
+        layered |= {p for p in (lw or {}) if not repo_own(p)}  # a repo_own path holds goatcore's bytes: judged as goatcore's
     supplied = supplied | layered
     stray, err = stray_core_edits(repo, supplied | embargoed)
     if stray is None:
