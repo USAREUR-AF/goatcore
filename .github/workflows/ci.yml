@@ -296,7 +296,8 @@ jobs:
         timeout-minutes: 5
         run: bash ops/ansible/roles/goat-peering-wg/tests/test-rotation.sh
       - name: an IPsec leaf rotation checks the staged pair, sets the live one aside once and rolls back (stand-in swanctl)
-        timeout-minutes: 5
+        # about 7.5 minutes: every case runs ansible-playbook against a stand-in swanctl
+        timeout-minutes: 12
         run: bash ops/ansible/roles/goat-peering-edge/tests/test-rotation.sh
 
   peering-host-firewall:
