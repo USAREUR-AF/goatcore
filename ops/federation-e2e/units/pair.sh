@@ -135,6 +135,28 @@ pair_persistent_reception() {
     edge_after="$(docker exec "$HP-$them-edge" docker inspect -f '{{.State.StartedAt}}' "goat-zenoh-edge-$s" 2>/dev/null)"
     rec "s$n-$them-edge-was-not-restarted" --expect-in "$edge_before" -- echo "edge router goat-zenoh-edge-$s started at $edge_after (before the core restart: $edge_before)"
   done
+  # The receiving edge router restarts (an upgrade of the edge, a host reboot) with its core
+  # left running: the edge must reconnect to its core and to the partner's edge by itself, and
+  # the core's interest must reach it again. A fresh value is released every 2 s for 90 s and
+  # the first one stored passes, with how long the route took to return.
+  local core_before core_after
+  for s in "$first" "$second"; do
+    them="$(other "$s")"; nonce="pe$(date +%s)$RANDOM"
+    core_before="$(docker exec "$HP-$them-core" docker inspect -f '{{.State.StartedAt}}' "$them-zenoh-router" 2>/dev/null)"
+    rec "s$n-$them-edge-router-restarted" -- docker exec "$HP-$them-edge" docker restart "goat-zenoh-edge-$s"
+    rec "s$n-$s-to-$them-stored-after-the-receiving-edge-restarts" -- bash -c \
+      "t0=\$(date +%s); i=0
+       for _ in \$(seq 1 45); do i=\$((i + 1)); k=$nonce-\$i; put_release $s all $them \$k >/dev/null; sleep 2
+         v=\$(stored_at $them from/$s/all/\$k); [ \"\$v\" = \"\$k\" ] && { echo \"stored after the edge restart: \$v; \$((i - 1)) release(s) before it lost while the route returned; \$((\$(date +%s) - t0)) s after the restart\"; exit 0; }; done
+       echo \"not stored at $them after its edge router restarted (core not restarted): \$i fresh release(s) of from/$s/all/$nonce-<n> over \$((\$(date +%s) - t0)) s, none stored\"
+       echo '--- the receiving edge router, its last log lines:'
+       docker exec $HP-$them-edge docker logs --tail 60 goat-zenoh-edge-$s 2>&1 | cut -c1-300
+       echo '--- subscribers and queryables the receiving core sees, now:'
+       pr_admin $them
+       exit 1"
+    core_after="$(docker exec "$HP-$them-core" docker inspect -f '{{.State.StartedAt}}' "$them-zenoh-router" 2>/dev/null)"
+    rec "s$n-$them-core-was-not-restarted" --expect-in "$core_before" -- echo "core router $them-zenoh-router started at $core_after (before the edge restart: $core_before)"
+  done
 }
 
 # The republisher lifts only the sets the agreement offers: a set staged beside a valid
