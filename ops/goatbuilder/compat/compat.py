@@ -368,16 +368,53 @@ def document_problems(base, new, conditional=()) -> list:
     return out + held + _shape_problems(shape(base), shape(new), "")
 
 
-def exit_problems(d: dict) -> list:
+RELEASE_TAG = re.compile(r"^goatbuilder/v(\d+)\.\d+\.\d+$")
+
+
+def _major(version) -> int | None:
+    """The major number of `1.2.3` (or `1.2.3-rc.1`), or None when it is not one."""
+    m = re.match(r"^(\d+)\.\d+\.\d+", str(version or ""))
+    return int(m.group(1)) if m else None
+
+
+def goatbuilder_version(repo: str) -> str:
+    """The build's version, from crates/goatbuilder/Cargo.toml; empty when it cannot be read."""
+    try:
+        with open(os.path.join(repo, "crates", "goatbuilder", "Cargo.toml")) as f:
+            m = re.search(r'^version\s*=\s*"([^"]+)"', f.read(), re.M)
+    except OSError:
+        return ""
+    return m.group(1) if m else ""
+
+
+def exit_problems(d: dict, base_release: str | None = None, version: str | None = None) -> list:
     """A kept invocation's `exit` is its release's (`release_exit`), or moved with a reason.
 
     Exit codes are a promised surface: a pull request that changes one edits
-    `exit` and says why in `exit_changed`, so the change is reviewed.
+    `exit` and says why in `exit_changed`, so the change is reviewed. From a 1.0
+    baseline (`base_release` goatbuilder/v1.0.0 or later) that is not enough: a
+    kept exit code changes only in a major release (ADR 1228), so `exit_changed`
+    is refused unless the build (`version`, from the crate) is a later major
+    than the baseline. An unreadable build version counts as the same major; an
+    unreadable baseline release, with `exit_changed`, is refused. With no
+    `base_release`, only the reason is checked (the rule before 1.0).
     """
     name = d.get("name", "?")
     if "release_exit" not in d:
         return [f"{name}: no `release_exit`; rerun compat.py refresh to record the release's exit code"]
     reason = d.get("exit_changed")
+    if base_release is not None and "exit_changed" in d:
+        m = RELEASE_TAG.match(str(base_release))
+        if not m:
+            return [f"{name}: the baseline release {base_release!r} is not goatbuilder/v<x.y.z>, so whether "
+                    f"`exit_changed:` may move an exit code cannot be decided; rerun compat.py refresh"]
+        base_major, build_major = int(m.group(1)), _major(version)
+        if base_major >= 1 and (build_major is None or build_major <= base_major):
+            moved = d.get("exit") != d["release_exit"]
+            return [f"{name}: from goatbuilder 1.0 a kept exit code is part of the promise and changes only in a "
+                    f"major release (ADR 1228); {base_release} exited {d['release_exit']} and this build is "
+                    f"{version or 'of an unreadable version'}, so `exit_changed:` cannot move it: "
+                    + (f"restore {d['release_exit']}" if moved else "remove the `exit_changed:` left on it")]
     if d.get("exit") != d["release_exit"] and not (isinstance(reason, str) and reason.strip()):
         return [f"{name}: `exit` is {d.get('exit')} but the release exited {d['release_exit']}; "
                 f"give the reason in `exit_changed:`, or restore {d['release_exit']}"]
@@ -553,13 +590,14 @@ def check_all(repo: str, root: str, binary: str, only=("surface", "documents")) 
                 rows.append((True, "surface", f"{len(b.surface())} commands", f"every command and flag of {b.release} is here"))
 
     if "documents" in only:
+        build_version = goatbuilder_version(repo)
         for d in b.documents():
             rc, doc, err = run_document(binary, repo, d)
             item = f"{d['name']}.{d['format']}"
             if err:
                 rows.append((False, "documents", item, err))
                 continue
-            p = exit_problems(d) + document_problems(b.document(d), doc, cond)
+            p = exit_problems(d, b.release, build_version) + document_problems(b.document(d), doc, cond)
             if rc != d["exit"]:
                 p.append(f"exit {d['exit']} in {b.release}, {rc} now")
             rows.append((not p, "documents", item, "; ".join(p) if p else "a superset of the release's document"))
