@@ -3,8 +3,8 @@
 # §8), included by rotate.yml with peering_edge_rotation_retire. It never moves the
 # live pair, the staged pair or our CA. It removes the set-aside key of rotation
 # <id>, and only when the new leaf is live: the live pair is not the set-aside one,
-# the live key is the live certificate's, and the IKE SA is established with an
-# installed CHILD SA. A rotation that was rolled back is refused with GB-302: its
+# the live key is the live certificate's, and an IKE SA established since the old
+# pair was set aside has an installed CHILD SA. A rotation that was rolled back is refused with GB-302: its
 # set-aside pair is the live one's copy.
 
 - name: peering-edge | retire | where things stand
@@ -57,11 +57,21 @@
   changed_when: false
   failed_when: false
 
-- name: peering-edge | retire | the SA on the live leaf
+# An SA established before the old pair was set aside authenticated the old leaf
+# (make-before-break keeps it up while the new one negotiates), so only an SA
+# established at or after .previous-<id>/'s time, with an installed CHILD SA,
+# counts. swanctl prints the age in whole seconds.
+- name: peering-edge | retire | an SA on the live leaf, established after the set-aside
   ansible.builtin.shell:
     cmd: >-
-      swanctl --list-sas --ike {{ peering_edge_name | quote }} | grep -q ESTABLISHED &&
-      swanctl --list-sas --ike {{ peering_edge_name | quote }} | grep -q INSTALLED
+      lim=$(( $(date +%s) - {{ (_pe_ret_stat.results[0].stat.mtime | default(0) | int) }} ));
+      swanctl --list-sas --ike {{ peering_edge_name | quote }} |
+      awk -v n={{ peering_edge_name | quote }} -v lim="$lim"
+      'index($0, n ": #") == 1 { est = ($0 ~ /ESTABLISHED/); age = -1; next }
+      match($0, /established [0-9]+s ago/) { age = substr($0, RSTART + 12, RLENGTH - 16) + 0 }
+      /INSTALLED/ && est && age >= 0 && age <= lim { ok = 1 }
+      END { exit ok ? 0 : 1 }'
+    executable: /bin/bash
   register: _pe_ret_up
   changed_when: false
   failed_when: false
@@ -83,7 +93,7 @@
       if (_pe_ret_live_cert.checksum | default('') == _pe_ret_aside_cert.checksum | default('')
           or _pe_ret_live_key.checksum | default('') == _pe_ret_aside_key.checksum | default('')) else '' }}{{
       'the live key is not the live certificate\'s; ' if _pe_ret_match.rc != 0 else '' }}{{
-      'the IKE SA of ' ~ peering_edge_name ~ ' is not established with an installed CHILD SA; '
+      'no IKE SA of ' ~ peering_edge_name ~ ' established since the old pair was set aside has an installed CHILD SA; '
       if _pe_ret_up.rc != 0 else '' }}finish the rotation (run it again with the same id) and retire
       once both sides passed phase 14. Nothing was moved or removed.
     quiet: true

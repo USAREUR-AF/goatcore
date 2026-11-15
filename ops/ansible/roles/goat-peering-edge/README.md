@@ -147,17 +147,18 @@ rotation our new CA as `<name>-local-ca.next.pem` in `x509ca/`. The role then:
 2. for `ca`, refuses unless `peering_edge_rotation_ca_readback` is the new CA's sha256 as the partner read it
    back (GB-303);
 3. copies the live pair into `.previous-<id>/` (0700), once per id, and moves the staged pair over it;
-4. runs `swanctl --load-creds` and `swanctl --rekey --ike <name> --reauth`, and waits up to
-   `peering_edge_rotation_confirm_seconds` (the DPD timeout) for an established SA with an installed CHILD SA;
-5. if none comes up, copies the old pair back, loads it, re-authenticates, marks the rotation rolled back
-   (`.previous-<id>/rolled-back`) and stops (GB-302). Every later run of that id, a resume or a retire,
+4. notes the IKE SAs up, runs `swanctl --load-creds` and `swanctl --rekey --ike <name> --reauth`, and waits up to
+   `peering_edge_rotation_confirm_seconds` (the DPD timeout) for an established SA with an installed CHILD SA
+   that was not up before (with `make_before_break = yes`, which the role sets, the old SA stays up meanwhile);
+5. if none comes up, marks the rotation rolled back (`.previous-<id>/rolled-back`), copies the old pair back,
+   loads it, re-authenticates and stops (GB-302); a run killed meanwhile is finished by the next one. Every later run of that id, a resume or a retire,
    reports GB-302 again with the old leaf live and moves nothing; a new attempt takes a new id.
 
 A rerun with the same id moves nothing, so a killed run finishes. `peering_edge_rotation_retire: true`, after
 both sides pass phase 14, removes the set-aside key and keeps its certificate (`tasks/rotate-retire.yml`). It
 never moves the live pair, the staged pair or our CA, and it removes the key only when the new leaf is live:
-the live pair is not the set-aside one, the live key is the live certificate's, and the SA is established with
-an installed CHILD SA. Otherwise, or for an id with no `.previous-<id>/` here, it refuses (GB-309). Our new
+the live pair is not the set-aside one, the live key is the live certificate's, and an SA established since the
+old pair was set aside has an installed CHILD SA. Otherwise, or for an id with no `.previous-<id>/` here, it refuses (GB-309). Our new
 CA replaces the current one only on the switch, and only with the partner's read-back (GB-303). During a partner's own CA
 rotation, `peering_edge_remote_ca_next_path` makes `remote.cacerts` accept their new CA beside the current one.
 `tests/test-rotation.sh` covers each step with a stand-in `swanctl` and certificates made at test time.

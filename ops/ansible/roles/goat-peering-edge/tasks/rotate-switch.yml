@@ -28,13 +28,45 @@
     _pe_rot_chain_ca: >-
       {{ peering_edge_local_ca_next_path if peering_edge_rotation_kind == 'ca' else peering_edge_local_ca_path }}
 
+- name: peering-edge | rotation | finish a roll-back a killed run left part done
+  when: _pe_rot_rolled_back | bool
+  block:
+    - name: peering-edge | rotation | the live and set-aside pairs
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      loop:
+        - "{{ peering_edge_cert_path }}"
+        - "{{ peering_edge_key_path }}"
+        - "{{ _pe_rot_aside }}/{{ peering_edge_cert_path | basename }}"
+        - "{{ _pe_rot_aside }}/{{ peering_edge_key_path | basename }}"
+      register: _pe_rot_rb
+    - name: peering-edge | rotation | put the set-aside pair back where it is not live yet
+      ansible.builtin.command:
+        argv: [cp, -p, "--", "{{ item.src }}", "{{ item.dest }}"]
+      loop:
+        - { src: "{{ _pe_rot_aside }}/{{ peering_edge_key_path | basename }}", dest: "{{ peering_edge_key_path }}", i: 1, j: 3 }
+        - { src: "{{ _pe_rot_aside }}/{{ peering_edge_cert_path | basename }}", dest: "{{ peering_edge_cert_path }}", i: 0, j: 2 }
+      when: _pe_rot_rb.results[item.i].stat.checksum | default('') != _pe_rot_rb.results[item.j].stat.checksum | default('-')
+      register: _pe_rot_rb_done
+      changed_when: true
+    - name: peering-edge | rotation | load the old pair and re-authenticate
+      ansible.builtin.shell:
+        cmd: "swanctl --load-creds && swanctl --rekey --ike {{ peering_edge_name | quote }} --reauth"
+      changed_when: true
+      failed_when: false
+      when: _pe_rot_rb_done.results | selectattr('changed', 'defined') | selectattr('changed') | list | length > 0
+
 - name: peering-edge | rotation | a rotation rolled back stays rolled back (GB-302)
   ansible.builtin.fail:
     msg: >-
       goat-peering-edge (GB-302): rotation {{ peering_edge_rotation }} of {{ peering_edge_name }} on
       {{ inventory_hostname }} was rolled back: the SA did not come up on the new leaf, and the old
-      pair was put back from {{ _pe_rot_aside }}, so the old leaf is live. Nothing was moved
-      or re-authenticated. Read `swanctl --list-sas` and the charon log on both edges, stage the new
+      pair was put back from {{ _pe_rot_aside }}, so the old leaf is live{{
+      ' (this run finished putting it back, after a run killed during the roll-back)'
+      if (_pe_rot_rb_done.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | list | length > 0)
+      else '; nothing was moved or re-authenticated' }}. Read `swanctl --list-sas` and the charon log on both edges, stage the new
       pair again, and start a rotation with a new id.
   when: _pe_rot_rolled_back | bool
 
@@ -151,16 +183,30 @@
     - { src: "{{ peering_edge_key_next_path }}", dest: "{{ peering_edge_key_path }}" }
     - { src: "{{ peering_edge_cert_next_path }}", dest: "{{ peering_edge_cert_path }}" }
 
+# With make-before-break the old IKE SA stays ESTABLISHED while the new one
+# negotiates, so the confirm counts only an SA whose unique id was not up before
+# the re-authentication: the SA the new leaf authenticated.
+- name: peering-edge | rotation | the IKE SAs up before the re-authentication
+  ansible.builtin.shell:
+    cmd: >-
+      swanctl --list-sas --ike {{ peering_edge_name | quote }} |
+      awk -v n={{ peering_edge_name | quote }} 'index($0, n ": #") == 1 { split(substr($0, length(n) + 4), a, ","); printf " %s", a[1] + 0 }'
+  register: _pe_rot_before
+  changed_when: false
+
 - name: peering-edge | rotation | load the credentials and re-authenticate the IKE SA
   ansible.builtin.shell:
     cmd: "swanctl --load-creds && swanctl --rekey --ike {{ peering_edge_name | quote }} --reauth"
   changed_when: true
 
-- name: peering-edge | rotation | wait for the SA on the new leaf
+- name: peering-edge | rotation | wait for a new SA on the new leaf
   ansible.builtin.shell:
     cmd: >-
-      swanctl --list-sas --ike {{ peering_edge_name | quote }} | grep -q ESTABLISHED &&
-      swanctl --list-sas --ike {{ peering_edge_name | quote }} | grep -q INSTALLED
+      swanctl --list-sas --ike {{ peering_edge_name | quote }} |
+      awk -v n={{ peering_edge_name | quote }} -v old={{ (_pe_rot_before.stdout ~ ' ') | quote }}
+      'index($0, n ": #") == 1 { split(substr($0, length(n) + 4), a, ","); cur = a[1] + 0; est = ($0 ~ /ESTABLISHED/); next }
+      /INSTALLED/ && est && index(old, " " cur " ") == 0 { ok = 1 }
+      END { exit ok ? 0 : 1 }'
   register: _pe_rot_up
   until: _pe_rot_up.rc == 0
   retries: "{{ [((peering_edge_rotation_confirm_seconds | int) / 5) | round(0, 'ceil') | int, 1] | max }}"
@@ -171,6 +217,13 @@
 - name: peering-edge | rotation | put the old pair back and stop (GB-302)
   when: _pe_rot_up.rc != 0
   block:
+    # Marked first, so a run killed during the roll-back resumes as rolled back
+    # (and finishes it), never as switched.
+    - name: peering-edge | rotation | mark the rotation rolled back, so no resume reports it done
+      ansible.builtin.copy:
+        dest: "{{ _pe_rot_aside }}/rolled-back"
+        content: "rotation {{ peering_edge_rotation }} rolled back: the old pair is put back\n"
+        mode: "0600"
     - name: peering-edge | rotation | restore the set-aside pair
       ansible.builtin.command:
         argv: [cp, -p, "--", "{{ _pe_rot_aside }}/{{ item.name }}", "{{ item.dest }}"]
@@ -183,11 +236,6 @@
         cmd: "swanctl --load-creds && swanctl --rekey --ike {{ peering_edge_name | quote }} --reauth"
       changed_when: true
       failed_when: false
-    - name: peering-edge | rotation | mark the rotation rolled back, so no resume reports it done
-      ansible.builtin.copy:
-        dest: "{{ _pe_rot_aside }}/rolled-back"
-        content: "rotation {{ peering_edge_rotation }} rolled back: the old pair is live\n"
-        mode: "0600"
     - name: peering-edge | rotation | stop
       ansible.builtin.fail:
         msg: >-
