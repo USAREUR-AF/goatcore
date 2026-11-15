@@ -82,6 +82,16 @@ fg2_holds_nothing() {
 }
 export -f fg2_holds_nothing
 
+# The digest of the agreement between $1 and {B}, as each of the two holds it: one line
+# per side, "<side> <sha256>" (empty when a side holds none).
+fg2_digests() { # $1 {B}'s partner
+  local s w
+  for s in "$1" "$NATED"; do
+    if [ "$s" = "$NATED" ]; then w="/var/lib/goat-federation/$1"; else w="/var/lib/goat-federation/$NATED"; fi
+    printf '%s %s\n' "$s" "$(docker exec "$(drv_host "$s")" sha256sum "$w/agreement.json" 2>/dev/null | cut -d' ' -f1)"
+  done
+}
+
 # One pair, as nh_main drives it (units/nohand.sh): {A} and {B} are the pair's sovereigns
 # for the length of the call, {B} the listener behind the forwarder.
 fg2_pair() { # $1 the partner ({A}, then {C}), $2 1 for the second peering of {B}
@@ -133,12 +143,28 @@ fg2_main() {
   say "forwarder-two-peerings-by-goatbuilder: the first peering, $B with $A"
   NH_STEP=nh; OC_PREFIX=nh; export OC_PREFIX
   fg2_pair "$A" 0
+  # The first agreement as both sides hold it before the second peering is added.
+  fg2_digests "$A" > "$WORK/fg2-first-agreement-before.txt"
   say "forwarder-two-peerings-by-goatbuilder: the second peering, $B with $C, beside the first"
   NH_STEP=nh2; OC_PREFIX=nh2; export OC_PREFIX
   fg2_pair "$C" 1
 
   h="$(drv_host "$NATED")"; c="$WORK/$NATED/clone"
   g="$c/ops/ansible/group_vars/peering_forwarders/peering-forwarder.yml"
+
+  # Adding the second peering re-renders the first's files (allocate renders every
+  # peering); what runs must not change: the first agreement on both sides, and its
+  # acceptance from {A} run again now.
+  say "forwarder-two-peerings-by-goatbuilder: the first peering after the second was added"
+  fg2_digests "$A" > "$WORK/fg2-first-agreement-after.txt"
+  rec "fg2-$A-$B-agreement-unchanged-by-the-second-peering" -- bash -c \
+    "echo before:; cat '$WORK/fg2-first-agreement-before.txt'; echo after:; cat '$WORK/fg2-first-agreement-after.txt'
+     [ -s '$WORK/fg2-first-agreement-before.txt' ] && [ \"\$(grep -cE ' [0-9a-f]{64}\$' '$WORK/fg2-first-agreement-before.txt')\" = 2 ] && cmp -s '$WORK/fg2-first-agreement-before.txt' '$WORK/fg2-first-agreement-after.txt'"
+  OC_PREFIX=nh; export OC_PREFIX
+  local out="$RECORD/acceptance-as-$A-after-the-second-peering.out" arc=0
+  oc_accept "$A" "$B" > "$out" 2>&1 || arc=$?
+  rec "fg2-acceptance-as-$A-with-$B-after-the-second-peering" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" \
+    --expect-not-in "ACCEPTANCE FAILED" --expect-not-in "ACCEPTANCE INCOMPLETE" -- bash -c "cat '$out'; exit $arc"
   say "forwarder-two-peerings-by-goatbuilder: what allocate rendered for both"
   rec "fg2-$NATED-forwarder-values-list-both" --expect-in "name: \"$A\"" --expect-in "name: \"$C\"" \
     --expect-in 'interface: "wg-carry0"' --expect-in 'interface: "wg-carry1"' -- bash -c \
