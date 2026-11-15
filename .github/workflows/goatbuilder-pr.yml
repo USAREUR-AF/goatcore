@@ -263,6 +263,14 @@ jobs:
           set -o pipefail
           cargo test -p goatbuilder --test flows -- --nocapture 2>&1 | tee /tmp/flows.log
           if grep -q '^skipped:' /tmp/flows.log; then echo "::error::a flow skipped for missing Python deps"; exit 1; fi
+      # Gate row E4: the goat-get deploy serves a goatbuilder release only once its
+      # signature verifies, with this build as the controller's verifier. The test
+      # runs the role's goatbuilder tasks with ansible-playbook against this runner.
+      - name: The goat-get deploy serves goatbuilder only once its signature verifies (gate row E4)
+        if: env.FULL == 'true'
+        run: |
+          pip install --quiet ansible-core==2.20.11
+          GOAT_GET_RELEASE_TEST_REQUIRED=1 cargo test -p goatbuilder --test goat_get_verifies_release
       # Gate row E1: a deployment made with each released 0.x binary continues on
       # this build. The released binaries come from a cache keyed on their pinned
       # checksums; only a cache miss downloads, and fetch.sh refuses a download

@@ -15,7 +15,7 @@
 // after signing, a signature by another workflow identity, a
 // transparency-log entry naming another sha256, no bundle, a binary
 // SHA256SUMS does not list at its digest, and a .sha256 that disagrees with
-// SHA256SUMS.
+// SHA256SUMS. A controller with no verifier serves nothing either.
 //
 // Without ansible-playbook on PATH the test says it did not run and passes,
 // unless GOAT_GET_RELEASE_TEST_REQUIRED=1.
@@ -216,6 +216,12 @@ impl Surface {
 
     /// Run the role with `release` on the stand-in GitHub.
     fn deploy(&self, bin: &Path, release: Release) -> Output {
+        self.deploy_verified_by(bin, release, Path::new(env!("CARGO_BIN_EXE_goatbuilder")))
+    }
+
+    /// Run the role with `release` on the stand-in GitHub and `verifier` as the
+    /// controller's goatbuilder.
+    fn deploy_verified_by(&self, bin: &Path, release: Release, verifier: &Path) -> Output {
         *self.served.lock().unwrap() = release;
         let vars = serde_json::json!({
             "goat_get_www_dir": self.www(),
@@ -226,7 +232,7 @@ impl Surface {
             "goat_get_goatbuilder_assets": assets(),
             "goat_get_github_api": self.api,
             "goat_get_github_token": "",
-            "goat_get_goatbuilder_verifier": env!("CARGO_BIN_EXE_goatbuilder"),
+            "goat_get_goatbuilder_verifier": verifier,
             "goat_get_goatbuilder_trusted_root": self.root,
             "goat_get_hostname": "get.zagros.example.org",
             "site_id": "zagros",
@@ -278,14 +284,19 @@ impl Surface {
         out
     }
 
-    /// Nothing but the served directory is left in the web root.
+    /// Nothing but the served directory is left in the web root, and no
+    /// staging directory beside it.
     fn leftovers(&self) -> Vec<String> {
-        std::fs::read_dir(self.www())
+        let mut v: Vec<String> = std::fs::read_dir(self.www())
             .unwrap()
             .flatten()
             .map(|e| e.file_name().to_string_lossy().to_string())
             .filter(|n| n != "goatbuilder")
-            .collect()
+            .collect();
+        if self.tmp.path().join(".goatbuilder-staging").exists() {
+            v.push(".goatbuilder-staging".into());
+        }
+        v
     }
 }
 
@@ -403,6 +414,30 @@ fn e4_goat_get_serves_a_release_only_once_its_signature_verifies() {
             surface.leftovers()
         );
     }
+
+    // A controller with no verifier serves nothing either.
+    let before = surface.snapshot();
+    let o = surface.deploy_verified_by(&bin, good("two"), Path::new("/nonexistent/goatbuilder"));
+    assert_ne!(
+        o.status.code(),
+        Some(0),
+        "no verifier: served: {}",
+        text(&o)
+    );
+    assert!(
+        text(&o).contains("goat_get_goatbuilder_verifier"),
+        "no verifier: the refusal does not name the setting: {}",
+        text(&o)
+    );
+    assert!(
+        surface.snapshot() == before,
+        "no verifier: the served directory changed"
+    );
+    assert!(
+        surface.leftovers().is_empty(),
+        "no verifier: left behind {:?}",
+        surface.leftovers()
+    );
 
     // And the next release that verifies replaces the served one.
     let next = good("three");
