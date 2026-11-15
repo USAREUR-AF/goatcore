@@ -21,7 +21,7 @@ is required and never a pass, so this half exits 3 (INCOMPLETE). On the edge,
 the log lines that carry one of those ids, within the window and 5 minutes
 either side. `FED_EDGE_TRACE_FILE=<that file>` then decides the pending rows
 by id, fires nothing, and refuses a file for other ids or another window.
-With neither set, phase 14 runs as before.
+With neither set, phase 14 runs as before. (#961)
 
 #### Added: `goatbuilder explain release` and `explain fastlane` answer for each of their steps
 
