@@ -96,6 +96,12 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
   `exit_changed:`. `release_exit` keeps what the release did, and `check`
   refuses an `exit` that differs from it without a reason. The next refresh
   records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.7.0's exit 2 for this purpose.
+  From a 1.0 baseline (`baseline.yaml` names `goatbuilder/v1.0.0` or later),
+  `check` refuses `exit_changed:` on any kept invocation, with or without a
+  changed `exit`: a kept exit code changes only in a major release (ADR 1228).
+  It is accepted again only when the build's version in
+  `crates/goatbuilder/Cargo.toml` is a later major than the baseline's; an
+  unreadable version counts as the same major.
 - **A kept document whose shape must change.** It cannot within one version:
   add the new field beside the old one, or publish a new document version.
 - **A field a format carries only on some entries** (conditional fields). The
