@@ -1312,6 +1312,36 @@ mod tests {
         t
     }
 
+    /// `goatnet_founder` is read as site-bootstrap reads it
+    /// (`goatnet_founder | default(true) | bool`): only the top-level key, and
+    /// Ansible's booleans, so `False`, `"false"`, `no` and `off` declare a
+    /// joiner, and a nested or commented-out key, or none, a founder.
+    #[test]
+    fn goatnet_founder_is_read_as_ansible_reads_it() {
+        for (line, joiner) in [
+            ("goatnet_founder: false", true),
+            ("goatnet_founder: False", true),
+            ("goatnet_founder: \"false\"", true),
+            ("goatnet_founder: no", true),
+            ("goatnet_founder: 'no'", true),
+            ("goatnet_founder: off", true),
+            ("goatnet_founder: true", false),
+            ("goatnet_founder: yes", false),
+            ("goatnet_founder: \"True\"", false),
+            ("", false),
+            ("site:\n  goatnet_founder: false", false),
+            ("# goatnet_founder: false", false),
+        ] {
+            let t = joiner_checkout();
+            let vars = t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml");
+            let text = std::fs::read_to_string(&vars).unwrap().replacen("goatnet_founder: false\n", &format!("{line}\n"), 1);
+            std::fs::write(&vars, text).unwrap();
+            let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap_or_else(|e| panic!("{line:?}: {e:#}"));
+            let is_joiner = ph.iter().any(|p| p.label.contains("[core, joiner]"));
+            assert_eq!(is_joiner, joiner, "{line:?}");
+        }
+    }
+
     /// Gate row I3: a joiner's core node runs its own mesh DNS replica in
     /// phase 13, after Ory and signal federation (ADR 1235). A gate first
     /// refuses an unset or unresolved founder API token (GB-281); the play
