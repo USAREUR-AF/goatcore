@@ -35,6 +35,8 @@ Each layer has independent failure modes. **An observability story that only wat
 
 Three classes — keep them disjoint, name them so operators know what changed:
 
+Every summary names its site. The mgmt host's Prometheus sets `site` as an external label ([`prometheus.yml`](../../ops/compose/mgmt-host/monitoring/prometheus.yml), `global.external_labels`), not on the series. A rule template's `$labels` does not hold external labels, so a summary names the site from the series' own `site` label when it has one, else from `$externalLabels.site`. Before this, every summary in the mgmt-host rules rendered an empty site on the mgmt host. Built; promtool renders one summary from `spock.yml` and one from `ntp.yml` both ways ([`alert-summaries-name-the-site.test.yml`](../../ops/compose/mgmt-host/monitoring/tests/alert-summaries-name-the-site.test.yml)).
+
 ### 3.1 Liveness (already covered)
 
 `PostgresDown`, `SignalServerDown` — exporter unscrape-able. Lives in [`spock.yml`](../../ops/compose/mgmt-host/monitoring/rules/spock.yml) `postgres.availability` group + [`signal-server.yml`](../../ops/compose/mgmt-host/monitoring/rules/signal-server.yml).
