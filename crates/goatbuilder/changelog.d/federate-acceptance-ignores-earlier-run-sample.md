@@ -22,7 +22,9 @@ there, the delivery rows are BLOCKED, say that an earlier run's sample is
 what is there, and the run ends open (exit 3). A partner whose runner
 stages no stamp is read once a whole `FED_SESSION_WAIT` has passed with no
 stamp of its own, since this run's stamp may still be in flight; once a
-partner's stamp has been read, a sample without one is never learned.
+partner's stamp has been read (a garbled one included), a sample without
+one is never learned; an unstamped sample's row says its run identity is
+not proven, and a second unstamped challenge is BLOCKED as two runs.
 
 Limits: a partner's current run is kept when both sides start phase 14
 within `FED_SESSION_WAIT` of each other and their clocks agree within

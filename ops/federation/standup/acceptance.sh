@@ -351,7 +351,7 @@ if [ -n "${FED_ACCEPTANCE_ATTEMPT:-}" ]; then
   SESSION_ID=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["session_id"])' "$SDIR/derived.json")
   AGREEMENT_HEX=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["agreement_sha256"].split(":", 1)[1])' "$SDIR/derived.json")
   MY_CHAL=$(python3 "$HERE/acceptance_session.py" challenge)
-  THEIR_CHAL=""; STAMP_SEEN=""; STAMPLESS=""
+  THEIR_CHAL=""; STAMP_SEEN=""; STAMPLESS=""; UNSTAMPED=""
   # When this run started, in seconds since the epoch (UTC). Staged beside our samples,
   # so the partner can tell this run's from an earlier run's (wait_for_partner).
   MY_STARTED=$(date -u +%s)
@@ -439,6 +439,7 @@ session_lanes() {
       done
     fi
     obs key "$key"; obs sent_expected "$val"; obs received "$GOT"; obs attempts "$i"
+    [ -n "$DERIVED" ] && [ -n "${UNSTAMPED:-}" ] && obs run_identity "unstamped: run identity not proven"
     obs sent_sha256 "$(sha "$val")"; obs received_sha256 "$(sha "$GOT")"
     if [ "$GOT_RC" -ne 0 ]; then blk "delivery/inbound/$set" inbound positive "$THEM's session sample under $set/**: our core's REST surface did not answer" "$GOT_ERR"
     elif [ -n "$DERIVED" ] && [ -n "$NOT_THIS_RUN" ]; then blk "delivery/inbound/$set" inbound positive "$NOT_THIS_RUN" \
@@ -503,7 +504,7 @@ session_lanes() {
 wait_for_partner() {
   local key="$1" set="${2#release/}" end next=0 left v rest chal started said="" w kind
   w=${FED_SESSION_WAIT:-300}
-  NOT_THIS_RUN=""
+  NOT_THIS_RUN=""; UNSTAMPED=""
   end=$((SECONDS + w))
   while :; do
     kind=""
@@ -519,14 +520,14 @@ wait_for_partner() {
         if [ -n "$STAMP_SEEN" ]; then
           NOT_THIS_RUN="$THEM's sample on $2/** has no run stamp beside it, though $THEM's runner stamps its runs; it is not learned, and this run's did not arrive within ${w}s"
         elif [ -n "$STAMPLESS" ]; then
-          learn_their_challenge "$GOT" "$2"; return 0
+          stampless_sample "$2" && return 0
         fi
       fi
     else
       v="${GOT#"$THEM"-}"; started="${v##*@}"; rest="${v%@*}"; chal="${rest%-"$set"}"
       if [ "$v" = "$GOT" ] || [ "$rest" = "$v" ] || [ "$chal" = "$rest" ] \
          || ! [[ "$chal" =~ ^[0-9a-f]{16,64}$ ]] || ! [[ "$started" =~ ^[0-9]{1,12}$ ]]; then
-        kind=garbled
+        kind=garbled; STAMP_SEEN=1
         NOT_THIS_RUN="$THEM's run stamp on $2/** is not of the form $THEM-<challenge>-$set@<seconds>: '$GOT'"
       elif [ "$started" -lt $((MY_STARTED - 2 * w)) ]; then
         kind=earlier; STAMP_SEEN=1
@@ -551,7 +552,10 @@ wait_for_partner() {
         # A whole wait with no stamp from this partner on any set: its runner stages
         # none. Its sample is read as before, and so are later sets', at once.
         STAMPLESS=1; NOT_THIS_RUN=""
-        learn_their_challenge "$GOT" "$2"
+        stampless_sample "$2"
+      elif [ "$kind" = fresh ] && [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "$THEM-$chal-$set" ]; then
+        # The stamp's own sample, arriving at the end of the wait: this run's.
+        THEIR_CHAL="$chal"; NOT_THIS_RUN=""
       elif [ "$kind" = fresh ] && [ "$GOT_RC" -eq 0 ]; then
         # A stamp started within 2W of ours is there and its sample is not. Another
         # run's sample (the same shape, another challenge) is named; other bytes are a
@@ -573,6 +577,23 @@ wait_for_partner() {
     fi
     settle 2
   done
+}
+
+# stampless_sample SET: GOT is an unstamped sample from a partner whose runner stages
+# no stamp (STAMPLESS). Its challenge is learned when none is yet; a sample carrying
+# another challenge than the one learned is a second run's, BLOCKED as two runs, never
+# a byte FAIL. Either way the row records that its run identity is not proven
+# (UNSTAMPED). Returns 0 when the sample is taken, 1 when it is set aside.
+stampless_sample() {
+  local v="${GOT#"$THEM"-}"
+  UNSTAMPED=1
+  v="${v%-"${1#release/}"}"
+  if [ -n "$THEIR_CHAL" ] && [ "$v" != "$GOT" ] && [[ "$v" =~ ^[0-9a-f]{16,64}$ ]] && [ "$v" != "$THEIR_CHAL" ]; then
+    NOT_THIS_RUN="two of $THEM's runs: $1/** holds an unstamped sample with another challenge than the set read before it; $THEM's runner stages no stamp, so which run is this one cannot be told"
+    return 1
+  fi
+  learn_their_challenge "$GOT" "$1"
+  return 0
 }
 
 # learn_their_challenge VALUE SET: the partner's challenge is the one their sample

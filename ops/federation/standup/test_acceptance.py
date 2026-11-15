@@ -1011,7 +1011,11 @@ class AcceptanceRun(unittest.TestCase):
         row = rows["delivery/inbound/release/" + second]
         self.assertEqual(row["verdict"], "BLOCKED", (row, out))
         self.assertIn("no run stamp", row["reason"], out)
-        self.assertNotIn(self.OLD_CHALLENGE, self.evidence_text())
+        # The earlier sample's bytes are recorded as what was read, never learned as
+        # xab's challenge.
+        self.assertIn(self.OLD_CHALLENGE, row["observations"]["received"])
+        self.assertNotIn(self.OLD_CHALLENGE, row["observations"]["sent_expected"])
+        self.assertNotIn(self.OLD_CHALLENGE, out)
 
     def test_derived_clocks_apart_by_less_than_the_wait_keep_a_fresh_sample(self):
         # xaa's clock runs 8 s behind, the wait is 10 s, and xab starts 3 s after xaa:

@@ -587,15 +587,19 @@ of the partner's sets in turn:
   this run's stamp may still be in flight: the first run after the partner upgrades, on a session id
   that its older runner used before, finds that runner's unstamped sample, and learning it would
   have the partner refuse our result (GB-273). Once the reader has read any stamp of the partner's,
-  it never learns from an unstamped sample; that set ends BLOCKED. The cost: a partner on an older
-  runner is read one `FED_SESSION_WAIT` later than before.
+  it never learns from an unstamped sample; that set ends BLOCKED. A garbled stamp counts as a stamp
+  read. The cost: a partner on an older runner is read one `FED_SESSION_WAIT` later than before.
+  An unstamped sample proves no run's identity: its delivery row records `run_identity:
+  unstamped: run identity not proven`, and a later set whose unstamped sample carries another
+  challenge than the one learned is BLOCKED as two runs, never a FAIL on other bytes. An earlier
+  run's unstamped sample can still pass a set alone; its result is refused (GB-273, §6.1).
 - The delivery row reads the reason a set is not this run's before it compares bytes, so the stamp
   decides a set whenever it says the sample is not this run's. When the wait ends without the
   sample, the row is BLOCKED and its reason names what is there: a stamp from the partner's earlier
   run, a stamp started within `2W` beside an earlier run's sample, that stamp with no sample, two
   runs' stamps, or an unstamped sample from a partner that stamps. The run ends open (exit 3), with
   no FAIL row. A sample of another shape beside a stamp started within `2W` is a FAIL (other bytes),
-  as on any lane.
+  as on any lane. A stamp's own sample read at the end of the wait is this run's, and passes.
 
 **The clock tolerance.** Let `W` be `FED_SESSION_WAIT`, `x` how long before us the partner's run
 started, and `D` how far the partner's clock runs behind ours (negative when ahead). A fresh sample
