@@ -694,11 +694,12 @@ scenarios:
     pass_condition: >
       nothing-hand-written (units/nohand.sh), with {B} behind a NAT router that forwards
       nothing inbound and listening through a peering forwarder it operates, as in
-      forwarder-path. {B}'s operator input is nothing-hand-written's, with two more parts:
-      `forwarder: {endpoint, ansible_host}` on its peering entry, and the forwarder machine's
-      own values (its SSH user, its public interface and the address it admits SSH from, in
-      ops/ansible/group_vars/peering_forwarders/), which only its operator knows. Nobody
-      runs a play by hand: `goatbuilder federate allocate` renders the forwarder's inventory
+      forwarder-path. {B}'s operator input is nothing-hand-written's, with one more part:
+      `forwarder:` on its peering entry, with its endpoint and ansible_host and the forwarder
+      machine's own values (`ansible_user`, `public_interface` and `ssh_sources`: its SSH
+      user, its public interface and the address it admits SSH from), which only its
+      operator knows. No group_vars file is written by hand: allocate renders those values
+      into the forwarder group's peering-forwarder.yml. Nobody runs a play by hand: `goatbuilder federate allocate` renders the forwarder's inventory
       group, its group_vars and the offer of the forwarder's public port, and phase 2 of
       `goatbuilder federate {A}` on {B} runs the edge, carrier-key and forwarder plays itself
       (peering-forwarder.md §7). Then {A}'s probe of {B}'s edge fails, and the same probe
