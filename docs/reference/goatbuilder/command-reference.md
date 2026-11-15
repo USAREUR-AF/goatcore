@@ -298,6 +298,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 | `--partner-ca-fingerprint <PARTNER_CA_FINGERPRINT>` | Phase 5: the partner's CA fingerprint, as read aloud on the call |  |
 | `--agreement-digest <AGREEMENT_DIGEST>` | Phase 6: the agreement digest, as compared with the partner |  |
 | `--place-pointer-package <PLACE_POINTER_PACKAGE>` | Phase 5: place the package the partner's single pointer named and the directory held back, after confirming on the call that it is the package for this peering (its digest, as the stop shows it) |  |
+| `--accept-partner-package <ACCEPT_PARTNER_PACKAGE>` | Phase 5: use the partner's new package, signed by the key already bound (after it rotated its WireGuard key, for example), after comparing its digest on the call (as the stop shows it). --yes never confirms it |  |
 | `--approve-admission <APPROVE_ADMISSION>` | Phase 10: approve exactly this admission digest, after reading what our core will admit. --yes never approves it |  |
 | `--review-in-pr` | Phase 10: write what our core would admit for review in a pull request, and stop |  |
 | `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
@@ -518,7 +519,7 @@ Replace one key of a running peering and run the command again from the first ph
 | Argument | Description |
 |---|---|
 | `<PARTNER>` | The partner whose peering's key is replaced (the peering name, as declared) |
-| `<KEY>` | The key: leaves, carrier, transport, signing or ca. This build rotates leaves and carrier |
+| `<KEY>` | The key: leaves, carrier, transport, signing or ca. This build rotates leaves, carrier and transport |
 
 **Options**
 
