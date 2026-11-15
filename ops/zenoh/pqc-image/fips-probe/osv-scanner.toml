@@ -1,0 +1,27 @@
+# Advisories that do not apply to the lock file in this directory.
+# Read by osv-scanner and by the OpenSSF Scorecard Vulnerabilities check.
+# One entry per advisory: the ID and the reason it does not apply.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0042"
+reason = "The probe does not enable CRL checking."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0043"
+reason = "The probe uses AWS-LC only through rustls, which offers no AES-CCM cipher suite."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0346"
+reason = "The probe defines no ClientSessionStore and never formats client session values."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0348"
+reason = "rustls is built here without the brotli feature."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0349"
+reason = "The probe opens one connection per client configuration and exits, so no stored key-share prediction is reused."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0382"
+reason = "The probe trusts only its own self-signed loopback certificate or the CA file named on its command line, never a public root set."

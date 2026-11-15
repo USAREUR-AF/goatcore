@@ -139,8 +139,9 @@ def run(argv=None):
     ap.add_argument("--deployed", help="comma-separated deployed component names")
     ap.add_argument("--ledger", help="deploy-history jsonl; components read from it")
     ap.add_argument("--endstate", help="the site's derived end state (ops/goatbuilder/endstate/endstate.py "
-                    "model <site>): a row whose `requires` names only services the site declares "
-                    "absent reads N/A (ADR 1206)")
+                    "model <site>): a row whose `requires` names a service the site declares "
+                    "absent reads N/A (ADR 1206), naming the present services it did not check; "
+                    "a present service that no row could check for that reason reads UNKNOWN")
     ap.add_argument("--only", help="run only these row ids (comma-separated)")
     ap.add_argument("--all-eligible", action="store_true",
                     help="run every applicable row (the default when no --only "
@@ -184,9 +185,10 @@ def run(argv=None):
 
     absent = declared_absent(args.endstate)
     gaps = declared_gaps(args.endstate)
+    present = present_services(args.endstate)
 
     if args.plan:
-        return plan(args, tests, values, absent, gaps)
+        return plan(args, tests, values, absent, gaps, present)
 
     results = []
     # TWO PASSES, POSITIVES FIRST. A `must_refuse` row asserts that something is
@@ -238,7 +240,7 @@ def run(argv=None):
         # applicability: the site's declared end state first (ADR 1206), then the row's own predicate
         gone = sorted(set(t.get("requires", [])) & absent)
         if gone:
-            results.append((vid, probes.Verdict(probes.NA, f"declared absent on this site: {', '.join(gone)}", probe_type), t))
+            results.append((vid, probes.Verdict(probes.NA, absent_detail(t, absent, present), probe_type), t))
             continue
         # a service the end state declares here that this site does not run yet: the
         # gap and its gate row, never N/A (ADR 1165, gate group I)
@@ -289,7 +291,60 @@ def run(argv=None):
             v = invert_refusal(v, probe_type)
         results.append((vid, v, t))
 
+    # A present service whose every row was N/A above for another service's
+    # absence was checked by nothing: say so, as UNKNOWN, never as a pass.
+    selected = [t for t in tests if not only_ids or t.get("id") in only_ids]
+    for svc, blocking in sorted(unchecked_services(selected, absent, present).items()):
+        results.append((f"coverage:{svc}", probes.Verdict(probes.UNKNOWN, coverage_detail(svc, blocking), "coverage"),
+                        {"id": f"coverage:{svc}", "aspect": "coverage", "requires": sorted(present[svc])}))
+
     return report(args, results)
+
+
+def present_services(path):
+    """{service: its acceptance tokens} for every service the site's end state
+    declares present and that owns at least one token. An undeclared service
+    (present: null, the model's "set nowhere") is not counted as present: nothing
+    says it runs. A token no service owns (a capability such as
+    spock-mesh-peering) belongs to none of them."""
+    if not path:
+        return {}
+    m = json.loads(Path(path).read_text())
+    return {name: set(s.get("assay") or []) for name, s in (m.get("services") or {}).items()
+            if s.get("present") is True and s.get("assay")}
+
+
+def missed_by(t, present):
+    """The present services a row requires: the ones it would also have checked."""
+    req = set(t.get("requires", []))
+    return sorted(svc for svc, toks in present.items() if toks & req)
+
+
+def absent_detail(t, absent, present):
+    """The N/A evidence for a row that needs a declared-absent service: the absent
+    tokens, then the present services the row would also have checked."""
+    gone = sorted(set(t.get("requires", [])) & absent)
+    missed = missed_by(t, present)
+    return f"declared absent on this site: {', '.join(gone)}" + (
+        f"; not checked by this row: {', '.join(missed)}" if missed else "")
+
+
+def unchecked_services(tests, absent, present):
+    """{service: the absent tokens that stopped its rows} for each present service
+    that some row requires, where every such row is N/A because it also needs a
+    service the site declares absent. A row that was N/A for its own applies_when,
+    or that ran, counts as reaching the service."""
+    out = {}
+    for svc, toks in present.items():
+        rows = [set(t.get("requires", [])) for t in tests if set(t.get("requires", [])) & toks]
+        if rows and all(r & absent for r in rows):
+            out[svc] = sorted(set().union(*(r & absent for r in rows)))
+    return out
+
+
+def coverage_detail(svc, blocking):
+    return (f"{svc} is present, and no row could check it: every row that does needs a service "
+            f"this site declares absent ({', '.join(blocking)})")
 
 
 def declared_absent(path):
@@ -338,16 +393,20 @@ def print_by_layer(results):
         print(f"  {layer:15s} " + "  ".join(f"{table[layer][k]:>7}" for k in order))
 
 
-def plan(args, tests, values, absent=frozenset(), gaps=None):
+def plan(args, tests, values, absent=frozenset(), gaps=None, present=None):
     """--plan: what the assay would run on this goatnet, by layer, probing
     nothing. Deterministic for a given value set, so a rehearsal can keep it
     as a checkpoint. A row whose `requires` names a service the end state
-    declares absent is N/A here too, as it is when the rows run (ADR 1206)."""
-    applicable, na, gapped = {}, [], []
+    declares absent is N/A here too, as it is when the rows run (ADR 1206),
+    and a present service that no row can check for that reason is listed."""
+    applicable, na, gapped, missed = {}, [], [], []
     gaps = gaps or {}
+    present = present or {}
     for t in tests:
         if set(t.get("requires", [])) & absent:
             na.append(t["id"])
+            if missed_by(t, present):
+                missed.append(f"{t['id']} ({', '.join(missed_by(t, present))})")
         elif set(t.get("requires", [])) & set(gaps):
             gapped.append(t["id"])
         elif truthy_applies(t.get("applies_when"), values):
@@ -365,6 +424,12 @@ def plan(args, tests, values, absent=frozenset(), gaps=None):
             print(f"    {kind} {t['id']:44s} {t.get('probe', '')}")
     if na:
         print(f"\n  N/A here: {', '.join(sorted(na))}")
+    if missed:
+        print(f"\n  N/A rows that would also check a present service: {', '.join(sorted(missed))}")
+    unchecked = unchecked_services(tests, absent, present)
+    if unchecked:
+        print("\n  present, and no row can check it here (UNKNOWN when the rows run): "
+              + "; ".join(coverage_detail(svc, b) for svc, b in sorted(unchecked.items())))
     if gapped:
         print(f"\n  gaps here, declared and not yet built at this site: {', '.join(sorted(gapped))}")
     return 0
@@ -603,8 +668,74 @@ def self_test():
             plan(argparse.Namespace(env="selftest"), rows, {}, absent)
         check(name, want in buf.getvalue(), True)
 
+    for name, got, want in absent_coverage_self_test():
+        check(name, got, want)
+
     print(f"\nself-test: {'ALL PROBES PROVEN RED-THEN-GREEN' if ok else 'FAILURES ABOVE'}")
     return 0 if ok else 1
+
+
+def absent_coverage_self_test():
+    """A row that needs a declared-absent service is N/A and names the present
+    services it did not check; a present service that no row could check for that
+    reason reads UNKNOWN; a token no service owns is never a service. Run through
+    run() with a manifest, a model and a local command probe."""
+    out = []
+    ok_row = {"probe": "cmd-assert", "params": {"cmd": "echo up", "expect": "up"}}
+    model = {"services": {
+        "door": {"present": False, "assay": ["door"]},
+        "app": {"present": True, "assay": ["app"]},
+        "db": {"present": True, "assay": ["db"]},
+        "maybe": {"present": None, "assay": ["maybe"]},
+    }}
+    cases = (
+        # one absent, one present: N/A naming app, and app reads UNKNOWN
+        ("one absent one present",
+         [{"id": "via-door", "requires": ["door", "app"], **ok_row}],
+         {"via-door": ("N/A", "declared absent on this site: door; not checked by this row: app"),
+          "coverage:app": ("UNKNOWN", "app is present, and no row could check it: every row that does needs a "
+                                      "service this site declares absent (door)")}),
+        # the same, with a row of app's own that runs: no coverage line
+        ("present service covered by its own row",
+         [{"id": "via-door", "requires": ["door", "app"], **ok_row},
+          {"id": "app-own", "requires": ["app"], **ok_row}],
+         {"via-door": ("N/A", "declared absent on this site: door; not checked by this row: app"),
+          "app-own": ("PASS", None)}),
+        # every service it requires absent: plain N/A
+        ("all absent",
+         [{"id": "door-only", "requires": ["door"], **ok_row}],
+         {"door-only": ("N/A", "declared absent on this site: door")}),
+        # a token no service owns is not a present service: N/A, nothing unchecked
+        # an undeclared service (present: null) is not present: no coverage row
+        ("undeclared service not counted as present",
+         [{"id": "via-door-maybe", "requires": ["door", "maybe"], **ok_row}],
+         {"via-door-maybe": ("N/A", "declared absent on this site: door")}),
+        ("unowned token ignored",
+         [{"id": "door-cap", "requires": ["door", "spock-mesh-peering"], **ok_row},
+          {"id": "db-own", "requires": ["db"], **ok_row}],
+         {"door-cap": ("N/A", "declared absent on this site: door"),
+          "db-own": ("PASS", None)}),
+    )
+    with tempfile.TemporaryDirectory() as d:
+        mp = Path(d) / "model.json"
+        mp.write_text(json.dumps(model))
+        for name, rows, want in cases:
+            man, js = Path(d) / "manifest.yaml", Path(d) / "out.jsonl"
+            man.write_text(yaml.safe_dump({"tests": rows}))
+            with contextlib.redirect_stdout(io.StringIO()):
+                run(["--env", "selftest", "--manifest", str(man), "--endstate", str(mp), "--json", str(js)])
+            got = {r["id"]: (r["status"], r["evidence"]) for r in map(json.loads, js.read_text().splitlines())}
+            got = {k: (st, ev if want.get(k, (None, None))[1] is not None else None) for k, (st, ev) in got.items()}
+            out.append((f"endstate coverage: {name}", got, want))
+        # the plan lists the same unchecked service
+        buf = io.StringIO()
+        rows = cases[0][1]
+        with contextlib.redirect_stdout(buf):
+            plan(argparse.Namespace(env="selftest"), rows, {}, declared_absent(str(mp)), {}, present_services(str(mp)))
+        out.append(("plan: an unchecked present service is listed",
+                    ("via-door (app)" in buf.getvalue(), "app is present, and no row could check it" in buf.getvalue()),
+                    (True, True)))
+    return out
 
 
 def goat_cli_self_test(tmp):

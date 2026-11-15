@@ -42,7 +42,7 @@ groups:
           severity: critical
           component: pgbackrest
         annotations:
-          summary: "pgBackRest backup failed on stanza {{ $labels.stanza }} at {{ $labels.site }}"
+          summary: "pgBackRest backup failed on stanza {{ $labels.stanza }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}"
           description: "Last backup job exited non-zero. Local NVMe repo for this stanza may be full, the postgres-exporter sidecar may be unable to reach the postgres container, or the stanza config has drifted. Run `docker compose exec pgbackrest pgbackrest --stanza={{ $labels.stanza }} info` on the mgmt-host to inspect."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/pgbackrest.md"
 
@@ -56,7 +56,7 @@ groups:
           severity: critical
           component: pgbackrest
         annotations:
-          summary: "pgBackRest stanza {{ $labels.stanza }} at {{ $labels.site }} has no full backup in > 10 days"
+          summary: "pgBackRest stanza {{ $labels.stanza }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} has no full backup in > 10 days"
           description: "Cadence is full every 7 days + diff daily; > 10 d since last full means the systemd timer / cron is silently failing. Check the per-stanza schedule on this host."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/pgbackrest.md"
 
@@ -75,7 +75,7 @@ groups:
           severity: critical
           component: pgbackrest
         annotations:
-          summary: "pgBackRest stanza {{ $labels.stanza }} at {{ $labels.site }} has not archived a WAL segment in > 15 min"
+          summary: "pgBackRest stanza {{ $labels.stanza }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} has not archived a WAL segment in > 15 min"
           description: "Postgres archive_command is failing or wedged. Risk: WAL accumulates in pg_wal until disk fills, then postgres halts. Check `docker logs postgres | grep archive` on the mgmt-host; check NVMe free space at /opt/docker-data/pgbackrest/."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/pgbackrest.md"
 
@@ -96,7 +96,7 @@ groups:
           severity: warning
           component: pgbackrest
         annotations:
-          summary: "Router-B at {{ $labels.site }} has archive_mode != 'always'"
+          summary: "Router-B at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} has archive_mode != 'always'"
           description: "Router-B must run archive_mode=always so its stanza keeps archiving WAL while it's the streaming replica. Drift means B's stanza is silently frozen — recovery from a B-only catastrophe would lose WAL since last promotion. Check ops/postgres/spock/postgresql.conf on Router-B."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/pgbackrest.md"
 
@@ -118,6 +118,6 @@ groups:
           severity: warning
           component: pgbackrest
         annotations:
-          summary: "pgBackRest stanzas at {{ $labels.site }} have diverged > 2 h between A and B"
+          summary: "pgBackRest stanzas at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} have diverged > 2 h between A and B"
           description: "Router-A's last full backup timestamp differs from Router-B's by more than 2 hours. One scheduler is failing silently. Check `docker compose ps pgbackrest` on both hosts and inspect the systemd timer / cron entries."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/pgbackrest.md"
