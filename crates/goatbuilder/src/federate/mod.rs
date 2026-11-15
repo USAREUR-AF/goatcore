@@ -1407,6 +1407,29 @@ mod tests {
         assert!(!six.contains("xac"), "a third party's key reached compose: {six}");
     }
 
+    /// With our id not known (no --as, no declaration, no package of ours
+    /// yet), phase 6 passes every keyring line and names the partner alone:
+    /// --party <partner> still holds the agreement to the declared partner,
+    /// and compose refuses another party's package with only that party named
+    /// (goat-federation `compose_takes_only_the_parties_it_is_given`).
+    #[test]
+    fn phase_6_with_our_id_unknown_names_the_partner_alone() {
+        let work = tempfile::tempdir().unwrap();
+        let ctx = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        std::fs::write(work.path().join("keys.txt"), "xaa=QUJD\nvelmara=QUJE\nxac=QUJF\n").unwrap();
+        runenv::set("GOAT_CONTEXT_DIR", ctx.path().display().to_string());
+        let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        let phases = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
+        runenv::unset("GOAT_CONTEXT_DIR");
+        let six = &phases.iter().find(|p| p.n == 6).unwrap().cmd;
+        assert_eq!(six.matches("--party").count(), 1, "{six}");
+        assert!(six.contains("--party 'velmara'"), "{six}");
+        for k in ["xaa=QUJD", "velmara=QUJE", "xac=QUJF"] {
+            assert!(six.contains(&format!("--key '{k}'")), "{k}: {six}");
+        }
+    }
+
     /// `rotate <partner> leaves` (docs/design/federation-key-rotation.md §5,
     /// K3): phase 8 replaces every leaf with --rotate, and only phase 8's
     /// command changes; the run is 8 to 14.
