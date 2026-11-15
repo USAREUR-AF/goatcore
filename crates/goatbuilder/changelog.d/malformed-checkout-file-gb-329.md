@@ -19,4 +19,4 @@ the file and the parser's reason.
   GB-329 with exit 1.
 
 A script that tests for exit 2, or matches GB-254, after one of these sees
-exit 1 and GB-329. A file that is missing or cannot be read stays GB-254.
+exit 1 and GB-329. A file that is missing or cannot be read stays GB-254 (#929).
