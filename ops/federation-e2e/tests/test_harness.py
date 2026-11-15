@@ -36,6 +36,7 @@
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
+import re
 import os
 import subprocess
 import sys
@@ -469,6 +470,22 @@ def samples_checks():
               f"samples --gap: a loss outside the gaps is not a FAIL naming it: {rc} {last}")
         rc, last = run([(t + 50, n, c) for t, n, c in sent], [])
         check(rc == 1 and "no sample was released inside the window" in last, f"samples: an empty window is not a FAIL: {rc} {last}")
+    # Each rotation records the rotating side's material before and after, and the
+    # partner's. A side's own snapshot keeps its name across both sides' rotations:
+    # the second rotation once overwrote the first side's before-file with the key it
+    # rotated to, and old-retired-transport then read the new key as the old one.
+    snap = ('RECORD=/r; eval "$(sed -n \'/^rot_snap()/,/^}/p\' units/rotation.sh)"; '
+            'rot_snap transport xaa xaa before; rot_snap transport xab xaa before; '
+            'rot_snap transport xab xab before; rot_snap transport xaa xab after')
+    p = subprocess.run(["bash", "-c", snap], cwd=ROOT, capture_output=True, text=True)
+    names = p.stdout.split()
+    check(p.returncode == 0 and len(names) == 4 and len(set(names)) == 4
+          and names[0] == "/r/rot-transport-xaa-before.txt" and names[2] == "/r/rot-transport-xab-before.txt",
+          f"rotation: rot_snap does not keep each side's own snapshot apart from the partner's: {names} {p.stderr.strip()}")
+    unit = open(os.path.join(ROOT, "units", "rotation.sh"), encoding="utf-8").read()
+    body = re.sub(r"(?ms)^rot_snap\(\).*?^}\n", "", unit)
+    raw = [l.strip() for l in body.splitlines() if re.search(r"-(before|after)\.txt", l)]
+    check(not raw, f"rotation: a snapshot path is spelled outside rot_snap: {raw}")
     cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
     ids = {c["id"] for sc in cat["scenarios"] if sc["id"] == "key-rotation" for c in sc.get("checks", [])}
     script = ('eval "$(sed -n \'/^rot_checks()/,/^}/p\' units/rotation.sh)"; '
