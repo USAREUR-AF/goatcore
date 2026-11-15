@@ -401,14 +401,15 @@ pub fn interpreted(verb: &str, key: &str, log: Option<&str>) -> Option<crate::Ch
 
 impl FailedPhase {
     /// The row's text, after the phase's own failure line: what the output
-    /// says went wrong, what to do, where the output is, and how to run this
-    /// phase again by hand.
+    /// says went wrong, where the output is, and how to run this phase again
+    /// by hand. What to do is the row's `fix`, printed on its own line, so it
+    /// is not in this text too.
     pub fn detail(&self) -> String {
         let mut s = match (&self.code, &self.title) {
-            (Some(c), Some(t)) => format!("{c}: {t}. Likely: {}. Fix: {}", self.cause, self.fix),
+            (Some(c), Some(t)) => format!("{c}: {t}. Likely: {}", self.cause),
             _ => format!(
-                "No known error in its output. This phase fails when {}; then {}",
-                self.cause, self.fix
+                "No known error in its output. This phase fails when {}",
+                self.cause
             ),
         };
         if let Some(l) = &self.log {
