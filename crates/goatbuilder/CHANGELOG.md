@@ -95,6 +95,14 @@ usage: the command line was wrong). Each change is from the last release:
 `federate allocate <peering>` naming an undeclared peering is not coded yet and
 still exits 2. Every other exit is unchanged.
 
+#### Fixed: a fleet-pins.yaml that breaks the pins schema is refused with GB-337
+
+`goatbuilder pins`, and the verbs that run its check (`release`, the
+preflight, the fast lane), refused a fleet-pins.yaml, its sidecar or a pins
+file that broke the pins schema with no catalog code. Each of those
+refusals now carries the new code GB-337 and names the file and the rule.
+It still exits 2.
+
 <!-- END generated: changelog unreleased -->
 
 ## 0.7.1 — 2026-11-15
