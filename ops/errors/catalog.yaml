@@ -3692,7 +3692,7 @@ entries:
       - the record was emptied or edited by hand
     fixes:
       - "finish the rotation the record names with the command that started it (the message names its id and kind)"
-      - "retire the earlier rotation once phase 14 passed on both sides: goatbuilder federate rotate <partner> ipsec-leaf|ipsec-ca --retire <id>"
+      - "retire the earlier rotation once phase 14 passed here after the switch (and the partner says theirs did): goatbuilder federate rotate <partner> ipsec-leaf|ipsec-ca --retire <id>"
       - "removing <work>/.rotation-ipsec starts a new rotation id; the edge keeps /etc/swanctl/.previous-<id>/ as it is (after a GB-302 rollback, with the old pair live), and nothing removes it yet"
     read: docs/design/federation-key-rotation.md
     exit: 1
@@ -3709,10 +3709,10 @@ entries:
       - "the rotation was not confirmed: it stopped after the switch and before its confirm wrote .previous-<id>/confirmed"
       - "the confirm's record is unreadable: it lacks the id= or at= line the confirm writes"
       - "neither the IKE SA the confirm recorded nor one established since is up, or the live key is not the live certificate's"
-      - "goatbuilder federate rotate --retire: this side's ledger (<work>/ipsec-rotations.json) shows no such rotation whose phase 11 switched and whose phase 14 passed afterwards, or it is already retired"
+      - "goatbuilder federate rotate --retire: this side's ledger (<work>/ipsec-rotations.json) shows no such rotation whose phase 11 switched and whose phase 14 passed here after the switch, or it is already retired"
     fixes:
       - "check the id the rotation printed (ls /etc/swanctl/.previous-*, or <work>/ipsec-rotations.json)"
-      - "run the rotation again with the same id: it re-authenticates, confirms and writes .previous-<id>/confirmed; then retire once both sides passed phase 14"
+      - "run the rotation again with the same id: it re-authenticates, confirms and writes .previous-<id>/confirmed; retire once phase 14 passed here after the switch, and the partner says theirs did"
     read: docs/design/federation-key-rotation.md
     exit: 2
     matches:

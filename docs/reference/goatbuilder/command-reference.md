@@ -525,7 +525,7 @@ Replace one key of a running peering and run the command again from the first ph
 | Flag | Description | Default |
 |---|---|---|
 | `--partner-holds-ipsec-ca <PARTNER_HOLDS_IPSEC_CA>` | ipsec-ca only: the partner's attestation that it placed our new IPsec CA beside its current one: the sha256 fingerprint it read back from the file it placed. goatbuilder checks the fingerprint is our staged CA's; it cannot check the partner's edge |  |
-| `--retire <RETIRE>` | ipsec-leaf or ipsec-ca: run the retire step of this rotation id, which removes the set-aside key. Only for a rotation whose phase 14 passed here after its switch, and only while no other rotation is under way |  |
+| `--retire <RETIRE>` | ipsec-leaf or ipsec-ca: run the retire step of this rotation id, which removes the set-aside key. Only once phase 14 passed here after the switch (check the partner's on the call), and only while no other rotation is under way |  |
 | `--env <ENV>` | The environment the peering is declared on |  |
 | `--as <AS_PARTY>` | Which party we are |  |
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |

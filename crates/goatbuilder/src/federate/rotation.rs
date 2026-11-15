@@ -80,8 +80,9 @@ pub struct RotateArgs {
     #[arg(long = "partner-holds-ipsec-ca", value_name = "SHA256")]
     pub partner_holds_ipsec_ca: Option<String>,
     /// ipsec-leaf or ipsec-ca: run the retire step of this rotation id, which
-    /// removes the set-aside key. Only for a rotation whose phase 14 passed here
-    /// after its switch, and only while no other rotation is under way.
+    /// removes the set-aside key. Only once phase 14 passed here after the
+    /// switch (check the partner's on the call), and only while no other
+    /// rotation is under way.
     #[arg(long, value_name = "ID")]
     pub retire: Option<String>,
     /// The environment the peering is declared on.
@@ -379,18 +380,33 @@ fn ledger_write(work: &Path, rows: &[serde_json::Value]) -> Result<()> {
 
 /// Set `field` to now on the ledger rows `pick` chooses; best effort, as the
 /// phase it records has already passed.
-fn ledger_mark(work: &Path, field: &str, pick: &dyn Fn(&serde_json::Value) -> bool) {
-    if let Ok(mut rows) = ledger_read(work) {
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let mut changed = false;
-        for r in rows.iter_mut().filter(|r| pick(r)) {
-            r[field] = serde_json::json!(now);
-            changed = true;
-        }
-        if changed {
-            let _ = ledger_write(work, &rows);
+fn ledger_mark(
+    work: &Path,
+    field: &str,
+    pick: &dyn Fn(&serde_json::Value) -> bool,
+) -> Option<String> {
+    let warn = |e: String| {
+        Some(format!(
+            "{} was not updated ({field}): {e}. Until it is, a new IPsec rotation does not wait for this one's retire, and --retire does not see it; check the working folder and record it by hand",
+            work.join(IPSEC_LEDGER).display()
+        ))
+    };
+    let mut rows = match ledger_read(work) {
+        Ok(r) => r,
+        Err(e) => return warn(e.to_string()),
+    };
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut changed = false;
+    for r in rows.iter_mut().filter(|r| pick(r)) {
+        r[field] = serde_json::json!(now);
+        changed = true;
+    }
+    if changed {
+        if let Err(e) = ledger_write(work, &rows) {
+            return warn(e.to_string());
         }
     }
+    None
 }
 
 fn has(r: &serde_json::Value, field: &str) -> bool {
@@ -463,9 +479,9 @@ pub fn ipsec_rotation(
             return Err(goat_errors::coded(
                 "GB-309",
                 format!(
-                    "the retire step finds no confirmed rotation to retire: {} shows no IPsec rotation '{id}' whose phase 11 switched and whose phase 14 passed here afterwards{}. Retire only an id the rotation printed, once phase 14 passed on both sides. Nothing ran",
+                    "the retire step finds no confirmed rotation to retire: {} shows no IPsec rotation '{id}' whose phase 11 switched and whose phase 14 passed here after the switch{}. Retire only an id the rotation printed, once phase 14 passed here after the switch, and the partner says theirs did. Nothing ran",
                     work.join(IPSEC_LEDGER).display(),
-                    match row { Some(r) if has(r, "retired") => " (it is already retired)", Some(_) => " (it has not passed phase 14 since its switch)", None => "" }
+                    match row { Some(r) if has(r, "retired") => " (it is already retired)", Some(_) => " (phase 14 has not passed here since its switch)", None => "" }
                 ),
             )
             .into());
@@ -555,7 +571,7 @@ pub fn ipsec_rotation(
         return Err(goat_errors::coded(
             "GB-298",
             format!(
-                "the IPsec rotation '{oid}' switched and is not retired, so its set-aside pair is still on the edge: retire it first, once phase 14 passed on both sides: goatbuilder federate {VERB} {partner} ipsec-{ok} --retire {oid}. Nothing ran"
+                "the IPsec rotation '{oid}' switched and is not retired, so its set-aside pair is still on the edge: retire it first, once phase 14 passed here after the switch and the partner says theirs did: goatbuilder federate {VERB} {partner} ipsec-{ok} --retire {oid}. Nothing ran"
             ),
         )
         .into());
@@ -766,12 +782,15 @@ pub fn refused(partner: &str, key: &str) -> Result<()> {
 /// new leaves, the run carries on as the plain one: no `rotate` command is
 /// offered again (it would mint another set), and the default resume is.
 pub(super) fn after_phase(s: &mut Surface, n: u32, work: &Path) -> Vec<String> {
+    let mut warnings = Vec::new();
     // Phase 14 passed: every IPsec rotation that switched and has not been
     // accepted since is accepted now, which is what allows its retire step.
-    if n == 14 {
-        ledger_mark(work, "accepted", &|r| {
+    // Only a ledger that exists is touched: a peering with no IPsec rotation
+    // has none.
+    if n == 14 && work.join(IPSEC_LEDGER).exists() {
+        warnings.extend(ledger_mark(work, "accepted", &|r| {
             has(r, "switched") && !has(r, "accepted")
-        });
+        }));
     }
     if s.rotate_leaves && n == 8 {
         s.rotate_leaves = false;
@@ -787,7 +806,9 @@ pub(super) fn after_phase(s: &mut Surface, n: u32, work: &Path) -> Vec<String> {
         if let Some(i) = s.rotate_ipsec.take() {
             s.again = None;
             let field = if i.retire { "retired" } else { "switched" };
-            ledger_mark(work, field, &|r| r["id"].as_str() == Some(i.id.as_str()));
+            warnings.extend(ledger_mark(work, field, &|r| {
+                r["id"].as_str() == Some(i.id.as_str())
+            }));
             if let Some(f) = i.file {
                 let _ = std::fs::remove_file(f);
             }
@@ -804,7 +825,7 @@ pub(super) fn after_phase(s: &mut Surface, n: u32, work: &Path) -> Vec<String> {
             let _ = std::fs::remove_file(&p.file);
         }
     }
-    Vec::new()
+    warnings
 }
 
 #[cfg(test)]
@@ -1010,7 +1031,8 @@ mod tests {
     fn the_retire_wording_says_whose_phase_14_it_saw() {
         const HERE: &str = "phase 14 passed here after the switch";
         let d = ipsec_work("ipsec-fips");
-        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some("ipsec-1"), true).unwrap_err();
+        let e =
+            ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some("ipsec-1"), true).unwrap_err();
         assert!(e.to_string().contains(HERE), "{e}");
         accepted(d.path(), "ipsec-leaf", None);
         let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap_err();
@@ -1036,7 +1058,8 @@ mod tests {
         std::fs::create_dir(d.path().join(IPSEC_LEDGER)).unwrap();
         let w = after_phase(&mut s, 11, d.path());
         assert!(
-            w.iter().any(|m| m.contains(IPSEC_LEDGER) && m.contains("switched")),
+            w.iter()
+                .any(|m| m.contains(IPSEC_LEDGER) && m.contains("switched")),
             "{w:?}"
         );
         assert!(after_phase(&mut s, 3, d.path()).is_empty());
