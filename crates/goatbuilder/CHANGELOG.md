@@ -301,7 +301,9 @@ the re-authentication made), and never moves the live pair, the staged pair or
 our CA (GB-309 for an id with nothing to retire, or a rotation not confirmed
 or with an unreadable record; a re-run with the same id confirms it). The
 confirm is recorded only once the SA from before the re-authentication is gone,
-and a roll-back removes the record. The confirm counts only an IKE SA the
+and a roll-back removes the record. A run killed during the set-aside or between
+the switch's two moves is finished by the next run, or refused with nothing
+moved (GB-310); the live pair is never left mixed. The confirm counts only an IKE SA the
 re-authentication made, not the old one still up beside it, and the role now
 sets `make_before_break = yes` in its charon drop-in on every IPsec peering
 edge, instead of leaving it to the packaged strongSwan's default

@@ -165,7 +165,11 @@ A rotation needs `peering_edge_ike_rekey_time` minus `peering_edge_ike_rand_time
 rekey falls in the confirm after the one the rotation makes; otherwise it refuses before anything moves. The
 defaults (4h minus 10m, against the DPD timeout plus 30 s) leave ample room.
 
-A rerun with the same id moves nothing, so a killed run finishes. `peering_edge_rotation_retire: true`, after
+A rerun with the same id moves nothing, so a killed run finishes. The set-aside is built in
+`.previous-<id>.tmp` and renamed into place, so `.previous-<id>/` exists only complete; a leftover `.tmp` is
+discarded and the set-aside redone. A run killed between the switch's two moves (key moved in, certificate not)
+is finished by the next run when the staged file left is the moved one's match, and refused with GB-310, nothing
+moved, when it is not. `peering_edge_rotation_retire: true`, after
 both sides pass phase 14, removes the set-aside key and keeps its certificate (`tasks/rotate-retire.yml`). It
 never moves the live pair, the staged pair or our CA, and it removes the key only when the new leaf is live:
 the confirm recorded it (`.previous-<id>/confirmed`, the new IKE SA's id and time, written once an SA the

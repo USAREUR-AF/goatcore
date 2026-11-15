@@ -94,9 +94,63 @@
       pair again, and start a rotation with a new id.
   when: _pe_rot_rolled_back | bool
 
+# A run killed between the switch's two moves leaves one staged file moved in and the
+# other still staged: a mixed live pair. Finish the remaining move when the file left
+# is the moved one's match (the moved file is not the set-aside one, and the two
+# halves are one key pair); otherwise refuse and move nothing.
+- name: peering-edge | rotation | a switch stopped half way
+  when:
+    - _pe_rot_aside_exists | bool
+    - (_pe_rot_key_next.exists | bool) != (_pe_rot_cert_next.exists | bool)
+  block:
+    - name: peering-edge | rotation | what the half-done switch left
+      ansible.builtin.shell:
+        cmd: |
+          pk() { openssl pkey -pubout -in "$1" 2>/dev/null | openssl sha256; }
+          pc() { openssl x509 -noout -pubkey -in "$1" 2>/dev/null | openssl sha256; }
+          sum() { openssl sha256 -r < "$1" 2>/dev/null | cut -d' ' -f1; }
+          a={{ _pe_rot_aside | quote }}
+          lk={{ peering_edge_key_path | quote }}; lc={{ peering_edge_cert_path | quote }}
+          nk={{ peering_edge_key_next_path | quote }}; nc={{ peering_edge_cert_next_path | quote }}
+          if [ -e "$nc" ] && [ ! -e "$nk" ]; then
+            if [ "$(sum "$lk")" != "$(sum "$a/$(basename "$lk")")" ] && [ -n "$(pk "$lk")" ] && [ "$(pk "$lk")" = "$(pc "$nc")" ]; then
+              echo finish-cert
+            else
+              echo "refuse:the key moved in is not the staged certificate's key, or is the set-aside one"
+            fi
+          elif [ -e "$nk" ] && [ ! -e "$nc" ]; then
+            if [ "$(sum "$lc")" != "$(sum "$a/$(basename "$lc")")" ] && [ -n "$(pc "$lc")" ] && [ "$(pc "$lc")" = "$(pk "$nk")" ]; then
+              echo finish-key
+            else
+              echo "refuse:the certificate moved in is not the staged key's certificate, or is the set-aside one"
+            fi
+          fi
+        executable: /bin/bash
+      register: _pe_rot_half
+      changed_when: false
+    - name: peering-edge | rotation | refuse a half-done switch that what is left cannot finish (GB-310)
+      ansible.builtin.fail:
+        msg: >-
+          goat-peering-edge refuses (GB-310): rotation {{ peering_edge_rotation }} on {{ inventory_hostname }}
+          stopped half way through its switch, and what is left does not finish it:
+          {{ _pe_rot_half.stdout | regex_replace('^refuse:', '') }}. The set-aside pair is in
+          {{ _pe_rot_aside }}. Restore the staged file the ceremony issued for this rotation, or put the
+          set-aside pair back by hand, before running it again. Nothing was moved.
+      when: not (_pe_rot_half.stdout | trim) in ['finish-cert', 'finish-key']
+    - name: peering-edge | rotation | finish the half-done switch
+      ansible.builtin.command:
+        argv: [mv, "--", "{{ item.src }}", "{{ item.dest }}"]
+      loop: >-
+        {{ [{'src': peering_edge_cert_next_path, 'dest': peering_edge_cert_path}]
+           if (_pe_rot_half.stdout | trim) == 'finish-cert'
+           else [{'src': peering_edge_key_next_path, 'dest': peering_edge_key_path}] }}
+      changed_when: true
+
 - name: peering-edge | rotation | the switch has not happened yet
   ansible.builtin.set_fact:
-    _pe_rot_to_switch: "{{ _pe_rot_cert_next.exists or _pe_rot_key_next.exists or not _pe_rot_aside_exists }}"
+    _pe_rot_to_switch: >-
+      {{ (_pe_rot_cert_next.exists or _pe_rot_key_next.exists or not _pe_rot_aside_exists)
+         and not ((_pe_rot_half.stdout | default('') | trim) in ['finish-cert', 'finish-key']) }}
 
 - name: peering-edge | rotation | refuse without the staged material (GB-289)
   ansible.builtin.assert:
@@ -183,20 +237,32 @@
     - _pe_rot_to_switch | bool
     - peering_edge_rotation_kind == 'ca'
 
+# The set-aside is built in .previous-<id>.tmp and renamed into place, so
+# .previous-<id>/ exists only complete. Before it exists the switch has not
+# happened (the rename comes first), so the live pair is still the old one and a
+# leftover .tmp from a killed run is discarded and the set-aside redone.
 - name: peering-edge | rotation | set the live pair aside, once for this id
   when: not (_pe_rot_aside_exists | bool)
   block:
-    - name: peering-edge | rotation | the rotation's directory
+    - name: peering-edge | rotation | discard a set-aside a killed run left unfinished
       ansible.builtin.file:
-        path: "{{ _pe_rot_aside }}"
+        path: "{{ _pe_rot_aside }}.tmp"
+        state: absent
+    - name: peering-edge | rotation | the set-aside, being built
+      ansible.builtin.file:
+        path: "{{ _pe_rot_aside }}.tmp"
         state: directory
         mode: "0700"
     - name: peering-edge | rotation | copy the live certificate and key aside
       ansible.builtin.command:
-        argv: [cp, -p, "--", "{{ item }}", "{{ _pe_rot_aside }}/"]
+        argv: [cp, -p, "--", "{{ item }}", "{{ _pe_rot_aside }}.tmp/"]
       loop:
         - "{{ peering_edge_cert_path }}"
         - "{{ peering_edge_key_path }}"
+      changed_when: true
+    - name: peering-edge | rotation | the set-aside, complete, in place
+      ansible.builtin.command:
+        argv: [mv, -T, "--", "{{ _pe_rot_aside }}.tmp", "{{ _pe_rot_aside }}"]
       changed_when: true
 
 - name: peering-edge | rotation | switch to the staged pair
