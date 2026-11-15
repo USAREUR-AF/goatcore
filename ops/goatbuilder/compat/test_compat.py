@@ -417,6 +417,58 @@ class A4ExitCodes(unittest.TestCase):
             self.assertEqual(compat.exit_problems(d), [], d)
 
 
+class A4ExitCodesFrozenFrom10(unittest.TestCase):
+    """From a 1.0 baseline a kept exit code is promised (ADR 1228): `exit_changed:`
+    moves it only in a later major release. Before 1.0 the reason is enough."""
+
+    MOVED = {"name": "validate-not-yaml", "exit": 1, "release_exit": 2, "exit_changed": "a config that is not YAML is GB-025"}
+
+    def problems(self, d, base="goatbuilder/v1.0.0", version="1.1.0"):
+        return compat.exit_problems(d, base, version)
+
+    def test_a_0x_baseline_still_takes_a_reason(self):
+        self.assertEqual(self.problems(self.MOVED, "goatbuilder/v0.7.0", "0.7.1"), [])
+
+    def test_a_1x_baseline_refuses_a_moved_exit_with_its_reason(self):
+        p = self.problems(self.MOVED)
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("validate-not-yaml", p[0])
+        self.assertIn("ADR 1228", p[0])
+        self.assertIn("major release", p[0])
+        self.assertIn("restore 2", p[0])
+
+    def test_a_1x_baseline_refuses_a_reason_left_on_an_unmoved_exit(self):
+        d = {"name": "d", "exit": 2, "release_exit": 2, "exit_changed": "left over"}
+        p = self.problems(d)
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("exit_changed", p[0])
+
+    def test_a_1x_baseline_passes_the_release_s_exit(self):
+        self.assertEqual(self.problems({"name": "d", "exit": 2, "release_exit": 2}), [])
+
+    def test_a_later_major_build_moves_an_exit_with_its_reason(self):
+        self.assertEqual(self.problems(self.MOVED, "goatbuilder/v1.4.0", "2.0.0"), [])
+
+    def test_a_later_major_build_still_needs_the_reason(self):
+        d = {"name": "d", "exit": 1, "release_exit": 2}
+        self.assertTrue(self.problems(d, "goatbuilder/v1.4.0", "2.0.0"))
+
+    def test_an_unreadable_build_version_is_the_same_major(self):
+        for version in ("", "x.y.z", None):
+            self.assertTrue(self.problems(self.MOVED, "goatbuilder/v1.0.0", version), version)
+
+    def test_an_unreadable_baseline_release_is_refused(self):
+        self.assertTrue(self.problems(self.MOVED, "goatbuilder/latest", "1.0.0"))
+
+    def test_the_message_names_no_date(self):
+        p = self.problems(self.MOVED)
+        self.assertNotRegex(p[0], r"\d{4}-\d{2}-\d{2}")
+
+    def test_the_build_version_is_the_crate_s(self):
+        v = compat.goatbuilder_version(os.path.join(HERE, "..", "..", ".."))
+        self.assertRegex(v, r"^\d+\.\d+\.\d+")
+
+
 class A4EveryVerbIsKept(unittest.TestCase):
     """Every verb of the last release has a kept -o json document, or says why not.
 
