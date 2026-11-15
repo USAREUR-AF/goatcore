@@ -3,12 +3,11 @@ heading: For someone deploying
 title: "Fixed: every error `goatbuilder federate` raises carries its catalog code"
 ---
 
-Fifty-one errors the federate stages raised had no catalog code, so a log of
+Fifty errors the federate stages raised had no catalog code, so a log of
 a run that met one (stderr not a terminal, no explanation page) showed only
 `goatbuilder: <text>`, with nothing to look up. Each now prints its code and
 `goatbuilder explain <code>` answers it. They use existing codes where one fits
-(an undeclared environment GB-241, a peering not declared GB-149, the working
-folder GB-184, a declaration GB-144, host flags GB-239, a confirmation with
+(an undeclared environment GB-241, the working folder GB-184, a declaration GB-144, host flags GB-239, a confirmation with
 no terminal GB-008, a peering on several environments GB-252), and six new
 ones: GB-320 a program the run starts could
 not be started, GB-321 a file a step wrote is missing or not what it wrote,
@@ -24,7 +23,5 @@ declaration it cannot read or parse (GB-144); a federate run that cannot write
 its working folder: plan.json, the deploy baseline, phase 1's result folder or
 an edge result's folder (GB-184).
 
-`federate allocate <peering>` naming a peering goatbuilder.yaml does not
-declare now carries GB-149 and exits 1, as GB-149 does everywhere else; it
-exited 2 before. The recheck given flags other than the saved plan's still
-exits 2. Every other exit is unchanged.
+The recheck given flags other than the saved plan's still exits 2. Every other
+exit is unchanged.
