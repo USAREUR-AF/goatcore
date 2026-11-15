@@ -43,7 +43,7 @@ class PreparePlayHalves(unittest.TestCase):
         docker.write_text(f"#!/bin/sh\necho \"docker $*\" >> '{self.calls}'\necho '{{\"keys\": []}}'\n")
         docker.chmod(0o755)
 
-    def play(self, edge_address, half=None, result=None, wg=False):
+    def play(self, edge_address, half=None, result=None, wg=False, play=PLAY):
         inv = self.tmp / "inventory.ini"
         # The edge is a host the run must not reach when only the core half
         # runs: a documentation address over ssh with a one-second timeout.
@@ -57,6 +57,7 @@ class PreparePlayHalves(unittest.TestCase):
         work.mkdir(exist_ok=True)
         extra = {
             "peering_wg_enabled": wg,
+            "peering_wg_interface": "wg-fed9",
             "peering_spire_enabled": True,
             "peering_spire_server_host": "spire-1",
             "peering_spire_container": "spire-server",
@@ -73,7 +74,7 @@ class PreparePlayHalves(unittest.TestCase):
                    ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_LOCALHOST_WARNING="0",
                    ANSIBLE_HOST_KEY_CHECKING="0", ANSIBLE_BECOME="0")
         r = subprocess.run(
-            ["ansible-playbook", "-i", str(inv), str(PLAY), "-e", json.dumps(extra)],
+            ["ansible-playbook", "-i", str(inv), str(play), "-e", json.dumps(extra)],
             cwd=REPO / "ops/ansible", env=env, capture_output=True, text=True, timeout=180,
         )
         return r, work
@@ -100,6 +101,32 @@ class PreparePlayHalves(unittest.TestCase):
         # peering_wg_enabled is off here: an edge with no federation interface.
         self.assertIsNone(doc["interface"])
         self.assertIsNone(doc["public_key"])
+
+    def test_the_edge_half_writes_the_interfaces_public_key(self):
+        # The play's wg branch on an edge with a federation interface: a stand-in
+        # `wg` prints the key, and goat-peering-wg's prepare (packages, the key
+        # under root) is a stand-in beside a copy of the play, so the play's own
+        # tasks run unchanged and nothing needs root.
+        wg = self.bin / "wg"
+        wg.write_text(f"#!/bin/sh\necho \"wg $*\" >> '{self.calls}.wg'\n"
+                      "[ \"$*\" = 'show wg-fed9 public-key' ] && { echo 'c3RhbmQtaW4tcHVibGljLWtleS1vZi13Zy1mZWQ5IT0='; exit 0; }\n"
+                      "echo \"wg: nothing answers $*\" >&2; exit 1\n")
+        wg.chmod(0o755)
+        here = self.tmp / "play"
+        (here / "roles/goat-peering-wg/tasks").mkdir(parents=True)
+        shutil.copy(PLAY, here / PLAY.name)
+        (here / "roles/goat-peering-spire").symlink_to(REPO / "ops/ansible/roles/goat-peering-spire")
+        (here / "roles/goat-peering-wg/tasks/prepare.yml").write_text(
+            "---\n- name: stand-in prepare\n  ansible.builtin.debug:\n    msg: stand-in goat-peering-wg prepare ran\n")
+        result = self.tmp / "edge" / "handoff/2/edge.json"
+        r, work = self.play("local", half="edge", result=result, wg=True, play=here / PLAY.name)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("stand-in goat-peering-wg prepare ran", r.stdout)
+        self.assertIn("wg show wg-fed9 public-key", Path(f"{self.calls}.wg").read_text())
+        doc = json.loads(result.read_text())
+        self.assertEqual(doc["interface"], "wg-fed9")
+        self.assertEqual(doc["public_key"], "c3RhbmQtaW4tcHVibGljLWtleS1vZi13Zy1mZWQ5IT0=")
+        self.assertFalse(self.calls.exists(), "the edge half ran the SPIRE export")
 
     def test_a_half_that_is_not_edge_or_core_is_refused(self):
         r, _ = self.play("local", half="both-of-them")
