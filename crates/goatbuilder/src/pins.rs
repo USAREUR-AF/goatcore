@@ -169,7 +169,8 @@ pub fn read_yaml(path: &Path) -> Result<Value> {
     if text.trim().is_empty() {
         return Ok(Value::Object(Map::new()));
     }
-    let v: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
+    // The file was read; what it holds does not parse (GB-329, not GB-254).
+    let v: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-329", format!("{}: {e}", path.display()))))?;
     let j = yaml_to_json(&v);
     Ok(if j.is_object() { j } else { Value::Object(Map::new()) })
 }
@@ -1200,8 +1201,10 @@ pub fn self_consistent(doc: &Map<String, Value>) -> (String, String) {
 
 pub fn validate_schema(p: &Paths, doc: &Map<String, Value>, where_: &str) -> Result<()> {
     let schema_path = p.intent_schema();
-    let schema: Value = serde_json::from_str(&std::fs::read_to_string(&schema_path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", schema_path.display()))))?)?;
-    let compiled = jsonschema::JSONSchema::options().with_draft(jsonschema::Draft::Draft7).compile(&schema).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", p.rel(&schema_path)))))?;
+    let text = std::fs::read_to_string(&schema_path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", schema_path.display()))))?;
+    // Read, but not JSON, or not a draft 7 schema: the checkout's file is damaged (GB-329).
+    let schema: Value = serde_json::from_str(&text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-329", format!("{} is not JSON: {e}", p.rel(&schema_path)))))?;
+    let compiled = jsonschema::JSONSchema::options().with_draft(jsonschema::Draft::Draft7).compile(&schema).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-329", format!("{} does not compile as a draft 7 schema: {e}", p.rel(&schema_path)))))?;
     let value = Value::Object(doc.clone());
     if let Err(errors) = compiled.validate(&value) {
         if let Some(e) = errors.into_iter().next() {

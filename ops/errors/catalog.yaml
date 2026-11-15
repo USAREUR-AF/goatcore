@@ -2750,6 +2750,20 @@ entries:
       - "goatbuilder -C <the right checkout> <verb>"
     read: docs/design/goatbuilder.md
     exit: 2
+  - code: GB-329
+    tool: goatbuilder
+    title: a file goatbuilder reads from the checkout is not well formed
+    what: "A verb read a file of the checkout (a pin table, the ladder, a record, a workflow, the intent schema), and what it holds does not parse as YAML or JSON, or the schema does not compile as JSON Schema draft 7. The file was read: this is not a permission or a missing file (GB-254). The message names the file and the parser's reason, with the line and column where the parser gives them."
+    causes:
+      - "a hand edit left the file malformed near the line named"
+      - "merge-conflict markers were left in the file"
+      - "the schema file comes from another commit than the rest of the checkout"
+    fixes:
+      - "git diff -- <the file the message names>"
+      - "fix the line the message names, or restore the file: git checkout -- <the file>"
+      - "goatbuilder pins --check"
+    read: docs/design/goatbuilder.md
+    exit: 1
   - code: GB-255
     tool: goatbuilder
     title: nothing is declared for the environment
