@@ -96,6 +96,7 @@ jobs:
       # rule and both values once, and the runbook and alert rules point at it.
       - name: the slot WAL cap is stated once, with the values the image and the role set
         run: |
+          python3 ops/ci/test_check_slot_wal_cap_agrees.py
           python3 ops/ci/check-slot-wal-cap-agrees.py --self-test
 
       # The by-hand signature check in the documents: its cosign identity is the
