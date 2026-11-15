@@ -22,7 +22,10 @@ directory step does not save one issued that far ahead; one that came
 through the partner's single pointer is asked about saying so. A package that names a
 party other than the peering's partner (`peerings: with`) is refused (GB-191)
 before its signature is checked, placed by hand or offered by the directory, and
-the directory step does not save one for phase 5. A package issued before the one held, or without a
+the directory step does not save one for phase 5. The directory step run by hand
+(`ops/federation/standup/directory.py`) without `--their-id` now offers no new
+package at all, since it has no partner to check one against; goatbuilder always
+passes it. A package issued before the one held, or without a
 readable issued date while the held one has one, is refused (GB-308) even with
 its digest given, so a replay is never asked about. When the keys confirmed before are
 unchanged, the new package's digest is the only question: phase 5 carries on
