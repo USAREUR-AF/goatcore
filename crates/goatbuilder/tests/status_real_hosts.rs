@@ -359,6 +359,7 @@ fn summary(m: &Measured) -> String {
         assert!(!s.contains(name), "the summary line names {name:?}: {s}");
     }
     assert!(!token_shaped(&s), "a token-shaped value in the summary line: {s}");
+    eprintln!("summary: {s}");
     s
 }
 
