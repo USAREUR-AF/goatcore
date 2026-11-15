@@ -1010,6 +1010,11 @@ mod tests {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let file = dir.join("deploy.plan.json");
         plan(&repo, Some(&dir), &PlanOpts { verb: "deploy", component: "portal", env: Some("preprod"), group: None, n: 1, site: None, out: &file }).unwrap();
+        // The plan records its writer from $USER, and apply declares under that name (C4).
+        // Name the writer here, so the test does not depend on the caller's environment.
+        let mut doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        doc["written_by"] = json!("A Person");
+        std::fs::write(&file, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
         let r = apply(&repo, Some(&dir), &file).unwrap();
         assert_eq!(r.exit, EXIT_OK, "{:?}", r.checks);
         // A newer publication since the plan: the plan is stale.
