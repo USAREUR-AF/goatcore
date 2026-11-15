@@ -336,9 +336,10 @@ Three fixes to `goatbuilder federate rotate <partner> carrier`:
   offer in the agreement is read from `<work>/ours.composed.json`, the copy of
   our package that phase 6 now keeps beside the agreement; without it the
   cross-check is blocked.
-- The peering and carrier key paths are quoted wherever a shell or systemd's
-  EnvironmentFile reads them, so a path with a space, `$` or a backtick is read
-  as written. A key path holding a newline is refused.
+- The peering and carrier key paths, and the ruleset paths beside them, are
+  quoted wherever a shell or systemd's EnvironmentFile reads them, so a path
+  with a space, `$` or a backtick is read as written. A path holding a newline
+  is refused.
 
 #### Changed: standup for a joiner site turns signal federation on
 
