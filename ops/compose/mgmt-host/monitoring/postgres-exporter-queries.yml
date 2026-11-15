@@ -51,34 +51,45 @@ pg_replication_slot:
         description: "1 if wal_status = 'lost' (slot invalidated, rebuild required)"
 
 spock_subscription_lag:
-  # spock.sub_show_status() returns per-subscription state incl.
-  # replication_lag (interval). We emit it as seconds for threshold
-  # math. The `subscription_name` label is the spock subscription
-  # name, e.g. 'sub_hadev_arm64_to_amd64'.
-  #
-  # NOTE: this query succeeds only when the spock extension is
-  # installed in the current database. postgres-exporter runs queries
-  # per-database via DATA_SOURCE_NAME; by default we connect to
-  # `postgres` which does NOT have spock. For the MVP we connect to
-  # `netbird` (the replicated DB). See DATA_SOURCE_NAME in
-  # docker-compose.obs.yml.
+  # One row per Spock subscription in each replicated database (datname): is
+  # it replicating, and how far behind its provider is it.
+  #   status   spock.sub_show_status(): replicating, disabled, down,
+  #            initializing, ... In Spock 5 it has no lag column.
+  #   lag      spock.lag_tracker, one row per origin node and receiver,
+  #            joined on the subscription's provider node: replication_lag
+  #            (interval, as seconds) and replication_lag_bytes. A
+  #            subscription with no lag_tracker row yet reads 0.
+  # Metrics: spock_subscription_lag_seconds, spock_subscription_lag_bytes and
+  # spock_subscription_lag_replicating, labelled datname and
+  # subscription_name (the same subscription name can exist in each
+  # database). SpockSubscriptionLag and SpockSubscriptionNotReplicating
+  # (rules/spock.yml) read them.
   query: |
     SELECT
-      subscription_name,
-      COALESCE(EXTRACT(EPOCH FROM replication_lag), 0)::float AS lag_seconds,
-      CASE WHEN status = 'replicating' THEN 1 ELSE 0 END AS replicating
-    FROM spock.sub_show_status()
-  master: true
+      current_database() AS datname,
+      s.subscription_name,
+      COALESCE(EXTRACT(EPOCH FROM l.replication_lag), 0)::float AS seconds,
+      COALESCE(l.replication_lag_bytes, 0)::float AS bytes,
+      CASE WHEN s.status = 'replicating' THEN 1 ELSE 0 END AS replicating
+    FROM spock.sub_show_status() s
+    LEFT JOIN spock.lag_tracker l ON l.origin_name = s.provider_node
+  master: false
   metrics:
+    - datname:
+        usage: "LABEL"
+        description: "The replicated database the subscription is in"
     - subscription_name:
         usage: "LABEL"
         description: "Spock subscription name"
-    - lag_seconds:
+    - seconds:
         usage: "GAUGE"
-        description: "Replication replay lag in seconds"
+        description: "spock.lag_tracker replication_lag for the subscription's provider, in seconds: the age of the last change applied from it, which also grows while the database is idle"
+    - bytes:
+        usage: "GAUGE"
+        description: "spock.lag_tracker replication_lag_bytes for the subscription's provider: its WAL insert position minus the last change received, the WAL still to apply while catching up (a few hundred bytes when idle)"
     - replicating:
         usage: "GAUGE"
-        description: "1 if subscription status = 'replicating', else 0"
+        description: "1 if spock.sub_show_status() reports the subscription 'replicating', else 0"
 
 spock_resolutions:
   # Conflicts Spock resolved (update_update, insert_exists, ...), one row each

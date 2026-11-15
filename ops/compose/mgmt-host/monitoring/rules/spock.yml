@@ -24,18 +24,26 @@ groups:
     interval: 30s
     rules:
 
-      # Replication lag — any subscription lagging > 60s. Metric
-      # produced by the spock_subscription_lag custom query in
-      # monitoring/postgres-exporter-queries.yml.
+      # Replication lag: a subscription applying changes more than 60s old
+      # with more than 1 MiB of its provider's WAL still ahead of it. Metrics
+      # from the spock_subscription_lag custom query
+      # (monitoring/postgres-exporter-queries.yml), read from Spock 5's
+      # spock.lag_tracker, one series per database (`datname`) and
+      # subscription. The seconds alone are not lag: lag_tracker reports the
+      # age of the last change applied from the provider, which grows on an
+      # idle database that is fully caught up. The bytes (provider insert
+      # position minus the last change received) stay at a few hundred
+      # bytes when idle and are the WAL still to apply while catching up.
+      # A subscription that stops is SpockSubscriptionNotReplicating's.
       - alert: SpockSubscriptionLag
-        expr: spock_subscription_lag_seconds > 60
+        expr: spock_subscription_lag_seconds > 60 and spock_subscription_lag_bytes > 1048576
         for: 2m
         labels:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock subscription {{ $labels.subscription_name }} at {{ $labels.site }} lagging >60s for 2m"
-          description: "Replication replay lag exceeds 60s. Check network path to provider, provider WAL senders, and subscriber apply worker. Sustained lag past a few minutes can cascade into slot-retention issues."
+          summary: "Spock subscription {{ $labels.subscription_name }} in {{ $labels.datname }} at {{ $labels.site }} lagging >60s for 2m"
+          description: "The subscription is applying changes more than 60s old, with more than 1 MiB of the provider's WAL still to apply. Check the network path to the provider, the provider's WAL senders, and the subscriber's apply worker. Sustained lag past a few minutes can cascade into slot-retention issues."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
       # Slot invalidated — urgent, rebuild required. Metric comes
@@ -81,12 +89,12 @@ groups:
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
       # Block 52A.1 — subscription stuck in non-replicating state.
-      # spock.sub_show_status() exposes status as one of:
-      #   replicating | initializing | down | unknown
-      # Lag-based alerts go quiet when status != 'replicating' (lag
-      # column is 0 / NULL), so a silent halt won't fire SpockSubscriptionLag.
-      # This alert closes that gap. spock_subscription_lag_replicating is
-      # the 0/1 gauge from the spock_subscription_lag custom query.
+      # spock.sub_show_status() reports status as replicating, disabled,
+      # down, initializing, ... A stopped subscription applies nothing, so
+      # its lag bytes do not grow and SpockSubscriptionLag stays quiet; this
+      # alert closes that gap. spock_subscription_lag_replicating is the 0/1
+      # gauge from the spock_subscription_lag custom query, one series per
+      # database (`datname`) and subscription.
       - alert: SpockSubscriptionNotReplicating
         expr: spock_subscription_lag_replicating == 0
         for: 2m
@@ -94,8 +102,8 @@ groups:
           severity: critical
           component: spock
         annotations:
-          summary: "Spock subscription {{ $labels.subscription_name }} at {{ $labels.site }} not replicating for 2m"
-          description: "Subscription status is not 'replicating' (likely 'down' or 'initializing'). Lag metrics are unreliable in this state. Run `psql netbird -c 'SELECT * FROM spock.sub_show_status();'` on the subscribing node to see the exact status. Common causes: apply worker crashed (check Postgres logs), provider unreachable, or a replicated DDL replay error stopping the apply queue. See post-partition convergence runbook for rejoin scenarios."
+          summary: "Spock subscription {{ $labels.subscription_name }} in {{ $labels.datname }} at {{ $labels.site }} not replicating for 2m"
+          description: "Subscription status is not 'replicating' (likely 'disabled', 'down' or 'initializing'). Lag metrics are unreliable in this state. Run `psql {{ $labels.datname }} -c 'SELECT * FROM spock.sub_show_status();'` on the subscribing node to see the exact status. Common causes: apply worker crashed (check Postgres logs), provider unreachable, or a replicated DDL replay error stopping the apply queue. See post-partition convergence runbook for rejoin scenarios."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
       # Block 52A.1 — replication slot reports inactive even though

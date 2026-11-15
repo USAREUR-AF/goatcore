@@ -1,0 +1,68 @@
+# The mgmt host's Spock subscription alerts, on the series postgres-exporter
+# reads from Spock 5 (spock.sub_show_status() and spock.lag_tracker), one per
+# replicated database (`datname`) and subscription.
+#
+# SpockSubscriptionLag fires on a subscription applying changes over 60s old
+# with over 1 MiB of WAL still ahead of it, and not on an idle database
+# whose last change is old but which is caught up (a few hundred bytes).
+# SpockSubscriptionNotReplicating fires on a subscription that is not
+# replicating, and names its database.
+rule_files:
+- ../../../mgmt-host/monitoring/rules/spock.yml
+evaluation_interval: 30s
+tests:
+- interval: 1m
+  input_series:
+  # Catching up: changes 90s and more old, 50 MB still to apply.
+  - series: spock_subscription_lag_seconds{datname="kratos",server="postgres-a:5432",site="fixture",subscription_name="sub_a_to_b"}
+    values: 5 90 150 210 270 330
+  - series: spock_subscription_lag_bytes{datname="kratos",server="postgres-a:5432",site="fixture",subscription_name="sub_a_to_b"}
+    values: 300 50000000 50000000 50000000 50000000 50000000
+  # Idle and caught up: the last change grows old, a few hundred bytes ahead.
+  - series: spock_subscription_lag_seconds{datname="netbird",server="postgres-a:5432",site="fixture",subscription_name="sub_a_to_b"}
+    values: 30 90 150 210 270 330
+  - series: spock_subscription_lag_bytes{datname="netbird",server="postgres-a:5432",site="fixture",subscription_name="sub_a_to_b"}
+    values: 312 312 312 312 312 312
+  alert_rule_test:
+  - alertname: SpockSubscriptionLag
+    eval_time: 2m
+    exp_alerts: []
+  - alertname: SpockSubscriptionLag
+    eval_time: 4m
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        component: spock
+        datname: kratos
+        server: postgres-a:5432
+        site: fixture
+        subscription_name: sub_a_to_b
+      exp_annotations:
+        summary: "Spock subscription sub_a_to_b in kratos at fixture lagging >60s for 2m"
+        description: "The subscription is applying changes more than 60s old, with more than 1 MiB of the provider's WAL still to apply. Check the network path to the provider, the provider's WAL senders, and the subscriber's apply worker. Sustained lag past a few minutes can cascade into slot-retention issues."
+        runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+- interval: 1m
+  input_series:
+  # kratos's subscription stops; netbird's keeps replicating.
+  - series: spock_subscription_lag_replicating{datname="kratos",server="postgres-a:5432",site="fixture",subscription_name="sub_a_to_b"}
+    values: 1 0 0 0 0 0
+  - series: spock_subscription_lag_replicating{datname="netbird",server="postgres-a:5432",site="fixture",subscription_name="sub_a_to_b"}
+    values: 1 1 1 1 1 1
+  alert_rule_test:
+  - alertname: SpockSubscriptionNotReplicating
+    eval_time: 2m
+    exp_alerts: []
+  - alertname: SpockSubscriptionNotReplicating
+    eval_time: 4m
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        component: spock
+        datname: kratos
+        server: postgres-a:5432
+        site: fixture
+        subscription_name: sub_a_to_b
+      exp_annotations:
+        summary: "Spock subscription sub_a_to_b in kratos at fixture not replicating for 2m"
+        description: "Subscription status is not 'replicating' (likely 'disabled', 'down' or 'initializing'). Lag metrics are unreliable in this state. Run `psql kratos -c 'SELECT * FROM spock.sub_show_status();'` on the subscribing node to see the exact status. Common causes: apply worker crashed (check Postgres logs), provider unreachable, or a replicated DDL replay error stopping the apply queue. See post-partition convergence runbook for rejoin scenarios."
+        runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
