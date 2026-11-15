@@ -998,23 +998,28 @@ mod tests {
 
     /// Phase 2's halves are its one play with the half named: the edge
     /// driver's with the result it writes, the controller's alone. A phase 2
-    /// that is not one peering-prepare.yml run (a forwarder's spliced steps,
-    /// which reach the forwarder host) has no halves: None, refused by the
-    /// caller as not built.
+    /// that is not one peering-prepare.yml run has no halves, and the caller's
+    /// refusal says which case: a forwarder's spliced steps (which reach the
+    /// forwarder host), or a command not of the shape expected.
     #[test]
     fn phase_2_halves_name_the_half_on_its_one_play() {
         let cmd = "cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' peering-prepare.yml";
         assert_eq!(
             phase_2_half(cmd, "xab", "edge", Some(Path::new("/e/handoff/2/edge.json"))).as_deref(),
-            Some("cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' -e peering_prepare_half=edge -e peering_prepare_peering='xab' -e peering_prepare_result='/e/handoff/2/edge.json' peering-prepare.yml")
+            Ok("cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' -e peering_prepare_half=edge -e peering_prepare_peering='xab' -e peering_prepare_result='/e/handoff/2/edge.json' peering-prepare.yml")
         );
         assert_eq!(
             phase_2_half(cmd, "xab", "core", None).as_deref(),
-            Some("cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' -e peering_prepare_half=core peering-prepare.yml")
+            Ok("cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' -e peering_prepare_half=core peering-prepare.yml")
         );
         let spliced = format!("({cmd}) && (x peering-carrier-keys.yml) && (x peering-forwarder.yml) && ({cmd})");
-        assert_eq!(phase_2_half(&spliced, "xab", "edge", None), None);
-        assert_eq!(phase_2_half("x peering-wg.yml", "xab", "core", None), None);
+        assert_eq!(phase_2_half(&spliced, "xab", "edge", None), Err(NoHalves::Spliced));
+        assert_eq!(phase_2_half("x peering-wg.yml", "xab", "core", None), Err(NoHalves::NotThePlay));
+        let s = phase_2_no_halves(NoHalves::Spliced, &spliced).detail;
+        assert!(s.contains("forwarder") && s.contains("Nothing of phase 2 ran"), "{s}");
+        let n = phase_2_no_halves(NoHalves::NotThePlay, "x peering-wg.yml").detail;
+        assert!(n.contains("not the shape") && n.contains("peering-wg.yml") && !n.contains("forwarder"), "{n}");
+        assert!(n.contains("Nothing of phase 2 ran"), "{n}");
     }
 
     /// Phase 2's edge result: the edge side's interface and public key for
