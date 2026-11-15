@@ -26,7 +26,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::joinnode::Options;
 use crate::runner::Cmd;
@@ -119,7 +119,7 @@ pub fn execute(repo: &Path, o: &Options) -> Result<Report> {
     let mut done = journaled(&journal);
     if !o.dry_run && done.get("converged").is_some_and(|d| d.0) {
         let kept = journal.trim_end_matches(".json").to_string() + &format!(".{}.done.json", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"));
-        std::fs::rename(&journal, &kept).with_context(|| format!("cannot keep the finished journal {journal} as {kept}"))?;
+        std::fs::rename(&journal, &kept).map_err(|e| goat_errors::coded("GB-323", format!("cannot keep the finished re-seed journal {journal} as {kept}: {e}")))?;
         done.clear();
     }
     let first_open = STEPS.iter().position(|(s, _)| !done.get(*s).is_some_and(|d| d.0)).map_or(1, |i| i as u32 + 1);
@@ -143,7 +143,7 @@ pub fn execute(repo: &Path, o: &Options) -> Result<Report> {
             continue;
         }
         crate::runner::phase(&n.to_string(), label, "");
-        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &c]).current_dir(repo).status().context("bash")?;
+        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &c]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
         if !status.success() {
             let (_, code, line) = journaled(&journal).get(*step).cloned().unwrap_or_default();
             let detail = if code.is_empty() {
