@@ -603,8 +603,69 @@ def self_test():
             plan(argparse.Namespace(env="selftest"), rows, {}, absent)
         check(name, want in buf.getvalue(), True)
 
+    for name, got, want in absent_coverage_self_test():
+        check(name, got, want)
+
     print(f"\nself-test: {'ALL PROBES PROVEN RED-THEN-GREEN' if ok else 'FAILURES ABOVE'}")
     return 0 if ok else 1
+
+
+def absent_coverage_self_test():
+    """A row that needs a declared-absent service is N/A and names the present
+    services it did not check; a present service that no row could check for that
+    reason reads UNKNOWN; a token no service owns is never a service. Run through
+    run() with a manifest, a model and a local command probe."""
+    out = []
+    ok_row = {"probe": "cmd-assert", "params": {"cmd": "echo up", "expect": "up"}}
+    model = {"services": {
+        "door": {"present": False, "assay": ["door"]},
+        "app": {"present": True, "assay": ["app"]},
+        "db": {"present": True, "assay": ["db"]},
+    }}
+    cases = (
+        # one absent, one present: N/A naming app, and app reads UNKNOWN
+        ("one absent one present",
+         [{"id": "via-door", "requires": ["door", "app"], **ok_row}],
+         {"via-door": ("N/A", "declared absent on this site: door; not checked by this row: app"),
+          "coverage:app": ("UNKNOWN", "app is present, and no row could check it: every row that does needs a "
+                                      "service this site declares absent (door)")}),
+        # the same, with a row of app's own that runs: no coverage line
+        ("present service covered by its own row",
+         [{"id": "via-door", "requires": ["door", "app"], **ok_row},
+          {"id": "app-own", "requires": ["app"], **ok_row}],
+         {"via-door": ("N/A", "declared absent on this site: door; not checked by this row: app"),
+          "app-own": ("PASS", None)}),
+        # every service it requires absent: plain N/A
+        ("all absent",
+         [{"id": "door-only", "requires": ["door"], **ok_row}],
+         {"door-only": ("N/A", "declared absent on this site: door")}),
+        # a token no service owns is not a present service: N/A, nothing unchecked
+        ("unowned token ignored",
+         [{"id": "door-cap", "requires": ["door", "spock-mesh-peering"], **ok_row},
+          {"id": "db-own", "requires": ["db"], **ok_row}],
+         {"door-cap": ("N/A", "declared absent on this site: door"),
+          "db-own": ("PASS", None)}),
+    )
+    with tempfile.TemporaryDirectory() as d:
+        mp = Path(d) / "model.json"
+        mp.write_text(json.dumps(model))
+        for name, rows, want in cases:
+            man, js = Path(d) / "manifest.yaml", Path(d) / "out.jsonl"
+            man.write_text(yaml.safe_dump({"tests": rows}))
+            with contextlib.redirect_stdout(io.StringIO()):
+                run(["--env", "selftest", "--manifest", str(man), "--endstate", str(mp), "--json", str(js)])
+            got = {r["id"]: (r["status"], r["evidence"]) for r in map(json.loads, js.read_text().splitlines())}
+            got = {k: (st, ev if want.get(k, (None, None))[1] is not None else None) for k, (st, ev) in got.items()}
+            out.append((f"endstate coverage: {name}", got, want))
+        # the plan lists the same unchecked service
+        buf = io.StringIO()
+        rows = cases[0][1]
+        with contextlib.redirect_stdout(buf):
+            plan(argparse.Namespace(env="selftest"), rows, {}, declared_absent(str(mp)), {}, present_services(str(mp)))
+        out.append(("plan: an unchecked present service is listed",
+                    ("via-door (app)" in buf.getvalue(), "app is present, and no row could check it" in buf.getvalue()),
+                    (True, True)))
+    return out
 
 
 def goat_cli_self_test(tmp):
