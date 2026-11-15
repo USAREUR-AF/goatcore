@@ -31,7 +31,7 @@ use crate::runner::Cmd;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -1595,12 +1595,12 @@ fn drop_value_deviation(block: &str, g: &str) -> String {
 
 /// rc.sh `set_deviation`: declare `reference` on goatnet `g` for `comp`, with the reason.
 pub fn edit_set_deviation(path: &Path, comp: &str, g: &str, reference: &str, reason: &str) -> Result<()> {
-    let s = std::fs::read_to_string(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    let s = std::fs::read_to_string(path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
     let table = load_table(path)?;
     if !table.components.contains_key(comp) {
         return Err(goat_errors::coded("GB-001", format!("AssertionError: {comp} is not a component of {}", path.display())).into());
     }
-    let (start, end) = component_block(&s, comp).ok_or_else(|| anyhow!("{comp}: no component block"))?;
+    let (start, end) = component_block(&s, comp).ok_or_else(|| goat_errors::coded("GB-257", format!("{comp}: no component block in {}", path.display())))?;
     // A goatnet that already declares this value keeps its deviation as it
     // stands, reason included: the reason carries the day it was declared, so
     // rewriting it on a re-run from a later day changed the table and landed a
@@ -1684,7 +1684,7 @@ pub fn fold_rungs(path: &Path, comp: &str, reference: &str, prod: &str, hotfix_r
 /// fastlane.sh's step 4: move the value of record; clear VALUE deviations; keep `absent: true`.
 /// Returns the lines the script prints.
 pub fn edit_move_fleet(path: &Path, comp: &str, new_ref: &str, old_ref: &str, reason: &str, ack: &str) -> Result<Vec<String>> {
-    let src = std::fs::read_to_string(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    let src = std::fs::read_to_string(path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
     let head = format!("  {comp}:\n");
     let m = if src.starts_with(&head) { Some(0) } else { src.find(&format!("\n{head}")).map(|i| i + 1) };
     let start = match m {
@@ -1808,7 +1808,7 @@ pub fn sign_intent(repo: &Path, intent: &Path, key: &str) -> Result<Vec<String>>
         .current_dir(repo.join("ops/enrollment"))
         .args(["run", "./cmd/intent-sign", "--intent", intent.to_str().unwrap_or(""), "--root-key", key, "--age-identity", &format!("{home}/.config/age/keys.txt"), "--audit-log", &audit])
         .output()
-        .map_err(|e| anyhow!("go run ./cmd/intent-sign: {e}"))?;
+        .map_err(|e| goat_errors::coded("GB-320", format!("could not start go run ./cmd/intent-sign: {e}")))?;
     if !out.status.success() {
         return Err(goat_errors::coded("GB-022", format!("intent-sign for {} failed: {}", intent.display(), String::from_utf8_lossy(&out.stderr).trim())).into());
     }

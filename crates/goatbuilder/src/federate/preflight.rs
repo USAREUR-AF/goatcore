@@ -616,8 +616,7 @@ pub fn recheck_slot_anchors(repo: &Path, peering: &str, work: &str) -> Result<Sl
     let r = read_slot_result(&result)?;
     anyhow::ensure!(
         status.success() == r.allows_restart(),
-        "the slot recheck exited {status} but its result says {}; not trusting either",
-        r.outcome
+        goat_errors::coded("GB-321", format!("the slot recheck exited {status} but its result says {}; not trusting either", r.outcome))
     );
     Ok(r)
 }

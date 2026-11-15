@@ -23,7 +23,7 @@ use crate::runner::Cmd;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use chrono::NaiveDate;
 use clap::Subcommand;
 use serde_json::{json, Map, Value};
@@ -2397,7 +2397,7 @@ pub fn call(repo: &Path, cmd: &Sub) -> (Vec<String>, i32) {
         Sub::Hotfix { component, reference, reason, ack, previous_ref } => cmd_hotfix(&t, component, reference, reason, ack.as_deref(), previous_ref.as_deref(), &mut o),
         Sub::Abandon { record, reason, superseded_by } => cmd_abandon(&t, record, reason, superseded_by.as_deref(), &mut o),
         Sub::Check => cmd_check(&t, &mut o),
-        _ => Err(anyhow!("promote::call: {cmd:?} is not a driver step")),
+        _ => Err(goat_errors::coded("GB-322", format!("promote::call: {cmd:?} is not a driver step")).into()),
     };
     let code = match code {
         Ok(c) => c,

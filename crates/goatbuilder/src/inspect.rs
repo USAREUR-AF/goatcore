@@ -13,7 +13,7 @@ use crate::runner::Cmd;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::json;
 
 use crate::converger::Converger;
@@ -206,7 +206,7 @@ fn read_all_tails(repo: &Path, inv: &[String], group: &str) -> Result<GroupRead>
     let mut args = inv.to_vec();
     args.push(group.to_string());
     args.extend(["-m".into(), "shell".into(), "-a".into(), READ_HOST.into()]);
-    let out = push::ansible_cmd(repo, "ansible", &args).output().with_context(|| "ansible")?;
+    let out = push::ansible_cmd(repo, "ansible", &args).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ansible: {e}")))?;
     Ok(parse_hosts(&String::from_utf8_lossy(&out.stdout), group))
 }
 
@@ -610,7 +610,7 @@ pub fn history(repo: &Path, component: &str, env: &str) -> Result<Report> {
         for g in &r.members {
             let mut args = push::inventory_args(&t);
             args.extend([g.clone(), "-m".into(), "shell".into(), "-a".into(), format!("tac /var/lib/goat/{ledger}/deploy-history.jsonl 2>/dev/null; echo GBEND")]);
-            let o = push::ansible_cmd(repo, "ansible", &args).output().with_context(|| "ansible")?;
+            let o = push::ansible_cmd(repo, "ansible", &args).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ansible: {e}")))?;
             let text = String::from_utf8_lossy(&o.stdout).to_string();
             let mut host: Option<String> = None;
             for l in text.lines() {
@@ -730,7 +730,7 @@ pub fn plan(repo: &Path, mock: Option<&Path>, o: &PlanOpts) -> Result<Report> {
         "schema": "goatbuilder.plan/v1", "verb": o.verb, "component": o.component, "env": o.env, "group": o.group, "n": o.n, "site": o.site,
         "main_commit": git(repo, &["rev-parse", "HEAD"]), "written_by": std::env::var("USER").unwrap_or_default(), "facts": facts,
     });
-    std::fs::write(o.out, serde_json::to_string_pretty(&doc)? + "\n").with_context(|| o.out.display().to_string())?;
+    std::fs::write(o.out, serde_json::to_string_pretty(&doc)? + "\n").map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", o.out.display())))?;
     let mut checks = vec![ok("plan/written", format!("{} — review it, then: goatbuilder apply {}", o.out.display(), o.out.display()))];
     if let Some(m) = doc["facts"].as_object() {
         for (k, v) in m {
@@ -743,7 +743,9 @@ pub fn plan(repo: &Path, mock: Option<&Path>, o: &PlanOpts) -> Result<Report> {
 /// `apply`: run exactly the reviewed plan, refusing (exit 1, naming what moved) when
 /// the declaration or the target moved since it was written.
 pub fn apply(repo: &Path, mock: Option<&Path>, file: &Path) -> Result<Report> {
-    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file).with_context(|| file.display().to_string())?)?;
+    let text = std::fs::read_to_string(file).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", file.display())))?;
+    let doc: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| goat_errors::coded("GB-052", format!("{} is not a goatbuilder plan: it is not JSON ({e})", file.display())))?;
     if doc["schema"] != "goatbuilder.plan/v1" {
         return Err(goat_errors::coded("GB-052", format!("{} is not a goatbuilder plan (schema goatbuilder.plan/v1)", file.display())).into());
     }

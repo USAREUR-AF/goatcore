@@ -500,8 +500,7 @@ fn import_edge_half(a: &ImportArgs, work: &Path, repo: &Path) -> anyhow::Result<
     let sha = hex_sha256(&bytes);
     anyhow::ensure!(
         sha == half.sha256,
-        "import: {} changed while it was read",
-        a.result.display()
+        goat_errors::coded("GB-321", format!("import: {} changed while it was read", a.result.display()))
     );
     let checked = vec![Check {
         name: "edge-half".into(),
@@ -664,9 +663,7 @@ pub fn join_phase_1(work: &Path, edge: &serde_json::Value) -> anyhow::Result<boo
         .map_err(|e| goat_errors::coded("GB-321", format!("{} is not JSON ({e})", path.display())))?;
     anyhow::ensure!(
         core["side"] == "core",
-        "{} holds the {} side's result, not the core half's",
-        path.display(),
-        core["side"]
+        goat_errors::coded("GB-321", format!("{} holds the {} side's result, not the core half's", path.display(), core["side"]))
     );
     let ready = core["ready"] == true && edge["ready"] == true;
     let tag = |side: &'static str, v: &serde_json::Value| -> Vec<serde_json::Value> {

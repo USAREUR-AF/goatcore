@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::CommandFactory;
 use serde::{Deserialize, Serialize};
 
@@ -643,7 +643,7 @@ fn available(lesson: &Lesson, repo: &Path) -> std::result::Result<(), String> {
 
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to)?;
-    for e in std::fs::read_dir(from).with_context(|| from.display().to_string())? {
+    for e in std::fs::read_dir(from).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", from.display())))? {
         let e = e?;
         let dst = to.join(e.file_name());
         if e.file_type()?.is_dir() {

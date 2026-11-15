@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use jsonschema::{Draft, JSONSchema};
 use serde::Deserialize;
 use serde_json::Value;
@@ -291,7 +291,7 @@ pub fn load_value(path: &Path) -> Result<Value> {
     let yaml: serde_yaml::Value = serde_yaml::from_str(&text)
         .map_err(|e| goat_errors::coded("GB-245", format!("{} is not valid YAML: {e}", path.display())))?;
     serde_json::to_value(yaml)
-        .with_context(|| format!("{} does not convert to JSON", path.display()))
+        .map_err(|e| goat_errors::coded(REFUSED_CODE, format!("{} does not convert to JSON: {e}", path.display())).into())
 }
 
 /// The checkout's own config a lite file beside it may take `repo` and
@@ -332,7 +332,7 @@ pub fn problems_at(
     checkout: Option<&Value>,
     record_dir: Option<&Path>,
 ) -> Result<Vec<String>> {
-    let schema: Value = serde_json::from_str(SCHEMA_JSON).context("embedded schema is not JSON")?;
+    let schema: Value = serde_json::from_str(SCHEMA_JSON).map_err(|e| goat_errors::coded("GB-322", format!("embedded schema is not JSON: {e}")))?;
     let compiled = JSONSchema::options()
         .with_draft(Draft::Draft7)
         .compile(&schema)
@@ -361,7 +361,7 @@ pub fn problems_at(
         return Ok(out);
     }
     let cfg: Config = serde_json::from_value(derive_lite(value, checkout))
-        .context("config does not match the typed model")?;
+        .map_err(|e| goat_errors::coded(REFUSED_CODE, format!("config does not match the typed model: {e}")))?;
     out.extend(cross_field_at(&cfg, record_dir));
     Ok(out)
 }
@@ -479,9 +479,9 @@ pub fn derive_lite(value: &Value, checkout: Option<&Value>) -> Value {
 #[allow(dead_code)] // the verb's wiring in main.rs is a separate change; the tests call this
 pub fn grow(value: &Value, checkout: Option<&Value>) -> Result<Value> {
     if value.get("preset").and_then(Value::as_str) != Some("lite") {
-        return Err(anyhow!("grow takes a goatlite config: this one does not declare preset: lite"));
+        return Err(goat_errors::coded("GB-327", "grow takes a goatlite config: this one does not declare preset: lite").into());
     }
-    let lite = value.get("lite").and_then(Value::as_object).ok_or_else(|| anyhow!("grow takes a goatlite config: this one has no lite: block"))?;
+    let lite = value.get("lite").and_then(Value::as_object).ok_or_else(|| goat_errors::coded("GB-327", "grow takes a goatlite config: this one has no lite: block"))?;
     let mut out = derive_lite(value, checkout);
     let obj = out.as_object_mut().expect("derive_lite keeps an object");
     obj.remove("lite");
@@ -515,7 +515,7 @@ pub fn grow(value: &Value, checkout: Option<&Value>) -> Result<Value> {
         } else {
             format!("\n\nA full configuration declares {} of its own; the lite preset took them from the checkout's config, and this checkout has none. Add them to goatlite.yaml, then grow again.", missing.join(" and "))
         };
-        return Err(anyhow!("the grown configuration does not validate:\n  {}{ask}", problems.join("\n  ")));
+        return Err(goat_errors::coded(REFUSED_CODE, format!("the grown configuration does not validate:\n  {}{ask}", problems.join("\n  "))).into());
     }
     Ok(out)
 }
@@ -646,7 +646,8 @@ pub fn load(path: &Path) -> Result<Config> {
         )
         .into());
     }
-    serde_json::from_value(derive_lite(&value, checkout.as_ref())).context("config does not match the typed model")
+    serde_json::from_value(derive_lite(&value, checkout.as_ref()))
+        .map_err(|e| goat_errors::coded(REFUSED_CODE, format!("{} does not match the typed model: {e}", path.display())).into())
 }
 
 /// The catalog code of a config that does not validate (ops/errors/catalog.yaml).

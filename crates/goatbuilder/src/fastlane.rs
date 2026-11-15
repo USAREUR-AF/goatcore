@@ -23,7 +23,7 @@ use crate::runner::Cmd;
 use std::path::Path;
 use std::process::Stdio;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::pins::read_yaml;
 use crate::{pins, promote, push};
@@ -62,7 +62,7 @@ pub fn not_a_pin_revert(comp: &serde_json::Value) -> Option<String> {
 }
 
 fn sh(cmd: &str, args: &[&str]) -> Result<String> {
-    let out = Cmd::new(cmd).args(args).output().with_context(|| cmd.to_string())?;
+    let out = Cmd::new(cmd).args(args).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start {cmd}: {e}")))?;
     if !out.status.success() {
         return Err(anyhow::Error::from(goat_errors::coded("GB-258", String::from_utf8_lossy(&out.stderr).trim().to_string())));
     }

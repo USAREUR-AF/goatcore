@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::rc::Rc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 
 use crate::pins::read_yaml;
 use crate::{pins, promote, push};
@@ -154,7 +154,7 @@ fn short_rev(repo: &str, rev: &str) -> Result<String> {
 fn sh(cmd: &str, args: &[&str]) -> Result<String> {
     let mut c = Cmd::new(cmd);
     c.args(args);
-    let out = c.output().with_context(|| format!("{cmd} {}", args.join(" ")))?;
+    let out = c.output().map_err(|e| goat_errors::coded("GB-320", format!("could not start {cmd} {}: {e}", args.join(" "))))?;
     if !out.status.success() {
         return Err(anyhow::Error::from(goat_errors::coded("GB-258", String::from_utf8_lossy(&out.stderr).trim().to_string())));
     }
@@ -245,7 +245,7 @@ impl<'a> Run<'a> {
         }
         let mut c = Cmd::new(cmd);
         c.args(args);
-        let st = c.status().with_context(|| cmd.to_string())?;
+        let st = c.status().map_err(|e| goat_errors::coded("GB-320", format!("could not start {cmd}: {e}")))?;
         if !st.success() {
             return Err(goat_errors::coded("GB-028", format!("{cmd} {} failed", args.join(" "))).into());
         }
@@ -299,7 +299,7 @@ impl<'a> Run<'a> {
         let Some(ov) = self.overlay.as_mut() else { return Ok(()) };
         let wt = self.wt.clone();
         let _ = std::fs::remove_dir_all(&wt);
-        let out = Cmd::new(ov.owt.join("assemble.sh")).arg(&wt).output().with_context(|| format!("{}/assemble.sh", ov.owt.display()))?;
+        let out = Cmd::new(ov.owt.join("assemble.sh")).arg(&wt).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start {}/assemble.sh: {e}", ov.owt.display())))?;
         if !out.status.success() {
             eprint!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
             return Err(goat_errors::coded("GB-028", format!("{}/assemble.sh could not build the scratch tree {}", ov.owt.display(), wt.display())).into());
@@ -341,7 +341,7 @@ impl<'a> Run<'a> {
                 if let Some(d) = dst.parent() {
                     std::fs::create_dir_all(d)?;
                 }
-                std::fs::copy(self.wt.join(p), &dst).with_context(|| format!("copy {p} to the overlay worktree"))?;
+                std::fs::copy(self.wt.join(p), &dst).map_err(|e| goat_errors::coded("GB-254", format!("copy {p} to the overlay worktree, {}: {e}", dst.display())))?;
             }
             self.note(format!("lands {st} {p}"));
         }
@@ -1030,7 +1030,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
         } else {
             run.rec = out.iter().find_map(|l| l.strip_prefix("record graduated: ")).unwrap_or("").trim().to_string();
             if run.rec.is_empty() {
-                return Err(anyhow!("{}", out.join("\n")));
+                return Err(goat_errors::coded("GB-020", format!("graduate printed no `record graduated:` line:\n{}", out.join("\n"))).into());
             }
             run.note(format!("graduated: {}", run.rec));
             let text = std::fs::read_to_string(run.wt.join(&run.rec)).unwrap_or_default();

@@ -25,7 +25,7 @@ use std::process::Stdio;
 
 use crate::runner::Cmd;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Deserialize;
 
 use crate::config;
@@ -954,7 +954,7 @@ fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks
             let log = format!("{}/standup-{}-12-{}.log", s.state_dir, s.site, q[*i].id);
             let f = std::fs::File::create(&log)?;
             crate::runner::phase("12", &q[*i].label, "");
-            let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().context("bash")?;
+            let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
             kids.push((*i, child, std::time::Instant::now(), log));
         }
         let mut failed = Vec::new();
@@ -1250,7 +1250,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let f = std::fs::File::create(log)?;
                 crate::runner::phase(&format!("observability-leg-{leg}"), label, "");
-                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 legs.insert(leg, (child, log.clone()));
             }
             Event::PullStart { label, cmd, log } => {
@@ -1265,7 +1265,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let f = std::fs::File::create(log)?;
                 crate::runner::phase("image-pull", label, "");
-                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 pulling = Some((child, log.clone()));
             }
             Event::PullJoin { at } => {
@@ -1336,7 +1336,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let t0 = std::time::Instant::now();
                 crate::runner::phase(&ph.n.to_string(), &ph.label, "");
-                let status = site_phase_command(repo, &s, &ph.cmd, &rs).current_dir(repo).status().context("bash")?;
+                let status = site_phase_command(repo, &s, &ph.cmd, &rs).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 let secs = t0.elapsed().as_secs();
                 let rc_now = status.code().unwrap_or(1);
                 checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
@@ -1493,7 +1493,8 @@ pub fn class_scope(root: &Path) -> Option<BTreeMap<String, Vec<String>>> {
 /// converger, verify every record, and report declared → verified time.
 pub fn mock(fixture: &mut Fixture, env: &str, site: &str, actor: &str, run: MockRun) -> Result<Report> {
     let text = std::fs::read_to_string(fixture.root.join("converger.yaml"))?;
-    let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section (goatbuilder-conformance.md §\"Rehearsing a standup on the fixture\")")?;
+    let script: MockScript = serde_yaml::from_str(&text)
+        .map_err(|e| goat_errors::coded("GB-024", format!("converger.yaml has no standup: section (goatbuilder-conformance.md §\"Rehearsing a standup on the fixture\"): {e}")))?;
     let m = script.standup;
     if m.env != env {
         return Err(goat_errors::coded("GB-249", format!("the fixture rehearses environment '{}', not '{env}'", m.env)).into());
@@ -1601,7 +1602,7 @@ pub fn mock(fixture: &mut Fixture, env: &str, site: &str, actor: &str, run: Mock
 /// and `status` afterwards reads the site as torn down, not as pending.
 pub fn teardown_mock(fixture: &mut Fixture, env: &str, site: &str, run: MockRun) -> Result<Report> {
     let text = std::fs::read_to_string(fixture.root.join("converger.yaml"))?;
-    let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section")?;
+    let script: MockScript = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("converger.yaml has no standup: section: {e}")))?;
     let m = script.standup;
     if m.env != env || m.site != site {
         return Err(goat_errors::coded("GB-249", format!("the fixture rehearses {}/{}, not {env}/{site}", m.env, m.site)).into());
@@ -1722,8 +1723,9 @@ struct TeardownFile {
 }
 
 fn load_teardown(repo: &Path) -> Result<Vec<TeardownDecl>> {
-    let t = std::fs::read_to_string(repo.join("ops/goatbuilder/teardown.yaml")).context("ops/goatbuilder/teardown.yaml")?;
-    Ok(serde_yaml::from_str::<TeardownFile>(&t).context("teardown.yaml")?.steps)
+    let p = repo.join("ops/goatbuilder/teardown.yaml");
+    let t = std::fs::read_to_string(&p).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?;
+    Ok(serde_yaml::from_str::<TeardownFile>(&t).map_err(|e| goat_errors::coded("GB-326", format!("{} is not the teardown declaration: {e}", p.display())))?.steps)
 }
 
 fn teardown_decl<'d>(decls: &'d [TeardownDecl], label: &str) -> Option<&'d TeardownDecl> {
@@ -1814,7 +1816,7 @@ fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, st
     let mut ok = true;
     for (n, label, component, cmd) in steps {
         let t0 = std::time::Instant::now();
-        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
+        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
         let rc = status.code().unwrap_or(1);
         let secs = t0.elapsed().as_secs();
         checks.push(row("time", format!("teardown {component} took {secs}s (exit {rc})")));

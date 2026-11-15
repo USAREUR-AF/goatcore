@@ -1412,7 +1412,7 @@ fn git(repo: &Path, args: &[&str]) -> Result<String> {
         .args(args)
         .output()?;
     if !out.status.success() {
-        anyhow::bail!("git {} failed", args.join(" "));
+        return Err(goat_errors::coded("GB-258", format!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim())).into());
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }

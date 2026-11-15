@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 
 use crate::runner::Finished;
@@ -82,7 +82,7 @@ pub fn write(run: &Finished, exit: i32, error: Option<&str>, stop: &[Check]) -> 
         inputs: &inputs,
         wrote: &run.wrote,
     };
-    std::fs::create_dir_all(&run.dir).with_context(|| format!("{}", run.dir.display()))?;
+    std::fs::create_dir_all(&run.dir).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", run.dir.display())))?;
     let path = run.dir.join("run.json");
     let tmp = run.dir.join(".run.json.tmp");
     let text = serde_json::to_string_pretty(&rec)? + "\n";
@@ -95,10 +95,10 @@ pub fn write(run: &Finished, exit: i32, error: Option<&str>, stop: &[Check]) -> 
     }
     {
         use std::io::Write;
-        let mut f = o.open(&tmp).with_context(|| format!("{}", tmp.display()))?;
+        let mut f = o.open(&tmp).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", tmp.display())))?;
         f.write_all(text.as_bytes())?;
     }
-    std::fs::rename(&tmp, &path).with_context(|| format!("{}", path.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
     Ok(path)
 }
 

@@ -981,15 +981,13 @@ fn run_phase1(
     })?;
     anyhow::ensure!(
         out.status.success() == written,
-        "phase 1 exited {} but its result says ready={written}; not trusting either",
-        out.status
+        goat_errors::coded("GB-321", format!("phase 1 exited {} but its result says ready={written}; not trusting either", out.status))
     );
     // Read again for the verdict: a one-sided result is not ready on its own.
     let (_, rows) = read_readiness(result)?;
     anyhow::ensure!(
         !rows.is_empty(),
-        "phase 1 wrote no results to {}",
-        result.display()
+        goat_errors::coded("GB-321", format!("phase 1 wrote no results to {}", result.display()))
     );
     Ok(rows)
 }
