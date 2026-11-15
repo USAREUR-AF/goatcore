@@ -310,6 +310,20 @@ mod tests {
             assert_eq!(fault_exit(&fault), 1, "{fault:#}");
         }
     }
+
+    /// Gate row C5: the shared library's own refusals carry X-FED-nnn, which
+    /// has no catalog exit (the library is not a binary). goatbuilder prints
+    /// the code and exits 1 for them, as goat does, so the binaries exit alike.
+    #[test]
+    fn a_library_refusal_with_no_catalog_exit_exits_1() {
+        for n in 1..=7 {
+            let code = format!("X-FED-{n:03}");
+            let e = goat_errors::explain(&code).unwrap_or_else(|| panic!("{code} is in the catalog"));
+            assert_eq!(e.exit, None, "{code} has no catalog exit");
+            let fault = anyhow::Error::from(goat_errors::coded(&code, "the library refused"));
+            assert_eq!(fault_exit(&fault), 1, "{code}");
+        }
+    }
     use super::*;
     use anyhow::anyhow;
 
