@@ -126,6 +126,7 @@ const EXPECTED: &[(&str, &str)] = &[
     ("validate_refuses_wrong_schema_version", "GB-025"),
     ("grow_four_facts", "GB-306"),
     ("grow_not_lite", "GB-304"),
+    ("grow_no_lite_block", "GB-304"),
 ];
 
 /// Refusals whose code a change in another stream's file brings, each with

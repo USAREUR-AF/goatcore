@@ -596,6 +596,9 @@ mod tests {
     }
 
     /// A run that stopped after writing the config carries on: the same config is kept.
+    /// This also pins that a hand-written goatbuilder.yaml equal to the grown
+    /// configuration (no grow header) is adopted as if grow had written it: the
+    /// file written here carries no header.
     #[test]
     fn a_rerun_after_the_config_was_written_carries_on() {
         let dir = checkout();
@@ -631,8 +634,9 @@ mod tests {
         assert!(!dir.join("renderer-args").exists());
     }
 
-    /// GB-304: a file that is not a goatlite; GB-306: a four-fact file with no repo
-    /// or components; GB-244: no goatlite.yaml at all.
+    /// GB-304: a file that is not a goatlite (another preset, or no lite: block);
+    /// GB-306: a four-fact file with no repo or components; GB-244: no
+    /// goatlite.yaml at all.
     #[test]
     fn the_refusals_carry_their_codes() {
         let dir = checkout();
@@ -653,6 +657,12 @@ mod tests {
             !format!("{e:#}").contains("does not validate"),
             "GB-025's words are not GB-306's: {e:#}"
         );
+        // GB-304's second site: preset: lite with no lite: block.
+        let no_block = "schema: goatbuilder/v1\npreset: lite\nrepo: {source: example-org/pasture}\n";
+        std::fs::write(dir.join(LITE_FILE), no_block).unwrap();
+        let e = grow(&dir, true).unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-304"), "{e:#}");
+        assert!(format!("{e:#}").contains("no lite: block"), "{e:#}");
         std::fs::remove_file(dir.join(LITE_FILE)).unwrap();
         assert_eq!(
             code_of(&grow(&dir, true).unwrap_err()).as_deref(),

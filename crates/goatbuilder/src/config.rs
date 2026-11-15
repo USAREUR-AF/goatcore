@@ -1177,9 +1177,10 @@ mod tests {
     }
 
     /// G1's proof: a standup plan from the grown configuration runs nothing the lite
-    /// plan did not, with the same arguments. It may drop the two lite render
+    /// plan did not, with the same arguments. It drops exactly the two lite render
     /// gates (their files exist by then) and the CA mint-if-missing flag (the CA
-    /// exists), and a GATE may differ (a gate measures and changes nothing).
+    /// exists), and runs the acceptance gate a goatlite skips by default (a gate
+    /// measures and changes nothing). Every other step, gates included, is the same.
     #[test]
     fn a_standup_plan_from_the_grown_config_changes_nothing_that_exists() {
         let lite_dir = crate::testdir::path("gb-grow-lite-");
@@ -1189,19 +1190,32 @@ mod tests {
         let grown = grow(&lite_fixture(), None).unwrap();
         std::fs::write(full_dir.join("ops/goatbuilder/goatbuilder.yaml"), serde_yaml::to_string(&grown).unwrap()).unwrap();
 
-        let lite: Vec<_> = plan_steps(&lite_dir)
+        let lite_all = plan_steps(&lite_dir);
+        let full = plan_steps(&full_dir);
+        // What the grown plan loses is exactly the lite path's own steps: the two
+        // render gates (`[GATE] goatlite: `) and the one step that mints the CA if
+        // it is missing. Every other step, gates included, is the same.
+        let render_gates: Vec<&String> = lite_all.iter().map(|(l, _)| l).filter(|l| l.contains("[GATE] goatlite: ")).collect();
+        assert_eq!(render_gates.len(), 2, "the two render gates: {render_gates:?}");
+        let minting: Vec<&String> = lite_all.iter().filter(|(_, c)| c.contains(" --mint-ca-if-missing")).map(|(l, _)| l).collect();
+        assert_eq!(minting.len(), 1, "one step mints the CA if missing: {minting:?}");
+        assert!(full.iter().all(|(l, c)| !l.contains("[GATE] goatlite: ") && !c.contains("--mint-ca-if-missing")), "the grown plan has neither");
+        let lite: Vec<_> = lite_all
             .into_iter()
             .filter(|(label, _)| !label.contains("[GATE] goatlite: "))
             .map(|(l, c)| (l, c.replace(" --mint-ca-if-missing", "")))
             .collect();
-        let full = plan_steps(&full_dir);
-        let is_gate = |label: &str| label.contains(" [GATE] ");
-        let changing = |steps: &[(String, String)]| steps.iter().filter(|(l, _)| !is_gate(l)).cloned().collect::<Vec<_>>();
-        let (lite, full) = (changing(&lite), changing(&full));
+        // One gate differs by design: a goatlite skips the acceptance phase by
+        // default (goatlite.md §11, standup's phase 13), and the grown full plan
+        // runs it. A gate reads and changes nothing; no other step may differ.
+        let acceptance = "=== Phase 13 [GATE] acceptance suite";
         let differ: Vec<String> = lite
             .iter()
             .zip(full.iter())
-            .filter(|(a, b)| a != b)
+            .filter(|(a, b)| {
+                let skipped_on_lite = a.0 == b.0 && a.0.starts_with(acceptance) && a.1.is_empty() && b.1.contains("/ops/validation/run-acceptance.py' --env pasture");
+                a != b && !skipped_on_lite
+            })
             .map(|(a, b)| format!("lite:  {} :: {}\ngrown: {} :: {}", a.0, a.1, b.0, b.1))
             .collect();
         assert!(differ.is_empty() && lite.len() == full.len(), "{} step(s) differ ({} lite, {} grown):\n{}", differ.len(), lite.len(), full.len(), differ.join("\n\n"));
