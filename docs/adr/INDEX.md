@@ -466,6 +466,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1239 | [A moon pod is a learning tool and not a sovereignty guarantee](1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md) | Proposed | Amends 0223, 0856, 1025, 1157, 1164 |
 | 1240 | [A platform-admin grant not made at the hub arrives without the group, and is recorded and alerted](1240-a-platform-admin-grant-not-made-at-the-hub-arrives-without-the-group-and-is-recorded.md) | Proposed | Amends 1205 |
 | 1242 | [A party's next CA is announced in package v2, so its CA rotates without a gap](1242-a-partys-next-ca-is-announced-in-package-v2-so-its-ca-rotates-without-a-gap.md) | Accepted | — |
+| 1246 | [Workflows pin actions by commit and start read-only, releases carry signatures and provenance, and OpenSSF Scorecard measures both](1246-workflows-pin-actions-and-start-read-only-releases-carry-signatures-and-provenance.md) | Proposed. Decisions 3, 4 and 6 are built on `main`. Decisions 1 and 2 are built on `main` except in four workflow files not yet converted (#915). Decision 5 is built for two of four release workflows. | — |
 
 <!-- END generated: adr-index -->
 
