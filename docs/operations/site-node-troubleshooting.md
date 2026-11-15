@@ -248,7 +248,10 @@ query to a public resolver times out and the same query to the resolver the
 network hands out answers. Declare that resolver in the site's group variables
 (`acme_dns_resolvers: ["<address>:53"]` and
 `acme_dns_skip_authoritative_checks: true`) and run `traefik-acme.yml` for the
-site; the next renewal attempt then succeeds. The served certificate keeps
+site; the next renewal attempt then succeeds. With the authoritative check off,
+Traefik waits `acme_dns_propagation_delay` (default 90s) before Let's Encrypt
+validates; if the log then shows `NXDOMAIN looking up TXT for _acme-challenge`,
+raise that value. The served certificate keeps
 working until its expiry date, so read that date first to know how long there
 is.
 
