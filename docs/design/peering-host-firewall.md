@@ -211,7 +211,8 @@ naming the host, the setting and the fix: set `goat_host_firewall_baseline: true
 11's play applies the baseline; there is no separate play for it. `goatbuilder federate plan`
 shows such an edge as BLOCKED with GB-279 ([federation-plan.md](federation-plan.md), "Host
 firewall"). A core host keeps the baseline opt-in. The back-out (`peering-backout.yml`) does not
-check it, so a peering can always be taken down.
+check it, so a peering can always be taken down. A host whose last peering is backed out is no
+longer a peering edge; the back-out unloads the baseline.
 
 An existing deployment whose edges have the baseline off is refused at its next peering run
 until the edge's group_vars switch it on.
