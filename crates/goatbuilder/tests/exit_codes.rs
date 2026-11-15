@@ -120,7 +120,7 @@ fn each_code_exits_by_the_contracts_meaning() {
         ("GB-257", 2),
         ("GB-259", 2),
         ("GB-326", 2),
-        ("GB-327", 2),
+        ("GB-277", 1),
     ];
     let got: Vec<(&str, Option<i32>)> = want
         .iter()

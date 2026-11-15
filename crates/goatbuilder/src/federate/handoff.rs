@@ -500,7 +500,7 @@ fn import_edge_half(a: &ImportArgs, work: &Path, repo: &Path) -> anyhow::Result<
     let sha = hex_sha256(&bytes);
     anyhow::ensure!(
         sha == half.sha256,
-        goat_errors::coded("GB-321", format!("import: {} changed while it was read", a.result.display()))
+        goat_errors::coded("GB-277", format!("import: {} changed while it was read", a.result.display()))
     );
     let checked = vec![Check {
         name: "edge-half".into(),

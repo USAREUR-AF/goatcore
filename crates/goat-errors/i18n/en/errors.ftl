@@ -1018,10 +1018,6 @@ gb-326-title = a file of the checkout goatbuilder reads is not the YAML it shoul
 gb-326-what = goatbuilder read a file of the checkout (fleet-pins.yaml, the inventory's doors.yaml, a role's deploy-history.yml, ops/goatbuilder/teardown.yaml) and it does not parse as YAML, or not in the shape that file has. The message names the file and the parser's line and column. Nothing that reads it ran.
 gb-326-cause-1 = a bracket, quote or indentation error near the line named
 gb-326-cause-2 = the file was edited by hand into another shape
-gb-327-title = grow was given a config that is not a goatlite
-gb-327-what = Growing a goatlite turns its goatlite.yaml (preset: lite, with its lite: block) into a full goatbuilder.yaml. The config given does not declare preset: lite, or has no lite: block, so there is nothing to grow. Nothing was written.
-gb-327-cause-1 = the config is already a full one (preset: full, or no preset)
-gb-327-cause-2 = the lite: block was removed by hand
 gb-278-title = the edge driver's checkout or carried files are not the controller's
 gb-278-what = On a two-driver peering (drivers: two), the edge driver runs a phase's edge half with the command the controller's hand-off names: `goatbuilder federate <peering> --side edge --from <N> --to <N> --expect-commit <commit>`, with one `--expect <file>=<sha256>` per file the controller carried. The edge driver refused to run: --expect-commit was not given; its checkout is not a git checkout, has no commit, has changes, or is at another commit than the one named; or a carried file is not under its <work> or in its checkout, or has another sha256. Nothing ran on the edge.
 gb-278-cause-1 = the edge driver's checkout was not updated to the controller's commit, or has local changes

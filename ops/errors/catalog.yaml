@@ -3734,20 +3734,6 @@ entries:
     matches:
       - "^GB-326: "
 
-  - code: GB-327
-    tool: goatbuilder
-    title: grow was given a config that is not a goatlite
-    what: "Growing a goatlite turns its goatlite.yaml (preset: lite, with its lite: block) into a full goatbuilder.yaml. The config given does not declare preset: lite, or has no lite: block, so there is nothing to grow. Nothing was written."
-    causes:
-      - "the config is already a full one (preset: full, or no preset)"
-      - "the lite: block was removed by hand"
-    fixes:
-      - "grow the goatlite.yaml the goatlite was rendered from"
-    read: docs/design/goatlite-growth.md
-    exit: 2
-    matches:
-      - "^GB-327: "
-
   - code: GB-278
     tool: goatbuilder
     title: the edge driver's checkout or carried files are not the controller's

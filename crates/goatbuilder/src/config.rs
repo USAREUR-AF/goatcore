@@ -477,11 +477,13 @@ pub fn derive_lite(value: &Value, checkout: Option<&Value>) -> Value {
 /// keeps. Refused unless the result validates: a four-fact file with no checkout
 /// config has no `repo` or `components`, and growth asks for them then.
 #[allow(dead_code)] // the verb's wiring in main.rs is a separate change; the tests call this
+// grow's errors are left uncoded here: grow is the surface of the open goatlite
+// growth change, which codes them itself.
 pub fn grow(value: &Value, checkout: Option<&Value>) -> Result<Value> {
     if value.get("preset").and_then(Value::as_str) != Some("lite") {
-        return Err(goat_errors::coded("GB-327", "grow takes a goatlite config: this one does not declare preset: lite").into());
+        return Err(anyhow::anyhow!("grow takes a goatlite config: this one does not declare preset: lite"));
     }
-    let lite = value.get("lite").and_then(Value::as_object).ok_or_else(|| goat_errors::coded("GB-327", "grow takes a goatlite config: this one has no lite: block"))?;
+    let lite = value.get("lite").and_then(Value::as_object).ok_or_else(|| anyhow::anyhow!("grow takes a goatlite config: this one has no lite: block"))?;
     let mut out = derive_lite(value, checkout);
     let obj = out.as_object_mut().expect("derive_lite keeps an object");
     obj.remove("lite");
@@ -515,7 +517,7 @@ pub fn grow(value: &Value, checkout: Option<&Value>) -> Result<Value> {
         } else {
             format!("\n\nA full configuration declares {} of its own; the lite preset took them from the checkout's config, and this checkout has none. Add them to goatlite.yaml, then grow again.", missing.join(" and "))
         };
-        return Err(goat_errors::coded(REFUSED_CODE, format!("the grown configuration does not validate:\n  {}{ask}", problems.join("\n  "))).into());
+        return Err(anyhow::anyhow!("the grown configuration does not validate:\n  {}{ask}", problems.join("\n  ")));
     }
     Ok(out)
 }
