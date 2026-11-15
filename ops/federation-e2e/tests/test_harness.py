@@ -521,7 +521,7 @@ def samples_checks():
     body1 = one.group(0) if one else ""
     step = body1.find("drive_x '$them' '$s' '$AVENUE' 5 14")
     back = body1.find('rec "rot-tunnel-back-$k-$s"')
-    on = body1.find('-- drive "$them" "$s" "$AVENUE" 11 13', step if step >= 0 else 0)
+    on = body1.find("drive '$them' '$s' '$AVENUE' 11 13", step if step >= 0 else 0)
     check(step >= 0 and back > step and step < on < back,
           "rotation: the partner's step does not go on from phase 11 (drive $them $s $AVENUE 11 13) before the tunnel check")
     # The partner's step from phase 11 runs through rec.py, which starts its command as

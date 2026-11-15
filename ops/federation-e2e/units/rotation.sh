@@ -173,7 +173,9 @@ PY
       # drive_x stops at phase 10's hand-off; phase 11 is where the partner replaces our
       # peer key. It stops at 13: phase 14 through drive has no acceptance surfaces, and
       # the acceptance step below covers 14.
-      rec "rot-partner-step-from-11-$k-$s" -- drive "$them" "$s" "$AVENUE" 11 13
+      # rec.py starts its command as a program; drive is a function, exported to child
+      # shells by lib/engine.sh's export_helpers, so it runs through bash -c.
+      rec "rot-partner-step-from-11-$k-$s" -- bash -c "drive '$them' '$s' '$AVENUE' 11 13"
       printf '%s\tpartner-step-end\n' "$(date +%s.%N)" >> "$RECORD/rot-$k-$s.times"
       rec "rot-tunnel-back-$k-$s" -- bash -c \
         "i=\$(iface '$s' '$them'); for _ in \$(seq 1 30); do t=\$(docker exec $HP-$s-edge wg show \$i latest-handshakes | cut -f2); [ \"\${t:-0}\" -gt '${t0%%.*}' ] 2>/dev/null && break; sleep 2; done
