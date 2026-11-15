@@ -363,6 +363,56 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertEqual(self.verdicts()["persistence/outbound/release/all"], "FAIL", out)
 
+    # --- a sample the receiving edge drops ----------------------------------
+    # The receiving edge passes at most one message per 1/hz on a lane and drops the
+    # rest (ADR 1244), so a check's single sample can land just behind a flow sample
+    # and be lost. The check sends a fresh value until one is stored.
+    def check(self, name):
+        return [c for c in self.bundle()["checks"] if c["name"] == name][0]
+
+    def test_a_dropped_delivery_sample_is_resent_fresh_until_one_is_stored(self):
+        self.fabric.faults.drop_samples["xaa"] = {r"from/xab/all/acceptance/[^/]+": 1}
+        rc, out = self.run_acceptance()
+        self.assertEqual(rc, 0, out)
+        c = self.check("delivery/inbound/release/all")
+        self.assertEqual(c["verdict"], "PASS", out)
+        o = c["observations"]
+        sent = o["values_sent"].split()
+        self.assertEqual((o["resent"], len(sent), len(set(sent))), ("1", 2, 2), o)
+        self.assertEqual(o["received"], sent[-1])
+        self.assertIn("1/hz", c["reason"])
+        self.assertIn("10 ms at 100 Hz", c["reason"])
+
+    def test_a_dropped_persistence_sample_is_resent_fresh_until_one_is_stored(self):
+        self.fabric.faults.drop_samples["xab"] = {r"from/xaa/xab/acceptance/[^/]+/persist": 1}
+        rc, out = self.run_acceptance()
+        self.assertEqual(rc, 0, out)
+        c = self.check("persistence/outbound/release/xab")
+        self.assertEqual(c["verdict"], "PASS", out)
+        o = c["observations"]
+        sent = o["values_sent"].split()
+        self.assertEqual((o["resent"], len(sent), len(set(sent))), ("1", 2, 2), o)
+        self.assertEqual(o["received"], sent[-1])
+        self.assertIn("10 ms at 100 Hz", c["reason"])
+
+    def test_a_check_stored_first_time_sends_once_and_names_no_rule(self):
+        self.run_acceptance()
+        for name in ("delivery/inbound/release/all", "persistence/outbound/release/xab"):
+            c = self.check(name)
+            self.assertEqual((c["verdict"], c["observations"]["resent"]), ("PASS", "0"), c)
+            self.assertNotIn("1/hz", c["reason"])
+
+    def test_a_lane_that_stores_nothing_fails_and_names_the_rule(self):
+        self.fabric.faults.republisher_down.add("xab")
+        rc, out = self.run_acceptance()
+        self.assertEqual(rc, 1, out)
+        c = self.check("delivery/inbound/release/all")
+        self.assertEqual(c["verdict"], "FAIL", out)
+        sent = c["observations"]["values_sent"].split()
+        self.assertEqual(len(set(sent)), 8, c)
+        self.assertIn("10 ms at 100 Hz", c["reason"])
+        self.assertIn("ADR 1244", c["reason"])
+
     def test_persistence_without_a_counterparty_surface_is_blocked(self):
         rc, out = self.run_acceptance(drop=["FED_THEIRS_REST"])
         v = self.verdicts()

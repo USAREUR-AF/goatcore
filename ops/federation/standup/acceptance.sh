@@ -223,7 +223,8 @@ def sets(frm):
             (out if stem.startswith("release/") and "*" not in stem else wild).append(stem)
     return ",".join(out) or "-", ",".join(wild) or "-"
 # Two samples closer than the receiving edge's agreed `hz` are one too many for its
-# downsampling, and the second is dropped with nothing logged. Half a second, or
+# downsampling, and the second is dropped; the router logs one INFO line for the lot,
+# each drop only at trace level (ADR 1244). Half a second, or
 # longer when an agreed rate is slower than three in two seconds.
 hz = [f.get("envelope", {}).get("hz") for f in ag.get("flows", [])]
 hz = [h for h in hz if isinstance(h, (int, float)) and h > 0]
@@ -298,6 +299,20 @@ get_side() {
   if [ "$1" = ours ]; then GOT=$(get_ours "$2"); else GOT=$(get_theirs "$2"); fi
   GOT_RC=$?; GOT_ERR=$(cat "$REST_ERR" 2>/dev/null)
 }
+put_side() { if [ "$1" = ours ]; then put_ours "$2" "$3"; else put_theirs "$2" "$3"; fi; }
+# A stopgap until every writer on a lane paces to it (ADR 1244): the receiving edge
+# passes at most one message per 1/hz on a lane and drops the rest, so a check's one
+# sample can land just behind a flow sample and be lost. A check that reads nothing
+# sends a FRESH value, one gap later, within its bounded wait, and any value it sent
+# counts. SENT holds them one per line; RESENT counts the resends.
+DROP_RULE="The receiving edge passes at most one message per 1/hz on a lane (10 ms at 100 Hz) and drops the rest, logging one INFO line for the lot (ADR 1244)."
+was_sent() { [ -n "$1" ] && printf '%s\n' "$SENT" | grep -Fxq -- "$1"; }
+resend() { # SIDE STAGING-KEY VALUE
+  gap; put_side "$1" "$2" "$3"; SENT="$SENT
+$3"; RESENT=$((RESENT+1))
+}
+obs_sent() { obs values_sent "$(printf '%s' "$SENT" | tr '\n' ' ')"; obs resent "$RESENT"; }
+resent_note() { [ "$RESENT" -eq 0 ] || printf ' (stored after %s fresh resend(s); %s)' "$RESENT" "$DROP_RULE"; }
 
 # absent NAME DIRECTION TIER SIDE KEY PASS-MESSAGE FAIL-MESSAGE: a key that must not
 # have arrived. A surface that cannot be read is BLOCKED, never a pass.
@@ -985,20 +1000,24 @@ done
       *) blk "$n" "$dir" persistence "$set/** on $there: who subscribes to the key could not be read" "$(scope_reason)" ;;
     esac
     if [ "$rc" -eq 0 ]; then
-      if [ "$tx" = ours ]; then put_ours "$set/acceptance/$S/persist" "$val"; else put_theirs "$set/acceptance/$S/persist" "$val"; fi
+      put_side "$tx" "$set/acceptance/$S/persist" "$val"; SENT="$val"; RESENT=0
       for i in 1 2 3 4 5 6 7 8; do
         settle 1
         get_side "$rx" "$key"
-        [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "$val" ] && break
+        [ "$GOT_RC" -eq 0 ] && was_sent "$GOT" && break
+        [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ] && [ "$i" -lt 8 ] && resend "$tx" "$set/acceptance/$S/persist" "$val-r$i"
       done
-      obs sent "$val"; obs received "$GOT"; obs attempts "$i"
+      obs sent "$(printf '%s' "$SENT" | tail -1)"; obs received "$GOT"; obs attempts "$i"; obs_sent
       if [ "$GOT_RC" -ne 0 ]; then
         blk "$n" "$dir" persistence "$set/** -> $key: $there's REST surface did not answer" "$GOT_ERR"
-      elif [ "$GOT" = "$val" ]; then
-        ok "$n" "$dir" persistence "$set/** persists on $there with only the core's own store subscribed to the key"
+      elif was_sent "$GOT"; then
+        ok "$n" "$dir" persistence "$set/** persists on $there with only the core's own store subscribed to the key$(resent_note)"
+      elif [ -z "$GOT" ]; then
+        no "$n" "$dir" persistence "$set/** did not persist on $there with only its store subscribed" \
+          "sent $((RESENT+1)) fresh value(s), read <nothing>. The store's own interest is not carrying this lane. $DROP_RULE"
       else
         no "$n" "$dir" persistence "$set/** did not persist on $there with only its store subscribed" \
-          "expected '$val', read '${GOT:-<nothing>}'. The store's own interest is not carrying this lane."
+          "expected '$val', read '$GOT'. The store's own interest is not carrying this lane."
       fi
     fi
     [ -n "$paused" ] && [ -n "$resume" ] && side_run "$rx" "$resume" >/dev/null 2>&1
@@ -1195,25 +1214,28 @@ else
   for set in $(list "$OUR_SETS");   do put_ours   "$set/acceptance/$S" "out-$S-${set#release/}"; gap; done
   # deliver DIRECTION SIDE SENDER SET PAYLOAD: bounded retries, then the verdict.
   deliver() {
-    local w n from there i
+    local w n from there i tx last
     w="$(wire_of "$3" "$4")/acceptance/$S"; n="delivery/$1/$4"
-    from="their"; there="our core"
-    [ "$1" = outbound ] && { from="our"; there="their core"; }
+    from="their"; there="our core"; tx=theirs
+    [ "$1" = outbound ] && { from="our"; there="their core"; tx=ours; }
+    SENT="$5"; RESENT=0
     for i in 1 2 3 4 5 6 7 8; do
       get_side "$2" "$w"
-      [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "$5" ] && break
+      [ "$GOT_RC" -eq 0 ] && was_sent "$GOT" && break
+      [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ] && [ "$i" -lt 8 ] && resend "$tx" "$4/acceptance/$S" "$5-r$i"
       settle 1
     done
-    obs key "$w"; obs sent "$5"; obs received "$GOT"; obs attempts "$i"
-    obs sent_sha256 "$(sha "$5")"; obs received_sha256 "$(sha "$GOT")"
+    last=$(printf '%s' "$SENT" | tail -1)
+    obs key "$w"; obs sent "$last"; obs received "$GOT"; obs attempts "$i"; obs_sent
+    obs sent_sha256 "$(sha "$last")"; obs received_sha256 "$(sha "$GOT")"
     if [ "$GOT_RC" -ne 0 ]; then
       blk "$n" "$1" positive "$4/** -> $w: $there's REST surface did not answer" "$GOT_ERR"
-    elif [ "$GOT" = "$5" ]; then
-      ok "$n" "$1" positive "$from $4/** staged arrived as $(wire_of "$3" "$4")/** and reads back byte for byte on $there"
+    elif was_sent "$GOT"; then
+      ok "$n" "$1" positive "$from $4/** staged arrived as $(wire_of "$3" "$4")/** and reads back byte for byte on $there$(resent_note)"
     elif [ -z "$GOT" ]; then
-      no "$n" "$1" positive "not delivered $1: $4/** -> $w" "expected '$5', read <nothing>"
+      no "$n" "$1" positive "not delivered $1: $4/** -> $w" "sent $((RESENT+1)) fresh value(s) from '$5', read <nothing>. $DROP_RULE"
     else
-      no "$n" "$1" positive "delivered $1 with other bytes: $4/** -> $w" "sent sha256 $(sha "$5"), read sha256 $(sha "$GOT")"
+      no "$n" "$1" positive "delivered $1 with other bytes: $4/** -> $w" "sent sha256 $(sha "$last"), read sha256 $(sha "$GOT")"
     fi
   }
   settle 2
