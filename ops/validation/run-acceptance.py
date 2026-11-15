@@ -716,6 +716,10 @@ def absent_coverage_self_test():
          {"door-cap": ("N/A", "declared absent on this site: door"),
           "db-own": ("PASS", None)}),
     )
+    # run()'s exit: 1 only where a present service went unchecked (a coverage
+    # row); otherwise the rule it had (0 when something passed, 2 when nothing did)
+    want_rc = {"one absent one present": 1, "present service covered by its own row": 0, "all absent": 2,
+               "undeclared service not counted as present": 2, "unowned token ignored": 0}
     with tempfile.TemporaryDirectory() as d:
         mp = Path(d) / "model.json"
         mp.write_text(json.dumps(model))
@@ -723,7 +727,8 @@ def absent_coverage_self_test():
             man, js = Path(d) / "manifest.yaml", Path(d) / "out.jsonl"
             man.write_text(yaml.safe_dump({"tests": rows}))
             with contextlib.redirect_stdout(io.StringIO()):
-                run(["--env", "selftest", "--manifest", str(man), "--endstate", str(mp), "--json", str(js)])
+                rc = run(["--env", "selftest", "--manifest", str(man), "--endstate", str(mp), "--json", str(js)])
+            out.append((f"endstate coverage exit: {name}", rc, want_rc[name]))
             got = {r["id"]: (r["status"], r["evidence"]) for r in map(json.loads, js.read_text().splitlines())}
             got = {k: (st, ev if want.get(k, (None, None))[1] is not None else None) for k, (st, ev) in got.items()}
             out.append((f"endstate coverage: {name}", got, want))
