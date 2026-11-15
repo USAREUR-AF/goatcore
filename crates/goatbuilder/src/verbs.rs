@@ -61,7 +61,7 @@ impl Fixture {
         let local = self.root.join("declared/pins.yaml");
         let (have, want) = (self.declared.revision, source.revision);
         if have == want {
-            if std::fs::read_to_string(&local)? == text {
+            if std::fs::read_to_string(&local).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&local)).display())))? == text {
                 return Ok(None);
             }
             return Err(goat_errors::coded("GB-046", format!("declared/pins.yaml and source/pins.yaml are both at revision {have} and differ; the local declaration is not the source of record's")).into());
@@ -565,14 +565,15 @@ pub fn rollback(fixture: &mut Fixture, env: &str, component: &str, n: u32, actor
     // fixture's source/ when it has one (C3, a new revision), and the local copy.
     fixture.freshen(false)?;
     let pins = fixture.root.join("declared/pins.yaml");
-    let mut doc: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&pins)?)?;
+    let text = std::fs::read_to_string(&pins).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", pins.display())))?;
+    let mut doc: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("{}: record unreadable: {e}", pins.display())))?;
     doc["components"][component][env]["ref"] = serde_yaml::Value::String(target.clone());
     let source = fixture.root.join("source/pins.yaml");
     if source.exists() {
         doc["revision"] = serde_yaml::Value::from(fixture.declared.revision + 1);
-        std::fs::write(&source, serde_yaml::to_string(&doc)?)?;
+        std::fs::write(&source, serde_yaml::to_string(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&source)).display())))?;
     }
-    std::fs::write(&pins, serde_yaml::to_string(&doc)?)?;
+    std::fs::write(&pins, serde_yaml::to_string(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&pins)).display())))?;
     *fixture = Fixture::open(&fixture.root.clone())?;
     checks.push(ok(&format!("{env}/{component}/declare"), format!("declared {} in declared/pins.yaml (was {})", short(&target), short(&current))));
     let mut r = deploy(fixture, env, Some(component), actor, false)?;

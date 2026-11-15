@@ -339,14 +339,14 @@ impl<'a> Run<'a> {
             } else {
                 let dst = owt.join(p);
                 if let Some(d) = dst.parent() {
-                    std::fs::create_dir_all(d)?;
+                    std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
                 }
                 std::fs::copy(self.wt.join(p), &dst).map_err(|e| goat_errors::coded("GB-254", format!("copy {p} to the overlay worktree, {}: {e}", dst.display())))?;
             }
             self.note(format!("lands {st} {p}"));
         }
         let b = std::env::temp_dir().join(format!("goatbuilder-pr-body-{}", std::process::id()));
-        std::fs::write(&b, format!("{body}\n"))?;
+        std::fs::write(&b, format!("{body}\n")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&b)).display())))?;
         let branch = sh("git", &["-C", &owt_s, "rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|_| "rc".into());
         let land = self.repo.join("ops/scripts/pr-land.sh").display().to_string();
         self.run(&land, &["--worktree".into(), owt_s.clone(), "--branch".into(), branch, "--title".into(), title.into(), "--body-file".into(), b.display().to_string()])?;
@@ -455,7 +455,7 @@ impl<'a> Run<'a> {
             }
         }
         let b = std::env::temp_dir().join(format!("goatbuilder-pr-body-{}", std::process::id()));
-        std::fs::write(&b, format!("{body}\n"))?;
+        std::fs::write(&b, format!("{body}\n")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&b)).display())))?;
         let branch = sh("git", &["-C", self.wt.to_str().unwrap_or("."), "rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|_| "rc".into());
         let mut args: Vec<String> = vec![
             "--worktree".into(), self.wt.display().to_string(), "--branch".into(), branch, "--title".into(), title.into(), "--body-file".into(), b.display().to_string(),
@@ -526,7 +526,7 @@ impl<'a> Run<'a> {
         reqs.dedup();
         let req = reqs.join(",");
         let evid = self.repo.join("ops/validation/evidence").join(format!("{}-{}-{name}.jsonl", self.image, self.tag.split('/').nth(1).unwrap_or(&self.tag)));
-        std::fs::create_dir_all(evid.parent().unwrap())?;
+        std::fs::create_dir_all(evid.parent().unwrap()).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(evid.parent().unwrap())).display())))?;
         self.evid = evid.display().to_string();
         self.note(format!("rows on {name}: {rows} (requires {req})"));
         // A browser row needs the console's Playwright toolchain on this machine;
@@ -590,7 +590,7 @@ impl<'a> Run<'a> {
             self.note(format!("DRY: env {}", args.join(" ")));
             return Ok(true);
         }
-        let st = Cmd::new("env").args(&args).status()?;
+        let st = Cmd::new("env").args(&args).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start env {}: {e}", args.join(" "))))?;
         // exit 2 from the runner is an environment problem (a tool missing, a
         // context not configured): the rows did not run. UNTESTED, never FAIL.
         if st.code() == Some(2) {

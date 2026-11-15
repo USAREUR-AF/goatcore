@@ -701,7 +701,7 @@ pub fn dump_record(doc: &Map<String, Value>) -> String {
 
 fn write_record(path: &Path, doc: &Map<String, Value>) -> Result<()> {
     if let Some(d) = path.parent() {
-        std::fs::create_dir_all(d)?;
+        std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
     }
     std::fs::write(path, dump_record(doc)).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))
 }
@@ -2142,7 +2142,7 @@ fn cmd_readiness(t: &Tree, out: Option<&Path>, o: &mut Out) -> Result<i32> {
     let text = json_dumps(&doc);
     match out {
         Some(p) => {
-            std::fs::write(p, format!("{text}\n"))?;
+            std::fs::write(p, format!("{text}\n")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(p)).display())))?;
             o.out(format!("release readiness written: {} ({} components)", p.display(), doc["components"].as_array().map(|a| a.len()).unwrap_or(0)));
         }
         // A terminal gets the page; a pipe, a redirect and `-o json` get the

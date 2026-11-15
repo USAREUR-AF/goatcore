@@ -690,8 +690,8 @@ pub fn join_phase_1(work: &Path, edge: &serde_json::Value) -> anyhow::Result<boo
         "joined": {"edge": "imported (handoff/1/edge.json)", "core": "this run"},
     });
     let tmp = path.with_extension("json.joining");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&joined)? + "\n")?;
-    std::fs::rename(&tmp, &path)?;
+    std::fs::write(&tmp, serde_json::to_string_pretty(&joined).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))? + "\n").map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&tmp)).display())))?;
+    std::fs::rename(&tmp, &path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&tmp)).display())))?;
     Ok(ready)
 }
 

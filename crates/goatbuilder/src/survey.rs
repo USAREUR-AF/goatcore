@@ -744,8 +744,8 @@ fn finish(reads: Vec<GoatnetRead>, ladder_rows: Vec<LadderRow>, rungs: Vec<(Stri
         std::fs::write(p, html(&survey)).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?;
     }
     match o.output {
-        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&survey)?),
-        OutputFormat::Yaml => println!("{}", serde_yaml::to_string(&survey)?),
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&survey).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?),
+        OutputFormat::Yaml => println!("{}", serde_yaml::to_string(&survey).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?),
         // One trailing newline, so the next prompt is on its own line.
         OutputFormat::Table => println!("{}", table(&survey, o.intra, o.inter, o.html).trim_end()),
     }

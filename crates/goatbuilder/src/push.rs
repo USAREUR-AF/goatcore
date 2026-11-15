@@ -158,7 +158,7 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
 pub fn declared(repo: &Path, component: &str, goatnet: &str, only_group: Option<&str>) -> Result<Declared> {
     // The merged table: a lite goatnet is declared in the sidecar, never in fleet-pins.yaml.
     let table = crate::pins::load_table(&repo.join("ops/pins/fleet-pins.yaml"))?;
-    let pins = serde_yaml::to_value(serde_json::json!({"goatnets": table.goatnets, "components": table.components}))?;
+    let pins = serde_yaml::to_value(serde_json::json!({"goatnets": table.goatnets, "components": table.components})).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?;
     let comp = pins
         .get("components")
         .and_then(|c| c.get(component))

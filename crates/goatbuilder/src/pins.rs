@@ -1372,7 +1372,7 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
             }
         } else {
             if let Some(d) = path.parent() {
-                std::fs::create_dir_all(d)?;
+                std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
             }
             let current = std::fs::read_to_string(&path).unwrap_or_default();
             std::fs::write(&path, &text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
@@ -1762,7 +1762,7 @@ pub fn regenerate(repo: &Path) -> Result<Regen> {
     let mut changed_intents = Vec::new();
     for (g, path, text, _doc, changed) in &r.intents {
         if let Some(d) = path.parent() {
-            std::fs::create_dir_all(d)?;
+            std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", d.display())))?;
         }
         std::fs::write(path, text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
         wrote.push(p.rel(path));

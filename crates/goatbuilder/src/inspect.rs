@@ -212,7 +212,9 @@ fn read_all_tails(repo: &Path, inv: &[String], group: &str) -> Result<GroupRead>
 
 /// Every fleet-pins component on this goatnet with a ledger to read.
 fn components_of(repo: &Path, env: &str) -> Result<Vec<String>> {
-    let pins: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(repo.join("ops/pins/fleet-pins.yaml"))?)?;
+    let path = repo.join("ops/pins/fleet-pins.yaml");
+    let text = std::fs::read_to_string(&path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
+    let pins: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-326", format!("{} is not YAML: {e}", path.display())))?;
     let comps = pins.get("components").and_then(|c| c.as_mapping()).ok_or_else(|| anyhow::Error::from(goat_errors::coded("GB-257", "fleet-pins.yaml has no components".to_string())))?;
     // A component is read wherever the pins put it, whether or not it has a
     // deploy play of its own: the comparison needs the ledger, not the play.
@@ -730,7 +732,7 @@ pub fn plan(repo: &Path, mock: Option<&Path>, o: &PlanOpts) -> Result<Report> {
         "schema": "goatbuilder.plan/v1", "verb": o.verb, "component": o.component, "env": o.env, "group": o.group, "n": o.n, "site": o.site,
         "main_commit": git(repo, &["rev-parse", "HEAD"]), "written_by": std::env::var("USER").unwrap_or_default(), "facts": facts,
     });
-    std::fs::write(o.out, serde_json::to_string_pretty(&doc)? + "\n").map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", o.out.display())))?;
+    std::fs::write(o.out, serde_json::to_string_pretty(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))? + "\n").map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", o.out.display())))?;
     let mut checks = vec![ok("plan/written", format!("{} — review it, then: goatbuilder apply {}", o.out.display(), o.out.display()))];
     if let Some(m) = doc["facts"].as_object() {
         for (k, v) in m {
@@ -882,7 +884,7 @@ pub fn adopt(repo: &Path, env: &str, yes: bool) -> Result<Report> {
     let base = repo.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "goat".into());
     let wt: PathBuf = repo.join("..").join(format!("{base}-wt-adopt-{stamp}"));
     let branch = format!("chore/adopt-{}-{}", env.replace('_', "-"), stamp.to_lowercase());
-    let st = Cmd::new("git").arg("-C").arg(repo).args(["worktree", "add", "-q", "-b", &branch]).arg(&wt).arg("origin/main").status()?;
+    let st = Cmd::new("git").arg("-C").arg(repo).args(["worktree", "add", "-q", "-b", &branch]).arg(&wt).arg("origin/main").status().map_err(|e| goat_errors::coded("GB-320", format!("could not start git: {e}")))?;
     if !st.success() {
         return Err(goat_errors::coded("GB-054", format!("git worktree add {} failed", wt.display())).into());
     }
@@ -930,11 +932,12 @@ pub fn adopt_mock(f: &Fixture, env: &str, yes: bool) -> Result<Report> {
         checks.push(ok(&format!("{env}/adopt"), "the declaration already names what every machine with a record runs".into()));
     } else if yes {
         let path = f.root.join("declared/pins.yaml");
-        let mut doc: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&path)?)?;
+        let text = std::fs::read_to_string(&path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
+        let mut doc: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("{}: record unreadable: {e}", path.display())))?;
         for p in &props {
             doc["components"][p.component.as_str()][env]["ref"] = serde_yaml::Value::String(p.running.clone());
         }
-        std::fs::write(&path, serde_yaml::to_string(&doc)?)?;
+        std::fs::write(&path, serde_yaml::to_string(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&path)).display())))?;
         checks.push(ok(&format!("{env}/adopt"), format!("{} declaration(s) written to {}", props.len(), path.display())));
     }
     Ok(Report::new("adopt", checks, EXIT_REFUSED))

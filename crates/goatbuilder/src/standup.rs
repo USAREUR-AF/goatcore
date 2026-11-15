@@ -952,7 +952,7 @@ fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks
         let mut kids = Vec::new();
         for i in &idx {
             let log = format!("{}/standup-{}-12-{}.log", s.state_dir, s.site, q[*i].id);
-            let f = std::fs::File::create(&log)?;
+            let f = std::fs::File::create(&log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&log)).display())))?;
             crate::runner::phase("12", &q[*i].label, "");
             let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
             kids.push((*i, child, std::time::Instant::now(), log));
@@ -1246,9 +1246,9 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     continue;
                 }
                 if let Some(d) = Path::new(log).parent() {
-                    std::fs::create_dir_all(d)?;
+                    std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
                 }
-                let f = std::fs::File::create(log)?;
+                let f = std::fs::File::create(log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(log)).display())))?;
                 crate::runner::phase(&format!("observability-leg-{leg}"), label, "");
                 let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 legs.insert(leg, (child, log.clone()));
@@ -1261,9 +1261,9 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     continue;
                 }
                 if let Some(d) = Path::new(log).parent() {
-                    std::fs::create_dir_all(d)?;
+                    std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
                 }
-                let f = std::fs::File::create(log)?;
+                let f = std::fs::File::create(log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(log)).display())))?;
                 crate::runner::phase("image-pull", label, "");
                 let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 pulling = Some((child, log.clone()));
@@ -1492,7 +1492,7 @@ pub fn class_scope(root: &Path) -> Option<BTreeMap<String, Vec<String>>> {
 /// the phase order the fixture states, converge each through the scripted
 /// converger, verify every record, and report declared → verified time.
 pub fn mock(fixture: &mut Fixture, env: &str, site: &str, actor: &str, run: MockRun) -> Result<Report> {
-    let text = std::fs::read_to_string(fixture.root.join("converger.yaml"))?;
+    let text = std::fs::read_to_string(fixture.root.join("converger.yaml")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(fixture.root.join("converger.yaml"))).display())))?;
     let script: MockScript = serde_yaml::from_str(&text)
         .map_err(|e| goat_errors::coded("GB-024", format!("converger.yaml has no standup: section (goatbuilder-conformance.md §\"Rehearsing a standup on the fixture\"): {e}")))?;
     let m = script.standup;
@@ -1601,7 +1601,7 @@ pub fn mock(fixture: &mut Fixture, env: &str, site: &str, actor: &str, run: Mock
 /// its class. Nothing earlier in any record is removed (history is evidence),
 /// and `status` afterwards reads the site as torn down, not as pending.
 pub fn teardown_mock(fixture: &mut Fixture, env: &str, site: &str, run: MockRun) -> Result<Report> {
-    let text = std::fs::read_to_string(fixture.root.join("converger.yaml"))?;
+    let text = std::fs::read_to_string(fixture.root.join("converger.yaml")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(fixture.root.join("converger.yaml"))).display())))?;
     let script: MockScript = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("converger.yaml has no standup: section: {e}")))?;
     let m = script.standup;
     if m.env != env || m.site != site {
@@ -1691,11 +1691,11 @@ fn teardown_cmd(s: &Site, d: &TeardownDecl) -> Result<Option<String>> {
     Ok(match d.action.as_str() {
         "compose-down" => {
             let dirs: Vec<TeardownDir> = d.dirs.iter().map(|x| TeardownDir { var: x.var.clone(), default: x.default.replace("<site>", &s.site) }).collect();
-            let dirs = serde_json::to_string(&dirs)?;
+            let dirs = serde_json::to_string(&dirs).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?;
             Some(format!("{pre} teardown-compose.yml -e target={group} -e teardown_component={} -e 'teardown_dirs={dirs}'", d.component))
         }
-        "service-stop" => Some(format!("{pre} teardown-service-stop.yml -e target={group} -e teardown_component={} -e teardown_project={} -e 'teardown_services={}'", d.component, d.project, serde_json::to_string(&d.services)?)),
-        "systemd-stop" => Some(format!("{pre} teardown-systemd.yml -e target={group} -e teardown_component={} -e 'teardown_units={}'", d.component, serde_json::to_string(&d.units)?)),
+        "service-stop" => Some(format!("{pre} teardown-service-stop.yml -e target={group} -e teardown_component={} -e teardown_project={} -e 'teardown_services={}'", d.component, d.project, serde_json::to_string(&d.services).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?)),
+        "systemd-stop" => Some(format!("{pre} teardown-systemd.yml -e target={group} -e teardown_component={} -e 'teardown_units={}'", d.component, serde_json::to_string(&d.units).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?)),
         "command" => Some(d.run.replace("{repo}", &s.repo).replace("{site}", &s.site)),
         _ => None,
     })

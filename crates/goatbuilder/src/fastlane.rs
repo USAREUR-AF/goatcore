@@ -337,7 +337,7 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     let br = format!("chore/fastlane-{}-{tag}", o.component);
     let _ = sh("git", &["-C", &repo_s, "checkout", "-q", "-B", &br]);
     let body = std::env::temp_dir().join(format!("goatbuilder-fastlane-body-{}", std::process::id()));
-    std::fs::write(&body, format!("chore(pins): fastlane {} to {tag} (ADR 1127)\n\nFASTLANE, ack {}. {}\nRollback: pin revert to {current_fleet}. Backfill owed until this ref graduates normally.\n", o.component, o.ack, o.reason))?;
+    std::fs::write(&body, format!("chore(pins): fastlane {} to {tag} (ADR 1127)\n\nFASTLANE, ack {}. {}\nRollback: pin revert to {current_fleet}. Backfill owed until this ref graduates normally.\n", o.component, o.ack, o.reason)).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&body)).display())))?;
     let landed = Cmd::new(repo.join("ops/scripts/pr-land.sh"))
         .args(["--worktree", &repo_s, "--branch", &br, "--title", &format!("chore(pins): fastlane {} to {tag} (ADR 1127)", o.component), "--body-file", body.to_str().unwrap_or(""), "--paths", "ops/pins/fleet-pins.yaml", "ops/ansible/group_vars", "ops/consistency/intent", "ops/release/records"])
         .stdout(Stdio::null())

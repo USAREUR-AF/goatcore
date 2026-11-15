@@ -717,8 +717,8 @@ pub fn status(
         peerings,
     };
     match format {
-        Format::Json => println!("{}", serde_json::to_string_pretty(&doc)?),
-        Format::Yaml => print!("{}", serde_yaml::to_string(&doc)?),
+        Format::Json => println!("{}", serde_json::to_string_pretty(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?),
+        Format::Yaml => print!("{}", serde_yaml::to_string(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?),
         Format::Table => print!("{}", table(&doc)),
     }
     let mut r = Report::new("federate", Vec::new(), EXIT_OK);

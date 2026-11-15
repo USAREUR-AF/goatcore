@@ -21,6 +21,15 @@ goatlite.
 Five checks inside `goatbuilder federate` that compare a step's result with its
 exit now carry GB-321.
 
+Eighty-four more errors were a file, program or JSON/YAML error passed up as it
+came, with no code. Each now carries one: a file that cannot be read or written
+GB-254 (it names the file), a value that cannot be written as JSON or YAML
+GB-322, a program that could not be started GB-320, fleet-pins.yaml that is not
+YAML GB-326, a mock fixture's pins GB-024, and the end-state grader's output
+GB-066. One that carries GB-322, GB-320 or GB-066 exits 1, where it exited 2 (on
+the federation verbs, an internal error already exited 1); the others still
+exit 2.
+
 Exit codes, by the contract's meanings (1 refused: a precondition failed; 2
 usage: the command line was wrong). Each of these errors exited 2 with no code.
 One that now carries GB-020, GB-025 (the config does not match the typed model,
