@@ -434,7 +434,12 @@ prepares the VM and runs its integrity checks, and phases 3 to 15 join the
 node as any `join-node` does.
 
 **It passes** when the command exits 0 after phase 15, and the timing file
-shows one run. The file holds exactly one phase-1 row, every row exits 0, and
+shows one run. That cannot be met yet: phase 1 of a phone run is a person's
+step (`crates/goatbuilder/src/joinnode.rs:429`). The run stops after it with
+`^ OPERATOR STEP — do the above, then re-run with --from 2`
+(`joinnode.rs:839`) and writes no row for it, so a run today needs a second
+command and its file has no phase-1 row. A run is a rehearsal until phase 1
+runs as a check that is recorded. The file holds exactly one phase-1 row, every row exits 0, and
 no step label appears twice. A `--from` resume, or a step run again after a
 failure, adds a second row for a step, and that run is not H7: fix the cause
 and start again from a reset VM.
@@ -555,12 +560,13 @@ phases are the next three levers.
 
 | Item | Status |
 |---|---|
-| Per-phase lines, the run summary and the run record as described above | designed |
-| Cause codes on every stop, and the stop count | designed |
-| Phase 11 recorded as a row | designed |
+| The per-phase line of the designed form (`phase 7/14 <name>  <start> → <end>  <duration>  <outcome>`) | designed |
+| A `took` line and a timing-file row per step, for `standup`, `join-node` and `teardown` | built (`record_timing`, `crates/goatbuilder/src/standup.rs:729`; `join-node` at `crates/goatbuilder/src/joinnode.rs:851`; `teardown` at `standup.rs:1823`) |
+| The process summary line, for all three | built (`timing_summary`, `standup.rs:868`; `join-node` at `joinnode.rs:872`; `teardown` at `standup.rs:1831`) |
+| The founder run's numbers across resumes: total since phase 1, phase 11, total without it, the stops and the slowest phases | built for `standup` (`run_evidence`, `standup.rs:777`) |
+| Phase 11 recorded as a row | built (`record_stop`, `standup.rs:736`, and `close_operator_stop`, `standup.rs:759`) |
+| A cause code on every stop | built for a failed step of all three verbs; a refusal before the first step writes no row |
 | The image pull, the observability legs and their joins as rows | designed |
-| A timing file and summary for `teardown` | not built |
-| Timing for `join-node` | not built |
 | A generator for a full goatnet's cloud tree | not built |
 
 None of the three clocks has been measured on hardware, and neither tutorial
