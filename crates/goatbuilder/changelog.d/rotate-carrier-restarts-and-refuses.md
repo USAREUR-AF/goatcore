@@ -13,5 +13,10 @@ Three fixes to `goatbuilder federate rotate <partner> carrier`:
 - The rotation re-runs phase 3. After phase 11 the federation interface
   carries the agreed MTU, which is the lower of both offers. When the partner
   offered less than we did, phase 3 refused our own offer as larger than the
-  interface. It now reports that cross-check as skipped and names the
-  agreement.
+  interface. While our declared offer is still the one we made in the
+  agreement the interface carries, it now reports that cross-check as skipped
+  and names the agreement. A changed offer is refused as blocked, asking for a
+  measurement off the federation interface, since the interface cannot bound
+  it. The same applies to a re-run after `rotate <partner> transport`. The
+  role's state file counts only when it records a decision that applies, is a
+  regular file owned by root and is not a link.

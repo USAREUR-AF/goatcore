@@ -133,9 +133,16 @@ pub fn is_read_only_probe(bin: &str, args: &[&str]) -> bool {
                 || spire_conf_path(path)
                 || wg_state_path(path)
         }
+        // Who owns the role's state file and what it is, before it is read:
+        // never followed through a link (no -L).
+        ("stat", ["-c", STATE_STAT_FORMAT, "--", path]) => wg_state_path(path),
         _ => false,
     }
 }
+
+/// The one `stat` format the state file's check asks for: owner, group and
+/// file type, read without following a link.
+const STATE_STAT_FORMAT: &str = "%U:%G:%F";
 
 /// goat-peering-wg's state file for one federation interface
 /// (`/var/log/goat-peering-wg-<if>-state.json`): the agreed transport the role
@@ -890,7 +897,11 @@ pub fn interface_mtu_on(probe: &dyn Probe, interface: &str) -> Option<i64> {
 
 /// The MTU an applied agreement put on `interface`: `transport.mtu` of the
 /// goat-peering-wg role's state file (`/var/log/goat-peering-wg-<if>-state.json`,
-/// written at phase 11 from the agreement), when the file is there.
+/// written at phase 11 from the agreement), when the file is there, is a
+/// regular file owned root:root (not a link: /var/log is group-writable on
+/// some distributions), names this interface, and records a decision the role
+/// applies (`proceed-no-claim`, `proceed-waived`). The role writes the file
+/// before its FIPS gate, so a refused run leaves one that applied nothing.
 pub fn applied_mtu(interface: &str) -> Option<i64> {
     applied_mtu_on(&Local, interface)
 }
@@ -900,12 +911,24 @@ pub fn applied_mtu_on(probe: &dyn Probe, interface: &str) -> Option<i64> {
     if !interface_name(interface) {
         return None;
     }
-    let text = probe
-        .read_file(&format!("/var/log/goat-peering-wg-{interface}-state.json"))
+    let path = format!("/var/log/goat-peering-wg-{interface}-state.json");
+    let kind = probe
+        .run("stat", &["-c", STATE_STAT_FORMAT, "--", &path])
         .ok()?;
+    if kind.trim() != "root:root:regular file" {
+        return None;
+    }
+    let text = probe.read_file(&path).ok()?;
     let doc = crate::json::parse_document(text.as_bytes()).ok()?;
     // The state file is the interface's own: one for another interface is not.
     if doc.get("interface").and_then(|v| v.as_str()) != Some(interface) {
+        return None;
+    }
+    // "applied" means applied: a refused run's file applied nothing.
+    if !matches!(
+        doc.get("decision").and_then(|v| v.as_str()),
+        Some("proceed-no-claim" | "proceed-waived")
+    ) {
         return None;
     }
     doc.get("transport")?.get("mtu")?.as_int()

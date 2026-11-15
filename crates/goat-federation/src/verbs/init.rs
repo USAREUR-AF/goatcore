@@ -375,15 +375,39 @@ pub fn run_init_measured(
                 match measured.interface_mtu {
                     // Phase 11 set the interface to the agreed MTU, min(both
                     // offers); below our offer it only says the partner offered
-                    // less. The offer was cross-checked when it was first made.
+                    // less. The offer was cross-checked when it was first made,
+                    // so it is skipped only while it is still that offer: our
+                    // offer in the agreement the interface carries, read from
+                    // <work> (where --out writes our package). A changed offer
+                    // could be checked against nothing here, and is blocked.
                     Some(mtu) if measured.applied_mtu == Some(mtu) && t.measured_mtu > mtu => {
-                        outcomes.push(FedOutcome::skip(
-                            "transport_offer.measured_mtu",
-                            format!(
-                                "interface `{}` carries the agreed MTU {mtu} an applied agreement set (min of both offers), so it bounds nothing about the declared {}; not cross-checked",
-                                t.interface, t.measured_mtu
-                            ),
-                        ));
+                        match agreed_offer(a.out.as_deref(), mtu) {
+                            Ok(ours) if ours == t.measured_mtu => outcomes.push(FedOutcome::skip(
+                                "transport_offer.measured_mtu",
+                                format!(
+                                    "interface `{}` carries the agreed MTU {mtu} an applied agreement set (min of both offers), and the declared {} is our offer in that agreement; not cross-checked again",
+                                    t.interface, t.measured_mtu
+                                ),
+                            )),
+                            found => {
+                                let why = match found {
+                                    Ok(ours) => format!("our offer in the agreement it carries was {ours}, and the declaration now says {}", t.measured_mtu),
+                                    Err(e) => format!("whether the declared {} is our offer in the agreement it carries cannot be read: {e}", t.measured_mtu),
+                                };
+                                outcomes.push(FedOutcome::fail(
+                                    "transport_offer.measured_mtu",
+                                    format!(
+                                        "blocked: interface `{}` holds MTU {mtu}, set by an applied agreement, so it cannot bound a new offer; {why}",
+                                        t.interface
+                                    ),
+                                    "re-measure the path MTU off the federation interface (across the path itself, not \
+                                     over the tunnel the agreement already sized) and declare that measured_mtu. An \
+                                     offer above the real path goes into the next agreement as min(both sides), and \
+                                     a link sized above its path silently drops large packets.",
+                                ));
+                                underived.push("transport_offer.measured_mtu".into());
+                            }
+                        }
                     }
                     Some(mtu) => {
                         if t.measured_mtu > mtu {
@@ -651,6 +675,37 @@ where
             None
         }
     }
+}
+
+/// Our offer in the agreement the federation interface carries: `<work>` is
+/// where `--out` writes our package. `<work>/agreement.json` must name the MTU
+/// the interface was given (`applied`), and `<work>/ours.canonical.json` is the
+/// package we offered in it, whose `transport_offer.measured_mtu` is returned.
+fn agreed_offer(out: Option<&std::path::Path>, applied: i64) -> Result<i64, String> {
+    let work = out
+        .and_then(|o| o.parent())
+        .ok_or_else(|| "no --out, so no <work> holding the agreement".to_string())?;
+    let read = |name: &str| -> Result<JVal, String> {
+        let p = work.join(name);
+        let text = std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        crate::json::parse_document(&text).map_err(|e| format!("{}: {e:?}", p.display()))
+    };
+    let agreement = read("agreement.json")?;
+    match agreement.get("transport").and_then(|t| t.get("mtu")).and_then(JVal::as_int) {
+        Some(m) if m == applied => {}
+        Some(m) => {
+            return Err(format!(
+                "{} names MTU {m}, not the {applied} the interface carries",
+                work.join("agreement.json").display()
+            ))
+        }
+        None => return Err(format!("{} has no transport.mtu", work.join("agreement.json").display())),
+    }
+    read("ours.canonical.json")?
+        .get("transport_offer")
+        .and_then(|t| t.get("measured_mtu"))
+        .and_then(JVal::as_int)
+        .ok_or_else(|| format!("{} offers no transport_offer.measured_mtu", work.join("ours.canonical.json").display()))
 }
 
 fn finish_init(
