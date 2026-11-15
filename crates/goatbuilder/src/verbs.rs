@@ -709,6 +709,39 @@ mod tests {
         assert_eq!(before, tree_hash(&f.root));
     }
 
+    /// Each machine row of the -o json document carries its state as a field,
+    /// `converged`, `pending` or `unknown`, so a program reads it without parsing
+    /// the words, and a machine the converger has not confirmed (pending) or
+    /// cannot read (unknown) is never `ok` (the pull-converger options paper,
+    /// option A: these are the states pull produces, defined before 1.0). Rows
+    /// that are not a machine's state carry no `state`.
+    #[test]
+    fn json_machine_rows_carry_their_state_and_pending_or_unknown_is_never_ok() {
+        let mut f = fixture("machine-state");
+        let mut seen = std::collections::BTreeSet::new();
+        let reports = [deploy(&mut f, "dev", Some("portal"), "A Person", false).unwrap(), status(&f, "dev", None).unwrap()];
+        for r in &reports {
+            let v: serde_json::Value = serde_json::from_str(&crate::output::render(r, crate::OutputFormat::Json, crate::output::ColorChoice::Never)).unwrap();
+            for c in v["checks"].as_array().unwrap() {
+                let name = c["name"].as_str().unwrap();
+                let detail = c["detail"].as_str().unwrap();
+                let machine = name.split('/').count() == 3 && !name.ends_with("/publish");
+                match c.get("state").and_then(|s| s.as_str()) {
+                    Some(st) => {
+                        assert!(machine, "only a machine row has a state: {c}");
+                        assert!(["converged", "pending", "unknown"].contains(&st), "{c}");
+                        assert_eq!(c["ok"].as_bool().unwrap(), st == "converged", "pending and unknown are never ok: {c}");
+                        assert!(detail.starts_with(if st == "converged" { "converged" } else { st }), "{c}");
+                        seen.insert(st.to_string());
+                    }
+                    None => assert!(!machine, "a machine row without its state: {c}"),
+                }
+            }
+        }
+        // The basic fixture holds all three: converged, pending and an unreadable record.
+        assert_eq!(seen.into_iter().collect::<Vec<_>>(), ["converged", "pending", "unknown"]);
+    }
+
     /// C10: the JSON report carries its schema version and the typed exit.
     #[test]
     fn c10_json_carries_schema_and_exit() {
