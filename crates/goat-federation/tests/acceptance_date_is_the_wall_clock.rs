@@ -9,7 +9,8 @@
 //! - outside the test modules, each is called exactly once, from its public
 //!   verb, with `chrono::Utc::now().date_naive()` as the date;
 //! - the term check they run (`render::verify_locally`, which is public) is
-//!   called from nowhere else in any Rust source in the repository.
+//!   called from nowhere else in the repository's Rust outside test code
+//!   (test modules and `tests/` directories, which build into no binary).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -66,9 +67,11 @@ fn the_one_call(verb: &str, public: &str, at: &str) {
         1,
         "{at} is called once outside the tests, from {public}"
     );
-    let call = &calls[0][..calls[0].find(';').expect("the call's statement ends")];
+    let call = &calls[0][..calls[0].find('\n').expect("the call's line ends")];
     assert!(
-        call.trim_end().ends_with(&format!("{WALL_CLOCK})")),
+        call.trim_end()
+            .trim_end_matches(';')
+            .ends_with(&format!("{WALL_CLOCK})")),
         "{public} must pass {WALL_CLOCK} to {at} as the date, and nothing else: {call}"
     );
     let public_body = &prod[prod.find(&format!("pub fn {public}(")).expect(public)..];
@@ -102,6 +105,11 @@ fn the_term_check_is_called_only_by_the_two_dated_verbs() {
     );
     let mut callers = Vec::new();
     for f in &files {
+        // Integration tests (any `tests/` directory) build into no binary;
+        // they may judge a term on a date they choose, as this file names it.
+        if f.components().any(|c| c.as_os_str() == "tests") {
+            continue;
+        }
         let prod = production(f);
         let n =
             prod.matches("verify_locally(").count() - prod.matches("fn verify_locally(").count();

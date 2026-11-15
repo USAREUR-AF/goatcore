@@ -64,6 +64,19 @@ pub fn run_apply(
     a: &ApplyArgs,
     out: &mut dyn Write,
 ) -> anyhow::Result<i32> {
+    run_apply_at(site, a, out, chrono::Utc::now().date_naive())
+}
+
+/// [`run_apply`] on a given date. The term is judged on `today`; every binary
+/// reaches this only through [`run_apply`], with today's UTC date, and the
+/// library's own tests pass the vectors' evaluation date
+/// (tests/acceptance_date_is_the_wall_clock.rs holds both).
+pub(crate) fn run_apply_at(
+    site: &dyn Fn() -> anyhow::Result<Site>,
+    a: &ApplyArgs,
+    out: &mut dyn Write,
+    today: chrono::NaiveDate,
+) -> anyhow::Result<i32> {
     let bytes = read_file(&a.agreement)?;
     let digest = digest_of(&bytes);
     let mut outcomes = Vec::new();
@@ -85,7 +98,6 @@ pub fn run_apply(
     // Render only what we could actually deliver. Writing access rules from an
     // agreement that fails its own conformance check is how a link comes up
     // half-configured and looks deployed.
-    let today = chrono::Utc::now().date_naive();
     let checks = render::verify_locally(&ag, &ours, today);
     if let Some(bad) = checks.iter().find(|c| !c.ok) {
         outcomes.push(FedOutcome::fail(

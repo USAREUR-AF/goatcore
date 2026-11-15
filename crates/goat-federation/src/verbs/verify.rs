@@ -44,6 +44,19 @@ pub fn run_verify(
     a: &VerifyArgs,
     out: &mut dyn Write,
 ) -> anyhow::Result<i32> {
+    run_verify_at(site, a, out, chrono::Utc::now().date_naive())
+}
+
+/// [`run_verify`] on a given date. The term is judged on `today`; every binary
+/// reaches this only through [`run_verify`], with today's UTC date, and the
+/// library's own tests pass the vectors' evaluation date
+/// (tests/acceptance_date_is_the_wall_clock.rs holds both).
+pub(crate) fn run_verify_at(
+    site: &dyn Fn() -> anyhow::Result<Site>,
+    a: &VerifyArgs,
+    out: &mut dyn Write,
+    today: chrono::NaiveDate,
+) -> anyhow::Result<i32> {
     let bytes = read_file(&a.agreement)?;
     let digest = digest_of(&bytes);
     let mut outcomes = Vec::new();
@@ -74,7 +87,6 @@ pub fn run_verify(
         }
     };
 
-    let today = chrono::Utc::now().date_naive();
     let mut failed = false;
     for c in render::verify_locally(&ag, &ours, today) {
         if c.ok {
