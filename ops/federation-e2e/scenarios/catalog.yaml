@@ -1143,8 +1143,8 @@ scenarios:
       On a peering up through phase 14 on role cores (FE2E_CORE=role), the receiving edge's
       router has its downsampling module at trace beside its ACL, and the link answers a round
       trip again. FE2E_BURST_COUNT samples (50) released about 1 ms apart under release/all on
-      the first side's core: the receiving edge's ACL allows every one on the partner link, its
-      downsampling drops none, no two cross closer than 1/hz of the lane's rule (less 1 ms),
+      the first side's core: the receiving edge's ACL allows every one on the partner link, in put
+      order, its downsampling drops none, no two cross closer than 1/hz of the lane's rule (less 1 ms),
       the receiving core stores every one, and the sending republisher counts no queue_full
       drop. Optional: with the sender's queue lowered to FE2E_BURST_DEPTH (8), the same burst
       loses only what the sender counts as queue_full and warns about; the edge drops none,

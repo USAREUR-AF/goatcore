@@ -19,12 +19,15 @@ units/burst.sh.
         --iface-prefix): zenoh's downsampling runs before that line, so a dropped message
         has none. Each "Message dropped by the downsampling interceptor: Push(KEY)" under
         PREFIX is a drop. Prints one JSON object: crossed, dropped, dropped_keys, the gaps
-        between successive crossings (min_gap_ms), and the INFO drop lines in the log.
+        between successive crossings (min_gap_ms), out_of_order (crossings whose sample
+        number is lower than the one that crossed before it; first_out_of_order names the
+        first), and the INFO drop lines in the log.
 
     burst.py judge --sent SENT --edge EDGE --hz HZ --stored K
                    --queue-full-before X --queue-full-after Y [--overflow --warned 0|1]
         EDGE is `edge`'s JSON, K how many burst values the receiving core stores, X and Y
         the sending republisher's dropped_total{reason="queue_full"} around the burst.
+        Either way, a sample that crossed out of put order fails it.
         Paced (the default): PASS only when every PUT was accepted, every sample crossed
         and was stored, the edge dropped none, the sender counted no queue_full drop, and
         no two crossings were closer than 1/hz (less 1 ms for the log's timing).
@@ -57,6 +60,7 @@ LINE = re.compile(r"^(\S+Z)\s+(?:(\d{4}-\d\d-\d\dT\S+Z)\s+)?(TRACE|DEBUG|INFO|WA
 ALLOW = re.compile(r" on Interface\(([^)]*)\)\S* is authorized to Put \(ingress\) on (\S+)\s*$")
 DROP = re.compile(r"Message dropped by the downsampling interceptor: Push\(([^)\s]+)\)")
 INFO_DROP = "Some message(s) have been dropped by the downsampling interceptor"
+NUMBER = re.compile(r"/b([0-9]+)$")
 QUEUE_FULL = re.compile(r'^goat_fed_republisher_dropped_total\{([^}]*)\}\s+([0-9.eE+-]+)\s*$')
 TIMING_SLACK_MS = 1.0
 
@@ -87,10 +91,15 @@ def edge(log_path, prefix, iface_prefix="wg-"):
             a = ALLOW.search(msg)
             if a and a.group(1).startswith(iface_prefix) and a.group(2).startswith(prefix):
                 crossed.setdefault(a.group(2), when)
-    times = sorted(crossed.values())
+    order = sorted(crossed, key=lambda k: crossed[k])
+    times = [crossed[k] for k in order]
     gaps = [round((b - a) * 1000, 1) for a, b in zip(times, times[1:])]
+    nums = [int(m.group(1)) if m else 0 for m in (NUMBER.search(k) for k in order)]
+    late = [order[i] for i in range(1, len(order)) if nums[i] < nums[i - 1]]
     return {"crossed": len(crossed), "dropped": len(drops), "dropped_keys": drops,
-            "min_gap_ms": min(gaps) if gaps else None, "gaps_ms": gaps, "info_drop_lines": info}
+            "min_gap_ms": min(gaps) if gaps else None, "gaps_ms": gaps,
+            "out_of_order": len(late), "first_out_of_order": late[0] if late else None,
+            "info_drop_lines": info}
 
 
 def read_sent(path):
@@ -113,6 +122,8 @@ def judge(a):
     if e["dropped"]:
         why.append(f"{e['dropped']} dropped at the receiving edge ({', '.join(e['dropped_keys'][:3])}"
                    f"{', ...' if e['dropped'] > 3 else ''})")
+    if e.get("out_of_order"):
+        why.append(f"{e['out_of_order']} crossed out of put order (first: {e.get('first_out_of_order')})")
     gap = e.get("min_gap_ms")
     if gap is not None and gap < interval - TIMING_SLACK_MS:
         why.append(f"two crossings {gap} ms apart, under 1/hz ({interval:.1f} ms)")
@@ -143,7 +154,7 @@ def judge(a):
     if a.overflow:
         print(f"burst: PASS {e['crossed']} crossed spaced, {qf} queue_full counted and warned, none dropped at the edge")
     else:
-        print(f"burst: PASS all {n} crossed and stored, none dropped, smallest gap {gap} ms (1/hz {interval:.1f} ms)")
+        print(f"burst: PASS all {n} crossed in put order and stored, none dropped, smallest gap {gap} ms (1/hz {interval:.1f} ms)")
     return 0
 
 
