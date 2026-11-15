@@ -284,14 +284,17 @@ def shipped_deprecations(repo: str, tag: str):
     return [d for d in items if isinstance(d, dict)] if isinstance(items, list) else None
 
 
-def period_problems(base: dict, new: dict, deps: list, base_release: str, version: str, tags: dict, today, shipped: dict) -> list:
+def period_problems(base: dict, new: dict, deps: list, base_release: str, version: str, tags: dict, today, shipped: dict, base_version: str) -> list:
     """From a 1.0 baseline, each entry that excuses a removal must have served its
     period (ADR 1228): the build is a later major whose release is not yet tagged;
     the release the entry names shipped a list that names the item, so a binary of
     it warned (`shipped`: {tag: that list, or None}); two minor releases (x.y.0,
     y > 0, of any major) followed it before the build's version; and 90 days have
     passed since it was tagged. On 0.x an entry excuses a removal at once ("When
-    it starts")."""
+    it starts"). `base_version` is the base branch's version: a removal lands only
+    in the pull request that moves it to the build's major, because the release
+    tag goes on that pull request's merge and anything merged after it ships in
+    a minor release."""
     m = _RELEASE.match(base_release)
     if not m or int(m.group(1)) < 1:
         return []
@@ -307,6 +310,18 @@ def period_problems(base: dict, new: dict, deps: list, base_release: str, versio
             built = version or "a build of an unreadable version"
             out.append(f"{what}: removed in {built}, but a deprecated item is removed only in a major release; "
                        f"keep it, with its warning, until goatbuilder {base_major + 1}.0.0")
+            continue
+        bm = re.match(r"^(\d+)\.\d+\.\d+", base_version or "")
+        if not bm:
+            out.append(f"{what}: removed in {version}, but the check cannot read the base branch's version "
+                       "(crates/goatbuilder/Cargo.toml at the merge's first parent, or at origin/main), so it cannot "
+                       f"tell whether this is the pull request that sets the version to {build_major}.0.0")
+            continue
+        if int(bm.group(1)) >= build_major:
+            out.append(f"{what}: removed in {version}, but the base branch is already at {base_version}: the version "
+                       f"pull request has merged, and its tag goes on that merge, so this change would ship in a later "
+                       f"release of {build_major}.x; a deprecated item is removed in the pull request that sets the "
+                       f"version to {build_major}.0.0")
             continue
         if f"goatbuilder/v{version}" in tags:
             out.append(f"{what}: removed in {version}, but goatbuilder/v{version} is already tagged, so this change would "
@@ -361,7 +376,28 @@ def period_rows(repo: str, b, new: dict, deps: list, today=None) -> list:
     tags = release_tag_dates(repo)
     named = {str(d.get("deprecated_in", "")) for d in deps if _removed(base, new, d)}
     shipped = {t: shipped_deprecations(repo, t) for t in sorted(named) if t in tags}
-    return period_problems(base, new, deps, b.release, goatbuilder_version(repo), tags, today, shipped)
+    return period_problems(base, new, deps, b.release, goatbuilder_version(repo), tags, today, shipped, base_branch_version(repo))
+
+
+def _git_out(repo: str, *args: str):
+    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def base_branch_version(repo: str) -> str:
+    """The version the pull request's base carries in crates/goatbuilder/Cargo.toml:
+    at the first parent of HEAD when HEAD is a merge (how CI checks a pull request
+    out), else at the merge base with origin/main. Empty when neither can be read."""
+    parents = (_git_out(repo, "rev-list", "--parents", "-n", "1", "HEAD") or "").split()
+    if len(parents) >= 3:
+        base = parents[1]
+    else:
+        base = _git_out(repo, "merge-base", "HEAD", "origin/main")
+    if not base:
+        return ""
+    text = _git_out(repo, "show", f"{base}:crates/goatbuilder/Cargo.toml") or ""
+    m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
+    return m.group(1) if m else ""
 
 
 # ---------------------------------------------------------------- A4: the documents

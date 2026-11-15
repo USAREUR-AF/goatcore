@@ -99,9 +99,15 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
   and a refusal names the date it compared against and the date the period
   ends. The build's version is read from `crates/goatbuilder/Cargo.toml`, which
   main carries at the last release's version until a version pull request
-  changes it. So a removal lands in the pull request that sets the version to
-  X.0.0, or after it on main before the X.0.0 tag; once that tag exists, a
-  removal would ship in a later minor release and is refused.
+  changes it, and the release tag goes on that pull request's merge. So a
+  removal lands only in the pull request that sets the version to X.0.0: the
+  check reads the base branch's version (the merge's first parent in CI, else
+  the merge base with origin/main) and refuses a removal once the base already
+  carries X.0.0, since anything merged after the version pull request ships in
+  a later minor release.
+  A release's shipped list names an item only from the first release that
+  carries the warning (#798, after v0.7.0); every list shipped from 0.4.1 to
+  0.7.0 is empty, so no entry can pass this condition with an earlier release.
 - **An error code no longer printed, or whose fault is renamed.** Keep the
   entry in the catalog and mark it `retired: "<tag>: <why>"`, such as
   `retired: "goatbuilder/v0.6.0: standup reads the site from the plan"`

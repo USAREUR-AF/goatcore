@@ -304,8 +304,9 @@ carry the warnings yet (#798).
 The compatibility check (`ops/ci/check-goatbuilder-compat.sh`, in
 goatbuilder-pr) now enforces ADR 1228's deprecation period. Once the last
 release is 1.0 or later, a deprecation entry excuses a removed command, flag
-or value only when all of these hold: the build is a later major release
-whose version is not yet tagged; the release the entry names shipped a
+or value only when all of these hold: the build is a later major release,
+and this is the pull request that sets that version (its base branch is
+still on the earlier major); the release the entry names shipped a
 deprecation list that names the item, so its binary warned; two minor
 releases, of any major, have been tagged since that release and before the
 build's version; and 90 days have passed since that release was tagged. A refusal names the date it compared

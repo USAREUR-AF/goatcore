@@ -163,7 +163,11 @@ jobs:
     env:
       FULL: ${{ needs.scope.outputs.scope != 'docs-only' }}
     steps:
+      # Depth 2: the pull request's merge commit and its parents, so row A1 reads
+      # the base branch's crates/goatbuilder/Cargo.toml at the merge's first parent.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: ./.github/actions/apt-failover
         if: env.FULL == 'true'
       - name: Install Rust toolchain (1.100.0 + clippy)
