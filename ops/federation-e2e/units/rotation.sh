@@ -147,15 +147,18 @@ PY
     # comes back. The times bound the tunnel gap: our rotation ends, their step starts, the
     # first handshake after it.
     transport)
-      local d t0 pub fp
+      local d t0 pub fp ad
       d="$(docker exec "$(drv_host "$s")" sha256sum "/var/lib/goat-federation/$them/ours.canonical.json" | cut -d' ' -f1)"
       # The lab binds the keyring by hand (lib/engine.sh), so no confirmation 1 is
       # journaled on the partner's side: its phase 5 asks the keys with the package. The
       # values are the ones the call would read: our verifying key and our CA fingerprint.
       pub="$(cat "$WORK/$s/keys/signing.pub")"
       fp="$(docker exec "$(drv_host "$s")" python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["identity"]["ca_fingerprint"])' "/var/lib/goat-federation/$them/ours.canonical.json")"
+      # Nor is confirmation 2 journaled through the command: the agreement digest is
+      # passed too. The agreement carries no WireGuard key, so it is the one held now.
+      ad="$(docker exec "$(drv_host "$them")" sha256sum "/var/lib/goat-federation/$s/agreement.json" | cut -d' ' -f1)"
       t0="$(date +%s.%N)"; printf '%s\tpartner-step-start\n' "$t0" >> "$RECORD/rot-$k-$s.times"
-      rec "rot-partner-step-$k-$s" -- bash -c "DRIVE_EXTRA='--accept-partner-package $d --partner-key $pub --partner-ca-fingerprint $fp' drive_x '$them' '$s' '$AVENUE' 5 14"
+      rec "rot-partner-step-$k-$s" -- bash -c "DRIVE_EXTRA='--accept-partner-package $d --partner-key $pub --partner-ca-fingerprint $fp --agreement-digest $ad' drive_x '$them' '$s' '$AVENUE' 5 14"
       printf '%s\tpartner-step-end\n' "$(date +%s.%N)" >> "$RECORD/rot-$k-$s.times"
       rec "rot-tunnel-back-$k-$s" -- bash -c \
         "i=\$(iface '$s' '$them'); for _ in \$(seq 1 30); do t=\$(docker exec $HP-$s-edge wg show \$i latest-handshakes | cut -f2); [ \"\${t:-0}\" -gt '${t0%%.*}' ] 2>/dev/null && break; sleep 2; done
