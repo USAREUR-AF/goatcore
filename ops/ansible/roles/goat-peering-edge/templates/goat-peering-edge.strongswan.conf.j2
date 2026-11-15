@@ -13,4 +13,11 @@ charon {
     # identity we did not agree to.
     follow_redirects = no
     accept_unencrypted_mainmode_messages = no
+
+    # Re-authentication makes the new IKE SA before it deletes the old one, so a
+    # credential rotation (tasks/rotate-switch.yml) has no gap on the link. Set
+    # here, not left to the packaged strongSwan's default, which has changed
+    # between releases. The rotation confirms only an SA the re-authentication
+    # made (a new unique id), never the old one still up beside it.
+    make_before_break = {{ 'yes' if peering_edge_make_before_break | bool else 'no' }}
 }

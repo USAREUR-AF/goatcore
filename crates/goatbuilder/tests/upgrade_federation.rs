@@ -18,6 +18,16 @@
 //! by the last run, the same outcome per phase, and the same calls to the
 //! stubs.
 //!
+//! Both halves run from every 0.x release pinned in
+//! tests/upgrade/releases.sha256 from 0.5.1 on, so a release pinned later is
+//! covered without a change here.
+//!
+//! The second half: a peering the released binary takes through phase 14 is
+//! accepted by the build under test. The build runs phase 14 alone on the
+//! released binary's working directory; it must pass and leave the journal's
+//! records for phases 1 to 13 as they were. The control: a journal of a
+//! schema the build does not read is refused (GB-182).
+//!
 //! The released binary comes from `$GOATBUILDER_UPGRADE_DIR`, as for E1
 //! (tests/upgrade.rs, tests/upgrade/fetch.sh).
 
@@ -102,9 +112,10 @@ fn three_runs(early: &Path) -> Ended {
     }
 }
 
-#[test]
-fn e2_a_peering_taken_to_phase_10_by_0_5_1_is_finished_by_this_build() {
-    let Some(old) = released::binary("v0.5.1") else {
+/// The first half from `version`: taken to phase 10 by it, finished by the
+/// build under test, ending as a peering the build ran throughout.
+fn finished_by_this_build(version: &str) {
+    let Some(old) = released::binary(version) else {
         return;
     };
     let mixed = three_runs(&old);
@@ -113,7 +124,7 @@ fn e2_a_peering_taken_to_phase_10_by_0_5_1_is_finished_by_this_build() {
     assert_eq!(mixed.last_phases, all_new.last_phases);
     assert_eq!(
         mixed.outcomes, all_new.outcomes,
-        "the journal 0.5.1 started ends unlike one this build started"
+        "the journal {version} started ends unlike one this build started"
     );
     assert!(
         mixed.outcomes.iter().all(|(_, o)| o == "passed"),
@@ -122,6 +133,111 @@ fn e2_a_peering_taken_to_phase_10_by_0_5_1_is_finished_by_this_build() {
     );
     assert_eq!(
         mixed.log, all_new.log,
-        "phases 11 to 14 asked the stubs for something else after 0.5.1"
+        "phases 11 to 14 asked the stubs for something else after {version}"
+    );
+}
+
+/// The second half from `version`: the peering it takes through phase 14 is
+/// accepted by the build under test, which runs phase 14 alone and leaves the
+/// records of phases 1 to 13 as they were.
+fn accepted_by_this_build(version: &str) {
+    let Some(old) = released::binary(version) else {
+        return;
+    };
+    let w = world();
+    let (out, v) = run_as(&old, &w, &["hello-ally"]);
+    assert!(out.status.success(), "{version}: first run: {}", says(&out));
+    assert_eq!(phases_run(&v), [1, 2, 3, 4, 5], "{}", says(&out));
+    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+    let (out, v) = run_as(&old, &w, &["hello-ally", "--from", "6"]);
+    assert!(out.status.success(), "{version}: --from 6: {}", says(&out));
+    assert_eq!(phases_run(&v), [6, 7, 8, 9, 10], "{}", says(&out));
+    let (out, v) = run_as(&old, &w, &["hello-ally", "--from", "11"]);
+    assert!(out.status.success(), "{version}: --from 11: {}", says(&out));
+    assert_eq!(phases_run(&v), [11, 12, 13, 14], "{}", says(&out));
+    let before = w.state();
+    w.clear_log();
+    let (out, v) = w.run(&["hello-ally", "--from", "14", "--to", "14"]);
+    assert!(
+        out.status.success(),
+        "the build under test, phase 14 on {version}'s peering: {}",
+        says(&out)
+    );
+    assert_eq!(phases_run(&v), [14], "{}", says(&out));
+    assert!(
+        w.log().lines().any(|l| l.starts_with("acceptance")),
+        "phase 14 ran no acceptance on {version}'s peering: {}",
+        w.log()
+    );
+    let after = w.state();
+    assert_eq!(
+        after["phases"]["14"]["outcome"], "passed",
+        "{}",
+        after["phases"]["14"]
+    );
+    for n in 1..=13 {
+        let k = n.to_string();
+        assert_eq!(
+            before["phases"][&k], after["phases"][&k],
+            "phase {n}'s record changed when the build ran phase 14 on {version}'s peering"
+        );
+    }
+}
+
+/// Every 0.x release pinned in tests/upgrade/releases.sha256 from 0.5.1 on,
+/// oldest first: a release pinned later is tested without a change here.
+fn pinned_0x_from_0_5_1() -> Vec<String> {
+    let mut v: Vec<(u32, u32, u32)> = include_str!("upgrade/releases.sha256")
+        .lines()
+        .filter_map(|l| l.split_once("  ")?.1.split('/').next())
+        .filter_map(|tag| {
+            let mut n = tag
+                .strip_prefix('v')?
+                .split('.')
+                .map(|x| x.parse::<u32>().ok());
+            Some((n.next()??, n.next()??, n.next()??))
+        })
+        .filter(|&(major, minor, _)| major == 0 && minor >= 5)
+        .collect();
+    v.sort();
+    v.dedup();
+    let v: Vec<String> = v.iter().map(|(a, b, c)| format!("v{a}.{b}.{c}")).collect();
+    assert!(
+        v.first().map(String::as_str) == Some("v0.5.1"),
+        "pinned: {v:?}"
+    );
+    v
+}
+
+#[test]
+fn e2_a_peering_taken_to_phase_10_by_each_pinned_0x_is_finished_by_this_build() {
+    for version in pinned_0x_from_0_5_1() {
+        finished_by_this_build(&version);
+    }
+}
+
+#[test]
+fn e2_a_peering_each_pinned_0x_finished_is_accepted_by_this_build() {
+    for version in pinned_0x_from_0_5_1() {
+        accepted_by_this_build(&version);
+    }
+}
+
+/// The control: a journal of a schema this build does not read is refused,
+/// and left as it was.
+#[test]
+fn e2_a_journal_of_a_schema_this_build_does_not_read_is_refused() {
+    let w = world();
+    std::fs::create_dir_all(&w.work).unwrap();
+    let path = w.work.join("state.json");
+    let newer = r#"{"schema":"goatbuilder.federate.state/v9","peering":"hello-ally","updated":""}"#;
+    std::fs::write(&path, newer).unwrap();
+    let (out, _) = w.run(&["hello-ally", "--from", "14", "--to", "14"]);
+    assert!(!out.status.success(), "{}", says(&out));
+    assert!(says(&out).contains("GB-182"), "{}", says(&out));
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        newer,
+        "the journal was changed"
     );
 }
