@@ -641,9 +641,11 @@ fn inject(phases: &mut [Phase], n: u32, vars: &str, what: &str) -> Result<()> {
             .replace(" -e fed_work='", &format!("{vars} -e fed_work='"));
     }
     if made == 0 {
-        return Err(anyhow::anyhow!(
-            "phase {n} has no play to pass {what} to (no `-e fed_work=` in its command); nothing ran"
-        ));
+        return Err(goat_errors::coded(
+            "GB-328",
+            format!("phase {n} has no play to pass {what} to (no `-e fed_work=` in its command); nothing ran"),
+        )
+        .into());
     }
     Ok(())
 }

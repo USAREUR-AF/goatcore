@@ -3734,6 +3734,20 @@ entries:
     matches:
       - "goat-peering-edge refuses \\(GB-311\\)"
 
+  - code: GB-328
+    tool: goatbuilder
+    title: a rotation's values reach no play in the phases this run built
+    what: "A key rotation of `goatbuilder federate rotate` passes its values (the rotation id, and for an IPsec rotation its kind and read-back) to the plays of one phase: phase 11 for ipsec-leaf and ipsec-ca, phase 2 for the peering key. It puts them before each play's `-e fed_work=`. The phase this run built has no such play, so the values would reach nothing and the phase would run as a plain one and report the rotation done. Nothing ran. The phases are built from the agreement each run, and the rotation already checked that the agreement chose its transport, so this is goatbuilder's own fault, not the peering's."
+    causes:
+      - "the phase's command in this goatbuilder no longer runs its play with `-e fed_work=`"
+    fixes:
+      - "goatbuilder federate rotate <partner> <key> --dry-run   (it prints the phase's command)"
+      - "report the command and this goatbuilder's version (goatbuilder --version); do not run the phase by hand in its place"
+    read: docs/design/federation-key-rotation.md
+    exit: 1
+    matches:
+      - "has no play to pass .* to \\(no `-e fed_work=` in its command\\)"
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable

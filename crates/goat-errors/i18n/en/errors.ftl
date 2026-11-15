@@ -1027,6 +1027,9 @@ gb-311-title = an IPsec rotation stopped half way through its switch, and what i
 gb-311-what = The switch of an IPsec credential rotation (goat-peering-edge) moves the staged key, then the staged certificate, over the live names. A run killed between the two moves leaves one moved in and the other still staged. The next run finishes the remaining move when what is left is the moved one's match: the moved file is not the set-aside one, and the two halves are one key pair (each parsed by openssl; a file that does not parse matches nothing). Here they are not, so the live pair would be mixed: nothing was moved.
 gb-311-cause-1 = the staged file left behind was replaced after the run stopped
 gb-311-cause-2 = someone moved or edited the live or set-aside files by hand
+gb-328-title = a rotation's values reach no play in the phases this run built
+gb-328-what = A key rotation of `goatbuilder federate rotate` passes its values (the rotation id, and for an IPsec rotation its kind and read-back) to the plays of one phase: phase 11 for ipsec-leaf and ipsec-ca, phase 2 for the peering key. It puts them before each play's `-e fed_work=`. The phase this run built has no such play, so the values would reach nothing and the phase would run as a plain one and report the rotation done. Nothing ran. The phases are built from the agreement each run, and the rotation already checked that the agreement chose its transport, so this is goatbuilder's own fault, not the peering's.
+gb-328-cause-1 = the phase's command in this goatbuilder no longer runs its play with `-e fed_work=`
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened
