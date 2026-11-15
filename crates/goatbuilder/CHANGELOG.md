@@ -20,7 +20,7 @@ timeout although the peering worked. `fedcheck.sh` now sends a probe with
 a fresh nonce once per gap (phase 14's sample gap, never faster) until one
 is acknowledged, and any acknowledged probe passes. A probe our core
 refuses fails the check at once with its HTTP status. `responder.py` no
-longer stops when one acknowledgement cannot be written; it tries it again.
+longer stops when one acknowledgement cannot be written; it tries it again (#808).
 
 #### Fixed: phase 14 in a bilateral session no longer fails each side's own staging row
 
