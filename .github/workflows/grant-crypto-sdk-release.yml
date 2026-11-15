@@ -20,6 +20,10 @@
 #   SHA256SUMS          every tarball's digest
 #   SHA256SUMS.cosign-bundle  a keyless cosign signature over SHA256SUMS, made
 #                       under this workflow's GitHub OIDC identity
+#   <asset>.sigstore.json  one per tarball: a keyless cosign signature over that
+#                       file, under the same identity
+#   grant-crypto-sdk.intoto.jsonl  SLSA build provenance naming every tarball by
+#                       digest, made by actions/attest-build-provenance
 name: grant-crypto-sdk-release
 
 on:
@@ -270,14 +274,17 @@ jobs:
           retention-days: 30
 
   checksums:
-    name: SHA256SUMS, signed with cosign (keyless)
+    name: SHA256SUMS, signatures and provenance (cosign, keyless)
     needs: [version, source-tarball, docs, capi]
     if: ${{ !cancelled() && needs.source-tarball.result == 'success' && needs.docs.result == 'success' && needs.capi.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
+      # The keyless signatures and the provenance are made under this job's OIDC identity.
       id-token: write
+      # The provenance is also recorded in this repository's attestations.
+      attestations: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -312,12 +319,46 @@ jobs:
             --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             SHA256SUMS
+      - name: Sign each asset SHA256SUMS names, then verify each signature
+        run: |
+          set -euo pipefail
+          # One keyless signature per binary or archive, written beside it as
+          # <asset>.sigstore.json (the Sigstore bundle format). SHA256SUMS.cosign-bundle
+          # above is unchanged, and stays the signature the update commands check.
+          while read -r _ asset <&3; do
+            cosign sign-blob --yes --new-bundle-format --bundle "$asset.sigstore.json" "artifacts/$asset"
+            cosign verify-blob --new-bundle-format --bundle "$asset.sigstore.json" \
+              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "artifacts/$asset"
+            test -s "$asset.sigstore.json"
+          done 3< SHA256SUMS
+      - name: SLSA build provenance for every asset SHA256SUMS names
+        id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: SHA256SUMS
+      - name: Stage the provenance as grant-crypto-sdk.intoto.jsonl, then verify it for each asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          OUT: grant-crypto-sdk.intoto.jsonl
+        run: |
+          set -euo pipefail
+          test -s "$BUNDLE"
+          cp "$BUNDLE" "$OUT"
+          while read -r _ asset <&3; do
+            gh attestation verify "artifacts/$asset" --bundle "$OUT" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/grant-crypto-sdk-release.yml"
+          done 3< SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: grant-crypto-sdk-checksums
           path: |
             SHA256SUMS
             SHA256SUMS.cosign-bundle
+            *.sigstore.json
+            *.intoto.jsonl
           if-no-files-found: error
           retention-days: 30
 
