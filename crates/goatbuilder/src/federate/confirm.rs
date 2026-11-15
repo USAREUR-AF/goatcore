@@ -746,11 +746,15 @@ fn sync_dir(path: &Path) -> std::io::Result<()> {
 }
 
 /// Write `body` to `path` (0600) through a file beside it, so a reader sees
-/// the old package or the new one, never part of one.
-fn place(path: &Path, body: &[u8]) -> std::io::Result<()> {
-    let tmp = write_staged(path, body)?;
-    std::fs::rename(&tmp, path)?;
-    sync_dir(path)
+/// the old package or the new one, never part of one. `hook` runs at each
+/// stage (a test injects a failure there).
+fn place(path: &Path, body: &[u8], hook: &mut dyn FnMut(Stage) -> std::io::Result<()>) -> Result<(), ReplaceError> {
+    hook(Stage::BeforePlace)
+        .and_then(|_| write_staged(path, body))
+        .and_then(|tmp| std::fs::rename(&tmp, path))
+        .and_then(|_| hook(Stage::AfterRename))
+        .and_then(|_| sync_dir(path))
+        .map_err(ReplaceError::BeforeRename)
 }
 
 /// Replace the package at `path` with `body`, keeping the old one at
@@ -804,6 +808,9 @@ pub(crate) enum ReplaceError {
     /// at `aside`; the folder's sync failed, so the rename may not survive a
     /// crash.
     AfterRename { aside: std::path::PathBuf, error: std::io::Error },
+    /// place() after the rename: the bytes given are in place, the folder's
+    /// sync failed (no copy aside: place keeps none).
+    SyncAfterRename(std::io::Error),
 }
 
 /// The package digest the last confirmation of this peering names, and its
@@ -1242,7 +1249,8 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
                     "check the working folder is writable, then run phase 5 again",
                 ))
             }
-            Err(ReplaceError::BeforeRename(e)) => {
+            // SyncAfterRename is place()'s alone; replace_counterparty never returns it.
+            Err(ReplaceError::BeforeRename(e) | ReplaceError::SyncAfterRename(e)) => {
                 return Some(fail(
                     "GB-184",
                     format!("cannot write the working folder: {them}'s new package could not be placed at {} ({e}); the old one is kept aside", paths.counterparty.display()),
@@ -1259,7 +1267,7 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
         }
         let _ = std::fs::remove_file(&held);
         drop_marker();
-    } else if let Err(e) = place(&paths.counterparty, &body) {
+    } else if let Err(ReplaceError::BeforeRename(e) | ReplaceError::SyncAfterRename(e) | ReplaceError::CopyAside(e) | ReplaceError::AfterRename { error: e, .. }) = place(&paths.counterparty, &body, &mut |_| Ok(())) {
         // The bytes confirmed are the bytes placed, whatever was copied over
         // the file while the person was asked.
         return Some(fail(
@@ -2138,6 +2146,25 @@ mod tests {
         }
         assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new, "the new package is in place");
         assert!(previous_copies(&w).iter().any(|p| std::fs::read(p).unwrap() == old));
+    }
+
+    /// The by-hand placement (no copy aside): a failure after the rename is
+    /// told apart from one before it, since the bytes given are then in place.
+    #[test]
+    fn a_by_hand_placement_tells_a_failure_after_the_rename_from_one_before_it() {
+        let w = world();
+        let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
+        let r = place(&w.paths.counterparty, &new, &mut |at| {
+            if at == Stage::AfterRename { Err(std::io::Error::other("injected after the rename")) } else { Ok(()) }
+        });
+        assert!(matches!(r, Err(ReplaceError::SyncAfterRename(_))), "{r:?}");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new);
+        let before = std::fs::read(&w.paths.counterparty).unwrap();
+        let r = place(&w.paths.counterparty, b"other", &mut |at| {
+            if at == Stage::BeforePlace { Err(std::io::Error::other("injected before")) } else { Ok(()) }
+        });
+        assert!(matches!(r, Err(ReplaceError::BeforeRename(_))), "{r:?}");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), before);
     }
 
     /// An asker that copies another file over the package while the person is

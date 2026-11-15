@@ -224,4 +224,21 @@ fn rotating_side_phase_5_continues_f_for_a_pure_transport_rotation() {
     assert!(st["phases"]["5"]["detail"].as_str().unwrap_or("").contains("unchanged"), "{}", st["phases"]["5"]);
     assert_eq!(st["phases"]["6"]["outcome"], "passed", "{}", st["phases"]["6"]);
     assert!(!t.contains("waiting for the agreement digest"), "{t}");
+    // No directory step here (the hand exchange): nobody has sent our new
+    // package, so the row says to send it now.
+    assert!(t.contains("send our new package") && t.contains("ours.canonical.json"), "{t}");
+}
+
+/// (g) A new package of the partner's is waiting (theirs.incoming.json): the
+/// rotation does not skip phase 5, which asks about it.
+#[test]
+fn rotating_side_phase_5_stops_g_when_a_partner_package_is_waiting() {
+    let w = confirmed_world();
+    let fp = federate_world::sha256_hex(b"fake-ca-der");
+    std::fs::write(
+        w.work.join("theirs.incoming.json"),
+        federate_world::resigned_with_transport("xab", &fp, Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")),
+    )
+    .unwrap();
+    assert_stops_at_phase_5(&w);
 }
