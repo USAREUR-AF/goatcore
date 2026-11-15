@@ -15,6 +15,9 @@ For each catalog service with `present.var`, the guard must appear in one of:
     `<ledger>-deploy.yml`);
   - the files the catalog row names under `guard:` — then EVERY one of them must read it
     (a service two plays can deploy is guarded only when both do).
+A row whose code lives in a sibling repository names it under `home:` (goatstuff,
+goatrodeo). In a tree without that code (goatcore alone) the row is printed as SKIP and
+not judged; in an assembled tree it is checked like any other.
 A guard is a line that reads the flag as a decision: a `when:` (inline or as a list item
 under one), an `assert` `that:` item, or a Jinja `if` — not a comment, and not a mention in
 a message. A service whose code reads no flag at all is a refusal naming the file to add
@@ -83,13 +86,19 @@ def guarded(text, var):
 
 def check(repo):
     cat = yaml.safe_load((repo / "ops/goatbuilder/endstate/catalog.yaml").read_text()) or {}
-    errs, ok = [], 0
+    errs, ok, skipped = [], 0, []
     for name, spec in (cat.get("services") or {}).items():
         var = (spec.get("present") or {}).get("var")
         if not var:
             continue
+        home = spec.get("home")
         explicit = [repo / g for g in (spec.get("guard") or [])]
         missing = [str(f.relative_to(repo)) for f in explicit if not f.is_file()]
+        # Deployed from a sibling repository: judged only where its code is (an assembled
+        # tree); in a tree without it, named and skipped.
+        if home and ((explicit and len(missing) == len(explicit)) or (not explicit and not candidates(repo, name, spec))):
+            skipped.append(f"{name}: deployed from {home}, not in this tree")
+            continue
         if missing:
             errs.append(f"{name}: its `guard:` names files that do not exist: {', '.join(missing)}")
             continue
@@ -113,10 +122,13 @@ def check(repo):
         errs.append(f"{name}: no deploying code reads {var}, so a site that declares it off still gets it deployed. "
                     f"Guard {first.relative_to(repo)}: move its tasks to deploy.yml and make main.yml\n    "
                     + SHAPE.format(var=var, default=default).replace("\n", "\n    "))
+    for e in skipped:
+        print(f"SKIP {e}")
     for e in errs:
         print(f"FAIL {e}")
     if not errs:
-        print(f"ok: {ok} catalog services; every presence flag is read by the code that deploys it")
+        print(f"ok: {ok} catalog services; every presence flag is read by the code that deploys it"
+              + (f"; {len(skipped)} deployed from a sibling repository, not in this tree" if skipped else ""))
     return 1 if errs else 0
 
 
