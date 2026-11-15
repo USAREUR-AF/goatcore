@@ -337,9 +337,9 @@ fn no_carrier_refused(repo: &Path, o: &Options) -> Result<()> {
     let edge_group = super::run_edge_group(o);
     if !super::peering_files::via_forwarder(repo, &edge_group) {
         return Err(goat_errors::coded(
-            "GB-189",
+            "GB-317",
             format!(
-                "`rotate {w} carrier`: peering {w} on {env} declares no forwarder, neither in goatbuilder.yaml nor as `peering_wg_via_forwarder: true` in its edge group's group_vars, so its edge has no carrier to rotate (the carrier is the link to a peering forwarder, docs/design/peering-forwarder.md). Nothing ran. Rotate its peering key with `rotate {w} transport` once that is built, or its leaves with `rotate {w} leaves`",
+                "`rotate {w} carrier`: peering {w} on {env} declares no forwarder, neither in goatbuilder.yaml nor as `peering_wg_via_forwarder: true` in its edge group's group_vars, so its edge has no carrier to rotate (the carrier is the link to a peering forwarder, docs/design/peering-forwarder.md). Nothing ran (GB-317). Rotate its peering key with `rotate {w} transport` once that is built, or its leaves with `rotate {w} leaves`",
                 w = o.with,
                 env = p.environment
             ),

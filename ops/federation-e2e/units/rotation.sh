@@ -12,8 +12,9 @@
 # §6 read what changed, what did not, what was retired, what a rerun of the ordinary command
 # does, and which numbers each reader missed during the key's step (samples-<key>).
 #
-# A key the goatbuilder under test refuses to rotate (GB-189, designed and not built, or
-# GB-282, which needs an ADR first) is not a failure of the run: its checks are marked
+# A key the goatbuilder under test refuses to rotate (GB-189, designed and not built,
+# GB-282, which needs an ADR first, or GB-317, a carrier on a side with no forwarder; a
+# build before GB-317 refused that with GB-189) is not a failure of the run: its checks are marked
 # BLOCKED with the refusal's own words, and the unit goes on to the next key. A rotation that
 # is attempted and fails stops the unit. The partner's step for transport and signing waits
 # on §5; the unit names it where it is reached. The forced SPIRE CA rotation that §6 puts
@@ -94,7 +95,7 @@ rot_one() { # $1 key, $2 side
   rot_all_material "$them" "$RECORD/rot-$k-$them-before.txt"
   out="$RECORD/rot-$k-$s-rotate.out"
   rc=0; ROT_KEY="$k" drive_rotate "$s" "$them" goatbuilder 0 0 > "$out" 2>&1 || rc=$?
-  why="$(grep -m1 -oE '(GB-189|GB-282)[^|]*' "$out" || true)"
+  why="$(grep -m1 -oE '(GB-189|GB-282|GB-317)[^|]*' "$out" || true)"
   if [ "$rc" != 0 ] && [ -n "$why" ]; then
     # Refused, by this build's own word: every check of this key waits for a build that rotates it.
     ROT_REFUSED="$ROT_REFUSED $k"

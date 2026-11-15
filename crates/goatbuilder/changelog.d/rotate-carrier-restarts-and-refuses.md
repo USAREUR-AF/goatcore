@@ -3,19 +3,22 @@ heading: For someone deploying
 title: "Fixed: `federate rotate <partner> carrier` puts the new key on the carrier, refuses a peering with no carrier, and re-runs phase 3"
 ---
 
-Three fixes to `goatbuilder federate rotate <partner> carrier`:
+Fixes to `goatbuilder federate rotate <partner> carrier`:
 - The edge's carrier now restarts onto its new key. Before, the key file
   changed but the running carrier kept the old key, because its environment
   file names the key's path, not the key.
 - A peering that declares no forwarder has no carrier. Rotating its carrier is
-  now refused before anything runs (GB-189). Before, the run passed and changed
-  no key. A forwarder counts as declared in goatbuilder.yaml or, for a
-  hand-run deployment, by `peering_wg_via_forwarder: true` in the edge group's
-  group_vars. A forwarder declared that way by hand cannot take the edge's new
-  key from the rotation, so rotating its carrier now stops before anything runs
-  (GB-312), naming the forwarder's value and play; declare the forwarder in
-  goatbuilder.yaml and run `goatbuilder federate allocate` to rotate it. A
-  forwarder declared in goatbuilder.yaml takes the new key in the same phase 2.
+  now refused before anything runs, with GB-317 and exit 1. Before, the run
+  passed with exit 0 and changed no key. A forwarder counts as declared in
+  goatbuilder.yaml or, for a hand-run deployment, by
+  `peering_wg_via_forwarder: true` in the edge group's group_vars.
+- A forwarder declared that way by hand cannot take the edge's new key from
+  the rotation. Rotating its carrier now stops before anything runs, with
+  GB-312 and exit 1. Before, the run went ahead with exit 0 and the forwarder
+  kept the edge's old key. The refusal names the forwarder's value and play.
+  To rotate it, declare the forwarder in goatbuilder.yaml and run
+  `goatbuilder federate allocate`. A forwarder declared in goatbuilder.yaml
+  takes the new key in the same phase 2.
 - The rotation re-runs phase 3. After phase 11 the federation interface
   carries the agreed MTU, which is the lower of both offers. When the partner
   offered less than we did, phase 3 refused our own offer as larger than the
