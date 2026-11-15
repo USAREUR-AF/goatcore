@@ -214,6 +214,7 @@ goatbuilder doctor --env <env> --credentials
 goatbuilder standup <env> --site <joiner-site> --dry-run
 ops/scripts/with-secrets goatbuilder standup <env> --site <joiner-site> --ack "<your name>" --yes
 goatbuilder assay <joiner-site>
+goatbuilder assay <founder-site>
 goatbuilder status --env <env>
 ```
 
@@ -230,14 +231,16 @@ text as you go. A difference is a finding even when the command exits 0.
 | `standup` exit 0, with phase 9's `[signal federation] proven from both nodes` row passing | The joiner's three passes, the founder-side mirror and the federation proof ran: the federation half of checkpoint 3 holds |
 | `standup` exit 0, with phase 9's `[signal federation]` gate passing and its SKIP line (`declared off at <joiner-site>`) | The joiner declares `signal_federation_absent_reason` and the gate proved no side expects federation. Checkpoint 3's federation half does not apply; record the declared reason |
 | `assay <joiner-site>` exit 0, every row of the `federation` layer PASS, including `goat-xsite-roundtrip` (`xsite: PASS …`) | Checkpoint 2 holds, and the joiner's half of checkpoint 3 |
+| `assay <founder-site>` exit 0, `fed-founder-netbird-subscriptions-replicating` and `fed-founder-ory-narrow-subscriptions-replicating` PASS | The founder's half of checkpoint 3: its subscriptions from the joiner replicate |
 | `status --env <env>` lists both sites' machines, every one `converged` | Checkpoint 4 holds |
 | a phase fails, or `assay` exits 3 | Not yet a measurement. Note the phase, the code and the output. Fix the tool or the text, then resume with `--from <phase>` |
 
-Checkpoint 3 is not fully covered by a command today. `assay` reads the
-joiner's inbound subscriptions (netbird, kratos and hydra), and the founder's
-rows present on the joiner. Nothing yet reads the founder's subscriptions
-from the joiner, or writes a row at the founder and deletes it at the joiner.
-Until a command does, the run records those two legs as not measured.
+Checkpoint 3 is not fully covered by a command today. `assay` at the joiner
+reads the joiner's inbound subscriptions (netbird, kratos and hydra) and the
+founder's rows present on the joiner. `assay` at the founder reads the
+founder's subscriptions from the joiner. Nothing yet writes a row at the
+founder and deletes it at the joiner. Until a command does, the run records
+that leg as not measured.
 
 **What to keep.**
 
@@ -555,7 +558,6 @@ phases are the next three levers.
 
 None of the three clocks has been measured on hardware, and neither tutorial
 has been followed on hardware. Two parts of the tutorial runs are not built:
-- a command for tutorial 2's checkpoint 3 legs, the founder's subscriptions
-  and a write and a deletion across the sites;
+- a command for tutorial 2's checkpoint 3 write and deletion across the sites;
 - federation-acceptance.md §6.4, which a two-party tutorial 3 run needs for a
   PASS.
