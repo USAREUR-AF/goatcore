@@ -671,6 +671,27 @@ mod tests {
         assert_eq!(f.code.as_deref(), Some("GB-271"), "{f:?}");
     }
 
+    /// Phase 14 that ends INCOMPLETE (X-ACCEPT-001) inside `goatbuilder
+    /// federate`: its fix names the command that resumes it, not the scripts
+    /// avenue, and the row prints that fix once, in its own field.
+    #[test]
+    fn an_incomplete_acceptance_names_the_command_and_prints_its_fix_once() {
+        let out = "  BLOCKED  their nonce, acknowledged by our responder: no counterparty surface (FED_THEIRS_REST)\n  ACCEPTANCE FAILED — 2 passed, 1 SKIPPED, 14 BLOCKED. A check that did not run is not a pass; see the lines above for why.\n";
+        let f = failed_phase("federate", "14", out, None).unwrap();
+        assert_eq!(f.code.as_deref(), Some("X-ACCEPT-001"), "{f:?}");
+        assert!(
+            f.fix.contains("goatbuilder federate <peering> --from 14"),
+            "{f:?}"
+        );
+        assert!(!f.fix.contains("peering-standup.sh"), "{f:?}");
+        let d = f.detail();
+        assert!(!d.contains("Fix:"), "{d}");
+        assert!(!d.contains(&f.fix), "{d}");
+        // With no known error, the phase's own guidance is the fix, once.
+        let f = failed_phase("federate", "12", "something odd happened\nexit 2\n", None).unwrap();
+        assert!(!f.detail().contains(&f.fix), "{}", f.detail());
+    }
+
     /// Output that names no known error gets the phase catalog's own guidance,
     /// never a lexical guess.
     #[test]
