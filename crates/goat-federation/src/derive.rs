@@ -1747,7 +1747,8 @@ mod tests {
     /// never through a symbolic link, and an unanswered check is no applied
     /// MTU. The file is not read at all when the check refuses it. The check
     /// asks for numbers (`%u:%g:%f`, the raw mode in hex), never the localised
-    /// words `%F` prints, so an edge in another language reads the same.
+    /// words `%F` prints, so an edge in another language reads the same. A
+    /// file the group or anyone may write (mode & 0o022) is refused too.
     #[test]
     fn the_state_file_is_read_only_when_root_owned_and_not_a_link() {
         let state = "/var/log/goat-peering-wg-wg-fed0-state.json";
@@ -1755,6 +1756,8 @@ mod tests {
         for (stat, want) in [
             (Ok("0:0:81a4\n"), Some(1300)),
             (Ok("0:0:8180\n"), Some(1300)),
+            (Ok("0:0:81b4\n"), None),
+            (Ok("0:0:81a6\n"), None),
             (Ok("0:0:a1ff\n"), None),
             (Ok("0:0:41ed\n"), None),
             (Ok("104:4:81a4\n"), None),

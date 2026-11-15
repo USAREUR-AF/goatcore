@@ -165,3 +165,20 @@ fn the_forwarder_switch_is_read_from_the_group_the_run_deploys_to() {
     let (t, _) = pinned("hello-ally_edge");
     assert!(!t.contains("no forwarder"), "{t}");
 }
+
+/// Phase 6 keeps a copy of the package the agreement was composed from,
+/// `<work>/ours.composed.json`, beside `agreement.json`: phase 3 rewrites
+/// ours.canonical.json on every run, so a later phase 3 cross-checks a
+/// re-declared MTU against the offer the applied agreement holds, read from
+/// that copy.
+#[test]
+fn phase_6_keeps_the_package_the_agreement_was_composed_from() {
+    let w = world();
+    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+    w.run(&["hello-ally"]);
+    assert!(!w.work.join("ours.composed.json").exists(), "a copy before phase 6");
+    let (out, _) = w.run(&["hello-ally", "--from", "6", "--to", "6"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let composed = std::fs::read(w.work.join("ours.composed.json")).expect("phase 6 wrote no ours.composed.json");
+    assert_eq!(composed, std::fs::read(w.work.join("ours.canonical.json")).unwrap());
+}

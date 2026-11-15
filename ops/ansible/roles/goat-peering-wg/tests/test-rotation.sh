@@ -212,19 +212,42 @@ fi
 
 # The link environment files name the key's path for systemd's EnvironmentFile,
 # which splits an unquoted value at whitespace: the path is written in double
-# quotes, and both systemd's reading (the quotes removed) and a shell's give it back whole.
+# quotes with \ " $ and ` escaped, so systemd's reading (the quotes and the
+# escapes removed) and a shell's `. file` both give it back whole and literal. A
+# path holding a newline is refused.
 mkdir -p "$T/env"
 envval() { # $1 file, $2 name: the value as systemd reads a double-quoted one
-  sed -n "s/^$2=\"\(.*\)\"\$/\1/p" "$1" | sed 's/\\\(["\\]\)/\1/g'
+  sed -n "s/^$2=\"\(.*\)\"\$/\1/p" "$1" | sed 's/\\\([\\"$`]\)/\1/g'
 }
-if ANSIBLE_NOCOLOR=1 ANSIBLE_RETRY_FILES_ENABLED=0 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
-     ansible-playbook -i localhost, "$HERE/env-files.yml" -e "env_out=$T/env" \
-     -e "{\"peering_wg_key_path\": \"$PS\", \"peering_wg_carrier_key_path\": \"$KS\"}" > "$LOG" 2>&1 \
-   && [ "$(envval "$T/env/link.env" WG_KEY_FILE)" = "$PS" ] && [ "$(envval "$T/env/carrier.env" WG_KEY_FILE)" = "$KS" ] \
-   && [ "$(sh -c '. "$1"; printf %s "$WG_KEY_FILE"' sh "$T/env/link.env")" = "$PS" ]; then
-  pass "env files: a key path with a space is written quoted and read back whole"
+envfiles() { # $1 peering key path, $2 carrier key path
+  ANSIBLE_NOCOLOR=1 ANSIBLE_RETRY_FILES_ENABLED=0 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
+    ansible-playbook -i localhost, "$HERE/env-files.yml" -e "env_out=$T/env" \
+    -e "$(python3 -c 'import json,sys; print(json.dumps({"peering_wg_key_path": sys.argv[1], "peering_wg_carrier_key_path": sys.argv[2]}))' "$1" "$2")" \
+    > "$LOG" 2>&1
+}
+sourced() { sh -c '. "$1"; printf %s "$WG_KEY_FILE"' sh "$1"; }
+# shellcheck disable=SC2016 # a literal $ and backtick in the path, not expansions
+DS="$T/edge \$HOME \`id\`/wg-fed0.key"
+for pair in "$PS|$KS" "$DS|$DS"; do
+  p="${pair%%|*}"; c="${pair#*|}"
+  if envfiles "$p" "$c" \
+     && [ "$(envval "$T/env/link-interface.env" WG_KEY_FILE)" = "$p" ] \
+     && [ "$(envval "$T/env/link.env" WG_KEY_FILE)" = "$p" ] && [ "$(envval "$T/env/carrier.env" WG_KEY_FILE)" = "$c" ] \
+     && [ "$(sourced "$T/env/link-interface.env")" = "$p" ] && [ "$(sourced "$T/env/link.env")" = "$p" ] \
+     && [ "$(sourced "$T/env/carrier.env")" = "$c" ]; then
+    pass "env files: the key path '$p' is written quoted and read back whole by systemd's rules and by a shell"
+  else
+    fail "env files: the key path '$p' is not read back whole"; grep WG_KEY_FILE "$T/env/"*.env 2>/dev/null || true; tail -15 "$LOG"
+  fi
+done
+NL="$T/edge
+x/wg-fed0.key"
+if envfiles "$NL" "$KS"; then
+  fail "env files: a key path holding a newline was written"
+elif grep -qF "holds a newline" "$LOG"; then
+  pass "env files: a key path holding a newline is refused, naming why"
 else
-  fail "env files: a key path with a space is not read back whole"; grep WG_KEY_FILE "$T/env/"*.env 2>/dev/null; tail -15 "$LOG"
+  fail "env files: wrong refusal for a key path holding a newline"; tail -15 "$LOG"
 fi
 
 if [ "$FAILS" -eq 0 ]; then

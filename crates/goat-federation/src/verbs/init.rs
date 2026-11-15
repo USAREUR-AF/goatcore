@@ -898,7 +898,8 @@ mod tests {
     /// the role's state file says an agreement applied `applied`, the
     /// declaration offers `declared`, and `<work>` (where `--out` writes our
     /// package) holds the agreement the interface carries (`agreed_mtu`) and
-    /// the package we offered in it (`our_offer`). Returns init's output.
+    /// phase 6's copy of the package it was composed from,
+    /// `ours.composed.json` (`our_offer`). Returns init's output.
     fn rerun(
         declared: i64,
         interface: i64,
@@ -906,18 +907,18 @@ mod tests {
         agreed_mtu: Option<i64>,
         our_offer: Option<i64>,
     ) -> String {
-        rerun_at(declared, interface, applied, agreed_mtu, our_offer, false)
+        rerun_at(declared, interface, applied, agreed_mtu, our_offer, our_offer)
     }
 
-    /// [`rerun`], with our package written after the agreement when
-    /// `ours_newer` (compose runs after phase 3, so the agreement is newer).
+    /// [`rerun`], with `ours.canonical.json` (what phase 3 last wrote, on
+    /// every run, after the agreement) offering `canonical`.
     fn rerun_at(
         declared: i64,
         interface: i64,
         applied: Option<i64>,
         agreed_mtu: Option<i64>,
         our_offer: Option<i64>,
-        ours_newer: bool,
+        canonical: Option<i64>,
     ) -> String {
         let (_d, site) = site_with(&DECL.replace("measured_mtu = 1380", &format!("measured_mtu = {declared}")));
         let work = tempfile::tempdir().unwrap();
@@ -928,21 +929,23 @@ mod tests {
             )
             .unwrap();
         }
+        let package = |o: i64| {
+            format!(r#"{{"sovereign_id": "xaa", "transport_offer": {{"endpoint": "192.0.2.10:51820", "listener": true, "measured_mtu": {o}}}}}"#)
+        };
         if let Some(o) = our_offer {
-            std::fs::write(
-                work.path().join("ours.canonical.json"),
-                format!(r#"{{"sovereign_id": "xaa", "transport_offer": {{"endpoint": "192.0.2.10:51820", "listener": true, "measured_mtu": {o}}}}}"#),
-            )
-            .unwrap();
+            std::fs::write(work.path().join("ours.composed.json"), package(o)).unwrap();
         }
-        // Phase 3 wrote our package, then compose wrote the agreement.
-        let now = std::time::SystemTime::now();
-        let earlier = now - std::time::Duration::from_secs(60);
-        let (ours_at, agreement_at) = if ours_newer { (now, earlier) } else { (earlier, now) };
-        for (name, at) in [("ours.canonical.json", ours_at), ("agreement.json", agreement_at)] {
-            if let Ok(f) = std::fs::File::options().write(true).open(work.path().join(name)) {
-                f.set_modified(at).unwrap();
-            }
+        // Phase 3 rewrites our package on every run, so it is newer than the
+        // agreement after any retry; its age says nothing.
+        if let Some(o) = canonical {
+            std::fs::write(work.path().join("ours.canonical.json"), package(o)).unwrap();
+            let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+            std::fs::File::options()
+                .write(true)
+                .open(work.path().join("ours.canonical.json"))
+                .unwrap()
+                .set_modified(later)
+                .unwrap();
         }
         let measure = |i: Option<&str>| {
             Ok(derive::Measured {
@@ -1010,20 +1013,33 @@ mod tests {
         }
     }
 
-    /// Our package newer than the agreement the interface carries: an earlier
-    /// phase 3 wrote it without the cross-check (an unreadable interface, a
-    /// SKIP), and no agreement has been composed from it, so its offer was
-    /// checked by nothing. Even when it equals the declaration, the cross-check
-    /// is blocked, never skipped as "checked earlier".
+    /// An honest retry: a run passed phase 3, stopped before phase 6 (a lint
+    /// failure at 4, phase 5 waiting, a kill), and runs again. Phase 3 rewrote
+    /// ours.canonical.json each time, so it is newer than the agreement, and
+    /// may hold another offer; the offer the interface carries is phase 6's
+    /// copy beside the agreement. Declared equal to that copy: a SKIP.
     #[test]
-    fn a_package_newer_than_the_agreement_is_blocked() {
-        let out = rerun_at(1500, 1300, Some(1300), Some(1300), Some(1500), true);
-        assert!(!out.contains("carries the agreed MTU"), "{out}");
-        assert!(out.contains("blocked") && out.contains("re-measure"), "{out}");
-        assert!(out.contains("newer"), "{out}");
-        // The same files in the order phase 3 and compose write them: a SKIP.
-        let ordered = rerun_at(1380, 1300, Some(1300), Some(1300), Some(1380), false);
-        assert!(ordered.contains("carries the agreed MTU 1300"), "{ordered}");
+    fn an_honest_retry_after_a_stop_before_compose_is_skipped() {
+        for canonical in [Some(1380), Some(1500), None] {
+            let out = rerun_at(1380, 1300, Some(1300), Some(1300), Some(1380), canonical);
+            assert!(out.contains("carries the agreed MTU 1300"), "{canonical:?}: {out}");
+            assert!(!out.contains("blocked"), "{canonical:?}: {out}");
+        }
+    }
+
+    /// The offer is read from phase 6's copy only: with no
+    /// ours.composed.json beside the agreement, the cross-check is blocked
+    /// (fail closed), even when ours.canonical.json offers the declared value;
+    /// and a raised offer is blocked whatever ours.canonical.json says.
+    #[test]
+    fn the_offer_is_read_from_phase_6s_copy_only() {
+        let missing = rerun_at(1380, 1300, Some(1300), Some(1300), None, Some(1380));
+        assert!(!missing.contains("carries the agreed MTU"), "{missing}");
+        assert!(missing.contains("blocked") && missing.contains("re-measure"), "{missing}");
+        assert!(missing.contains("ours.composed.json"), "{missing}");
+        let raised = rerun_at(1500, 1300, Some(1300), Some(1300), Some(1380), Some(1500));
+        assert!(!raised.contains("carries the agreed MTU"), "{raised}");
+        assert!(raised.contains("blocked") && raised.contains("re-measure"), "{raised}");
     }
 
     /// A host that cannot be reached is the caller's error, returned as is.

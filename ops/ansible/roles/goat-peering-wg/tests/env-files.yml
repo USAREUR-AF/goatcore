@@ -1,6 +1,7 @@
 ---
-# Renders the role's two link environment files (templates/link.env.j2 and
-# templates/carrier.env.j2) on localhost into env_out, with the values given as
+# Renders the role's link environment files (templates/link-interface.env.j2,
+# phase 2's first one; templates/link.env.j2; templates/carrier.env.j2) on
+# localhost into env_out, with the values given as
 # extra vars, so test-rotation.sh can read the key path back the way systemd's
 # EnvironmentFile and a shell read it.
 - name: goat-peering-wg link environment files
@@ -19,6 +20,11 @@
     peering_wg_forwarder_carrier_public_key: FWDKEYfixture=
     peering_wg_forwarder_endpoint: 192.0.2.30:51900
   tasks:
+    - name: Phase 2's first link environment, the interface only
+      ansible.builtin.template:
+        src: ../templates/link-interface.env.j2
+        dest: "{{ env_out }}/link-interface.env"
+        mode: "0600"
     - name: The peering link's environment
       ansible.builtin.template:
         src: ../templates/link.env.j2
