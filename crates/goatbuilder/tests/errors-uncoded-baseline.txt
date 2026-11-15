@@ -15,57 +15,9 @@ src/converger.rs :: context :: {}
 src/converger.rs :: context :: {}
 src/doctor.rs :: bail :: git {} failed
 src/fastlane.rs :: context :: <|| cmd.to_string())?;>
-src/federate/backout.rs :: anyhow :: unknown environment \"{env}\"; declared: {:?}
-src/federate/backout.rs :: anyhow :: {} answered for peering '{}', not '{}'
-src/federate/backout.rs :: context :: bash
-src/federate/backout.rs :: context :: delete {}
-src/federate/backout.rs :: context :: read the confirmation
-src/federate/backout.rs :: context :: read {}
-src/federate/backout.rs :: context :: run {}
-src/federate/backout.rs :: context :: {} gave no plan: {}
-src/federate/backout.rs :: context :: {} is not a back-out host record
-src/federate/declaration.rs :: anyhow :: peering '{with}' is declared on several environments ({}); pass --env
-src/federate/deploy.rs :: context :: {}
-src/federate/forwarder.rs :: anyhow :: phase 2 is no longer one peering-prepare.yml run on --limit '{edge_group}', so the forwarder steps cannot be placed around it
-src/federate/handoff.rs :: anyhow :: phase 1's core half left no result at {} ({e})
-src/federate/handoff.rs :: anyhow :: the edge result {} was not written ({err})
-src/federate/handoff.rs :: anyhow :: {} is not JSON ({e})
-src/federate/measure.rs :: anyhow :: --side edge takes --half-out <file> (where the edge half is written), and
-src/federate/measure.rs :: anyhow :: --ssh-edge-group, --ssh-core-group, --edge-host, --core-host, --router-container, --side, --half-out and --edge-half choose what `init --over-ssh <peering>` measures; without --over-ssh, init measures this machine
-src/federate/measure.rs :: anyhow :: FED_MEASURE is here or ssh, not '{other}'
-src/federate/measure.rs :: anyhow :: could not read the declaration {}: {e}
-src/federate/measure.rs :: anyhow :: could not write the edge half to {}: {e}
-src/federate/measure.rs :: anyhow :: run_init over SSH without --over-ssh
-src/federate/measure.rs :: anyhow :: {}: {e}
-src/federate/mod.rs :: anyhow :: unknown environment \"{env}\"; declared: {:?}
-src/federate/mod.rs :: context :: bash
-src/federate/mod.rs :: context :: cannot make {}
+# Kept uncoded, with exit 2, until GB-149's exit is decided (its own issue): the
+# contract gives exit 2 to a command line naming an undeclared peering; GB-149 exits 1.
 src/federate/peering_files.rs :: anyhow :: peering '{name}' is not declared in {} peerings: (C1); `goatbuilder federate allocate <peering>` allocates one declared peering
-src/federate/plan.rs :: anyhow :: --accept records into a new plan; --recheck reads the saved one: run them apart
-src/federate/plan.rs :: anyhow :: --accept {c}: the plan has no {c} row
-src/federate/plan.rs :: anyhow :: --edge-group or --as differs from the saved plan's ({}, {}): make a new plan with them
-src/federate/plan.rs :: anyhow :: --recheck reads the hosts, and --mock reads none: recheck without --mock
-src/federate/plan.rs :: anyhow :: --recheck reruns the live checks; --no-live would skip exactly those
-src/federate/plan.rs :: anyhow :: the federation verbs, backout and rotate are run before this point
-src/federate/plan.rs :: context :: mkdir {}
-src/federate/plan.rs :: context :: mkdir {}
-src/federate/plan.rs :: context :: no phase 1 result at {}
-src/federate/plan.rs :: context :: phase 1 exited {}: {}
-src/federate/plan.rs :: context :: python3 {}
-src/federate/plan.rs :: context :: rename to {}
-src/federate/plan.rs :: context :: write {}
-src/federate/plan.rs :: context :: {} is not JSON
-src/federate/plan.rs :: context :: {} is not JSON
-src/federate/preflight.rs :: context :: no preflight result at {}
-src/federate/preflight.rs :: context :: python3 {}
-src/federate/preflight.rs :: context :: {} has no slot-anchors result
-src/federate/preflight.rs :: context :: {} is not JSON
-src/federate/rotation.rs :: anyhow :: `rotate {} {k}` is marked built but has no run
-src/federate/rotation.rs :: anyhow :: {} holds '{id}', which is not a rotation id; remove the file to start the rotation again
-src/federate/status.rs :: anyhow :: --work names one peering's folder: give the partner (goatbuilder federate status <partner> --work <dir>), or set FED_WORK_ROOT for every peering
-src/federate/verbs.rs :: anyhow :: --over-ssh and its host flags apply to `goatbuilder federate init` only
-src/federate/verbs.rs :: anyhow :: init --over-ssh reads the plays' inventory: pass -C <repository>
-src/federate/verbs.rs :: context :: goatbuilder federate {}
 src/fresh.rs :: context :: <|| p.display().to_string())?;>
 src/fresh.rs :: context :: ops/scripts/fresh-source.sh
 src/fresh.rs :: context :: {MARKER} in {}
