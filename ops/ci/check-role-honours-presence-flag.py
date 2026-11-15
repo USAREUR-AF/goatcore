@@ -19,17 +19,24 @@ ops/ci/presence-flag-allowlist.txt names rows refused today for a known reason (
 a listed row that stops failing makes its line stale, and the check refuses it).
 A row whose code lives in a sibling repository names it under `home:` (goatstuff,
 goatrodeo). In a tree without that code (goatcore alone) the row is printed as SKIP and
-not judged; in an assembled tree it is checked like any other.
+not judged; in an assembled tree it is checked like any other. Since a SKIP is an escape
+from the check, every `home:` row must also be listed in the allowlist as
+`home: <service> <repository>` under a reason; an unlisted one, or one listed with another
+repository, is refused, and a listed one whose catalog row has no such `home:` is stale.
+Every allowlist entry needs a reason (the comment lines above it). With --base <ref>, the
+allowlist is also held to <ref>'s: an entry <ref> does not list is refused (shrink-only).
 A guard is a line that reads the flag as a decision: a `when:` (inline or as a list item
 under one), an `assert` `that:` item, or a Jinja `if` — not a comment, and not a mention in
 a message. A service whose code reads no flag at all is a refusal naming the file to add
 the guard to and the one-line shape to add.
 
-usage: check-role-honours-presence-flag.py [--repo DIR] [--self-test]
-exit 0 every flag is read · 1 a flag no code reads · 2 cannot run
+usage: check-role-honours-presence-flag.py [--repo DIR] [--base REF] [--self-test]
+exit 0 every flag is read · 1 a flag no code reads, or the allowlist is wrong or grew · 2 cannot run
 """
 import argparse
+import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -87,33 +94,91 @@ def guarded(text, var):
     return False
 
 
-def read_allowlist(repo):
-    """{service: reason} from ALLOWLIST: one service per line, the reason the comment
-    lines above it (the section it sits in)."""
-    p = repo / ALLOWLIST
+def parse_allowlist(text):
+    """{key: (service, home, reason)} from the allowlist's text. An entry is `<service>` (a
+    known gap) or `home: <service> <repository>` (a reviewed sibling-repository row); its
+    reason is the comment lines above it, up to the last blank line. A reason of "" means
+    none was given. The key is the entry as written, so a changed repository is a new key."""
     out, reason = {}, []
-    if not p.is_file():
-        return out
-    for ln in p.read_text().splitlines():
+    for ln in text.splitlines():
         s = ln.strip()
         if not s:
             reason = []
         elif s.startswith("#"):
             reason.append(s.lstrip("#").strip())
         else:
-            out[s] = " ".join(reason) or "(no reason given)"
+            m = re.match(r"^home:\s+(\S+)\s+(\S+)$", s)
+            key = f"home: {m.group(1)} {m.group(2)}" if m else s
+            out[key] = (m.group(1) if m else s, m.group(2) if m else None, " ".join(reason))
     return out
+
+
+def read_allowlist(repo):
+    p = repo / ALLOWLIST
+    return parse_allowlist(p.read_text()) if p.is_file() else {}
+
+
+def grown(base, head):
+    """Entries of `head` that `base` does not list (the allowlist only shrinks)."""
+    return [f"{k}: not in the base's {ALLOWLIST}; the list only shrinks, so fix the row "
+            f"instead of listing it" for k in sorted(head) if k not in base]
+
+
+def against_base(repo, base_ref):
+    """0 when the allowlist at `repo` lists nothing `base_ref`'s does not; 1 when it grew;
+    2 when the base cannot be read. A base that predates the file passes (this change
+    introduces it)."""
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    if git("cat-file", "-e", f"{base_ref}^{{commit}}").returncode != 0:
+        print(f"cannot compare: {base_ref!r} is not a commit here (fetch the base first)", file=sys.stderr)
+        return 2
+    listed = git("ls-tree", "--name-only", base_ref, "--", ALLOWLIST)
+    if listed.returncode != 0:
+        print(f"cannot list {ALLOWLIST} at {base_ref}: {listed.stderr.strip()}", file=sys.stderr)
+        return 2
+    if not listed.stdout.strip():
+        print(f"ok: {base_ref} has no {ALLOWLIST}; this change introduces it")
+        return 0
+    got = git("show", f"{base_ref}:{ALLOWLIST}")
+    if got.returncode != 0:
+        print(f"cannot read {ALLOWLIST} at {base_ref}: {got.stderr.strip()}", file=sys.stderr)
+        return 2
+    problems = grown(parse_allowlist(got.stdout), read_allowlist(repo))
+    for p in problems:
+        print(f"FAIL {p}")
+    if problems:
+        return 1
+    print(f"ok: {ALLOWLIST} lists nothing {base_ref}'s does not")
+    return 0
 
 
 def check(repo):
     cat = yaml.safe_load((repo / "ops/goatbuilder/endstate/catalog.yaml").read_text()) or {}
-    allow = read_allowlist(repo)
+    entries = read_allowlist(repo)
+    allow = {svc: why for svc, home, why in entries.values() if home is None}
+    listed_home = {svc: (home, why) for svc, home, why in entries.values() if home is not None}
     errs, ok, skipped = [], 0, []
-    for name, spec in (cat.get("services") or {}).items():
+    services = cat.get("services") or {}
+    # A listed home entry is stale when its catalog row does not say that home.
+    for svc, (home, _) in listed_home.items():
+        if (services.get(svc) or {}).get("home") != home:
+            errs.append(f"{svc}: listed in {ALLOWLIST} as `home: {svc} {home}`, and its catalog row does not "
+                        f"say home: {home} (or it is not in the catalog): the line is stale, remove it")
+    for name, spec in services.items():
         var = (spec.get("present") or {}).get("var")
         if not var:
             continue
         home = spec.get("home")
+        if home and name not in listed_home:
+            errs.append(f"{name}: its catalog row says home: {home}, which is not listed in {ALLOWLIST}; "
+                        f"a home: row is skipped where its code is absent, so it needs a reviewed entry "
+                        f"`home: {name} {home}` with its reason")
+            continue
+        if home and listed_home[name][0] != home:
+            errs.append(f"{name}: its catalog row says home: {home}, and {ALLOWLIST} lists it as "
+                        f"`home: {name} {listed_home[name][0]}`; make the two agree")
+            continue
         explicit = [repo / g for g in (spec.get("guard") or [])]
         missing = [str(f.relative_to(repo)) for f in explicit if not f.is_file()]
         # Deployed from a sibling repository: judged only where its code is (an assembled
@@ -155,6 +220,12 @@ def check(repo):
         else:
             errs.append(f"{name}: listed in {ALLOWLIST}, and the check no longer refuses it "
                         f"(or it is not in the catalog): the line is stale, remove it")
+    # Every entry carries a reason (after the known gaps are taken out, so a listed row
+    # without one is refused even while it fails).
+    for key, (_, _, why) in entries.items():
+        if not why:
+            errs.append(f"{key.split()[-2] if key.startswith('home:') else key}: the entry `{key}` in {ALLOWLIST} "
+                        f"has no reason; write one in a comment line above it")
     for e in skipped:
         print(f"SKIP {e}")
     for e in known:
@@ -297,16 +368,23 @@ def self_test():
     assert against_base(REPO, "no-such-ref") == 2, "a ref that does not exist"
     assert against_base(REPO, "0" * 40) == 2, "an all-zero sha"
     print("self-test ok: an unread flag is refused; when:, assert that: and an import guard pass; "
-          "a row deployed from a sibling repository is skipped only while its code is absent")
+          "a row deployed from a sibling repository is skipped only while its code is absent and only when the "
+          "allowlist lists it with its repository; every entry needs a reason; the allowlist only shrinks against the base")
     return 0
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--repo", default=str(REPO))
+    ap.add_argument("--base", help="also refuse an allowlist entry this git ref does not list")
     ap.add_argument("--self-test", action="store_true")
     a = ap.parse_args()
-    return self_test() if a.self_test else check(Path(a.repo))
+    if a.self_test:
+        return self_test()
+    rc = check(Path(a.repo))
+    if a.base:
+        rc = max(rc, against_base(Path(a.repo), a.base))
+    return rc
 
 
 if __name__ == "__main__":

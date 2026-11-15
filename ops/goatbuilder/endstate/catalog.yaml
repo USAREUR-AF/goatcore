@@ -63,7 +63,9 @@
 #                                        # (ops/ci/check-role-honours-presence-flag.py)
 #       home: goatstuff | goatrodeo      # the repository its deploying code lives in, when
 #                                        # not goatcore: that check skips the row in a tree
-#                                        # without the code and judges it in an assembled one
+#                                        # without the code and judges it in an assembled one;
+#                                        # each is listed, with a reason, in
+#                                        # ops/ci/presence-flag-allowlist.txt (shrink-only)
 schema: goatnet-endstate-catalog/v1
 
 services:

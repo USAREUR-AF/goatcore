@@ -347,9 +347,11 @@ jobs:
           ops/goatbuilder/parity-endstate.sh crates/target/debug/goatbuilder
           # a service a site declares off is never deployed: the checker's own cases, then the
           # catalog-wide run, which judges goatcore's own roles and names (SKIP) the rows deployed
-          # from goatstuff or goatrodeo; those are judged on an assembled tree
+          # from goatstuff or goatrodeo; those are judged on an assembled tree. Its allowlist
+          # (known gaps and reviewed home: rows) only shrinks against the pull request's base.
           python3 ops/ci/check-role-honours-presence-flag.py --self-test
-          python3 ops/ci/check-role-honours-presence-flag.py
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          python3 ops/ci/check-role-honours-presence-flag.py --base FETCH_HEAD
       - name: Fresh source on an assembled tree — goatcore at goatcore.ref plus an overlay is judged against that pair (C3)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
