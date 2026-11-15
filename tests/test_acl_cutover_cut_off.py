@@ -25,6 +25,9 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 PLAY = REPO / "ops" / "ansible" / "netbird-acl-cutover.yml"
+BOOTSTRAP = REPO / "ops" / "ansible" / "netbird-acl-bootstrap.yml"
+# The standard invocation (standup phase 12, goatlite.md §11): groups, then the cutover, in one run.
+CHAIN = (BOOTSTRAP, PLAY)
 needs_ansible = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason="ansible-playbook not installed")
 
 TAG = "[L4-cutover via netbird-acl-cutover.yml]"
@@ -98,8 +101,10 @@ class NetBird:
 
             def _write(self, method):
                 n = int(self.headers.get("Content-Length") or 0)
-                api.writes.append((method, self.path, json.loads(self.rfile.read(n) or b"{}")))
-                self._send(200, {"id": "p-new"})
+                body = json.loads(self.rfile.read(n) or b"{}")
+                api.writes.append((method, self.path, body))
+                # As NetBird answers: the object written, with the id it assigned.
+                self._send(200, dict(body, id="g-new" if self.path == "/api/groups" else "p-new"))
 
             def do_POST(self):
                 self._write("POST")
@@ -118,11 +123,11 @@ class NetBird:
         self.server.shutdown()
 
 
-def run(tmp, nb, *extra, action="disable"):
-    (tmp / "taxonomy.yml").write_text(json.dumps(TAXONOMY))
+def run(tmp, nb, *extra, action="disable", plays=(PLAY,), taxonomy=None):
+    (tmp / "taxonomy.yml").write_text(json.dumps(taxonomy or TAXONOMY))
     (tmp / "matrix.yml").write_text(json.dumps(matrix(action)))
     env = dict(os.environ, ZAGROS_NB_API_TOKEN="t", ANSIBLE_NOCOLOR="1", ANSIBLE_LOCAL_TEMP=str(tmp / "ansible"))
-    argv = ["ansible-playbook", "-i", "localhost,", str(PLAY), "-e", "target_site=zagros",
+    argv = ["ansible-playbook", "-i", "localhost,", *[str(p) for p in plays], "-e", "target_site=zagros",
             "-e", f"taxonomy_path={tmp / 'taxonomy.yml'}", "-e", f"matrix_path={tmp / 'matrix.yml'}",
             "-e", f"netbird_mgmt_url={nb.url}", "-e", "netbird_api_ca=public"]
     for e in extra:
@@ -209,3 +214,51 @@ def test_without_cut_off_the_cutover_creates_as_before(tmp_path, drifted_and_mis
     out = run(tmp_path, nb, "mode=apply")
     assert out.returncode == 0, out.stdout + out.stderr
     assert sorted((m, p) for m, p, _ in nb.writes) == [("POST", "/api/policies"), ("PUT", "/api/policies/p-1")], nb.writes
+
+
+# The chained form standup runs: netbird-acl-bootstrap.yml creates missing groups
+# before the cutover. A created group gets an id NetBird assigns, as a policy does,
+# so two cut-off sites that each create it leave two groups of one name after the
+# heal. With cut_off=true the bootstrap refuses a create with GB-295 too, before
+# any write.
+WITH_OBS = {"netbird_acl_taxonomy": {"zagros": {"site_prefix": "ZAGROS", "groups": [
+    {"suffix": "ADMIN"}, {"suffix": "INFRA"}, {"suffix": "OBS"}]}}, "netbird_exercises": {}}
+
+
+@needs_ansible
+def test_chained_cut_off_refuses_a_missing_group_and_writes_nothing(tmp_path):
+    nb = NetBird([DEFAULT, policy("p-1", "admin to infra", "g-admin", "g-infra"),
+                  policy("p-2", "infra to admin", "g-infra", "g-admin")])
+    try:
+        out = run(tmp_path, nb, "mode=apply", "cut_off=true", plays=CHAIN, taxonomy=WITH_OBS)
+        text = out.stdout + out.stderr
+        assert out.returncode != 0, text
+        assert "GB-295" in text, text
+        assert "ZAGROS-OBS" in text, "names the group it would have created"
+        assert nb.writes == [], f"a refusal writes nothing, no group and no policy: {nb.writes}"
+    finally:
+        nb.close()
+
+
+@needs_ansible
+def test_chained_cut_off_with_every_group_present_updates_existing_ids_only(tmp_path):
+    nb = NetBird([DEFAULT, policy("p-1", "admin to infra", "g-admin", "g-admin"),
+                  policy("p-2", "infra to admin", "g-infra", "g-admin")])
+    try:
+        out = run(tmp_path, nb, "mode=apply", "cut_off=true", plays=CHAIN)
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert [(m, p) for m, p, _ in nb.writes] == [("PUT", "/api/policies/p-1")], nb.writes
+    finally:
+        nb.close()
+
+
+@needs_ansible
+def test_chained_without_cut_off_the_bootstrap_creates_a_missing_group_as_before(tmp_path):
+    nb = NetBird([DEFAULT, policy("p-1", "admin to infra", "g-admin", "g-infra"),
+                  policy("p-2", "infra to admin", "g-infra", "g-admin")])
+    try:
+        out = run(tmp_path, nb, "mode=apply", plays=CHAIN, taxonomy=WITH_OBS)
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert ("POST", "/api/groups") in [(m, p) for m, p, _ in nb.writes], nb.writes
+    finally:
+        nb.close()
