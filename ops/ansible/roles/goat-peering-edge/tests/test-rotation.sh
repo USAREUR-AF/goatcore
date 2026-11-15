@@ -15,7 +15,10 @@
 #   - an ipsec-ca rotation is refused without the partner's read-back of the new CA
 #     (GB-303) and switches with it; the new CA replaces the one the chain is
 #     checked against;
-#   - the retire step removes the set-aside key and keeps its certificate;
+#   - the retire step removes the set-aside key and keeps its certificate, only once
+#     the new leaf is live; it never switches the live pair or replaces our CA, and an
+#     unknown id, a retire before the switch or with the SA down is refused;
+#   - a resume or retire after a rollback reports GB-302 again, the old leaf live;
 #   - swanctl.conf renders byte for byte as before without the partner's next CA,
 #     and lists the current CA and then the next one with it.
 #
@@ -205,6 +208,98 @@ if rot -e peering_edge_rotation=r5 -e peering_edge_rotation_kind=ca -e peering_e
   pass "retire removes the set-aside key, keeps its certificate, and re-authenticates nothing"
 else
   fail "retire did not remove only the set-aside key"; tail -12 "$LOG"
+fi
+
+# The retire step never switches the live pair, and removes the set-aside key only
+# once the new leaf is confirmed live (the review's cases A and B, the owner's rules).
+RETIRE_CODE=GB-309
+
+# Case A: r1 passed, then the next leaf is staged, then --retire r1.
+fresh; stage good; touch "$T/sa-up"
+rot -e peering_edge_rotation=r1 || { fail "setup: r1 did not pass"; tail -12 "$LOG"; }
+stage good2
+reauth_before=$(calls '--reauth')
+if rot -e peering_edge_rotation=r1 -e peering_edge_rotation_retire=true && live_is good \
+   && [ -f "$S/x509/xab-cert.next.pem" ] && [ -f "$S/private/xab-key.next.pem" ] \
+   && [ ! -e "$S/.previous-r1/xab-key.pem" ] && [ -f "$S/.previous-r1/xab-cert.pem" ] \
+   && [ "$(calls '--reauth')" = "$reauth_before" ]; then
+  pass "retire with the next leaf staged: the live pair and the staged pair stay, only the set-aside key goes"
+else
+  fail "retire with something staged switched or removed the wrong file"; tail -12 "$LOG"
+fi
+
+# Case B: a mistyped id with something staged: refused, nothing moves.
+fresh; stage good; touch "$T/sa-up"
+before=$(snap)
+if ! rot -e peering_edge_rotation=r9 -e peering_edge_rotation_retire=true && grep -q "$RETIRE_CODE" "$LOG" \
+   && [ "$(snap)" = "$before" ] && [ ! -e "$S/.previous-r9" ] && ! grep -q -- --load-creds "$T/swanctl.log" 2>/dev/null; then
+  pass "retire of an id with no set-aside here: $RETIRE_CODE, nothing moved"
+else
+  fail "retire of an unknown id was not refused, or something moved"; tail -12 "$LOG"
+fi
+
+# Not confirmed live: the SA is down after the switch; the set-aside key stays.
+fresh; stage good; touch "$T/sa-up"
+rot -e peering_edge_rotation=r1 || { fail "setup: r1 did not pass"; tail -12 "$LOG"; }
+rm -f "$T/sa-up"
+if ! rot -e peering_edge_rotation=r1 -e peering_edge_rotation_retire=true && grep -q "$RETIRE_CODE" "$LOG" \
+   && [ -f "$S/.previous-r1/xab-key.pem" ] && live_is good; then
+  pass "retire while the SA on the new leaf is not up: $RETIRE_CODE, the set-aside key stays"
+else
+  fail "retire removed the set-aside key without the new leaf confirmed live"; tail -12 "$LOG"
+fi
+
+# Stopped after the set-aside, before the switch: the set-aside copy is the live key's only
+# other copy and the live pair is still the old one, so retire removes nothing.
+fresh; stage good; touch "$T/sa-up"
+mkdir -m 700 "$S/.previous-r2"; cp -p "$S/x509/xab-cert.pem" "$S/private/xab-key.pem" "$S/.previous-r2/"
+before=$(snap)
+if ! rot -e peering_edge_rotation=r2 -e peering_edge_rotation_retire=true && grep -q "$RETIRE_CODE" "$LOG" \
+   && [ "$(snap)" = "$before" ]; then
+  pass "retire before the switch happened: $RETIRE_CODE, nothing moved or removed"
+else
+  fail "retire before the switch moved or removed something"; tail -12 "$LOG"
+fi
+
+# A CA rotation's "new CA becomes the CA" never runs on retire, read-back or not.
+fresh; stage good; touch "$T/sa-up"
+rot -e peering_edge_rotation=r6 || { fail "setup: r6 did not pass"; tail -12 "$LOG"; }
+cp "$T/pki/ca2.pem" "$S/x509ca/xab-local-ca.next.pem"
+rot -e peering_edge_rotation=r6 -e peering_edge_rotation_kind=ca -e peering_edge_rotation_retire=true || true
+if [ "$(sha "$T/local-ca.pem")" = "$(sha "$T/pki/ca1.pem")" ] && [ -f "$S/x509ca/xab-local-ca.next.pem" ]; then
+  pass "retire of an ipsec-ca rotation without the read-back: our CA is not replaced"
+else
+  fail "retire replaced our CA without the partner's read-back"; tail -12 "$LOG"
+fi
+
+# A resume after a GB-302 rollback reports the rollback, never success, and the old leaf live.
+fresh; stage good
+rot -e peering_edge_rotation=r4 || true
+touch "$T/sa-up"
+reauth_before=$(calls '--reauth')
+if ! rot -e peering_edge_rotation=r4 && grep -q "GB-302" "$LOG" && grep -q "the old leaf is live" "$LOG" \
+   && live_is live && [ "$(calls '--reauth')" = "$reauth_before" ]; then
+  pass "a resume after a rollback: GB-302 again, the old leaf live, nothing re-authenticated"
+else
+  fail "a resume after a rollback reported success or changed the live pair"; tail -12 "$LOG"
+fi
+if ! rot -e peering_edge_rotation=r4 -e peering_edge_rotation_retire=true && grep -q "GB-302" "$LOG" \
+   && [ -f "$S/.previous-r4/xab-key.pem" ]; then
+  pass "retire after a rollback: GB-302, the set-aside key stays"
+else
+  fail "retire after a rollback removed the set-aside key"; tail -12 "$LOG"
+fi
+
+# The same for an ipsec-ca rotation: our CA is not replaced by the resume.
+fresh; stage ca2leaf; cp "$T/pki/ca2.pem" "$S/x509ca/xab-local-ca.next.pem"
+RB=(-e peering_edge_rotation=r7 -e peering_edge_rotation_kind=ca -e peering_edge_rotation_ca_readback="sha256:$(sha "$T/pki/ca2.pem")")
+rot "${RB[@]}" || true
+touch "$T/sa-up"
+if ! rot "${RB[@]}" && grep -q "GB-302" "$LOG" && live_is live \
+   && [ "$(sha "$T/local-ca.pem")" = "$(sha "$T/pki/ca1.pem")" ]; then
+  pass "a resume after an ipsec-ca rollback: GB-302, the old leaf live, our CA not replaced"
+else
+  fail "a resume after an ipsec-ca rollback replaced our CA or reported success"; tail -12 "$LOG"
 fi
 
 # swanctl.conf: unchanged without the partner's next CA; current then next with it.
