@@ -468,6 +468,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1242 | [A party's next CA is announced in package v2, so its CA rotates without a gap](1242-a-partys-next-ca-is-announced-in-package-v2-so-its-ca-rotates-without-a-gap.md) | Accepted | — |
 | 1246 | [Workflows pin actions by commit and start read-only, releases carry signatures and provenance, and OpenSSF Scorecard measures both](1246-workflows-pin-actions-and-start-read-only-releases-carry-signatures-and-provenance.md) | Proposed. Decisions 3, 4 and 6 are built on `main`. Decisions 1 and 2 are built on `main` except in four workflow files not yet converted (#915). Decision 5 is built for two of four release workflows. | — |
 | 1247 | [Decoys are a detection layer, generated on demand from a seed; the mechanism is public and each goatnet's placements are private](1247-decoys-are-a-detection-layer-generated-on-demand-from-a-seed.md) | Proposed. Designed, not built; merging this record changes nothing on any goatnet. | — |
+| 1248 | [goat follows stock upstream NetBird and WireGuard, and retires each of its own departures when upstream offers the same](1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md) | Proposed. The watch list it governs is written ([`upstream-netbird-wireguard-watch.md`](../design/upstream-netbird-wireguard-watch.md)); merging this record changes no build and no goatnet. | — |
 
 <!-- END generated: adr-index -->
 
