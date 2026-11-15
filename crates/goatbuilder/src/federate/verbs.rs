@@ -203,13 +203,15 @@ pub fn run_measured_to(
         (None, cmd) => run_to(cmd, site, out),
         (Some(_), FederateCmd::Init(a)) => {
             let repo = repo.ok_or_else(|| {
-                anyhow::anyhow!("init --over-ssh reads the plays' inventory: pass -C <repository>")
+                goat_errors::coded("GB-325", "init --over-ssh reads the plays' inventory: pass -C <repository>")
             })?;
             super::measure::run_init(repo, &resolve_site(site)?, &a, measure, out)
         }
-        (Some(_), _) => Err(anyhow::anyhow!(
-            "--over-ssh and its host flags apply to `goatbuilder federate init` only"
-        )),
+        (Some(_), _) => Err(goat_errors::coded(
+            "GB-239",
+            "--over-ssh and its host flags apply to `goatbuilder federate init` only",
+        )
+        .into()),
     }
 }
 
@@ -275,7 +277,8 @@ pub fn run_argv_to(argv: &[String], out: &mut dyn Write) -> Result<i32> {
     // The clap error stays in the chain, so `fault_exit` exits 2 for it, as
     // goat does for a command line it cannot parse.
     let line = VerbLine::try_parse_from(argv).map_err(|e| {
-        anyhow::Error::new(e).context(format!("goatbuilder federate {}", argv.join(" ")))
+        // GB-242: goatbuilder's code for a command line it cannot parse.
+        anyhow::Error::new(e).context(format!("goatbuilder federate {} (GB-242)", argv.join(" ")))
     })?;
     run_measured_to(line.cmd, &line.site, &line.measure, line.repo.as_deref(), out)
 }

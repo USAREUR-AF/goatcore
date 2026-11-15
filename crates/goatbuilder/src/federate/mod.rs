@@ -45,7 +45,7 @@ use std::path::Path;
 pub mod backout;
 pub mod rotation;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 
 use crate::config;
 
@@ -726,7 +726,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     measure::check_driver_measure()?;
     if let Some(env) = o.env {
         if !cfg.environments.iter().any(|e| e.name == env) {
-            return Err(anyhow!("unknown environment \"{env}\"; declared: {:?}", cfg.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>()));
+            return Err(goat_errors::coded("GB-241", format!("unknown environment \"{env}\"; declared: {:?}", cfg.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>())).into());
         }
     }
     // C1: an empty list declares nothing, so it refuses every name. It used to pass
@@ -938,7 +938,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         let mut edge_cmd: Option<String> = None;
         if let Some(e) = &s.edge {
             if let Some(dir) = e.result.parent() {
-                std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+                std::fs::create_dir_all(dir).map_err(|e| goat_errors::coded("GB-184", format!("cannot create the working folder {} for the edge result: {e}", dir.display())))?;
             }
             let _ = std::fs::remove_file(&e.result);
             match &ph.verb {
@@ -1119,7 +1119,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 // -e, like standup and join-node: a phase that is several statements
                 // stops at the first failure instead of running on past it.
                 let cmd = core_cmd.as_deref().or(edge_cmd.as_deref()).unwrap_or(&ph.cmd);
-                let status = runenv::command("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
+                let status = runenv::command("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 if status.success() { 0 } else { status.code().unwrap_or(1) }
             }
         };
@@ -1726,7 +1726,7 @@ mod tests {
         assert_eq!(guarded(|| panic!("a verb panicked")), 101);
         assert_eq!(guarded(|| Ok(23)), 23);
         assert_eq!(guarded(|| verbs::run_argv(&["lint".into(), "--no-such-flag".into()])), 2);
-        assert_eq!(guarded(|| Err(anyhow!("a fault"))), 1);
+        assert_eq!(guarded(|| Err(anyhow::anyhow!("a fault"))), 1);
     }
 
     /// Each of federate's fourteen phases has a purpose, for the runner's frame.

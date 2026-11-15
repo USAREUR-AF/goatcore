@@ -21,7 +21,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -236,7 +236,7 @@ pub fn accept(p: &mut Plan, checks: &[String]) -> Result<()> {
             .into());
         }
         let Some(row) = p.readiness.iter().find(|r| r.check == *c) else {
-            return Err(anyhow!("--accept {c}: the plan has no {c} row"));
+            return Err(goat_errors::coded("GB-325", format!("--accept {c}: the plan has no {c} row")).into());
         };
         if row.outcome != "SKIP" {
             return Err(goat_errors::coded(
@@ -613,7 +613,7 @@ pub fn agreement_facts(work: &str) -> Result<Option<AgreementFacts>> {
         return Ok(None);
     };
     let v: serde_json::Value = serde_json::from_slice(&bytes)
-        .with_context(|| format!("{} is not JSON", path.display()))?;
+        .map_err(|e| goat_errors::coded("GB-321", format!("{} is not JSON ({e})", path.display())))?;
     let s = |v: &serde_json::Value| v.as_str().unwrap_or_default().to_string();
     let flows = v["flows"]
         .as_array()
@@ -944,7 +944,7 @@ fn run_phase1(
         }
     }
     if let Some(dir) = result.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("mkdir {}", dir.display()))?;
+        std::fs::create_dir_all(dir).map_err(|e| goat_errors::coded("GB-184", format!("cannot create the working folder {}: {e}", dir.display())))?;
     }
     let script = repo.join("ops/federation/standup/preflight.py");
     let mut cmd = crate::federate::runenv::command("python3");
@@ -968,12 +968,15 @@ fn run_phase1(
     }
     let out = cmd
         .output()
-        .with_context(|| format!("python3 {}", script.display()))?;
-    let (written, _, _) = read_result(result).with_context(|| {
-        format!(
-            "phase 1 exited {}: {}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
+        .map_err(|e| goat_errors::coded("GB-320", format!("could not start python3 {}: {e}", script.display())))?;
+    let (written, _, _) = read_result(result).map_err(|e| {
+        goat_errors::coded(
+            "GB-321",
+            format!(
+                "phase 1 exited {}: {} ({e:#})",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
         )
     })?;
     anyhow::ensure!(
@@ -1018,9 +1021,9 @@ pub fn read_readiness(path: &Path) -> Result<(bool, Vec<Readiness>)> {
 /// a result written before sides), and its outcomes.
 fn read_result(path: &Path) -> Result<(bool, Option<String>, Vec<Readiness>)> {
     let text = std::fs::read_to_string(path)
-        .with_context(|| format!("no phase 1 result at {}", path.display()))?;
-    let doc: serde_json::Value =
-        serde_json::from_str(&text).with_context(|| format!("{} is not JSON", path.display()))?;
+        .map_err(|e| goat_errors::coded("GB-321", format!("no phase 1 result at {} ({e})", path.display())))?;
+    let doc: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| goat_errors::coded("GB-321", format!("{} is not JSON ({e})", path.display())))?;
     let s = |v: &serde_json::Value| v.as_str().unwrap_or_default().to_string();
     let ready = doc["ready"].as_bool() == Some(true);
     let side = doc["side"].as_str().map(String::from);
@@ -1395,12 +1398,13 @@ pub fn build(repo: &Path, o: &PlanOptions) -> Result<Plan> {
 /// place, so a reader never sees half a plan.
 pub fn write(p: &Plan) -> Result<PathBuf> {
     let path = Path::new(&p.work).join("plan.json");
-    std::fs::create_dir_all(&p.work).with_context(|| format!("mkdir {}", p.work))?;
+    let cannot = |what: String, e: std::io::Error| goat_errors::coded("GB-184", format!("cannot write the working folder: {what} ({e})"));
+    std::fs::create_dir_all(&p.work).map_err(|e| cannot(format!("create {}", p.work), e))?;
     let tmp = path.with_extension("json.tmp");
     let mut text = serde_json::to_string_pretty(p)?;
     text.push('\n');
-    std::fs::write(&tmp, text).with_context(|| format!("write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).with_context(|| format!("rename to {}", path.display()))?;
+    std::fs::write(&tmp, text).map_err(|e| cannot(format!("write {}", tmp.display()), e))?;
+    std::fs::rename(&tmp, &path).map_err(|e| cannot(format!("rename to {}", path.display()), e))?;
     Ok(path)
 }
 
@@ -1906,24 +1910,32 @@ pub fn plan_accepting(repo: &Path, o: &PlanOptions, accepting: &[String]) -> Res
 /// runs, on demand. Exit 0 only when a change may go ahead.
 pub fn recheck(repo: &Path, o: &PlanOptions) -> Result<Report> {
     if o.mock.is_some() {
-        return Err(anyhow!(
-            "--recheck reads the hosts, and --mock reads none: recheck without --mock"
-        ));
+        return Err(goat_errors::coded(
+            "GB-325",
+            "--recheck reads the hosts, and --mock reads none: recheck without --mock",
+        )
+        .into());
     }
     if !o.live {
-        return Err(anyhow!(
-            "--recheck reruns the live checks; --no-live would skip exactly those"
-        ));
+        return Err(goat_errors::coded(
+            "GB-325",
+            "--recheck reruns the live checks; --no-live would skip exactly those",
+        )
+        .into());
     }
     let path = Path::new(&work_of(o)).join("plan.json");
     let saved = read(&path)?;
     let differs = |given: Option<&str>, planned: Option<&str>| given.is_some() && given != planned;
     if differs(o.edge_group, Some(&saved.edge_group)) || differs(o.r#as, saved.us.as_deref()) {
-        return Err(anyhow!(
-            "--edge-group or --as differs from the saved plan's ({}, {}): make a new plan with them",
-            saved.edge_group,
-            saved.us.as_deref().unwrap_or("not given")
-        ));
+        return Err(goat_errors::coded(
+            "GB-200",
+            format!(
+                "--edge-group or --as differs from the saved plan's ({}, {}): make a new plan with them",
+                saved.edge_group,
+                saved.us.as_deref().unwrap_or("not given")
+            ),
+        )
+        .into());
     }
     let r = recheck_live_prerequisites(repo, &path, o.with)?;
     let mut checks = vec![row(
@@ -2045,7 +2057,7 @@ pub fn run(repo: &Path, stage: &Stage, mock: Option<&Path>) -> Result<Report> {
     match stage {
         // main.rs runs the verbs before it reads a repository.
         Stage::Verb(_) | Stage::Backout(_) | Stage::Rotate(_) => {
-            Err(anyhow!("the federation verbs, backout and rotate are run before this point"))
+            Err(goat_errors::coded("GB-322", "the federation verbs, backout and rotate are run before this point").into())
         }
         Stage::Import(a) => {
             let work = a.work.clone().unwrap_or_else(|| super::env_or("FED_WORK", format!("/var/lib/goat-federation/{}", a.with)));
@@ -2072,7 +2084,7 @@ pub fn run(repo: &Path, stage: &Stage, mock: Option<&Path>) -> Result<Report> {
             };
             if *again {
                 if !accepting.is_empty() {
-                    return Err(anyhow!("--accept records into a new plan; --recheck reads the saved one: run them apart"));
+                    return Err(goat_errors::coded("GB-325", "--accept records into a new plan; --recheck reads the saved one: run them apart").into());
                 }
                 recheck(repo, &o)
             } else {

@@ -1132,10 +1132,14 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
     let mut others: Vec<String> = Vec::new();
     if let Some(name) = only {
         let Some(named) = super::declaration::peering(&full, name, o.env)? else {
-            return Err(anyhow::anyhow!(
-                "peering '{name}' is not declared in {} peerings: (C1); `goatbuilder federate allocate <peering>` allocates one declared peering",
-                cfg_path.display()
-            ));
+            return Err(goat_errors::coded(
+                "GB-149",
+                format!(
+                    "peering '{name}' is not declared in {} peerings: (C1); `goatbuilder federate allocate <peering>` allocates one declared peering",
+                    cfg_path.display()
+                ),
+            )
+            .into());
         };
         let named_key = format!("{}/{}", named.environment, named.with);
         let recorded = |p: &config::Peering| {

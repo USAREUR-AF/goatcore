@@ -842,7 +842,7 @@ pub fn write_edge_half(
     });
     let text = serde_json::to_string_pretty(&v)? + "\n";
     std::fs::write(path, &text)
-        .map_err(|e| anyhow::anyhow!("could not write the edge half to {}: {e}", path.display()))?;
+        .map_err(|e| goat_errors::coded("GB-323", format!("could not write the edge half to {}: {e}", path.display())))?;
     Ok(sha256_hex(text.as_bytes()))
 }
 
@@ -1010,9 +1010,9 @@ fn declared_interface(
         .clone()
         .unwrap_or_else(|| site.declaration_path());
     let text = std::fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("could not read the declaration {}: {e}", path.display()))?;
-    let doc: toml::Value =
-        toml::from_str(&text).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+        .map_err(|e| goat_errors::coded("GB-144", format!("could not read the declaration {}: {e}", path.display())))?;
+    let doc: toml::Value = toml::from_str(&text)
+        .map_err(|e| goat_errors::coded("GB-144", format!("the declaration {} is not TOML: {e}", path.display())))?;
     Ok(doc
         .get("transport")
         .and_then(|t| t.get("interface"))
@@ -1097,12 +1097,14 @@ impl MeasureArgs {
             if self.is_empty() {
                 return Ok(None);
             }
-            return Err(anyhow::anyhow!(
+            return Err(goat_errors::coded(
+                "GB-239",
                 "--ssh-edge-group, --ssh-core-group, --edge-host, --core-host, \
                  --router-container, --side, --half-out and --edge-half choose what \
                  `init --over-ssh <peering>` measures; \
-                 without --over-ssh, init measures this machine"
-            ));
+                 without --over-ssh, init measures this machine",
+            )
+            .into());
         };
         let plain = |v: &str| {
             !v.is_empty()
@@ -1136,12 +1138,16 @@ impl MeasureArgs {
             | (Some("edge"), Some(_), None, None)
             | (Some("core"), None, Some(_), Some(_)) => {}
             _ => {
-                return Err(anyhow::anyhow!(concat!(
-                    "--side edge takes --half-out <file> (where the edge half is written), and ",
-                    "--side core takes --edge-half <file> (the edge half to join) with ",
-                    "--edge-half-sha256 <digest> (the digest the edge driver printed, confirmed); ",
-                    "none of them is read or written without its side"
-                )))
+                return Err(goat_errors::coded(
+                    "GB-325",
+                    concat!(
+                        "--side edge takes --half-out <file> (where the edge half is written), and ",
+                        "--side core takes --edge-half <file> (the edge half to join) with ",
+                        "--edge-half-sha256 <digest> (the digest the edge driver printed, confirmed); ",
+                        "none of them is read or written without its side"
+                    ),
+                )
+                .into())
             }
         }
         Ok(Some(p))
@@ -1177,7 +1183,7 @@ pub fn run_init(
 ) -> Result<i32> {
     let peering = m
         .peering()?
-        .ok_or_else(|| anyhow::anyhow!("run_init over SSH without --over-ssh"))?;
+        .ok_or_else(|| goat_errors::coded("GB-322", "run_init over SSH without --over-ssh"))?;
     let (edge_group, core_group) = m.groups(peering);
     match m.side.as_deref() {
         None => {
@@ -1290,9 +1296,11 @@ pub fn driver_measures_over_ssh() -> bool {
 pub fn check_driver_measure() -> Result<()> {
     match crate::federate::runenv::var("FED_MEASURE").ok().as_deref() {
         None | Some("") | Some("here") | Some("ssh") => Ok(()),
-        Some(other) => Err(anyhow::anyhow!(
-            "FED_MEASURE is here or ssh, not '{other}'"
-        )),
+        Some(other) => Err(goat_errors::coded(
+            "GB-324",
+            format!("FED_MEASURE is here or ssh, not '{other}'"),
+        )
+        .into()),
     }
 }
 
