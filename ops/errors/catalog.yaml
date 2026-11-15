@@ -3790,6 +3790,21 @@ entries:
     read: docs/operations/goatnet-standup.md
     exit: 1
 
+  - code: GB-336
+    tool: goatbuilder
+    title: "--over-ssh's host flags are given where they do not belong"
+    what: "--over-ssh and its host flags belong to `goatbuilder federate init`, which measures our half of phase 3 on the edge and core hosts over SSH. Given to `goatbuilder federate plan`, or to a peering run (`goatbuilder federate <partner>`), they would be ignored, so the command refuses. A peering run measures phase 3 over SSH by itself, with FED_MEASURE=ssh (the default). Nothing ran."
+    causes:
+      - "the flags were given to `federate plan` or to a peering run, which read the deployment's own declarations"
+      - "the flags were meant for init, and were typed before the word init"
+    fixes:
+      - "goatbuilder federate init --over-ssh <partner> --side edge --half-out <file>   (init first, then its flags)"
+      - "drop the flags from a peering run or a plan"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^--over-ssh and its host flags apply to `goatbuilder federate init`"
+    exit: 2
+
   - code: GB-278
     tool: goatbuilder
     title: the edge driver's checkout or carried files are not the controller's

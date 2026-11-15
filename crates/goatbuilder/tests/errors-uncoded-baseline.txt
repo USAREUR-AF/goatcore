@@ -10,6 +10,3 @@ src/config.rs :: anyhow :: the grown configuration does not validate:\n {}{ask}
 # Kept uncoded, with exit 2, until GB-149's exit is decided (its own issue): the
 # contract gives exit 2 to a command line naming an undeclared peering; GB-149 exits 1.
 src/federate/peering_files.rs :: anyhow :: peering '{name}' is not declared in {} peerings: (C1); `goatbuilder federate allocate <peering>` allocates one declared peering
-src/main.rs :: anyhow :: --context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run
-src/main.rs :: anyhow :: --context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to goatbuilder federate plan
-src/main.rs :: anyhow :: --over-ssh and its host flags apply to `goatbuilder federate init`, not to goatbuilder federate plan

@@ -106,6 +106,14 @@ usage: the command line was wrong). Each change is from the last release:
 `federate allocate <peering>` naming an undeclared peering is not coded yet and
 still exits 2. Every other exit is unchanged.
 
+#### Fixed: a flag given to `federate plan` or a peering run that does not belong there carries its code
+
+The six verbs' site flags (`--context-dir`, `--cert`, `--ca-roots`,
+`--context`, `--profile-dir`) given to `goatbuilder federate plan` or to a
+peering run are refused with GB-238, the code that already names them.
+`init`'s `--over-ssh` and its host flags given there are refused with the
+new code GB-336. Both still exit 2.
+
 <!-- END generated: changelog unreleased -->
 
 ## 0.7.1 — 2026-11-15

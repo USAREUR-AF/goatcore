@@ -1667,9 +1667,9 @@ fn main() {
         }
         Cmd::Federate { verb: Some(stage), site, measure, .. } => {
             if !site.is_empty() {
-                Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to goatbuilder federate plan"))
+                Err(goat_errors::coded("GB-238", "--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to goatbuilder federate plan").into())
             } else if !measure.is_empty() {
-                Err(anyhow::anyhow!("--over-ssh and its host flags apply to `goatbuilder federate init`, not to goatbuilder federate plan"))
+                Err(goat_errors::coded("GB-336", "--over-ssh and its host flags apply to `goatbuilder federate init`, not to goatbuilder federate plan").into())
             } else {
                 federate::plan::run(&repo, stage, cli.mock.as_deref())
             }
@@ -1731,9 +1731,9 @@ fn main() {
                 // `federate --context-dir D init`: clap read the verb as a partner.
                 Err(goat_errors::coded("GB-238", format!("put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate {with} --context-dir <dir> ...")).into())
             } else if !site.is_empty() {
-                Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run"))
+                Err(goat_errors::coded("GB-238", "--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run").into())
             } else if !measure.is_empty() {
-                Err(anyhow::anyhow!("--over-ssh and its host flags apply to `goatbuilder federate init`; a peering run measures phase 3 over SSH with FED_MEASURE=ssh (for init, put the flags after the word init)"))
+                Err(goat_errors::coded("GB-336", "--over-ssh and its host flags apply to `goatbuilder federate init`; a peering run measures phase 3 over SSH with FED_MEASURE=ssh (for init, put the flags after the word init)").into())
             } else if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "federate is a mutation: pass --yes without a terminal (C10)").into())
             } else {

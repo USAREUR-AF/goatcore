@@ -1034,6 +1034,10 @@ gb-334-cause-1 = the leg's own error, in its log (obs_scrape_targets unset is th
 gb-335-title = a teardown failed
 gb-335-what = goatbuilder teardown stops a site's services in reverse order, and one stop exited non-zero. The row names the component and the exit code. The services before it are down; nothing after it ran.
 gb-335-cause-1 = the stop's own error, printed above the row (a compose project or unit that did not stop, a host that did not answer)
+gb-336-title = --over-ssh's host flags are given where they do not belong
+gb-336-what = --over-ssh and its host flags belong to `goatbuilder federate init`, which measures our half of phase 3 on the edge and core hosts over SSH. Given to `goatbuilder federate plan`, or to a peering run (`goatbuilder federate <partner>`), they would be ignored, so the command refuses. A peering run measures phase 3 over SSH by itself, with FED_MEASURE=ssh (the default). Nothing ran.
+gb-336-cause-1 = the flags were given to `federate plan` or to a peering run, which read the deployment's own declarations
+gb-336-cause-2 = the flags were meant for init, and were typed before the word init
 gb-278-title = the edge driver's checkout or carried files are not the controller's
 gb-278-what = On a two-driver peering (drivers: two), the edge driver runs a phase's edge half with the command the controller's hand-off names: `goatbuilder federate <peering> --side edge --from <N> --to <N> --expect-commit <commit>`, with one `--expect <file>=<sha256>` per file the controller carried. The edge driver refused to run: --expect-commit was not given; its checkout is not a git checkout, has no commit, has changes, or is at another commit than the one named; or a carried file is not under its <work> or in its checkout, or has another sha256. Nothing ran on the edge.
 gb-278-cause-1 = the edge driver's checkout was not updated to the controller's commit, or has local changes
