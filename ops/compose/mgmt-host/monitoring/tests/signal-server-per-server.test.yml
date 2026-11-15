@@ -1,0 +1,97 @@
+# promtool unit test: the signal-server alerts are per server.
+#
+# Run by .github/workflows/goat-obs-checks.yml; locally with
+#   promtool test rules ops/compose/mgmt-host/monitoring/tests/signal-server-per-server.test.yml
+#
+# The mgmt host's Prometheus scrapes two signal servers: its own (job
+# signal-server, role local) and its peer site's (job signal-server-peer, role
+# peer), prometheus.yml. Neither series carries `site` (it is an external label
+# only), so grouping by site summed both scraped signal servers into one
+# series: a rate under the threshold at each server could alert as their sum,
+# and the alert could not say which server. Each case gives the two servers'
+# series; the alerts group by (job, instance, node) and name the server.
+rule_files:
+  - ../rules/signal-server.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Relay misses at 0.6/s at each of the two scraped servers: each is under the
+  # 1/s threshold; only their sum crosses it. No alert.
+  - interval: 1m
+    input_series:
+      - series: 'signal_server_relay_total{job="signal-server",instance="signal-a",node="signal-zagros-a",role="local",outcome="notfound",path="send"}'
+        values: '0 36 72 108 144 180 216 252 288 324 360 396 432 468 504 540 576 612 648 684'
+      - series: 'signal_server_relay_total{job="signal-server-peer",instance="signal-peer",node="signal-zagros-b",role="peer",outcome="notfound",path="send"}'
+        values: '0 36 72 108 144 180 216 252 288 324 360 396 432 468 504 540 576 612 648 684'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SignalServerRelayMissSpike
+        exp_alerts: []
+
+  # A spike at the peer's server only (1.5/s): it fires for that server, named.
+  - interval: 1m
+    input_series:
+      - series: 'signal_server_relay_total{job="signal-server",instance="signal-a",node="signal-zagros-a",role="local",outcome="notfound",path="send"}'
+        values: '0 6 12 18 24 30 36 42 48 54 60 66 72 78 84 90 96 102 108 114'
+      - series: 'signal_server_relay_total{job="signal-server-peer",instance="signal-peer",node="signal-zagros-b",role="peer",outcome="notfound",path="send"}'
+        values: '0 90 180 270 360 450 540 630 720 810 900 990 1080 1170 1260 1350 1440 1530 1620 1710'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SignalServerRelayMissSpike
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: signal-server
+              job: signal-server-peer
+              instance: signal-peer
+              node: signal-zagros-b
+            exp_annotations:
+              summary: "signal-server signal-zagros-b (signal-peer) seeing >60 notfound relays/min for 5m"
+              description: "Likely cause: federation partners unreachable (so Broadcast returns false for every peer not locally registered). Check federation peer health first, then look for a dropped site."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/signal-server-runbook.md"
+
+  # Outbound-full at 0.3/s at each server: only the sum crosses 0.5/s. No alert.
+  - interval: 1m
+    input_series:
+      - series: 'signal_server_relay_total{job="signal-server",instance="signal-a",node="signal-zagros-a",role="local",outcome="outbound_full",path="send"}'
+        values: '0 18 36 54 72 90 108 126 144 162 180 198 216 234 252 270 288 306 324 342 360 378 396 414 432'
+      - series: 'signal_server_relay_total{job="signal-server-peer",instance="signal-peer",node="signal-zagros-b",role="peer",outcome="outbound_full",path="send"}'
+        values: '0 18 36 54 72 90 108 126 144 162 180 198 216 234 252 270 288 306 324 342 360 378 396 414 432'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SignalServerOutboundFull
+        exp_alerts: []
+
+  # Forward-RPC errors to the same peer at 0.06/s from each server: only the sum
+  # crosses 0.1/s. No alert. At 0.2/s from the local server alone, it fires
+  # for that server and that peer.
+  - interval: 1m
+    input_series:
+      - series: 'signal_server_forward_sent_total{job="signal-server",instance="signal-a",node="signal-zagros-a",role="local",outcome="rpc_error",peer="relay-x"}'
+        values: '0 3 7 10 14 18 21 25 28 32 36 39 43 46 50 54 57 61 64 68'
+      - series: 'signal_server_forward_sent_total{job="signal-server-peer",instance="signal-peer",node="signal-zagros-b",role="peer",outcome="rpc_error",peer="relay-x"}'
+        values: '0 3 7 10 14 18 21 25 28 32 36 39 43 46 50 54 57 61 64 68'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SignalServerForwardRPCErrors
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'signal_server_forward_sent_total{job="signal-server",instance="signal-a",node="signal-zagros-a",role="local",outcome="rpc_error",peer="relay-x"}'
+        values: '0 12 24 36 48 60 72 84 96 108 120 132 144 156 168 180 192 204 216 228'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SignalServerForwardRPCErrors
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: signal-server
+              job: signal-server
+              instance: signal-a
+              node: signal-zagros-a
+              peer: relay-x
+            exp_annotations:
+              summary: "signal-server signal-zagros-a (signal-a) getting forward-RPC errors to peer relay-x"
+              description: "Sustained >6/min rpc_error outcomes forwarding to relay-x. Cross-site peer connectivity via that peer is broken — verify peer signal-server reachability over WireGuard mesh, gRPC TLS cert validity, and federation_peers flag value."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/signal-server-runbook.md"

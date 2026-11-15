@@ -321,7 +321,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 - [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
 - [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
 - [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
-- [`goatbuilder federate rotate`](#goatbuilder-federate-rotate) — Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14) or `rotate <partner> carrier` (phases 2 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
+- [`goatbuilder federate rotate`](#goatbuilder-federate-rotate) — Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14), `rotate <partner> carrier` (phases 2 to 14), or on an ipsec-fips peering `rotate <partner> ipsec-leaf\|ipsec-ca` (phases 11 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
 - [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phases 1 and 3; another phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
 
 ## `goatbuilder federate init`
@@ -511,19 +511,21 @@ Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federa
 
 ## `goatbuilder federate rotate`
 
-Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14) or `rotate <partner> carrier` (phases 2 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
+Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14), `rotate <partner> carrier` (phases 2 to 14), or on an ipsec-fips peering `rotate <partner> ipsec-leaf|ipsec-ca` (phases 11 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
 
 **Arguments**
 
 | Argument | Description |
 |---|---|
 | `<PARTNER>` | The partner whose peering's key is replaced (the peering name, as declared) |
-| `<KEY>` | The key: leaves, carrier, transport, signing or ca. This build rotates leaves and carrier |
+| `<KEY>` | The key: leaves, carrier, ipsec-leaf, ipsec-ca, transport, signing or ca. This build rotates leaves, carrier, ipsec-leaf and ipsec-ca |
 
 **Options**
 
 | Flag | Description | Default |
 |---|---|---|
+| `--partner-holds-ipsec-ca <PARTNER_HOLDS_IPSEC_CA>` | ipsec-ca only: the partner's attestation that it placed our new IPsec CA beside its current one: the sha256 fingerprint it read back from the file it placed. goatbuilder checks the fingerprint is our staged CA's; it cannot check the partner's edge |  |
+| `--retire <RETIRE>` | ipsec-leaf or ipsec-ca: run the retire step of this rotation id, which removes the set-aside key. Only once phase 14 passed here after the switch (check the partner's on the call), and only while no other rotation is under way |  |
 | `--env <ENV>` | The environment the peering is declared on |  |
 | `--as <AS_PARTY>` | Which party we are |  |
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |

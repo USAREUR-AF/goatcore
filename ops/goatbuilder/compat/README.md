@@ -24,7 +24,7 @@ crate, the schema, the catalog or this directory.
 
 ## The last release
 
-`baseline.yaml` names it: `goatbuilder/v0.7.0`, commit `9a35afb5`, with the
+`baseline.yaml` names it: `goatbuilder/v0.7.1`, commit `56d0f650`, with the
 SHA-256 of the released `goatbuilder-linux-amd64` binary the baseline was
 recorded from and of the `SHA256SUMS` that listed it. That binary's SHA-256 must
 also be its line in `crates/goatbuilder/tests/upgrade/releases.sha256`, the one
@@ -118,7 +118,7 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
   `documents/manifest.yaml` in the same pull request and give the reason in
   `exit_changed:`. `release_exit` keeps what the release did, and `check`
   refuses an `exit` that differs from it without a reason. The next refresh
-  records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.7.0's exit 2 for this purpose.
+  records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.7.1's exit 2 for this purpose.
   From a 1.0 baseline (`baseline.yaml` names `goatbuilder/v1.0.0` or later),
   `check` refuses `exit_changed:` on any kept invocation, with or without a
   changed `exit`: a kept exit code changes only in a major release (ADR 1228).

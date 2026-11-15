@@ -130,6 +130,11 @@ unit_main() {
   FE2E_CORE=role; export FE2E_CORE
   local n=5 rc=0
   set_partners "$A" "$B $C"; set_partners "$B" "$A"; set_partners "$C" "$A"; export NODIR="" PERCP=""
+  # {A} declares its peering with {C} only when it starts (declare_later), as a deployment
+  # adds a second peering: declared from the start, it would have no agreement while {A}-{B}
+  # is admitted (host-allocation reads SKIP, GB-188), or its tunnel would already be on the
+  # shared edge when {A}-{B}'s phase 11 loads the host firewall baseline (GB-210).
+  printf -v "FE2E_LATER_$A" '%s' "$C"; export "FE2E_LATER_$A"
   export_helpers
   say "scenario $n: ${A} federates with ${B} and with ${C} on one edge host and one core host, both by goatbuilder"
   setup_hosts "$n"
@@ -138,13 +143,9 @@ unit_main() {
   printf '%s\n' "# $A's core router site (the goat-zenoh role's mandatory site_id)." "site_id: $A" > "$WORK/$A/core-site.yml"
   core_declare "$A" ops/ansible/group_vars/core_router/site.yml "$WORK/$A/core-site.yml" "$A: the core router's site"
   bo1_rest_relay
-  # Both peerings reach their agreements before either is admitted: {A}'s admission through
-  # goatbuilder checks every peering declared on the edge and core it shares, and one with no
-  # agreement yet cannot be compared (host-allocation SKIP), which deploy refuses (GB-188).
-  peer_agree "$n" "$A" "$B" goatbuilder
-  peer_agree "$n" "$A" "$C" goatbuilder
-  peer_finish "$n" "$A" "$B" goatbuilder
-  peer_finish "$n" "$A" "$C" goatbuilder
+  peer_up "$n" "$A" "$B" goatbuilder
+  declare_later "$A" "$C"
+  peer_up "$n" "$A" "$C" goatbuilder
   accept_pair "$n" "$A" "$B" goatbuilder "-before-backout"
   accept_pair "$n" "$A" "$C" goatbuilder "-before-backout"
 

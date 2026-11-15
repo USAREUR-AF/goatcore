@@ -111,7 +111,7 @@ scenarios:
       With no responder, probe or other subscriber running on either side, a fresh value
       released on each side is stored by the receiving core's own configured store; and after
       the receiving core's router restarts, with the edge router left running, a fresh value
-      is stored again (the core's interest reaches the edge without an edge restart). After
+      is stored again (the core's interest reaches the edge without an edge restart). Then each receiving edge router restarts, with its core left running, and a fresh value is stored again the same way (released every 2 s, for up to 90 s); the core is not restarted. After
       the restart a fresh value, each with a nonce never used before, is released every 2 s
       for 60 s; the first one stored passes, and the run records how many were lost before it
       and how many seconds after the core answered it was stored. Values released while the
@@ -126,6 +126,10 @@ scenarios:
       - {id: second-to-first-after-core-restart, step: "s{n}-{S}-to-{F}-stored-after-the-receiving-core-restarts"}
       - {id: second-edge-not-restarted, step: "s{n}-{S}-edge-was-not-restarted"}
       - {id: first-edge-not-restarted, step: "s{n}-{F}-edge-was-not-restarted"}
+      - {id: first-to-second-after-edge-restart, step: "s{n}-{F}-to-{S}-stored-after-the-receiving-edge-restarts"}
+      - {id: second-to-first-after-edge-restart, step: "s{n}-{S}-to-{F}-stored-after-the-receiving-edge-restarts"}
+      - {id: second-core-not-restarted, step: "s{n}-{S}-core-was-not-restarted"}
+      - {id: first-core-not-restarted, step: "s{n}-{F}-core-was-not-restarted"}
 
   - id: republisher-boundary
     title: A set that was not offered does not cross the republisher
@@ -858,14 +862,6 @@ scenarios:
     title: Backing a peering out leaves both hosts as they were before it (gate B7)
     unit: {goatbuilder: backout}
     runs_where: local
-    known_failure: >
-      The edge check: with the host firewall baseline on (lib/hostfw.sh), phase 11 loads
-      goat-host-firewall on the edge and stores the peering's entry there, and the back-out
-      leaves both: the edge's snapshot after it adds `table inet goat_host_firewall` and
-      `goat-host-firewall.service`. docs/design/peering-host-firewall.md, "Several peerings on
-      one edge": taking a peering out has to remove its stored entry as well, or its rules
-      stay, and that is not built. Until it is, the edge check is recorded and does not decide
-      the scenario; the core check still does.
     pass_condition: >
       nothing-hand-written runs {A}'s peering with {B} to acceptance; then `goatbuilder
       federate backout {B}` on {A} exits 0, and {A}'s edge host and core host are each equal to
@@ -876,7 +872,7 @@ scenarios:
     checks:
       - {id: peering-accepted, step: "nh-acceptance-as-{A}-with-{B}"}
       - {id: backout-ran, step: "bo-{A}-{B}-backout-ran"}
-      - {id: edge-as-before, step: "bo-{A}-edge-as-before", required: false}
+      - {id: edge-as-before, step: "bo-{A}-edge-as-before"}
       - {id: core-as-before, step: "bo-{A}-core-as-before"}
 
   - id: rollback-tools

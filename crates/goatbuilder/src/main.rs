@@ -1662,7 +1662,7 @@ fn main() {
             } else if !cli.yes && !r.dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "federate rotate is a mutation: pass --yes without a terminal (C10)").into())
             } else {
-                federate::rotation::rotate(&repo, &r.options(cli.mock.as_deref(), matches!(cli.output, OutputFormat::Table)), &r.key)
+                federate::rotation::rotate(&repo, &r.options(cli.mock.as_deref(), matches!(cli.output, OutputFormat::Table)), &r.key, r.partner_holds_ipsec_ca.as_deref(), r.retire.as_deref())
             }
         }
         Cmd::Federate { verb: Some(stage), site, measure, .. } => {

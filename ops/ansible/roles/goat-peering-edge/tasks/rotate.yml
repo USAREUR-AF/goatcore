@@ -1,0 +1,42 @@
+---
+# Credential rotation of this peering's IPsec leaf (K6,
+# docs/design/federation-key-rotation.md §8). Runs only with a rotation id in
+# peering_edge_rotation. The role still writes no secret: the offline ceremony
+# issued the new material and an operator staged it beside the live files
+# (peering_edge_cert_next_path, peering_edge_key_next_path, and for an ipsec-ca
+# rotation peering_edge_local_ca_next_path).
+#
+# Steps, each redone only when its effect is missing, so a killed run finishes:
+#   1. check what is staged (GB-289 missing, GB-290 wrong), before anything moves;
+#   2. set the live pair aside in .previous-<id>/ (0700), once per id;
+#   3. switch: move the staged pair over the live names;
+#   4. load the credentials and re-authenticate the IKE SA (a rekey without
+#      --reauth keeps the old authentication, so the new leaf would not be shown);
+#   5. confirm an established IKE SA with an installed CHILD SA, or put the old
+#      pair back and stop (GB-302).
+# The set-aside directory is the edge's marker: staged files gone and the
+# directory present means the switch already happened, unless it holds
+# `rolled-back`, which a GB-302 rollback writes: such a rotation is reported
+# rolled back on every later run, never done.
+#
+# The retire step (peering_edge_rotation_retire) is rotate-retire.yml and never
+# runs the switch; the switch is rotate-switch.yml.
+
+- name: peering-edge | rotation | the rotation id is a plain word and the kind is known
+  ansible.builtin.assert:
+    that:
+      - peering_edge_rotation is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+      - peering_edge_rotation_kind in ['leaf', 'ca']
+    fail_msg: >-
+      peering_edge_rotation '{{ peering_edge_rotation }}' is not a rotation id (letters,
+      digits, '-' and '_'), or peering_edge_rotation_kind '{{ peering_edge_rotation_kind }}'
+      is not leaf or ca. Nothing was moved.
+    quiet: true
+
+- name: peering-edge | rotation | retire the set-aside key
+  ansible.builtin.include_tasks: rotate-retire.yml
+  when: peering_edge_rotation_retire | bool
+
+- name: peering-edge | rotation | switch to the staged pair
+  ansible.builtin.include_tasks: rotate-switch.yml
+  when: not (peering_edge_rotation_retire | bool)

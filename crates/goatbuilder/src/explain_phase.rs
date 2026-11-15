@@ -401,14 +401,15 @@ pub fn interpreted(verb: &str, key: &str, log: Option<&str>) -> Option<crate::Ch
 
 impl FailedPhase {
     /// The row's text, after the phase's own failure line: what the output
-    /// says went wrong, what to do, where the output is, and how to run this
-    /// phase again by hand.
+    /// says went wrong, where the output is, and how to run this phase again
+    /// by hand. What to do is the row's `fix`, printed on its own line, so it
+    /// is not in this text too.
     pub fn detail(&self) -> String {
         let mut s = match (&self.code, &self.title) {
-            (Some(c), Some(t)) => format!("{c}: {t}. Likely: {}. Fix: {}", self.cause, self.fix),
+            (Some(c), Some(t)) => format!("{c}: {t}. Likely: {}", self.cause),
             _ => format!(
-                "No known error in its output. This phase fails when {}; then {}",
-                self.cause, self.fix
+                "No known error in its output. This phase fails when {}",
+                self.cause
             ),
         };
         if let Some(l) = &self.log {
@@ -669,6 +670,27 @@ mod tests {
         let now = "fatal: [edge-1]: FAILED! => {\n    \"assertion\": \"_pw_peer_key in _pw_peers.stdout\",\n    \"changed\": false,\n    \"evaluated_to\": false,\n    \"msg\": \"The interface does not hold what the agreement says: peer SyntheticKeyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=, allowed 169.254.77.1/32, address 169.254.77.0/31. Its peers (public key, allowed addresses): []; its addresses: []\"\n}\n";
         let f = failed_phase("federate", "11", now, None).unwrap();
         assert_eq!(f.code.as_deref(), Some("GB-271"), "{f:?}");
+    }
+
+    /// Phase 14 that ends INCOMPLETE (X-ACCEPT-001) inside `goatbuilder
+    /// federate`: its fix names the command that resumes it, not the scripts
+    /// avenue, and the row prints that fix once, in its own field.
+    #[test]
+    fn an_incomplete_acceptance_names_the_command_and_prints_its_fix_once() {
+        let out = "  BLOCKED  their nonce, acknowledged by our responder: no counterparty surface (FED_THEIRS_REST)\n  ACCEPTANCE FAILED — 2 passed, 1 SKIPPED, 14 BLOCKED. A check that did not run is not a pass; see the lines above for why.\n";
+        let f = failed_phase("federate", "14", out, None).unwrap();
+        assert_eq!(f.code.as_deref(), Some("X-ACCEPT-001"), "{f:?}");
+        assert!(
+            f.fix.contains("goatbuilder federate <peering> --from 14"),
+            "{f:?}"
+        );
+        assert!(!f.fix.contains("peering-standup.sh"), "{f:?}");
+        let d = f.detail();
+        assert!(!d.contains("Fix:"), "{d}");
+        assert!(!d.contains(&f.fix), "{d}");
+        // With no known error, the phase's own guidance is the fix, once.
+        let f = failed_phase("federate", "12", "something odd happened\nexit 2\n", None).unwrap();
+        assert!(!f.detail().contains(&f.fix), "{}", f.detail());
     }
 
     /// Output that names no known error gets the phase catalog's own guidance,
