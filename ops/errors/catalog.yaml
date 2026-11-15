@@ -3734,6 +3734,62 @@ entries:
     matches:
       - "^GB-326: "
 
+  - code: GB-331
+    tool: goatbuilder
+    title: a standup phase failed
+    what: "A phase of goatbuilder standup exited non-zero. The row prints the phase, its label and its exit code; the run stopped there, and no later phase ran. The site is left partway through that phase."
+    causes:
+      - "the phase's own error, printed above the row (a play's failed task, a refused gate, a host that did not answer); the interpreted row under it names a catalog code when the output carries one"
+    fixes:
+      - "fix the cause, then resume: goatbuilder standup <environment> --site <site> --from <phase>   (every phase is idempotent)"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-332
+    tool: goatbuilder
+    title: a join-node phase failed
+    what: "A phase of goatbuilder join-node exited non-zero. The row prints the phase, its label and its exit code; the run stopped there, and no later phase ran. The node is left partway through that phase."
+    causes:
+      - "the phase's own error, printed above the row (a play's failed task, a node that refused our key, a refused gate); the interpreted row under it names a catalog code when the output carries one"
+    fixes:
+      - "fix the cause, then resume: goatbuilder join-node <environment> --site <site> --node <node> --from <phase>   (--dry-run prints the phase's command and the gate that proves it)"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-333
+    tool: goatbuilder
+    title: an image pull failed
+    what: "goatbuilder standup pulls the pinned images beside phases 3 and 4, and the pull exited non-zero. The row prints its exit code and its log, which names each image that could not be pulled. The phase that first runs those images, and every phase after it, did not run."
+    causes:
+      - "a private package and no GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it)"
+      - "a pin that names an image the registry no longer has"
+    fixes:
+      - "set GHCR_READ_TOKEN, or pin an image the registry has in ops/pins/, then resume from the phase the row names"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-334
+    tool: goatbuilder
+    title: an observability leg failed
+    what: "A site that declares has_obs_host: true stands up its observability host in a leg beside the core phases, and that leg exited non-zero. The row prints the leg, its exit code and its log. The core phases before the one that needs the leg have run; that phase and the later ones did not."
+    causes:
+      - "the leg's own error, in its log (obs_scrape_targets unset is the usual one for the stack leg)"
+    fixes:
+      - "fix the cause, then: goatbuilder standup <environment> --site <site> --obs-only, and resume from the phase the row names"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-335
+    tool: goatbuilder
+    title: a teardown failed
+    what: "goatbuilder teardown stops a site's services in reverse order, and one stop exited non-zero. The row names the component and the exit code. The services before it are down; nothing after it ran."
+    causes:
+      - "the stop's own error, printed above the row (a compose project or unit that did not stop, a host that did not answer)"
+    fixes:
+      - "fix the cause, then run the teardown again: goatbuilder teardown <environment> --site <site> --services   (every stop is idempotent)"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
   - code: GB-278
     tool: goatbuilder
     title: the edge driver's checkout or carried files are not the controller's

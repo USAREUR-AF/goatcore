@@ -1283,7 +1283,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Image pull FAILED — exit {rc} (full log: {log}). Phase {at} and every later phase run these images, so the run stops here; the log names each image that could not be pulled."), fix: Some(format!("a private package needs GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it); a pin naming an image the registry no longer has needs a new pin in ops/pins/. Then resume: {resume} --from {at}{prof}")) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Image pull FAILED — exit {rc} (GB-333; full log: {log}). Phase {at} and every later phase run these images, so the run stops here; the log names each image that could not be pulled."), fix: Some(format!("a private package needs GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it); a pin naming an image the registry no longer has needs a new pin in ops/pins/. Then resume: {resume} --from {at}{prof}")) });
                     checks.extend(interpreted("image-pull", Some(&log)));
                     exit = EXIT_REFUSED;
                     break 'run;
@@ -1303,7 +1303,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Observability leg \"{leg}\" FAILED — exit {rc} (full log: {log}). The core phases up to {at} have run; phase {at} needs this leg, so the run stops here."), fix: Some(format!("fix the cause (the log names it; obs_scrape_targets unset is the usual one for the stack leg), then: {resume} --obs-only && {resume} --from {at}")) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Observability leg \"{leg}\" FAILED — exit {rc} (GB-334; full log: {log}). The core phases up to {at} have run; phase {at} needs this leg, so the run stops here."), fix: Some(format!("fix the cause (the log names it; obs_scrape_targets unset is the usual one for the stack leg), then: {resume} --obs-only && {resume} --from {at}")) });
                     checks.extend(interpreted(&format!("observability-leg-{leg}"), Some(&log)));
                     exit = EXIT_REFUSED;
                     break 'run;
@@ -1351,7 +1351,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the site is left partway through phase {}. Read the error above; docs/operations/goatnet-standup.md \"The run\" table has this phase's \"Worked when\" and the Troubleshooting table lists the common failures by symptom + fix.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}{prof}", ph.n)) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc} (GB-331). No later phase has run; the site is left partway through phase {}. Read the error above; docs/operations/goatnet-standup.md \"The run\" table has this phase's \"Worked when\" and the Troubleshooting table lists the common failures by symptom + fix.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}{prof}", ph.n)) });
                     // No row when standup's phase catalog has no such phase.
                     checks.extend(interpreted(&phase_id, log.as_deref()));
                     exit = EXIT_REFUSED;
@@ -1824,7 +1824,7 @@ fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, st
         let cause = if status.success() { "ok".to_string() } else { crate::explain_phase::cause("teardown", &n.to_string(), None) };
         record_timing(state_dir, &file, *n, label, secs, rc, &cause);
         if !status.success() {
-            checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc}; the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
+            checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc} (GB-335); the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
             ok = false;
             break;
         }

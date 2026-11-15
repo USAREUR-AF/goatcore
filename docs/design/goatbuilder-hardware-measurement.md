@@ -97,7 +97,7 @@ same file):
 | A line per foreground step, and per phase-12 step run in `--parallel` waves | `phase <n> took <s>s (exit <rc>)`; a wave step prints `phase 12 <step id> took <s>s (exit <rc>)` |
 | A row per such step in `<state_dir>/standup-<site>-timings.tsv` | time written, phase, step label, seconds, exit code, cause |
 | A summary at the end of the process | `total <s>s (<m> min) over <k> phases; slowest: ...`, the five slowest steps of this process, then the founder run's numbers read from the file: `since phase 1: <s>s (<m> min), phase 11 <s>s, without phase 11 <s>s (<m> min); <k> stops (...); slowest phases: ...` |
-| A failure | `!! Phase <n> ("<label>") FAILED — exit <rc>` and the resume command |
+| A failure | `!! Phase <n> ("<label>") FAILED — exit <rc> (GB-331)` and the resume command |
 
 The rows are per step, not per phase: a phase of several steps writes several
 rows. The cause is `ok` for a step that passed. For a failed step it is the
