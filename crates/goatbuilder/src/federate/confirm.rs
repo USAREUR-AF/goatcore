@@ -184,6 +184,10 @@ pub struct Values {
     /// `--place-pointer-package <digest>`: place the package their single
     /// pointer named, the one with this digest (see `pointer`).
     pub pointer_package: Option<String>,
+    /// `--accept-partner-package <digest>`: take the partner's new package,
+    /// signed by the key already bound, the one with this digest (see
+    /// `incoming`; ADR 1229).
+    pub partner_package: Option<String>,
 }
 
 impl Values {
@@ -194,6 +198,7 @@ impl Values {
             || self.partner_ca_fingerprint.is_some()
             || self.agreement_digest.is_some()
             || self.pointer_package.is_some()
+            || self.partner_package.is_some()
     }
 }
 
@@ -609,6 +614,16 @@ pub fn pointer(
     Some(Step { rows: vec![ok("confirm", format!("the package {them}'s pointer names was confirmed for this peering ({how}) and placed"))], verdict: Verdict::Continue })
 }
 
+/// Where the directory step, or a person on the hand path, leaves a new
+/// package from the partner that phase 5 has not placed yet (ADR 1229).
+pub const INCOMING: &str = "theirs.incoming.json";
+
+/// Phase 5, before the keys: a new package from the partner under the key
+/// already bound (ADR 1229). `None` when there is none.
+pub fn incoming(_paths: &Paths, _s: &mut Surface, _st: &mut State, _run: &str) -> Option<Step> {
+    None
+}
+
 /// After compose (phase 6): the agreement digest, compared with the partner.
 pub fn agreement(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Step {
     let bytes = match std::fs::read(&paths.agreement) {
@@ -692,6 +707,13 @@ mod tests {
     /// A conformance-vector package, with its CA fingerprint replaced, signed
     /// again with the committed test seed (worthless keys, public on purpose).
     pub fn resigned(party: &str, fp: &str) -> Vec<u8> {
+        package(party, fp, None, party)
+    }
+
+    /// `party`'s conformance package with its CA fingerprint replaced and,
+    /// when given, its `transport_offer.public_key` (a rotated WireGuard
+    /// key), signed with `signer`'s committed test seed.
+    pub fn package(party: &str, fp: &str, transport_key: Option<&str>, signer: &str) -> Vec<u8> {
         use goat_federation::json::{canonical, parse_document, JVal};
         let bytes =
             std::fs::read(vectors().join(format!("compose-full/package-{party}.canonical.json")))
@@ -709,9 +731,16 @@ mod tests {
                     }
                 }
             }
+            if let (Some(key), "transport_offer", JVal::Obj(t)) = (transport_key, k.as_str(), &mut *v) {
+                for (tk, tv) in t.iter_mut() {
+                    if tk == "public_key" {
+                        *tv = JVal::Str(key.into());
+                    }
+                }
+            }
         }
         let unsigned = JVal::Obj(top.clone());
-        let hex = seed_hex(party);
+        let hex = seed_hex(signer);
         let seed: [u8; 32] = (0..32)
             .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
             .collect::<Vec<u8>>()
@@ -1020,6 +1049,161 @@ mod tests {
         std::fs::remove_file(&w.paths.counterparty).unwrap();
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
         assert!(pointer(&w.paths, &mut s, &mut st, "r1", Some(later), &|| true).is_none());
+    }
+
+    /// A transport key other than the vector's: the partner rotated it (K4).
+    const ROTATED: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+    /// The world after confirmation 1: their key in the keyring, and the
+    /// keys journaled for the package on disk.
+    fn bound() -> (World, State) {
+        let w = world();
+        let mut st = State::new("xab");
+        let mut s = surface(
+            Values {
+                partner_key: Some(w.their_key.clone()),
+                partner_ca_fingerprint: Some(w.their_fp.clone()),
+                ..Default::default()
+            },
+            &[],
+        );
+        assert_eq!(code(&exchange(&w.paths, &mut s, &mut st, "r1", &|| true)), "continue");
+        (w, st)
+    }
+
+    fn previous_copies(w: &World) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(&w.paths.work)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("theirs.canonical.json.previous-"))
+            .collect()
+    }
+
+    #[test]
+    fn the_keys_confirmation_records_the_package_it_was_given_for() {
+        let (w, st) = bound();
+        let theirs = std::fs::read(&w.paths.counterparty).unwrap();
+        let c = st.confirmations.iter().find(|c| c.kind == "keys").unwrap();
+        assert_eq!(c.values["partner_package"], sha256(&theirs));
+    }
+
+    #[test]
+    fn a_new_package_under_the_bound_key_is_placed_only_once_confirmed() {
+        let (w, mut st) = bound();
+        let old = std::fs::read(&w.paths.counterparty).unwrap();
+        let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
+        let incoming = w.paths.work.join(INCOMING);
+        std::fs::write(&incoming, &new).unwrap();
+        let digest = sha256(&new);
+        // No flag and no terminal: the stop names the digest and what changed; nothing placed.
+        let mut s = surface(Values { partner_key: Some(w.their_key.clone()), ..Default::default() }, &[]);
+        let step = incoming_step(&w, &mut s, &mut st);
+        assert_eq!(code(&step), "GB-192");
+        let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains(&digest) && text.contains("transport_offer.public_key"), "{text}");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), old);
+        // Another digest fails; a "y" is not a yes.
+        let mut s = surface(Values { partner_package: Some("sha256:00".into()), ..Default::default() }, &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "GB-191");
+        let mut s = surface(Values { ask: true, ..Default::default() }, &["y"]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "GB-192");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), old);
+        assert!(st.confirmed("partner-package", 5, &digest).is_none());
+        // At a terminal, the typed word: placed, the old one kept aside, journaled.
+        let mut s = surface(Values { ask: true, ..Default::default() }, &["yes"]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new);
+        assert!(!incoming.exists());
+        let kept = previous_copies(&w);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(std::fs::read(&kept[0]).unwrap(), old);
+        let c = st.confirmed("partner-package", 5, &digest).expect("journaled");
+        assert_eq!(c.how, "terminal");
+        assert_eq!(c.values["previous"], sha256(&old));
+        assert!(incoming_step_opt(&w, &mut s, &mut st).is_none(), "placed: nothing to ask");
+    }
+
+    #[test]
+    fn the_flag_places_a_new_package_whose_digest_it_names() {
+        let (w, mut st) = bound();
+        let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
+        std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
+        let mut s = surface(Values { partner_package: Some(sha256(&new)), ..Default::default() }, &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new);
+        assert_eq!(st.confirmed("partner-package", 5, &sha256(&new)).unwrap().how, "flag");
+    }
+
+    #[test]
+    fn a_package_not_signed_by_the_bound_key_is_refused_and_set_aside() {
+        let (w, mut st) = bound();
+        let old = std::fs::read(&w.paths.counterparty).unwrap();
+        // xab's package, signed by another party's key.
+        let forged = package("xab", &w.their_fp, Some(ROTATED), "xaa");
+        let incoming = w.paths.work.join(INCOMING);
+        std::fs::write(&incoming, &forged).unwrap();
+        let mut s = surface(Values { partner_package: Some(sha256(&forged)), ..Default::default() }, &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "GB-191");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), old);
+        assert!(!incoming.exists(), "set aside, so the next run does not ask again");
+        assert!(previous_copies(&w).is_empty());
+    }
+
+    #[test]
+    fn the_package_already_on_disk_offered_again_is_not_a_question() {
+        let (w, mut st) = bound();
+        let incoming = w.paths.work.join(INCOMING);
+        std::fs::copy(&w.paths.counterparty, &incoming).unwrap();
+        let mut s = surface(Values::default(), &[]);
+        assert!(incoming_step_opt(&w, &mut s, &mut st).is_none());
+        assert!(!incoming.exists());
+    }
+
+    #[test]
+    fn a_replayed_older_package_is_a_new_question() {
+        let (w, mut st) = bound();
+        let old = std::fs::read(&w.paths.counterparty).unwrap();
+        let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
+        std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
+        let mut s = surface(Values { partner_package: Some(sha256(&new)), ..Default::default() }, &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
+        // The older package, still signed by the same key, offered again.
+        std::fs::write(w.paths.work.join(INCOMING), &old).unwrap();
+        let mut s = surface(Values { partner_key: Some(w.their_key.clone()), ..Default::default() }, &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "GB-192");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new);
+    }
+
+    #[test]
+    fn a_package_copied_over_the_placed_one_by_hand_is_asked_about() {
+        let (w, mut st) = bound();
+        let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
+        std::fs::write(&w.paths.counterparty, &new).unwrap();
+        let mut s = surface(Values { partner_key: Some(w.their_key.clone()), ..Default::default() }, &[]);
+        let step = incoming_step(&w, &mut s, &mut st);
+        assert_eq!(code(&step), "GB-192");
+        assert!(step.rows.iter().any(|r| r.detail.contains(&sha256(&new))));
+        let mut s = surface(Values { partner_package: Some(sha256(&new)), ..Default::default() }, &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
+        assert!(st.confirmed("partner-package", 5, &sha256(&new)).is_some());
+        assert!(incoming_step_opt(&w, &mut s, &mut st).is_none());
+    }
+
+    #[test]
+    fn before_their_key_is_bound_nothing_is_a_new_package() {
+        let w = world();
+        let mut st = State::new("xab");
+        std::fs::write(w.paths.work.join(INCOMING), package("xab", &w.their_fp, Some(ROTATED), "xab")).unwrap();
+        let mut s = surface(Values { ask: true, ..Default::default() }, &["yes"]);
+        assert!(incoming_step_opt(&w, &mut s, &mut st).is_none());
+    }
+
+    fn incoming_step_opt(w: &World, s: &mut Surface, st: &mut State) -> Option<Step> {
+        incoming(&w.paths, s, st, "r2")
+    }
+
+    fn incoming_step(w: &World, s: &mut Surface, st: &mut State) -> Step {
+        incoming_step_opt(w, s, st).expect("a new package is offered")
     }
 
     #[test]

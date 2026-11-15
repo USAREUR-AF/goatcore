@@ -1745,7 +1745,7 @@ fn main() {
                     // `allocate <peering>`: that peering alone, beside hand-written ones.
                     "allocate" if partner.is_some() => federate::peering_files::run_scoped(&repo, &federate::Options { with, ..o }, partner.as_deref()),
                     _ => {
-                        let values = federate::Values { ask: federate::prompt::ask_by_default(*confirm, *no_confirm), partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone() };
+                        let values = federate::Values { ask: federate::prompt::ask_by_default(*confirm, *no_confirm), partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone(), partner_package: None };
                         let admission = federate::Admission { approve: approve_admission.clone(), review_in_pr: *review_in_pr };
                         let ask = values.ask;
                         // With a person at the terminal, phase 10 hands over to
