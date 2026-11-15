@@ -1135,6 +1135,30 @@ scenarios:
       - {id: first-status-at-14, step: "td-{A}-controller-status-at-phase-14"}
       - {id: second-status-at-14, step: "td-{B}-controller-status-at-phase-14"}
 
+  - id: lane-pacing-burst
+    title: A burst on one lane crosses the receiving edge spaced, and an overflow is counted (ADR 1244)
+    unit: {goatbuilder: burst}
+    runs_where: local
+    pass_condition: >
+      On a peering up through phase 14 on role cores (FE2E_CORE=role), the receiving edge's
+      router has its downsampling module at trace beside its ACL, and the link answers a round
+      trip again. FE2E_BURST_COUNT samples (50) released about 1 ms apart under release/all on
+      the first side's core: the receiving edge's ACL allows every one on the partner link, its
+      downsampling drops none, no two cross closer than 1/hz of the lane's rule (less 1 ms),
+      the receiving core stores every one, and the sending republisher counts no queue_full
+      drop. Optional: with the sender's queue lowered to FE2E_BURST_DEPTH (8), the same burst
+      loses only what the sender counts as queue_full and warns about; the edge drops none,
+      and every sample that crossed is stored. The queue is put back to 4096.
+    checks:
+      - {id: lane-rate, step: "bu-lane-rate-read"}
+      - {id: edge-trace, step: "bu-{B}-edge-traces-downsampling"}
+      - {id: link-back, step: "bu-link-back-after-the-edge-restart"}
+      - {id: paced, step: "bu-paced-burst-crosses-spaced-and-stored"}
+      - {id: queue-lowered, step: "bu-sender-queue-lowered", required: false}
+      - {id: link-back-after-queue, step: "bu-link-back-after-the-queue-change", required: false}
+      - {id: overflow, step: "bu-overflow-counted-and-warned", required: false}
+      - {id: queue-restored, step: "bu-sender-queue-restored", required: false}
+
   - id: flow-monitor-measures-a-core-restart
     title: The harness's flow monitor measures a gap it is shown (lib/flow.sh, for gate rows B3 and B4)
     unit: {goatbuilder: flow}
