@@ -106,8 +106,9 @@ package's digest, and places it only once a person confirms the digest compared
 on the call: `yes` at a terminal, or `--accept-partner-package <digest>`.
 `--yes` never confirms it. The old package is kept as
 `theirs.canonical.json.previous-<UTC time>`. A package not signed by the bound
-key is refused (GB-191) and set aside, and a replayed older package is asked
-about again. This follows ADR 1229, which is proposed.
+key is refused (GB-191) and set aside. A package issued before the one held is
+refused (GB-308) even with its digest given, so a replay is never asked about.
+This follows ADR 1229, which is proposed.
 
 `goatbuilder federate rotate <partner> transport` now replaces our WireGuard
 peering key from phase 2. The tunnel is down until the partner runs

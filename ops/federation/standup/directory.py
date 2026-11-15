@@ -1130,7 +1130,8 @@ def offer_new_package(a, their_id: str, bound_key, body: bytes, theirs: dict, on
     differs from the one on disk is a new package (after they rotated their WireGuard key, for
     example). A signature says who signed a package, not which of two is current, so it is
     saved at <work>/theirs.incoming.json and never placed here: phase 5 places it once a person
-    confirms its digest on the call (--accept-partner-package). Only with --per-counterparty
+    confirms its digest on the call (--accept-partner-package). One issued before the package on
+    disk is a replay or a rollback and is not offered at all. Only with --per-counterparty
     (goatbuilder federate's default): without it, before their key is recorded, or without a
     working folder, the file on disk is what composes and the run says so, as before."""
     incoming = os.path.join(a.work, INCOMING) if a.work else None
@@ -1154,6 +1155,12 @@ def offer_new_package(a, their_id: str, bound_key, body: bytes, theirs: dict, on
             verified = False
     if not (verified and incoming and a.per_counterparty):
         warnings.append(f"{a.theirs} differs from the package `{their_id}` serves; the file on disk is what composes")
+        return
+    was, now = str(on_disk.get("issued", "")), str(theirs.get("issued", ""))
+    if was and now and now < was:
+        # A replay or a rollback: never offered for confirmation (phase 5 refuses it too).
+        warnings.append(f"`{their_id}` serves a package issued {now}, before the one on disk ({was}); it is not "
+                        f"offered, and {a.theirs} is what composes. Ask `{their_id}` which package is current")
         return
     try:
         _write(incoming, body, exclusive=False)

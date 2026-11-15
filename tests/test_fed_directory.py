@@ -1571,3 +1571,31 @@ def test_a_partner_with_only_a_pointer_also_delivers_a_new_package_for_confirmat
     assert theirs.read_bytes() == first
     assert (work / "theirs.incoming.json").read_bytes() == new, out
     assert d.sha256_of(new) in out, out
+
+
+@needs_ed25519
+def test_a_package_older_than_the_one_on_disk_is_not_offered(server, tmp_path):
+    """A package issued before the one on disk is a replay or a rollback: the directory step
+    does not save it for phase 5 to ask about, and says so (phase 5 refuses one regardless)."""
+    work = tmp_path / "w"
+    work.mkdir()
+    base = {k: v for k, v in json.loads(XAA.read_bytes()).items() if k != "signature"}
+    seed = d.load_seed(str(KEY["xaa"]))
+
+    def signed(pkg):
+        return d.canonical(dict(pkg, signature=d.b64(d.sign(seed, d.canonical(pkg)))))
+
+    held = signed(dict(base, issued="2026-09-20"))
+    older = signed(dict(base, issued="2026-09-01",
+                        transport_offer=dict(base["transport_offer"], endpoint="192.0.2.10:51831")))
+    publish = tmp_path / "xaa-ours.json"
+    publish.write_bytes(older)
+    run("--url", server, "--ours", publish, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    theirs = work / "theirs.canonical.json"
+    theirs.write_bytes(held)
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                  "--keyring", keyring_for(tmp_path, "xaa"), "--work", work, "--per-counterparty")
+    assert rc == 0, out
+    assert theirs.read_bytes() == held
+    assert not (work / "theirs.incoming.json").exists(), out
+    assert "issued 2026-09-01, before the one on disk (2026-09-20)" in out, out

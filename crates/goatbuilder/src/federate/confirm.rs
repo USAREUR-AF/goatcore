@@ -485,6 +485,10 @@ pub fn exchange(
             ("partner_ca_fingerprint".to_string(), their_fp),
             ("partner_ca_fingerprint_how".to_string(), fp_how.to_string()),
             ("partner_package".to_string(), sha256(&theirs_bytes)),
+            (
+                "partner_package_issued".to_string(),
+                issued(&theirs_bytes).unwrap_or_default(),
+            ),
         ]),
     );
     rows.push(ok("confirm", format!("keys confirmed ({how}): {them}'s verifying key verifies their half, and their CA fingerprint is the one read aloud; both keys written to {}", paths.keyring.display())));
@@ -619,6 +623,16 @@ pub fn pointer(
 /// package from the partner that phase 5 has not placed yet (ADR 1229).
 pub const INCOMING: &str = "theirs.incoming.json";
 
+/// The code for a partner's package older than the one we hold (ADR 1229).
+pub const OLDER_PACKAGE: &str = "GB-308";
+
+/// A package's `issued` date (YYYY-MM-DD), as the parser checked it.
+fn issued(package: &[u8]) -> Option<String> {
+    goat_federation::package::parse_package(package)
+        .ok()
+        .map(|p| p.issued)
+}
+
 /// The key the keyring binds for `id`, as written by `write_keyring`.
 fn keyring_key(path: &Path, id: &str) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
@@ -699,8 +713,9 @@ fn place(path: &Path, body: &[u8]) -> std::io::Result<()> {
 /// confirms its digest, read on the call as the keys are: `yes` at a
 /// terminal, or `--accept-partner-package <digest>`. The old package is kept
 /// at `<work>/theirs.canonical.json.previous-<UTC time>`, and the
-/// confirmation is journaled bound to the digest, so a later package (an
-/// older one replayed included) is a new question. `None` when there is
+/// confirmation is journaled bound to the digest, so a later package is a
+/// new question. A package issued before the one held is refused (a replay
+/// is never asked about), even with its digest given. `None` when there is
 /// none, or before their key is bound (the first exchange places theirs).
 pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Option<Step> {
     let held = paths.work.join(INCOMING);
@@ -746,6 +761,46 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
             "do not use it; tell the partner, and ask them to publish their current package again",
         ));
     }
+    // A package older than the one held is refused, never asked about:
+    // asking again would turn a replay into a rollback approved by habit.
+    // `issued` (YYYY-MM-DD, checked by the parser) is the only member that
+    // orders a party's packages; same day, different digest is asked about.
+    let held_issued = if by_hand {
+        st.confirmations
+            .iter()
+            .find(|c| c.kind == "keys" && c.phase == 5)
+            .and_then(|c| c.values.get("partner_package_issued").cloned())
+    } else {
+        issued(&placed)
+    };
+    let new_issued = issued(&body);
+    let held_digest = if by_hand {
+        st.confirmations
+            .iter()
+            .find(|c| c.kind == "keys" && c.phase == 5)
+            .and_then(|c| c.values.get("partner_package").cloned())
+            .unwrap_or_default()
+    } else {
+        sha256(&placed)
+    };
+    if let (Some(was), Some(now)) = (held_issued.as_deref(), new_issued.as_deref()) {
+        if now < was {
+            let what = if by_hand {
+                format!("{} was replaced by hand with a package of {them}'s issued {now}, older than the one confirmed ({was})", paths.counterparty.display())
+            } else {
+                let aside = match set_aside(&held, "refused") {
+                    Ok(p) => format!("it was set aside at {}", p.display()),
+                    Err(e) => format!("it could not be set aside ({e}); remove {}", held.display()),
+                };
+                format!("the package offered as {them}'s new one was issued {now}, before the one we hold ({was}); {aside}")
+            };
+            return Some(fail(
+                OLDER_PACKAGE,
+                format!("{what}. An older package is never taken, even with its digest confirmed; nothing was placed"),
+                "ask the partner which package is current; if they rolled back on purpose, they publish it again with a later issued date",
+            ));
+        }
+    }
     let mut changed = Vec::new();
     let old_v = if by_hand {
         serde_json::Value::Null
@@ -761,20 +816,31 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
         changed.join(", ")
     };
     let interactive = s.values.ask && s.asker().interactive();
+    // Two packages of one day are not ordered by anything in them: show
+    // both digests, so the call settles which is current.
+    let same_day = match (held_issued.as_deref(), new_issued.as_deref()) {
+        (Some(was), Some(now)) if was == now && !held_digest.is_empty() => format!(
+            "\n    both issued {now}: nothing in them says which is current.\n    the one held: {}",
+            groups(&held_digest)
+        ),
+        _ => String::new(),
+    };
     let text = format!(
-        "\nPhase 5: {them} has a new package\n  It is signed by the key you bound for {them}, and it differs from the one\n  on disk. A signature does not say which of two packages is current, so\n  compare this digest with {them} on the call before it is used.\n    changed:  {changed_text}\n    digest:   {}\n    saved at: {}\n",
+        "\nPhase 5: {them} has a new package\n  It is signed by the key you bound for {them}, and it differs from the one\n  on disk. A signature does not say which of two packages is current, so\n  compare this digest with {them} on the call before it is used.\n    changed:  {changed_text}\n    digest:   {}\n    saved at: {}{same_day}\n",
         groups(&digest),
         if by_hand { paths.counterparty.display() } else { held.display() }
     );
     let how = match s.values.partner_package.clone() {
         Some(d) if prompt::same_value(&d, &digest) => "flag",
-        Some(d) => return Some(fail(
-            "GB-191",
-            format!(
+        Some(d) => {
+            return Some(fail(
+                "GB-191",
+                format!(
                 "--accept-partner-package {d} is not the digest of {them}'s new package ({digest})"
             ),
-            "read the digest again with the partner; a different package arrived",
-        )),
+                "read the digest again with the partner; a different package arrived",
+            ))
+        }
         None if interactive => {
             s.asker().say(&text);
             if !prompt::is_yes(&s.asker().ask(&format!("Did {them} read this digest on the call? Type yes to use the new package, or press Enter to stop:"))) {
@@ -833,6 +899,7 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
                 },
             ),
             ("changed".to_string(), changed_text),
+            ("issued".to_string(), new_issued.clone().unwrap_or_default()),
         ]),
     );
     rows.push(ok(
@@ -935,6 +1002,17 @@ mod tests {
     /// when given, its `transport_offer.public_key` (a rotated WireGuard
     /// key), signed with `signer`'s committed test seed.
     pub fn package(party: &str, fp: &str, transport_key: Option<&str>, signer: &str) -> Vec<u8> {
+        package_issued(party, fp, transport_key, signer, None)
+    }
+
+    /// As `package`, with its `issued` date replaced when given.
+    pub fn package_issued(
+        party: &str,
+        fp: &str,
+        transport_key: Option<&str>,
+        signer: &str,
+        issued: Option<&str>,
+    ) -> Vec<u8> {
         use goat_federation::json::{canonical, parse_document, JVal};
         let bytes =
             std::fs::read(vectors().join(format!("compose-full/package-{party}.canonical.json")))
@@ -951,6 +1029,9 @@ mod tests {
                         }
                     }
                 }
+            }
+            if let (Some(date), "issued") = (issued, k.as_str()) {
+                *v = JVal::Str(date.into());
             }
             if let (Some(key), "transport_offer", JVal::Obj(t)) =
                 (transport_key, k.as_str(), &mut *v)
@@ -1447,31 +1528,142 @@ mod tests {
         assert!(!incoming.exists());
     }
 
+    /// The code for a package older than the one held (the owner's rule on
+    /// ADR 1229): refused, never asked about.
+    const OLDER: &str = "GB-308";
+    /// The vector packages are issued on 2026-09-05.
+    const EARLIER: &str = "2026-09-01";
+    const LATER: &str = "2026-09-20";
+
+    fn flag(digest: &str) -> Values {
+        Values {
+            partner_package: Some(digest.into()),
+            ..Default::default()
+        }
+    }
+
+    /// A replay of an older package would become a rollback approved by
+    /// habit, so it is refused even with its own digest given, and set aside.
     #[test]
-    fn a_replayed_older_package_is_a_new_question() {
+    fn an_older_package_is_refused_even_with_its_digest() {
+        let (w, mut st) = bound();
+        let held = std::fs::read(&w.paths.counterparty).unwrap();
+        let older = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(EARLIER));
+        let incoming = w.paths.work.join(INCOMING);
+        std::fs::write(&incoming, &older).unwrap();
+        let mut s = surface(flag(&sha256(&older)), &[]);
+        let step = incoming_step(&w, &mut s, &mut st);
+        assert_eq!(code(&step), OLDER);
+        assert!(
+            matches!(step.verdict, Verdict::Fail(_)),
+            "a refusal, not a stop"
+        );
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), held);
+        assert!(!incoming.exists(), "set aside, so it is not offered again");
+        assert!(st
+            .confirmed("partner-package", 5, &sha256(&older))
+            .is_none());
+        // A typed yes changes nothing either.
+        std::fs::write(&incoming, &older).unwrap();
+        let mut s = surface(
+            Values {
+                ask: true,
+                ..Default::default()
+            },
+            &["yes"],
+        );
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), OLDER);
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), held);
+    }
+
+    #[test]
+    fn a_newer_package_and_one_of_the_same_day_are_asked_about() {
+        for issued in [LATER, "2026-09-05"] {
+            let (w, mut st) = bound();
+            let new = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(issued));
+            std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
+            let mut s = surface(
+                Values {
+                    partner_key: Some(w.their_key.clone()),
+                    ..Default::default()
+                },
+                &[],
+            );
+            assert_eq!(
+                code(&incoming_step(&w, &mut s, &mut st)),
+                "GB-192",
+                "{issued}"
+            );
+            let mut s = surface(flag(&sha256(&new)), &[]);
+            assert_eq!(
+                code(&incoming_step(&w, &mut s, &mut st)),
+                "continue",
+                "{issued}"
+            );
+            assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new);
+        }
+    }
+
+    /// Two packages of one day are not ordered: the stop shows both digests.
+    #[test]
+    fn a_package_of_the_same_day_shows_both_digests() {
+        let (w, mut st) = bound();
+        let held = std::fs::read(&w.paths.counterparty).unwrap();
+        let new = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some("2026-09-05"));
+        std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
+        let mut s = surface(Values::default(), &[]);
+        let step = incoming_step(&w, &mut s, &mut st);
+        assert_eq!(code(&step), "GB-192");
+        let text: String = step
+            .rows
+            .iter()
+            .map(|r| r.detail.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains(&groups(&sha256(&new))) && text.contains(&groups(&sha256(&held))),
+            "{text}"
+        );
+        // A later package shows only its own.
+        let (w, mut st) = bound();
+        let held = std::fs::read(&w.paths.counterparty).unwrap();
+        let new = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(LATER));
+        std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
+        let step = incoming_step(&w, &mut s, &mut st);
+        let text: String = step
+            .rows
+            .iter()
+            .map(|r| r.detail.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!text.contains(&groups(&sha256(&held))), "{text}");
+    }
+
+    #[test]
+    fn a_replayed_older_package_is_refused_after_a_newer_one_was_taken() {
         let (w, mut st) = bound();
         let old = std::fs::read(&w.paths.counterparty).unwrap();
-        let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
+        let new = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(LATER));
         std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
-        let mut s = surface(
-            Values {
-                partner_package: Some(sha256(&new)),
-                ..Default::default()
-            },
-            &[],
-        );
+        let mut s = surface(flag(&sha256(&new)), &[]);
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
-        // The older package, still signed by the same key, offered again.
+        // The package it replaced, still signed by the same key, offered again.
         std::fs::write(w.paths.work.join(INCOMING), &old).unwrap();
-        let mut s = surface(
-            Values {
-                partner_key: Some(w.their_key.clone()),
-                ..Default::default()
-            },
-            &[],
-        );
-        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "GB-192");
+        let mut s = surface(flag(&sha256(&old)), &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), OLDER);
         assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new);
+    }
+
+    #[test]
+    fn an_older_package_copied_over_the_placed_one_by_hand_is_refused() {
+        let (w, mut st) = bound();
+        let older = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(EARLIER));
+        std::fs::write(&w.paths.counterparty, &older).unwrap();
+        let mut s = surface(flag(&sha256(&older)), &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), OLDER);
+        assert!(st
+            .confirmed("partner-package", 5, &sha256(&older))
+            .is_none());
     }
 
     #[test]
