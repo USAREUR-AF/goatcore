@@ -131,6 +131,11 @@ ops/scripts/with-secrets \
 Resume after a manual phase or a fixed failure with `--from <phase>`, as in
 tutorial 1.
 
+`standup` does not turn signal federation on. After it, run the federation rows
+of the phase 13 table below, from the federation gate to the federation proof.
+Or bring the joiner's core machine in with `join-node`, whose phase 13 runs
+them ([signal-federation-pair.md](../design/signal-federation-pair.md)).
+
 **Each further machine at a site** joins with its own verb, which runs the
 node-addition sequence (reach, key seeding, the narrowed baseline, the class's
 converge) in numbered phases:
@@ -208,8 +213,10 @@ that proves it, so the same steps can be run one at a time.
 
 **Checkpoint 2.** `goatbuilder assay <joiner-site>` is green for the joiner,
 with the fresh-peer rows run from the joiner's network and a goat context for
-each site on the machine that runs it (`goat_context` for the joiner,
-`goat_context_peer` for the founder). **Checkpoint 3**, the federation
+each site on the machine that runs it. The cross-site round trip uses the
+contexts named after the two sites, `<joiner-site>` and `<founder-site>`; add
+`--var goat_context=<name> --var goat_context_peer=<name>` when yours are named
+otherwise. **Checkpoint 3**, the federation
 evidence: every replication subscription reports `replicating` in both
 directions; a write on the founder appears in the joiner's database; the
 same deletion replicates back; and `signal-federation-verify.yml` passes, naming

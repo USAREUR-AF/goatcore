@@ -286,6 +286,15 @@ uses — **carries, refuses, and round-trips**:
   one silently half-works — a peering can be established, mutually authenticated,
   and carrying nothing, with nothing logged at either end.
 
+With a counterparty that runs its own side, phase 14 does not reach PASS yet.
+The refusal rows need probe sessions that hold the partner's identity, and
+`spire/svid-chains` needs the partner's SPIRE server. Neither is on your side,
+so those rows stay open and the verdict is INCOMPLETE (exit 3). Moving each row
+to the side that owns its surface is designed, not built
+([federation-acceptance.md](../design/federation-acceptance.md) §6.4). When you
+run both sides yourself, as in tutorial 4, each side can be given the other's,
+and phase 14 can pass.
+
 The access decision itself is a reviewable record: one file per partner under
 `ops/federation/partners/` in your goatnet's own repository, changed by pull
 request and gated by `ops/federation/validate-partners.py`. goatcore ships one

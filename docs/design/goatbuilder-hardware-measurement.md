@@ -191,6 +191,70 @@ both. The run is done when the tutorial's checkpoints 2 to 4 hold on hardware
 the joiner's network, every subscription replicating both ways, and `status`
 across both sites.
 
+**Before the run.** Everything is in the tutorial's "Before the real run":
+- a founder whose `goatbuilder assay <founder-site>` is green;
+- the joiner's group_vars, with `goatnet_founder: false` and `join_founder_site`;
+- both sites' groups under `[mgmt_hosts:children]`;
+- the joiner's member group in `ops/pins/fleet-pins.yaml`;
+- signal federation declared on both sides, passing
+  `ops/scripts/signal-federation-check.py <joiner-site> --resolve`;
+- reach to both sites.
+
+The machine that runs the assay holds a goat context named after each site:
+`<joiner-site>` and `<founder-site>`. The cross-site round trip runs `goat`
+under those two names; other names are passed with
+`--var goat_context=<name> --var goat_context_peer=<name>`. You also need a
+release binary and the goatnet's checkout at the commit it deploys from.
+
+**The run.** From the root of the checkout:
+
+```text
+goatbuilder --version
+goatbuilder doctor --env <env> --credentials
+goatbuilder standup <env> --site <joiner-site> --dry-run
+ops/scripts/with-secrets goatbuilder standup <env> --site <joiner-site> --ack "<your name>" --yes
+goatbuilder assay <joiner-site>
+goatbuilder status --env <env>
+```
+
+`standup --site <joiner-site>` does not run the signal federation steps
+([signal-federation-pair.md](signal-federation-pair.md)). After it, run the
+federation rows of the tutorial's phase 13 table, from the federation gate to
+the federation proof, by hand. `join-node` runs the same rows in its phase 13
+for a joiner's core machine. Each further machine of the joiner runs
+`goatbuilder join-node <env> --site <joiner-site> --node <name> --class <class> --address <LAN address> --yes`,
+after its `--dry-run`. Compare every command's output with the tutorial's
+text as you go. A difference is a finding even when the command exits 0.
+
+| The run ends with | It means |
+|---|---|
+| `standup` exit 0 | The joiner's three passes and the founder-side mirror ran |
+| `signal-federation-verify.yml` passes, naming the directions a forward proved | The federation half of checkpoint 3 holds |
+| `assay <joiner-site>` exit 0, every row of the `federation` layer PASS, including `goat-xsite-roundtrip` (`xsite: PASS …`) | Checkpoint 2 holds, and the joiner's half of checkpoint 3 |
+| `status --env <env>` lists both sites' machines, every one `converged` | Checkpoint 4 holds |
+| a phase fails, or `assay` exits 3 | Not yet a measurement. Note the phase, the code and the output. Fix the tool or the text, then resume with `--from <phase>` |
+
+Checkpoint 3 is not fully covered by a command today. `assay` reads the
+joiner's inbound subscriptions (netbird, kratos and hydra), and the founder's
+rows present on the joiner. Nothing yet reads the founder's subscriptions
+from the joiner, or writes a row at the founder and deletes it at the joiner.
+Until a command does, the run records those two legs as not measured.
+
+**What to keep.**
+
+| Field | Content |
+|---|---|
+| Build | the goatcore commit and the `goatbuilder --version` output |
+| Hardware | each joiner machine's node class and model |
+| Result | the exit code of `standup`, of `assay <joiner-site>` and of `status` |
+| Findings | each command whose output differed from the text, with the phase, the code and the difference |
+| Times | `standup`'s summary line, and each `join-node` run's total |
+| Reports | `assay`'s rows (`--rows-out`), `status -o json`, the timings file |
+
+The reports name a real deployment's hosts, so they go to the operator's
+private record. The gate row records the version, the commit, the number of
+machines per site, the exit codes and the number of findings.
+
 ### Tutorial 3, a boundary node
 
 Tutorial 3 peers a goatnet with a counterparty that runs its own goatnet under
@@ -202,12 +266,70 @@ acceptance. The run is done when phase 14's acceptance is green on both sides:
 a sample carries in the agreed direction, a write outside the agreed prefix is
 refused, and a nonce round-trips through the counterparty's own router.
 
+That run cannot pass yet. Each side holds only its own surfaces. The refusal
+rows need probe sessions holding the partner's identity, and
+`spire/svid-chains` needs the partner's SPIRE server. So phase 14 at each side
+ends INCOMPLETE, exit 3, with those rows BLOCKED or SKIPPED. The fix is
+[federation-acceptance.md](federation-acceptance.md) §6.4, which moves each
+row to the side that owns its surface; it is designed, not built. Until §6.4 is
+built, a two-party run is a rehearsal of every phase but the last.
+
 A peering between two goatnets that one party runs is a weaker run. It shows
 that the phases work on real machines. It does not show the exchange between
 two people, or that the counterparty's side works from the published text
-alone. Accepting it for row C2 is an operator decision, recorded in the gate
-row as "both goatnets run by one party". Without that decision, it is a
+alone. It can pass today, because that party can give each side the other's
+probe launcher and SPIRE command; [tutorial 4](../tutorials/04-two-sovereigns.md)
+runs it that way. Accepting it for row C2 is an operator decision, recorded in
+the gate row as "both goatnets run by one party". Without that decision, it is a
 rehearsal.
+
+**Before the run.** Everything in the tutorial's "Before the real run":
+- a goatnet whose gate is green;
+- an edge host in node class `PEERING-EDGE`;
+- the peering declared under `peerings:`, its files written by
+  `goatbuilder federate allocate <peering>`, reviewed and committed;
+- a peering directory both sides reach;
+- the signing key and CA declared under `secrets.federation`;
+- a FIPS-mode fabric image on both edge routers, or the waiver recorded.
+
+You also need the counterparty on a call for phases 5, 6 and 10, a release
+binary on each side, and each side's checkout at the commit it deploys from.
+
+**The run.** Each side, from the root of its own checkout:
+
+```text
+goatbuilder --version
+goatbuilder federate <peering> --env <env> --as <ours> --dry-run
+ops/scripts/with-secrets goatbuilder federate <peering> --env <env> --as <ours>
+goatbuilder federate status <peering> --env <env>
+```
+
+The run asks at phases 5, 6 and 10. It stops at phase 5 until the
+counterparty's package is in the directory; run the same command again to
+resume. Without a terminal, run the four stage commands of the tutorial's "Run
+it on your hardware" instead. Phase 14 alone runs again with
+`goatbuilder federate test <peering> --env <env>`.
+
+| Phase 14, at each side, ends with | It means |
+|---|---|
+| exit 0, verdict PASS: carries, refuses and round-trips all PASS | Checkpoint 2 holds at this side. Row C2 needs it at both sides |
+| exit 3, INCOMPLETE, with only the `refusal/*` and `spire/svid-chains` rows open | Expected until §6.4 is built. Every other phase is measured, phase 14 is not |
+| exit 3, INCOMPLETE, with any other row open | Not yet a measurement. Fix the surface the row names, then run `federate test` again |
+| exit 1, FAIL | A defect. File the row with both sides' result bundles |
+
+**What to keep.**
+
+| Field | Content |
+|---|---|
+| Build | each side's goatcore commit and `goatbuilder --version` output |
+| Parties | one party or two, and the transport the agreement chose |
+| Result | each side's phase 14 exit code and verdict, and every row not PASS |
+| Findings | each command whose output differed from the text, with the phase and the difference |
+| Reports | each side's acceptance result bundle and the agreement digest |
+
+The bundles and the agreement name both goatnets, so they go to each party's
+private record. The gate row records the versions, one party or two, the
+transport, and each side's verdict.
 
 ## `status` on a standing goatnet (row C3)
 
@@ -292,4 +414,10 @@ phases are the next three levers.
 | A generator for a full goatnet's cloud tree | not built |
 
 None of the three clocks has been measured on hardware, and neither tutorial
-has been followed on hardware.
+has been followed on hardware. Two parts of the tutorial runs are not built:
+- a command for tutorial 2's checkpoint 3 legs, the founder's subscriptions
+  and a write and a deletion across the sites;
+- signal federation in `standup` for a joiner site; today only `join-node`
+  phase 13 and the plays turn it on;
+- federation-acceptance.md §6.4, which a two-party tutorial 3 run needs for a
+  PASS.
