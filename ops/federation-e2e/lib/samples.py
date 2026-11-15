@@ -15,7 +15,7 @@ recorder and the check of §6's `samples-<key>` row.
         received.
 
     samples.py check --sent SENT --arrived ARRIVED [--sent SENT --arrived ARRIVED]...
-                     --from T0 --to T1 [--gap]
+                     --from T0 --to T1 [--gap [--rotation START END]...]
         SENT is lib/flow.sh's flow-<label>.sent (<release time> TAB <key> TAB <HTTP code>),
         ARRIVED this recorder's file for the same flow. The step is the time window
         [T0, T1]. Every sample released inside the window counts, at every reader:
@@ -27,8 +27,12 @@ recorder and the check of §6's `samples-<key>` row.
             last number on time before it to the first on time after it. The fabric does
             not re-deliver what was released while the tunnel was down (measured in the
             ADR 1229 trial, §6), so each gap is recorded with its numbers, its length in
-            seconds and how many it lost. A number lost outside such a run fails: no
-            rotation explains it.
+            seconds and how many it lost. A run that lost numbers counts as a gap only
+            when the flow recovers after it (an on-time number follows), it is no longer
+            than GAP_MAX_S, and it lies inside a rotated side's window (--rotation, one
+            gap per window, and no more such runs than windows). A number lost outside a
+            gap fails: no rotation explains it. Each run refused as a gap is listed in
+            "not_gaps" with why.
         A number is late when it arrived more than LATE_S seconds after its release.
         Prints one JSON object per flow and a last line "samples: PASS|FAIL <why>".
         Exits 0 on PASS, 1 on FAIL, 2 when an input cannot be read.
@@ -46,6 +50,10 @@ LATE_S = 5.0
 # A rotation's gap is the link restarting onto a new key until the far side takes it:
 # tens of seconds, measured (§6). A shorter run of losses is not one.
 GAP_MIN_S = 5.0
+# The longest a rotation's gap may be: the harness's own tunnel-back check gives up 60 s
+# after the partner's step begins (units/rotation.sh, rot-tunnel-back), and that is
+# about three times the ~21.5 s measured (§6). A longer run of losses is an outage.
+GAP_MAX_S = 60.0
 NUMBER = re.compile(r"n([0-9]+)$")
 
 
@@ -80,8 +88,9 @@ def read_rows(path):
         return [r.rstrip("\n").split("\t") for r in fh if r.strip()]
 
 
-def judge(sent_rows, arrived_rows, t0, t1, gap):
-    """One flow's verdict for the window [t0, t1]: (ok, report dict)."""
+def judge(sent_rows, arrived_rows, t0, t1, gap, rotations=()):
+    """One flow's verdict for the window [t0, t1]: (ok, report dict). `rotations` are the
+    rotated sides' windows, (start, end) each: a lossy gap counts only inside one of them."""
     released = []  # (number, release time, code)
     for r in sent_rows:
         if len(r) < 3:
@@ -119,21 +128,51 @@ def judge(sent_rows, arrived_rows, t0, t1, gap):
             runs[-1].append(i)
         else:
             runs.append([i])
-    gaps, lost_outside = [], []
+    gaps, lost_outside, not_gaps = [], [], []
+    windows = sorted(rotations)
+    used = set()
+    # The runs that lost numbers and are long enough to be a rotation's gap.
+    lossy = [r for r in runs if any(accepted[i][0] in missing_set for i in r) and span(r[0], r[-1]) >= GAP_MIN_S]
     for r in runs:
         lost = [accepted[i][0] for i in r if accepted[i][0] in missing_set]
         s_ = span(r[0], r[-1])
-        # Late and complete is a gap the fabric re-delivered, however short; a run that
-        # lost numbers is a rotation's gap only when it is long enough to be one.
-        if gap and (not lost or s_ >= GAP_MIN_S):
-            gaps.append({"first": accepted[r[0]][0], "last": accepted[r[-1]][0], "s": s_, "lost": len(lost)})
-        else:
+        rec = {"first": accepted[r[0]][0], "last": accepted[r[-1]][0], "s": s_, "lost": len(lost)}
+        # Late and complete is a gap the fabric re-delivered, however short.
+        if gap and not lost:
+            gaps.append(rec)
+            continue
+        if not gap:
             lost_outside += lost
+            continue
+        # A run that lost numbers is a rotation's gap only when it is long enough to be
+        # one, the flow recovers after it (an on-time number follows), it is no longer
+        # than GAP_MAX_S, and it lies inside a rotated side's window not already used by
+        # another gap; and only as many such runs as there are rotated sides.
+        lo, hi = accepted[r[0]][1], accepted[r[-1]][1]
+        win = next((w for w in windows if w[0] <= lo and hi <= w[1] and w not in used), None)
+        why = None
+        if s_ < GAP_MIN_S:
+            why = f"shorter than {GAP_MIN_S:g} s"
+        elif r[-1] + 1 >= len(accepted):
+            why = "not followed by an on-time number (the flow did not recover)"
+        elif s_ > GAP_MAX_S:
+            why = f"longer than {GAP_MAX_S:g} s"
+        elif len(lossy) > len(windows):
+            why = f"more lossy runs than rotated sides ({len(lossy)} runs, {len(windows)} rotation window(s))"
+        elif win is None:
+            why = "outside every rotation's window"
+        if why:
+            lost_outside += lost
+            not_gaps.append(dict(rec, why=why))
+        else:
+            used.add(win)
+            gaps.append(rec)
     report = {"released": len(released), "refused_by_sender": refused, "arrived": len(accepted) - len(missing),
               "missing": missing, "late": late, "gap_s": gap_s}
     if gap:
         report["gaps"] = gaps
         report["lost_outside"] = lost_outside
+        report["not_gaps"] = not_gaps
     problems = []
     if not released:
         problems.append("no sample was released inside the window")
@@ -142,8 +181,9 @@ def judge(sent_rows, arrived_rows, t0, t1, gap):
     if missing and not gap:
         problems.append(f"{len(missing)} number(s) never reached the reader")
     if gap and lost_outside:
-        problems.append(f"{len(lost_outside)} number(s) lost outside a rotation's gap (a run of at least {GAP_MIN_S:g} s): "
-                        + ", ".join(str(n) for n in lost_outside[:20]))
+        problems.append(f"{len(lost_outside)} number(s) lost outside a rotation's gap: "
+                        + ", ".join(str(n) for n in lost_outside[:20])
+                        + "".join(f"; {g['first']}-{g['last']} ({g['s']} s) is {g['why']}" for g in not_gaps))
     if late and not gap:
         problems.append(f"{len(late)} number(s) arrived more than {LATE_S:g} s late, in a step that has no gap by design")
     report["problems"] = problems
@@ -161,7 +201,7 @@ def check(args):
         return 2
     ok_all, why = True, []
     for sent, arrived, name in flows:
-        ok, rep = judge(sent, arrived, args.t0, args.t1, args.gap)
+        ok, rep = judge(sent, arrived, args.t0, args.t1, args.gap, [tuple(w) for w in args.rotation])
         rep["flow"] = name
         print(json.dumps(rep, sort_keys=True))
         if not ok:
@@ -189,6 +229,8 @@ def main(argv=None):
     c.add_argument("--from", dest="t0", type=float, required=True)
     c.add_argument("--to", dest="t1", type=float, required=True)
     c.add_argument("--gap", action="store_true")
+    c.add_argument("--rotation", nargs=2, type=float, action="append", default=[], metavar=("START", "END"),
+                   help="a rotated side's window; a lossy gap counts only inside one, one gap each")
     a = ap.parse_args(argv)
     if a.cmd == "record":
         record(a.out, a.prefix)

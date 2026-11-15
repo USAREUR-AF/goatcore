@@ -229,7 +229,13 @@ unit_main() {
   local k s
   for k in $ROT_KEYS; do
     printf '%s\tstart\n' "$(date +%s.%N)" >> "$RECORD/rot-$k.window"
-    for s in "$NATED" "$PARTNER"; do rot_one "$k" "$s"; done
+    # Each side's window, from its rotation to the end of its partner's step and the
+    # acceptance after it: the samples check takes a lossy gap only inside one.
+    for s in "$NATED" "$PARTNER"; do
+      printf '%s\tside-start\t%s\n' "$(date +%s.%N)" "$s" >> "$RECORD/rot-$k.window"
+      rot_one "$k" "$s"
+      printf '%s\tside-end\t%s\n' "$(date +%s.%N)" "$s" >> "$RECORD/rot-$k.window"
+    done
     printf '%s\tend\n' "$(date +%s.%N)" >> "$RECORD/rot-$k.window"
     rot_retired "$k"
   done
@@ -266,9 +272,11 @@ PY
   # carrier, whose step has a gap by design (§3), every number re-delivered after it.
   for k in $ROT_KEYS; do
     case " $ROT_REFUSED " in *" $k "*) continue ;; esac
+    local rots
+    rots="$(awk -F'\t' '$2 == "side-start" { a[$3] = $1 } $2 == "side-end" && ($3 in a) { printf "--rotation %s %s ", a[$3], $1 }' "$RECORD/rot-$k.window")"
     rec "rot-samples-$k" -- bash -c \
       "lo=\$(cut -f1 '$RECORD/rot-$k.window' | sort -n | head -1); hi=\$(cut -f1 '$RECORD/rot-$k.window' | sort -n | tail -1)
-       python3 '$HERE/lib/samples.py' check --from \$lo --to \$hi $(case "$k" in transport|carrier) echo --gap ;; esac) \
+       python3 '$HERE/lib/samples.py' check --from \$lo --to \$hi $(case "$k" in transport|carrier) echo --gap ;; esac) $rots \
          --sent '$RECORD/flow-a2b.sent' --arrived '$RECORD/flow-a2b.arrived' --sent '$RECORD/flow-b2a.sent' --arrived '$RECORD/flow-b2a.arrived'"
   done
   # Not decidable yet: how much may be lost across a rotation (the same question as B4's).

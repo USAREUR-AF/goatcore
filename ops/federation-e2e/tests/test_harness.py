@@ -526,7 +526,7 @@ def samples_checks():
           "rotation: the partner's step does not go on from phase 11 (drive $them $s $AVENUE 11 13) before the tunnel check")
     # The samples check is given each rotated side's window: from the side's rotation to
     # the end of its partner's step, recorded around rot_one.
-    check(re.search(r"side-start\\t\$s", unit) and re.search(r"side-end\\t\$s", unit) and "--rotation" in unit,
+    check(re.search(r"side-start\\t%s\\n' \"\$\(date [^)]*\)\" \"\$s\"", unit) and re.search(r"side-end\\t%s\\n' \"\$\(date [^)]*\)\" \"\$s\"", unit) and "--rotation" in unit,
           "rotation: each side's rotation window is not recorded and passed to samples.py (--rotation)")
     cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
     ids = {c["id"] for sc in cat["scenarios"] if sc["id"] == "key-rotation" for c in sc.get("checks", [])}
