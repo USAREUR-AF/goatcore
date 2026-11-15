@@ -33,6 +33,10 @@
 #                          [--ca-key-age <file.age> --age-identity <keys.txt>]
 #                          [--core-cn <name>] [--core-san <san>[,<san>...]]
 #                          [--link-ip <ip>] [--rotate] [--min-valid-seconds <n>]
+#   mint-peering-leaves.sh <agreement.json> <probe-dir> --probe <run id>
+#                          --probe-kind <forged|impersonate> --issued-record <file>
+#                          [--impersonate-for-run <run id> --partner-core-cn <name>]
+#                          [--as <sovereign>] [CA key flags as above]
 #
 # Environment: FED_CA_CERT, FED_CA_KEY, FED_CA_KEY_FROM_AGE, FED_CA_KEY_AGE,
 #              FED_AGE_IDENTITY, FED_CA_KEY_TMP, FED_CORE_CN, FED_CORE_SAN, FED_LINK_IP
@@ -46,6 +50,18 @@
 # private directory under FED_CA_KEY_TMP, else memory-backed /dev/shm, else
 # $TMPDIR, else /tmp, removed when the script exits, whatever the exit. The key
 # is needed only to issue a missing leaf or to rotate.
+#
+# PROBE LEAVES (--probe). Phase 14's forged-name and impersonation probes hold a leaf
+# from our own CA, issued for one acceptance run (federation-acceptance.md §2.4):
+#   forged       CN = fed.<us>.<them>.acceptance-forged.<the run id's last part>, a
+#                name in our own prefix that no agreement lists
+#   impersonate  CN = the partner's core's name (--partner-core-cn; the agreement does
+#                not record it), only with --impersonate-for-run naming the same run
+# Each is CA:FALSE, clientAuth only, digitalSignature only, with the SAN URI
+# urn:goat:acceptance-probe:<run id>, valid from a minute back to FED_PROBE_TTL (900)
+# plus 15 minutes. It goes only into <probe-dir>, an empty 0700 folder (never a
+# folder of leaves or a trust file), and its certificate facts into the CA's
+# issued-certificates record (--issued-record). probe-identities.sh calls this.
 set -uo pipefail
 
 AGREEMENT=""; OUT=""; AS=""
@@ -55,6 +71,7 @@ FROM_AGE="${FED_CA_KEY_FROM_AGE:-0}"
 CORE_CN="${FED_CORE_CN:-goat-zenoh}"; CORE_SAN="${FED_CORE_SAN:-}"; LINK_IP="${FED_LINK_IP:-}"
 DAYS="${FED_LEAF_DAYS:-90}"
 ROTATE=0; MIN_VALID_SECONDS="${FED_LEAF_MIN_VALID_SECONDS:-86400}"
+PROBE_RUN=""; PROBE_KIND=""; IMPERSONATE_FOR=""; PARTNER_CORE_CN=""; ISSUED_RECORD=""; PROBE_FLAGS=0
 HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/peering_leaf_material.py"
 
 while [ $# -gt 0 ]; do
@@ -70,7 +87,12 @@ while [ $# -gt 0 ]; do
     --core-cn)  CORE_CN="$2"; shift 2 ;;
     --core-san) CORE_SAN="$2"; shift 2 ;;
     --link-ip)  LINK_IP="$2"; shift 2 ;;
-    -h|--help)  sed -n '2,44p' "$0"; exit 0 ;;
+    --probe)    PROBE_RUN="$2"; shift 2 ;;
+    --probe-kind) PROBE_KIND="$2"; PROBE_FLAGS=1; shift 2 ;;
+    --impersonate-for-run) IMPERSONATE_FOR="$2"; PROBE_FLAGS=1; shift 2 ;;
+    --partner-core-cn) PARTNER_CORE_CN="$2"; PROBE_FLAGS=1; shift 2 ;;
+    --issued-record) ISSUED_RECORD="$2"; PROBE_FLAGS=1; shift 2 ;;
+    -h|--help)  sed -n '2,64p' "$0"; exit 0 ;;
     -*)         echo "unknown flag $1" >&2; exit 2 ;;
     *)          if [ -z "$AGREEMENT" ]; then AGREEMENT="$1"; else OUT="$1"; fi; shift ;;
   esac
@@ -116,10 +138,39 @@ EOF
 [ "$US" = "ERR" ] && fail "could not read both parties from the agreement" \
   "Pass --as <sovereign> when the agreement does not say which side we are."
 
+# --- probe mode: refused before anything is opened or written ------------------
+usage_err() { echo "[✗] $1" >&2; exit 2; }
+if [ -z "$PROBE_RUN" ]; then
+  [ "$PROBE_FLAGS" = 0 ] || usage_err "--probe-kind, --impersonate-for-run, --partner-core-cn and --issued-record go with --probe <run id>"
+else
+  printf '%s' "$PROBE_RUN" | grep -Eqx '[A-Za-z0-9][A-Za-z0-9-]{0,79}' || usage_err "--probe: '$PROBE_RUN' is not a run id"
+  [ -n "$ISSUED_RECORD" ] || usage_err "--probe needs --issued-record <file>: every probe leaf goes into our CA's issued-certificates record"
+  [ -d "$(dirname "$ISSUED_RECORD")" ] || usage_err "--issued-record: no folder $(dirname "$ISSUED_RECORD")"
+  case "$PROBE_KIND" in
+    forged)
+      [ -z "$IMPERSONATE_FOR" ] || usage_err "--impersonate-for-run is only for --probe-kind impersonate"
+      [ -z "$PARTNER_CORE_CN" ] || usage_err "--partner-core-cn is only for --probe-kind impersonate"
+      PROBE_CN="fed.$US.$THEM.acceptance-forged.${PROBE_RUN##*-}" ;;
+    impersonate)
+      # A leaf bearing another party's name is issued only when the caller names this run.
+      [ "$IMPERSONATE_FOR" = "$PROBE_RUN" ] || usage_err "an impersonation leaf needs --impersonate-for-run $PROBE_RUN (the run it is minted for)"
+      [ -n "$PARTNER_CORE_CN" ] || usage_err "an impersonation leaf needs --partner-core-cn <the partner's core's name>; the agreement does not record it, and it is never defaulted"
+      printf '%s' "$PARTNER_CORE_CN" | grep -Eqx '[A-Za-z0-9][A-Za-z0-9._-]{0,127}' || usage_err "--partner-core-cn: '$PARTNER_CORE_CN' is not a name"
+      case "$PARTNER_CORE_CN" in fed."$US".*) usage_err "--partner-core-cn '$PARTNER_CORE_CN' is in our own prefix fed.$US.: the impersonation leaf names the partner's core" ;; esac
+      PROBE_CN="$PARTNER_CORE_CN" ;;
+    *) usage_err "--probe needs --probe-kind forged or impersonate" ;;
+  esac
+  [ -d "$OUT" ] && [ ! -L "$OUT" ] || usage_err "the probe folder $OUT does not exist (it is made 0700 by the caller)"
+  why=$(python3 "$(dirname "$HELPER")/probe_leaf_material.py" --check-folder "$OUT") || usage_err "the probe folder: $why (a probe folder is an empty 0700 directory)"
+  [ -n "$CA_CERT" ] || usage_err "no CA certificate: set FED_CA_CERT to OUR OWN CA"
+  echo "  probe leaf ($PROBE_KIND) for run $PROBE_RUN: CN $PROBE_CN"
+fi
+
 # An address read from the agreement is not one anybody can type wrong. --link-ip
 # stays for an agreement carrying no transport member.
 [ -n "$LINK_IP" ] || { [ "$DERIVED_LINK_IP" = "-" ] || LINK_IP="$DERIVED_LINK_IP"; }
 
+if [ -z "$PROBE_RUN" ]; then
 echo "  agreement names us '$US', counterparty '$THEM'"
 echo "  outward CN (to them):   $OURS_CN"
 echo "  inward  CN (to core):   $THEIRS_CN   <- the name our core's ACL matches"
@@ -169,6 +220,7 @@ else
   echo "      certificate without a SAN for the dialled address fails name"
   echo "      verification, and the edge logs nothing at INFO when it does."
 fi
+fi
 
 # The CA key from the deployment's declared source, when no key file is given.
 RUN_KEY_DIR=""
@@ -212,6 +264,14 @@ if [ -z "$CA_KEY" ] && [ -n "$CA_KEY_AGE" ] && [ "$FROM_AGE" = 1 ]; then
   # A key is needed only to issue or rotate; a re-run that reuses every leaf
   # goes on without one, and the helper refuses if it does need it.
   [ -z "$why" ] || echo "  [!] CA key not opened: $why" >&2
+fi
+
+if [ -n "$PROBE_RUN" ]; then
+  [ -n "$CA_KEY" ] || fail "no CA key: a probe leaf is always issued" "Pass --ca-key, or FED_CA_KEY_FROM_AGE=1 with the age-encrypted key."
+  python3 "$(dirname "$HELPER")/probe_leaf_material.py" --out "$OUT" --ca-cert "$CA_CERT" --ca-key "$CA_KEY" \
+    --run "$PROBE_RUN" --kind "$PROBE_KIND" --cn "$PROBE_CN" --ttl "${FED_PROBE_TTL:-900}" \
+    --issued-record "$ISSUED_RECORD" || exit 1
+  exit 0
 fi
 
 ARGS=(--out "$OUT" --ca-cert "$CA_CERT" --ca-fingerprint "$CA_FINGERPRINT" --days "$DAYS"

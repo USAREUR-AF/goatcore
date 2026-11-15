@@ -984,6 +984,9 @@ fi
 #        <launcher> stop <handle>     ends it; a launcher that deletes the probe's key and
 #             checks it is gone prints KEY_DELETED=verified (or KEY_DELETED=failed), which
 #             the manifest records as key_deleted, and a failed one fails cleanup/probes
+#             (a start may print KEY_DELETED_DRIVER=verified|failed: whether the copy of the
+#             probe's identity on this host is gone, as probe-identities.sh does; recorded
+#             beside it as key_deleted_driver, and a failed one fails cleanup/probes too)
 #        <launcher> alive <handle>    exits 0 while it exists, 1 once it is gone
 PROBES_DIR="$EVID/probes"
 PROBES_FILE="$PROBES_DIR/$RUN_ID.json"
@@ -992,12 +995,12 @@ PROBES_STARTED=""; PROBES_DONE=""
 # run by (pid, start) and a pid reused by another process is told apart.
 proc_start() { ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//'; }
 PROBES_PID=$$; PROBES_PID_START=$(proc_start $$)
-probes_note() { # KIND HANDLE STATUS DEADLINE [KEY]: record one resource in this run's manifest
+probes_note() { # KIND HANDLE STATUS DEADLINE [KEY] [DRIVER]: record one resource in this run's manifest
   # STATUS "-" leaves the status as it is; KEY is what the launcher said of the probe's key on
-  # stop: verified, failed or "not reported".
-  python3 - "$PROBES_FILE" "$RUN_ID" "$1" "$2" "$3" "$4" "$PROBES_PID" "$PROBES_PID_START" "${5:-}" <<'PY'
+  # stop: verified, failed or "not reported"; DRIVER what its start said of this host's copy.
+  python3 - "$PROBES_FILE" "$RUN_ID" "$1" "$2" "$3" "$4" "$PROBES_PID" "$PROBES_PID_START" "${5:-}" "${6:-}" <<'PY'
 import json, os, sys, time
-path, run, kind, handle, status, deadline, pid, pid_start, key = sys.argv[1:]
+path, run, kind, handle, status, deadline, pid, pid_start, key, driver = sys.argv[1:]
 m = {"run": run, "pid": int(pid), "pid_start": pid_start, "resources": {}}
 if os.path.exists(path):
     m = json.load(open(path))
@@ -1006,13 +1009,19 @@ if status != "-":
     r["status"] = status
 if key:
     r["key_deleted"] = key
+if driver:
+    r["key_deleted_driver"] = driver
 tmp = path + ".tmp"
 json.dump(m, open(tmp, "w"), indent=2, sort_keys=True)
 os.replace(tmp, path)
 PY
 }
 probes_left() { # MANIFEST: the handles it names that were not confirmed gone; exit 2 when unreadable
-  python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print("\n".join(h for h,r in m.get("resources",{}).items() if r.get("status")!="gone"))' "$1" 2>/dev/null || return 2
+  # A start that gave no handle ("not started") left nothing the launcher can stop.
+  python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print("\n".join(h for h,r in m.get("resources",{}).items() if r.get("status") not in ("gone","not started")))' "$1" 2>/dev/null || return 2
+}
+probes_driver_left() { # MANIFEST: the handles whose start said this host's copy of the identity is still here
+  python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(" ".join(h+"(driver-copy-not-deleted)" for h,r in sorted(m.get("resources",{}).items()) if r.get("key_deleted_driver")=="failed"))' "$1" 2>/dev/null || echo "<unreadable manifest>"
 }
 probes_owner() { # MANIFEST: 0 its run is still going here, 1 it is not, 2 cannot tell
   local pid want now
@@ -1043,7 +1052,15 @@ probes_stop() { # MANIFEST: stop and check every resource it names; prints the o
   printf '%s' "$left"
 }
 probes_keys() { # MANIFEST: how the launcher answered for each probe's key, counted
-  python3 -c 'import json,sys,collections as c; m=json.load(open(sys.argv[1])); n=c.Counter(r.get("key_deleted","not reported") for r in m.get("resources",{}).values()); print(", ".join("%s %d" % (k, n[k]) for k in sorted(n)) or "none")' "$1" 2>/dev/null || echo "unreadable"
+  # (and for this host's copy, when a start reported it)
+  python3 -c '
+import json, sys, collections as c
+rs = json.load(open(sys.argv[1])).get("resources", {}).values()
+fmt = lambda n: ", ".join("%s %d" % (k, n[k]) for k in sorted(n)) or "none"
+line = fmt(c.Counter(r.get("key_deleted", "not reported") for r in rs if r.get("status") != "not started"))
+if any("key_deleted_driver" in r for r in rs):
+    line += "; driver copies deleted: " + fmt(c.Counter(r.get("key_deleted_driver", "not reported") for r in rs))
+print(line)' "$1" 2>/dev/null || echo "unreadable"
 }
 probes_cleanup_on_signal() { # EXIT-STATUS
   [ -n "$PROBES_STARTED" ] && [ -f "$PROBES_FILE" ] && probes_stop "$PROBES_FILE" >/dev/null
@@ -1107,7 +1124,13 @@ if [ -n "$PROBE_CMD" ]; then
     h=$(printf '%s\n' "$out" | sed -n 's/^HANDLE=//p' | head -1)
     url=$(printf '%s\n' "$out" | sed -n 's/^REST=//p' | head -1)
     zid=$(printf '%s\n' "$out" | sed -n 's/^ZID=//p' | head -1)
-    if [ -n "$h" ]; then probes_note "$kind" "$h" started "$deadline"; PROBES_STARTED=1; fi
+    drv=$(printf '%s\n' "$out" | sed -n 's/^KEY_DELETED_DRIVER=//p' | tail -1)
+    case "$drv" in verified|failed|"") ;; *) drv="not reported" ;; esac
+    if [ -n "$h" ]; then probes_note "$kind" "$h" started "$deadline" "" "$drv"; PROBES_STARTED=1
+    elif [ -n "$drv" ]; then
+      # No handle, so nothing for the launcher to stop; this host's copy is still judged.
+      probes_note "$kind" "unstarted-$kind" "not started" "$deadline" "" "$drv"; PROBES_STARTED=1
+    fi
     if [ "$lrc" -ne 0 ] || [ -z "$h" ] || [ -z "$url" ]; then
       echo "  probe $kind did not start: $(printf '%s' "$out" | tail -1)"
       continue
@@ -1136,6 +1159,7 @@ probes_finish() {
   [ -n "$PROBES_STARTED" ] || return 0
   begin
   left=$(probes_stop "$PROBES_FILE")
+  left="$left$(d=$(probes_driver_left "$PROBES_FILE"); [ -z "$d" ] || printf ' %s' "$d")"
   obs manifest "$PROBES_FILE"; obs left "$left"; obs keys_deleted "$(probes_keys "$PROBES_FILE")"
   if [ -z "$left" ]; then ok cleanup/probes local precondition "every probe this run started is stopped and gone; keys deleted: $(probes_keys "$PROBES_FILE")"
   else no cleanup/probes local precondition "probes this run started are still there:$left" \

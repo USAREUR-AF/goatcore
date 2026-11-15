@@ -176,12 +176,16 @@ class ProbeIdentities(unittest.TestCase):
 
     def test_each_leaf_is_recorded_with_its_run_and_certificate_facts_only(self):
         self.assertEqual(self.mint('--probe-kind', 'forged').returncode, 0)
-        r = self.mint('--probe-kind', 'impersonate', '--impersonate-for-run', RUN, '--partner-core-cn', 'router.xab')
+        second = self.root / 'probe2'
+        second.mkdir(mode=0o700)
+        second.chmod(0o700)
+        r = self.mint('--probe-kind', 'impersonate', '--impersonate-for-run', RUN, '--partner-core-cn', 'router.xab',
+                      out=second)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         recs = self.records()
         self.assertEqual([x['kind'] for x in recs], ['forged', 'impersonate'])
-        for rec, kind in zip(recs, ('forged', 'impersonate')):
-            cert = self.probe / f'{kind}-cert.pem'
+        for rec, kind, folder in zip(recs, ('forged', 'impersonate'), (self.probe, second)):
+            cert = folder / f'{kind}-cert.pem'
             der = subprocess.check_output(['openssl', 'x509', '-in', str(cert), '-outform', 'DER'])
             self.assertEqual(rec['sha256'], hashlib.sha256(der).hexdigest())
             self.assertEqual(rec['serial'].lower(), x509(cert, '-serial').split('=', 1)[1].strip().lower())
@@ -330,9 +334,10 @@ class ProbeIdentities(unittest.TestCase):
         self.assertEqual(self.log.read_text().split('\n')[:2], ['stop goat-probe-forged-x', 'alive goat-probe-forged-x'])
 
     def test_a_missing_setting_is_refused_by_name(self):
-        for var in ('FED_PROBE_AGREEMENT', 'FED_PROBE_PKI', 'FED_PROBE_FAR_CA', 'FED_PROBE_ISSUED_RECORD'):
+        for var, kind in (('FED_PROBE_AGREEMENT', 'forged'), ('FED_PROBE_PKI', 'agreed'), ('FED_PROBE_FAR_CA', 'forged'),
+                          ('FED_PROBE_ISSUED_RECORD', 'forged')):
             with self.subTest(var=var):
-                r = self.wrap('start', 'forged', RUN, str(int(time.time()) + 60), env={var: ''})
+                r = self.wrap('start', kind, RUN, str(int(time.time()) + 60), env={var: ''})
                 self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
                 self.assertIn(var, r.stderr)
         r = self.wrap('start', 'impersonate', RUN, str(int(time.time()) + 60), env={'FED_PROBE_PARTNER_CORE_CN': ''})
