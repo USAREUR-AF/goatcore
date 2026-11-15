@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed. Decisions 3, 4 and 6 are built on `main`. Decisions 1 and 2 are built in part on `main`, and the rest is in review in pull request #915. Decision 5 is built for two of four release workflows. |
+| Status | Proposed. Decisions 3, 4 and 6 are built on `main`. Decisions 1 and 2 are built on `main` except in four workflow files not yet converted (#915). Decision 5 is built for two of four release workflows. |
 | Date | 2026-11-15 |
 | Repo scope | goat core (`.github/workflows/`, `.github/dependabot.yml`, every `osv-scanner.toml`, `.github/release-notes/`) |
 | Supersedes | — |

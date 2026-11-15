@@ -39,8 +39,8 @@ Status of the rules on `main`:
 
 | Rule | Status |
 |---|---|
-| W1 | Built in 25 of 446 external action references. The other references, and the `github-actions` entry in `.github/dependabot.yml` that keeps the pins current, are in review in pull request #915. |
-| W2, W3 | Built in 57 of 98 workflows. Most of the other workflows are in review in pull request #915. |
+| W1 | Built in 392 of 446 external action references (#915), and `.github/dependabot.yml` keeps the pins current through its `github-actions` entry. The other references are in four workflow files not yet converted. See [`.github/ACTION-PINS.md`](../../.github/ACTION-PINS.md). |
+| W2, W3 | Built in 96 of 98 workflows (#915). Two workflow files are not yet converted. |
 | W4 | Built in the three `pull_request_target` workflows that check out code: `leak-gate.yml`, `agent-references.yml` and `contributor-trust.yml`. `stable-guard.yml` runs no checkout under `pull_request_target`. |
 
 No check refuses a workflow that breaks W1 to W4. Before you push a workflow change, run Scorecard on your checkout:
