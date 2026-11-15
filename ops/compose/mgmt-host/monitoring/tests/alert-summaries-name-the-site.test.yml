@@ -1,0 +1,106 @@
+# promtool unit test: an alert summary names the site.
+#
+# Run by .github/workflows/goat-obs-checks.yml; locally with
+#   promtool test rules ops/compose/mgmt-host/monitoring/tests/alert-summaries-name-the-site.test.yml
+#
+# The mgmt host's Prometheus sets `site` as an external label (prometheus.yml,
+# global.external_labels), not on the series, and a rule template's $labels
+# does not hold external labels. So every summary in these rules names the site
+# from the series' own `site` label when it has one, else from
+# $externalLabels.site. Each case below renders one summary both ways: the
+# site as the mgmt host sets it (external label only), and on the series
+# (which wins over the external label).
+rule_files:
+  - ../rules/spock.yml
+  - ../rules/ntp.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    external_labels:
+      site: zagros-a
+    input_series:
+      - series: 'spock_exceptions_total{job="postgres",instance="postgres-a",datname="netbird"}'
+        values: '0 1 2 3 4 5'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SpockApplyExceptionLogged
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: spock
+              job: postgres
+              instance: postgres-a
+              datname: netbird
+            exp_annotations:
+              summary: "Spock skipped remote change(s) at zagros-a in netbird in last 5m"
+              description: "New rows in spock.exception_log: a change from another site failed to apply here and was skipped (spock.exception_behaviour = discard). The usual cause after a partition is an update to a row this site deleted, which is correct to skip. Anything else means the sites now disagree on that row. Review with the post-partition runbook §3."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+
+  - interval: 1m
+    external_labels:
+      site: zagros-a
+    input_series:
+      - series: 'spock_exceptions_total{job="postgres",instance="postgres-a",site="zagros-b",datname="netbird"}'
+        values: '0 1 2 3 4 5'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SpockApplyExceptionLogged
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: spock
+              job: postgres
+              instance: postgres-a
+              site: zagros-b
+              datname: netbird
+            exp_annotations:
+              summary: "Spock skipped remote change(s) at zagros-b in netbird in last 5m"
+              description: "New rows in spock.exception_log: a change from another site failed to apply here and was skipped (spock.exception_behaviour = discard). The usual cause after a partition is an update to a row this site deleted, which is correct to skip. Anything else means the sites now disagree on that row. Review with the post-partition runbook §3."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+
+  - interval: 1m
+    external_labels:
+      site: zagros-a
+    input_series:
+      - series: 'up{job="chrony",instance="mgmt-a"}'
+        values: '0x5'
+      - series: 'chrony_tracking_last_offset_seconds{job="chrony",instance="mgmt-a"}'
+        values: '0x5'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ChronyDaemonDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: chrony
+              job: chrony
+              instance: mgmt-a
+            exp_annotations:
+              summary: "chrony daemon appears down at zagros-a:mgmt-a for 2m"
+              description: "Either chrony_exporter is unscrape-able, or chronyd itself isn't producing tracking data. Without chronyd disciplining the clock, the host will drift — and that drift will silently poison LWW conflict resolution before any other alert notices. Check `systemctl status chrony chrony_exporter` on the host."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"
+
+  - interval: 1m
+    external_labels:
+      site: zagros-a
+    input_series:
+      - series: 'up{job="chrony",instance="mgmt-a",site="zagros-b"}'
+        values: '0x5'
+      - series: 'chrony_tracking_last_offset_seconds{job="chrony",instance="mgmt-a",site="zagros-b"}'
+        values: '0x5'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ChronyDaemonDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: chrony
+              job: chrony
+              instance: mgmt-a
+              site: zagros-b
+            exp_annotations:
+              summary: "chrony daemon appears down at zagros-b:mgmt-a for 2m"
+              description: "Either chrony_exporter is unscrape-able, or chronyd itself isn't producing tracking data. Without chronyd disciplining the clock, the host will drift — and that drift will silently poison LWW conflict resolution before any other alert notices. Check `systemctl status chrony chrony_exporter` on the host."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"

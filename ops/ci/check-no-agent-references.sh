@@ -20,6 +20,8 @@
 #   - ops/work/                         the multi-agent session bus
 #   - docs/multi-agent/                 multi-agent substrate docs
 #   - docs/adr/0013-*, docs/adr/0017-*  the ADRs that decided the pilot
+#   - docs/adr/1018-augmented-design-driven-development.md
+#                                       the ADR that names the design tool it adopted
 #   - docs/design-assets/, docs/design-system/_origin/
 #   - ops/ci/check-no-agent-references.sh + .github/workflows/agent-references.yml
 #                                       (the guard itself necessarily names the patterns)
@@ -64,6 +66,11 @@ allowed() {
     ops/work/*) return 0 ;;
     docs/multi-agent/*) return 0 ;;
     docs/adr/0013-*|docs/adr/0017-*) return 0 ;;
+    # ADR 1018 records the decision to author design specs in an AI design
+    # tool, and names that tool's site as the one the first instance used. A
+    # product site, not a session link or a trailer, and an ADR is never
+    # rewritten, so the record stays as it was decided. This one file only.
+    docs/adr/1018-augmented-design-driven-development.md) return 0 ;;
     docs/design-assets/*) return 0 ;;
     docs/design-system/_origin/*) return 0 ;;
     ops/ci/check-no-agent-references.sh) return 0 ;;
