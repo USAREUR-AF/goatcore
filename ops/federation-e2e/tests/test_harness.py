@@ -566,9 +566,9 @@ def drive_rotate_checks():
 
 def refused_marks_checks():
     """A refused rotation marks BLOCKED only what the refusal stops: the refused side's own
-    checks and the key's checks, and the other side's only when that side has not run yet
-    (the first side refused). Marks outrank passing steps, so marking the other side after
-    it ran would hide its real results."""
+    checks and the key's checks, never the other side's, which runs its own rotate and
+    records its own result. Marks outrank passing steps, so marking the other side would
+    hide its real results."""
     script = ('eval "$(sed -n \'/^rot_checks()/,/^}/p\' units/rotation.sh)"; '
               'eval "$(sed -n \'/^rot_refused_marks()/,/^}/p\' units/rotation.sh)"; '
               'rot_refused_marks "$K" "$O"')
@@ -583,10 +583,16 @@ def refused_marks_checks():
     check("rotate-carrier-second-ran" in m and "samples-carrier" in m and "old-retired-carrier" in m,
           f"refused marks: a second side's refusal leaves its own or the key's checks unmarked: {sorted(m)}")
     rc, m = run("transport", "first")
-    check("rotate-transport-first-ran" in m and "rotate-transport-second-ran" in m,
-          f"refused marks: a first side's refusal does not mark both sides: {sorted(m)}")
-    check(m.get("rotate-transport-second-ran") == "not-run" and m.get("rotate-transport-first-ran") == "refused",
-          f"refused marks: the second side, which never ran, is not told apart from the refused side: {m}")
+    check("rotate-transport-first-ran" in m and "samples-transport" in m,
+          f"refused marks: a first side's refusal leaves its own or the key's checks unmarked: {sorted(m)}")
+    check(not any(c.endswith("-second") or c.endswith("-second-ran") for c in m),
+          f"refused marks: a first side's refusal marks the second side, which still runs its own rotate: {sorted(c for c in m if 'second' in c)}")
+    # The second side still attempts its own rotate after the first side's refusal (a refusal
+    # changes nothing), so one run shows each side's own refusal.
+    src = open(os.path.join(ROOT, "units", "rotation.sh"), encoding="utf-8").read()
+    body = src.split("rot_one() {", 1)[1].split("\n}\n", 1)[0] if "rot_one() {" in src else ""
+    check(body and 'case " $ROT_REFUSED " in *" $k "*) return 0' not in body.split("drive_rotate", 1)[0],
+          "refused marks: rot_one still skips the second side's rotate once the first side was refused")
 
 
 catalog_checks()
