@@ -317,20 +317,34 @@ pub fn rotate(repo: &Path, o: &Options, key: &str) -> Result<crate::Report> {
 /// The carrier is the forwarder's (docs/design/peering-forwarder.md §2): a
 /// peering no forwarder relays has none, and its edge's role ignores a carrier
 /// rotation's id, so the run would pass having changed no key. Refused before
-/// anything runs, and before the id is kept. An undeclared peering is left to
-/// the run's own refusal (GB-149).
+/// anything runs, and before the id is kept. A peering has a forwarder when
+/// goatbuilder.yaml declares one, or when its edge group's hand-written
+/// group_vars turn on `peering_wg_via_forwarder` (a hand-run deployment's
+/// declaration, the role's own switch for the carrier). An undeclared peering
+/// is left to the run's own refusal (GB-149).
 fn no_carrier_refused(repo: &Path, o: &Options) -> Result<()> {
     let cfg = super::config::load(&super::config_path(repo, o))?;
     match super::declaration::peering(&cfg, o.with, o.env)? {
-        Some(p) if p.forwarder.is_none() => Err(goat_errors::coded(
+        Some(p)
+            if p.forwarder.is_none() && {
+                let edge_group = o
+                    .edge_group
+                    .map(String::from)
+                    .or_else(|| p.values.edge_group.clone())
+                    .unwrap_or_else(|| format!("{}_edge", o.with));
+                !super::peering_files::via_forwarder(repo, &edge_group)
+            } =>
+        {
+            Err(goat_errors::coded(
             "GB-189",
             format!(
-                "`rotate {w} carrier`: peering {w} on {env} declares no forwarder, so its edge has no carrier to rotate (the carrier is the link to a peering forwarder, docs/design/peering-forwarder.md). Nothing ran. Rotate its peering key with `rotate {w} transport` once that is built, or its leaves with `rotate {w} leaves`",
+                "`rotate {w} carrier`: peering {w} on {env} declares no forwarder, neither in goatbuilder.yaml nor as `peering_wg_via_forwarder: true` in its edge group's group_vars, so its edge has no carrier to rotate (the carrier is the link to a peering forwarder, docs/design/peering-forwarder.md). Nothing ran. Rotate its peering key with `rotate {w} transport` once that is built, or its leaves with `rotate {w} leaves`",
                 w = o.with,
                 env = p.environment
             ),
         )
-        .into()),
+        .into())
+        }
         _ => Ok(()),
     }
 }
