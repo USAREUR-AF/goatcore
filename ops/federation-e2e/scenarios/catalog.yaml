@@ -858,14 +858,6 @@ scenarios:
     title: Backing a peering out leaves both hosts as they were before it (gate B7)
     unit: {goatbuilder: backout}
     runs_where: local
-    known_failure: >
-      The edge check: with the host firewall baseline on (lib/hostfw.sh), phase 11 loads
-      goat-host-firewall on the edge and stores the peering's entry there, and the back-out
-      leaves both: the edge's snapshot after it adds `table inet goat_host_firewall` and
-      `goat-host-firewall.service`. docs/design/peering-host-firewall.md, "Several peerings on
-      one edge": taking a peering out has to remove its stored entry as well, or its rules
-      stay, and that is not built. Until it is, the edge check is recorded and does not decide
-      the scenario; the core check still does.
     pass_condition: >
       nothing-hand-written runs {A}'s peering with {B} to acceptance; then `goatbuilder
       federate backout {B}` on {A} exits 0, and {A}'s edge host and core host are each equal to
@@ -876,7 +868,7 @@ scenarios:
     checks:
       - {id: peering-accepted, step: "nh-acceptance-as-{A}-with-{B}"}
       - {id: backout-ran, step: "bo-{A}-{B}-backout-ran"}
-      - {id: edge-as-before, step: "bo-{A}-edge-as-before", required: false}
+      - {id: edge-as-before, step: "bo-{A}-edge-as-before"}
       - {id: core-as-before, step: "bo-{A}-core-as-before"}
 
   - id: rollback-tools
