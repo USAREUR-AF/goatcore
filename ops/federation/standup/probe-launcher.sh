@@ -9,7 +9,12 @@
 #       prints HANDLE=<handle>, then REST=<url> and ZID=<zenoh id>, one per line; the session
 #       ends by itself at the deadline. Exit 1 when the session did not answer (it is removed).
 #   probe-launcher.sh stop <handle>
+#       removes the session and its key, and prints KEY_DELETED=verified once the edge host
+#       shows the key gone; KEY_DELETED=failed and exit 1 when it is still there
 #   probe-launcher.sh alive <handle>     exit 0 while it runs, 1 once it is gone
+#
+# A start that does not end with a session that answered (it fails, or is interrupted or
+# terminated) removes what it put on the edge host and prints KEY_DELETED=<verified|failed>.
 #
 # A probe is a zenoh client session in a container on one edge host, holding one identity
 # and dialling the far edge across the link. Which identities it holds is the caller's
@@ -70,6 +75,16 @@ put_host() { # MODE PATH
 }
 handle_ok() { printf '%s' "$1" | grep -Eqx 'goat-probe-(agreed|forged|impersonate)-[A-Za-z0-9-]{1,40}'; }
 hex() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
+# Remove a probe (its container and its folder, the key with it) and check on the edge host
+# that the key is gone. Prints KEY_DELETED=verified or KEY_DELETED=failed; prints nothing when
+# the edge host did not answer.
+remove_probe() { # HANDLE
+  on_host <<EOF 2>/dev/null || true
+docker rm -f "$1" >/dev/null 2>&1 || true
+rm -rf "$STATE/$1"
+if [ -e "$STATE/$1/key.pem" ]; then echo KEY_DELETED=failed; else echo KEY_DELETED=verified; fi
+EOF
+}
 
 verb="${1:-}"
 case "$verb" in
@@ -105,6 +120,22 @@ case "$verb" in
     dir="$STATE/$name"
     ttl=$((deadline - $(date +%s))); [ "$ttl" -gt 0 ] || ttl=1
 
+    # From here on the key may be on the edge host. Any way out but a session that answered
+    # (a failure, an interrupt, a termination) removes the probe and checks its key is gone.
+    STARTED_OK=""; INTERRUPTED=""
+    # shellcheck disable=SC2329 # called by the EXIT trap below
+    start_exit() {
+      local rc=$? del
+      [ -z "$STARTED_OK" ] || return 0
+      del=$(remove_probe "$name")
+      printf '%s\n' "${del:-KEY_DELETED=unknown}"
+      [ -z "$INTERRUPTED" ] || echo "probe-launcher: interrupted; removed $name (${del:-the edge host did not answer}) (X-PROBE-003)" >&2
+      exit "$rc"
+    }
+    trap start_exit EXIT
+    trap 'INTERRUPTED=1; exit 130' INT
+    trap 'INTERRUPTED=1; exit 143' TERM
+
     on_host <<EOF
 set -e
 install -d -m 0700 "$STATE" "$dir"
@@ -126,22 +157,21 @@ EOF
     for _ in $(seq 1 30); do
       if curl -s -m 2 -o /dev/null "http://$FED_PL_REST_IP:$port/@/**"; then
         printf 'REST=http://%s:%s\nZID=%s\n' "$FED_PL_REST_IP" "$port" "$zid"
+        STARTED_OK=1
         exit 0
       fi
       sleep "${FED_PL_WAIT_STEP:-2}"
     done
-    on_host <<EOF
-docker rm -f "$name" >/dev/null 2>&1 || true
-rm -rf "$dir"
-EOF
-    die "the $kind probe's REST port http://$FED_PL_REST_IP:$port did not answer; the probe was removed" X-PROBE-003 1
+    die "the $kind probe's REST port http://$FED_PL_REST_IP:$port did not answer; the probe is removed" X-PROBE-003 1
     ;;
   stop)
     if [ $# -ne 2 ] || ! handle_ok "$2"; then die "stop <handle>: not a handle this launcher gives: '${2:-}'" X-PROBE-001; fi
-    on_host <<EOF
-docker rm -f "$2" >/dev/null 2>&1 || true
-rm -rf "$STATE/$2"
-EOF
+    del=$(remove_probe "$2")
+    case "$del" in
+      KEY_DELETED=verified) echo "$del" ;;
+      KEY_DELETED=failed) echo "$del"; die "the key of $2 is still on the edge host after stop" X-PROBE-003 1 ;;
+      *) die "the edge host did not answer while stopping $2" X-PROBE-003 2 ;;
+    esac
     ;;
   alive)
     if [ $# -ne 2 ] || ! handle_ok "$2"; then die "alive <handle>: not a handle this launcher gives: '${2:-}'" X-PROBE-001; fi

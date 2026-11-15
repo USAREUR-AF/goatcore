@@ -211,9 +211,17 @@ one address (`FED_PL_REST_IP`; 0.0.0.0 is refused), because whoever reaches that
 the probe's identity. `start` prints the handle before the session answers, so a run stopped
 from then on still cleans it up, and removes a probe whose REST port does not answer within a
 minute (exit 1, X-PROBE-003). `alive` exits 1 only when the edge host answers that the probe is
-gone; an edge host that does not answer is exit 2. A value that goes into a command on the edge
+gone; an edge host that does not answer is exit 2. `stop` removes the probe's folder, the key
+with it, and prints `KEY_DELETED=verified` only once the edge host shows the key gone
+(`KEY_DELETED=failed` and exit 1 when it is still there). A `start` that does not end with a
+session that answered, whether it fails, is interrupted or is terminated, removes what it put on
+the edge host in an exit trap and prints the same line. The run records each probe's answer in
+its manifest as `key_deleted` (`verified`, `failed`, or `not reported` for a launcher that says
+nothing, such as the test environment's), and `cleanup/probes` fails, required, on a key that
+was not deleted. A value that goes into a command on the edge
 host is checked for its form first, and a handle it did not give is refused (X-PROBE-001).
-Tested with stubbed ssh, sudo, docker and curl (`tests/probe-launcher.bats`); not yet run
+Tested with stubbed ssh, sudo, docker and curl (`tests/probe-launcher.bats`, an interrupted
+start among them) and, for the manifest's `key_deleted`, in `test_acceptance.py`; not yet run
 against a real edge host. How the identities it is given are issued is not built.
 
 **A side's own launcher, in a bilateral session** (built in the runner and on the in-process

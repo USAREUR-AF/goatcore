@@ -229,8 +229,8 @@ later() { echo $(( $(date +%s) + ${1:-30} )); }
 }
 
 @test "probe-launcher: a start interrupted after the key is on the host removes it, on any exit" {
-  # curl never answers in time: the start waits, and is then terminated mid-run.
-  printf '#!/usr/bin/env bash\nsleep 30\n' > "$STUB/bin/curl"
+  # The probe never answers: the start keeps waiting, and is terminated mid-run.
+  printf '#!/usr/bin/env bash\nsleep 1\nexit 7\n' > "$STUB/bin/curl"
   FED_PL_WAIT_STEP=1 "$PL" start agreed run-17 "$(later)" > "$STUB/start.out" 2> "$STUB/start.err" &
   pid=$!
   for _ in $(seq 1 50); do [ -e "$FED_PL_STATE/goat-probe-agreed-run-17/key.pem" ] && break; sleep 0.1; done
