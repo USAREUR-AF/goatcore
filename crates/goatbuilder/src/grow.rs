@@ -456,7 +456,10 @@ mod tests {
             !dir.join("renderer-args").exists(),
             "a dry run runs the renderer only to check"
         );
-        let vars = dir.join("ops/ansible/group_vars/pasture_hosts/vars.yml");
+        // The stand-in renderer names the file by its resolved path (on macOS the
+        // temporary directory is under a symlink, /var -> /private/var).
+        let vars = std::fs::canonicalize(dir.join("ops/ansible/group_vars/pasture_hosts/vars.yml"))
+            .unwrap();
         assert!(
             all.contains(&format!("would hand over {}", vars.display())),
             "the dry run lists each file the hand-over takes: {all}"
@@ -560,7 +563,10 @@ mod tests {
             details(&r)
         );
         let shown = no.transcript.clone();
-        let vars = dir.join("ops/ansible/group_vars/pasture_hosts/vars.yml");
+        // The stand-in renderer names the file by its resolved path (on macOS the
+        // temporary directory is under a symlink, /var -> /private/var).
+        let vars = std::fs::canonicalize(dir.join("ops/ansible/group_vars/pasture_hosts/vars.yml"))
+            .unwrap();
         for want in [
             "~ preset: \"lite\" -> \"full\"".to_string(),
             format!("would write {TARGET}"),
