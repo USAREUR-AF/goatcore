@@ -73,12 +73,15 @@ pub struct RotateArgs {
     pub partner: String,
     /// The key: leaves, carrier, ipsec-leaf, ipsec-ca, transport, signing or ca. This build rotates leaves, carrier, ipsec-leaf and ipsec-ca.
     pub key: String,
-    /// ipsec-ca only: the sha256 fingerprint of our new IPsec CA, as the partner
-    /// read it back after placing it beside their current one.
+    /// ipsec-ca only: the partner's attestation that it placed our new IPsec CA
+    /// beside its current one: the sha256 fingerprint it read back from the file
+    /// it placed. goatbuilder checks the fingerprint is our staged CA's; it
+    /// cannot check the partner's edge.
     #[arg(long = "partner-holds-ipsec-ca", value_name = "SHA256")]
     pub partner_holds_ipsec_ca: Option<String>,
     /// ipsec-leaf or ipsec-ca: run the retire step of this rotation id, which
-    /// removes the set-aside key once both sides passed phase 14.
+    /// removes the set-aside key. Only for a rotation whose phase 14 passed here
+    /// after its switch, and only while no other rotation is under way.
     #[arg(long, value_name = "ID")]
     pub retire: Option<String>,
     /// The environment the peering is declared on.
@@ -245,11 +248,12 @@ pub(super) fn carrier(phases: &mut [Phase], c: &Pending, partner: &str) {
 /// each play's `-e fed_work=`. Only goat-peering-wg reads it; an edge whose
 /// transport is not WireGuard has no such key and ignores it.
 pub(super) fn transport(phases: &mut [Phase], t: &Pending) -> Result<()> {
-    phase_2_vars(
+    inject(
         phases,
+        2,
         &format!(" -e peering_wg_transport_rotation='{}'", t.id),
-    );
-    Ok(())
+        "the peering key rotation",
+    )
 }
 
 // `rotate <partner> transport` is refused until the partner can receive our
@@ -320,13 +324,79 @@ fn rotation_id_ok(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// A sha256 fingerprint as read aloud: 64 lowercase hex digits, with or
-/// without `sha256:`.
-fn fingerprint_ok(f: &str) -> bool {
-    let h = f.strip_prefix("sha256:").unwrap_or(f);
-    h.len() == 64
-        && h.chars()
-            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+/// A sha256 fingerprint as read aloud (64 hex digits, either case, with or
+/// without `sha256:`), in one form: `sha256:` and lowercase. `None` when it is
+/// not one.
+fn fingerprint(f: &str) -> Option<String> {
+    let t = f.trim();
+    let h = t
+        .strip_prefix("sha256:")
+        .or_else(|| t.strip_prefix("SHA256:"))
+        .unwrap_or(t)
+        .to_ascii_lowercase();
+    (h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit())).then(|| format!("sha256:{h}"))
+}
+
+/// The ledger of this peering's IPsec rotations (`IPSEC_LEDGER`): a list of
+/// objects with `id`, `kind`, `readback` (for `ca`, the partner's attestation),
+/// and the times `started`, `switched` (phase 11 passed), `accepted` (phase 14
+/// passed after the switch) and `retired`.
+fn ledger_read(work: &Path) -> Result<Vec<serde_json::Value>> {
+    let f = work.join(IPSEC_LEDGER);
+    match std::fs::read_to_string(&f) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(goat_errors::coded(
+            "GB-298",
+            format!("{} cannot be read: {e}. Nothing ran", f.display()),
+        )
+        .into()),
+        Ok(t) => serde_json::from_str::<serde_json::Value>(&t)
+            .ok()
+            .and_then(|v| v.get("rotations").and_then(|r| r.as_array()).cloned())
+            .ok_or_else(|| {
+                goat_errors::coded(
+                    "GB-298",
+                    format!(
+                        "{} is not a ledger of IPsec rotations; it was left as it is. Nothing ran",
+                        f.display()
+                    ),
+                )
+                .into()
+            }),
+    }
+}
+
+fn ledger_write(work: &Path, rows: &[serde_json::Value]) -> Result<()> {
+    let f = work.join(IPSEC_LEDGER);
+    let tmp = f.with_extension("json.tmp");
+    std::fs::write(
+        &tmp,
+        format!("{}\n", serde_json::json!({ "rotations": rows })),
+    )?;
+    std::fs::rename(tmp, f)?;
+    Ok(())
+}
+
+/// Set `field` to now on the ledger rows `pick` chooses; best effort, as the
+/// phase it records has already passed.
+fn ledger_mark(work: &Path, field: &str, pick: &dyn Fn(&serde_json::Value) -> bool) {
+    if let Ok(mut rows) = ledger_read(work) {
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let mut changed = false;
+        for r in rows.iter_mut().filter(|r| pick(r)) {
+            r[field] = serde_json::json!(now);
+            changed = true;
+        }
+        if changed {
+            let _ = ledger_write(work, &rows);
+        }
+    }
+}
+
+fn has(r: &serde_json::Value, field: &str) -> bool {
+    r.get(field)
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.is_empty())
 }
 
 /// The transport the agreement in `work` chose, if it can be read.
@@ -347,7 +417,6 @@ pub fn ipsec_rotation(
     retire: Option<&str>,
     phase_11_in_run: bool,
 ) -> Result<Ipsec> {
-    let _ = phase_11_in_run;
     let kind = if key == "ipsec-ca" { "ca" } else { "leaf" };
     match agreed_transport(work).as_deref() {
         Some("ipsec-fips") => {}
@@ -363,6 +432,8 @@ pub fn ipsec_rotation(
             .into())
         }
     }
+    let file = work.join(IPSEC_FILE);
+    let ledger = ledger_read(work)?;
     if let Some(id) = retire {
         if !rotation_id_ok(id) {
             return Err(goat_errors::coded(
@@ -371,21 +442,61 @@ pub fn ipsec_rotation(
             )
             .into());
         }
+        if readback.is_some() {
+            return Err(goat_errors::coded(
+                "GB-189",
+                format!("--retire and --partner-holds-ipsec-ca do not go together: the retire step of '{id}' moves no CA and takes no attestation. Nothing ran"),
+            )
+            .into());
+        }
+        if file.exists() {
+            return Err(goat_errors::coded(
+                "GB-298",
+                format!("{} records an IPsec rotation under way, so '{id}' is not retired: finish that rotation first (the command that started it), then retire. Nothing ran", file.display()),
+            )
+            .into());
+        }
+        let row = ledger.iter().find(|r| r["id"].as_str() == Some(id));
+        let Some(row) =
+            row.filter(|r| has(r, "switched") && has(r, "accepted") && !has(r, "retired"))
+        else {
+            return Err(goat_errors::coded(
+                "GB-309",
+                format!(
+                    "the retire step finds no confirmed rotation to retire: {} shows no IPsec rotation '{id}' whose phase 11 switched and whose phase 14 passed here afterwards{}. Retire only an id the rotation printed, once phase 14 passed on both sides. Nothing ran",
+                    work.join(IPSEC_LEDGER).display(),
+                    match row { Some(r) if has(r, "retired") => " (it is already retired)", Some(_) => " (it has not passed phase 14 since its switch)", None => "" }
+                ),
+            )
+            .into());
+        };
+        let rkind = if row["kind"].as_str() == Some("ca") {
+            "ca"
+        } else {
+            "leaf"
+        };
+        if rkind != kind {
+            return Err(goat_errors::coded(
+                "GB-298",
+                format!("'{id}' was an ipsec-{rkind} rotation, not {key}: retire it as `rotate {partner} ipsec-{rkind} --retire {id}`. Nothing ran"),
+            )
+            .into());
+        }
         return Ok(Ipsec {
             id: id.to_string(),
-            kind,
+            kind: rkind,
             readback: None,
             retire: true,
             file: None,
         });
     }
     let readback = match (kind, readback) {
-        ("ca", Some(f)) if fingerprint_ok(f) => Some(f.to_string()),
+        ("ca", Some(f)) if fingerprint(f).is_some() => fingerprint(f),
         ("ca", got) => {
             return Err(goat_errors::coded(
                 "GB-303",
                 format!(
-                    "`rotate {partner} ipsec-ca` switches to a leaf of our new CA only once the partner trusts it: pass --partner-holds-ipsec-ca <sha256>, the fingerprint the partner read back after placing our new CA ({}). Nothing ran",
+                    "`rotate {partner} ipsec-ca` switches to a leaf of our new CA only with the partner's attestation that it placed that CA: pass --partner-holds-ipsec-ca <sha256>, the fingerprint the partner read back from the file it placed ({}). Nothing ran",
                     match got { Some(f) => format!("'{f}' is not 64 hex digits"), None => "it was not given".to_string() }
                 ),
             )
@@ -393,19 +504,31 @@ pub fn ipsec_rotation(
         }
         (_, _) => None,
     };
-    let file = work.join(IPSEC_FILE);
     if let Ok(t) = std::fs::read_to_string(&file) {
-        let v: serde_json::Value = serde_json::from_str(&t).unwrap_or_default();
-        let (k, id) = (
-            v["kind"].as_str().unwrap_or(""),
-            v["id"].as_str().unwrap_or(""),
-        );
-        let r = v["readback"].as_str().map(String::from);
-        if k != kind || r != readback || !rotation_id_ok(id) {
+        let v: Option<serde_json::Value> = serde_json::from_str(&t).ok();
+        let (k, id, r) = match &v {
+            Some(v) => (
+                v["kind"].as_str().unwrap_or(""),
+                v["id"].as_str().unwrap_or(""),
+                v["readback"].as_str().and_then(fingerprint),
+            ),
+            None => ("", "", None),
+        };
+        if !matches!(k, "leaf" | "ca") || !rotation_id_ok(id) {
             return Err(goat_errors::coded(
                 "GB-298",
                 format!(
-                    "{} records the IPsec rotation '{id}' (ipsec-{k}{}), which is not the one asked for ({key}{}). Finish it with the command that started it, or remove the file to start again; goat-peering-edge keeps the set-aside pair in .previous-{id}/ on the edge. Nothing ran",
+                    "{} is not a rotation record (it is empty, not JSON, or has no kind and id), so the rotation under way is not known. Read it, and the edge's /etc/swanctl/.previous-*/ directories, before removing it. Nothing ran",
+                    file.display()
+                ),
+            )
+            .into());
+        }
+        if k != kind || r != readback {
+            return Err(goat_errors::coded(
+                "GB-298",
+                format!(
+                    "{} records the IPsec rotation '{id}' (ipsec-{k}{}), which is not the one asked for ({key}{}). Finish it with the command that started it. Removing the file starts a new rotation id; the edge keeps .previous-{id}/ as it is (after a GB-302 rollback, with the old pair live), and nothing removes it yet. Nothing ran",
                     file.display(),
                     r.as_deref().map(|r| format!(", read-back {r}")).unwrap_or_default(),
                     readback.as_deref().map(|r| format!(", read-back {r}")).unwrap_or_default(),
@@ -421,13 +544,50 @@ pub fn ipsec_rotation(
             file: Some(file),
         });
     }
+    if let Some(open) = ledger
+        .iter()
+        .find(|r| has(r, "switched") && !has(r, "retired"))
+    {
+        let (oid, ok) = (
+            open["id"].as_str().unwrap_or(""),
+            open["kind"].as_str().unwrap_or("leaf"),
+        );
+        return Err(goat_errors::coded(
+            "GB-298",
+            format!(
+                "the IPsec rotation '{oid}' switched and is not retired, so its set-aside pair is still on the edge: retire it first, once phase 14 passed on both sides: goatbuilder federate {VERB} {partner} ipsec-{ok} --retire {oid}. Nothing ran"
+            ),
+        )
+        .into());
+    }
     let id = format!("ipsec-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"));
+    // A run that leaves phase 11 out rotates nothing, so it records nothing.
+    if !phase_11_in_run {
+        return Ok(Ipsec {
+            id,
+            kind,
+            readback,
+            retire: false,
+            file: None,
+        });
+    }
     let mut rec = serde_json::json!({"kind": kind, "id": id});
     if let Some(r) = &readback {
         rec["readback"] = serde_json::json!(r);
     }
     std::fs::create_dir_all(work)?;
     std::fs::write(&file, format!("{rec}\n"))?;
+    let mut rows = ledger;
+    let mut row = serde_json::json!({
+        "id": id,
+        "kind": kind,
+        "started": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    });
+    if let Some(r) = &readback {
+        row["readback"] = serde_json::json!(r);
+    }
+    rows.push(row);
+    ledger_write(work, &rows)?;
     Ok(Ipsec {
         id,
         kind,
@@ -450,10 +610,24 @@ pub(super) fn ipsec(phases: &mut [Phase], i: &Ipsec) -> Result<()> {
     if i.retire {
         vars.push_str(" -e peering_edge_rotation_retire='true'");
     }
-    for p in phases.iter_mut().filter(|p| p.n == 11) {
+    inject(phases, 11, &vars, "the IPsec rotation")
+}
+
+/// Put `vars` before every `-e fed_work=` of phase `n`, and refuse when there
+/// is none: a rotation whose values reach no play would run the phase as a
+/// plain one and report the rotation done.
+fn inject(phases: &mut [Phase], n: u32, vars: &str, what: &str) -> Result<()> {
+    let mut made = 0;
+    for p in phases.iter_mut().filter(|p| p.n == n) {
+        made += p.cmd.matches(" -e fed_work='").count();
         p.cmd = p
             .cmd
             .replace(" -e fed_work='", &format!("{vars} -e fed_work='"));
+    }
+    if made == 0 {
+        return Err(anyhow::anyhow!(
+            "phase {n} has no play to pass {what} to (no `-e fed_work=` in its command); nothing ran"
+        ));
     }
     Ok(())
 }
@@ -515,7 +689,14 @@ pub fn rotate(
     match key {
         "ipsec-leaf" | "ipsec-ca" => {
             let work = super::work_dir(o);
-            let i = ipsec_rotation(Path::new(&work), o.with, key, readback, retire, o.from <= 11)?;
+            let i = ipsec_rotation(
+                Path::new(&work),
+                o.with,
+                key,
+                readback,
+                retire,
+                o.from <= 11,
+            )?;
             let mut again = format!("goatbuilder federate {VERB} {} {key}", o.with);
             if let Some(r) = &i.readback {
                 again.push_str(&format!(" --partner-holds-ipsec-ca {r}"));
@@ -585,7 +766,13 @@ pub fn refused(partner: &str, key: &str) -> Result<()> {
 /// new leaves, the run carries on as the plain one: no `rotate` command is
 /// offered again (it would mint another set), and the default resume is.
 pub(super) fn after_phase(s: &mut Surface, n: u32, work: &Path) {
-    let _ = work;
+    // Phase 14 passed: every IPsec rotation that switched and has not been
+    // accepted since is accepted now, which is what allows its retire step.
+    if n == 14 {
+        ledger_mark(work, "accepted", &|r| {
+            has(r, "switched") && !has(r, "accepted")
+        });
+    }
     if s.rotate_leaves && n == 8 {
         s.rotate_leaves = false;
         s.again = None;
@@ -599,6 +786,8 @@ pub(super) fn after_phase(s: &mut Surface, n: u32, work: &Path) {
     if n == 11 {
         if let Some(i) = s.rotate_ipsec.take() {
             s.again = None;
+            let field = if i.retire { "retired" } else { "switched" };
+            ledger_mark(work, field, &|r| r["id"].as_str() == Some(i.id.as_str()));
             if let Some(f) = i.file {
                 let _ = std::fs::remove_file(f);
             }
@@ -761,7 +950,8 @@ mod tests {
         let r = ipsec_rotation(d.path(), "xab", "ipsec-ca", None, Some(&id), true).unwrap();
         assert!(r.retire && r.id == id && r.file.is_none() && r.kind == "ca");
         assert!(!d.path().join(IPSEC_FILE).exists());
-        let e = ipsec_rotation(d.path(), "xab", "ipsec-ca", None, Some("x; rm -rf /"), true).unwrap_err();
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-ca", None, Some("x; rm -rf /"), true)
+            .unwrap_err();
         assert_eq!(code(&e), "GB-189");
         // The kind is the retired rotation's, not the key's.
         let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some(&id), true).unwrap_err();
@@ -774,7 +964,8 @@ mod tests {
     fn retire_needs_a_rotation_this_side_saw_pass_phase_14() {
         let d = ipsec_work("ipsec-fips");
         // Nothing in the ledger: refused.
-        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some("ipsec-1"), true).unwrap_err();
+        let e =
+            ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some("ipsec-1"), true).unwrap_err();
         assert_eq!(code(&e), "GB-309", "{e}");
         // Under way (the record is there): refused.
         let i = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap();
@@ -789,7 +980,8 @@ mod tests {
         after_phase(&mut s, 14, d.path());
         assert!(ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some(&i.id), true).is_ok());
         // Never together with a read-back.
-        let e = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(FP), Some(&i.id), true).unwrap_err();
+        let e =
+            ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(FP), Some(&i.id), true).unwrap_err();
         assert_eq!(code(&e), "GB-189", "{e}");
         // Once retired, a second retire of the same id is refused.
         let r = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some(&i.id), true).unwrap();
@@ -819,7 +1011,10 @@ mod tests {
         let a = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(FP), None, true).unwrap();
         let upper = FP[7..].to_uppercase();
         let b = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(&upper), None, true).unwrap();
-        assert_eq!(a.id, b.id, "the same read-back, written another way, resumes");
+        assert_eq!(
+            a.id, b.id,
+            "the same read-back, written another way, resumes"
+        );
         assert_eq!(b.readback.as_deref(), Some(FP), "passed on in one form");
     }
 
@@ -832,7 +1027,10 @@ mod tests {
             let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap_err();
             assert_eq!(code(&e), "GB-298", "{body:?}");
             let m = e.to_string();
-            assert!(m.contains(IPSEC_FILE) && m.contains("not a rotation record"), "{body:?}: {m}");
+            assert!(
+                m.contains(IPSEC_FILE) && m.contains("not a rotation record"),
+                "{body:?}: {m}"
+            );
         }
     }
 
@@ -855,7 +1053,10 @@ mod tests {
         assert!(ipsec(&mut ph, &i).is_err());
         let mut ph = vec![phase(12, "play -e fed_work='/w'")];
         assert!(ipsec(&mut ph, &i).is_err(), "no phase 11 at all");
-        let t = Pending { id: "transport-1".into(), file: "/w/.rotation-transport".into() };
+        let t = Pending {
+            id: "transport-1".into(),
+            file: "/w/.rotation-transport".into(),
+        };
         let mut ps = vec![phase(2, "play peering-prepare.yml")];
         assert!(transport(&mut ps, &t).is_err());
     }
@@ -898,9 +1099,11 @@ mod tests {
         after_phase(&mut s, 11, d.path());
         assert!(s.rotate_ipsec.is_none() && s.again.is_none());
         assert!(!d.path().join(IPSEC_FILE).exists());
+        // A new rotation waits for that one's retire, so a fresh peering here.
+        let d2 = ipsec_work("ipsec-fips");
         let (o, s) = ipsec_run(
             &opts(12),
-            ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap(),
+            ipsec_rotation(d2.path(), "xab", "ipsec-leaf", None, None, false).unwrap(),
             "again".into(),
         );
         assert!(

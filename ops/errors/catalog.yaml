@@ -3679,18 +3679,21 @@ entries:
     exit: 2
     matches:
       - "goat-peering-edge refuses \\(GB-303\\)"
-      - "switches to a leaf of our new CA only once the partner trusts it"
+      - "only with the partner's attestation that it placed that CA"
 
   - code: GB-298
     tool: goatbuilder
-    title: an IPsec rotation under way is not the one asked for
-    what: "goatbuilder federate rotate <partner> ipsec-leaf|ipsec-ca records the rotation it starts in <work>/.rotation-ipsec (its id, its kind and, for ipsec-ca, the partner's read-back of our new CA) before phase 11 runs, and removes the record once phase 11 passed. A run that finds a record resumes that rotation with the same id, so goat-peering-edge sets nothing aside twice. This run asked for another kind, or another read-back, than the record names, so it was refused before anything ran."
+    title: an IPsec rotation under way, or not yet retired, is not the one asked for
+    what: "goatbuilder federate rotate <partner> ipsec-leaf|ipsec-ca records the rotation it starts in <work>/.rotation-ipsec (its id, its kind and, for ipsec-ca, the partner's attestation: the fingerprint it read back of our new CA) before phase 11 runs, and removes the record once phase 11 passed. Each rotation is also kept in <work>/ipsec-rotations.json, with when it switched, passed phase 14 and was retired. A run that finds a record resumes that rotation with the same id, so goat-peering-edge sets nothing aside twice. This run was refused before anything ran: it asked for another kind or another read-back than the record names (fingerprints are compared in one form, sha256: and lowercase), the record is empty or not a rotation record, a retire was asked while a rotation is under way or of the other kind than the rotation retired, or a new rotation was asked while an earlier one switched and is not retired."
     causes:
       - an earlier rotation stopped before phase 11 passed, and a rotation of the other kind was asked for
       - the partner's read-back changed between the run that started the rotation and this one
+      - an earlier rotation switched and its retire step has not run
+      - the record was emptied or edited by hand
     fixes:
       - "finish the rotation the record names with the command that started it (the message names its id and kind)"
-      - "or remove <work>/.rotation-ipsec to start again; the edge keeps the set-aside pair in /etc/swanctl/.previous-<id>/"
+      - "retire the earlier rotation once phase 14 passed on both sides: goatbuilder federate rotate <partner> ipsec-leaf|ipsec-ca --retire <id>"
+      - "removing <work>/.rotation-ipsec starts a new rotation id; the edge keeps /etc/swanctl/.previous-<id>/ as it is (after a GB-302 rollback, with the old pair live), and nothing removes it yet"
     read: docs/design/federation-key-rotation.md
     exit: 1
     matches:
@@ -3706,13 +3709,15 @@ entries:
       - "the rotation was not confirmed: it stopped after the switch and before its confirm wrote .previous-<id>/confirmed"
       - "the confirm's record is unreadable: it lacks the id= or at= line the confirm writes"
       - "neither the IKE SA the confirm recorded nor one established since is up, or the live key is not the live certificate's"
+      - "goatbuilder federate rotate --retire: this side's ledger (<work>/ipsec-rotations.json) shows no such rotation whose phase 11 switched and whose phase 14 passed afterwards, or it is already retired"
     fixes:
-      - "check the id the rotation printed (ls /etc/swanctl/.previous-*)"
+      - "check the id the rotation printed (ls /etc/swanctl/.previous-*, or <work>/ipsec-rotations.json)"
       - "run the rotation again with the same id: it re-authenticates, confirms and writes .previous-<id>/confirmed; then retire once both sides passed phase 14"
     read: docs/design/federation-key-rotation.md
     exit: 2
     matches:
       - "goat-peering-edge refuses \\(GB-309\\)"
+      - "the retire step finds no confirmed rotation to retire"
 
   - code: GB-311
     tool: goatbuilder
