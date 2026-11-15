@@ -840,16 +840,20 @@ pub fn migrate(paths: &Paths, st: &mut State, run: &str) -> Option<Step> {
 /// names. `None` when no keys confirmation is journaled (keys bound by hand).
 fn partner_keys_hold(paths: &Paths, st: &State, bytes: &[u8]) -> Option<bool> {
     let keys = st.confirmations.iter().rev().find(|c| c.kind == "keys" && c.phase == 5)?;
-    let theirs: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-    let them = field(&theirs, &["sovereign_id"]).filter(|id| plain_id(id))?;
-    let same = |k: &str, now: Option<String>| match (keys.values.get(k).filter(|v| !v.is_empty()), now) {
-        (Some(a), Some(b)) => prompt::same_value(a, &b),
-        _ => false,
+    // With a keys confirmation journaled, a package that cannot be read for its
+    // keys (not JSON, or a sovereign id that is not a plain id) does not hold:
+    // fail closed.
+    let Some(theirs) = serde_json::from_slice::<serde_json::Value>(bytes).ok() else {
+        return Some(false);
     };
-    Some(
-        same("partner_key", keyring_key(&paths.keyring, &them))
-            && same("partner_ca_fingerprint", field(&theirs, &["identity", "ca_fingerprint"])),
-    )
+    let Some(them) = field(&theirs, &["sovereign_id"]).filter(|id| plain_id(id)) else {
+        return Some(false);
+    };
+    let got = |k: &str| keys.values.get(k).filter(|v| !v.is_empty());
+    // The key exactly (base64); the fingerprint as hex (same_value).
+    let key_same = matches!((got("partner_key"), keyring_key(&paths.keyring, &them)), (Some(a), Some(b)) if a.trim() == b.trim());
+    let fp_same = matches!((got("partner_ca_fingerprint"), field(&theirs, &["identity", "ca_fingerprint"])), (Some(a), Some(b)) if prompt::same_value(a, &b));
+    Some(key_same && fp_same)
 }
 
 /// Before any phase after 5: the package on disk is the one the last
@@ -914,13 +918,28 @@ pub fn keys_unchanged(paths: &Paths, st: &State) -> bool {
         return false;
     };
     let seed = paths.signing.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
-    let now = [
+    // Verifying keys are base64, where case is part of the value: compared exactly.
+    // Fingerprints are hex: compared as same_value does (case and a sha256: prefix).
+    let exact = [
         ("partner_key", keyring_key(&paths.keyring, &them)),
-        ("partner_ca_fingerprint", field(&theirs, &["identity", "ca_fingerprint"])),
-        ("our_ca_fingerprint", field(&ours, &["identity", "ca_fingerprint"])),
         ("our_key", our_verifying_key(&seed).ok()),
     ];
-    now.iter().all(|(k, v)| matches!((got(k), v), (Some(a), Some(b)) if prompt::same_value(a, b)))
+    let hex = [
+        ("partner_ca_fingerprint", field(&theirs, &["identity", "ca_fingerprint"])),
+        ("our_ca_fingerprint", field(&ours, &["identity", "ca_fingerprint"])),
+    ];
+    let keys_same = exact.iter().all(|(k, v)| matches!((got(k), v), (Some(a), Some(b)) if a.trim() == b.trim()));
+    let fps_same = hex.iter().all(|(k, v)| matches!((got(k), v), (Some(a), Some(b)) if prompt::same_value(a, b)));
+    // And their CA certificate on disk carries exactly the fingerprint confirmed,
+    // as the normal path checks it: one certificate, that one.
+    let ca_same = match (got("partner_ca_fingerprint"), std::fs::read(&paths.their_ca)) {
+        (Some(fp), Ok(pem)) => {
+            let fps = pem_fingerprints(&pem);
+            fps.len() == 1 && prompt::same_value(&fps[0], fp)
+        }
+        _ => false,
+    };
+    keys_same && fps_same && ca_same
 }
 
 /// Phase 5, before the keys: a new package from the partner under the key
