@@ -222,7 +222,23 @@ evidence: every replication subscription reports `replicating` in both
 directions (`goatbuilder assay <founder-site>` reads the founder's half); a write on the founder appears in the joiner's database; the
 same deletion replicates back; and `signal-federation-verify.yml` passes, naming
 which directions a forward proved (a direction whose target peer is homed on
-the sender's own signal reports UNPROVEN until peers home on the joiner). **Checkpoint 4:**
+the sender's own signal reports UNPROVEN until peers home on the joiner).
+
+The write and the deletion have their own probe. It writes, so it is optional
+on a live goatnet and runs only with `--write`:
+
+```text
+ops/validation/identity-roundtrip.sh --write \
+  --founder <founder's Kratos admin URL> --joiner <joiner's Kratos admin URL>
+```
+
+It creates one inactive test identity, `goat-roundtrip-<stamp>-<random>@example.org`,
+at the founder. It waits for that identity at the joiner, deletes it there,
+and waits for the deletion to reach the founder. It passes on exit 0 with
+`identity-roundtrip: PASS …`. It refuses, writing nothing, when the address
+already exists. When it fails part way, it still deletes what it created and
+says so. Each admin URL is that site's Kratos admin API, for example through
+`ssh -L` to the management host. **Checkpoint 4:**
 
 ```text
 goatbuilder status --env <env>
