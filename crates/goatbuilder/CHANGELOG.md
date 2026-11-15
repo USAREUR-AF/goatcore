@@ -104,7 +104,10 @@ rotating its WireGuard key, for example), the directory step saves it at
 `goatbuilder federate <partner>` shows which members changed and the new
 package's digest, and places it only once a person confirms the digest compared
 on the call: `yes` at a terminal, or `--accept-partner-package <digest>`.
-`--yes` never confirms it. The old package is kept as a copy,
+`--yes` never confirms it. A scripted run that gives only the keys
+(`goatbuilder federate <partner> --partner-key <key> --partner-ca-fingerprint <fp>`)
+now stops at phase 5 with GB-192 and exit 0 when a new package waits, so a script
+cannot tell that stop from a pass by its exit code; it reads the stop line. The old package is kept as a copy,
 `theirs.canonical.json.previous-<UTC time>`, and the place is never empty; if the
 folder cannot be synced after the new package is placed, the run says the new one
 is in place, not confirmed, and the old one is at the copy (GB-184). A
@@ -125,7 +128,8 @@ contract's "refused: a precondition failed"); a package outside a working
 folder composes as before. A peering confirmed by an earlier build has
 its held package recorded as confirmed on its first run, as a migration, and the
 run prints that package's digest to compare with the partner at the next call; one
-that cannot be read stops the run (GB-310). This follows ADR 1229, which is
+that cannot be read stops every run that executes a phase (deploy, test, a resume)
+with GB-310, exit 1. This follows ADR 1229, which is
 accepted.
 
 `goatbuilder federate rotate <partner> transport` now replaces our WireGuard
