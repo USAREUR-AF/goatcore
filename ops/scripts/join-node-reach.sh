@@ -50,12 +50,41 @@ case "${1:-}" in
         echo "  Find the box's real LAN address (on the box: ip -4 addr, the interface on the site LAN, not l4tbr0) and pass it as --address." >&2
         exit 1 ;;
     esac
-    kh="$(mktemp "${TMPDIR:-/tmp}/join-node-reach.XXXXXX")" || exit 1
-    trap 'rm -f "$kh"' EXIT
-    err="$(ssh -o BatchMode=yes -o ConnectTimeout=10 -o NumberOfPasswordPrompts=0 \
-      -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$kh" -o GlobalKnownHostsFile=/dev/null \
-      "$target" true 2>&1 >/dev/null)"
-    rc=$?
+    # The run's own known_hosts, in a folder of its own under /tmp: ssh splits
+    # UserKnownHostsFile on whitespace and expands % in it, so a TMPDIR with a
+    # space or a % would name another file, and a good node would fail.
+    dir="$(mktemp -d /tmp/join-node-reach.XXXXXX)" || exit 1
+    case "$dir" in *[[:space:]%]*|'') echo "join-node-reach: unsafe folder '$dir'" >&2; exit 1 ;; esac
+    kh="$dir/known_hosts"
+    errf="$dir/stderr"
+    : > "$kh"
+    bound="$dir/bound"
+    trap 'rm -f "$kh" "$errf" "$bound"; rmdir "$dir" 2>/dev/null' EXIT
+    # The whole check is bounded (JOIN_NODE_REACH_LIMIT seconds, default 30). A
+    # ProxyJump or ProxyCommand ssh takes none of the options below; measured on
+    # OpenSSH 8.2 to 10.2, ConnectTimeout still ends a jump host that drops
+    # packets, or one whose key is unknown, at the banner (10 s), and the jump's
+    # ssh exits with it. The bound covers what ConnectTimeout does not, such as
+    # a server that sends its banner and then stalls the key exchange.
+    limit="${JOIN_NODE_REACH_LIMIT:-30}"
+    case "$limit" in ''|*[!0-9]*) echo "join-node-reach: JOIN_NODE_REACH_LIMIT is '$limit', not a number of seconds" >&2; exit 2 ;; esac
+    opts=(-o BatchMode=yes -o ConnectTimeout=10 -o NumberOfPasswordPrompts=0
+      -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$kh" -o GlobalKnownHostsFile=/dev/null)
+    # A KnownHostsCommand in the operator's ssh_config (OpenSSH 8.5 and later)
+    # would vouch for the node and keep its key out of the run's file.
+    if ssh -G -o KnownHostsCommand=none "$target" >/dev/null 2>&1; then
+      opts+=(-o KnownHostsCommand=none)
+    fi
+    ssh "${opts[@]}" "$target" true </dev/null >/dev/null 2>"$errf" &
+    pid=$!
+    ( sleep "$limit"; : > "$bound"; kill -TERM "$pid" ) </dev/null >/dev/null 2>&1 &
+    dog=$!
+    wait "$pid"; rc=$?
+    kill -TERM "$dog" 2>/dev/null
+    err="$(cat "$errf" 2>/dev/null)"
+    if [ -e "$bound" ]; then
+      err="no answer within the ${limit} s bound, JOIN_NODE_REACH_LIMIT${err:+; ssh said: $(printf '%s\n' "$err" | grep -v '^Warning: Permanently added' | head -n 1)}"
+    fi
     if [ "$rc" -eq 0 ]; then
       echo ">> $target answers over SSH, and logs in"
       exit 0
