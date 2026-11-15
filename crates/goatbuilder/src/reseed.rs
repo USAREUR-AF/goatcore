@@ -50,18 +50,31 @@ fn yaml_value(file: &Path, key: &str) -> String {
             t.lines().find_map(|l| {
                 l.strip_prefix(key)
                     .and_then(|r| r.strip_prefix(':'))
-                    .map(|v| v.split_whitespace().next().unwrap_or("").replace(['"', '\''], ""))
+                    .map(|v| {
+                        v.split_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .replace(['"', '\''], "")
+                    })
             })
         })
         .unwrap_or_default()
 }
 
 fn row(name: &str, detail: String) -> Check {
-    Check { name: name.into(), ok: true, detail, fix: None }
+    Check {
+        name: name.into(),
+        ok: true,
+        detail,
+        fix: None,
+    }
 }
 
 pub fn journal_path(repo: &Path, site: &str, node: &str) -> String {
-    format!("{}/join-node-{site}-{node}-reseed.json", crate::settings::state_dir_abs(repo))
+    format!(
+        "{}/join-node-{site}-{node}-reseed.json",
+        crate::settings::state_dir_abs(repo)
+    )
 }
 
 /// Each step's outcome as the journal records it: (passed, code, line).
@@ -75,7 +88,11 @@ fn journaled(path: &str) -> std::collections::BTreeMap<String, (bool, String, St
         for (k, v) in steps {
             out.insert(
                 k.clone(),
-                (v["ok"].as_bool().unwrap_or(false), v["code"].as_str().unwrap_or("").to_string(), v["line"].as_str().unwrap_or("").to_string()),
+                (
+                    v["ok"].as_bool().unwrap_or(false),
+                    v["code"].as_str().unwrap_or("").to_string(),
+                    v["line"].as_str().unwrap_or("").to_string(),
+                ),
             );
         }
     }
@@ -85,7 +102,10 @@ fn journaled(path: &str) -> std::collections::BTreeMap<String, (bool, String, St
 pub fn execute(repo: &Path, o: &Options) -> Result<Report> {
     let site_us = o.site.replace('-', "_");
     let group = format!("{site_us}_hosts");
-    let gv = repo.join("ops/ansible/group_vars").join(&group).join("vars.yml");
+    let gv = repo
+        .join("ops/ansible/group_vars")
+        .join(&group)
+        .join("vars.yml");
     let founder_site = yaml_value(&gv, "join_founder_site");
     if founder_site.is_empty() {
         return Err(goat_errors::coded("GB-247", format!("--reseed at {}, which names no founder (join_founder_site in group_vars/{group}/vars.yml): a node is seeded again from the site that kept its slot, the founder its site joins", o.site)).into());
@@ -93,7 +113,10 @@ pub fn execute(repo: &Path, o: &Options) -> Result<Report> {
     let founder_group = format!("{}_hosts", founder_site.replace('-', "_"));
     let mut container = yaml_value(&gv, "spock_mesh_postgres_container");
     if container.is_empty() {
-        container = yaml_value(&repo.join("ops/ansible/roles/spock-mesh-peering/defaults/main.yml"), "spock_mesh_postgres_container");
+        container = yaml_value(
+            &repo.join("ops/ansible/roles/spock-mesh-peering/defaults/main.yml"),
+            "spock_mesh_postgres_container",
+        );
     }
     if container.is_empty() {
         return Err(goat_errors::coded("GB-350", "--reseed: no spock_mesh_postgres_container in the site's group_vars or in ops/ansible/roles/spock-mesh-peering/defaults/main.yml, so the run cannot name the Postgres container it reaches").into());
@@ -112,23 +135,61 @@ pub fn execute(repo: &Path, o: &Options) -> Result<Report> {
         u = sh_word(&user),
         n = sh_word(o.node),
     );
-    let psql = |who: &str| format!("\"ssh ${who} sudo docker exec -i {} psql -U postgres\"", sh_word(&container));
-    let cmd = |step: &str| format!("{reach}python3 ../scripts/spock-reseed.py {step} --node-psql {} --site-psql {} --journal {}", psql("node"), psql("site"), sh_quote(&journal));
+    let psql = |who: &str| {
+        format!(
+            "\"ssh ${who} sudo docker exec -i {} psql -U postgres\"",
+            sh_word(&container)
+        )
+    };
+    let cmd = |step: &str| {
+        format!("{reach}python3 ../scripts/spock-reseed.py {step} --node-psql {} --site-psql {} --journal {}", psql("node"), psql("site"), sh_quote(&journal))
+    };
 
     // A finished re-seed is kept, and this one starts again.
     let mut done = journaled(&journal);
     if !o.dry_run && done.get("converged").is_some_and(|d| d.0) {
-        let kept = journal.trim_end_matches(".json").to_string() + &format!(".{}.done.json", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"));
-        std::fs::rename(&journal, &kept).map_err(|e| goat_errors::coded("GB-323", format!("cannot keep the finished re-seed journal {journal} as {kept}: {e}")))?;
+        let kept = journal.trim_end_matches(".json").to_string()
+            + &format!(".{}.done.json", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"));
+        std::fs::rename(&journal, &kept).map_err(|e| {
+            goat_errors::coded(
+                "GB-323",
+                format!("cannot keep the finished re-seed journal {journal} as {kept}: {e}"),
+            )
+        })?;
         done.clear();
     }
-    let first_open = STEPS.iter().position(|(s, _)| !done.get(*s).is_some_and(|d| d.0)).map_or(1, |i| i as u32 + 1);
+    let first_open = STEPS
+        .iter()
+        .position(|(s, _)| !done.get(*s).is_some_and(|d| d.0))
+        .map_or(1, |i| i as u32 + 1);
     let from = o.from.max(first_open);
 
-    let resume = format!("goatbuilder join-node {} --site {} --node {} --class {} --reseed", o.env, o.site, o.node, o.class);
-    let mut checks = vec![row("banner", format!("join-node --reseed: site={}  node={}  founder={}  journal={journal}  {}", o.site, o.node, founder_site, if o.dry_run { "(DRY RUN — nothing executes)" } else { "" }))];
+    let resume = format!(
+        "goatbuilder join-node {} --site {} --node {} --class {} --reseed",
+        o.env, o.site, o.node, o.class
+    );
+    let mut checks = vec![row(
+        "banner",
+        format!(
+            "join-node --reseed: site={}  node={}  founder={}  journal={journal}  {}",
+            o.site,
+            o.node,
+            founder_site,
+            if o.dry_run {
+                "(DRY RUN — nothing executes)"
+            } else {
+                ""
+            }
+        ),
+    )];
     if from > 1 && !o.dry_run {
-        checks.push(row("resume", format!("steps 1 to {} passed in the journal; starting at step {from}", from - 1)));
+        checks.push(row(
+            "resume",
+            format!(
+                "steps 1 to {} passed in the journal; starting at step {from}",
+                from - 1
+            ),
+        ));
     }
     let mut exit = EXIT_OK;
     for (i, (step, label)) in STEPS.iter().enumerate() {
@@ -143,15 +204,35 @@ pub fn execute(repo: &Path, o: &Options) -> Result<Report> {
             continue;
         }
         crate::runner::phase(&n.to_string(), label, "");
-        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &c]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
+        let status = Cmd::new("bash")
+            .args(["-euo", "pipefail", "-c", &c])
+            .current_dir(repo)
+            .status()
+            .map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
         if !status.success() {
             let (_, code, line) = journaled(&journal).get(*step).cloned().unwrap_or_default();
             let detail = if code.is_empty() {
-                format!("!! step {n} ({step}) failed, exit {}: {}", status.code().unwrap_or(1), if line.is_empty() { "the node or the founder could not be reached; the output above says why".to_string() } else { line })
+                format!(
+                    "!! step {n} ({step}) failed, exit {}: {}",
+                    status.code().unwrap_or(1),
+                    if line.is_empty() {
+                        "the node or the founder could not be reached; the output above says why"
+                            .to_string()
+                    } else {
+                        line
+                    }
+                )
             } else {
                 format!("{code}: {line}")
             };
-            checks.push(Check { name: "failed".into(), ok: false, detail, fix: Some(format!("fix the cause, then run it again; it starts at step {n}: {resume}")) });
+            checks.push(Check {
+                name: "failed".into(),
+                ok: false,
+                detail,
+                fix: Some(format!(
+                    "fix the cause, then run it again; it starts at step {n}: {resume}"
+                )),
+            });
             exit = EXIT_REFUSED;
             break;
         }
