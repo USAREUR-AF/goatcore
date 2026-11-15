@@ -191,3 +191,12 @@ f = json.load(open('$RECORD/bo1-flow.json')); print(json.dumps(f))
 sys.exit(0 if f['released'] > 0 and f['lost'] == 0 else 1)"
   accept_pair "$n" "$A" "$B" goatbuilder "-after-backout"
 }
+
+# The relay is the lab's, for this run only. It is stopped on the unit's exit path, which
+# every end of the run takes (a die, the watchdog, a signal), before the engine's own final
+# step, so a lab kept after a failed run (KEEP=1) holds no listener the deployment never had.
+eval "$(declare -f final | sed '1s/^final /bo1_engine_final /')"
+final() {
+  docker exec "$HP-$A-core" pkill -f fe2e-rest-relay.py >/dev/null 2>&1 || true
+  bo1_engine_final
+}

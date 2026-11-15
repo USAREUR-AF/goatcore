@@ -63,7 +63,7 @@ psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -c \
 
 - `wal_status` is `reserved` or `extended` for every slot (NOT `lost`).
 - `active` is `t` for every slot belonging to a Spock subscription.
-- `retained_wal` < `max_slot_wal_keep_size` (default 1 GiB).
+- `retained_wal` < `max_slot_wal_keep_size`. Read it on this site (`SHOW max_slot_wal_keep_size;`): the Spock image sets one value and a site with a streaming pair raises it ([The slot WAL cap](../../ops/postgres/spock/README.md#the-slot-wal-cap)).
 
 **If `wal_status = lost` on any slot** → go to §A. The slot is invalidated; convergence cannot proceed without rebuild.
 

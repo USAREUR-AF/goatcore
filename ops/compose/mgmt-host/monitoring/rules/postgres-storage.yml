@@ -39,7 +39,7 @@ groups:
           component: postgres
         annotations:
           summary: "pg_wal at {{ $labels.site }} is > 50% of total used data-volume"
-          description: "pg_wal directory is consuming more than half of the used capacity on /opt/docker-data. This means an offline subscriber slot is pinning WAL — investigate via the SpockSlotInactive / SpockSlotWALSenderLag siblings. If unaddressed, an offline-too-long subscriber will eventually trip the 6 GB max_slot_wal_keep_size cap and self-invalidate (which is the safety net — but the disk-headroom signal is a chance to do something graceful first)."
+          description: "pg_wal directory is consuming more than half of the used capacity on /opt/docker-data. This means an offline subscriber slot is pinning WAL — investigate via the SpockSlotInactive / SpockSlotWALSenderLag siblings. If unaddressed, an offline-too-long subscriber will eventually trip this site's max_slot_wal_keep_size cap (spock_config_max_slot_wal_keep_size_bytes; ops/postgres/spock/README.md, The slot WAL cap) and self-invalidate (which is the safety net — but the disk-headroom signal is a chance to do something graceful first)."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
       # Critical disk-fill class. node-exporter's filesystem free is
@@ -113,5 +113,5 @@ groups:
           component: postgres
         annotations:
           summary: "max_slot_wal_keep_size is unbounded at {{ $labels.site }}"
-          description: "The Postgres setting `max_slot_wal_keep_size` is back to the upstream `-1` (unlimited) default. This is the F-093 root cause — any offline subscriber's slot can pin WAL on disk indefinitely. The role default is 6GB; check `postgres-streaming-replication` was applied recently on this primary and that no out-of-band ALTER SYSTEM cleared the value."
+          description: "The Postgres setting `max_slot_wal_keep_size` is back to the upstream `-1` (unlimited) default. This is the F-093 root cause — any offline subscriber's slot can pin WAL on disk indefinitely. The Spock image sets a cap, and on a pair's primary the `postgres-streaming-replication` role raises it (ops/postgres/spock/README.md, The slot WAL cap). Check that postgres-a started with the image's config_file, that the role was applied on a pair's primary, and that no out-of-band ALTER SYSTEM cleared the value."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/findings/F-093-docker-data-root-default-plus-spock-unbounded-wal.md"

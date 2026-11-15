@@ -59,3 +59,5 @@ bash ops/ci/test-host-firewall-role.sh                                 # needs d
 
 `systemctl disable --now goat-host-firewall` (stopping it deletes the table),
 `rm -rf /etc/goat-host-firewall`, then set `goat_host_firewall_baseline: false`.
+Backing out an edge's last peering (`peering-backout.yml`, which includes `tasks/absent.yml`)
+does the first two; backing out one of several removes only that peering's entry and reloads.

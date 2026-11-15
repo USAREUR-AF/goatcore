@@ -347,13 +347,13 @@ phases:
 - verb: standup
   phase: 9
   id: router
-  kind: A
+  kind: A + GATE
   title: zenoh router + SPIRE server
-  what: Deploys the per-site zenoh router, bound to the host's mesh IP with the certificate from phase 4 or 8, and the SPIRE server on the founder's first host for workload identity. On an obs-only run it deploys the obs host's stack (Prometheus, Alertmanager, Grafana).
-  why: The data fabric and every service that takes a workload identity (the portal bridge, the id console, onboard-runner, grant-keyd) need these.
-  changes: The router and SPIRE containers on the site's hosts.
-  verify: the router container `Up (healthy)` with a 7447 listener on the intended IP; `spire-server entry show` lists the grant-keyd entry
-  runs: ops/ansible/zenoh-deploy.yml, ops/ansible/spire-deploy.yml, ops/ansible/obs-host-bootstrap.yml
+  what: 'Deploys the per-site zenoh router, bound to the host''s mesh IP with the certificate from phase 4 or 8, and the SPIRE server on the founder''s first host for workload identity. A joiner first turns on signal federation with its founder, with join-node phase 13''s own steps: a gate on both sites'' declarations, the token and proxy on the joiner then the founder, the federation routers, the joiner''s relay tunnel and pin, and the delivery proof; a joiner that declares it off gets the gate and a SKIP line. On an obs-only run it deploys the obs host''s stack (Prometheus, Alertmanager, Grafana).'
+  why: The data fabric and every service that takes a workload identity (the portal bridge, the id console, onboard-runner, grant-keyd) need these. A peer holds its signalling stream on one signal server, so a joiner's signal and the founder's must forward offers to each other (signal-federation-pair.md).
+  changes: 'The router and SPIRE containers on the site''s hosts. For a joiner: the signal federation token and proxy on both sites'' management nodes, each node''s federation router and certificate, the joiner''s tunnel to the founder''s relays and its pin on them.'
+  verify: the router container `Up (healthy)` with a 7447 listener on the intended IP; `spire-server entry show` lists the grant-keyd entry; for a joiner, `signal-federation-verify.yml` passes, naming the directions a forward proved
+  runs: 'ops/scripts/signal-federation-check.py, ops/ansible/signal-federation-transport.yml, ops/ansible/traefik-acme.yml, ops/ansible/site-rathole-client.yml, ops/ansible/relay-ingress-add-site.yml, ops/ansible/signal-federation-verify.yml, ops/ansible/inventory/generate-relays.sh (not run here: named in the refusal when the founder''s relay inventory is missing), ops/ansible/zenoh-deploy.yml, ops/ansible/spire-deploy.yml, ops/ansible/obs-host-bootstrap.yml'
   by_hand: goatbuilder standup <env> --site <site> --from 9 --to 9 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
   read: docs/operations/goatnet-standup.md#phase-9--the-router-is-bound-not-just-up
   failed_because: the router could not bind its address or read its certificate

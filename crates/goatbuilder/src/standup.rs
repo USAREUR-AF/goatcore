@@ -564,6 +564,14 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(8, "A", "[internet] mesh-enroll the hosts (a single-use key each, the declared enrolment URL)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", sh_quote(&mesh_ips))));
         ev.push(p(8, "T", "[internet] record the mesh IPs (group_vars, mesh inventory, cert manifest) and re-mint the router cert".into(), format!("python3 '{r}/ops/scripts/standup-mesh-record.py' {site} --ips {}", sh_quote(&mesh_ips))));
     }
+    // A joiner turns signal federation on here, after its Spock wiring (phase 6)
+    // and its mesh enrolment (phase 8), with join-node phase 13's own rows
+    // (signal-federation-pair.md): the gate first, the delivery proof last.
+    if s.joiner {
+        let gv = repo.join("ops/ansible/group_vars").join(g).join("vars.yml");
+        let (rows, _) = crate::joinnode::signal_federation_rows(repo, r, &gv, site, jfs, pre, inv);
+        ev.extend(rows.into_iter().map(|(kind, label, cmd)| p(9, kind, label, cmd)));
+    }
     ev.push(p(9, "A", "zenoh router".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={g}")));
     ev.push(p(9, "A", "SPIRE server on the founder (workload identity)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} spire-deploy.yml -e target={g} -l 'mgmt-{site}-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
     if s.obs {
@@ -806,7 +814,53 @@ pub(crate) fn run_evidence(file: &str, now: chrono::NaiveDateTime) -> Option<Str
         1 => format!("1 stop ({})", parts[0].1),
         _ => format!("{n} stops ({})", parts.iter().map(|(k, w)| format!("{k} {w}")).collect::<Vec<_>>().join(", ")),
     };
-    Some(format!("since phase 1: {total}s ({} min), {p11_text}; {stops}", total / 60))
+    let slowest: Vec<String> = slowest_phases(rows).iter().take(3).map(|(n, secs)| format!("{n} {secs}s")).collect();
+    let slowest = if slowest.is_empty() { String::new() } else { format!("; slowest phases: {}", slowest.join(", ")) };
+    Some(format!("since phase 1: {total}s ({} min), {p11_text}; {stops}{slowest}", total / 60))
+}
+
+/// Each phase's time across resumes, slowest first, phase 11 left out (it is
+/// reported on its own): the wall time of each stretch of consecutive rows of
+/// one phase, from the earliest step's start (its row's time less its seconds)
+/// to the latest row, summed over the phase's stretches. Steps run side by side
+/// in phase 12's waves count once; a failed step ends its stretch, so the time
+/// until the resume is not the phase's, nor is the wait after an open row.
+fn slowest_phases(rows: &[Vec<&str>]) -> Vec<(u32, u64)> {
+    let mut by: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut stretch: Option<(u32, chrono::NaiveDateTime, chrono::NaiveDateTime)> = None;
+    let mut end = |s: &mut Option<(u32, chrono::NaiveDateTime, chrono::NaiveDateTime)>| {
+        if let Some((n, a, b)) = s.take() {
+            *by.entry(n).or_default() += (b - a).num_seconds().max(0) as u64;
+        }
+    };
+    for r in rows {
+        let (Ok(n), Ok(secs), Some(t)) = (r[1].parse::<u32>(), r[3].parse::<i64>(), row_time(r[0])) else {
+            // An open row is a stop: the wait until the resume is no phase's.
+            end(&mut stretch);
+            continue;
+        };
+        if n == 11 {
+            continue;
+        }
+        let start = t - chrono::Duration::seconds(secs);
+        match &mut stretch {
+            Some((m, a, b)) if *m == n => {
+                *a = (*a).min(start);
+                *b = (*b).max(t);
+            }
+            _ => {
+                end(&mut stretch);
+                stretch = Some((n, start, t));
+            }
+        }
+        if r[4] != "0" {
+            end(&mut stretch);
+        }
+    }
+    end(&mut stretch);
+    let mut v: Vec<(u32, u64)> = by.into_iter().collect();
+    v.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
+    v
 }
 
 /// The run's timing line: total wall-clock and the slowest phases first, so the
@@ -1800,6 +1854,27 @@ mod tests {
     }
 
     #[test]
+    fn every_applied_step_of_a_joiners_plan_has_a_teardown_declaration() {
+        let decls = load_teardown(&repo_root()).unwrap();
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        // Steps no declaration covered before signal federation joined the plan:
+        // the joiner's phase 6 rows and two LAN surfaces. Pinned here so a new
+        // undeclared step fails; declaring one of these removes it from the list.
+        let known = |l: &str| ["[joiner] seed-from-peer", "[joiner] founder-side mirror", "[joiner] the joiner's Spock wiring again", "[lan] LAN service surface", "[lan] TLS routes for the mgmt stack"].iter().any(|k| l.starts_with(k));
+        for joiner in [true, false] {
+            let undeclared: Vec<String> = plan(&repo_root(), &test_site(joiner), &o, "RESUME").into_iter().filter_map(|e| match e {
+                Event::Phase(p) if p.kind == "A" && teardown_decl(&decls, &p.label).is_none() && !known(&p.label) => Some(format!("phase {}: {}", p.n, p.label)),
+                _ => None,
+            }).collect();
+            assert!(undeclared.is_empty(), "joiner={joiner}: no teardown declaration for {undeclared:#?}");
+        }
+        // A joiner's signal federation leaves founder-side state; teardown refuses it and says why.
+        let d = teardown_decl(&decls, "[signal federation] the joiner's tunnel to every alpha relay (site-rathole-client.yml, service rathole_client_service_name)").unwrap();
+        assert_eq!(d.action, "refused");
+        assert!(d.why.contains("founder-side federation state"), "{}", d.why);
+    }
+
+    #[test]
     fn teardown_declarations_match_labels_and_name_their_dirs_as_the_script_does() {
         let decls = load_teardown(&repo_root()).unwrap();
         assert_eq!(teardown_decl(&decls, "portal (registry, certificate minting, grant rows)").unwrap().action, "compose-down");
@@ -1825,8 +1900,24 @@ mod tests {
 20270101T104000Z\t14\tcross\t60\t0\tok\n";
         let now = chrono::NaiveDate::from_ymd_opt(2027, 1, 1).unwrap().and_hms_opt(10, 40, 0).unwrap();
         let s = run_evidence(file, now).unwrap();
-        assert_eq!(s, "since phase 1: 2400s (40 min), phase 11 600s, without phase 11 1800s (30 min); 2 stops (1 the operator step, 1 a defect: X-SSH-001)");
+        assert_eq!(s, "since phase 1: 2400s (40 min), phase 11 600s, without phase 11 1800s (30 min); 2 stops (1 the operator step, 1 a defect: X-SSH-001); slowest phases: 7 600s, 3 290s, 14 60s");
         assert!(run_evidence("20270101T100010Z\t3\tcerts\t10\t0\tok\n", now).is_none(), "no phase-1 row, no founder numbers");
+    }
+
+    /// A phase's time across resumes is the wall time of each stretch of its
+    /// rows, summed: steps run side by side in waves count once, and the time
+    /// between a failed step and its resume is not the phase's.
+    #[test]
+    fn the_slowest_phases_are_wall_time_across_resumes() {
+        let file = "20270101T100010Z\t1\tgates\t10\t0\tok\n\
+20270101T100030Z\t12\ta\t30\t0\tok\n\
+20270101T100031Z\t12\tb\t31\t0\tok\n\
+20270101T100100Z\t12\tc\t29\t0\tok\n\
+20270101T100200Z\t13\td\t20\t5\tuncatalogued\n\
+20270101T101000Z\t13\td\t50\t0\tok\n";
+        let now = chrono::NaiveDate::from_ymd_opt(2027, 1, 1).unwrap().and_hms_opt(10, 10, 0).unwrap();
+        let s = run_evidence(file, now).unwrap();
+        assert!(s.ends_with("; slowest phases: 13 70s, 12 60s, 1 10s"), "{s}");
     }
 
     #[test]
@@ -1846,12 +1937,22 @@ mod tests {
         assert!(text.lines().last().unwrap().ends_with("\t11\tfirst login\t75\t0\toperator"), "{text}");
     }
 
+    /// goat-standup.sh writes phase 11 as standup does: an open row at the
+    /// operator step, closed by the resumed run (ops/scripts/standup-timings-close.py,
+    /// tested by tests/test_standup_timings_close.py).
+    #[test]
+    fn the_script_records_the_operator_step_too() {
+        let sh = std::fs::read_to_string(repo_root().join("ops/scripts/goat-standup.sh")).unwrap();
+        assert!(sh.contains(r#""$n" "$label" '-' '-' operator >> "$STATE_DIR/standup-$SITE-timings.tsv""#), "the open row");
+        assert!(sh.contains(r#"standup-timings-close.py" "$STATE_DIR/standup-$SITE-timings.tsv" "$FROM""#), "the close");
+    }
+
     /// goat-standup.sh writes the same six columns, so either driver's runs read back the same way.
     #[test]
     fn the_script_writes_the_cause_column_too() {
         let sh = std::fs::read_to_string(repo_root().join("ops/scripts/goat-standup.sh")).unwrap();
-        let rows: Vec<&str> = sh.lines().filter(|l| l.contains("standup-$SITE-timings.tsv")).collect();
-        assert_eq!(rows.len(), 2, "{rows:?}");
+        let rows: Vec<&str> = sh.lines().filter(|l| l.contains("printf") && l.contains("standup-$SITE-timings.tsv")).collect();
+        assert_eq!(rows.len(), 3, "a step, a wave step and the operator step: {rows:?}");
         for l in rows {
             assert!(l.contains(r"'%s\t%s\t%s\t%s\t%s\t%s\n'"), "{l}");
         }
@@ -2113,6 +2214,39 @@ mod tests {
         std::fs::write(t.join("ops/ansible/zagros-bootstrap.yml"), "---\n").unwrap();
         assert_eq!(bootstrap_play(&t, "zagros"), "zagros-bootstrap.yml");
         let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// A joiner's standup turns signal federation on as join-node phase 13
+    /// does (signal-federation-pair.md): the same rows, built by the same
+    /// function, in phase 9 before the data router, with the gate first and
+    /// the delivery proof last. A founder runs none. A joiner that declares
+    /// it off gets the gate and a SKIP line, and no transport step.
+    #[test]
+    fn a_joiners_standup_turns_signal_federation_on_before_its_router() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let s = test_site(true);
+        let j = phase_lines(&s, &o);
+        let fed: Vec<&(u32, String, String)> = j.iter().filter(|l| l.1.starts_with("[signal federation]")).collect();
+        let gv = repo_root().join("ops/ansible/group_vars/zagros_hosts/vars.yml");
+        let (want, on) = crate::joinnode::signal_federation_rows(&repo_root(), "/r", &gv, "zagros", "alpha", "PRE", "INV");
+        assert!(on);
+        assert_eq!(fed.iter().map(|l| (l.1.clone(), l.2.clone())).collect::<Vec<_>>(), want.iter().map(|(_, l, c)| (l.clone(), c.clone())).collect::<Vec<_>>(), "the rows are join-node's, unchanged");
+        assert!(fed.iter().all(|l| l.0 == 9), "{fed:?}");
+        assert!(fed[0].2.contains("signal-federation-check.py' zagros --peer alpha --resolve --require-env"), "{}", fed[0].2);
+        assert!(fed.last().unwrap().2.contains("signal-federation-verify.yml -e federation_site=zagros -e federation_peer_site=alpha"), "{}", fed.last().unwrap().2);
+        let at = |needle: &str| j.iter().position(|l| l.2.contains(needle)).unwrap();
+        assert!(at("signal-federation-verify.yml") < at("zenoh-deploy.yml"), "before the data router");
+        assert!(at("spock-mesh-wire.yml --limit zagros_hosts") < at("signal-federation-check.py"), "after the joiner's second Spock wiring");
+        // A founder runs no federation step of a joiner's.
+        assert!(!phase_lines(&test_site(false), &o).iter().any(|l| l.2.contains("signal-federation")));
+        // Declared off: the gate, then a SKIP line, and nothing converges.
+        let tree = tempfile::tempdir().unwrap();
+        let gvd = tree.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvd).unwrap();
+        std::fs::write(gvd.join("vars.yml"), "goatnet_founder: false\njoin_founder_site: alpha\nsignal_federation_absent_reason: one node holds every peer\n").unwrap();
+        let off: Vec<(u32, &'static str, String)> = plan(tree.path(), &s, &o, "RESUME").into_iter().filter_map(|e| match e { Event::Phase(p) if p.label.starts_with("[signal federation]") => Some((p.n, p.kind, p.cmd)), _ => None }).collect();
+        assert_eq!(off.iter().map(|l| l.1).collect::<Vec<_>>(), vec!["GATE", "SKIP"], "{off:?}");
+        assert!(!off.iter().any(|l| l.2.contains("signal-federation-transport.yml")));
     }
 
     /// goatcore deploys no Forgejo: an obs host on a goatnet that declares no

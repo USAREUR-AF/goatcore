@@ -295,11 +295,12 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 | `--edge-host <EDGE_HOST>` | init --over-ssh: the edge host to measure, when its group has several |  |
 | `--core-host <CORE_HOST>` | init --over-ssh: the core host to measure, when its group has several |  |
 | `--router-container <ROUTER_CONTAINER>` | init --over-ssh: the core router container, by hand (default: the name the core host's variables give, else the one discovery finds there) |  |
-| `--side <SIDE>` | init --over-ssh: measure one half of phase 3 on this machine, for a peering no one machine reaches both hosts of (docs/design/federation-router-discovery.md): `edge` measures only the edge and writes the result to --half-out; `core` measures only the core, joins the edge half read from --edge-half, and builds the package. Without it, both hosts are measured here, as always. On a peering run, `--side edge` is the edge driver's run of a two-driver peering (`drivers: two`): not built yet, and refused with GB-267 (docs/design/federation-two-drivers.md) |  |
+| `--side <SIDE>` | init --over-ssh: measure one half of phase 3 on this machine, for a peering no one machine reaches both hosts of (docs/design/federation-router-discovery.md): `edge` measures only the edge and writes the result to --half-out; `core` measures only the core, joins the edge half read from --edge-half, and builds the package. Without it, both hosts are measured here, as always. On a peering run, `--side edge` is the edge driver's run of a two-driver peering (`drivers: two`): built for phases 1 and 3, refused with GB-267 for another phase (docs/design/federation-two-drivers.md) |  |
 | `--half-out <HALF_OUT>` | init --over-ssh --side edge: the file the edge half is written to |  |
 | `--edge-half <EDGE_HALF>` | init --over-ssh --side core: the edge half the edge driver wrote |  |
 | `--edge-half-sha256 <EDGE_HALF_SHA256>` | init --over-ssh --side core: the edge half's sha256 as the edge driver printed it, read from there and confirmed here (the full digest, or its first 32 hex digits; spaces and dashes are ignored) |  |
-| `--expect-commit <EXPECT_COMMIT>` | With --side edge: the commit the edge driver's checkout must be at, as a hand-off object names it. The edge driver's run is not built yet: refused with GB-267 (docs/design/federation-two-drivers.md) |  |
+| `--expect-commit <EXPECT_COMMIT>` | With --side edge: the commit the edge driver's checkout must be at, as a hand-off object names it. The run refuses a checkout at another commit or with changes (GB-278) |  |
+| `--expect <EXPECT>` | With --side edge: a file the controller produced, under the edge driver's <work> or its checkout, and the sha256 the hand-off names. The run refuses a file that is not there or has another digest (GB-278) |  |
 | `--plan <PLAN>` | deploy: the plan to execute (default <work>/plan.json) |  |
 | `--approve-plan <APPROVE_PLAN>` | deploy: approve exactly this plan hash, after reading the plan. --yes never approves a plan |  |
 | `--confirm` | Phases 5, 6 and 10: confirm the keys, the agreement digest and the admission here, at this terminal, instead of stopping for them by hand. The default when both stdin and stderr are a terminal |  |
@@ -332,7 +333,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 - [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
 - [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
 - [`goatbuilder federate rotate`](#goatbuilder-federate-rotate) — Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14) or `rotate <partner> carrier` (phases 2 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
-- [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phase 1; a later phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
+- [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phases 1 and 3; another phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
 
 ## `goatbuilder federate init`
 
@@ -543,7 +544,7 @@ Replace one key of a running peering and run the command again from the first ph
 
 ## `goatbuilder federate import`
 
-A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phase 1; a later phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
+A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phases 1 and 3; another phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
 
 **Arguments**
 
@@ -559,6 +560,7 @@ A two-driver peering's import of an edge result, as a hand-off object names it: 
 |---|---|---|
 | `--sha256 <SHA256>` | The confirm code the edge driver printed (the result's sha256, or its first digits) |  |
 | `--work <WORK>` | The working directory (default `$FED_WORK`, else /var/lib/goat-federation/<peering>) |  |
+| `--edge-group <EDGE_GROUP>` | Phase 3: the edge's inventory group whose host the edge half must have been measured on (default <peering>_edge) |  |
 
 ## `goatbuilder pins`
 

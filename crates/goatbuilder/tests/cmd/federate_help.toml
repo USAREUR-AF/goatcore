@@ -43,7 +43,7 @@ Commands:
            (docs/design/federation-key-rotation.md)
   import   A two-driver peering's import of an edge result, as a hand-off object names it: checked
            against the edge driver's confirm code, placed under the working directory and journaled.
-           Built for phase 1; a later phase's import refuses with GB-267
+           Built for phases 1 and 3; another phase's import refuses with GB-267
            (docs/design/federation-two-drivers.md)
   help     Print this message or the help of the given subcommand(s)
 
@@ -151,8 +151,8 @@ Options:
           the edge and writes the result to --half-out; `core` measures only the core, joins the
           edge half read from --edge-half, and builds the package. Without it, both hosts are
           measured here, as always. On a peering run, `--side edge` is the edge driver's run of a
-          two-driver peering (`drivers: two`): not built yet, and refused with GB-267
-          (docs/design/federation-two-drivers.md)
+          two-driver peering (`drivers: two`): built for phases 1 and 3, refused with GB-267 for
+          another phase (docs/design/federation-two-drivers.md)
           
           [possible values: edge, core]
 
@@ -169,8 +169,12 @@ Options:
 
       --expect-commit <COMMIT>
           With --side edge: the commit the edge driver's checkout must be at, as a hand-off object
-          names it. The edge driver's run is not built yet: refused with GB-267
-          (docs/design/federation-two-drivers.md)
+          names it. The run refuses a checkout at another commit or with changes (GB-278)
+
+      --expect <FILE=SHA256>
+          With --side edge: a file the controller produced, under the edge driver's <work> or its
+          checkout, and the sha256 the hand-off names. The run refuses a file that is not there or
+          has another digest (GB-278)
 
       --plan <FILE>
           deploy: the plan to execute (default <work>/plan.json)

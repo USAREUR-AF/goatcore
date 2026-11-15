@@ -28,16 +28,16 @@ groups:
           description: "Replication replay lag exceeds 60s. Check network path to provider, provider WAL senders, and subscriber apply worker. Sustained lag past a few minutes can cascade into slot-retention issues."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
-      # Replication slot WAL retention near the configured ceiling. Default
-      # max_slot_wal_keep_size=1GB (per docs/design/ha-multi-site.md §5.3).
+      # Replication slot WAL retention near the configured ceiling,
+      # max_slot_wal_keep_size (its values: ops/postgres/spock/README.md,
+      # "The slot WAL cap").
       # If a slot-consumer stays offline long enough that retained WAL
       # approaches the ceiling, the slot will be invalidated and the
       # subscriber must rebuild via pg_basebackup.
       - alert: SpockSlotWALNearLimit
         expr: |
           pg_replication_slot_retained_wal_bytes
-            / ignoring(slot_name) group_left() on(instance)
-              (max_slot_wal_keep_size_bytes) > 0.8
+            / on(instance) group_left() spock_config_max_slot_wal_keep_size_bytes > 0.8
         for: 5m
         labels:
           severity: critical

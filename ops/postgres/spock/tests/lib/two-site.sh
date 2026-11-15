@@ -56,7 +56,7 @@ ts_run_published() { # ts_run_published <port> docker run <args...>
     "$@" 2>"$err" || rc=$?
     if [[ "$rc" == 0 ]]; then rm -f "$err"; return 0; fi
     if grep -q 'port is already allocated' "$err"; then
-      [[ -n "$name" ]] && docker rm -f "$name" >/dev/null 2>&1
+      [[ -n "$name" ]] && docker rm -fv "$name" >/dev/null 2>&1
       owner="$(docker ps --filter "publish=$port" --format '{{.Names}}' 2>/dev/null | paste -sd, -)"
       echo "::error::127.0.0.1:$port is published by ${owner:-another container of this docker}, and will not free by itself" >&2
       rm -f "$err"; return "$rc"
@@ -64,7 +64,7 @@ ts_run_published() { # ts_run_published <port> docker run <args...>
     if ! grep -q 'address already in use' "$err"; then
       cat "$err" >&2; rm -f "$err"; return "$rc"
     fi
-    [[ -n "$name" ]] && docker rm -f "$name" >/dev/null 2>&1
+    [[ -n "$name" ]] && docker rm -fv "$name" >/dev/null 2>&1
     holders="$(ts_port_holders "$port")"
     if grep -q '^LISTEN' <<<"$holders"; then
       owner="$(docker ps --filter "publish=$port" --format '{{.Names}}' 2>/dev/null | paste -sd, -)"
@@ -123,7 +123,7 @@ ts_up() {
 }
 
 ts_down() { # ts_down [extra containers...]
-  docker rm -f "$PFX-a" "$PFX-b" "$@" >/dev/null 2>&1 || true
+  docker rm -fv "$PFX-a" "$PFX-b" "$@" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
 }
 

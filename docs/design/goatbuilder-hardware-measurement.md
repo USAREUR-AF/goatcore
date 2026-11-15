@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed.** The per-step timing file and its summary line are built for `standup`, `join-node` and `teardown`, each row with its cause; standup records phase 11 as a row of its own and its summary reads the founder run's numbers from the file (below). The row C3 procedure ("`status` on a standing goatnet", below) and the phone procedures for rows H7 and H8 ("A phone node on hardware", below) use only built verbs and scripts. Everything else on this page is designed and not built. No run on hardware has been measured against it |
+| Status | **Designed.** The per-step timing file and its summary line are built for `standup`, `join-node` and `teardown`, each row with its cause; both standup drivers record phase 11 as a row of its own, and `goatbuilder standup`'s summary reads the founder run's numbers, the slowest phases across resumes among them, from the file (below). The row C3 procedure ("`status` on a standing goatnet", below) and the phone procedures for rows H7 and H8 ("A phone node on hardware", below) use only built verbs and scripts. Everything else on this page is designed and not built. No run on hardware has been measured against it |
 | Proves | Gate rows C1 (a founder site in 60 minutes or less, a node in 15, a burn-down in 15) C2 (tutorials 2 and 3 on real machines), C3 (`status` agrees with `verify` and `diff` on a standing goatnet), H7 (a phone built by one command) and H8 (a phone node for seven days) of the goatbuilder 1.0 gate |
 | Design | [goatbuilder-speed.md](goatbuilder-speed.md) (the targets and the modelled budget) · [goatnet-tutorials.md](goatnet-tutorials.md) (the tutorials and their checkpoints) · [goatnet-standup.md](../operations/goatnet-standup.md) (the prerequisites and the phases) |
 
@@ -75,8 +75,11 @@ writes a second phase-11 row whose seconds are the wall time from the stop to
 the resume, exit code 0, cause `operator`, and prints
 `phase 11 (the operator step) took <s>s`. Phase 11's wall time is read from
 the record, not derived. It includes any time between the person finishing
-and the resume being started. `ops/scripts/goat-standup.sh` writes no
-phase-11 row.
+and the resume being started. `ops/scripts/goat-standup.sh` writes the same
+open row at the operator step, and a resumed run of the script closes it with
+`ops/scripts/standup-timings-close.py` (the same rule, tested by
+`tests/test_standup_timings_close.py`), so a run driven by either, or by both
+in turn, reads back the same way. The script prints no summary line.
 
 ## What the binary prints and keeps
 
@@ -93,7 +96,7 @@ same file):
 |---|---|
 | A line per foreground step, and per phase-12 step run in `--parallel` waves | `phase <n> took <s>s (exit <rc>)`; a wave step prints `phase 12 <step id> took <s>s (exit <rc>)` |
 | A row per such step in `<state_dir>/standup-<site>-timings.tsv` | time written, phase, step label, seconds, exit code, cause |
-| A summary at the end of the process | `total <s>s (<m> min) over <k> phases; slowest: ...`, the five slowest steps of this process, then the founder run's numbers read from the file: `since phase 1: <s>s (<m> min), phase 11 <s>s, without phase 11 <s>s (<m> min); <k> stops (...)` |
+| A summary at the end of the process | `total <s>s (<m> min) over <k> phases; slowest: ...`, the five slowest steps of this process, then the founder run's numbers read from the file: `since phase 1: <s>s (<m> min), phase 11 <s>s, without phase 11 <s>s (<m> min); <k> stops (...); slowest phases: ...` |
 | A failure | `!! Phase <n> ("<label>") FAILED — exit <rc>` and the resume command |
 
 The rows are per step, not per phase: a phase of several steps writes several
@@ -112,8 +115,13 @@ began (that row's time less its seconds), across every resume; phase 11's
 closed row; the total without it; and the stops. A stop is an open row (the
 operator step, or a stop on purpose) or a failed step; each failed step is a
 defect stop, named by its cause. A run with no phase-1 row in the file prints
-only the process summary. The three slowest phases across resumes are not
-built: the slowest list covers one process.
+only the process summary. The founder numbers end with the three slowest
+phases across every resume, phase 11 left out because it is reported on its
+own: `slowest phases: <n> <s>s, ...`. A phase's time is the wall time of each
+stretch of its consecutive rows, from the earliest step's start to the latest
+row, summed over its stretches. Steps run side by side in phase 12's waves
+count once. A failed step or an open row ends a stretch, so the time until the
+resume is no phase's.
 
 Two kinds of work are not timed on their own. The image pull and the
 observability host's legs run in the background (`Event::PullStart` and
@@ -144,8 +152,7 @@ its exit code. No script avenue writes these two files.
    `phase 7/14 public TLS and relay  10:21:04Z → 10:25:40Z  4m36s  ok`.
 2. **At the end of the run**, one summary line: the total since phase 1 began,
    across every resume; phase 11's wall time; the number of stops; and the
-   three slowest phases with their durations. Built for `standup` except the
-   slowest phases across resumes (above).
+   three slowest phases with their durations. Built for `standup` (above).
 3. **The run record** keeps the same rows per phase and the summary row, in
    the timing file both drivers write, so a run driven by either reads back
    the same way. The step rows stay, and the image pull, each observability
@@ -214,31 +221,33 @@ goatbuilder doctor --env <env> --credentials
 goatbuilder standup <env> --site <joiner-site> --dry-run
 ops/scripts/with-secrets goatbuilder standup <env> --site <joiner-site> --ack "<your name>" --yes
 goatbuilder assay <joiner-site>
+goatbuilder assay <founder-site>
 goatbuilder status --env <env>
 ```
 
-`standup --site <joiner-site>` does not run the signal federation steps
-([signal-federation-pair.md](signal-federation-pair.md)). After it, run the
-federation rows of the tutorial's phase 13 table, from the federation gate to
-the federation proof, by hand. `join-node` runs the same rows in its phase 13
-for a joiner's core machine. Each further machine of the joiner runs
+`standup --site <joiner-site>` runs the signal federation steps in its phase
+9, the same rows `join-node` runs in its phase 13
+([signal-federation-pair.md](signal-federation-pair.md)). Each further machine
+of the joiner runs
 `goatbuilder join-node <env> --site <joiner-site> --node <name> --class <class> --address <LAN address> --yes`,
 after its `--dry-run`. Compare every command's output with the tutorial's
 text as you go. A difference is a finding even when the command exits 0.
 
 | The run ends with | It means |
 |---|---|
-| `standup` exit 0 | The joiner's three passes and the founder-side mirror ran |
-| `signal-federation-verify.yml` passes, naming the directions a forward proved | The federation half of checkpoint 3 holds |
+| `standup` exit 0, with phase 9's `[signal federation] proven from both nodes` row passing | The joiner's three passes, the founder-side mirror and the federation proof ran: the federation half of checkpoint 3 holds |
+| `standup` exit 0, with phase 9's `[signal federation]` gate passing and its SKIP line (`declared off at <joiner-site>`) | The joiner declares `signal_federation_absent_reason` and the gate proved no side expects federation. Checkpoint 3's federation half does not apply; record the declared reason |
 | `assay <joiner-site>` exit 0, every row of the `federation` layer PASS, including `goat-xsite-roundtrip` (`xsite: PASS …`) | Checkpoint 2 holds, and the joiner's half of checkpoint 3 |
+| `assay <founder-site>` exit 0, with `fed-founder-netbird-subscriptions-replicating` (and, with Ory on both sites, `fed-founder-kratos-subscriptions-replicating` and `fed-founder-hydra-subscriptions-replicating`) PASS | The founder's half of checkpoint 3: each subscription it must hold from the joiner exists by name and replicates |
 | `status --env <env>` lists both sites' machines, every one `converged` | Checkpoint 4 holds |
 | a phase fails, or `assay` exits 3 | Not yet a measurement. Note the phase, the code and the output. Fix the tool or the text, then resume with `--from <phase>` |
 
-Checkpoint 3 is not fully covered by a command today. `assay` reads the
-joiner's inbound subscriptions (netbird, kratos and hydra), and the founder's
-rows present on the joiner. Nothing yet reads the founder's subscriptions
-from the joiner, or writes a row at the founder and deletes it at the joiner.
-Until a command does, the run records those two legs as not measured.
+Checkpoint 3 is not fully covered by a command today. `assay` at the joiner
+reads the joiner's inbound subscriptions (netbird, kratos and hydra) and the
+founder's rows present on the joiner. `assay` at the founder reads the
+founder's subscriptions from the joiner. Nothing yet writes a row at the
+founder and deletes it at the joiner. Until a command does, the run records
+that leg as not measured.
 
 **What to keep.**
 
@@ -556,9 +565,6 @@ phases are the next three levers.
 
 None of the three clocks has been measured on hardware, and neither tutorial
 has been followed on hardware. Two parts of the tutorial runs are not built:
-- a command for tutorial 2's checkpoint 3 legs, the founder's subscriptions
-  and a write and a deletion across the sites;
-- signal federation in `standup` for a joiner site; today only `join-node`
-  phase 13 and the plays turn it on;
+- a command for tutorial 2's checkpoint 3 write and deletion across the sites;
 - federation-acceptance.md §6.4, which a two-party tutorial 3 run needs for a
   PASS.

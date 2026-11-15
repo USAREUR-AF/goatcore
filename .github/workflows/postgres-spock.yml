@@ -17,6 +17,11 @@ on:
       - 'ops/ansible/roles/revocation-ledger-bootstrap/**'
       - 'ops/ansible/roles/ory-narrow-repset/**'
       - 'ops/ansible/roles/spock-mesh-peering/**'
+      # The mgmt host's postgres-exporter reads Spock's tables
+      # (exporter-every-database below).
+      - 'ops/compose/mgmt-host/docker-compose.obs.yml'
+      - 'ops/compose/mgmt-host/monitoring/postgres-exporter-queries.yml'
+      - 'ops/ansible/roles/observability/**'
       - '.github/workflows/postgres-spock.yml'
   workflow_dispatch:
 
@@ -145,7 +150,9 @@ jobs:
           docker exec pg-smoke psql -U postgres -tAXc "SHOW wal_level;" | tee /dev/stderr | grep -q '^logical$'
           docker exec pg-smoke psql -U postgres -tAXc "SHOW shared_preload_libraries;" | tee /dev/stderr | grep -q spock
           docker exec pg-smoke psql -U postgres -tAXc "SHOW track_commit_timestamp;" | tee /dev/stderr | grep -q '^on$'
-          docker exec pg-smoke psql -U postgres -tAXc "SHOW max_slot_wal_keep_size;" | tee /dev/stderr | grep -q '1GB'
+          # The cap the image's conf sets (its last assignment; ops/postgres/spock/README.md, "The slot WAL cap").
+          cap="$(sed -n 's/^max_slot_wal_keep_size[[:space:]]*=[[:space:]]*//p' ops/postgres/spock/conf/postgresql.conf | tail -1)"
+          docker exec pg-smoke psql -U postgres -tAXc "SHOW max_slot_wal_keep_size;" | tee /dev/stderr | grep -qx "$cap"
           # Recent PG16 minors refuse an output plugin that is not on this list,
           # so an empty value means no Spock subscription can ever start. Assert
           # it in the CHEAP single-instance step, not only via the two-instance
@@ -306,6 +313,27 @@ jobs:
           IMAGE: postgres-spock:smoke
           GUARD: ${{ matrix.guard }}
         run: ops/postgres/spock/tests/partition-revoke/run.sh
+
+  exporter-every-database:
+    # The mgmt host's postgres-exporter, run as docker-compose.obs.yml runs it,
+    # counts a real Spock conflict in kratos as well as reading netbird: the
+    # SpockConflictLogged alert reads spock_resolutions_total from it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (native arch only)
+        uses: docker/build-push-action@v6
+        with:
+          context: ops/postgres/spock
+          load: true
+          tags: postgres-spock:smoke
+          cache-from: type=gha,scope=postgres-spock
+      - name: A conflict in kratos reaches spock_resolutions_total
+        env:
+          IMAGE: postgres-spock:smoke
+        run: ops/postgres/spock/tests/exporter-every-database/run.sh
 
   build:
     runs-on: ubuntu-24.04

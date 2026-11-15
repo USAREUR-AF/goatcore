@@ -72,6 +72,7 @@ on:
       - 'ops/scripts/goat-teardown.sh'
       - 'ops/scripts/goatnet-endstate.sh'
       - 'ops/ci/check-role-honours-presence-flag.py'
+      - 'ops/ci/presence-flag-allowlist.txt'
       - 'ops/scripts/envrc-var.sh'
       - 'ops/scripts/standup-required-inputs.py'
       - 'ops/scripts/test_standup_required_inputs.py'
@@ -82,6 +83,11 @@ on:
       - 'ops/scripts/test_standup_mesh_record.py'
       - 'ops/scripts/node-seed.py'
       - 'ops/scripts/test_node_seed.py'
+      - 'ops/scripts/external-service-finish.py'
+      - 'ops/scripts/test_external_service_finish.py'
+      - 'ops/scripts/lifecycle-sweep.py'
+      - 'ops/scripts/test_lifecycle_sweep.py'
+      - 'ops/warrant/membership.py'
       - 'ops/scripts/mint-site-certs.sh'
       - 'ops/goatnets/cross-env-apply.sh'
       - 'ops/scripts/goatlite-render.py'
@@ -99,6 +105,8 @@ on:
       - 'ops/scripts/standup-phase-run'
       - 'ops/secrets/posture.py'
       - 'tests/test_standup_phase_run.py'
+      - 'ops/scripts/standup-timings-close.py'
+      - 'tests/test_standup_timings_close.py'
       - 'tests/test_deploy_secrets_*.py'
       - 'ops/scripts/goatlite-render.py'
       - 'tests/test_goatlite_render_*.py'
@@ -163,7 +171,11 @@ jobs:
     env:
       FULL: ${{ needs.scope.outputs.scope != 'docs-only' }}
     steps:
+      # Depth 2: the pull request's merge commit and its parents, so row A1 reads
+      # the base branch's crates/goatbuilder/Cargo.toml at the merge's first parent.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: ./.github/actions/apt-failover
         if: env.FULL == 'true'
       - name: Install Rust toolchain (1.100.0 + clippy)
@@ -273,11 +285,16 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: bash ops/ci/check-goatbuilder-tests-leave-home.sh --after "$RUNNER_TEMP/goatbuilder-tests-start"
       # Row A1 reads the date each release was tagged; the checkout is shallow and
-      # has no tags. Tag objects and their commits only, no trees.
-      - name: Fetch the goatbuilder release tags (A1 reads their dates)
+      # has no tags. Tag objects and their commits only, no trees. A1 also reads
+      # the deprecations.yaml a release shipped (git show <tag>:<path>); the
+      # filtered fetch makes origin a promisor, so git fetches that one file's
+      # trees and blob on demand. The second line proves it on the baseline's tag.
+      - name: Fetch the goatbuilder release tags (A1 reads their dates and shipped lists)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
-        run: git fetch --no-tags --depth=1 --filter=tree:0 origin '+refs/tags/goatbuilder/v*:refs/tags/goatbuilder/v*'
+        run: |
+          git fetch --no-tags --depth=1 --filter=tree:0 origin '+refs/tags/goatbuilder/v*:refs/tags/goatbuilder/v*'
+          git show "$(sed -n 's/^release: //p' ops/goatbuilder/compat/baseline.yaml):ops/goatbuilder/compat/deprecations.yaml" > /dev/null
       - name: The promise — commands and documents of the last release still hold (A1, A3, A4)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
@@ -335,9 +352,13 @@ jobs:
         run: |
           python3 ops/goatbuilder/endstate/endstate.py --self-test
           ops/goatbuilder/parity-endstate.sh crates/target/debug/goatbuilder
-          # a service a site declares off is never deployed: the checker's own cases here; the
-          # catalog-wide run needs the roles goatstuff carries, so it runs on an assembled tree
+          # a service a site declares off is never deployed: the checker's own cases, then the
+          # catalog-wide run, which judges goatcore's own roles and names (SKIP) the rows deployed
+          # from goatstuff or goatrodeo; those are judged on an assembled tree. Its allowlist
+          # (known gaps and reviewed home: rows) only shrinks against the pull request's base.
           python3 ops/ci/check-role-honours-presence-flag.py --self-test
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          python3 ops/ci/check-role-honours-presence-flag.py --base FETCH_HEAD
       - name: Fresh source on an assembled tree — goatcore at goatcore.ref plus an overlay is judged against that pair (C3)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
@@ -362,6 +383,10 @@ jobs:
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 tests/test_standup_phase_run.py
+      - name: goat-standup.sh closes the operator step's timings row when the run resumes, as goatbuilder standup does
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: python3 tests/test_standup_timings_close.py
       - name: The deploy secrets check names every env lookup the play reaches — role defaults and task lookups
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
@@ -378,6 +403,14 @@ jobs:
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 ops/scripts/test_node_seed.py
+      - name: external-service-finish writes a governed scope's membership entry and names the group from the taxonomy's site_prefix
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: python3 -W error::ResourceWarning ops/scripts/test_external_service_finish.py
+      - name: The lifecycle sweep holds, revokes and restores by its lanes, and on a governed scope emits a membership entry instead of writing live
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: python3 -W error::ResourceWarning ops/scripts/test_lifecycle_sweep.py
       - name: Phase 12's dependency graph is valid, and both avenues run it in waves
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}

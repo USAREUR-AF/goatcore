@@ -1,0 +1,32 @@
+# check-role-honours-presence-flag.py allowlist: catalog rows the check refuses or skips
+# today for a known reason. Shrink-only: CI refuses an entry the pull request's base does
+# not list, and a row that stops failing (or loses its `home:`) makes its line stale until
+# the line goes. Every entry needs a reason: the comment lines above it, up to the last
+# blank line. docs/design/goatnet-end-state.md has the rule.
+
+# Known gaps, one service per line.
+
+# No deploying role or play found in goatcore, goatstuff, goatrodeo or goatenv; owner
+# unknown. Its authenticated door is in ops/ansible/authenticated-doors.yml.
+brief
+
+# Reviewed `home:` rows, as `home: <service> <repository>`. Each is skipped in a tree
+# without its code, so each is listed here, never added by a catalog edit alone.
+
+# Deployed by goatstuff's role of the same name (ops/ansible/roles/<service>/) through its
+# <service>-deploy.yml play; each reads its flag there (checked by hand on an assembled tree).
+home: herd goatstuff
+home: herd-connector goatstuff
+home: gym goatstuff
+home: dataflows goatstuff
+home: zenoh-sandbox goatstuff
+
+# Deployed by goatstuff's role goat-trashgoat, which has no play of its own; its
+# tasks/main.yml reads the flag.
+home: goat-trashgoat goatstuff
+
+# Deployed by goatstuff's zenoh-synth-vendors-deploy.yml (role zenoh-synth-vendors).
+home: synth-vendors goatstuff
+
+# Deployed by goatrodeo's airdefenders-deploy.yml (role airdefenders).
+home: airdefenders goatrodeo

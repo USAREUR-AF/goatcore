@@ -455,6 +455,52 @@ def generate(env, gv_dir=None, inv_path=None, pins_path=None):
         # empty DB, so a present marker means the seed never ran.
         values["spock_seed_marker"] = "/opt/mgmt-host/management-a/marker/migrations.allow"
 
+    # The founder's half (tutorial 2, checkpoint 3): the subscriptions the
+    # founder holds FROM each peer, which live on the founder, so the joiner's
+    # rows cannot see them. The peers are the ones the roles wire
+    # (spock-mesh-peering tasks/main.yml, ory-narrow-repset tasks/main.yml):
+    # a site in [mgmt_hosts:children] whose group_vars participate in Spock and
+    # that has a primary host (router_role A, or none) in the inventory,
+    # filtered by the founder's inter_site_spock_topology (none, the default:
+    # the roles wire nothing; explicit: inter_site_spock_peers; full_mesh:
+    # every such site; any other value is read as explicit, the roles' else
+    # branch). A peer is named by the site_id its group_vars declare, else its
+    # group stem, and the explicit list is compared raw, as the roles compare
+    # it. Only the peer's vars.yml is read. Each subscription is named as the
+    # role names it, so a missing one is a missing row, not a pass. A founder with no such peer
+    # (tutorial 1) emits nothing and the rows are N/A. Subscriptions live on the
+    # founder's node A; an A/B pair's B is a streaming standby.
+    if _bool(values.get("participates_in_spock")) and not joiner:
+        topo = _extract(text, "inter_site_spock_topology") or "none"
+        explicit = set(_yaml_list(text, "inter_site_spock_peers"))
+        local = _spock_node_name(env, _bool(_extract(text, "intra_site_pair")))
+        subs, kratos, hydra = [], [], []
+        if topo != "none":
+            for g in _inventory_children(inv_path, "mgmt_hosts"):
+                if g == group or not g.endswith("_hosts"):
+                    continue
+                stem = g[: -len("_hosts")]
+                ptext = _read_or_empty(gv_dir.parent / g / "vars.yml")
+                if not _bool(_extract(ptext, "participates_in_spock")):
+                    continue
+                if "A" not in _inventory_hosts(inv_path, g):
+                    continue
+                peer = _extract(ptext, "site_id") or stem
+                if "{{" in peer:
+                    peer = stem
+                if topo != "full_mesh" and peer not in explicit:
+                    continue
+                node = _spock_node_name(peer, _bool(_extract(ptext, "intra_site_pair")))
+                subs.append(f"sub_{node}_to_{local}")
+                if _bool(_extract(text, "ory_spock_enabled")) and _bool(_extract(ptext, "ory_spock_enabled")):
+                    kratos.append(f"ory_sub_{node}_kratos_to_{local}_kratos")
+                    hydra.append(f"ory_sub_{node}_hydra_to_{local}_hydra")
+        if subs:
+            values["spock_founder_subs"] = sorted(subs)
+        if kratos:
+            values["spock_founder_kratos_subs"] = sorted(kratos)
+            values["spock_founder_hydra_subs"] = sorted(hydra)
+
     # The identity row reads the NetBird management config the mgmt-host play
     # writes ({{ compose_dir }}/management-a/management.json).
     compose_dir = _extract(text, "compose_dir") or "/opt/mgmt-host"
@@ -546,6 +592,26 @@ def _obs_relay_tls_targets(text, gv_dir, group):
                 seen.add(v)
                 out.append(v)
     return out
+
+
+def _inventory_children(inv_path, group):
+    """The group names listed under `[group:children]`."""
+    if not Path(inv_path).is_file():
+        return []
+    out, inside = [], False
+    for line in Path(inv_path).read_text().splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            inside = (s == f"[{group}:children]")
+            continue
+        if inside and s and not s.startswith("#"):
+            out.append(s.split()[0])
+    return out
+
+
+def _read_or_empty(path):
+    p = Path(path)
+    return p.read_text() if p.is_file() else ""
 
 
 def _inventory_host_names(inv_path, group):
@@ -974,6 +1040,98 @@ def self_test():
         problems.append("founder: must not emit joiner-only values")
     if vf.get("acl_scope") != "orig":
         problems.append(f"founder: acl_scope should be its own site id (got {vf.get('acl_scope')})")
+
+    # The founder's half (tutorial 2, checkpoint 3): the subscriptions the
+    # founder holds FROM each peer, named as the roles name them, for the peers
+    # spock-mesh-peering wires: participating sites with a primary (router_role
+    # A) host in [mgmt_hosts:children], filtered by the founder's topology
+    # (none: no peer; explicit: inter_site_spock_peers; full_mesh: all). The
+    # Ory subscriptions only for peers that enable ory_narrow too.
+    import shutil
+    d6 = Path(tempfile.mkdtemp())
+    def site6(name, text):
+        (d6 / f"{name}_hosts").mkdir(parents=True, exist_ok=True)
+        (d6 / f"{name}_hosts" / "vars.yml").write_text(text)
+    def inv6(*groups):
+        body = "".join(f"[{g}_hosts]\n" + (f"mgmt-{g}-01 ansible_host=192.0.2.{10 + i} router_role={r}\n" if r else "")
+                       for i, (g, r) in enumerate(groups))
+        (d6 / "inv.ini").write_text(body + "[mgmt_hosts:children]\n" + "".join(f"{g}_hosts\n" for g, _ in groups))
+        return d6 / "inv.ini"
+    def f6(inv):
+        return generate("orig", gv_dir=d6 / "orig_hosts", inv_path=inv)
+    FOUNDER = "participates_in_spock: true\ngoatnet_founder: true\nory_spock_enabled: true\n"
+    JOINER = "participates_in_spock: true\ngoatnet_founder: false\njoin_founder_site: orig\n"
+    site6("orig", FOUNDER + "inter_site_spock_topology: full_mesh\n")
+    site6("join", JOINER)
+    site6("far", "participates_in_spock: true\ngoatnet_founder: true\n")
+    keys6 = ("spock_founder_subs", "spock_founder_kratos_subs", "spock_founder_hydra_subs")
+    v = f6(inv6(("orig", "A")))
+    if any(k in v for k in keys6):
+        problems.append(f"founder alone: no founder subscription values (got {[k for k in keys6 if k in v]})")
+    v = f6(inv6(("orig", "A"), ("join", "A")))
+    if v.get("spock_founder_subs") != ["sub_join_to_orig"]:
+        problems.append(f"founder + joiner (full_mesh): spock_founder_subs (got {v.get('spock_founder_subs')})")
+    if "spock_founder_kratos_subs" in v:
+        problems.append("founder + a netbird-only joiner: no Ory subscription is expected")
+    v = f6(inv6(("orig", "A"), ("join", "")))
+    if "spock_founder_subs" in v:
+        problems.append("a peer group with no host yet is not a peer")
+    v = f6(inv6(("orig", "A"), ("join", "B")))
+    if "spock_founder_subs" in v:
+        problems.append("a peer group with only a B (standby) host is not a peer")
+    site6("join", JOINER + "intra_site_pair: true\nory_spock_enabled: true\n")
+    v = f6(inv6(("orig", "A"), ("join", "A")))
+    if v.get("spock_founder_subs") != ["sub_join_a_to_orig"]:
+        problems.append(f"an A/B peer's node is <site>_a (got {v.get('spock_founder_subs')})")
+    if (v.get("spock_founder_kratos_subs"), v.get("spock_founder_hydra_subs")) != (
+            ["ory_sub_join_a_kratos_to_orig_kratos"], ["ory_sub_join_a_hydra_to_orig_hydra"]):
+        problems.append(f"Ory subscriptions for an Ory peer (got {v.get('spock_founder_kratos_subs')}, {v.get('spock_founder_hydra_subs')})")
+    site6("join", JOINER)
+    site6("orig", FOUNDER + "inter_site_spock_topology: none\n")
+    v = f6(inv6(("orig", "A"), ("join", "A")))
+    if any(k in v for k in keys6):
+        problems.append("founder with topology none: the role wires nothing, so nothing is expected")
+    site6("orig", FOUNDER)
+    v = f6(inv6(("orig", "A"), ("join", "A")))
+    if any(k in v for k in keys6):
+        problems.append("founder with no topology declared (none by default): nothing is expected")
+    # Two goatnets in one inventory, and explicit topology: only the named peer.
+    site6("orig", FOUNDER + "inter_site_spock_topology: explicit\ninter_site_spock_peers:\n  - join\n")
+    v = f6(inv6(("orig", "A"), ("join", "A"), ("far", "A")))
+    if v.get("spock_founder_subs") != ["sub_join_to_orig"]:
+        problems.append(f"explicit topology: only the listed peer, not another goatnet's founder (got {v.get('spock_founder_subs')})")
+    site6("orig", FOUNDER + "inter_site_spock_topology: explicit\ninter_site_spock_peers:\n  - far\n")
+    v = f6(inv6(("orig", "A"), ("join", "A")))
+    if any(k in v for k in keys6):
+        problems.append("explicit topology naming a site not in the inventory: nothing is expected")
+    # full_mesh wires every participating site the walk finds, so the role
+    # subscribes to another goatnet's site in the same inventory too.
+    site6("orig", FOUNDER + "inter_site_spock_topology: full_mesh\n")
+    v = f6(inv6(("orig", "A"), ("join", "A"), ("far", "A")))
+    if v.get("spock_founder_subs") != ["sub_far_to_orig", "sub_join_to_orig"]:
+        problems.append(f"full_mesh: every participating site with a primary host (got {v.get('spock_founder_subs')})")
+    # A peer is named by the site_id its group_vars declare, as the roles name
+    # it (spock-mesh-peering's registry, ory-narrow-repset's peer sites),
+    # falling back to the group stem; the explicit list is compared raw.
+    site6("join", JOINER + "site_id: join-b\n")
+    site6("orig", FOUNDER + "inter_site_spock_topology: full_mesh\n")
+    v = f6(inv6(("orig", "A"), ("join", "A")))
+    if v.get("spock_founder_subs") != ["sub_join_b_to_orig"]:
+        problems.append(f"a peer's node comes from its site_id (got {v.get('spock_founder_subs')})")
+    site6("orig", FOUNDER + "inter_site_spock_topology: explicit\ninter_site_spock_peers:\n  - join-b\n")
+    v = f6(inv6(("orig", "A"), ("join", "A")))
+    if v.get("spock_founder_subs") != ["sub_join_b_to_orig"]:
+        problems.append(f"explicit: the list names the peer's site_id (got {v.get('spock_founder_subs')})")
+    site6("orig", FOUNDER + "inter_site_spock_topology: explicit\ninter_site_spock_peers:\n  - join_b\n")
+    v = f6(inv6(("orig", "A"), ("join", "A")))
+    if "spock_founder_subs" in v:
+        problems.append("explicit: the list is compared raw, as the role compares it (join_b is not join-b)")
+    site6("join", JOINER)
+    site6("orig", FOUNDER + "inter_site_spock_topology: mesh\ninter_site_spock_peers:\n  - join\n")
+    v = f6(inv6(("orig", "A"), ("join", "A"), ("far", "A")))
+    if v.get("spock_founder_subs") != ["sub_join_to_orig"]:
+        problems.append(f"an unknown topology is read as explicit, the roles' else branch (got {v.get('spock_founder_subs')})")
+    shutil.rmtree(d6)
 
     # The Postgres encoding rows expect the goatnet's encoding: UTF8 when
     # nothing is declared; the founder's declaration on the founder AND on

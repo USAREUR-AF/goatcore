@@ -949,6 +949,11 @@ pub struct Report {
     /// (`output::after_view`). `None`: the view stands for every row.
     #[serde(skip)]
     pub view_rows: Option<usize>,
+    /// The deprecated commands, flags and values this run used, each with the
+    /// warning it printed on stderr (ADR 1228, "Deprecation"); absent when
+    /// it used none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub deprecations: Vec<deprecation::Used>,
 }
 
 impl Report {
@@ -963,6 +968,7 @@ impl Report {
             handoff: None,
             printed: false,
             view_rows: None,
+            deprecations: deprecation::recorded(),
         }
     }
 
@@ -1269,13 +1275,17 @@ fn usage_exit(e: clap::Error) -> ! {
 
 /// One stderr line per deprecated command, flag or value this run's command
 /// line uses. The list is compiled in, and a test reads it, so it always reads.
+/// The same items, with those lines, are the `deprecations` field of the run's
+/// document (`deprecation::record`, read by `Report::new` and the error document).
 fn warn_deprecated(matches: &clap::ArgMatches) {
     let argv: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
     match deprecation::shipped() {
         Ok(deps) => {
-            for w in deprecation::warnings(&deps, &Cli::command(), matches, &argv, env!("CARGO_PKG_VERSION")) {
-                eprintln!("{w}");
+            let used = deprecation::in_use(&deps, &Cli::command(), matches, &argv, env!("CARGO_PKG_VERSION"));
+            for u in &used {
+                eprintln!("{}", u.warning);
             }
+            deprecation::record(used);
         }
         Err(e) => eprintln!("goatbuilder: {e}"),
     }
@@ -1703,9 +1713,18 @@ fn main() {
                 && !goat_federation::verbs::VERB_NAMES.contains(&with)
                 && !matches!(with, "status" | "allocate");
             if side_edge_alone {
-                Err(federate::handoff::edge_side_not_built())
-            } else if edge_run.expect_commit.is_some() {
-                Err(goat_errors::coded("GB-189", "--expect-commit belongs to the edge driver's run, `goatbuilder federate <partner> --side edge`").into())
+                if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                    Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
+                } else {
+                    let o = federate::Options { with, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) };
+                    let at = federate::work_dir(&o);
+                    federate::handoff::edge_run(&repo, edge_run, *from, *to, std::path::Path::new(&at)).and_then(|e| {
+                        let mut s = federate::Surface { edge: Some(e), ..Default::default() };
+                        federate::federate_with(&repo, &o, &mut s)
+                    })
+                }
+            } else if edge_run.expect_commit.is_some() || !edge_run.expect.is_empty() {
+                Err(goat_errors::coded("GB-189", "--expect-commit and --expect belong to the edge driver's run, `goatbuilder federate <partner> --side edge`").into())
             } else if with == "status" {
                 let format = match cli.output {
                     OutputFormat::Table => federate::status::Format::Table,
@@ -1848,11 +1867,11 @@ fn main() {
                 // to stdout like every report, so a consumer parses one stream.
                 OutputFormat::Json => {
                     eprintln!("goatbuilder: {text}");
-                    println!("{}", serde_json::to_string_pretty(&ErrorOut { schema: "goatbuilder.error/v1", error: &text, code: code.as_deref(), interpretation: &interp }).unwrap_or_default());
+                    println!("{}", serde_json::to_string_pretty(&ErrorOut::new(&text, code.as_deref(), &interp)).unwrap_or_default());
                 }
                 OutputFormat::Yaml => {
                     eprintln!("goatbuilder: {text}");
-                    println!("{}", serde_yaml::to_string(&ErrorOut { schema: "goatbuilder.error/v1", error: &text, code: code.as_deref(), interpretation: &interp }).unwrap_or_default());
+                    println!("{}", serde_yaml::to_string(&ErrorOut::new(&text, code.as_deref(), &interp)).unwrap_or_default());
                 }
             }
             let exit = code.as_deref().and_then(goat_errors::explain).and_then(|e| e.exit).unwrap_or(EXIT_USAGE);
@@ -1869,6 +1888,17 @@ struct ErrorOut<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<&'a str>,
     interpretation: &'a goat_errors::Interpretation,
+    /// As a report's: the deprecated items this run used, absent when none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    deprecations: Vec<deprecation::Used>,
+}
+
+impl<'a> ErrorOut<'a> {
+    /// A refused run's document, with the deprecated items the run recorded
+    /// (`deprecation::record`), as `Report::new` carries them.
+    fn new(error: &'a str, code: Option<&'a str>, interpretation: &'a goat_errors::Interpretation) -> Self {
+        ErrorOut { schema: "goatbuilder.error/v1", error, code, interpretation, deprecations: deprecation::recorded() }
+    }
 }
 
 #[cfg(test)]
@@ -1909,6 +1939,78 @@ mod deprecation_tests {
             vec!["warning: `goatbuilder status --component` is deprecated since goatbuilder/v0.7.0 and will be removed in a later release; use --only instead".to_string()]
         );
         assert!(warnings_for(STATUS_COMPONENT, &["goatbuilder", "status", "--env", "dev"]).is_empty());
+    }
+
+    fn used_for(list: &str, argv: &[&str]) -> Vec<crate::deprecation::Used> {
+        let deps = crate::deprecation::parse(list).unwrap();
+        let m = Cli::command().try_get_matches_from(argv).unwrap();
+        let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        crate::deprecation::in_use(&deps, &Cli::command(), &m, &argv, "0.7.0")
+    }
+
+    /// The run's document carries the deprecated items it used, under
+    /// `deprecations`, in -o json and -o yaml alike; a run that used none has
+    /// no such field, so the documents of the last release are unchanged.
+    #[test]
+    fn a_report_lists_the_deprecated_items_the_run_used() {
+        let used = used_for(STATUS_COMPONENT, &["goatbuilder", "status", "--env", "dev", "--component", "netbird"]);
+        let mut r = crate::Report::new("status", vec![], crate::EXIT_REFUSED);
+        let plain = crate::output::render(&r, crate::OutputFormat::Json, crate::output::ColorChoice::Never);
+        let v: serde_json::Value = serde_json::from_str(&plain).unwrap();
+        assert!(v.get("deprecations").is_none(), "{plain}");
+        r.deprecations = used;
+        let v: serde_json::Value = serde_json::from_str(&crate::output::render(&r, crate::OutputFormat::Json, crate::output::ColorChoice::Never)).unwrap();
+        assert_eq!(v["deprecations"][0]["flag"], "--component");
+        assert_eq!(v["deprecations"][0]["replacement"], "--only");
+        assert!(v["deprecations"][0]["warning"].as_str().unwrap().starts_with("warning: `goatbuilder status --component`"));
+        let y: serde_yaml::Value = serde_yaml::from_str(&crate::output::render(&r, crate::OutputFormat::Yaml, crate::output::ColorChoice::Never)).unwrap();
+        assert_eq!(y["deprecations"][0]["flag"].as_str(), Some("--component"));
+    }
+
+    /// A refused run's error document carries them too.
+    #[test]
+    fn an_error_document_lists_the_deprecated_items_the_run_used() {
+        let used = used_for(STATUS_COMPONENT, &["goatbuilder", "status", "--env", "dev", "--component", "netbird"]);
+        let interp = goat_errors::interpret("nothing known");
+        let doc = |d: &[crate::deprecation::Used]| serde_json::to_value(crate::ErrorOut { schema: "goatbuilder.error/v1", error: "x", code: None, interpretation: &interp, deprecations: d.to_vec() }).unwrap();
+        assert!(doc(&[]).get("deprecations").is_none());
+        assert_eq!(doc(&used)["deprecations"][0]["flag"], "--component");
+    }
+
+    /// What main records reaches every document the run builds: `Report::new`
+    /// and the error document read the list `deprecation::record` keeps. The
+    /// list is a process-wide OnceLock that is set once, so the check runs in a
+    /// process of its own (this test binary, re-run on the one ignored test
+    /// below); recorded here, it would reach every other test's report.
+    #[test]
+    fn a_recorded_list_reaches_the_reports_and_error_documents_of_the_run() {
+        let exe = std::env::current_exe().unwrap();
+        let out = std::process::Command::new(exe)
+            .args(["deprecation_tests::recorded_in_its_own_process", "--exact", "--ignored", "--test-threads=1", "--nocapture"])
+            .output()
+            .unwrap();
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "{said}");
+        assert!(said.contains("test result: ok. 1 passed"), "the child ran no test: {said}");
+    }
+
+    /// Run only by the test above, in its own process.
+    #[test]
+    #[ignore = "records the process-wide list; run in its own process by a_recorded_list_reaches_the_reports_and_error_documents_of_the_run"]
+    fn recorded_in_its_own_process() {
+        // Under --include-ignored beside the other tests it would record into
+        // their process; it acts only when named alone, as the test above runs it.
+        if !std::env::args().any(|a| a == "deprecation_tests::recorded_in_its_own_process") {
+            return;
+        }
+        assert!(crate::Report::new("status", vec![], crate::EXIT_REFUSED).deprecations.is_empty(), "nothing recorded yet");
+        crate::deprecation::record(used_for(STATUS_COMPONENT, &["goatbuilder", "status", "--env", "dev", "--component", "netbird"]));
+        let r = crate::Report::new("status", vec![], crate::EXIT_REFUSED);
+        let v: serde_json::Value = serde_json::from_str(&crate::output::render(&r, crate::OutputFormat::Json, crate::output::ColorChoice::Never)).unwrap();
+        assert_eq!(v["deprecations"][0]["flag"], "--component", "{v}");
+        let interp = goat_errors::interpret("nothing known");
+        let e = serde_json::to_value(crate::ErrorOut::new("x", None, &interp)).unwrap();
+        assert_eq!(e["deprecations"][0]["replacement"], "--only", "{e}");
     }
 
     /// The list this build ships reads, so main never runs without it.

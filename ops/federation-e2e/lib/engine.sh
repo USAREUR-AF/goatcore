@@ -58,6 +58,9 @@ FE2E_PARTNER="${FE2E_PARTNER:-lab}"
 case "$FE2E_PARTNER" in lab|external) ;; *) echo "engine: FE2E_PARTNER must be lab or external, not '$FE2E_PARTNER'" >&2; exit 2 ;; esac
 case "$FE2E_CORE" in hand|role) ;; *) echo "engine: FE2E_CORE must be hand or role, not '$FE2E_CORE'" >&2; exit 2 ;; esac
 export SRC A B C D PARTIES HP NP NB LAB FE2E_CORE FE2E_DRIVER FE2E_PARTNER
+# The host firewall baseline's values (gen_sovereign, units/nodesec.sh).
+# shellcheck source=lib/hostfw.sh
+. "$HERE/lib/hostfw.sh"
 # The fleet image, by digest, and the SPIRE release the fleet pins: the `spire`
 # component's value of record in ops/pins/fleet-pins.yaml, which every checkout carries
 # (a public one declares no goatnet there, but keeps every component). Both pull
@@ -238,6 +241,8 @@ gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identi
     --core-addr "$(core_ip "$s")" --spire-listen "$(edge_ip "$s")" ${also[@]+"${also[@]}"} \
     $([ "$FE2E_DRIVER" = workspace ] && echo "--edge-addr $(edge_ip "$s")") $more
   if [ "$FE2E_CORE" = role ]; then core_role_overlay "$s" "$d/clone"; fi
+  # Each edge with the host firewall baseline on (lib/hostfw.sh).
+  edge_fw_declare "$s" "$d/clone"
   git -C "$d/clone" add -A
   git -C "$d/clone" commit -q -m "$s: this sovereign's declarations for the peering"
   git clone -q --bare "$d/clone" "$d/origin.git"
@@ -611,6 +616,8 @@ TOML
 # ONE invocation shape per avenue. The environment is what an operator's would be; the
 # only thing specific to a hermetic host is GOAT_AWS_MODE=none, the mode ADR 1204
 # declares for a deploy needing no cloud credential.
+# The environment must not depend on from/to: units/rotation.sh copies this function
+# (make_drive_rotate) with only the goatbuilder command line swapped.
 drive() { # $1 sovereign, $2 them, $3 avenue, $4 from, $5 to
   local s="$1" them="$2" avenue="$3" from="$4" to="$5" h; h="$(drv_host "$1")"
   local env=(

@@ -10,6 +10,77 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Added: goatbuilder grow hands a goatlite over to the full preset
+
+`goatbuilder grow` rewrites `goatlite.yaml` as a full configuration with the
+same values. Before it changes anything, it shows:
+- the difference, leaf by leaf;
+- the configuration file it writes;
+- each file whose generated header it takes off;
+- the removal of `goatlite.yaml`;
+- the renderer command it runs, exactly as it runs it.
+
+`--dry-run` stops there. At a terminal it then asks, and goes on only when
+you type yes. It asks only when stdin and stderr are both a terminal; otherwise,
+including `goatbuilder grow 2>file`, it needs `--yes`. With `--yes` it does not ask. A run writes
+`ops/goatbuilder/goatbuilder.yaml`, takes the generated header off every file
+the goatlite's render wrote, so each is yours, and removes `goatlite.yaml`.
+It changes files in the checkout only, never a host. Before you commit, git
+undoes it: restore `goatlite.yaml` and the files it handed over, and delete
+`ops/goatbuilder/goatbuilder.yaml`.
+It refuses, and changes nothing, when `goatlite.yaml` is not a goatlite
+(GB-304), when `ops/goatbuilder/goatbuilder.yaml` already holds another
+configuration (GB-305, which says so when the file is grow's own from an earlier run, since edited), or when the grown configuration is incomplete
+(GB-306: a four-fact file names no `repo` or `components`). A renderer that
+fails or refuses stops it with the renderer's own words (GB-258). Run again
+after it finished, it says the goatlite was already handed over. It is step 3 of
+the growth design; the other steps are not built, and it has not run on
+hardware.
+
+<!-- END generated: changelog unreleased -->
+
+## 0.7.1 — 2026-11-15
+
+What changed since 0.7.0, the previous release. `join-node` builds a node on a
+phone with `--class phone --via usb`, on a fixture and not yet measured on a
+phone, runs a joining site's own mesh DNS, and refuses a node whose clock is
+off. `standup` for a joiner turns signal federation on, and standup,
+join-node and teardown keep timings files whose rows name their cause. Every
+site's end state declares every service a cut-off site needs, and what a
+joining site does not run yet is named as a gap. `federate rotate <partner>
+leaves` replaces a running peering's leaves; `federate test
+--bilateral` completes the partner's half of acceptance, opt-in; on a
+two-driver peering the edge driver runs phases 1 and 3. A back-out keeps the
+core leaf another peering still uses and removes the peering's host-firewall
+entry. After a signing-key rotation, phase 5 hands the peering directory over
+to the new key, and a host-allocation SKIP says what clears it or is accepted
+into the plan. `goatbuilder.yaml` takes three optional `deploy` fields,
+`cloud`, `owner` and `cross_goatnet`; undeclared, nothing changes.
+
+Three behaviour changes: an environment that declares `converger: pull-agent` is
+refused by `doctor` and by every verb that pushes to real hosts, with GB-307;
+`join-node` refuses a node whose clock is unsynchronized or more than 250 ms
+off, with GB-297; and a back-out with no other peering set up, and no record
+of what the core leaf's paths held before, stops with GB-293 where it stopped
+with GB-221.
+
+### For someone deploying
+
+#### Fixed: phase 14's round trip sends a fresh probe until one is acknowledged, so one dropped probe does not fail it
+
+In a bilateral acceptance session both sides run the round trip at once.
+Our probe could reach the partner's edge just behind their responder's
+acknowledgement of their own probe, and the edge's downsampling dropped it
+with nothing logged, so the round trip on that set failed after its
+timeout although the peering worked. `fedcheck.sh` now sends a probe with
+a fresh nonce until one is acknowledged: the first resend one gap after the
+first probe (phase 14's sample gap), each later one twice as long after
+the last, up to 4 seconds. Any acknowledged probe passes, and the check
+ends within its timeout. A first probe our core refuses fails the check at
+once with its HTTP status; a later refusal is counted and the check keeps
+waiting. `responder.py` no
+longer stops when one acknowledgement cannot be written; it tries it again (#808).
+
 #### Fixed: phase 14 in a bilateral session no longer fails each side's own staging row
 
 In a bilateral acceptance session (`FED_ACCEPTANCE_SESSION` or
@@ -20,6 +91,17 @@ failed on `publish/outbound/<set>`, although the partner saw the samples
 arrive. The row now passes when our core accepts both samples (HTTP 2xx),
 fails when it refuses one and is BLOCKED when it does not answer; the
 partner's `delivery/inbound/<set>` still observes the arrival. (#789)
+
+#### Fixed: backing a peering out removes its entry from the edge's host firewall
+
+`goatbuilder federate backout` left the backed-out peering's entry in the edge's
+host firewall baseline (`/etc/goat-host-firewall/peerings/`), so its ports stayed
+open. The back-out now removes that entry and no other. When another peering
+stays on the edge, the ruleset is loaded again without it, through the role's
+lockout check and timed rollback. When none stays, the baseline is unloaded and
+removed, and the edge is as it was before its first peering. If the reload or
+the unload fails, the entry is put back so the back-out can run again. A pending
+rollback of an earlier run refuses (GB-214), and `--dry-run` only reports.
 
 #### Fixed: the C3 comparison says when a verify report read no machine
 
@@ -52,7 +134,7 @@ so a full configuration grown from one behaves the same: `cloud: none`
 means no play asks for a cloud account; `owner` is the bootstrap owner,
 used in place of `$OWNER_EMAIL`; `cross_goatnet: false` means standup
 phase 14 does not reach the cross-goatnet boxes. Undeclared, nothing
-changes. `goatbuilder grow` writes them for a goatlite it hands over (#765).
+changes. The `grow` command that writes them is not built yet (#765).
 
 #### Changed: every site's end state declares every service, and a joining site's missing ones are named gaps
 
@@ -85,13 +167,14 @@ keeps waiting for this run's. With only an earlier run's samples there, those
 rows are BLOCKED and the run ends open (exit 3). A partner whose runner
 stages no start time is read as before.
 
-Limits: this rests on both sides' clocks agreeing within `FED_SESSION_WAIT`,
-and phase 1 does not check the clocks yet, so keep each host's clock
-synchronized. A partner's earlier run that started within `FED_SESSION_WAIT`
-of ours is not told apart; its result is still refused (GB-273), so the
-verdicts can differ until a rerun, but a stale result never passes.
-`goatbuilder federate` does not run a derived session yet. Tested on the
-in-process fabric only, not on hosts (#786).
+Limits: this rests on both sides' clocks agreeing within `FED_SESSION_WAIT`.
+`goatbuilder federate test <partner> --bilateral`, which runs phase 14 on a
+derived session (#720), runs phase 1's clock check (GB-268) alone first and
+stops on a clock that is unsynchronized or over the budget. A partner's
+earlier run that started within `FED_SESSION_WAIT` of ours is not told
+apart; its result is still refused (GB-273), so the verdicts can differ
+until a rerun, but a stale result never passes. Tested on the in-process
+fabric only, not on hosts (#786).
 
 #### Fixed: backing out one of two peerings keeps the core leaf the other still uses
 
@@ -114,6 +197,34 @@ the pointer's write with the previous seed, `FED_PREVIOUS_SIGNING_KEY` (or
 rotation was refused. If the previous seed is missing, unreadable or of a
 third key, it prints GB-285 and publishes nothing; the step stays advisory
 and phase 5 goes on. The `rotate … signing` stage is not built (#683).
+
+#### Added: a two-driver peering's edge driver runs phase 1's edge checks and prints the way back
+
+On a peering declared `drivers: two`, the edge driver runs the command the
+controller's phase 1 hand-off names: `goatbuilder federate <peering> --side
+edge --from 1 --to 1 --expect-commit <commit>`. It refuses to run unless its
+checkout is that commit with nothing changed, and each file given with
+`--expect <file>=<sha256>` has that digest (GB-278). It then runs preflight's
+edge checks into `<work>/handoff/1/edge.json` and prints the way back: the
+confirm code, and the `import` and `then` commands for the controller. The
+edge driver's run of phase 3 is built too; phase 2's and those of 11 and
+later are not yet (gate row B10).
+
+#### Added: a two-driver peering hands phase 3 to the edge driver and joins its edge half
+
+On a peering declared `drivers: two`, the controller now stops at phase 3
+with a hand-off object whose result is the edge half
+(`handoff/3/edge-half.json`). On the edge driver, `goatbuilder federate
+<peering> --side edge --from 3 --to 3 --expect-commit <commit>` measures the
+edge half over SSH, reaching only the edge host, and prints the way back with
+its confirm code. On the controller, `goatbuilder federate import <peering> 3
+<file> --sha256 <code>` checks the file as the core half would (GB-114): the
+code, the peering, the 24-hour bound, and the edge host the inventory names
+(`--edge-group` for a group other than `<peering>_edge`). Then
+`goatbuilder federate <peering> --from 3` hashes the file again and measures
+the core half against it, reaching only the core host. A two-driver run from
+phase 3 with `FED_MEASURE=here` is refused before it acts (GB-267). Phase 2
+and phases 11 to 14 are not built yet (gate row B10).
 
 #### Added: `goatbuilder federate rotate <partner> leaves` and `carrier` replace a peering's keys, and an interrupted rotation finishes
 
@@ -152,33 +263,6 @@ the run on a clock that is unsynchronized or over the budget. It is opt-in:
 without `--bilateral`, phase 14 runs as before and its exit is unchanged. A partner result that does not verify is GB-272,
 one from another session or run GB-273, and an unset or unresolved signing key
 GB-142. (#720)
-
-#### Added: goatbuilder grow hands a goatlite over to the full preset
-
-`goatbuilder grow` rewrites `goatlite.yaml` as a full configuration with the
-same values. Before it changes anything, it shows:
-- the difference, leaf by leaf;
-- the configuration file it writes;
-- each file whose generated header it takes off;
-- the removal of `goatlite.yaml`;
-- the renderer command it runs, exactly as it runs it.
-
-`--dry-run` stops there. At a terminal it then asks, and goes on only when
-you type yes. It asks only when stdin and stderr are both a terminal; otherwise,
-including `goatbuilder grow 2>file`, it needs `--yes`. With `--yes` it does not ask. A run writes
-`ops/goatbuilder/goatbuilder.yaml`, takes the generated header off every file
-the goatlite's render wrote, so each is yours, and removes `goatlite.yaml`.
-It changes files in the checkout only, never a host. Before you commit, git
-undoes it: restore `goatlite.yaml` and the files it handed over, and delete
-`ops/goatbuilder/goatbuilder.yaml`.
-It refuses, and changes nothing, when `goatlite.yaml` is not a goatlite
-(GB-304), when `ops/goatbuilder/goatbuilder.yaml` already holds another
-configuration (GB-305, which says so when the file is grow's own from an earlier run, since edited), or when the grown configuration is incomplete
-(GB-306: a four-fact file names no `repo` or `components`). A renderer that
-fails or refuses stops it with the renderer's own words (GB-258). Run again
-after it finished, it says the goatlite was already handed over. It is step 3 of
-the growth design; the other steps are not built, and it has not run on
-hardware.
 
 #### Added: join-node refuses a node whose clock is off, before changing it
 
@@ -243,6 +327,19 @@ standup's timing line (the total and the five slowest steps), and join-node
 prints "phase <n> took <s>s" for each step. A dry run writes nothing, and a
 failed step is the last row, with its exit code (#802).
 
+#### Added: a report's -o json document lists the deprecated items a run used
+
+A run that uses a deprecated command, flag or value now lists each one in a
+`deprecations` field of a report's `-o json` or `-o yaml` document and of a
+refused run's error document, so a pipeline sees it without reading stderr.
+The documents a verb prints in a shape of its own (`survey`, `show --json`,
+`federate status`, `explain`, and `promote status --json`, `review --json` and
+`readiness`) do not carry it.
+Each entry names the command, the flag or value, the replacement, the release
+that first warned and the warning line printed on stderr. A run that used none
+has no such field, so every document is unchanged until the list in
+`ops/goatbuilder/compat/deprecations.yaml` names something (#818).
+
 #### Added: goatbuilder federate plan --accept host-allocation records a judged SKIP
 
 A deployment that declares its other peerings by hand may not be able to make
@@ -271,6 +368,20 @@ carry the check's detail, which gives the case and the route:
 
 GB-188's catalog entry gains this cause (#753, fixes #742).
 
+#### Changed: standup for a joiner site turns signal federation on
+
+`goatbuilder standup <env> --site <joiner>` now runs the joiner's signal
+federation with its founder in phase 9, after the mesh enrolment and before
+the data router. It uses the same steps `join-node` runs in its phase 13: a
+gate on both sites' declarations, the token and proxy on the joiner and then
+the founder, each node's federation router, the joiner's relay tunnel and
+pin, and the delivery proof. A joiner that declares
+`signal_federation_absent_reason` gets the gate and a SKIP line. Before this,
+standup left signal federation off, and the operator ran those plays by hand.
+`ops/scripts/goat-standup.sh` plans the same steps. A founder's plan is
+unchanged. `goatbuilder teardown` refuses those steps by name, since they
+leave state at the founder. (#824)
+
 #### Added: each timings row names its cause, and standup times phase 11 and sums the run
 
 Every row of the timings files that `goatbuilder standup`, `join-node` and
@@ -282,6 +393,16 @@ row with the time the step took. The resumed run's timing line then adds the
 total since phase 1 across every resume, phase 11's time, the total without
 it, and the run's stops. `ops/scripts/goat-standup.sh` writes the sixth column
 too, as `ok` or `failed` (#805).
+
+#### Added: goat-standup.sh times phase 11, and standup's timing line names the slowest phases
+
+`ops/scripts/goat-standup.sh` now writes an open row to the timings file when
+it stops at phase 11 for the operator step, and the run resumed with
+`--from 12` closes it with the time the step took, as `goatbuilder standup`
+does. A run driven by the script, or by both drivers in turn, now has phase
+11's time in its record. `goatbuilder standup`'s timing line now ends with the
+three slowest phases across every resume, phase 11 left out, each counted by
+wall time, so steps run side by side count once (#814).
 
 ### For someone contributing
 
@@ -331,12 +452,25 @@ carry the warnings yet (#798).
 The compatibility check (`ops/ci/check-goatbuilder-compat.sh`, in
 goatbuilder-pr) now enforces ADR 1228's deprecation period. Once the last
 release is 1.0 or later, a deprecation entry excuses a removed command, flag
-or value only when all three hold: the build is a later major release, the
-major that first warned has had two minor releases since, and 90 days have
-passed since that release was tagged. A refusal names the date it compared
+or value only when all of these hold: the build is a later major release,
+and this is the pull request that sets that version (its base branch is
+still on the earlier major); the release the entry names shipped a
+deprecation list that names the item, so its binary warned; two minor
+releases, of any major, have been tagged since that release and before the
+build's version; and 90 days have passed since that release was tagged. A refusal names the date it compared
 against (today, UTC) and the date the 90 days end. Before 1.0 an entry
 excuses a removal at once, as before. goatbuilder-pr fetches the release tags
-for this check (#800).
+for this check, and reads each named release's list from its tag (#800, #826).
+
+#### Added: join-node's peer-groups query is measured against NetBird's own schema
+
+`ops/netbird/tests/peer-groups-query.sh` starts the pinned NetBird management
+on a disposable Postgres, enrols two real clients with keys from
+`mgmt-host-bootstrap`, and runs the query `mesh-enroll-host.yml` uses at
+join-node's phase 10 to read the groups the minting host's peer holds.
+`tests/test_mesh_enroll_peer_groups.py` holds the query's shape always, and
+its result when the script runs it. The query was designed and is now
+measured. (#754)
 
 #### Added: the release check starts at the cut-off, and the tag's tree check decides a rerun
 
@@ -347,7 +481,9 @@ request's merge commit. Before the tag, a diff between the checked commit and th
 commit must name nothing under `crates/`, `ops/ansible/` or `ops/federation-e2e/`, or each
 stage those paths feed runs again on the merge commit (#772).
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.0 — 2026-11-14
 

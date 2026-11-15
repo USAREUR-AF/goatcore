@@ -50,6 +50,14 @@ A change to a fixture or a re-recorded checkpoint is copied to the Hello Galaxy
 repository in the same piece of work:
 
 ```text
-ops/tutorials/sync-goatnet-from-scratch.sh <clone>            # compare; exit 1 on any difference
-ops/tutorials/sync-goatnet-from-scratch.sh <clone> --apply    # copy, and set its GOATBUILDER_REF to this HEAD
+ops/tutorials/sync-goatnet-from-scratch.sh <clone> --goatbuilder <bin>           # compare; exit 1 on any difference
+ops/tutorials/sync-goatnet-from-scratch.sh <clone> --apply --goatbuilder <bin>   # copy the steps, re-record the checkpoints, set GOATBUILDER_REF
 ```
+
+`<bin>` is a goatbuilder built at this checkout. The script copies only the files
+this directory holds; a file only the clone has (its `checkpoints/base-images.txt`)
+is kept and named. It never copies a checkpoint: the clone rehearses tutorial 3 from
+a copied fixture, so its checkpoint names other paths. The clone's own `./run`
+checks the checkpoints and, with `--apply`, re-records them (`./run <bin> --record`,
+with `GOAT_REPO` set to this checkout). Without `--goatbuilder` the checkpoints are
+not compared, and the script exits 3.

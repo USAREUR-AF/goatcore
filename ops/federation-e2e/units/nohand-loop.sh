@@ -178,7 +178,7 @@ oc_env_more() { # $1 us, $2 them
     -e "FED_SPIRE_THEIRS=ssh goat@$(core_ip "$them") docker exec spire-server /opt/spire/bin/spire-server"
     -e FED_PROBE_LAUNCHER=/usr/local/sbin/fe2e-probe-launcher
     -e "FE2E_PL_SSH=goat@$(edge_ip "$them")" -e "FE2E_PL_REST_IP=$(edge_ip "$them")" -e "FE2E_PL_FAR_IP=$far"
-    -e FE2E_PL_DIR=/root/fe2e-launcher -e FE2E_PL_PORT=8201 -e FE2E_PL_TEMPLATE=/root/fe2e-launcher/probe.json5 -e "FE2E_PL_IMAGE=$ZENOH_IMAGE")
+    -e FE2E_PL_DIR=/root/fe2e-launcher -e "FE2E_PL_PORT=$PL_PORT" -e FE2E_PL_TEMPLATE=/root/fe2e-launcher/probe.json5 -e "FE2E_PL_IMAGE=$ZENOH_IMAGE")
 }
 loop_reach_on() { # $1 us, $2 them: the probes' identities and the reach, as oc_accept gives them
   local s="$1" them="$2" h pl pub; h="$(drv_host "$s")"; pl="$WORK/$s/launcher-$them"; mkdir -p "$pl"
@@ -193,7 +193,8 @@ loop_reach_on() { # $1 us, $2 them: the probes' identities and the reach, as oc_
   docker cp -q "$HERE/lib/probe-launcher.sh" "$h:/usr/local/sbin/fe2e-probe-launcher"
   docker cp -q "$HERE/probe.json5" "$h:/root/fe2e-launcher/probe.json5"
   host_exec "$h" chmod 0755 /usr/local/sbin/fe2e-probe-launcher
-  docker network connect "$NP-$them" "$h" >/dev/null 2>&1 || true
+  # At the address the partner's edge firewall admits (drill_reach_ip, lib/hostfw.sh).
+  docker network connect --ip "$(drill_reach_ip "$them" "$s")" "$NP-$them" "$h" >/dev/null 2>&1 || true
   pub="$(cat "$WORK/$s/keys/id_ed25519.pub")"
   for t in "$HP-$them-core" "$HP-$them-edge"; do docker exec "$t" sh -c "grep -qxF '$pub' /home/goat/.ssh/authorized_keys || printf '%s\n' '$pub' >> /home/goat/.ssh/authorized_keys"; done
   hand "values FED_THEIRS_REST, FED_SSH_THEIRS, FED_SPIRE_THEIRS, FED_PROBE_LAUNCHER and the drill's reach into the partner's network, given to phase 14 (\`goatbuilder federate $them --from 14\`) on $s: lab-only: only a drill owns both sides; a production operator holds only their own (docs/design/federation-acceptance.md)"

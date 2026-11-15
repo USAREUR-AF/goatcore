@@ -51,18 +51,26 @@ groups:
           description: "Slot wal_status is 'lost'. The subscriber cannot resume from this slot. Run the slot-rebuild runbook: docker compose stop postgres on the disconnected node; rm -rf pgdata; pg_basebackup from a healthy peer; spock.sub_create with the new base; monitor catchup."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
-      # WAL retention approaching max_slot_wal_keep_size. The cap is
-      # configured per-cluster via the postgres-streaming-replication
-      # role's `postgres_max_slot_wal_keep_size` var (default 6GB per
-      # F-093 closure 2026-05-09; was hardcoded to 1GB pre-F-093). The
-      # `spock_max_slot_wal_keep_size_bytes` gauge is now LIVE-read
-      # from pg_settings via the postgres-exporter custom query, so
-      # this expression always uses the true configured threshold —
-      # no stale-constant drift class.
+      # WAL retention approaching max_slot_wal_keep_size. The cap differs
+      # by site: the Spock image sets one value, and on a pair's primary
+      # the postgres-streaming-replication role raises it (F-093;
+      # ops/postgres/spock/README.md, The slot WAL cap). The cap is read
+      # live from pg_settings by the exporter's `spock_config` query, whose
+      # column max_slot_wal_keep_size_bytes is exported as
+      # `spock_config_max_slot_wal_keep_size_bytes`
+      # (monitoring/postgres-exporter-queries.yml). Until this rule named
+      # that series it divided by one no exporter emits, scalar() of
+      # nothing is NaN, and the alert never fired. An unlimited cap is the
+      # sentinel 2^63-1, so the ratio stays near 0. Each slot is divided by
+      # the cap of its own Postgres, matched on `instance`, so a Prometheus
+      # that scrapes more than one cap series (a pair's postgres-a and
+      # postgres-b, or a hub federating several sites) compares each slot
+      # with the right one; scalar() of two series is NaN and would silence
+      # the alert again. tests/spock-slot-wal-near-limit.test.yml holds it.
       - alert: SpockSlotWALNearLimit
         expr: |
           pg_replication_slot_retained_wal_bytes
-            / scalar(spock_max_slot_wal_keep_size_bytes) > 0.8
+            / on(instance) group_left() spock_config_max_slot_wal_keep_size_bytes > 0.8
         for: 5m
         labels:
           severity: critical
@@ -111,8 +119,9 @@ groups:
       # after the WAL reaches them; a saturated provider→network path
       # with a fast subscriber would show subscriber-lag near zero
       # while pending_bytes climbs. 100 MB threshold matches §5.3 risk
-      # framing — well below max_slot_wal_keep_size (1 GiB) but high
-      # enough above noise floor to indicate sustained backlog.
+      # framing — well below max_slot_wal_keep_size on any site (see
+      # ops/postgres/spock/README.md, The slot WAL cap) but high enough above
+      # noise floor to indicate sustained backlog.
       - alert: SpockSlotWALSenderLag
         expr: pg_stat_replication_pending_bytes > 100 * 1024 * 1024
         for: 5m
@@ -179,7 +188,8 @@ groups:
     rules:
 
       # Any conflict resolved. Metric comes from the spock_resolutions custom
-      # query (COUNT over spock.resolutions; needs spock.save_resolutions=on).
+      # query (COUNT over spock.resolutions; needs spock.save_resolutions=on),
+      # one series per replicated database (`datname`: netbird, kratos, ...).
       # After a partition this is expected, and each row is one write that
       # lost the merge; with the revocation guard (ADR 1193) a revocation
       # cannot be one of them. Review with the post-partition runbook.
@@ -189,19 +199,20 @@ groups:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock resolved conflict(s) at {{ $labels.site }} in last 5m"
+          summary: "Spock resolved conflict(s) at {{ $labels.site }} in {{ $labels.datname }} in last 5m"
           description: "New rows in spock.resolutions: a replicated write lost to a later write at another site (last-writer-wins, per row). Outside a partition this means two sites changed the same row; after a rejoin it is expected. Review the rows (post-partition runbook §3) and confirm nothing that should have won was dropped."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
       # A remote change could not be applied and was skipped. The sites now
-      # differ on that row until someone reconciles it.
+      # differ on that row until someone reconciles it. One series per
+      # replicated database (`datname`), as above.
       - alert: SpockApplyExceptionLogged
         expr: increase(spock_exceptions_total[5m]) > 0
         labels:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock skipped remote change(s) at {{ $labels.site }} in last 5m"
+          summary: "Spock skipped remote change(s) at {{ $labels.site }} in {{ $labels.datname }} in last 5m"
           description: "New rows in spock.exception_log: a change from another site failed to apply here and was skipped (spock.exception_behaviour = discard). The usual cause after a partition is an update to a row this site deleted, which is correct to skip. Anything else means the sites now disagree on that row. Review with the post-partition runbook §3."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 

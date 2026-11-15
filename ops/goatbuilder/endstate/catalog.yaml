@@ -61,6 +61,11 @@
 #       role: <role>                     # the role that deploys it, when not named for it
 #       guard: [<file>]                  # files that must each read the presence flag
 #                                        # (ops/ci/check-role-honours-presence-flag.py)
+#       home: goatstuff | goatrodeo      # the repository its deploying code lives in, when
+#                                        # not goatcore: that check skips the row in a tree
+#                                        # without the code and judges it in an assembled one;
+#                                        # each is listed, with a reason, in
+#                                        # ops/ci/presence-flag-allowlist.txt (shrink-only)
 schema: goatnet-endstate-catalog/v1
 
 services:
@@ -406,6 +411,7 @@ services:
     ledger: compliance-proxy
     surfaces: [compliance]
   herd:
+    home: goatstuff
     class: mgmt
     present: {pin: herd, var: herd_enabled}
     containers: [herd, herd-guacd, herd-postgres, oauth2-proxy-herd]
@@ -413,6 +419,7 @@ services:
     surfaces: [herd]
     oidc_clients: [herd]
   herd-connector:
+    home: goatstuff
     class: mgmt
     present: {pin: herd-connector, var: herd_connector_enabled}
     containers: [herd-connector]
@@ -440,6 +447,7 @@ services:
     ledger: goat-docs
     surfaces: [goat-docs]
   gym:
+    home: goatstuff
     class: mgmt
     present: {var: gym_enabled}
     containers: [gym]
@@ -453,6 +461,7 @@ services:
     surfaces: [brief]
     oidc_clients: [brief]
   dataflows:
+    home: goatstuff
     class: mgmt
     present: {var: dataflows_enabled}
     containers: [dataflows, oauth2-proxy-dataflows]
@@ -460,6 +469,7 @@ services:
     surfaces: [dataflows]
     oidc_clients: [dataflows]
   airdefenders:
+    home: goatrodeo
     class: mgmt
     present: {var: airdefenders_enabled}
     containers: [airdefenders, airdefenders-zenoh-sidecar, oauth2-proxy-airdefenders]
@@ -467,12 +477,14 @@ services:
     surfaces: [airdefenders]
     oidc_clients: [airdefenders]
   zenoh-sandbox:
+    home: goatstuff
     class: mgmt
     present: {var: zenoh_sandbox_enabled}
     containers: [zenoh-sandbox-router, zenoh-sandbox-web]
     ledger: zenoh-sandbox
     surfaces: [zenoh-sandbox]
   synth-vendors:
+    home: goatstuff
     class: mgmt
     play: zenoh-synth-vendors-deploy.yml
     present: {var: synth_vendors_enabled}
@@ -480,6 +492,7 @@ services:
     containers: ["synth-*"]
     ledger: null
   goat-trashgoat:
+    home: goatstuff
     class: mgmt
     present: {var: goat_trashgoat_enabled}
     containers: [goat-trashgoat]

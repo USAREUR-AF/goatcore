@@ -671,6 +671,10 @@ bilateral_round() {
 BEFORE_DIR="$EVID/before"
 RT_SCRIPT="$HERE/../roundtrip/fedcheck.sh"
 RT_WAIT="${FED_ACCEPTANCE_RT_TIMEOUT:-25}"
+# fedcheck.sh sends a fresh probe until one is acknowledged, never closer than the gap: the
+# partner's edge drops a sample inside its downsampling interval, and in a session
+# their runner's traffic shares that interval with ours. Never faster than our gap.
+RT_GAP="${FED_ACCEPTANCE_GAP:-$GAP_DEFAULT}"
 before_get() { python3 "$EVIDENCE" lookup --bundle "$BEFORE_DIR/result.json" "$@" 2>/dev/null; }
 existing_rest() { # ID: the drill's REST surface for that partner's core, or nothing
   printf '%s' "${FED_EXISTING_REST:-}" | tr ',' '\n' | sed -n "s|^$1=||p" | head -1
@@ -746,7 +750,7 @@ EOF
     else
       for set in $(list "$osets"); do
         begin; n="existing/$p/roundtrip/$set"
-        out=$(ours "BASE=$(printf %q "$FED_OURS_REST") bash -s -- $(printf '%q %q %q' "$set" "from/$p" "$RT_WAIT")" < "$RT_SCRIPT" 2>&1)
+        out=$(ours "BASE=$(printf %q "$FED_OURS_REST") bash -s -- $(printf '%q %q %q %q' "$set" "from/$p" "$RT_WAIT" "$RT_GAP")" < "$RT_SCRIPT" 2>&1)
         obs fedcheck "$out"
         bv=""; [ "$BEFORE" = 1 ] || bv=$(before_get --name "$n")
         obs before "${bv:-<none>}"
@@ -1295,9 +1299,9 @@ roundtrip() {
   for set in $(list "$sets"); do
     begin
     if [ "$side" = ours ]; then
-      out=$(ours "BASE=$(printf %q "$rest") bash -s -- $(printf '%q %q %q' "$set" "$far" "$RT_WAIT")" < "$RT" 2>&1)
+      out=$(ours "BASE=$(printf %q "$rest") bash -s -- $(printf '%q %q %q %q' "$set" "$far" "$RT_WAIT" "$RT_GAP")" < "$RT" 2>&1)
     else
-      out=$(theirs "BASE=$(printf %q "$rest") bash -s -- $(printf '%q %q %q' "$set" "$far" "$RT_WAIT")" < "$RT" 2>&1)
+      out=$(theirs "BASE=$(printf %q "$rest") bash -s -- $(printf '%q %q %q %q' "$set" "$far" "$RT_WAIT" "$RT_GAP")" < "$RT" 2>&1)
     fi
     obs fedcheck "$out"
     case "$out" in
