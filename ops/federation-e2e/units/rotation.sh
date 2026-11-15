@@ -26,7 +26,9 @@ eval "$(declare -f unit_main | sed '1s/^unit_main /rot_peering_up /')"
 # shellcheck source=/dev/null
 . "$HERE/lib/flow.sh"
 
-ROT_KEYS="leaves carrier transport signing"
+# FE2E_ROT_KEYS: a subset of the keys, in this order, for a run that measures some of them
+# (a key left out is not rotated and its checks are not recorded).
+ROT_KEYS="${FE2E_ROT_KEYS:-leaves carrier transport signing}"
 
 # drive's environment for `goatbuilder federate rotate <partner> <key>` (ROT_KEY): the rotation
 # re-runs phases (8 for the leaves, 3 after a carrier or transport key), which read the same
@@ -94,8 +96,17 @@ rot_one() { # $1 key, $2 side
   rot_all_material "$them" "$RECORD/rot-$k-$them-before.txt"
   out="$RECORD/rot-$k-$s-rotate.out"
   rc=0; ROT_KEY="$k" drive_rotate "$s" "$them" goatbuilder 0 0 > "$out" 2>&1 || rc=$?
-  why="$(grep -m1 -oE '(GB-189|GB-282)[^|]*' "$out" || true)"
+  why="$(grep -m1 -oE '(GB-189|GB-282|GB-312)[^|]*' "$out" || true)"
   if [ "$rc" != 0 ] && [ -n "$why" ]; then
+    # A refusal changes nothing: both sides' material is read again and compared with the
+    # material before it, the edge's live carrier pair is shown, and no carrier key was set
+    # aside (no .previous-carrier-* directory on the edge).
+    rot_all_material "$s" "$RECORD/rot-$k-$s-after-refusal.txt"
+    rot_all_material "$them" "$RECORD/rot-$k-$them-after-refusal.txt"
+    rec "rot-refused-$k-$s-changed-nothing" -- bash -c \
+      "cat '$out' | sed 's/\x1b\[[0-9;]*m//g' | grep -E 'GB-[0-9]+' | head -3
+       diff '$RECORD/rot-$k-$s-before.txt' '$RECORD/rot-$k-$s-after-refusal.txt' && diff '$RECORD/rot-$k-$them-before.txt' '$RECORD/rot-$k-$them-after-refusal.txt' || exit 1
+       docker exec $HP-$s-edge sh -c 'wg show wg-carry0 2>/dev/null | grep -E \"public key|peer:|latest handshake\"; ls -d /etc/goat-peering-wg/.previous-carrier-* 2>/dev/null && exit 1; exit 0'"
     # Refused, by this build's own word: every check of this key waits for a build that rotates it.
     ROT_REFUSED="$ROT_REFUSED $k"
     for o in first second; do
