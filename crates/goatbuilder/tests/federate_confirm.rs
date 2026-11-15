@@ -336,3 +336,35 @@ fn an_unchanged_agreement_digest_confirmed_before_is_not_asked_again() {
     assert_eq!(sha256_hex(&std::fs::read(w.work.join("agreement.json")).unwrap()), digest, "the agreement is unchanged");
     assert_eq!(phases_run(&v), [5, 6, 7], "{}", says(&out));
 }
+
+/// Owner's read, point 2: the package is checked before EACH phase after 5,
+/// not once per run. Here phase 6's compose also copies another package over
+/// the confirmed one; phase 7 must not run on it.
+#[test]
+fn the_package_is_checked_before_each_phase_after_5_not_once_per_run() {
+    let w = world();
+    let fp = sha256_hex(b"fake-ca-der");
+    let key = their_key();
+    let (out, _) = w.run(&["hello-ally", "--partner-key", &key, "--partner-ca-fingerprint", &fp]);
+    assert!(out.status.success(), "{}", says(&out));
+    let digest = sha256_hex(&std::fs::read(w.work.join("agreement.json")).unwrap());
+    let (out, _) = w.run(&["hello-ally", "--resume", "--agreement-digest", &digest]);
+    assert!(out.status.success(), "{}", says(&out));
+    let goat = w.root.path().join("bin/goat");
+    std::fs::rename(&goat, w.root.path().join("bin/goat.orig")).unwrap();
+    let other = w.root.path().join("other-package.json");
+    std::fs::write(&other, resigned_with_transport("xab", &fp, Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="))).unwrap();
+    federate_world::exe(
+        &goat,
+        &format!(
+            "#!/bin/sh\n[ \"$2\" = compose ] && cp '{}' '{}'\nexec '{}' \"$@\"\n",
+            other.display(),
+            w.work.join("theirs.canonical.json").display(),
+            w.root.path().join("bin/goat.orig").display()
+        ),
+    );
+    let (out, v) = w.run(&["hello-ally", "--from", "6", "--to", "8"]);
+    assert!(!out.status.success(), "{}", says(&out));
+    assert!(says(&out).contains("GB-191") && says(&out).contains("phase 5"), "{}", says(&out));
+    assert_eq!(phases_run(&v), [6], "{}", says(&out));
+}

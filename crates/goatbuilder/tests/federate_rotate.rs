@@ -121,37 +121,9 @@ fn rotating_the_transport_key_starts_at_phase_2_and_records_the_rotation_for_pha
     );
 }
 
-/// After `rotate <partner> transport` our package changes (the new WireGuard
-/// key), so phase 5 runs again; nothing on our side needs confirming when the
-/// keys confirmed before still hold, so the rotation carries our run past
-/// phase 5, and phase 6 goes on when the agreement digest is the one confirmed.
-#[test]
-fn a_transport_rotation_carries_our_run_past_phase_5_when_the_keys_are_unchanged() {
-    use federate_world::{phases_run, public_b64, sha256_hex};
-    let w = world();
-    let fp = sha256_hex(b"fake-ca-der");
-    let key = public_b64("xab");
-    let (out, _) = w.run(&["hello-ally", "--partner-key", &key, "--partner-ca-fingerprint", &fp]);
-    assert!(out.status.success(), "{}", says(&out));
-    let digest = sha256_hex(&std::fs::read(w.work.join("agreement.json")).unwrap());
-    let (out, _) = w.run(&["hello-ally", "--resume", "--agreement-digest", &digest]);
-    assert!(out.status.success(), "{}", says(&out));
-    let (out, v) = w.run(&["rotate", "hello-ally", "transport"]);
-    let t = text(&out);
-    let ran = phases_run(&v);
-    assert!(ran.starts_with(&[2, 3, 4, 5, 6]), "{ran:?}: {t}");
-    let st = w.state();
-    assert_eq!(st["phases"]["5"]["outcome"], "passed", "{}", st["phases"]["5"]);
-    assert!(st["phases"]["5"]["detail"].as_str().unwrap_or("").contains("unchanged"), "phase 5 says why it carried on: {}", st["phases"]["5"]);
-    // Phase 6: the agreement is the one confirmed before, so it is not asked again.
-    assert_eq!(st["phases"]["6"]["outcome"], "passed", "{}", st["phases"]["6"]);
-    assert!(!t.contains("waiting for the agreement digest"), "{t}");
-}
-
-/// A change on our side's keys (here their CA certificate on disk is another
-/// one) still stops the rotation at phase 5.
-#[test]
-fn a_transport_rotation_with_a_changed_key_still_stops_at_phase_5() {
+/// The rotating side's phase 5 after `rotate <partner> transport` (ADR 1229): a
+/// world where both confirmations were journaled through the command.
+fn confirmed_world() -> federate_world::World {
     use federate_world::{public_b64, sha256_hex};
     let w = world();
     let fp = sha256_hex(b"fake-ca-der");
@@ -161,13 +133,95 @@ fn a_transport_rotation_with_a_changed_key_still_stops_at_phase_5() {
     let digest = sha256_hex(&std::fs::read(w.work.join("agreement.json")).unwrap());
     let (out, _) = w.run(&["hello-ally", "--resume", "--agreement-digest", &digest]);
     assert!(out.status.success(), "{}", says(&out));
-    let ca = w.work.join("theirs-ca.pem");
-    let other = "-----BEGIN CERTIFICATE-----\nb3RoZXItY2EtZGVy\n-----END CERTIFICATE-----\n";
-    std::fs::write(&ca, other).unwrap();
-    let (out, v) = w.run(&["rotate", "hello-ally", "transport"]);
+    w
+}
+
+/// Change the journal: `edit` gets the confirmations array.
+fn edit_journal(w: &federate_world::World, edit: impl FnOnce(&mut Vec<serde_json::Value>)) {
+    let path = w.work.join("state.json");
+    let mut st = w.state();
+    edit(st["confirmations"].as_array_mut().unwrap());
+    std::fs::write(&path, serde_json::to_vec_pretty(&st).unwrap()).unwrap();
+}
+
+fn set_keys_value(w: &federate_world::World, key: &str, value: &str) {
+    edit_journal(w, |cs| {
+        let c = cs.iter_mut().find(|c| c["kind"] == "keys").expect("a keys confirmation");
+        c["values"][key] = serde_json::Value::String(value.into());
+    });
+}
+
+/// Runs the rotation and requires it to stop at phase 5: phase 5 ran, phase 6
+/// did not, and phase 5 did not carry on.
+fn assert_stops_at_phase_5(w: &federate_world::World) {
     use federate_world::phases_run;
+    let (out, v) = w.run(&["rotate", "hello-ally", "transport"]);
     let ran = phases_run(&v);
     assert!(ran.contains(&5) && !ran.contains(&6), "{ran:?}: {}", says(&out));
     let st = w.state();
     assert!(!st["phases"]["5"]["detail"].as_str().unwrap_or("").contains("unchanged"), "{}", st["phases"]["5"]);
+}
+
+/// (a) Our own verifying key changed since the keys were confirmed: stops.
+#[test]
+fn rotating_side_phase_5_stops_a_when_our_verifying_key_changed() {
+    let w = confirmed_world();
+    set_keys_value(&w, "our_key", &federate_world::public_b64("xab"));
+    assert_stops_at_phase_5(&w);
+}
+
+/// (b) Our CA fingerprint changed: stops.
+#[test]
+fn rotating_side_phase_5_stops_b_when_our_ca_fingerprint_changed() {
+    let w = confirmed_world();
+    set_keys_value(&w, "our_ca_fingerprint", &format!("sha256:{}", "cd".repeat(32)));
+    assert_stops_at_phase_5(&w);
+}
+
+/// (c) The partner's key, or their CA fingerprint, changed: stops (each).
+#[test]
+fn rotating_side_phase_5_stops_c_when_the_partners_key_or_fingerprint_changed() {
+    let w = confirmed_world();
+    set_keys_value(&w, "partner_key", &federate_world::public_b64("xaa"));
+    assert_stops_at_phase_5(&w);
+    let w = confirmed_world();
+    set_keys_value(&w, "partner_ca_fingerprint", &format!("sha256:{}", "ef".repeat(32)));
+    assert_stops_at_phase_5(&w);
+}
+
+/// (d) The agreement on disk is not the one whose digest was confirmed: stops
+/// at phase 5, before compose.
+#[test]
+fn rotating_side_phase_5_stops_d_when_the_agreement_digest_differs_from_the_confirmed_one() {
+    let w = confirmed_world();
+    edit_journal(&w, |cs| {
+        let c = cs.iter_mut().find(|c| c["kind"] == "agreement").expect("an agreement confirmation");
+        c["bound_to"] = serde_json::Value::String(format!("sha256:{}", "12".repeat(32)));
+    });
+    assert_stops_at_phase_5(&w);
+}
+
+/// (e) No keys confirmation journaled (the keys bound by hand): stops.
+#[test]
+fn rotating_side_phase_5_stops_e_when_no_keys_confirmation_is_journaled() {
+    let w = confirmed_world();
+    edit_journal(&w, |cs| cs.retain(|c| c["kind"] != "keys"));
+    assert_stops_at_phase_5(&w);
+}
+
+/// (f) A pure transport rotation: phase 5 carries on, saying why, and phase 6
+/// does not ask the agreement digest again.
+#[test]
+fn rotating_side_phase_5_continues_f_for_a_pure_transport_rotation() {
+    use federate_world::phases_run;
+    let w = confirmed_world();
+    let (out, v) = w.run(&["rotate", "hello-ally", "transport"]);
+    let t = text(&out);
+    let ran = phases_run(&v);
+    assert!(ran.starts_with(&[2, 3, 4, 5, 6]), "{ran:?}: {t}");
+    let st = w.state();
+    assert_eq!(st["phases"]["5"]["outcome"], "passed", "{}", st["phases"]["5"]);
+    assert!(st["phases"]["5"]["detail"].as_str().unwrap_or("").contains("unchanged"), "{}", st["phases"]["5"]);
+    assert_eq!(st["phases"]["6"]["outcome"], "passed", "{}", st["phases"]["6"]);
+    assert!(!t.contains("waiting for the agreement digest"), "{t}");
 }

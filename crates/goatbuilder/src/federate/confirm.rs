@@ -717,9 +717,10 @@ fn copy_aside(path: &Path, tag: &str) -> std::io::Result<std::path::PathBuf> {
     Ok(aside)
 }
 
-/// Write `body` to `path` (0600) through a file beside it, so a reader sees
-/// the old package or the new one, never part of one.
-fn place(path: &Path, body: &[u8]) -> std::io::Result<()> {
+/// `body` written (0600) to a file beside `path` and synced to disk, ready to
+/// be renamed over it: the bytes reach the disk before the rename makes them
+/// the package.
+fn write_staged(path: &Path, body: &[u8]) -> std::io::Result<std::path::PathBuf> {
     let tmp = path.with_extension("placing");
     let mut o = std::fs::OpenOptions::new();
     o.write(true).create(true).truncate(true);
@@ -727,16 +728,26 @@ fn place(path: &Path, body: &[u8]) -> std::io::Result<()> {
     std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
     let mut f = o.open(&tmp)?;
     std::io::Write::write_all(&mut f, body)?;
-    // The bytes reach the disk before the rename makes them the package, and
-    // the rename reaches the disk before anything is journaled about it.
     f.sync_all()?;
-    drop(f);
-    std::fs::rename(&tmp, path)?;
+    Ok(tmp)
+}
+
+/// Sync `path`'s folder, so a rename in it reaches the disk before anything is
+/// journaled about it.
+fn sync_dir(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::File::open(dir)?.sync_all()?;
     }
     Ok(())
+}
+
+/// Write `body` to `path` (0600) through a file beside it, so a reader sees
+/// the old package or the new one, never part of one.
+fn place(path: &Path, body: &[u8]) -> std::io::Result<()> {
+    let tmp = write_staged(path, body)?;
+    std::fs::rename(&tmp, path)?;
+    sync_dir(path)
 }
 
 /// Replace the package at `path` with `body`, keeping the old one at
@@ -751,16 +762,44 @@ fn replace_counterparty(
     path: &Path,
     body: &[u8],
     tag: &str,
-    between: &mut dyn FnMut() -> std::io::Result<()>,
-) -> Result<std::path::PathBuf, (bool, std::io::Error)> {
-    let aside = copy_aside(path, tag).map_err(|e| (false, e))?;
-    let done = between().and_then(|_| place(path, body));
-    if let Err(e) = done {
+    hook: &mut dyn FnMut(Stage) -> std::io::Result<()>,
+) -> Result<std::path::PathBuf, ReplaceError> {
+    let aside = copy_aside(path, tag).map_err(ReplaceError::CopyAside)?;
+    let before = hook(Stage::BeforePlace)
+        .and_then(|_| write_staged(path, body))
+        .and_then(|tmp| std::fs::rename(&tmp, path));
+    if let Err(e) = before {
         let _ = std::fs::remove_file(&aside);
         let _ = std::fs::remove_file(path.with_extension("placing"));
-        return Err((true, e));
+        return Err(ReplaceError::BeforeRename(e));
+    }
+    if let Err(e) = hook(Stage::AfterRename).and_then(|_| sync_dir(path)) {
+        let _ = std::fs::remove_file(&aside);
+        return Err(ReplaceError::BeforeRename(e));
     }
     Ok(aside)
+}
+
+/// Where replace_counterparty is (a test injects a failure or a crash there).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stage {
+    /// The old package is copied aside; nothing is written yet.
+    BeforePlace,
+    /// The new package is renamed into place; the folder is not synced yet.
+    AfterRename,
+}
+
+/// How replace_counterparty failed, by the state it left.
+#[derive(Debug)]
+pub(crate) enum ReplaceError {
+    /// The old package could not be copied aside: nothing changed.
+    CopyAside(std::io::Error),
+    /// Before the rename: the old package is in place, the copy removed.
+    BeforeRename(std::io::Error),
+    /// After the rename: the NEW package is in place and the old one is kept
+    /// at `aside`; the folder's sync failed, so the rename may not survive a
+    /// crash.
+    AfterRename { aside: std::path::PathBuf, error: std::io::Error },
 }
 
 /// The package digest the last confirmation of this peering names, and its
@@ -1175,27 +1214,34 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
     };
     let mut rows = Vec::new();
     if !by_hand {
-        match replace_counterparty(&paths.counterparty, &body, "previous", &mut || Ok(())) {
+        match replace_counterparty(&paths.counterparty, &body, "previous", &mut |_| Ok(())) {
             Ok(p) => rows.push(ok("partner-package", format!("the package it replaces is kept at {}", p.display()))),
-            Err((false, e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(ReplaceError::CopyAside(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Some(fail(
                     "GB-191",
                     format!("no package held at {}; nothing was placed", paths.counterparty.display()),
                     format!("run phase 5 again with them, the keys read aloud: goatbuilder federate {them} --from 5 --partner-key <key> --partner-ca-fingerprint <fp>"),
                 ))
             }
-            Err((false, e)) => {
+            Err(ReplaceError::CopyAside(e)) => {
                 return Some(fail(
                     "GB-184",
                     format!("cannot write the working folder: {} could not be copied aside ({e}); nothing was placed", paths.counterparty.display()),
                     "check the working folder is writable, then run phase 5 again",
                 ))
             }
-            Err((true, e)) => {
+            Err(ReplaceError::BeforeRename(e)) => {
                 return Some(fail(
                     "GB-184",
                     format!("cannot write the working folder: {them}'s new package could not be placed at {} ({e}); the old one is kept aside", paths.counterparty.display()),
                     "check the working folder is writable, then run phase 5 again",
+                ));
+            }
+            Err(ReplaceError::AfterRename { aside, error }) => {
+                return Some(fail(
+                    "GB-184",
+                    format!("{them}'s new package is in place at {} but the folder could not be synced ({error}), so it was not recorded as confirmed; the old one is kept at {}", paths.counterparty.display(), aside.display()),
+                    "check the working folder's disk, then run phase 5 again: it asks about the package on disk",
                 ));
             }
         }
@@ -2041,21 +2087,44 @@ mod tests {
         let (w, _st) = bound();
         let old = std::fs::read(&w.paths.counterparty).unwrap();
         let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
-        let r = replace_counterparty(&w.paths.counterparty, &new, "previous", &mut || {
-            Err(std::io::Error::other("injected between the two steps"))
+        let r = replace_counterparty(&w.paths.counterparty, &new, "previous", &mut |at| {
+            if at == Stage::BeforePlace { Err(std::io::Error::other("injected between the two steps")) } else { Ok(()) }
         });
         assert!(r.is_err());
         assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), old, "a failure leaves the old package in place");
         // A crash at the same point: the process dies there.
         let path = w.paths.counterparty.clone();
         let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = replace_counterparty(&path, &new, "previous", &mut || panic!("crash between the two steps"));
+            let _ = replace_counterparty(&path, &new, "previous", &mut |at| {
+                if at == Stage::BeforePlace { panic!("crash between the two steps") } else { Ok(()) }
+            });
         }));
         assert!(crashed.is_err());
         assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), old, "a crash leaves the old package in place");
         // And when nothing interrupts it: the new one is placed, the old one kept.
-        replace_counterparty(&w.paths.counterparty, &new, "previous", &mut || Ok(())).unwrap();
+        replace_counterparty(&w.paths.counterparty, &new, "previous", &mut |_| Ok(())).unwrap();
         assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new);
+        assert!(previous_copies(&w).iter().any(|p| std::fs::read(p).unwrap() == old));
+    }
+
+    /// Owner's read, defect 1: a failure AFTER the rename (the folder's sync)
+    /// leaves the NEW package in place, so the old one must stay kept aside, and
+    /// the error must say that state, not "nothing placed".
+    #[test]
+    fn a_failure_after_the_rename_keeps_the_old_package_aside_and_says_the_new_one_is_in_place() {
+        let (w, _st) = bound();
+        let old = std::fs::read(&w.paths.counterparty).unwrap();
+        let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
+        let r = replace_counterparty(&w.paths.counterparty, &new, "previous", &mut |at| {
+            if at == Stage::AfterRename { Err(std::io::Error::other("injected after the rename")) } else { Ok(()) }
+        });
+        match r {
+            Err(ReplaceError::AfterRename { aside, .. }) => {
+                assert_eq!(std::fs::read(&aside).unwrap(), old, "the old package is kept aside");
+            }
+            other => panic!("expected AfterRename, got {other:?}"),
+        }
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new, "the new package is in place");
         assert!(previous_copies(&w).iter().any(|p| std::fs::read(p).unwrap() == old));
     }
 
