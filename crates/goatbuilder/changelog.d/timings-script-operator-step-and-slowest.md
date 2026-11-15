@@ -9,4 +9,4 @@ it stops at phase 11 for the operator step, and the run resumed with
 does. A run driven by the script, or by both drivers in turn, now has phase
 11's time in its record. `goatbuilder standup`'s timing line now ends with the
 three slowest phases across every resume, phase 11 left out, each counted by
-wall time, so steps run side by side count once.
+wall time, so steps run side by side count once (#814).
