@@ -190,4 +190,7 @@ import json, sys
 f = json.load(open('$RECORD/bo1-flow.json')); print(json.dumps(f))
 sys.exit(0 if f['released'] > 0 and f['lost'] == 0 else 1)"
   accept_pair "$n" "$A" "$B" goatbuilder "-after-backout"
+  # The relay is the lab's, for this run only: stopped here, so a lab kept after the run
+  # (KEEP=1) holds no listener the deployment never had.
+  docker exec "$HP-$A-core" pkill -f fe2e-rest-relay.py >/dev/null 2>&1 || true
 }
