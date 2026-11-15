@@ -564,6 +564,31 @@ def drive_rotate_checks():
     check(rc == 3 and "no longer has the command line" in out, f"drive_rotate: a drive() with no line to swap is not refused: {rc} {out}")
 
 
+def refused_marks_checks():
+    """A refused rotation marks BLOCKED only what the refusal stops: the refused side's own
+    checks and the key's checks, and the other side's only when that side has not run yet
+    (the first side refused). Marks outrank passing steps, so marking the other side after
+    it ran would hide its real results."""
+    script = ('eval "$(sed -n \'/^rot_checks()/,/^}/p\' units/rotation.sh)"; '
+              'eval "$(sed -n \'/^rot_refused_marks()/,/^}/p\' units/rotation.sh)"; '
+              'rot_refused_marks "$K" "$O"')
+    def run(k, o):
+        p = subprocess.run(["bash", "-c", script], cwd=ROOT, capture_output=True, text=True,
+                           env={**os.environ, "K": k, "O": o})
+        rows = [l.split("\t", 1) for l in p.stdout.splitlines() if l.strip()]
+        return p.returncode, {c: why for c, why in rows}
+    rc, m = run("carrier", "second")
+    check(rc == 0 and m, f"refused marks: nothing printed for a refused second side: rc {rc}")
+    check(not any(c.endswith("-first") for c in m), f"refused marks: a second side's refusal marks the first side's checks: {sorted(c for c in m if c.endswith('-first'))}")
+    check("rotate-carrier-second-ran" in m and "samples-carrier" in m and "old-retired-carrier" in m,
+          f"refused marks: a second side's refusal leaves its own or the key's checks unmarked: {sorted(m)}")
+    rc, m = run("transport", "first")
+    check("rotate-transport-first-ran" in m and "rotate-transport-second-ran" in m,
+          f"refused marks: a first side's refusal does not mark both sides: {sorted(m)}")
+    check(m.get("rotate-transport-second-ran") == "not-run" and m.get("rotate-transport-first-ran") == "refused",
+          f"refused marks: the second side, which never ran, is not told apart from the refused side: {m}")
+
+
 catalog_checks()
 backout_edge_check()
 srctree_checks()
@@ -574,6 +599,7 @@ hostfw_checks()
 handoff_checks()
 samples_checks()
 drive_rotate_checks()
+refused_marks_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")
