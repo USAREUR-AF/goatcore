@@ -302,14 +302,16 @@ def run(argv=None):
 
 
 def present_services(path):
-    """{service: its acceptance tokens} for every service the site's end state does
-    not declare absent and that owns at least one token. A token no service owns
-    (a capability such as spock-mesh-peering) belongs to none of them."""
+    """{service: its acceptance tokens} for every service the site's end state
+    declares present and that owns at least one token. An undeclared service
+    (present: null, the model's "set nowhere") is not counted as present: nothing
+    says it runs. A token no service owns (a capability such as
+    spock-mesh-peering) belongs to none of them."""
     if not path:
         return {}
     m = json.loads(Path(path).read_text())
     return {name: set(s.get("assay") or []) for name, s in (m.get("services") or {}).items()
-            if s.get("present") is not False and s.get("assay")}
+            if s.get("present") is True and s.get("assay")}
 
 
 def missed_by(t, present):
@@ -684,6 +686,7 @@ def absent_coverage_self_test():
         "door": {"present": False, "assay": ["door"]},
         "app": {"present": True, "assay": ["app"]},
         "db": {"present": True, "assay": ["db"]},
+        "maybe": {"present": None, "assay": ["maybe"]},
     }}
     cases = (
         # one absent, one present: N/A naming app, and app reads UNKNOWN
@@ -703,6 +706,10 @@ def absent_coverage_self_test():
          [{"id": "door-only", "requires": ["door"], **ok_row}],
          {"door-only": ("N/A", "declared absent on this site: door")}),
         # a token no service owns is not a present service: N/A, nothing unchecked
+        # an undeclared service (present: null) is not present: no coverage row
+        ("undeclared service not counted as present",
+         [{"id": "via-door-maybe", "requires": ["door", "maybe"], **ok_row}],
+         {"via-door-maybe": ("N/A", "declared absent on this site: door")}),
         ("unowned token ignored",
          [{"id": "door-cap", "requires": ["door", "spock-mesh-peering"], **ok_row},
           {"id": "db-own", "requires": ["db"], **ok_row}],
