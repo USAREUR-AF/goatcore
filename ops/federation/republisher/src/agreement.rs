@@ -17,11 +17,14 @@ use anyhow::{bail, Context, Result};
 use chrono::NaiveDate;
 use serde::Deserialize;
 
-/// The only agreement version this build understands. A different value is a
-/// refusal, never a best-effort parse: two versions producing two behaviours
-/// is exactly the silent divergence the spec's single-lineage rule exists to
-/// prevent.
-pub const AGREEMENT_SPEC: &str = "federation-agreement/v1";
+/// The agreement versions this build understands. v2 (ADR 1242,
+/// docs/design/federation-package-v2-spec.md) is v1 with `spec` changed and a
+/// party's optional `ca_fingerprint_next`; its `flows` are v1's, and `parties`
+/// is never read here, so both are read by the one path below. Any other value
+/// is a refusal, never a best-effort parse: two versions producing two
+/// behaviours is exactly the silent divergence the spec's single-lineage rule
+/// exists to prevent.
+pub const AGREEMENT_SPECS: &[&str] = &["federation-agreement/v1", "federation-agreement/v2"];
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Agreement {
@@ -63,11 +66,15 @@ impl Agreement {
              `flows`, the producing implementation and docs/design/federation-package-spec.md \
              §8.1 disagree, and the spec is the contract",
         )?;
-        if ag.spec != AGREEMENT_SPEC {
+        if !AGREEMENT_SPECS.contains(&ag.spec.as_str()) {
             bail!(
-                "agreement declares spec {:?}; this build implements {:?} only",
+                "agreement declares spec {:?}; this build implements {} only",
                 ag.spec,
-                AGREEMENT_SPEC
+                AGREEMENT_SPECS
+                    .iter()
+                    .map(|s| format!("{s:?}"))
+                    .collect::<Vec<_>>()
+                    .join(" and ")
             );
         }
         ag.expiry_date()?;
