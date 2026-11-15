@@ -48,7 +48,7 @@ fn a_key_this_build_does_not_rotate_is_refused_before_anything_runs() {
             "the partner cannot yet receive our new package",
         ),
         ("signing", "GB-189", "previous seed"),
-        ("ca", "GB-282", "§5.1"),
+        ("ca", "GB-282", "is decided, not built: rotating our CA"),
         ("everything", "GB-189", "takes one of"),
     ] {
         let (out, _) = w.run(&["rotate", "hello-ally", key]);

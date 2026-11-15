@@ -40,8 +40,8 @@
 //! Refused: `transport` and `signing` with GB-189, each naming what is not
 //! built yet; `transport` also while the partner cannot receive our new
 //! package (§5, ADR 1229), because the tunnel would stay down after our new
-//! key. `ca` with GB-282: our CA's rotation needs an ADR superseding the
-//! package specification's single CA fingerprint (§4; package-spec §5.1).
+//! key. `ca` with GB-282: our CA's rotation is decided (ADR 1242: the next CA
+//! announced in package v2, §4) and not built yet.
 
 use std::path::Path;
 
@@ -105,7 +105,7 @@ pub enum Gate {
     Built,
     /// Refused with GB-189, with the reason.
     NotBuilt(&'static str),
-    /// Refused with GB-282: a decision is needed first, not only code.
+    /// Refused with GB-282: decided (ADR 1242), not built yet.
     NeedsAdr,
 }
 
@@ -335,7 +335,7 @@ pub fn refused(partner: &str, key: &str) -> Result<()> {
         Some((k, Gate::NeedsAdr)) => Err(goat_errors::coded(
             "GB-282",
             format!(
-                "`rotate {partner} {k}` needs a decision first: rotating our CA needs both CAs trusted for an overlap, and every check accepts the one CA fingerprint the package specification carries (federation-package-spec.md §5.1). An ADR superseding that section comes before any code (docs/design/federation-key-rotation.md §4). This goatbuilder rotates {}",
+                "`rotate {partner} {k}` is decided, not built: rotating our CA needs both CAs trusted for an overlap, and ADR 1242 decides it (our next CA announced in package v2, where every check of v1 accepts the one CA fingerprint federation-package-spec.md §5.1 binds), but this goatbuilder does not build that overlap yet (docs/design/federation-key-rotation.md §4). This goatbuilder rotates {}",
                 built()
             ),
         )
@@ -415,16 +415,18 @@ mod tests {
         );
     }
 
-    /// `ca` needs an ADR, not only code: GB-282 names it.
+    /// `ca` is decided (ADR 1242) and not built: GB-282 says so, and never
+    /// that the decision is still to be made.
     #[test]
-    fn our_ca_is_refused_until_the_adr_superseding_one_ca_fingerprint() {
+    fn our_ca_is_refused_as_decided_and_not_built() {
         let e = refused("xab", "ca").unwrap_err();
         assert_eq!(code(&e), "GB-282");
         let m = e.to_string();
         assert!(
-            m.contains("§5.1") && m.contains("ADR") && m.contains("§4"),
+            m.contains("is decided, not built") && m.contains("ADR 1242") && m.contains("§4"),
             "{m}"
         );
+        assert!(!m.contains("needs a decision") && !m.contains("comes before any code"), "{m}");
     }
 
     #[test]
