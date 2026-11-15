@@ -13,6 +13,8 @@
 #   healthy      the machine's newest ledger row names the declared ref, deploy finished
 #   drifted      the machine was read and is not at the declared ref, for any reason
 #   unreachable  the machine was not read: unreachable, or silent where the inventory names it
+# A component with no ledger coverage (ledger_component: null) records nothing to
+# compare: it is named on a line of its own and left out.
 # Exit 0 when the three verbs name the same machines and the same verdict for
 # every (machine, component); exit 3 with each disagreement printed otherwise;
 # exit 2 when a report has a row this script cannot grade, or a verify report
@@ -47,6 +49,16 @@ def grade_row(detail):
     if d.startswith("not provisioned") or d.startswith("no ledger coverage"):
         return None
     raise ValueError(d)
+
+
+def uncovered(report):
+    """Components a status or diff report says have no ledger (ledger_component: null)."""
+    out = set()
+    for c in report.get("checks", []):
+        parts = c["name"].split("/")
+        if len(parts) == 3 and c["detail"].startswith("no ledger coverage"):
+            out.add(parts[2])
+    return out
 
 
 def from_rows(report):
@@ -103,6 +115,11 @@ def main():
     except ValueError as e:
         print(f"c3: a row with no verdict: {e}", file=sys.stderr)
         return 2
+    # A component with no ledger coverage records nothing on any machine: verify
+    # reads a ledger that is never written, status and diff say "no ledger
+    # coverage". There is no recorded state to agree about, so it is not compared.
+    skip = sorted(uncovered(load(a.status)) & {c for (_, c) in verify})
+    verify = {k: v for k, v in verify.items() if k[1] not in skip}
     comps = {c for (_, c) in verify}
     # verify is read per component: compare only the components it was run for.
     status_v = {k: v for k, v in status.items() if k[1] in comps}
@@ -114,6 +131,8 @@ def main():
         if len(set(row)) != 1:
             bad.append((key, row))
     machines = sorted({h for (h, _) in status_v})
+    if skip:
+        print(f"c3: no ledger coverage, not compared: {' '.join(skip)}")
     if missing:
         print(f"c3: status names component(s) verify was not run for: {' '.join(missing)}")
     for (h, c), (s, v, d) in bad:
