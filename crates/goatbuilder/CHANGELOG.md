@@ -24,8 +24,7 @@ GB-259, a release graduation that printed no record GB-020, a git command
 `doctor` runs that failed GB-258, an internal error GB-322, and a mutation
 without a terminal GB-008. One is new: GB-326, a file of the checkout that is
 not YAML (fleet-pins.yaml, doors.yaml, a role's deploy-history.yml,
-teardown.yaml). The errors of `grow`, which is not wired yet, are left to the
-change that wires it.
+teardown.yaml).
 
 Five checks inside `goatbuilder federate` now carry a code: phase 1's and the slot
 recheck's exit disagreeing with its result GB-315, phase 1 writing no results and
