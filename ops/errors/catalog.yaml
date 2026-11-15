@@ -3685,11 +3685,12 @@ entries:
   - code: GB-290
     tool: goatbuilder
     title: the staged IPsec certificate is not right for this link
-    what: "Before an IPsec credential rotation moves anything, goat-peering-edge checks the staged certificate: its key is the staged key, it chains to the CA it must chain to (our current CA for ipsec-leaf, the staged new CA for ipsec-ca), its subject CN is peering_edge_local_id, its key is ECDSA P-384 (secp384r1) as the proposals require, it is valid now, and it stays valid for peering_edge_min_valid_days more days (default 30). The message names each check that failed. Nothing was moved."
+    what: "Before an IPsec credential rotation moves anything, goat-peering-edge checks the staged certificate: its key is the staged key, it chains to the CA it must chain to (our current CA for ipsec-leaf, the staged new CA for ipsec-ca), its subject CN is peering_edge_local_id, its key is ECDSA P-384 (secp384r1) as the proposals require, it is valid now, it stays valid for peering_edge_min_valid_days more days (default 30), and its key is not the live leaf's (the confirm tells the two leaves apart only by their keys, so a leaf re-certified on the old key is refused). The message names each check that failed. Nothing was moved."
     causes:
       - the leaf was issued for another peering or another identity
       - the leaf was issued by another CA, or the staged key belongs to another certificate
       - the leaf uses another key type, or expires too soon
+      - "the leaf was re-certified on the live leaf's key instead of a new one"
     fixes:
       - "have the ceremony issue the leaf again with Subject CN = peering_edge_local_id and an ECDSA P-384 key, from the right CA, then stage it and run the rotation again"
     read: docs/design/federation-key-rotation.md
@@ -3700,15 +3701,13 @@ entries:
   - code: GB-302
     tool: goatbuilder
     title: the IPsec link did not come up on the new leaf; the old pair was put back
-    what: "After switching to the staged leaf, goat-peering-edge loaded the credentials, re-authenticated the IKE SA and waited up to peering_edge_rotation_confirm_seconds (the DPD timeout by default) for an established IKE SA with an installed CHILD SA. Once one is up it reloads the credentials from the files alone (swanctl --load-creds --clear) and needs charon to hold the live leaf's serial with its private key and no other certificate of our id with one, because swanctl --list-sas names only the identities. None came up, or the leaf was not proven, so it put the set-aside pair back from .previous-<id>/, loaded it and re-authenticated: the old leaf is live. It marks the rotation rolled back (.previous-<id>/rolled-back), so every later run of the same id, a resume or a retire, reports GB-302 again, moves nothing and never replaces our CA. For ipsec-ca with --no-overlap, a partner that no longer trusts our old CA cannot carry the link on the old pair either."
+    what: "After switching to the staged leaf, goat-peering-edge loaded the credentials, re-authenticated the IKE SA and waited up to peering_edge_rotation_confirm_seconds (the DPD timeout by default) for an established IKE SA with an installed CHILD SA. None came up, so it put the set-aside pair back from .previous-<id>/, loaded it and re-authenticated: the old leaf is live. It marks the rotation rolled back (.previous-<id>/rolled-back), so every later run of the same id, a resume or a retire, reports GB-302 again, moves nothing and never replaces our CA. For ipsec-ca with --no-overlap, a partner that no longer trusts our old CA cannot carry the link on the old pair either."
     causes:
       - the partner does not trust the CA that issued the new leaf
       - the partner's edge expects another identity, or is not reachable
       - "this rotation id was rolled back by an earlier run"
-      - "charon did not load the new pair, or another certificate of our id is still loadable with its key from the swanctl directory (the message names its serial)"
     fixes:
       - "read swanctl --list-sas and the charon log on both edges, then stage the new pair again and start a rotation with a new id"
-      - "when the message names another serial, remove that certificate and key from the swanctl directory, then start a rotation with a new id"
     read: docs/design/federation-key-rotation.md
     exit: 2
     matches:
@@ -3811,6 +3810,37 @@ entries:
     exit: 2
     matches:
       - "goat-peering-edge refuses \\(GB-341\\)"
+
+  - code: GB-342
+    tool: goatbuilder
+    title: the IPsec rotation's new SA could not be shown to run on the new leaf; the old pair was put back
+    what: "swanctl --list-sas names only the identities, which an old and a new leaf share, so goat-peering-edge proves the leaf another way. Once the new IKE SA is up and the SAs from before the re-authentication are gone, it reloads the credentials from the files alone (swanctl --load-creds --clear) and reads swanctl --list-certs. charon signs only with a private key it holds, and the partner checks the signature against the certificate we send, so the new SA ran on the live leaf when charon lists exactly one end-entity certificate of our id (peering_edge_local_id): the live leaf's serial, holding its private key, on a key other than the set-aside leaf's. Here it did not: charon lists another certificate of our id, does not hold the live leaf with its key, or the live leaf has the set-aside leaf's key. The message says which and names the serials. The old pair was put back and loaded, the old leaf is live, nothing was recorded, and the rotation is marked rolled back, so every later run of its id reports GB-302."
+    causes:
+      - "another certificate and key of our id are still in the swanctl directory under other file names"
+      - "charon did not load the new pair"
+      - "the live leaf was re-certified on the old key, and a resume found it switched in"
+    fixes:
+      - "read swanctl --list-certs on the edge; remove every certificate and key of our id but the ones the rotation stages, then stage the new pair again and start a rotation with a new id"
+      - "have the ceremony issue the leaf on a new key"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge \\(GB-342\\)"
+
+  - code: GB-343
+    tool: goatbuilder
+    title: another peering's credentials on the edge are missing, so the IPsec rotation does not reload them
+    what: "Once the new IKE SA is up, an IPsec credential rotation (goat-peering-edge) reloads every credential in the edge's swanctl directory from the files alone (swanctl --load-creds --clear), which unloads any key whose file is gone. So before anything moves, and again just before that reload, it checks every other peering on the edge (each conf.d/<name>.conf the role wrote): its certs file in x509/ is present and readable, a readable key in private/ is that certificate's key, and its cacerts files in x509ca/ are present and readable. One was not; the message names the peering and the file. Before anything moves, nothing was moved. Just before the reload, the reload was not run, the old pair was put back and the rotation is marked rolled back."
+    causes:
+      - "another peering's certificate, key or CA file was removed or made unreadable"
+      - "a peering was removed by hand, leaving its conf.d file behind"
+    fixes:
+      - "run that peering's role again so its files are written, or remove the peering, then run the rotation (a new id after a roll-back)"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-343\\)"
+      - "goat-peering-edge \\(GB-343\\)"
 
   - code: X-ANSIBLE-001
     tool: ansible
