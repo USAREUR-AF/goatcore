@@ -56,8 +56,8 @@ rekeys the IKE SA before the re-authentication, so no rekey of either side, whic
 keeps the old authentication, can pass the confirm on the old leaf, and it refuses
 an IKE rekey interval too short to hold the confirm. `peering_edge_remote_ca_next_path` accepts a
 partner's new CA beside the current one during their rotation. It is opt-in,
-and without a rotation id nothing changes. `goatbuilder federate rotate` does
-not drive it yet.
+and without a rotation id nothing changes. `goatbuilder federate rotate
+<partner> ipsec-leaf` and `ipsec-ca` drive it.
 
 ### For someone contributing
 
