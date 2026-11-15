@@ -3698,7 +3698,7 @@ entries:
     matches:
       - "goat-peering-edge refuses \\(GB-309\\)"
 
-  - code: GB-310
+  - code: GB-311
     tool: goatbuilder
     title: an IPsec rotation stopped half way through its switch, and what is left does not finish it
     what: "The switch of an IPsec credential rotation (goat-peering-edge) moves the staged key, then the staged certificate, over the live names. A run killed between the two moves leaves one moved in and the other still staged. The next run finishes the remaining move when what is left is the moved one's match: the moved file is not the set-aside one, and the two halves are one key pair. Here they are not, so the live pair would be mixed: nothing was moved."
@@ -3711,7 +3711,7 @@ entries:
     read: docs/design/federation-key-rotation.md
     exit: 2
     matches:
-      - "goat-peering-edge refuses \\(GB-310\\)"
+      - "goat-peering-edge refuses \\(GB-311\\)"
 
   - code: X-ANSIBLE-001
     tool: ansible

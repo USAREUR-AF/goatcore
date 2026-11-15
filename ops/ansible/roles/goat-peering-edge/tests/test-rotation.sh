@@ -526,8 +526,8 @@ rot -e peering_edge_rotation=r22 || true
 rm -f "$T/mv-dies"
 cp "$T/pki/good2.pem" "$S/x509/xab-cert.next.pem"
 before=$(snap)
-if ! rot -e peering_edge_rotation=r22 && grep -q "GB-310" "$LOG" && [ "$(snap)" = "$before" ]; then
-  pass "a half-done switch whose staged remainder does not match: GB-310, nothing moved"
+if ! rot -e peering_edge_rotation=r22 && grep -q "GB-311" "$LOG" && [ "$(snap)" = "$before" ]; then
+  pass "a half-done switch whose staged remainder does not match: GB-311, nothing moved"
 else
   fail "a half-done switch with a mismatched remainder was not refused, or something moved"; tail -12 "$LOG"
 fi

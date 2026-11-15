@@ -128,10 +128,10 @@
         executable: /bin/bash
       register: _pe_rot_half
       changed_when: false
-    - name: peering-edge | rotation | refuse a half-done switch that what is left cannot finish (GB-310)
+    - name: peering-edge | rotation | refuse a half-done switch that what is left cannot finish (GB-311)
       ansible.builtin.fail:
         msg: >-
-          goat-peering-edge refuses (GB-310): rotation {{ peering_edge_rotation }} on {{ inventory_hostname }}
+          goat-peering-edge refuses (GB-311): rotation {{ peering_edge_rotation }} on {{ inventory_hostname }}
           stopped half way through its switch, and what is left does not finish it:
           {{ _pe_rot_half.stdout | regex_replace('^refuse:', '') }}. The set-aside pair is in
           {{ _pe_rot_aside }}. Restore the staged file the ceremony issued for this rotation, or put the

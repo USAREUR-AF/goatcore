@@ -214,7 +214,7 @@ Generating the new key on the edge, with only a signing request leaving it, woul
 Each rotation writes `<work>/ipsec-rotation.json` on the controller before anything moves on the edge: the kind, the rotation id, the sha256 of the staged certificate (and of the staged CA for `ipsec-ca`), the partner's read-back fingerprint, and the last step that completed (`checked`, `set-aside`, `switched`, `confirmed`, `retired`). The set-aside directory `.previous-<id>/` on the edge is the second marker. A resumed run takes the peering's lock, reads the journal, and redoes each step only when its effect is missing:
 
 - **Set aside**: only when `.previous-<id>/` does not exist, so a second run never sets aside the new pair as if it were the old one. **Built** so that it exists only complete: built in `.previous-<id>.tmp` and renamed into place; a leftover `.tmp` (a run killed during the set-aside, when the live pair is still the old one) is discarded and the set-aside redone, so a later roll-back restores both files.
-- **Switch**: only when the live certificate's sha256 is not the journal's. **Built** for a run killed between the switch's two moves: when one staged file is moved in and the other is still staged, the next run finishes the remaining move if the file left is the moved one's match (the moved file is not the set-aside one, and the two halves are one key pair), and otherwise refuses with GB-310 and moves nothing, so the live pair is never left mixed. A run killed after the move but before `--load-creds` finds the files switched, and charon still holding the old credentials in memory. It loads and re-authenticates without moving anything.
+- **Switch**: only when the live certificate's sha256 is not the journal's. **Built** for a run killed between the switch's two moves: when one staged file is moved in and the other is still staged, the next run finishes the remaining move if the file left is the moved one's match (the moved file is not the set-aside one, and the two halves are one key pair), and otherwise refuses with GB-311 and moves nothing, so the live pair is never left mixed. A run killed after the move but before `--load-creds` finds the files switched, and charon still holding the old credentials in memory. It loads and re-authenticates without moving anything.
 - **Re-authenticate and confirm**: always repeated, which is harmless.
 - **Roll back**: a run killed during the roll-back finishes it. The set-aside pair is the target, and a live file whose sha256 matches the set-aside one is already done.
 
@@ -222,7 +222,7 @@ A journal whose staged sha256 differs from the `.next` files now on the edge (so
 
 ### 8.5 Refusal codes
 
-Seven codes, GB-289, GB-290, GB-298, GB-302, GB-303, GB-309 and GB-310, reserved for this design. Each prints the host, the file and the fix:
+Seven codes, GB-289, GB-290, GB-298, GB-302, GB-303, GB-309 and GB-311, reserved for this design. Each prints the host, the file and the fix:
 
 | Code | Refused when |
 |---|---|
@@ -230,7 +230,7 @@ Seven codes, GB-289, GB-290, GB-298, GB-302, GB-303, GB-309 and GB-310, reserved
 | GB-290 | The staged certificate does not match its key, does not chain to the CA it must chain to, names another CN, uses another key type than the proposals require, or is not valid now and for the minimum days |
 | GB-298 | A resumed rotation whose journal names material other than what is staged, or another rotation of this peering is unfinished |
 | GB-302 | The IKE SA did not come up on the new leaf within `peering_edge_dpd_timeout`; the old pair was restored (or, with `--no-overlap`, could not be). Also every later run of a rotation id that was rolled back |
-| GB-310 | A switch stopped half way, and the staged file left is not the moved one's match; nothing is moved |
+| GB-311 | A switch stopped half way, and the staged file left is not the moved one's match; nothing is moved |
 | GB-309 | The retire step finds no `.previous-<id>/` for the id, or the rotation is not confirmed live; nothing is removed |
 | GB-303 | `ipsec-ca` without `--partner-holds-ipsec-ca`, or with a fingerprint other than the staged CA's. The role checks it too, from `peering_edge_rotation_ca_readback` |
 
