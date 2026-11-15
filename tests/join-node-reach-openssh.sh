@@ -32,7 +32,7 @@
 set -euo pipefail
 
 : "${REACH_PFX:?set REACH_PFX (a prefix of your own)}"
-CLIENTS="${REACH_CLIENTS:-ubuntu:20.04 ubuntu:22.04 debian:12 ubuntu:24.04 alpine:3.20 debian:13}"
+CLIENTS="${REACH_CLIENTS:-ubuntu:20.04 ubuntu:22.04 debian:12 ubuntu:24.04 alpine:3.20 debian:13 ubuntu:26.04}"
 SERVER_BASE="${REACH_SERVER:-debian:13}"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
