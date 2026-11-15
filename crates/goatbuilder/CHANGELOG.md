@@ -109,7 +109,8 @@ on the call: `yes` at a terminal, or `--accept-partner-package <digest>`.
 folder cannot be synced after the new package is placed, the run says the new one
 is in place, not confirmed, and the old one is at the copy (GB-184). A
 package not signed by the bound key, one the parser refuses, or one issued more
-than 7 days after today (UTC) is refused (GB-191) and set aside; one that came
+than 7 days after today (UTC) is refused (GB-191) and set aside, and the
+directory step does not save one issued that far ahead; one that came
 through the partner's single pointer is asked about saying so. A package issued before the one held, or without a
 readable issued date while the held one has one, is refused (GB-308) even with
 its digest given, so a replay is never asked about. When the keys confirmed before are

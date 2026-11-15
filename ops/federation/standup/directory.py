@@ -1128,6 +1128,11 @@ def changed_members(a, b, at=""):
     return [] if a == b else [at or "(the whole package)"]
 
 
+# The same bound as phase 5's (crates/goatbuilder/src/federate/confirm.rs ISSUED_AHEAD_DAYS):
+# a package issued further ahead of today's UTC date than this is not well formed.
+ISSUED_AHEAD_DAYS = 7
+
+
 def _issued(package) -> str:
     """A package's `issued` date when it is a real YYYY-MM-DD date, else ""."""
     v = package.get("issued") if isinstance(package, dict) else None
@@ -1175,6 +1180,13 @@ def offer_new_package(a, their_id: str, bound_key, body: bytes, theirs: dict, on
         warnings.append(f"{a.theirs} differs from the package `{their_id}` serves; the file on disk is what composes")
         return
     was, now = _issued(on_disk), _issued(theirs)
+    today = datetime.now(timezone.utc).date()
+    if now and (date.fromisoformat(now) - today).days > ISSUED_AHEAD_DAYS:
+        # Phase 5 refuses it as not well formed; saving it would offer it on every run.
+        warnings.append(f"`{their_id}` serves a package issued {now}, more than {ISSUED_AHEAD_DAYS} days after today's "
+                        f"UTC date ({today}); it is not offered, and {a.theirs} is what composes. Ask `{their_id}` "
+                        "to publish their current package again")
+        return
     if was and now and now < was:
         # A replay or a rollback: never offered for confirmation (phase 5 refuses it too).
         warnings.append(f"`{their_id}` serves a package issued {now}, before the one on disk ({was}); it is not "
