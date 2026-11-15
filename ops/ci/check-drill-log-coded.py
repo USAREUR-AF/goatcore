@@ -102,7 +102,13 @@ def uncoded_text(path, text):
     for i, line in enumerate(lines):
         if not (REFUSAL.search(line) or USAGE.search(line) or FAILED.search(line)):
             continue
-        window = "\n".join(lines[i:i + 1 + WINDOW])
+        # The error's own lines: up to WINDOW after it, ending before the next
+        # refusal, usage error or failed row, whose code is that error's, not this one's.
+        end = i + 1
+        while end < min(len(lines), i + 1 + WINDOW) and not (
+                REFUSAL.search(lines[end]) or USAGE.search(lines[end]) or FAILED.search(lines[end])):
+            end += 1
+        window = "\n".join(lines[i:end])
         if CODE.search(window):
             continue
         found.append((str(path), i + 1, line.strip()))

@@ -20,6 +20,15 @@ def findings(text, name="drill.log"):
 
 
 class TextLogs(unittest.TestCase):
+    def test_a_code_after_the_next_error_line_does_not_count_for_this_one(self):
+        # Each error's window ends at the next refusal, usage error or failed row, so
+        # a later error's code never covers an earlier uncoded one.
+        log = ("goatbuilder: grow takes a goatlite config: this one has no lite: block\n"
+               "goatbuilder: federate is a mutation: pass --yes without a terminal (C10)\n"
+               "  (GB-008 — goatbuilder explain GB-008)\n")
+        got = findings(log)
+        self.assertEqual([g[1] for g in got], [1], got)
+
     def test_a_coded_refusal_passes(self):
         self.assertEqual(findings("goatbuilder: GB-008: federate is a mutation: pass --yes\n"), [])
 

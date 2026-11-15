@@ -1098,7 +1098,7 @@ impl MeasureArgs {
                 return Ok(None);
             }
             return Err(goat_errors::coded(
-                "GB-239",
+                "GB-325",
                 "--ssh-edge-group, --ssh-core-group, --edge-host, --core-host, \
                  --router-container, --side, --half-out and --edge-half choose what \
                  `init --over-ssh <peering>` measures; \

@@ -10,7 +10,8 @@
 //! It reads every file under `src/` (test modules and `#[cfg(test)]` items
 //! left out) for the places an error is made: `anyhow!(…)`, `bail!(…)`,
 //! `ensure!(…)`, `.context(…)` and `.with_context(…)`. A place is coded when its expression
-//! names a `GB-nnn` code or calls `coded(`. A message that only meets one of the
+//! calls `coded(`; a message that only names a `GB-nnn` code is not coded,
+//! since the error is not `Coded` and takes the uncoded exit. A message that only meets one of the
 //! catalog's `matches:` patterns is not: main.rs prints a code without the
 //! explanation only for an error raised with `goat_errors::coded`, so a drill
 //! log of a pattern-matched error carries none. Every other place is listed in
@@ -153,7 +154,6 @@ fn one_line(s: &str) -> String {
 /// Every uncoded place in one file's text.
 fn uncoded_in(file: &str, text: &str) -> Vec<Site> {
     let lines = non_test_lines(text);
-    let code = regex::Regex::new(r"GB-\d{3}").unwrap();
     let mut out = Vec::new();
     for (n, line) in lines.iter().enumerate() {
         if line.trim_start().starts_with("//") {
@@ -200,7 +200,9 @@ fn uncoded_in(file: &str, text: &str) -> Vec<Site> {
                 tail.push_str(lines[t]);
             }
             let whole = format!("{expr}\n{tail}");
-            if code.is_match(&whole) || whole.contains("coded(") {
+            // Only a real `coded(…)` construction codes it: a message that names a
+            // code is still an uncoded error, and exits as one.
+            if whole.contains("coded(") {
                 continue;
             }
             let message = match first_literal(&expr).map(|l| one_line(&l)) {
@@ -309,7 +311,8 @@ fn every_error_the_source_makes_is_coded_or_listed() {
 
 /// The scanner itself: an uncoded `anyhow!`, `ensure!` and `.context` are found, with
 /// their messages; a coded one, and one in a test module, are not; one the
-/// catalog would only match by its words is.
+/// catalog would only match by its words is, and so is one whose message only
+/// names a code: the error is not `Coded`, so it takes the uncoded exit.
 #[test]
 fn the_scanner_finds_uncoded_errors_and_only_those() {
     let src = r#"
@@ -337,6 +340,11 @@ fn e(ok: bool) -> Result<()> {
     Ok(())
 }
 
+fn f() -> Result<()> {
+    let line = parse(argv).context(format!("goatbuilder federate {} (GB-242)", argv.join(" ")))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     fn c() { let _ = anyhow!("a test's own error"); }
@@ -348,8 +356,10 @@ mod tests {
         vec![
             "src/x.rs :: context :: the plan file".to_string(),
             "src/x.rs :: anyhow :: an empty plan: {}".to_string(),
+            "src/x.rs :: anyhow :: a refusal with its code, GB-149, inside the message".to_string(),
             "src/x.rs :: anyhow :: federate is a mutation: pass --yes without a terminal (C10)".to_string(),
             "src/x.rs :: ensure :: phase 1 wrote no results to {}".to_string(),
+            "src/x.rs :: context :: goatbuilder federate {} (GB-242)".to_string(),
         ]
     );
 }
