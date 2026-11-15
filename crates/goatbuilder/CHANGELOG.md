@@ -220,6 +220,14 @@ machine's owner. A clock that could not be read is reported as not verified,
 never as passed. The rule is the federation preflight's clock check
 (GB-268) (#766).
 
+#### Fixed: a joiner's join-node needs no OWNER_EMAIL
+
+A joiner's phase 13 passed `-e bootstrap_owner_email="$OWNER_EMAIL"` to its
+bootstrap passes. A joiner's account arrives from the founder, so the value
+was never used, but a run with no `OWNER_EMAIL` set stopped at phase 13
+(unbound variable). A joiner's phase 13 no longer passes it. A founder site's
+join-node still does.
+
 #### Added: join-node runs mesh DNS at a joining site
 
 A site that joins a goatnet now runs its own mesh DNS, so it still resolves
