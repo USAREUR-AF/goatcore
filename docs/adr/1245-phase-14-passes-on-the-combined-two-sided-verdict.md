@@ -1,4 +1,4 @@
-# ADR 1230 — Phase 14 passes on the combined two-sided verdict
+# ADR 1245 — Phase 14 passes on the combined two-sided verdict
 
 | Field | Value |
 |---|---|
