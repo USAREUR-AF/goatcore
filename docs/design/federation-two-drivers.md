@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed; the hand-off stop at phases 1 and 2 is built, and the phase-1 hand-off is measured.** The federation test environment's two-driver scenario on 90ecd3d3 (run `90ecd3d39829-20261113T083718-2510969`, harness 159b1674) measured it: both controllers stopped at phase 1 with an object whose commands parse, the follower's controller run passed with its clean-checkout, edge-commit and carry checks, and the edge step was refused with GB-267 as built; 15 checks passed and the 7 that need the edge run failed. Phase 1's `import` and its core half are built: `goatbuilder federate import <peering> 1 <file> --sha256 <code>` checks the edge result against the edge driver's confirm code, places it under `<work>/handoff/1/` and journals its sha256, and `--from 1` hashes it again, runs preflight `--side core` and joins the two sides' results (GB-277 refuses a result that cannot be imported). The edge driver's run of phase 1 is built: `goatbuilder federate <peering> --side edge --from 1 --to 1 --expect-commit <commit>` refuses a checkout at another commit or with changes, and a carried file (`--expect <file>=<sha256>`) that is missing or differs (GB-278), runs preflight's edge checks into `<work>/handoff/1/edge.json`, and prints the way-back object with the confirm code. The edge driver's run, the import and core half of every later phase, and the contract's end state are not built, so gate row B10 is not passed. A peering declares two drivers with `drivers: two` ("Which peerings have two drivers"). The controller's run stops at phase 1 or 2 with the hand-off object (GB-265), the two phases where the generic object is the contract's; a checkout with changes is refused (GB-266). A two-driver run that would reach a later phase that needs the edge (3, 11 to 14), whose object differs, is refused before the run acts (GB-267, not built yet); that includes every `federate deploy`, which runs phase 10 then 11. The edge driver's `--side edge` run of any phase after 1 is refused the same way. Phase 3's two halves are on main at the `init` level; the halves inside the one command, `import` and the rest are not built. It is the product contract goatbuilder 1.0 gate row B10 is proven against |
+| Status | **Designed; the hand-off stop at phases 1 and 2 is built, and the phase-1 hand-off is measured.** The federation test environment's two-driver scenario on 90ecd3d3 (run `90ecd3d39829-20261113T083718-2510969`, harness 159b1674) measured it: both controllers stopped at phase 1 with an object whose commands parse, the follower's controller run passed with its clean-checkout, edge-commit and carry checks, and the edge step was refused with GB-267 as built; 15 checks passed and the 7 that need the edge run failed. Phase 1's `import` and its core half are built: `goatbuilder federate import <peering> 1 <file> --sha256 <code>` checks the edge result against the edge driver's confirm code, places it under `<work>/handoff/1/` and journals its sha256, and `--from 1` hashes it again, runs preflight `--side core` and joins the two sides' results (GB-277 refuses a result that cannot be imported). The edge driver's run of phase 1 is built: `goatbuilder federate <peering> --side edge --from 1 --to 1 --expect-commit <commit>` refuses a checkout at another commit or with changes, and a carried file (`--expect <file>=<sha256>`) that is missing or differs (GB-278), runs preflight's edge checks into `<work>/handoff/1/edge.json`, and prints the way-back object with the confirm code. Phase 3's hand-off is built ("Phase 3: the hand-off around the two halves"): the controller stops at phase 3 with the edge half's object, the edge driver's `--side edge --from 3 --to 3` measures the edge half alone over SSH and prints the way back, `import` runs the core half's file checks (GB-114), and `--from 3` hashes the file again and runs the core half against it. The edge driver's run, the import and core half of phase 2 and of 11 to 14, and the contract's end state are not built, so gate row B10 is not passed. A peering declares two drivers with `drivers: two` ("Which peerings have two drivers"). The controller's run stops at phase 1, 2 or 3 with the hand-off object (GB-265); a checkout with changes is refused (GB-266). A two-driver run that would reach a later phase that needs the edge (11 to 14), whose object differs, is refused before the run acts (GB-267, not built yet); that includes every `federate deploy`, which runs phase 10 then 11. A two-driver run from phase 3 with `FED_MEASURE=here` is refused the same way: measured on one machine, phase 3 has no halves. The edge driver's `--side edge` run of a phase other than 1 and 3 is refused with GB-267. It is the product contract goatbuilder 1.0 gate row B10 is proven against |
 | Design | [goatbuilder.md](goatbuilder.md) (the federate sections) · [federation-plan.md](federation-plan.md) · [federation-preflight.md](federation-preflight.md) · [ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) |
 | Audience | whoever builds the two-driver run, writes its scenario, or runs a peering where no one machine reaches both the edge host and the core host |
 
@@ -166,12 +166,13 @@ everything that command reads from the other machine, the file it writes, and
 the two commands the controller runs after it. The sentence a person reads
 names the same commands.
 
-Status: built at the stop, at phases 1 and 2 only: the controller's run with `-o json` carries
+Status: built at the stop, at phases 1, 2 and 3: the controller's run with `-o json` carries
 `handoff`, its text names every argv on its own line, quoted for a POSIX shell, and a checkout with
-changes gives no object (GB-266), naming each file. At phases 3 and 11 to 14 the object differs
-(phase 3's result is the edge half, 11 to 13 carry files, 14 binds by id) and is not built. A
-two-driver run is refused with GB-267, and prints no object, when the first phase it would run
-that needs the edge is one of those; a run whose first such phase is 1 or 2 stops there instead.
+changes gives no object (GB-266), naming each file. Phase 3's result is the edge half
+(`handoff/3/edge-half.json`). At phases 11 to 14 the object differs (11 to 13 carry files, 14
+binds by id) and is not built. A two-driver run is refused with GB-267, and prints no object, when
+the first phase it would run that needs the edge is one of those; a run whose first such phase is
+1, 2 or 3 stops there instead.
 The refusal comes before the run acts: before the peering's lock and journal, and for
 `federate deploy` before its plan is read, approved or rechecked, so phase 10 never admits the
 edge on our core and leaves the admission half done when 11 is refused. The refusal says that
@@ -320,6 +321,24 @@ one command, its last line names the one command's `import` and `then` instead
 of the `init --side core` line, and it prints the way-back object with `-o
 json`. `init` run on its own keeps printing what it prints.
 
+Status: built (`crates/goatbuilder/src/federate/handoff.rs`, `import_edge_half`;
+`federate/mod.rs`, the phase loop's halves; tests
+`phase_3_stops_with_the_edge_half_hand_off_object`,
+`the_edge_driver_measures_phase_3s_edge_half_and_the_controller_joins_it`,
+`a_phase_3_edge_half_that_does_not_hold_is_not_imported` and
+`a_two_driver_phase_3_measured_here_is_refused` in
+`crates/goatbuilder/tests/federate_two_drivers.rs`, against stand-in `ssh` and
+`ansible-inventory` commands that record which host each call reached). Both
+halves run in process with their reports on stderr, so `-o json` stays one
+document. The edge driver's run reaches only the edge host and the controller's
+`--from 3` only the core host. The import takes `--edge-group <group>` when the
+edge's group is not `<peering>_edge`. Phase 3 of a two-driver peering always
+measures over SSH: a run from phase 3 with `FED_MEASURE=here` is refused before it
+acts (GB-267). In the tests no core router answers, so the core half stops at its
+own refusal (GB-113) after the join; the package built and signed from the two
+halves inside the one command is not shown by a test. Not measured: the test
+environment's two-driver scenario has not run phase 3.
+
 ### Each hand-off, filled in
 
 For a peering `xab` seen from `xaa`, with default working directories and an
@@ -391,7 +410,8 @@ one is not designed.
   `<work>/handoff/<N>/`, and journals its sha256. Built for phase 1, with phase 1's core half
   against it and the join of the two sides' results (`federate/handoff.rs`, `import`,
   `check_imported`, `join_phase_1`; tests in `crates/goatbuilder/tests/federate_two_drivers.rs`);
-  a result that cannot be imported is GB-277.
+  a result that cannot be imported is GB-277. Built for phase 3, with the core half's file checks
+  (GB-114) and the core half against the imported edge half (`import_edge_half`).
 - The controller's clean-tree rule: no hand-off object while its checkout has uncommitted changes;
   the stop names each file to commit.
 - `--side edge` runs ending with the way-back object and its confirm code; `--expect-commit`
@@ -400,7 +420,8 @@ one is not designed.
   `way_back`; tests `an_edge_drivers_phase_1_writes_its_result_and_prints_the_way_back` and
   `the_edge_driver_refuses_a_checkout_or_carried_file_not_the_controllers` in
   `crates/goatbuilder/tests/federate_two_drivers.rs`); a refusal is GB-278. A carried file is
-  read under the edge driver's `<work>` when it is there, else in its checkout.
+  read under the edge driver's `<work>` when it is there, else in its checkout. Built for phase 3:
+  the edge half (`the_edge_driver_measures_phase_3s_edge_half_and_the_controller_joins_it`).
 - Every `then` hashing its imported file against the journaled sha256 before reading it.
 - Phase 14 split by id: the controller's half first, recording the ids it fired; the edge's log
   lines carrying those ids, within the window and 5 minutes either side; `test` matching them by

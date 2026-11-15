@@ -3,18 +3,21 @@
 # Every block is gated; the role is a complete no-op with defaults.
 
 # ---- 0. the bad-day transport ------------------------------------------------
+# Tailscale publishes one apt repository per distribution and codename
+# (pkgs.tailscale.com/stable/<debian|ubuntu>/<codename>), so both come from the
+# host's facts: a Debian joiner gets Debian's packages.
 - name: breakglass-node | tailscale package
   when: breakglass_tailscale_installed | bool
   block:
     - name: breakglass-node | tailscale apt key
       ansible.builtin.get_url:
-        url: "https://pkgs.tailscale.com/stable/ubuntu/{{ ansible_distribution_release }}.noarmor.gpg"
+        url: "https://pkgs.tailscale.com/stable/{{ ansible_distribution | lower }}/{{ ansible_distribution_release }}.noarmor.gpg"
         dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
         mode: "0644"
 
     - name: breakglass-node | tailscale apt source
       ansible.builtin.get_url:
-        url: "https://pkgs.tailscale.com/stable/ubuntu/{{ ansible_distribution_release }}.tailscale-keyring.list"
+        url: "https://pkgs.tailscale.com/stable/{{ ansible_distribution | lower }}/{{ ansible_distribution_release }}.tailscale-keyring.list"
         dest: /etc/apt/sources.list.d/tailscale.list
         mode: "0644"
 

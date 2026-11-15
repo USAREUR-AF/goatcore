@@ -286,8 +286,9 @@
       tags: [streaming-repl, standby]
 
     - name: "Standby | wipe data dir (find -delete catches dotfiles)"
+      # argv: one find root, whatever the path holds; a split one would delete under two.
       ansible.builtin.command:
-        cmd: "find {{ postgres_data_volume_path }} -mindepth 1 -delete"
+        argv: [find, "{{ postgres_data_volume_path }}", -mindepth, "1", -delete]
       changed_when: true
       tags: [streaming-repl, standby]
 

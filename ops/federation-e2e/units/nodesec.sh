@@ -327,79 +327,8 @@ ns_profile_blocked() { # $1 reason
   done
 }
 
-# THE SWITCH, AS A DEPLOYMENT TURNS IT ON. The role's README and the example
-# group_vars/_examples/peering-host-firewall.example.yml: copy into each peering's edge and
-# core group_vars (group_vars/<peering>_edge/host-firewall.yml and
-# group_vars/<peering>_core/host-firewall.yml), set goat_host_firewall_baseline: true and
-# the management sources. Every peering on one host gets the same file: the edge's rule
-# set covers all its peerings, and a value that differed per peering would make each
-# peering's run replace the other's. What this sovereign writes, and why each line:
-#   management sources   edge: the scanner (the management source this unit scans from),
-#                        the core host (a second management address, which the tightening
-#                        override removes), and 127.0.0.1: the inventory reaches the edge
-#                        over SSH to 127.0.0.1, and the renderer refuses (GB-213) a rule set
-#                        that does not admit the managing session by source, the fixed
-#                        loopback rule notwithstanding.
-#                        core: the scanner and the edge host, which runs the core's plays
-#                        over SSH (GB-213 without it).
-#   closed listeners     core: udp/7446, the republisher's zenoh scouting socket on
-#                        224.0.0.224, closed on purpose (GB-215 otherwise).
-#   SPIRE                core: peering_spire_enabled and peering_spire_server_host as the
-#                        edge's group_vars set them, so peering-republisher.yml admits the
-#                        bundle endpoint (rule spire-bundle).
-#   override             core spire-bundle: the rule admits the edge on the mesh interface
-#                        only; this lab has no mesh, the edge reaches the core on the
-#                        internal network, so the interface is loosened to eth0 with a
-#                        reason and the sources narrowed to the edge's address.
-#                        other-tcp on both: the drill's own surfaces (core REST 8000, the
-#                        probe sessions' REST ports on the edge), from the docker host's
-#                        address on that network only, loosened with a reason.
-# $1 sovereign, $2 1 to add the tightening override (ssh-management on the edge from the
-# scanner and the loopback session only), $3 file to write the edge's values to, $4 the
-# core's.
-fw_profile_vars() {
-  local s="$1" tight="$2" o gw scan core edge probes="" t
-  o="$(octet "$s")"; gw="$NB.$o.1"; scan="$NB.$o.30"; core="$(core_ip "$s")"; edge="$(edge_ip "$s")"
-  for t in $(partners "$s"); do
-    probes="$probes${probes:+, }$(probe_port "$s" "$t" 8101), $(probe_port "$s" "$t" 8102), $(probe_port "$s" "$t" 8103)"
-  done
-  {
-    echo "# The host firewall baseline on $s's peering edge (roles/goat-host-firewall)."
-    echo "goat_host_firewall_baseline: true"
-    echo "goat_host_firewall_management_sources:"
-    echo "  - \"$scan/32\"      # the management host"
-    echo "  - \"$core/32\"      # the core host, a second management address"
-    echo "  - \"127.0.0.1/32\"  # the play's own SSH session: the inventory reaches this edge at 127.0.0.1"
-    echo "goat_host_firewall_override:"
-    echo "  other-tcp:"
-    echo "    ports: [$probes]"
-    echo "    sources: [\"$gw/32\"]"
-    echo "    reason: \"drill only: the federation test reads the probe sessions' REST ports from the docker host\""
-    if [ "$tight" = 1 ]; then
-      echo "  # Tightening: SSH from the management host only (and the play's loopback session)."
-      echo "  ssh-management:"
-      echo "    sources: [\"$scan/32\", \"127.0.0.1/32\"]"
-    fi
-  } > "$3"
-  {
-    echo "# The host firewall baseline on $s's core router host (roles/goat-host-firewall)."
-    echo "goat_host_firewall_baseline: true"
-    echo "goat_host_firewall_management_sources:"
-    echo "  - \"$scan/32\"      # the management host"
-    echo "  - \"$edge/32\"      # the edge host, which runs this host's plays over SSH"
-    echo "goat_host_firewall_closed_listeners:"
-    echo "  - \"udp/7446\"      # the republisher's zenoh scouting socket (224.0.0.224), closed on purpose"
-    echo "goat_host_firewall_override:"
-    echo "  spire-bundle:"
-    echo "    interface: eth0"
-    echo "    sources: [\"$edge/32\"]"
-    echo "    reason: \"no mesh on this network: the edge's inbound SPIRE forward reaches the core on the internal network\""
-    echo "  other-tcp:"
-    echo "    ports: [8000]"
-    echo "    sources: [\"$gw/32\"]"
-    echo "    reason: \"drill only: the federation test reads the core router's REST port from the docker host\""
-  } > "$4"
-}
+# THE SWITCH, AS A DEPLOYMENT TURNS IT ON, and what each value is for: fw_profile_vars in
+# lib/hostfw.sh (every scenario switches the edge baseline on from the start; see there).
 
 # Write the values into each peering's groups of the sovereign's clone, commit, push to its
 # origin (its trunk: ansible-preflight.sh refuses to deploy commits the trunk lacks), and
@@ -420,6 +349,27 @@ fw_profile_declare() {
   cp "$WORK/$s/host-firewall-core.yml" "$RECORD/host-firewall-$s-core$([ "$2" = 1 ] && echo -override).yml"
   git -C "$c" add -A ops/ansible/group_vars
   git -C "$c" diff --cached --quiet || git -C "$c" commit -q -m "$3"
+  git -C "$c" push -q origin HEAD:main
+  if docker exec "$HP-$s-edge" test -d /opt/goat/.git 2>/dev/null; then
+    host_exec "$HP-$s-edge" git -C /opt/goat pull -q --ff-only origin main
+  fi
+}
+
+# ns_edge_baseline: $1's edge group_vars with the baseline at the role's default (off) or on,
+# committed and pushed like fw_profile_declare, for the default's refusal (GB-279).
+ns_edge_baseline() { # $1 sovereign, $2 on|off
+  local s="$1" c="$WORK/$1/clone" t
+  fw_profile_vars "$s" 0 "$WORK/$s/host-firewall-edge.yml" "$WORK/$s/host-firewall-core.yml"
+  if [ "$2" = off ]; then
+    sed -i 's/^goat_host_firewall_baseline: true$/goat_host_firewall_baseline: false/' "$WORK/$s/host-firewall-edge.yml"
+  fi
+  for t in $(partners "$s"); do
+    mkdir -p "$c/ops/ansible/group_vars/${t}_edge"
+    cp "$WORK/$s/host-firewall-edge.yml" "$c/ops/ansible/group_vars/${t}_edge/host-firewall.yml"
+  done
+  cp "$WORK/$s/host-firewall-edge.yml" "$RECORD/host-firewall-$s-edge-baseline-$2.yml"
+  git -C "$c" add -A ops/ansible/group_vars
+  git -C "$c" diff --cached --quiet || git -C "$c" commit -q -m "$s: the host firewall baseline $2 on the peering edge"
   git -C "$c" push -q origin HEAD:main
   if docker exec "$HP-$s-edge" test -d /opt/goat/.git 2>/dev/null; then
     host_exec "$HP-$s-edge" git -C /opt/goat pull -q --ff-only origin main
@@ -472,10 +422,23 @@ unit_main() {
   NS_FOUND=0; NS_FW_ON=0; NS_PROFILE_REQUIRED=0
   fw_profile_find > "$RECORD/nodesec-profile.txt" 2>&1 && NS_FOUND=1
   setup_hosts 1
+  # The role's default (the baseline off) on {A}'s edge: an edge peering play refuses it
+  # (GB-279) before phase 2 changes the edge. Every scenario runs with the baseline on
+  # (lib/hostfw.sh), so it goes back on before the peering comes up.
+  say "node security: the edge's host firewall baseline at its default (off)"
+  ns_edge_baseline "$A" off
+  if has_text ops/errors/catalog.yaml "code: GB-279"; then
+    rec "ns-$A-edge-default-refused" --expect-in "GB-279" -- bash -c "! drive '$A' '$B' '$AVENUE' 1 2"
+  else
+    # Not yet measurable, not a failure: the refusal this check proves arrives with GB-279.
+    say "node security: GB-279 is not in this tree (ops/errors/catalog.yaml), so the default's refusal is not measured"
+    mark "node-ports-declared.default-refused" SKIP "GB-279 is not in this tree (ops/errors/catalog.yaml): no edge peering play refuses the role's default yet, so the refusal cannot be measured"
+  fi
+  ns_edge_baseline "$A" on
   peer_up 1 "$A" "$B" "$AVENUE"
   ns_tunnel_up "$A" "$B"
 
-  say "node security: every port each edge and core answers on, from each side"
+  say "node security: every port each edge and core answers on, from each side, the edge's baseline on"
   ns_scan_party ns "$A"
   ns_scan_party ns "$B"
 

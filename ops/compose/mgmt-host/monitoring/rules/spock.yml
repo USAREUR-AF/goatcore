@@ -12,8 +12,9 @@
 #   produced by a stock postgres-exporter (e.g.
 #   max_slot_wal_keep_size_bytes), the dependent rule is DEFERRED and
 #   commented out with a TODO, rather than shipping a broken alert.
-# - `site` label is set at scrape time via external_labels (SITE_NAME
-#   per-node: vega-a, vega-b).
+# - `site` is Prometheus's external label (SITE_NAME, prometheus.yml), not a
+#   series label, so a summary names the site from $externalLabels.site when
+#   the series carries no `site` of its own.
 #
 # Implements docs/design/ha-multi-site.md §7.3 replication lag /
 # WAL ceiling / conflict-log / availability criteria.
@@ -34,7 +35,7 @@ groups:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock subscription {{ $labels.subscription_name }} at {{ $labels.site }} lagging >60s for 2m"
+          summary: "Spock subscription {{ $labels.subscription_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} lagging >60s for 2m"
           description: "Replication replay lag exceeds 60s. Check network path to provider, provider WAL senders, and subscriber apply worker. Sustained lag past a few minutes can cascade into slot-retention issues."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -47,7 +48,7 @@ groups:
           severity: critical
           component: spock
         annotations:
-          summary: "Spock slot {{ $labels.slot_name }} at {{ $labels.site }} INVALIDATED — rebuild required"
+          summary: "Spock slot {{ $labels.slot_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} INVALIDATED — rebuild required"
           description: "Slot wal_status is 'lost'. The subscriber cannot resume from this slot. Run the slot-rebuild runbook: docker compose stop postgres on the disconnected node; rm -rf pgdata; pg_basebackup from a healthy peer; spock.sub_create with the new base; monitor catchup."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -76,7 +77,7 @@ groups:
           severity: critical
           component: spock
         annotations:
-          summary: "Spock slot {{ $labels.slot_name }} at {{ $labels.site }} > 80% of max_slot_wal_keep_size"
+          summary: "Spock slot {{ $labels.slot_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} > 80% of max_slot_wal_keep_size"
           description: "Replication slot is retaining WAL and approaching max_slot_wal_keep_size. If it hits the ceiling, Postgres invalidates the slot and the disconnected peer will require a full pg_basebackup + Spock re-subscribe to recover. Investigate why the subscriber isn't consuming — network partition, crashed apply worker, or a schema mismatch stopping replay."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -94,7 +95,7 @@ groups:
           severity: critical
           component: spock
         annotations:
-          summary: "Spock subscription {{ $labels.subscription_name }} at {{ $labels.site }} not replicating for 2m"
+          summary: "Spock subscription {{ $labels.subscription_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} not replicating for 2m"
           description: "Subscription status is not 'replicating' (likely 'down' or 'initializing'). Lag metrics are unreliable in this state. Run `psql netbird -c 'SELECT * FROM spock.sub_show_status();'` on the subscribing node to see the exact status. Common causes: apply worker crashed (check Postgres logs), provider unreachable, or a replicated DDL replay error stopping the apply queue. See post-partition convergence runbook for rejoin scenarios."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -110,7 +111,7 @@ groups:
           severity: critical
           component: spock
         annotations:
-          summary: "Spock slot {{ $labels.slot_name }} at {{ $labels.site }} inactive for 2m"
+          summary: "Spock slot {{ $labels.slot_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} inactive for 2m"
           description: "Replication slot has no consumer connected (pg_replication_slots.active = false). If wal_status is also 'lost' the SpockSlotInvalidated alert is the authoritative one — see inhibition rules. Otherwise: the subscriber's WAL sender connection has dropped without invalidating the slot. Check network path, subscriber's apply worker, and ensure `wal_keep_size`/`max_slot_wal_keep_size` haven't been changed unexpectedly."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -129,7 +130,7 @@ groups:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock WAL sender backlog to {{ $labels.subscriber }} at {{ $labels.site }} > 100 MB for 5m"
+          summary: "Spock WAL sender backlog to {{ $labels.subscriber }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} > 100 MB for 5m"
           description: "Provider-side WAL is queueing for subscriber {{ $labels.subscriber }}. Subscriber-side replay lag may still look healthy; this alert catches the case where bytes haven't yet left the provider. Check inter-site network throughput, congestion on the WireGuard tunnel, and subscriber's TCP receive window. Sustained growth ⇒ subscriber-side cannot drain; will eventually trigger SpockSlotWALNearLimit."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -148,7 +149,7 @@ groups:
           severity: warning
           component: spock
         annotations:
-          summary: "ACE drift-watch detected {{ $value }} divergent rows on {{ $labels.db }}/{{ $labels.table_pair }} at {{ $labels.site }}"
+          summary: "ACE drift-watch detected {{ $value }} divergent rows on {{ $labels.db }}/{{ $labels.table_pair }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}"
           description: "pgEdge ACE row-level diff found a non-empty result on this table-pair. L1 (Spock) is supposed to keep these in sync within seconds. A non-empty diff means either Spock missed an apply (rare bug or partition aftermath), an out-of-band SQL bypass occurred (forbidden per ADR 1010 D4), or the LWW resolution surfaced a column-level loss. Investigate via post-partition convergence runbook §4."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -163,7 +164,7 @@ groups:
           severity: warning
           component: spock
         annotations:
-          summary: "ACE drift-watch at {{ $labels.site }} has not run in over 2h"
+          summary: "ACE drift-watch at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} has not run in over 2h"
           description: "The hourly drift-watch cron has not emitted a successful-run timestamp in >2h. Check `systemctl status spock-drift-watch.timer` on the mgmt-host. Without drift-watch the L2a hourly observability layer is silently dark."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -188,7 +189,8 @@ groups:
     rules:
 
       # Any conflict resolved. Metric comes from the spock_resolutions custom
-      # query (COUNT over spock.resolutions; needs spock.save_resolutions=on).
+      # query (COUNT over spock.resolutions; needs spock.save_resolutions=on),
+      # one series per replicated database (`datname`: netbird, kratos, ...).
       # After a partition this is expected, and each row is one write that
       # lost the merge; with the revocation guard (ADR 1193) a revocation
       # cannot be one of them. Review with the post-partition runbook.
@@ -198,19 +200,20 @@ groups:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock resolved conflict(s) at {{ $labels.site }} in last 5m"
+          summary: "Spock resolved conflict(s) at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} in {{ $labels.datname }} in last 5m"
           description: "New rows in spock.resolutions: a replicated write lost to a later write at another site (last-writer-wins, per row). Outside a partition this means two sites changed the same row; after a rejoin it is expected. Review the rows (post-partition runbook §3) and confirm nothing that should have won was dropped."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
       # A remote change could not be applied and was skipped. The sites now
-      # differ on that row until someone reconciles it.
+      # differ on that row until someone reconciles it. One series per
+      # replicated database (`datname`), as above.
       - alert: SpockApplyExceptionLogged
         expr: increase(spock_exceptions_total[5m]) > 0
         labels:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock skipped remote change(s) at {{ $labels.site }} in last 5m"
+          summary: "Spock skipped remote change(s) at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} in {{ $labels.datname }} in last 5m"
           description: "New rows in spock.exception_log: a change from another site failed to apply here and was skipped (spock.exception_behaviour = discard). The usual cause after a partition is an update to a row this site deleted, which is correct to skip. Anything else means the sites now disagree on that row. Review with the post-partition runbook §3."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -225,6 +228,6 @@ groups:
           severity: critical
           component: postgres
         annotations:
-          summary: "postgres-exporter at {{ $labels.site }}:{{ $labels.instance }} unreachable for 2m"
+          summary: "postgres-exporter at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} unreachable for 2m"
           description: "Prometheus cannot scrape postgres-exporter. Either the exporter is down, or postgres itself is down (exporter fails open on a dead DB). Check `docker compose ps postgres postgres-exporter` on the mgmt-host."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"

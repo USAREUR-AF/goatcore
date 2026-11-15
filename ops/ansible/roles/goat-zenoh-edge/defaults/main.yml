@@ -106,7 +106,8 @@ goat_zenoh_edge_partner_dial: ""
 # This needs the edge on the host's network, so each link carries its real
 # interface: the partner link the tunnel interface, the core link the interface
 # routing to the core. In a bridge network both read as the container's eth0 and
-# the binding cannot separate them. Empty: detected at deploy from the routes, and
+# the binding cannot separate them, so the role refuses bridge mode while
+# goat_zenoh_edge_core_cn is set. Empty: detected at deploy from the routes, and
 # the role refuses when the two come out the same.
 goat_zenoh_edge_network_mode: host        # host | bridge (bridge cannot bind by interface)
 goat_zenoh_edge_core_interface: ""

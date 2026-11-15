@@ -8,6 +8,12 @@
 3. standup-image-pull.sh pulls every image with at most N at once, and an image
    that cannot be pulled fails the run naming it, after the others finished
    (negative control, a fake `docker` on PATH).
+
+The listing tests run against a checkout of their own in a temporary directory
+(fixture_checkout): copies of the scripts under test and the pin resolver, the
+fleet table's components, and a synthetic goatlite goatnet `zagros` whose member
+`zagros_hosts` has a group_vars folder there. This checkout declares no goatnet
+and keeps no member group_vars, so nothing here depends on what it holds.
 """
 import os
 import shutil
@@ -18,23 +24,54 @@ import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
-IMAGES = os.path.join(HERE, "standup-images.py")
+REAL = os.path.normpath(os.path.join(HERE, "..", ".."))
 PULL = os.path.join(HERE, "standup-image-pull.sh")
 
-sys.path.insert(0, os.path.join(REPO, "ops", "consistency", "python"))
+GOATNET, MEMBER = "zagros", "zagros_hosts"
+
+
+def fixture_checkout():
+    """A checkout of its own: the scripts and the resolver find their tree from their
+    own path, so copies of them here read only what is here."""
+    d = tempfile.mkdtemp(prefix="standup-image-pull-")
+    for rel in ("ops/scripts/standup-images.py", "ops/scripts/goatlite-render.py",
+                "ops/ansible/group_vars/all.yml"):
+        os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
+        shutil.copy(os.path.join(REAL, rel), os.path.join(d, rel))
+    shutil.copytree(os.path.join(REAL, "ops/consistency/python"), os.path.join(d, "ops/consistency/python"),
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    # The fleet table's components, and no goatnet: the goatnet is the fixture's.
+    import yaml
+    with open(os.path.join(REAL, "ops/pins/fleet-pins.yaml"), encoding="utf-8") as f:
+        components = (yaml.safe_load(f) or {}).get("components") or {}
+    os.makedirs(os.path.join(d, "ops/pins"))
+    with open(os.path.join(d, "ops/pins/fleet-pins.yaml"), "w", encoding="utf-8") as f:
+        yaml.safe_dump({"goatnets": {}, "components": components}, f)
+    os.makedirs(os.path.join(d, "ops/ansible/group_vars", MEMBER))
+    with open(os.path.join(d, "ops/ansible/group_vars", MEMBER, "vars.yml"), "w") as f:
+        f.write("# the synthetic goatnet zagros's member, for the image list tests\n")
+    return d
+
+
+FIX = fixture_checkout()
+IMAGES = os.path.join(FIX, "ops/scripts/standup-images.py")
+sys.path.insert(0, os.path.join(FIX, "ops", "consistency", "python"))
 from goat_consistency import resolve  # noqa: E402
 
 
+def tearDownModule():
+    shutil.rmtree(FIX, ignore_errors=True)
+
+
 def _checkout_org():
-    """The namespace standup-images.py resolves `{{ ghcr_org }}` to in this
-    checkout, read through its own default_ghcr_org: an overlay's
-    group_vars/all.yml may name another organisation than this repository's."""
+    """The namespace standup-images.py resolves `{{ ghcr_org }}` to in the fixture
+    checkout, read through its own default_ghcr_org from the group_vars/all.yml
+    copied there."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("standup_images", IMAGES)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.default_ghcr_org(REPO)
+    return mod.default_ghcr_org(FIX)
 
 
 ORG = _checkout_org()
@@ -45,12 +82,45 @@ def run(*args, env=None):
     return subprocess.run(list(args), capture_output=True, text=True, env=env)
 
 
+def renderer():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("goatlite_render", os.path.join(FIX, "ops/scripts/goatlite-render.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def zagros_table(d, registry="", absent=()):
+    """The fixture's fleet table, copied into `d`, with a lite sidecar beside it
+    declaring the goatlite zagros (member zagros_hosts) and the deviations
+    goatlite-render.py writes for it; each component in `absent` declared absent
+    too. Returns the fleet table's path, for --table."""
+    import yaml
+    shutil.copy(os.path.join(FIX, "ops/pins/fleet-pins.yaml"), os.path.join(d, "fleet-pins.yaml"))
+    comps = {}
+    for cname, dev in renderer().lite_deviations(registry).items():
+        entry = {"absent": True, "reason": "test"} if dev[0] == "absent" else {"value": dev[1], "reason": "test"}
+        comps[cname] = {"deviations": {GOATNET: entry}}
+    for cname in absent:
+        comps[cname] = {"deviations": {GOATNET: {"absent": True, "reason": "off on one box"}}}
+    with open(os.path.join(d, "lite-pins.yaml"), "w") as f:
+        yaml.safe_dump({"goatnets": {GOATNET: {"description": "a test goatlite", "members": [MEMBER],
+                                                "ca_id_var": "goat_ca_id"}},
+                        "components": comps}, f)
+    return os.path.join(d, "fleet-pins.yaml")
+
+
 class ImageList(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.table = zagros_table(self.d)
+
     def test_a_governed_member_lists_its_image_pins(self):
-        t = resolve.load_tables()
+        t = resolve.load_tables(self.table)
         member_of = resolve.validate(t.goatnets, t.components)
-        member = sorted(member_of)[0]
-        r = run(sys.executable, IMAGES, "--member", member, "--ghcr-org", "someorg")
+        self.assertEqual(member_of, {MEMBER: GOATNET})
+        r = run(sys.executable, IMAGES, "--member", MEMBER, "--ghcr-org", "someorg", "--table", self.table)
         self.assertEqual(r.returncode, 0, r.stderr)
         refs = r.stdout.split()
         self.assertTrue(refs)
@@ -60,99 +130,67 @@ class ImageList(unittest.TestCase):
         for spec in t.components.values():
             if (spec.get("artifact_type") or "image") != "image":
                 continue
-            v, _ = resolve.resolve(spec, member, member_of[member])
+            v, _ = resolve.resolve(spec, MEMBER, GOATNET)
             if v is not None:
                 expect.add(str(v).replace("{{ ghcr_org }}", "someorg"))
         self.assertEqual(set(refs), expect)
 
     def test_an_ungoverned_member_lists_nothing_and_says_so(self):
-        r = run(sys.executable, IMAGES, "--member", "no_such_site_hosts")
-        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        r = run(sys.executable, IMAGES, "--member", "no_such_site_hosts", "--table", self.table)
+        self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
         self.assertIn("nothing to pre-pull", r.stderr)
 
     def test_a_component_declared_absent_on_a_goatlite_is_not_pulled(self):
+        t = resolve.load_tables(self.table)
+        listed = run(sys.executable, IMAGES, "--member", MEMBER, "--table", self.table).stdout.split()
+        present = [c for c, s in t.components.items()
+                   if (s.get("artifact_type") or "image") == "image" and s.get("fleet")
+                   and str(s["fleet"]).replace("{{ ghcr_org }}", ORG) in listed]
+        self.assertGreaterEqual(len(present), 2, "two components the goatlite runs at their fleet value")
+        gone, kept = present[0], present[1]
         d = tempfile.mkdtemp()
-        try:
-            shutil.copy(os.path.join(REPO, "ops/pins/fleet-pins.yaml"), os.path.join(d, "fleet-pins.yaml"))
-            fleet = resolve.load_tables(os.path.join(d, "fleet-pins.yaml"), os.path.join(d, "missing.yaml"))
-            present = [c for c, s in fleet.components.items() if (s.get("artifact_type") or "image") == "image" and s.get("fleet")]
-            gone, kept = present[0], present[1]
-            with open(os.path.join(d, "lite-pins.yaml"), "w") as f:
-                # hobby_hosts: a committed group_vars directory no pin table governs.
-                # A component with no fleet value needs a deviation, as the render writes.
-                off = [gone] + [c for c, s in fleet.components.items() if s.get("fleet") is None]
-                f.write("goatnets:\n  hobby:\n    description: a test goatlite\n    members: [hobby_hosts]\ncomponents:\n")
-                for c in off:
-                    f.write("  %s:\n    deviations:\n      hobby:\n        absent: true\n        reason: off on one box\n" % c)
-            r = run(sys.executable, IMAGES, "--member", "hobby_hosts", "--table", os.path.join(d, "fleet-pins.yaml"))
-            self.assertEqual(r.returncode, 0, r.stderr)
-            refs = r.stdout.split()
-            fleet_ref = lambda c: str(fleet.components[c]["fleet"]).replace("{{ ghcr_org }}", ORG)
-            self.assertNotIn(fleet_ref(gone), refs)
-            self.assertIn(fleet_ref(kept), refs)
-        finally:
-            shutil.rmtree(d)
-
-
-def renderer():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("goatlite_render", os.path.join(HERE, "goatlite-render.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+        self.addCleanup(shutil.rmtree, d, True)
+        table = zagros_table(d, absent=[gone])
+        r = run(sys.executable, IMAGES, "--member", MEMBER, "--table", table)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        refs = r.stdout.split()
+        fleet_ref = lambda c: str(t.components[c]["fleet"]).replace("{{ ghcr_org }}", ORG)
+        self.assertNotIn(fleet_ref(gone), refs)
+        self.assertIn(fleet_ref(kept), refs)
 
 
 class LitePreset(unittest.TestCase):
     """`--preset lite` (the prepared VM image's list, goatlite.md §11 measure 5) is what a
     rendered goatlite's pins resolve to; lite.image_registry moves goat's images only."""
 
-    def table_with_rendered_goatlite(self, d, registry=""):
-        """A copy of the fleet table with a lite sidecar holding the deviations
-        goatlite-render.py writes, for a goatlite `hobby` (member hobby_hosts: a committed group_vars directory no pin table governs)."""
-        import yaml
-        shutil.copy(os.path.join(REPO, "ops/pins/fleet-pins.yaml"), os.path.join(d, "fleet-pins.yaml"))
-        comps = {}
-        for cname, dev in renderer().lite_deviations(registry).items():
-            entry = {"absent": True, "reason": "test"} if dev[0] == "absent" else {"value": dev[1], "reason": "test"}
-            comps[cname] = {"deviations": {"hobby": entry}}
-        with open(os.path.join(d, "lite-pins.yaml"), "w") as f:
-            yaml.safe_dump({"goatnets": {"hobby": {"description": "a test goatlite", "members": ["hobby_hosts"],
-                                                      "ca_id_var": "goat_ca_id"}},
-                            "components": comps}, f)
-        return os.path.join(d, "fleet-pins.yaml")
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
 
     def test_preset_lite_lists_what_a_rendered_goatlite_runs(self):
-        d = tempfile.mkdtemp()
-        try:
-            table = self.table_with_rendered_goatlite(d)
-            member = run(sys.executable, IMAGES, "--member", "hobby_hosts", "--table", table)
-            preset = run(sys.executable, IMAGES, "--preset", "lite")
-            self.assertEqual(member.returncode, 0, member.stderr)
-            self.assertEqual(preset.returncode, 0, preset.stderr)
-            self.assertTrue(preset.stdout.split())
-            self.assertEqual(sorted(preset.stdout.split()), sorted(member.stdout.split()))
-        finally:
-            shutil.rmtree(d)
+        table = zagros_table(self.d)
+        member = run(sys.executable, IMAGES, "--member", MEMBER, "--table", table)
+        preset = run(sys.executable, IMAGES, "--preset", "lite")
+        self.assertEqual(member.returncode, 0, member.stderr)
+        self.assertEqual(preset.returncode, 0, preset.stderr)
+        self.assertTrue(preset.stdout.split())
+        self.assertEqual(sorted(preset.stdout.split()), sorted(member.stdout.split()))
 
     def test_image_registry_moves_goat_images_and_nothing_else(self):
         reg = "registry.lan:5000/goat"
-        d = tempfile.mkdtemp()
-        try:
-            table = self.table_with_rendered_goatlite(d, reg)
-            plain = run(sys.executable, IMAGES, "--preset", "lite").stdout.split()
-            moved = run(sys.executable, IMAGES, "--preset", "lite", "--image-registry", reg).stdout.split()
-            member = run(sys.executable, IMAGES, "--member", "hobby_hosts", "--table", table).stdout.split()
-            self.assertEqual(sorted(moved), sorted(member), "the rendered pins are the listed ones")
-            self.assertEqual(len(plain), len(moved))
-            goat = [r for r in plain if r.startswith(GOAT)]
-            other = [r for r in plain if not r.startswith(GOAT)]
-            self.assertTrue(goat and other, "the lite set has goat images and others (control)")
-            self.assertEqual(sorted(r.replace(GOAT, reg + "/", 1) for r in goat),
-                             sorted(r for r in moved if r.startswith(reg + "/")), "same name and digest")
-            self.assertEqual(sorted(other), sorted(r for r in moved if not r.startswith(reg + "/")),
-                             "another project's image keeps its registry")
-        finally:
-            shutil.rmtree(d)
+        table = zagros_table(self.d, reg)
+        plain = run(sys.executable, IMAGES, "--preset", "lite").stdout.split()
+        moved = run(sys.executable, IMAGES, "--preset", "lite", "--image-registry", reg).stdout.split()
+        member = run(sys.executable, IMAGES, "--member", MEMBER, "--table", table).stdout.split()
+        self.assertEqual(sorted(moved), sorted(member), "the rendered pins are the listed ones")
+        self.assertEqual(len(plain), len(moved))
+        goat = [r for r in plain if r.startswith(GOAT)]
+        other = [r for r in plain if not r.startswith(GOAT)]
+        self.assertTrue(goat and other, "the lite set has goat images and others (control)")
+        self.assertEqual(sorted(r.replace(GOAT, reg + "/", 1) for r in goat),
+                         sorted(r for r in moved if r.startswith(reg + "/")), "same name and digest")
+        self.assertEqual(sorted(other), sorted(r for r in moved if not r.startswith(reg + "/")),
+                         "another project's image keeps its registry")
 
     def test_registry_vars_only_for_a_registry_off_the_box(self):
         r = renderer()

@@ -219,7 +219,7 @@ contexts named after the two sites, `<joiner-site>` and `<founder-site>`; add
 `--var goat_context=<name> --var goat_context_peer=<name>` when yours are named
 otherwise. **Checkpoint 3**, the federation
 evidence: every replication subscription reports `replicating` in both
-directions; a write on the founder appears in the joiner's database; the
+directions (`goatbuilder assay <founder-site>` reads the founder's half); a write on the founder appears in the joiner's database; the
 same deletion replicates back; and `signal-federation-verify.yml` passes, naming
 which directions a forward proved (a direction whose target peer is homed on
 the sender's own signal reports UNPROVEN until peers home on the joiner). **Checkpoint 4:**

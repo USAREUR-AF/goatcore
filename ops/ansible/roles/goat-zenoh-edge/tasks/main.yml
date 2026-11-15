@@ -29,6 +29,21 @@
       docs/operations/sovereign-federation-runbook.md step 3. Nothing is
       defaulted on purpose — a half-configured edge looks deployed and is not.
 
+# F-601 binds the our-core subject to the core link's interface. In a bridge
+# network both links read as the container's eth0, so our-core cannot be bound
+# to the core link there: refuse bridge mode while goat_zenoh_edge_core_cn is
+# set, before anything renders. Bridge without it, and host mode, are unchanged.
+- name: edge | bridge mode cannot bind the our-core subject to the core link
+  ansible.builtin.assert:
+    that:
+      - not (goat_zenoh_edge_network_mode == 'bridge' and goat_zenoh_edge_core_cn | length > 0)
+    fail_msg: >-
+      goat-zenoh-edge refuses: goat_zenoh_edge_network_mode is bridge while
+      goat_zenoh_edge_core_cn is set. The our-core subject is bound to the core
+      link's interface (F-601), and in a bridge network both links read as the
+      container's eth0, so the binding cannot separate them. Set
+      goat_zenoh_edge_network_mode: host, or leave goat_zenoh_edge_core_cn empty.
+
 # Without a per-endpoint trust override on the inward
 # dial, the edge cannot verify our own core's server certificate — because
 # root_ca_certificate is global to the process and holds the PARTNER's CA — and
