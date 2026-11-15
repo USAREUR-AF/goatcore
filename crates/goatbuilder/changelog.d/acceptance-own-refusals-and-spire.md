@@ -15,4 +15,4 @@ bundle and one workload certificate, never a key, and checks the partner's
 against the bundle your server holds. A staged value holding private key
 material stops the run. `FED_PROBE_LAUNCHER_OURS` is refused outside a
 session and beside `FED_PROBE_LAUNCHER`. Without it, the partner's refusal
-rows stay BLOCKED and name you.
+rows stay BLOCKED and name you (#815).
