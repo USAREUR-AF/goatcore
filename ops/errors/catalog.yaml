@@ -2955,6 +2955,7 @@ entries:
       - --plan or --approve-plan was given outside `deploy`
       - --bilateral was given outside `test`
       - "`rotate <partner> <key>` named a key whose rotation is designed and not built in this goatbuilder (`transport` or `signing`; this goatbuilder rotates the leaves and the carrier keys), or a key it does not know; the message says what is missing (for `transport`, that the partner cannot yet receive our new package)"
+      - "`rotate <partner> carrier` named a peering that declares no forwarder: its edge has no carrier, so there is no carrier key to rotate"
     fixes:
       - "goatbuilder federate deploy <partner> --approve-plan <hash>   (or --from 11 after the admission)"
       - "goatbuilder federate test <partner>"
@@ -2972,6 +2973,7 @@ entries:
       - "^--partner-key and --partner-ca-fingerprint are for phase 5"
       - "^`rotate [^ ]+ [^ ]+` is designed, not built"
       - "^`rotate` takes one of"
+      - "^`rotate [^ ]+ carrier`: peering [^ ]+ on [^ ]+ declares no forwarder"
     exit: 1
 
   - code: GB-282

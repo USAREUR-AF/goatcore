@@ -165,6 +165,7 @@ pub fn measure_here_with(
         pqc_capable: derive::pqc_capable(),
         public_key: interface.map(derive::transport_public_key),
         interface_mtu: interface.and_then(derive::interface_mtu),
+        applied_mtu: interface.and_then(derive::applied_mtu),
         // Run on the core, this reads the SPIRE server's own config; anywhere
         // else it is absent and the profile alone must name the trust domain.
         spire_trust_domain: Some(derive::spire_trust_domain_on(
@@ -372,6 +373,18 @@ pub fn run_init_measured(
                     source: "the caller's measurement".into(),
                 });
                 match measured.interface_mtu {
+                    // Phase 11 set the interface to the agreed MTU, min(both
+                    // offers); below our offer it only says the partner offered
+                    // less. The offer was cross-checked when it was first made.
+                    Some(mtu) if measured.applied_mtu == Some(mtu) && t.measured_mtu > mtu => {
+                        outcomes.push(FedOutcome::skip(
+                            "transport_offer.measured_mtu",
+                            format!(
+                                "interface `{}` carries the agreed MTU {mtu} an applied agreement set (min of both offers), so it bounds nothing about the declared {}; not cross-checked",
+                                t.interface, t.measured_mtu
+                            ),
+                        ));
+                    }
                     Some(mtu) => {
                         if t.measured_mtu > mtu {
                             outcomes.push(FedOutcome::fail(
@@ -735,6 +748,7 @@ mod tests {
                 source: "on edge-a".into(),
             }),
             interface_mtu: interface.map(|_| 1420),
+            applied_mtu: None,
             spire_trust_domain: None,
         }
     }
@@ -806,6 +820,37 @@ mod tests {
         run_init_measured(&site, &a, &mut out, &measure).unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains(&gone.display().to_string()), "{text}");
+    }
+
+    /// After phase 11 the federation interface carries the agreed MTU,
+    /// min(both offers). A re-run of phase 3 (a rotation, a resume from 2)
+    /// then reads an interface MTU below our offer whenever the partner
+    /// offered less: that bounds nothing about our offer, so it is a SKIP
+    /// naming the agreement, not a refusal. With no applied agreement, an
+    /// interface below the offer is still refused.
+    #[test]
+    fn an_interface_carrying_the_agreed_mtu_does_not_refuse_our_offer() {
+        let (_d, site) = site_with(DECL);
+        let run = |applied: Option<i64>| {
+            let measure = |i: Option<&str>| {
+                Ok(derive::Measured {
+                    interface_mtu: i.map(|_| 1300),
+                    applied_mtu: applied,
+                    ..fixed(i)
+                })
+            };
+            let mut out = Vec::new();
+            run_init_measured(&site, &args(true), &mut out, &measure).unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        let before = run(None);
+        assert!(before.contains("declared 1380 exceeds interface `wg-fed0` MTU 1300"), "{before}");
+        let after = run(Some(1300));
+        assert!(!after.contains("exceeds interface"), "{after}");
+        assert!(after.contains("carries the agreed MTU 1300"), "{after}");
+        // An applied MTU that is not the interface's says nothing about it.
+        let other = run(Some(1340));
+        assert!(other.contains("declared 1380 exceeds interface `wg-fed0` MTU 1300"), "{other}");
     }
 
     /// A host that cannot be reached is the caller's error, returned as is.

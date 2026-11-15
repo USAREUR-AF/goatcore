@@ -63,33 +63,21 @@ fn a_key_this_build_does_not_rotate_is_refused_before_anything_runs() {
     }
 }
 
-/// `rotate <partner> carrier` is not refused: it runs from phase 2, and
-/// phase 2's plays get the rotation's id. Nothing before phase 2 runs, and
-/// once phase 2 has passed the id is no longer kept.
+/// `rotate <partner> carrier` on a peering no forwarder relays is refused
+/// before anything runs: its edge has no carrier, so a run would report a
+/// rotation that changed no key. The id is not kept. Phase 2 passing the id
+/// to its plays, for a relayed peering, is held by `rotation::tests`.
 #[test]
-fn rotating_the_carrier_starts_at_phase_2_and_passes_the_rotation_id_to_its_plays() {
+fn rotating_the_carrier_of_a_peering_with_no_forwarder_is_refused_before_anything_runs() {
     let w = world();
-    let plays = w.root.path().join("plays.log");
-    exe(
-        &w.repo.join("ops/scripts/ansible-preflight.sh"),
-        &format!(
-            "#!/bin/sh\necho \"play $*\" >> '{}'\nexit 0\n",
-            plays.display()
-        ),
-    );
     let (out, _) = w.run(&["rotate", "hello-ally", "carrier"]);
+    assert!(!out.status.success(), "{}", says(&out));
     let t = text(&out);
-    assert!(!t.contains("GB-189"), "carrier was refused: {t}");
-    let played = std::fs::read_to_string(&plays).unwrap_or_default();
-    let first = played.lines().next().unwrap_or_default();
-    assert!(
-        first.contains("peering_wg_carrier_rotation=carrier-")
-            && first.contains("peering_forwarder_carrier_rotation_name=hello-ally"),
-        "phase 2's first play has no rotation id: {played}\n{t}"
-    );
-    assert!(!w.log().contains("preflight "), "phase 1 ran: {}", w.log());
+    assert!(t.contains("GB-189") && t.contains("no forwarder"), "{t}");
+    assert!(w.log().is_empty(), "something ran: {}", w.log());
     assert!(
         !w.work.join(".rotation-carrier").exists(),
-        "the id is kept after phase 2 passed: {t}"
+        "a rotation id was kept for a carrier that does not exist: {t}"
     );
+    assert!(!w.work.join("state.json").exists(), "a run was journaled");
 }

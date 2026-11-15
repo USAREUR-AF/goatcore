@@ -809,6 +809,7 @@ gb-189-cause-2 = --to, --resume or a --from other than 10 or 11 was given to a s
 gb-189-cause-3 = --plan or --approve-plan was given outside `deploy`
 gb-189-cause-4 = --bilateral was given outside `test`
 gb-189-cause-5 = `rotate <partner> <key>` named a key whose rotation is designed and not built in this goatbuilder (`transport` or `signing`; this goatbuilder rotates the leaves and the carrier keys), or a key it does not know; the message says what is missing (for `transport`, that the partner cannot yet receive our new package)
+gb-189-cause-6 = `rotate <partner> carrier` named a peering that declares no forwarder: its edge has no carrier, so there is no carrier key to rotate
 gb-282-title = rotating our CA needs a decision before it can be built
 gb-282-what = `goatbuilder federate rotate <partner> ca` would replace the CA that signs our peering leaves. Every check accepts exactly one CA per party, the one fingerprint our package carries (federation-package-spec.md §5.1), so the partner could not trust the new CA beside the old one while our leaves change over, and data would stop. The overlap of both CAs is designed in the key-rotation design §4 and needs an ADR superseding §5.1 before it is built. Nothing ran.
 gb-282-cause-1 = `rotate <partner> ca` was asked for, and no ADR yet lets a package carry a second CA fingerprint

@@ -49,9 +49,10 @@ chmod 755 "$T/bin/wg"
 
 LOG="$T/play.log"
 edge() { # rest: extra arguments
+  rm -f "$T/carrier-restarted"
   ANSIBLE_NOCOLOR=1 ANSIBLE_RETRY_FILES_ENABLED=0 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
     ansible-playbook -i localhost, "$HERE/carrier-key.yml" -e "stand_in_bin=$T/bin" \
-    -e "peering_wg_carrier_key_path=$T/edge/wg-carry0.key" "$@" > "$LOG" 2>&1
+    -e "peering_wg_carrier_key_path=$T/edge/wg-carry0.key" -e "restart_marker=$T/carrier-restarted" "$@" > "$LOG" 2>&1
 }
 forwarder() { # rest: extra arguments
   ANSIBLE_NOCOLOR=1 ANSIBLE_RETRY_FILES_ENABLED=0 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
@@ -73,21 +74,33 @@ echo "goat-peering-wg test-rotation"
 mkdir -p "$T/edge"
 K="$T/edge/wg-carry0.key"
 
-if edge && [ -s "$K" ] && edge && [ "$(changed)" = 0 ]; then
-  pass "edge: the key is made once, and a rerun keeps it"
+if edge && [ -s "$K" ] && edge && [ "$(changed)" = 0 ] && [ ! -e "$T/carrier-restarted" ]; then
+  pass "edge: the key is made once, a rerun keeps it, and the carrier is not restarted without a rotation"
 else
-  fail "edge: the key was not made, or a rerun changed it"; tail -15 "$LOG"
+  fail "edge: the key was not made, a rerun changed it, or the carrier restarted"; tail -15 "$LOG"
 fi
 OLD="$(cat "$K" 2>/dev/null || true)"
+live_is "$K"
 
 if edge -e peering_wg_carrier_rotation=r1 && [ -s "$K" ] && [ "$(cat "$K" 2>/dev/null)" != "$OLD" ] \
    && [ "$(cat "$T/edge/.previous-r1/wg-carry0.key" 2>/dev/null)" = "$OLD" ] && [ "$(mode_of "$T/edge/.previous-r1")" = 700 ] \
-   && [ "$(mode_of "$K")" = 600 ]; then
-  pass "edge: a rotation sets the key aside in .previous-r1/ (0700) and makes a new one (0600)"
+   && [ "$(mode_of "$K")" = 600 ] && [ -e "$T/carrier-restarted" ]; then
+  pass "edge: a rotation sets the key aside in .previous-r1/ (0700), makes a new one (0600), and restarts the carrier onto it"
 else
-  fail "edge: the rotation did not set the key aside and make a new one"; ls -la "$T/edge" "$T/edge/.previous-r1" 2>/dev/null || true; tail -15 "$LOG"
+  fail "edge: the rotation did not set the key aside, make a new one and restart the carrier"; ls -la "$T/edge" "$T/edge/.previous-r1" 2>/dev/null || true; tail -15 "$LOG"
 fi
 NEW="$(cat "$K" 2>/dev/null || true)"
+if edge -e peering_wg_carrier_rotation=r1 && [ "$(cat "$K" 2>/dev/null)" = "$NEW" ] && [ -e "$T/carrier-restarted" ]; then
+  pass "edge: a rerun of the rotation moves nothing, and restarts a carrier still holding the old key"
+else
+  fail "edge: a rerun of the rotation moved a key, or left the carrier on the old key"; tail -15 "$LOG"
+fi
+live_is "$K"
+if edge -e peering_wg_carrier_rotation=r1 && [ "$(changed)" = 0 ] && [ ! -e "$T/carrier-restarted" ]; then
+  pass "edge: once the carrier holds the new key, a rerun of the rotation changes nothing"
+else
+  fail "edge: a rerun restarted a carrier that already holds the new key"; tail -15 "$LOG"
+fi
 
 if edge -e peering_wg_carrier_rotation=r1 && [ "$(cat "$K" 2>/dev/null)" = "$NEW" ] && [ "$(changed)" = 0 ] \
    && [ "$(cat "$T/edge/.previous-r1/wg-carry0.key" 2>/dev/null)" = "$OLD" ]; then
