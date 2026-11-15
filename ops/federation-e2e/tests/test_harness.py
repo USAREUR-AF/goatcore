@@ -42,6 +42,7 @@ Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -546,6 +547,28 @@ def drive_rotate_checks():
     check(rc == 3 and "no longer has the command line" in out, f"drive_rotate: a drive() with no line to swap is not refused: {rc} {out}")
 
 
+
+def rotate_refusal_checks():
+    """units/rotation.sh reads a key the goatbuilder under test refuses to rotate
+    from the refusal's code, and marks that key's checks BLOCKED instead of
+    failing the unit. Every code `rotate` refuses with before anything runs
+    (each goat_errors::coded in crates/goatbuilder/src/federate/rotation.rs) must
+    be one it reads: a hand-declared forwarder's GB-312, for one."""
+    unit = open(os.path.join(ROOT, "units", "rotation.sh")).read()
+    m = re.search(r"why=\"\$\(grep -m1 -oE '([^']+)' \"\$out\"", unit)
+    check(m is not None, "rotate refusals: units/rotation.sh has no refusal grep")
+    if m is None:
+        return
+    pattern = m.group(1)
+    src = open(os.path.join(ROOT, "..", "..", "crates", "goatbuilder", "src", "federate", "rotation.rs")).read()
+    codes = sorted(set(re.findall(r'goat_errors::coded\(\s*"(GB-\d+)"', src)))
+    check(len(codes) >= 3, f"rotate refusals: rotation.rs names too few codes: {codes}")
+    for code in codes:
+        sample = f"`rotate xab carrier`: peering xab on zagros declares something. Nothing ran ({code}). Do this instead\n"
+        p = subprocess.run(["grep", "-m1", "-oE", pattern], input=sample, capture_output=True, text=True)
+        check(p.returncode == 0 and code in p.stdout, f"rotate refusals: units/rotation.sh does not read {code} as a refusal (pattern {pattern})")
+
+
 catalog_checks()
 srctree_checks()
 srcclone_checks()
@@ -555,6 +578,7 @@ hostfw_checks()
 handoff_checks()
 samples_checks()
 drive_rotate_checks()
+rotate_refusal_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")
