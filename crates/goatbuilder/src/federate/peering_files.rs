@@ -503,12 +503,19 @@ fn shadowed(repo: &Path, r: &Rendered, hosts: &[String]) -> Option<(PathBuf, Vec
     let mut others: Vec<PathBuf> = Vec::new();
     // The group itself, the parent groups the rendered inventory puts it under,
     // and the inventory names in it: each would set the same variable.
-    let mut places: Vec<String> = vec![
-        format!("group_vars/{group}"),
-        "group_vars/peering_edges".into(),
-        "group_vars/peering_cores".into(),
-        "group_vars/peering_forwarders".into(),
-    ];
+    // A forwarder group is a child of peering_forwarders only (forwarder.rs,
+    // inventory), so the edges' and cores' parent groups never reach its hosts.
+    let parents: &[&str] = if r.path.ends_with("/peering-forwarder.yml") {
+        &["group_vars/peering_forwarders"]
+    } else {
+        &[
+            "group_vars/peering_edges",
+            "group_vars/peering_cores",
+            "group_vars/peering_forwarders",
+        ]
+    };
+    let mut places: Vec<String> = vec![format!("group_vars/{group}")];
+    places.extend(parents.iter().map(|s| s.to_string()));
     places.extend(hosts.iter().map(|h| format!("host_vars/{h}")));
     for place in places {
         let dir = repo.join("ops/ansible").join(&place);
