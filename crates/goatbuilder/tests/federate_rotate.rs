@@ -132,3 +132,36 @@ fn an_edge_group_that_switches_the_forwarder_off_is_still_refused() {
     assert!(t.contains("GB-189") && t.contains("no forwarder"), "{t}");
     assert!(w.log().is_empty(), "something ran: {}", w.log());
 }
+
+/// The check reads the edge group the run deploys to: `--edge-group`, else
+/// `<partner>_edge`, never a goatbuilder.yaml `values.edge_group` pin that the
+/// run itself does not read. With such a pin and no allocation record, the
+/// switch in the pinned group alone is no carrier the run would touch
+/// (refused), and the switch in `<partner>_edge` alone is (not refused).
+#[test]
+fn the_forwarder_switch_is_read_from_the_group_the_run_deploys_to() {
+    let pinned = |switch_group: &str| {
+        let w = world();
+        let cfg = w.repo.join("ops/goatbuilder/goatbuilder.yaml");
+        let text_before = std::fs::read_to_string(&cfg).unwrap();
+        let declared = text_before.replacen(
+            "    edge_class: edge\n",
+            "    edge_class: edge\n    values:\n      edge_group: ally_pinned_edge\n",
+            1,
+        );
+        assert_ne!(declared, text_before, "the fixture's peering entry moved");
+        federate_world::write(&cfg, &declared);
+        federate_world::write(
+            &w.repo
+                .join(format!("ops/ansible/group_vars/{switch_group}/forwarder.yml")),
+            "peering_wg_via_forwarder: true\n",
+        );
+        let (out, _) = w.run(&["rotate", "hello-ally", "carrier"]);
+        (text(&out), w.log())
+    };
+    let (t, log) = pinned("ally_pinned_edge");
+    assert!(t.contains("GB-189") && t.contains("no forwarder"), "{t}");
+    assert!(log.is_empty(), "something ran: {log}");
+    let (t, _) = pinned("hello-ally_edge");
+    assert!(!t.contains("no forwarder"), "{t}");
+}
