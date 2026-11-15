@@ -15,7 +15,8 @@
 #   unreachable  the machine was not read: unreachable, or silent where the inventory names it
 # Exit 0 when the three verbs name the same machines and the same verdict for
 # every (machine, component); exit 3 with each disagreement printed otherwise;
-# exit 2 when a report has a row this script cannot grade. On agreement it
+# exit 2 when a report has a row this script cannot grade, or a verify report
+# read no machine (not a measurement). On agreement it
 # prints the transport diff read over and how many machines any read reached.
 #
 # The same rules are the Rust test crates/goatbuilder/src/inspect.rs
@@ -91,7 +92,14 @@ def main():
         verify = {}
         for spec in a.verify:
             comp, _, path = spec.partition("=")
-            verify.update(from_verify(load(path), comp))
+            got = from_verify(load(path), comp)
+            if not got:
+                # verify ran and read no machine (its transport or inventory read
+                # failed, or the report is not a real-host verify): nothing to compare.
+                print(f"c3: {path} read no machine for {comp}: it has no per-machine row; "
+                      f"its own rows say why. This run is not a C3 measurement", file=sys.stderr)
+                return 2
+            verify.update(got)
     except ValueError as e:
         print(f"c3: a row with no verdict: {e}", file=sys.stderr)
         return 2
