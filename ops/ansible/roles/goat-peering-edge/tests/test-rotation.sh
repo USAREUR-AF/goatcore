@@ -532,6 +532,19 @@ else
   fail "a half-done switch with a mismatched remainder was not refused, or something moved"; tail -12 "$LOG"
 fi
 
+# A half-done switch whose files do not parse: an unreadable key and an unreadable staged
+# certificate must not "match" (both would hash empty input). Refused, nothing moved.
+fresh; stage good; touch "$T/sa-up" "$T/mv-dies"
+rot -e peering_edge_rotation=r24 || true
+rm -f "$T/mv-dies"
+echo "not a certificate" > "$S/x509/xab-cert.next.pem"; rm -f "$S/private/xab-key.pem"
+before=$(snap)
+if ! rot -e peering_edge_rotation=r24 && grep -q "GB-311" "$LOG" && [ "$(snap)" = "$before" ]; then
+  pass "a half-done switch with an unreadable key and staged certificate: GB-311, nothing moved"
+else
+  fail "a half-done switch finished on files that do not parse"; tail -12 "$LOG"
+fi
+
 # K2: killed during the set-aside (certificate copied, key not). The set-aside exists
 # only when complete, so the re-run redoes it, and a roll-back restores both files.
 fresh; stage good; touch "$T/cp-dies-on-key"
