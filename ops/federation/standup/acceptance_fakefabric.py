@@ -29,6 +29,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 import urllib.parse
 
 
@@ -73,6 +74,9 @@ class Faults:
         self.existing_down = set()         # existing partners that no longer receive anything from us
         self.leak_to_existing = set()      # existing partners that receive every set we lift
         self.refuse_put = set()            # sides whose REST surface answers every PUT with HTTP 403
+        self.drop_probes = {}              # side -> how many round-trip probes arriving there its edge
+        #                                    drops first, as downsampling drops a sample inside its interval
+        self.refuse_probe_put = set()      # sides whose core answers a PUT of a round-trip probe with 403
 
 
 class Core:
@@ -106,6 +110,7 @@ class Fabric:
         self.diag_zid = "d" + "3" * 31
         self.agreed_zid = "a" * 32
         self.existing = {}                 # partner id -> (agreement, Core): peerings we already have
+        self.probe_log = []                # (time, side, key): every round-trip probe a core accepted
 
     # --- the agreement -------------------------------------------------------
     def offered(self, side):
@@ -164,6 +169,8 @@ class Fabric:
         # none): a sample staged there goes to the republisher's subscription and is
         # never read back from the core that staged it.
         core = self.cores[side]
+        if re.fullmatch(r"release/.+/fedcheck/[^/]+", key):
+            self.probe_log.append((time.monotonic(), side, key))
         if not key.startswith("release/"):
             with core.lock:
                 core.store[key] = value
@@ -217,6 +224,10 @@ class Fabric:
         # The store keeps a sample when its own subscription carries it, or when the
         # edge refuses that subscription but a diagnostic session's interest pulls the
         # sample across anyway (the defect the persistence check exists for).
+        if re.fullmatch(r"from/%s/(?:.+/)?fedcheck/[^/]+" % re.escape(self.other(side)), key) \
+                and self.faults.drop_probes.get(side, 0) > 0:
+            self.faults.drop_probes[side] -= 1
+            return
         store = side not in self.faults.no_storage
         interest = side not in self.faults.storage_interest_refused or any(
             _match(ke, key) for ke, clients in self.subscribers(side) if clients != [self.cores[side].zid])
@@ -299,7 +310,7 @@ class Fabric:
             def do_PUT(self):
                 n = int(self.headers.get("Content-Length") or 0)
                 body = self.rfile.read(n)
-                if side in faults.refuse_put:
+                if side in faults.refuse_put or (side in faults.refuse_probe_put and "/fedcheck/" in self.path):
                     self.send_response(403)
                     self.send_header("Content-Length", "0")
                     self.end_headers()

@@ -887,6 +887,17 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("did not complete", out)
 
+    def test_a_dropped_round_trip_probe_is_sent_again_after_the_gap(self):
+        # In a session both runners send at once, so the partner's edge can drop our
+        # probe inside its downsampling interval; the next probe, one gap later, completes.
+        self.fabric.faults.drop_probes["xab"] = 1
+        rc, out = self.run_acceptance(extra={"FED_ACCEPTANCE_GAP": "0.8"})
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.verdicts()["roundtrip/outbound/release/all"], "PASS", out)
+        times = [t for t, side, key in self.fabric.probe_log if side == "xaa" and key.startswith("release/all/fedcheck/")]
+        self.assertEqual(len(times), 2, out)
+        self.assertGreaterEqual(times[1] - times[0], 0.8 - 0.05, out)
+
 
 if __name__ == "__main__":
     unittest.main()
