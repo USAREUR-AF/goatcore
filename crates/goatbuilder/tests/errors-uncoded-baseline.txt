@@ -4,9 +4,6 @@
 # remove its line; never add one.
 src/assay.rs :: context :: the temporary file for {what}
 src/assay.rs :: context :: the temporary file for {what}
-src/config.rs :: anyhow :: grow takes a goatlite config: this one does not declare preset: lite
-src/config.rs :: anyhow :: grow takes a goatlite config: this one has no lite: block
-src/config.rs :: anyhow :: the grown configuration does not validate:\n {}{ask}
 src/config.rs :: context :: config does not match the typed model
 src/config.rs :: context :: config does not match the typed model
 src/config.rs :: context :: embedded schema is not JSON

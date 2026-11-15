@@ -27,6 +27,10 @@ Include: a description of the issue and its impact; reproduction steps or a proo
 
 In scope: the code in this repository and the images and release artifacts built from it. Out of scope: the upstream projects goat assembles (NetBird, Zenoh, Ory, SPIRE, Postgres, WireGuard) — report those to their maintainers, and tell us too if goat's integration is affected; any deployment you do not own.
 
+## Verifying a release, and the project's supply-chain practices
+
+Every release page lists its assets and prints the commands that verify them: a checksum file, a keyless cosign signature over it, and for the components that sign per asset, a signature per file and a build provenance file. [docs/design/openssf-scorecard.md](docs/design/openssf-scorecard.md#release-signatures-and-provenance) says which components carry which files. The same page records the project's [OpenSSF Scorecard](https://github.com/ossf/scorecard) result per check and how dependency advisories are handled.
+
 ## Supported versions
 
 Pre-1.0, the latest tagged release of each component is supported. Fixes land on `main` and are released by tag.
