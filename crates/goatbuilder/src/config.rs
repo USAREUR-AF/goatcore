@@ -777,6 +777,28 @@ mod tests {
         assert_eq!(problems(&v).unwrap(), Vec::<String>::new());
     }
 
+    /// ADR 1242: a peering selects its package version, v1 or v2; absent is v1.
+    #[test]
+    fn a_peering_selects_its_package_version_and_v1_is_the_default() {
+        let peering = |extra: serde_json::Value| {
+            let mut p = json!({"with": "velmara", "environment": "dev", "site": "alpha", "edge_class": "edge"});
+            if let (Some(o), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+                o.extend(e.clone());
+            }
+            p
+        };
+        for (extra, want) in [(json!({}), "v1"), (json!({"package": "v1"}), "v1"), (json!({"package": "v2"}), "v2")] {
+            let mut v = with_sites();
+            v["peerings"] = json!([peering(extra.clone())]);
+            assert_eq!(problems(&v).unwrap(), Vec::<String>::new(), "{extra}");
+            let p: Peering = serde_json::from_value(v["peerings"][0].clone()).unwrap();
+            assert_eq!(p.package_version(), want, "{extra}");
+        }
+        let mut v = with_sites();
+        v["peerings"] = json!([peering(json!({"package": "v3"}))]);
+        rejected(&v, "package");
+    }
+
     #[test]
     fn unknown_field_is_refused() {
         let mut v = minimal();
