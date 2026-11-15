@@ -210,6 +210,10 @@ jobs:
       - name: obs-host scrape inputs need a consumable sample
         timeout-minutes: 10
         run: python3 ops/ansible/roles/obs-host/tests/test_scrape_inputs.py
+      # Loads the role's own task file and runs the shell bodies of its
+      # artifact-freshness and rebuild tasks against a temporary tree.
+      - name: ntp-health-agent rebuilds its artifact only when the source is newer
+        run: python3 ops/ansible/roles/ntp-health-agent/tests/test_freshness.py
       - name: the deploy's source-of-record check on assembled trees
         run: bash ops/ci/test-source-of-record.sh
       - name: Ansible roles and templates resolve
