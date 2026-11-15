@@ -31,12 +31,23 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      # No `ref`: under pull_request_target that is the base branch, never the
+      # pull request.
       - name: check out the base branch (the gate as merged)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      # The pull request's recorded base commit is a commit of the base branch.
+      - name: move the working tree to the pull request's base commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "${BASE_SHA}"
+          fi
+          git checkout --quiet --detach "${BASE_SHA}"
 
       - name: fetch the pull request's commits as data
         env:

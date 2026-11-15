@@ -40,7 +40,7 @@ jobs:
       - name: check out the base branch (the check as merged)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.ref }}
+          ref: ${{ github.base_ref }}
           sparse-checkout: .github/contributor-trust
           persist-credentials: false
 
