@@ -1,0 +1,68 @@
+# promtool unit test for PostgresWalDirNearVolumeCapacity (rules/postgres-storage.yml).
+#
+# Run by .github/workflows/goat-obs-checks.yml; locally with
+#   promtool test rules ops/compose/mgmt-host/monitoring/tests/postgres-wal-dir-near-volume-capacity.test.yml
+#
+# The WAL size comes from postgres-exporter (job postgres, the pg_wal_dir query
+# in monitoring/postgres-exporter-queries.yml) and the volume's size from
+# node-exporter (job node for this host, job node-peer for the peer's host), as
+# monitoring/prometheus.yml scrapes them. The two jobs share no label set, so
+# the alert matches them explicitly: this host's WAL against this host's data
+# volume, /opt/docker-data. The WAL is part of that volume's used space.
+rule_files:
+  - ../rules/postgres-storage.yml
+
+evaluation_interval: 1m
+
+tests:
+  # WAL holds 90 GB of a 100 GB data volume with 95 GB used: fires once it has
+  # held for the rule's 30 minutes.
+  - interval: 1m
+    external_labels:
+      site: zagros-a
+    input_series:
+      - series: 'pg_wal_dir_bytes{job="postgres",instance="postgres-a",role="local"}'
+        values: '96636764160x40'
+      - series: 'node_filesystem_size_bytes{job="node",instance="node-local",role="local",device="/dev/nvme0n1p1",fstype="ext4",mountpoint="/opt/docker-data"}'
+        values: '107374182400x40'
+      - series: 'node_filesystem_avail_bytes{job="node",instance="node-local",role="local",device="/dev/nvme0n1p1",fstype="ext4",mountpoint="/opt/docker-data"}'
+        values: '5368709120x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: PostgresWalDirNearVolumeCapacity
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: PostgresWalDirNearVolumeCapacity
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: postgres
+              job: postgres
+              instance: postgres-a
+              role: local
+            exp_annotations:
+              summary: "pg_wal at zagros-a is > 50% of total used data-volume"
+              description: "pg_wal directory is consuming more than half of the used capacity on /opt/docker-data. This means an offline subscriber slot is pinning WAL — investigate via the SpockSlotInactive / SpockSlotWALSenderLag siblings. If unaddressed, an offline-too-long subscriber will eventually trip this site's max_slot_wal_keep_size cap (spock_config_max_slot_wal_keep_size_bytes; ops/postgres/spock/README.md, The slot WAL cap) and self-invalidate (which is the safety net — but the disk-headroom signal is a chance to do something graceful first)."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+
+  # WAL holds 10 GB of this host's 60 GB used: silent. The peer host's volume
+  # (job node-peer) has only 10.5 GB used, so 10 GB against it would fire; the
+  # alert compares this host's WAL with this host's volume only.
+  - interval: 1m
+    external_labels:
+      site: zagros-a
+    input_series:
+      - series: 'pg_wal_dir_bytes{job="postgres",instance="postgres-a",role="local"}'
+        values: '10737418240x40'
+      - series: 'node_filesystem_size_bytes{job="node",instance="node-local",role="local",device="/dev/nvme0n1p1",fstype="ext4",mountpoint="/opt/docker-data"}'
+        values: '107374182400x40'
+      - series: 'node_filesystem_avail_bytes{job="node",instance="node-local",role="local",device="/dev/nvme0n1p1",fstype="ext4",mountpoint="/opt/docker-data"}'
+        values: '42949672960x40'
+      - series: 'node_filesystem_size_bytes{job="node-peer",instance="node-peer",role="peer",device="/dev/nvme0n1p1",fstype="ext4",mountpoint="/opt/docker-data"}'
+        values: '107374182400x40'
+      - series: 'node_filesystem_avail_bytes{job="node-peer",instance="node-peer",role="peer",device="/dev/nvme0n1p1",fstype="ext4",mountpoint="/opt/docker-data"}'
+        values: '96100638720x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: PostgresWalDirNearVolumeCapacity
+        exp_alerts: []
