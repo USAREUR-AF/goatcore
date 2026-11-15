@@ -41,18 +41,52 @@ pass() { echo "  PASS  $1"; }
 fail() { echo "  FAIL  $1"; FAILS=$((FAILS + 1)); }
 sha() { openssl sha256 -r < "$1" | cut -d' ' -f1; }
 
-# The stand-in swanctl: records each call; --list-sas reports an established SA
-# with an installed CHILD SA only while $T/sa-up exists.
+# The stand-in swanctl: records each call. While $T/sa-up exists, --list-sas reports
+# the IKE SAs in $T/sas (one "<unique id> <established epoch>" per line; at first one
+# SA established an hour ago), each ESTABLISHED, with its established age and an
+# INSTALLED CHILD SA, as `swanctl --list-sas` prints them. `--rekey --reauth` makes a
+# new SA with the next id and drops the old one (make-before-break done), unless
+# $T/reauth-stalls exists: then the old SA stays and no new one comes.
 mkdir -p "$T/bin"
-cat > "$T/bin/swanctl" <<SH
+cat > "$T/bin/swanctl" <<'SH'
 #!/bin/sh
-echo "\$*" >> "$T/swanctl.log"
-case "\$1" in
-  --list-sas) [ -e "$T/sa-up" ] && printf 'xab: #1, ESTABLISHED\n  fabric: #1, INSTALLED\n'; exit 0 ;;
+T=@T@
+echo "$*" >> "$T/swanctl.log"
+now=$(date +%s)
+[ -e "$T/sas" ] || echo "1 $((now - 3600))" > "$T/sas"
+case "$1" in
+  --list-sas)
+    [ -e "$T/sa-up" ] || exit 0
+    while read -r id ep; do
+      printf 'xab: #%s, ESTABLISHED, IKEv2\n  established %ss ago\n  fabric: #%s, reqid 1, INSTALLED, TUNNEL\n' \
+        "$id" "$((now - ep))" "$id"
+    done < "$T/sas"
+    exit 0 ;;
+  --rekey)
+    case "$*" in *--reauth*) ;; *) exit 0 ;; esac
+    [ -e "$T/sa-up" ] || exit 0
+    [ -e "$T/reauth-stalls" ] && exit 0
+    n=$(($(cut -d' ' -f1 "$T/sas" | sort -n | tail -1) + 1))
+    echo "$n $now" > "$T/sas"
+    exit 0 ;;
   *) exit 0 ;;
 esac
 SH
+sed -i "s|@T@|$T|" "$T/bin/swanctl"
 chmod 755 "$T/bin/swanctl"
+# A cp that fails copying out of a set-aside directory while $T/cp-fails exists: a
+# run killed during the roll-back.
+cat > "$T/bin/cp" <<'SH'
+#!/bin/sh
+T=@T@
+if [ -e "$T/cp-fails" ]; then
+  for a in "$@"; do last=$a; done
+  case "$*" in *.previous-*) case "$last" in *.previous-*) ;; *) exit 1 ;; esac ;; esac
+fi
+exec /bin/cp "$@"
+SH
+sed -i "s|@T@|$T|" "$T/bin/cp"
+chmod 755 "$T/bin/cp"
 
 # Certificates made at test time: two CAs, then leaves.
 P384=(-newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -nodes)
@@ -77,7 +111,7 @@ leaf short ca1 fed.xaa.xab.01 10
 
 S="$T/swanctl"
 fresh() { # a fresh edge: live leaf of ca1, our CA ca1, nothing staged
-  rm -rf "$S" "$T/swanctl.log" "$T/sa-up"
+  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails"
   mkdir -p "$S/x509" "$S/private" "$S/x509ca"
   cp "$T/pki/live.pem" "$S/x509/xab-cert.pem"; cp "$T/pki/live.key" "$S/private/xab-key.pem"
   chmod 600 "$S/private/xab-key.pem"
@@ -300,6 +334,48 @@ if ! rot "${RB[@]}" && grep -q "GB-302" "$LOG" && live_is live \
   pass "a resume after an ipsec-ca rollback: GB-302, the old leaf live, our CA not replaced"
 else
   fail "a resume after an ipsec-ca rollback replaced our CA or reported success"; tail -12 "$LOG"
+fi
+
+# Make-before-break: while the new SA negotiates the old one stays ESTABLISHED. The
+# confirm counts only an SA other than the ones up before the re-authentication.
+fresh; stage good; touch "$T/sa-up" "$T/reauth-stalls"
+if ! rot -e peering_edge_rotation=r8 && grep -q "GB-302" "$LOG" && live_is live; then
+  pass "the old SA still up and no new one: the confirm does not pass, GB-302, the old pair back"
+else
+  fail "the confirm passed on the SA that was up before the re-authentication"; tail -12 "$LOG"
+fi
+
+# Retire: the SA must be established after the rotation set the old pair aside.
+fresh; stage good; touch "$T/sa-up"
+rot -e peering_edge_rotation=r1 || { fail "setup: r1 did not pass"; tail -12 "$LOG"; }
+echo "1 $(( $(date +%s) - 3600 ))" > "$T/sas"
+if ! rot -e peering_edge_rotation=r1 -e peering_edge_rotation_retire=true && grep -q "$RETIRE_CODE" "$LOG" \
+   && [ -f "$S/.previous-r1/xab-key.pem" ]; then
+  pass "retire while the only SA predates the rotation: $RETIRE_CODE, the set-aside key stays"
+else
+  fail "retire removed the set-aside key on an SA older than the rotation"; tail -12 "$LOG"
+fi
+
+# A run killed during the roll-back is reported rolled back on its resume, never done.
+fresh; stage good; touch "$T/cp-fails"
+rot -e peering_edge_rotation=r10 || true
+rm -f "$T/cp-fails"; touch "$T/sa-up"
+if ! rot -e peering_edge_rotation=r10 && grep -q "GB-302" "$LOG"; then
+  pass "killed during the roll-back: the resume reports GB-302, not a switch done"
+else
+  fail "a run killed during the roll-back resumed as switched"; tail -12 "$LOG"
+fi
+
+# make_before_break is set explicitly, not left to the packaged strongSwan's default.
+render() { # render <src> <out> [extra]
+  ANSIBLE_NOCOLOR=1 ANSIBLE_RETRY_FILES_ENABLED=0 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
+    ansible-playbook -i localhost, "$HERE/render-swanctl.yml" -e "src=$1" -e "out=$2" "${@:3}" > "$LOG" 2>&1
+}
+if render "$HERE/../templates/goat-peering-edge.strongswan.conf.j2" "$T/charon.conf" \
+   && grep -Eq '^ *make_before_break = yes$' "$T/charon.conf"; then
+  pass "the charon drop-in sets make_before_break = yes"
+else
+  fail "the charon drop-in does not set make_before_break"; cat "$T/charon.conf" 2>/dev/null | tail -5 || tail -8 "$LOG"
 fi
 
 # swanctl.conf: unchanged without the partner's next CA; current then next with it.
