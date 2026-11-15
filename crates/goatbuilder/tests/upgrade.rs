@@ -2,7 +2,8 @@
 //! a deployment made with a released 0.x binary continues with the build
 //! under test, with no change to its files.
 //!
-//! For each release pinned in `tests/upgrade/releases.sha256`:
+//! For each 0.x release pinned in `tests/upgrade/releases.sha256` (a release
+//! pinned later is tested without a change here):
 //!   1. the released binary stands the tutorial-1 fixture up
 //!      (`goatnet-from-scratch/01-founder`), then deploys one changed pin, so
 //!      the deployment has a history to roll back to;
@@ -311,21 +312,44 @@ fn continues_on_the_build_under_test(version: &str) {
     }
 }
 
-#[test]
-fn e1_a_deployment_made_with_0_4_3_continues() {
-    continues_on_the_build_under_test("v0.4.3");
+/// Every 0.x release pinned in releases.sha256, oldest first: a release pinned
+/// later is tested without a change here.
+fn pinned_0x() -> Vec<String> {
+    let mut v: Vec<(u32, u32, u32)> = include_str!("upgrade/releases.sha256")
+        .lines()
+        .filter_map(|l| l.split_once("  ")?.1.split('/').next())
+        .filter_map(|tag| {
+            let mut n = tag
+                .strip_prefix('v')?
+                .split('.')
+                .map(|x| x.parse::<u32>().ok());
+            Some((n.next()??, n.next()??, n.next()??))
+        })
+        .filter(|&(major, _, _)| major == 0)
+        .collect();
+    v.sort();
+    v.dedup();
+    let v: Vec<String> = v.iter().map(|(a, b, c)| format!("v{a}.{b}.{c}")).collect();
+    assert!(
+        v.first().map(String::as_str) == Some("v0.4.3"),
+        "pinned: {v:?}"
+    );
+    v
 }
 
 #[test]
-fn e1_a_deployment_made_with_0_5_1_continues() {
-    continues_on_the_build_under_test("v0.5.1");
+fn e1_a_deployment_made_with_each_pinned_0x_continues() {
+    for version in pinned_0x() {
+        continues_on_the_build_under_test(&version);
+    }
 }
 
 /// Every release the test names has a pin for every platform it ships, and
 /// fetch.sh reads the same file.
 #[test]
 fn every_release_is_pinned_for_each_platform() {
-    for v in ["v0.4.3", "v0.5.1"] {
+    for v in pinned_0x() {
+        let v = v.as_str();
         for a in [
             "goatbuilder-linux-amd64",
             "goatbuilder-linux-arm64",
