@@ -482,9 +482,10 @@ or the node answers on the mesh), and the node's rows converged in `status`
 again. "Without a person" is met only when nobody touches the phone. The
 launcher starts the VM at the first unlock, and Android delivers its start
 signal at boot only on a phone with no lock screen. A node phone with no lock
-screen is a decision about the phone's own security, and it is the operator's
-to make before the run. With a lock screen, the run records the one unlock,
-and H8 is not met as written.
+screen is a decision about the phone's own security. Operator decision,
+2026-11-15: the phone of the seven-day record may run with no lock screen, and
+only a dedicated test phone may. With a lock screen, the run records the one
+unlock, and H8 is not met as written.
 
 **It passes** when every day's integrity check exits 0, the node's `status`
 rows are converged on every day, and the node came back after the reboot.
