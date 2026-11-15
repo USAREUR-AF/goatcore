@@ -80,5 +80,6 @@ checks that every tool the release path invokes is named by its preflight.
 | pins | `goatbuilder pins --check` | drift, an unsigned or tampered intent |
 | ladder | `goatbuilder promote check` | a malformed ladder, a record without its pin edit, a stale hotfix |
 | error catalog | `error-catalog.yml` | an incomplete entry, an uncited or missing code, a stale reference |
+| bare `?` | `goatbuilder-bare-question.yml` (`ops/ci/check-goatbuilder-bare-question.sh`) | a `?` in goatbuilder that passes up an error with no catalog code, beyond the shrink-only list in `crates/goatbuilder/tests/bare-question-baseline.txt` |
 | translations | `goatbuilder-pr.yml`, `goat-cli-pr.yml` (`ops/scripts/translate-ftl.py --check`) | an English message missing from any shipped language |
 | phase-12 graph | `ops/goatbuilder/standup-dag.py --check` | a cycle or an unknown need |

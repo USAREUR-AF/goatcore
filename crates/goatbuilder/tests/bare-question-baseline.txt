@@ -1,0 +1,28 @@
+# Places in crates/goatbuilder/src/ where a `?` passes up an error with no
+# catalog code (ops/ci/goatbuilder_bare_question.py). This list only shrinks:
+# the change that codes a place removes its line. A new place is coded, not
+# listed. One line per `?`: <file> :: <the trimmed text of its line>.
+doctor.rs :: .output()?;
+doctor.rs :: let status = Cmd::new("python3").args(["-c", &code]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;
+endstate.rs :: let g: serde_json::Value = serde_json::from_str(&text)?;
+federate/handoff.rs :: std::fs::rename(&tmp, &path)?;
+federate/handoff.rs :: std::fs::write(&tmp, serde_json::to_string_pretty(&joined)? + "\n")?;
+federate/handoff.rs :: std::fs::write(&tmp, serde_json::to_string_pretty(&joined)? + "\n")?;
+federate/measure.rs :: )?;
+federate/measure.rs :: )?;
+federate/measure.rs :: let text = serde_json::to_string_pretty(&v)? + "\n";
+federate/peering_files.rs :: std::fs::create_dir_all(parent)?;
+federate/peering_files.rs :: std::fs::rename(&tmp, &t)?;
+federate/peering_files.rs :: std::fs::write(&tmp, &r.body)?;
+federate/rotation.rs :: )?;
+federate/rotation.rs :: std::fs::create_dir_all(work)?;
+federate/rotation.rs :: std::fs::create_dir_all(work)?;
+federate/rotation.rs :: std::fs::rename(tmp, f)?;
+federate/rotation.rs :: std::fs::write(&file, format!("{id}\n"))?;
+federate/rotation.rs :: std::fs::write(&file, format!("{rec}\n"))?;
+federate/rotation.rs :: std::fs::write(&record, want)?;
+federate/state.rs :: let mut text = serde_json::to_string_pretty(self)?;
+federate/status.rs :: Format::Json => println!("{}", serde_json::to_string_pretty(&doc)?),
+federate/status.rs :: Format::Yaml => print!("{}", serde_yaml::to_string(&doc)?),
+grow.rs :: &format!("{HEADER}{}", serde_yaml::to_string(&grown)?),
+push.rs :: let mode = resolve_target_mode(&ansible, &play)?;
