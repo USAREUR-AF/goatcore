@@ -5,8 +5,8 @@
 # test, and parity-standup.sh plans the example goatnet's one site on both
 # sides there. It declares one environment and one founder site only: the
 # plan's obs, joiner and rescue-class lines come from the site's group_vars,
-# which a deployment carries and this tree does not, so those are compared in
-# the CI of the repository that declares the deployment.
+# which a deployment carries and this tree does not, so a deployment's own CI
+# runs it on its sites for those.
 schema: goatbuilder/v1
 preset: lite
 repo:
