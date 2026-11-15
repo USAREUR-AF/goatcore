@@ -702,7 +702,7 @@ class AcceptanceRun(unittest.TestCase):
         der = os.path.join(self.tmp, "derived.json")
         subprocess.run(["python3", str(HERE / "acceptance_session.py"), "derive", "--agreement", path, "--us", "xaa",
                         "--attempt", "1", "--out", der], check=True, capture_output=True)
-        return json.load(open(der))["session_id"]
+        return json.loads(Path(der).read_text())["session_id"]
 
     def earlier_run_on_xaa(self, stamp=True, started_ago=100000):
         """xab's samples from an earlier run on xaa's core: another challenge and,
@@ -726,7 +726,7 @@ class AcceptanceRun(unittest.TestCase):
         path = os.path.join(d, name)
         with open(path, "w") as f:
             f.write("#!/usr/bin/env bash\n" + body)
-        os.chmod(path, 0o755)
+        os.chmod(path, 0o700)  # the owner runs it; nobody else needs to read it
         return {"PATH": d + os.pathsep + os.environ["PATH"]}
 
     def curl_stand_in(self, condition, action):
@@ -768,7 +768,7 @@ class AcceptanceRun(unittest.TestCase):
     def test_derived_each_run_stamps_its_challenge_and_start_time_in_one_value(self):
         ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived()
         self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
-        result = json.load(open(os.path.join(ev["xaa"], "result.json")))["session"]
+        result = json.loads(Path(ev["xaa"], "result.json").read_text())["session"]
         st = self.fabric.offered("xaa")[0]
         name = st[len("release/"):]
         stamp = self.fabric.cores["xab"].store.get("from/xaa/%s/acceptance/%s/xaa/run" % (name, result["id"]))
@@ -811,7 +811,7 @@ class AcceptanceRun(unittest.TestCase):
     def test_derived_a_partner_stamp_arriving_after_its_sample_is_waited_for(self):
         self.earlier_run_on_xaa()
         delayed = "( sleep 4; exec %s \"$@\" ) >/dev/null 2>&1 & exit 0" % shutil.which("curl")
-        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(
+        _, (rc_a, out_a), (rc_b, out_b) = self.both_derived(
             delay=3, wait="12", second={"extra": self.curl_stand_in(self.STAMP_PUT, delayed)})
         self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
         self.assert_no_earlier_challenge_used(out_a, out_b)
@@ -820,7 +820,7 @@ class AcceptanceRun(unittest.TestCase):
         self.earlier_run_on_xaa()
         flag = os.path.join(self.tmp, "stamp-read-failed")
         once = '[ "$put" = 0 ] && [[ "$url" == */run ]] && [ ! -e %s ]' % flag
-        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(
+        _, (rc_a, out_a), (rc_b, out_b) = self.both_derived(
             delay=3, wait="12", extra=self.curl_stand_in(once, ": > %s; exit 7" % flag), second={"extra": None})
         self.assertTrue(os.path.exists(flag), "the stand-in failed a read of the stamp")
         self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
