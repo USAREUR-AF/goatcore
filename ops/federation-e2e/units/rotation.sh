@@ -135,6 +135,8 @@ EOF_MARKS
     return 0
   fi
   local f0="$FAILS"
+  # Not refused: the refusal's changed-nothing check does not apply to this side's key.
+  mark "key-rotation.refused-changed-nothing-$k-$ord" "NOT APPLICABLE" "\`rotate $them $k\` ran on $s: nothing was refused"
   rec "rot-rotate-$k-$s-ran" -- bash -c "tail -30 '$out'; exit $rc"
   [ "$FAILS" = "$f0" ] || rot_die "\`goatbuilder federate rotate $them $k\` failed on $s (exit $rc): $out"
   rot_all_material "$s" "$RECORD/rot-$k-$s-after.txt"
