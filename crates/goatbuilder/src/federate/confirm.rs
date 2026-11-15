@@ -2326,6 +2326,19 @@ mod tests {
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), OLDER);
     }
 
+    /// A migration records a package as confirmed without a person, so it prints
+    /// the digest, in the groups read aloud, to compare with the partner at the
+    /// next call.
+    #[test]
+    fn a_migration_prints_the_digest_to_compare_at_the_next_call() {
+        let (w, mut st) = bound_before_1229();
+        let held = std::fs::read(&w.paths.counterparty).unwrap();
+        let step = migrate(&w.paths, &mut st, "r2").expect("a migration is recorded");
+        let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains(&groups(&sha256(&held))), "{text}");
+        assert!(text.contains("compare it with the partner at the next call"), "{text}");
+    }
+
     #[test]
     fn a_held_package_that_cannot_be_read_stops_the_migration_with_gb_310() {
         let (w, mut st) = bound_before_1229();
