@@ -48,6 +48,8 @@ tests:
               slot_name: sub_zagros_b
             exp_annotations:
               summary: "Spock slot sub_zagros_b at zagros-a > 80% of max_slot_wal_keep_size"
+              description: "Replication slot is retaining WAL and approaching max_slot_wal_keep_size. If it hits the ceiling, Postgres invalidates the slot and the disconnected peer will require a full pg_basebackup + Spock re-subscribe to recover. Investigate why the subscriber isn't consuming — network partition, crashed apply worker, or a schema mismatch stopping replay."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
   # An unlimited cap (setting -1) is exported as the sentinel 2^63-1: no slot
   # comes near it, so the alert never fires.

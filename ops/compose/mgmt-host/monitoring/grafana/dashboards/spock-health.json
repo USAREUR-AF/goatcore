@@ -161,7 +161,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "100 * pg_replication_slot_retained_wal_bytes / scalar(spock_max_slot_wal_keep_size_bytes)",
+          "expr": "100 * pg_replication_slot_retained_wal_bytes / scalar(spock_config_max_slot_wal_keep_size_bytes)",
           "legendFormat": "{{site}}/{{slot_name}}",
           "refId": "A"
         }

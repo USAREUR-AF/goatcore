@@ -54,15 +54,20 @@ groups:
       # WAL retention approaching max_slot_wal_keep_size. The cap differs
       # by site: the Spock image sets one value, and on a pair's primary
       # the postgres-streaming-replication role raises it (F-093;
-      # ops/postgres/spock/README.md, The slot WAL cap). The
-      # `spock_max_slot_wal_keep_size_bytes` gauge is now LIVE-read
-      # from pg_settings via the postgres-exporter custom query, so
-      # this expression always uses the true configured threshold —
-      # no stale-constant drift class.
+      # ops/postgres/spock/README.md, The slot WAL cap). The cap is read
+      # live from pg_settings by the exporter's `spock_config` query, whose
+      # column max_slot_wal_keep_size_bytes is exported as
+      # `spock_config_max_slot_wal_keep_size_bytes`
+      # (monitoring/postgres-exporter-queries.yml). Until this rule named
+      # that series it divided by one no exporter emits, scalar() of
+      # nothing is NaN, and the alert never fired. An unlimited cap is the
+      # sentinel 2^63-1, so the ratio stays near 0. scalar() needs exactly
+      # one cap series: this Prometheus scrapes one postgres-exporter.
+      # tests/spock-slot-wal-near-limit.test.yml holds it.
       - alert: SpockSlotWALNearLimit
         expr: |
           pg_replication_slot_retained_wal_bytes
-            / scalar(spock_max_slot_wal_keep_size_bytes) > 0.8
+            / scalar(spock_config_max_slot_wal_keep_size_bytes) > 0.8
         for: 5m
         labels:
           severity: critical
