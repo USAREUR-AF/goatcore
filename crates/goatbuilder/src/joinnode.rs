@@ -679,7 +679,9 @@ pub(crate) fn inventories_of(via: &str) -> &'static str {
     inventories(via)
 }
 
-pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
+/// The environment, site and class are declared, and the class is one this
+/// verb converges.
+fn declared(repo: &Path, o: &Options) -> Result<()> {
     let cfg = config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml"))?;
     let Some(env) = cfg.environments.iter().find(|e| e.name == o.env) else {
         return Err(goat_errors::coded("GB-241", format!("unknown environment \"{}\"; declared: {:?}", o.env, cfg.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>())).into());
@@ -695,7 +697,22 @@ pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
     if !CLASSES.contains(&o.class) {
         return Err(goat_errors::coded("GB-247", format!("class '{}' is not one this verb converges; known: {}", o.class, CLASSES.join(", "))).into());
     }
+    Ok(())
+}
+
+pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
+    declared(repo, o)?;
     execute(repo, o)
+}
+
+/// `join-node ... --reseed`: the node, already joined, seeded again from its
+/// founder (crate::reseed). Only a node that replicates has a slot to lose.
+pub fn reseed(repo: &Path, o: &Options) -> Result<Report> {
+    if CLASSES.contains(&o.class) && converges_as(o.class) != "core" {
+        return Err(goat_errors::coded("GB-247", format!("--reseed is for a node that replicates (class core or phone); a {} node is not a Spock member and has no slot to lose", o.class)).into());
+    }
+    declared(repo, o)?;
+    crate::reseed::execute(repo, o)
 }
 
 /// The end-state model's script, relative to the checkout.

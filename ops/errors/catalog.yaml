@@ -4246,6 +4246,94 @@ entries:
       - "ROUTE MISSING: the directory's operator moves it to a release that serves the route; check which release runs with goatbuilder federate directory ls"
     read: docs/design/peering-directory-service.md
     exit: 1
+  - code: GB-345
+    tool: goatbuilder
+    title: there is nothing to seed again
+    what: "`goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed."
+    causes:
+      - "the node came back before the founder's slot for it passed `max_slot_wal_keep_size`"
+      - "the node or the site named is not the one whose slot was lost"
+      - "a later step ran before the lost step passed in this journal"
+    fixes:
+      - "read the slots on the founder: SELECT slot_name, active, wal_status FROM pg_replication_slots;"
+      - "goatbuilder join-node <env> --site <site> --node <node> --class <class> --reseed --dry-run   (it prints each step's command)"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "no slot the site keeps for the node's subscriptions reads wal_status = lost"
+      - "the lost step has not passed in this journal"
+  - code: GB-346
+    tool: goatbuilder
+    title: the founder has not taken the node's own writes
+    what: "Before the re-seed truncates the node's tables, the founder must hold everything the node wrote while it was away. The founder's subscription from the node does not read `replicating`, or its slot on the node has not confirmed the node's current WAL position within the wait (`--wait`, 600 seconds by default). Truncating now would lose those writes, so nothing was changed."
+    causes:
+      - "the founder's subscription from the node is down or disabled"
+      - "the node's writes are still on their way: a large backlog, or a slow link"
+      - "the founder has no subscription from the node"
+    fixes:
+      - "on the founder: SELECT * FROM spock.sub_show_status(); the subscription from the node must read replicating"
+      - "run the re-seed again; it starts at this step"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "the node's own writes have not all reached the site"
+      - "the site has no subscription from the node"
+  - code: GB-347
+    tool: goatbuilder
+    title: the copy is not well under the node's own slot cap
+    what: "The re-seed's copy is written as WAL on the node, and that WAL counts against the slot the node keeps for the founder. The replicated tables to copy hold more than the allowed share (`--size-fraction`, 0.25 by default) of the node's `max_slot_wal_keep_size`. A copy near the cap invalidates the founder's slot on the node, and the node's next writes could not reach the founder. Nothing was changed."
+    causes:
+      - "the replicated tables are larger than the node's cap allows for"
+      - "the node runs with a small max_slot_wal_keep_size"
+    fixes:
+      - "raise max_slot_wal_keep_size on the node for the copy, then run the re-seed again"
+      - "read the sizes on the founder: SELECT pg_total_relation_size(...) for the tables of the subscription's replication sets"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "the copy is written as WAL on the node, and one near its cap invalidates"
+  - code: GB-348
+    tool: goatbuilder
+    title: the copy did not finish
+    what: "After the re-seed dropped and created the node's subscription from the founder and asked for each table to be copied again, a table was still not copied (`spock.local_sync_status` other than `r`) or the subscription did not read `replicating` within the wait, or a slot on the node read `lost` during the copy. The node's tables may be partly copied; the founder's are untouched."
+    causes:
+      - "the copy is still running: a large table, or a slow link"
+      - "a table failed to copy (the node's Postgres log says why)"
+      - "the copy cost the founder its slot on the node (GB-347's case)"
+    fixes:
+      - "run the re-seed again; it starts at this step and waits again"
+      - "on the node: SELECT * FROM spock.local_sync_status; and read its Postgres log"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "a slot on the node reads lost during the copy"
+      - "the subscription reads '.*' and tables not yet copied"
+  - code: GB-349
+    tool: goatbuilder
+    title: a table differs after the copy
+    what: "The re-seed's last step compares each copied table on the node and the founder by row count and digest, and one still differs after the wait. The node and the founder do not hold the same rows."
+    causes:
+      - "writes still arriving on one side: a busy table converges a little later"
+      - "a write the copy did not carry, or a conflict resolved differently on each side"
+    fixes:
+      - "run the re-seed again; it starts at this step and compares again"
+      - "compare the table with drift-watch, as the post-partition convergence runbook's step 4 does"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "\\(count and digest\\) after [0-9]+s"
+  - code: GB-350
+    tool: goatbuilder
+    title: the re-seed cannot name the Postgres container
+    what: "The re-seed reaches the node and the founder through the Postgres container the replication role names (`spock_mesh_postgres_container`). Neither the site's group_vars nor `ops/ansible/roles/spock-mesh-peering/defaults/main.yml` in this checkout sets it. Nothing ran."
+    causes:
+      - "the checkout does not carry the spock-mesh-peering role's defaults"
+    fixes:
+      - "set spock_mesh_postgres_container in ops/ansible/group_vars/<site>_hosts/vars.yml"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "no spock_mesh_postgres_container in the site's group_vars"
 
   - code: X-ANSIBLE-001
     tool: ansible
