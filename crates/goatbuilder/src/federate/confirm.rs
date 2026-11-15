@@ -2086,6 +2086,30 @@ mod tests {
         assert!(!keys_unchanged(&w2.paths, &st2));
     }
 
+    /// A new package with another CA fingerprint is confirmed and placed, and
+    /// the run stops for the keys (exit 0). A resume past phase 5 must not
+    /// compose it before that fingerprint is confirmed: the package matches the
+    /// digest confirmed, but the keys confirmation does not hold for it.
+    #[test]
+    fn compose_refuses_a_placed_package_whose_keys_were_not_confirmed_again() {
+        let (w, mut st) = bound();
+        let other_fp = format!("sha256:{}", "ab".repeat(32));
+        let new = package_issued("xab", &other_fp, Some(ROTATED), "xab", Some(LATER));
+        std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
+        let mut s = surface(flag(&sha256(&new)), &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
+        assert!(!keys_unchanged(&w.paths, &st));
+        let step = compose_guard(&w.paths, &st).expect("refused until the keys are confirmed again");
+        assert_eq!(code(&step), "GB-191");
+        let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("phase 5") && text.contains("CA fingerprint"), "{text}");
+        // Keys bound by hand (no keys confirmation journaled): only the digest is checked.
+        let (w2, mut st2) = bound();
+        st2.confirmations.retain(|c| c.kind != "keys");
+        st2.confirm("r", 5, "partner-package", "flag", &sha256(&std::fs::read(&w2.paths.counterparty).unwrap()), BTreeMap::new());
+        assert!(compose_guard(&w2.paths, &st2).is_none());
+    }
+
     #[test]
     fn before_their_key_is_bound_nothing_is_a_new_package() {
         let w = world();
