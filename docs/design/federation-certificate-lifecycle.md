@@ -168,8 +168,11 @@ name), and the switch is off: nothing would copy those files to the edge. With t
 switch on, `goatbuilder federate allocate` renders our CA's path and the core
 endpoint's `#root_ca_certificate_file=` as `/etc/goat-zenoh-edge-<partner>/tls/our-ca.pem`,
 where the role installs it, instead of the controller's path. **Built**, unit and
-stand-in tests only (`federate_edge_delivery.rs`); not yet run on the federation
-test environment's operator-workspace scenario.
+stand-in tests (`federate_edge_delivery.rs`). **Measured**: the federation test
+environment's `operator-workspace` scenario, whose edges are machines of their own
+with the switch on (`ops/federation-e2e/overlay.py --edge-addr`), passed 50 of 50
+checks on main 95fb16a0 in run `95fb16a0edfa-20261115T030245-3183932`, phases 1 to 14 from both
+workspaces and strict acceptance from both sides.
 
 `tasks/certificates-check.yml` runs before the role's first write and only reads:
 

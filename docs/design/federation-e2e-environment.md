@@ -41,7 +41,7 @@ Each sovereign is generated fresh for a run and shares nothing with another sove
 | Piece | How it is made |
 |---|---|
 | Certificate authority, signing key, operator profile | `gen_sovereign` in `lib/engine.sh`, new per run, P-256 and Ed25519 |
-| Its own repository | a clone of the ref under test, with `overlay.py` writing that sovereign's `goatbuilder.yaml`, inventory and group_vars |
+| Its own repository | a clone of the ref under test, with `overlay.py` writing that sovereign's `goatbuilder.yaml`, inventory and group_vars. An edge on the driver mounts phase 8's files from `<work>/pki`; an edge on a machine of its own (`--edge-addr`, the operator-workspace driver) has `goat_zenoh_edge_install_certs` on, so the role installs them, as `goatbuilder federate allocate` renders it |
 | Core host | a privileged container running systemd and its own dockerd: the core router (`<id>-zenoh-router`, label `org.goat.component=zenoh-core`), `spire-server`, and from phase 12 the republisher |
 | Edge host | a second privileged container: the edge router, the WireGuard interface, the driver |
 | Release producers | samples written under `release/<set>/` on the core, as a producer would write them |

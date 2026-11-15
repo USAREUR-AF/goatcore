@@ -113,18 +113,33 @@ for them, o in peerings:
 
     gv = clone / "ops/ansible/group_vars" / f"{them}_edge"
     gv.mkdir(parents=True, exist_ok=True)
+    # The edge's certificates. With the edge on the driver (the inventory reaches it at
+    # 127.0.0.1), the edge mounts phase 8's files where they were minted, <work>/pki. With
+    # the edge on a machine of its own (--edge-addr, the operator's workspace), nothing
+    # would copy them there (GB-275): the role installs them from the controller instead
+    # (goat_zenoh_edge_install_certs), derives the leaf and partner CA paths in its own
+    # per-peering directory, and our CA is mounted from there, as goatbuilder renders it
+    # (federate/peering_files.rs).
+    if edge_host == "127.0.0.1":
+        our_ca_on_edge = f"{work}/pki/our-ca.pem"
+        cert_vars = {
+            "goat_zenoh_edge_partner_ca_path": f"{work}/pki/partner-ca.pem",
+            "goat_zenoh_edge_outward_cert": f"{work}/pki/peering-outward.pem",
+            "goat_zenoh_edge_outward_key": f"{work}/pki/peering-outward-key.pem",
+            "goat_zenoh_edge_inward_cert": f"{work}/pki/peering-inward.pem",
+            "goat_zenoh_edge_inward_key": f"{work}/pki/peering-inward-key.pem",
+        }
+    else:
+        our_ca_on_edge = f"/etc/goat-zenoh-edge-{them}/tls/our-ca.pem"
+        cert_vars = {"goat_zenoh_edge_install_certs": True}
     edge_vars = {
         "goat_zenoh_edge_image": a.image,
         "goat_zenoh_edge_trust_mode": "fragment",
-        "goat_zenoh_edge_partner_ca_path": f"{work}/pki/partner-ca.pem",
-        "goat_zenoh_edge_our_ca_path": f"{work}/pki/our-ca.pem",
-        "goat_zenoh_edge_outward_cert": f"{work}/pki/peering-outward.pem",
-        "goat_zenoh_edge_outward_key": f"{work}/pki/peering-outward-key.pem",
-        "goat_zenoh_edge_inward_cert": f"{work}/pki/peering-inward.pem",
-        "goat_zenoh_edge_inward_key": f"{work}/pki/peering-inward-key.pem",
+        "goat_zenoh_edge_our_ca_path": our_ca_on_edge,
+        **cert_vars,
         "goat_zenoh_edge_core_cn": f"core-{us}",
         "goat_zenoh_edge_core_endpoints": [
-            f"tls/{core_ip}:7447#root_ca_certificate_file={work}/pki/our-ca.pem"
+            f"tls/{core_ip}:7447#root_ca_certificate_file={our_ca_on_edge}"
         ],
         # The same port for every peering: `goat federate apply` binds each edge router
         # to its own link address, so two edges on one host do not collide on it.
