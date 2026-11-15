@@ -561,22 +561,21 @@ mod tests {
     }
 
     /// verify with --as reads no site at all, so it runs where none resolves.
+    /// It judges the term on today's date, so it reads the far-term test
+    /// fixture (expires 2099-12-31) and must attest exactly.
     #[test]
     fn verify_with_as_reads_no_site() {
-        let full = vectors()
-            .join("compose-full/agreement.canonical.json")
+        let far = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ops/federation/fixtures/far-term/agreement.canonical.json")
             .display()
             .to_string();
-        let l = line(&["verify", &full, "--as", "xaa", "--json"]);
+        let l = line(&["verify", &far, "--as", "test-fixture-a", "--json"]);
         let mut out = Vec::new();
         let unreachable = || -> Result<Site> { Err(anyhow!("no site here")) };
         let code = verbs::run(l.cmd, &unreachable, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(!text.contains("no site here"), "{text}");
-        assert!(
-            code == verbs::EXIT_OK || code == verbs::EXIT_FED_NOT_CONFORMANT,
-            "{text}"
-        );
+        assert_eq!(code, verbs::EXIT_OK, "{text}");
     }
 
     /// A word the plan prints that the verbs do not take is an error, not a

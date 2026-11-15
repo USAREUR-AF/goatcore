@@ -185,58 +185,54 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors")
     }
 
-    /// The vectors' evaluation date, the one every vector reader is given.
-    fn vectors_now() -> String {
-        std::fs::read_to_string(vectors().join("now.txt"))
-            .expect("now.txt")
-            .trim()
-            .to_string()
+    /// The date the normative vectors are evaluated on (their README,
+    /// "Evaluation date"); tests over them pass it, never the wall clock.
+    fn vectors_now() -> chrono::NaiveDate {
+        let s = std::fs::read_to_string(vectors().join("now.txt")).expect("now.txt");
+        chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").expect("YYYY-MM-DD")
     }
 
-    fn args(now: &str) -> VerifyArgs {
-        VerifyArgs {
-            agreement: vectors().join("compose-full/agreement.canonical.json"),
-            as_party: Some("xaa".into()),
-            signing_key: None,
-            json: false,
-            now: Some(now.into()),
-        }
+    /// Far past the vector agreement's term, which ends 2026-11-20.
+    fn far_past_the_term() -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2030, 1, 1).unwrap()
     }
 
     fn no_site() -> anyhow::Result<Site> {
         anyhow::bail!("no site in this test")
     }
 
-    fn run(a: &VerifyArgs) -> (i32, String) {
+    fn args() -> VerifyArgs {
+        VerifyArgs {
+            agreement: vectors().join("compose-full/agreement.canonical.json"),
+            as_party: Some("xaa".into()),
+            signing_key: None,
+            json: false,
+        }
+    }
+
+    fn run_at(today: chrono::NaiveDate) -> (i32, String) {
         let mut out = Vec::new();
-        let code = run_verify(&no_site, a, &mut out).expect("verify ran");
+        let code = run_verify_at(&no_site, &args(), &mut out, today).expect("verify ran");
         (code, String::from_utf8(out).expect("utf-8"))
     }
 
-    /// The vector agreement attests on the vectors' own date, whatever the
-    /// wall clock says, so a test over it never expires.
     #[test]
     fn the_vector_agreement_attests_on_the_vectors_date() {
-        let (code, out) = run(&args(&vectors_now()));
+        let (code, out) = run_at(vectors_now());
         assert_eq!(code, EXIT_OK, "{out}");
-        assert!(out.contains("runs through 2026-11-20"), "{out}");
+        assert!(
+            out.contains("would publish `conformance ok for sha256:"),
+            "{out}"
+        );
     }
 
-    /// The term is judged on the date given: the day after it ends, verify
-    /// withholds the attestation.
     #[test]
-    fn the_term_is_judged_on_the_date_given() {
-        let (code, out) = run(&args("2026-11-21"));
+    fn the_vector_agreement_is_not_attested_far_past_its_term() {
+        let (code, out) = run_at(far_past_the_term());
         assert_eq!(code, EXIT_FED_NOT_CONFORMANT, "{out}");
-        assert!(out.contains("expired on 2026-11-20; today is 2026-11-21"), "{out}");
-    }
-
-    #[test]
-    fn a_date_that_is_not_yyyy_mm_dd_is_refused() {
-        let mut out = Vec::new();
-        let err = run_verify(&no_site, &args("21/11/2026"), &mut out)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("--now `21/11/2026` is not a YYYY-MM-DD date"), "{err}");
+        assert!(
+            out.contains("expired on 2026-11-20; today is 2030-01-01"),
+            "{out}"
+        );
     }
 }

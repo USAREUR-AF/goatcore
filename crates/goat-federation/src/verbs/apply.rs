@@ -201,14 +201,23 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors")
     }
 
-    fn vectors_now() -> String {
-        std::fs::read_to_string(vectors().join("now.txt"))
-            .expect("now.txt")
-            .trim()
-            .to_string()
+    /// The date the normative vectors are evaluated on (their README,
+    /// "Evaluation date"); tests over them pass it, never the wall clock.
+    fn vectors_now() -> chrono::NaiveDate {
+        let s = std::fs::read_to_string(vectors().join("now.txt")).expect("now.txt");
+        chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").expect("YYYY-MM-DD")
     }
 
-    fn args(now: &str) -> ApplyArgs {
+    /// Far past the vector agreement's term, which ends 2026-11-20.
+    fn far_past_the_term() -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2030, 1, 1).unwrap()
+    }
+
+    fn no_site() -> anyhow::Result<Site> {
+        anyhow::bail!("no site in this test")
+    }
+
+    fn args() -> ApplyArgs {
         ApplyArgs {
             agreement: vectors().join("compose-full/agreement.canonical.json"),
             as_party: Some("xaa".into()),
@@ -217,35 +226,30 @@ mod tests {
             partner_audience: Vec::new(),
             confirm: false,
             json: false,
-            now: Some(now.into()),
         }
     }
 
-    fn no_site() -> anyhow::Result<Site> {
-        anyhow::bail!("no site in this test")
-    }
-
-    fn run(a: &ApplyArgs) -> (i32, String) {
+    fn run_at(today: chrono::NaiveDate) -> (i32, String) {
         let mut out = Vec::new();
-        let code = run_apply(&no_site, a, &mut out).expect("apply ran");
+        let code = run_apply_at(&no_site, &args(), &mut out, today).expect("apply ran");
         (code, String::from_utf8(out).expect("utf-8"))
     }
 
-    /// apply renders from the vector agreement on the vectors' own date,
-    /// whatever the wall clock says.
     #[test]
     fn the_vector_agreement_renders_on_the_vectors_date() {
-        let (code, out) = run(&args(&vectors_now()));
+        let (code, out) = run_at(vectors_now());
         assert_eq!(code, EXIT_OK, "{out}");
-        assert!(out.contains("federation-xab.yml"), "{out}");
+        assert!(
+            out.contains("--- ops/ansible/group_vars/g/federation-xab.yml ---"),
+            "{out}"
+        );
     }
 
-    /// The day after the term ends, apply renders nothing.
     #[test]
-    fn nothing_renders_after_the_term_on_the_date_given() {
-        let (code, out) = run(&args("2026-11-21"));
+    fn nothing_renders_far_past_the_term() {
+        let (code, out) = run_at(far_past_the_term());
         assert_eq!(code, EXIT_FED_NOT_CONFORMANT, "{out}");
         assert!(out.contains("expired on 2026-11-20"), "{out}");
-        assert!(!out.contains("--- "), "{out}");
+        assert!(!out.contains("\n--- "), "{out}");
     }
 }
