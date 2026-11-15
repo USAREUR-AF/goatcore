@@ -54,6 +54,11 @@ A sender inside its envelope therefore loses data. Two puts a millisecond apart 
 - Overload is shed where the sender can see and count it.
 - The agreement format is unchanged, so no partner has to re-sign a package.
 
+**Measured.** The federation test environment's `lane-pacing-burst` scenario ran the pacing on a running lane at 100 Hz (run `c5658cf1e57c-20261115T135415-1778226`, shown):
+- 50 samples released 1 ms apart all crossed the receiving edge, in put order, and all were stored. The edge dropped none, and the sender counted no `queue_full`.
+- Arrivals at the edge were 12.2 ms apart at the median. The smallest gap was 10.0 ms, exactly 1/`hz`, right after a 14.3 ms gap: one sample was about 2 ms late on the way, and the next was on time. The tenth added for jitter was used up once, and nothing was dropped.
+- With the sender's queue lowered to 8, the same burst sent 16 across, spaced, with no edge drop. The other 34 were counted as `queue_full`, with one warning. All 50 are accounted for.
+
 **Negative.**
 - A burst now waits. Its last message is delayed by up to N/`hz` seconds, so a lane's latency under bursts depends on its agreed rate.
 - The bound on the queue is a new number to choose and measure.
@@ -69,4 +74,5 @@ This narrows an ambiguity in a cross-boundary flow control and makes data loss v
 
 - zenoh's downsampling gains per-key state or a burst allowance, or a newer router version changes its per-rule behaviour.
 - A lane needs bursts above its agreed rate without delay: a measured case, not a supposed one.
+- A paced lane's receiving edge drops a message, or two crossings arrive closer than 1/`hz`. The tenth added for jitter is then too small. The first measured run's smallest gap was exactly 1/`hz`.
 - A partner's implementation reads `accept_hz` as per key and the two cannot agree from this text.
