@@ -150,9 +150,11 @@ pg_stat_replication:
 
 spock_config:
   # Reads the LIVE configured value from pg_settings (NOT a hardcoded
-  # constant). The postgres-streaming-replication role sets
-  # max_slot_wal_keep_size = 6GB via ALTER SYSTEM; a hardcoded constant
-  # makes the SpockSlotWALNearLimit alert fire at the wrong threshold.
+  # constant). The Spock image sets the cap and, on a pair's primary,
+  # the postgres-streaming-replication role raises it via ALTER SYSTEM
+  # (ops/postgres/spock/README.md, The slot WAL cap), so sites differ and
+  # a hardcoded constant makes SpockSlotWALNearLimit fire at the wrong
+  # threshold.
   #
   # `setting` is the postgres-internal stored value; `unit` tells us
   # the unit it's measured in. For max_slot_wal_keep_size, postgres
@@ -214,7 +216,7 @@ pg_stat_wal_extended:
         description: "Total full-page-image WAL records (FPI). Spike → checkpoint storm or massive UPDATE."
     - wal_bytes:
         usage: "COUNTER"
-        description: "Total WAL bytes generated. Rate-of-change × 6GB / max_slot_wal_keep_size = how long an offline subscriber's slot can hold before invalidation."
+        description: "Total WAL bytes generated. max_slot_wal_keep_size_bytes / rate-of-change = about how long an offline subscriber's slot can hold before invalidation."
     - wal_buffers_full:
         usage: "COUNTER"
         description: "Number of times WAL buffers were full and forced to disk (wal_buffers tuning indicator)"

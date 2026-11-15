@@ -122,6 +122,11 @@ postgres_wal_keep_size: "2GB"
 #
 # Tune up to 12-24 GB only if re-snapshot becomes expensive (DB > 10 GB)
 # or if subscriber outages frequently exceed the 18-hour threshold.
+#
+# This role runs only on a site with a streaming pair (intra_site_pair:
+# true). Every other site keeps the Spock image's own cap, set in
+# ops/postgres/spock/conf/postgresql.conf. The rule and both values:
+# ops/postgres/spock/README.md, "The slot WAL cap".
 postgres_max_slot_wal_keep_size: "6GB"
 
 # max_connections — cluster-wide, MUST match primary on every standby.

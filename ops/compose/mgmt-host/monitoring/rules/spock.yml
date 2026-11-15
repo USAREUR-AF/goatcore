@@ -51,10 +51,10 @@ groups:
           description: "Slot wal_status is 'lost'. The subscriber cannot resume from this slot. Run the slot-rebuild runbook: docker compose stop postgres on the disconnected node; rm -rf pgdata; pg_basebackup from a healthy peer; spock.sub_create with the new base; monitor catchup."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
-      # WAL retention approaching max_slot_wal_keep_size. The cap is
-      # configured per-cluster via the postgres-streaming-replication
-      # role's `postgres_max_slot_wal_keep_size` var (default 6GB per
-      # F-093 closure 2026-05-09; was hardcoded to 1GB pre-F-093). The
+      # WAL retention approaching max_slot_wal_keep_size. The cap differs
+      # by site: the Spock image sets one value, and on a pair's primary
+      # the postgres-streaming-replication role raises it (F-093;
+      # ops/postgres/spock/README.md, The slot WAL cap). The
       # `spock_max_slot_wal_keep_size_bytes` gauge is now LIVE-read
       # from pg_settings via the postgres-exporter custom query, so
       # this expression always uses the true configured threshold —
@@ -111,8 +111,9 @@ groups:
       # after the WAL reaches them; a saturated provider→network path
       # with a fast subscriber would show subscriber-lag near zero
       # while pending_bytes climbs. 100 MB threshold matches §5.3 risk
-      # framing — well below max_slot_wal_keep_size (1 GiB) but high
-      # enough above noise floor to indicate sustained backlog.
+      # framing — well below max_slot_wal_keep_size on any site (see
+      # ops/postgres/spock/README.md, The slot WAL cap) but high enough above
+      # noise floor to indicate sustained backlog.
       - alert: SpockSlotWALSenderLag
         expr: pg_stat_replication_pending_bytes > 100 * 1024 * 1024
         for: 5m

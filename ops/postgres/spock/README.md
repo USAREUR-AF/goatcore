@@ -62,9 +62,40 @@ The bits of `postgresql.conf` that matter for replication correctness
 | `wal_level` | `logical` | Required for any logical replication |
 | `max_replication_slots` | `10` | One slot per remote subscriber per DB |
 | `max_wal_senders` | `10` | Same — one per outbound replication stream |
-| `max_slot_wal_keep_size` | `1GB` | Safety valve — invalidates a slow slot before disk fills. **Critical for island-mode scenarios.** |
+| `max_slot_wal_keep_size` | `1GB` here; raised on a pair's primary (below) | Safety valve — invalidates a slow slot before disk fills. **Critical for island-mode scenarios.** See "The slot WAL cap" |
 | `track_commit_timestamp` | `on` | Required for LWW conflict resolution |
 | `shared_preload_libraries` | `spock` | Loads the Spock extension at startup |
+
+## The slot WAL cap
+
+`max_slot_wal_keep_size` is the most WAL a replication slot may hold before
+Postgres invalidates it, and the subscriber behind it must be seeded again
+(`docs/operations/post-partition-convergence-runbook.md` §A). Two places set
+it, and both values are meant:
+
+| Where | Value | Which Postgres |
+|---|---|---|
+| This image's `conf/postgresql.conf`, which every site's `postgres-a` starts with (`-c config_file=`) | 1 GB | every site |
+| The `postgres-streaming-replication` role, variable `postgres_max_slot_wal_keep_size`, written with `ALTER SYSTEM` | 6 GB | the primary of a site with a streaming pair (`intra_site_pair: true`), and its standby, whose data directory is a copy of the primary's |
+
+Postgres reads `postgresql.auto.conf`, where `ALTER SYSTEM` writes, after the
+configuration file, so on a pair's primary the role's value is the one in
+effect. Nothing passes the setting on the command line. Every other site runs
+with the image's value.
+
+The two differ because the hosts do. A site with a streaming pair runs its
+database on the storage tier sized for it, and holds a slot's WAL for longer
+outages: 6 GB is about 18 hours at the write rate measured during F-093
+(about 330 megabytes an hour), and days at a normal rate. A site with no pair may be
+one small machine, such as a goatlite or a phone node, and the image keeps its
+worst case to 1 GB for each of its at most 10 slots (`max_replication_slots`).
+
+How long a subscriber may be away depends on the site that holds its slot:
+the cap there divided by that site's WAL rate. Read the live value on that
+site (`SHOW max_slot_wal_keep_size;`, or the exporter's
+`spock_config_max_slot_wal_keep_size_bytes`). Never assume either number.
+`ops/ci/check-slot-wal-cap-agrees.py` holds this section to the two values
+the image and the role set.
 
 ## Operational notes
 
