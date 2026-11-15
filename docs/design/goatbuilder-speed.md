@@ -260,7 +260,9 @@ goatbuilder standup <env> --site <site> --parallel --yes
 cat ~/.goat/state/standup-<site>-timings.tsv
 ```
 
-Record the total and the per-phase rows as a measurement. The slowest three
+Record the total and the per-phase rows as a measurement; the run's last
+summary line gives the total since phase 1, phase 11 and the stops, read from
+that file. The slowest three
 phases are the next three levers. A joining node's run is timed the same way,
 in `~/.goat/state/join-node-<site>-<node>-timings.tsv`, and a teardown in
 `~/.goat/state/teardown-<site>-timings.tsv`.

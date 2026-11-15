@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed.** The per-step timing file and its summary line are built for `standup`, and a per-component time line for `teardown` (below); everything else on this page is designed and not built. No run on hardware has been measured against it |
+| Status | **Designed.** The per-step timing file and its summary line are built for `standup`, `join-node` and `teardown`, each row with its cause; standup records phase 11 as a row of its own and its summary reads the founder run's numbers from the file (below). Everything else on this page is designed and not built. No run on hardware has been measured against it |
 | Proves | Gate rows C1 (a founder site in 60 minutes or less, a node in 15, a burn-down in 15) and C2 (tutorials 2 and 3 on real machines) of the goatbuilder 1.0 gate |
 | Design | [goatbuilder-speed.md](goatbuilder-speed.md) (the targets and the modelled budget) · [goatnet-tutorials.md](goatnet-tutorials.md) (the tutorials and their checkpoints) · [goatnet-standup.md](../operations/goatnet-standup.md) (the prerequisites and the phases) |
 
@@ -63,16 +63,20 @@ to admin, and the creation of the service user and token that phase 12 reads.
 Its wall time is recorded on its own, and every founder measurement reports
 three numbers: the total, phase 11, and the total without phase 11.
 
-Today the run cannot record phase 11 by itself. At phase 11 `standup` prints
+At phase 11 `standup` prints
 `OPERATOR STEP — run the above, then re-run with --from 12` and exits. The
-person's work happens between two processes, and the timing file has no row
-for it. Its wall time can be read from the file's timestamps: the last row
-written before the stop, and the first row after the resume less that row's
-own duration.
+person's work happens between two processes.
 
-**Designed:** the run writes a row for phase 11 when it stops, with outcome
-`operator`, and the resumed run closes that row with its end time. Phase 11's
-wall time is then read from the record, not derived.
+**Built**, in `standup` (`record_stop` and `close_operator_stop` in
+`crates/goatbuilder/src/standup.rs`): the run writes a row for phase 11 when
+it stops, with `-` for its seconds and exit code and cause `operator`. The
+run resumed with `--from 12` (or any later phase) first closes that row: it
+writes a second phase-11 row whose seconds are the wall time from the stop to
+the resume, exit code 0, cause `operator`, and prints
+`phase 11 (the operator step) took <s>s`. Phase 11's wall time is read from
+the record, not derived. It includes any time between the person finishing
+and the resume being started. `ops/scripts/goat-standup.sh` writes no
+phase-11 row.
 
 ## What the binary prints and keeps
 
@@ -88,14 +92,28 @@ same file):
 | What | Form |
 |---|---|
 | A line per foreground step, and per phase-12 step run in `--parallel` waves | `phase <n> took <s>s (exit <rc>)`; a wave step prints `phase 12 <step id> took <s>s (exit <rc>)` |
-| A row per such step in `<state_dir>/standup-<site>-timings.tsv` | time written, phase, step label, seconds, exit code |
-| A summary at the end of the process | `total <s>s (<m> min) over <k> phases; slowest: ...`, the five slowest steps |
+| A row per such step in `<state_dir>/standup-<site>-timings.tsv` | time written, phase, step label, seconds, exit code, cause |
+| A summary at the end of the process | `total <s>s (<m> min) over <k> phases; slowest: ...`, the five slowest steps of this process, then the founder run's numbers read from the file: `since phase 1: <s>s (<m> min), phase 11 <s>s, without phase 11 <s>s (<m> min); <k> stops (...)` |
 | A failure | `!! Phase <n> ("<label>") FAILED — exit <rc>` and the resume command |
 
 The rows are per step, not per phase: a phase of several steps writes several
-rows. A stop names no cause code; the file keeps the exit code only. The
-summary covers one process, so a run resumed after phase 11 or after a defect
-prints two summaries and neither is the run's total.
+rows. The cause is `ok` for a step that passed. For a failed step it is the
+catalog code the step's logged output carries or matches, the same match as
+the `interpreted` row (gate row F5, `explain_phase::cause`), or `uncatalogued`
+when no code covers it. `operator` marks phase 11's rows, and `stopped` an open
+row written when the run stops on purpose after a phase (the pubsub bot step
+when its token cannot be loaded). `ops/scripts/goat-standup.sh` writes the
+same six columns; it does not match output against the catalog, so its failed
+rows say `failed`.
+
+The founder numbers (`run_evidence`) cover the rows from the latest phase-1
+row to the end of the process that prints them: the total since phase 1
+began (that row's time less its seconds), across every resume; phase 11's
+closed row; the total without it; and the stops. A stop is an open row (the
+operator step, or a stop on purpose) or a failed step; each failed step is a
+defect stop, named by its cause. A run with no phase-1 row in the file prints
+only the process summary. The three slowest phases across resumes are not
+built: the slowest list covers one process.
 
 Two kinds of work are not timed on their own. The image pull and the
 observability host's legs run in the background (`Event::PullStart` and
@@ -111,9 +129,11 @@ step to `<state_dir>/join-node-<site>-<node>-timings.tsv`. `teardown` prints
 `teardown <component> took <s>s (exit <rc>)` for each component it stops and
 writes a row per stop to `<state_dir>/teardown-<site>-timings.tsv`, with the
 phase and label of the step the component came from. Both files have
-standup's columns, and both runs end with standup's summary line. A dry run
-writes no row; a failed step is the last row, with its exit code. No script
-avenue writes these two files.
+standup's columns, the cause included (join-node matches a failed step's
+logged output as standup does; teardown keeps no log of a stop, so a failed
+stop's cause is `uncatalogued`), and both runs end with standup's process
+summary line. A dry run writes no row; a failed step is the last row, with
+its exit code. No script avenue writes these two files.
 
 **Designed**, for `standup`, `join-node` and `teardown`, built with gate group F
 (the tool shows its work):
@@ -124,7 +144,8 @@ avenue writes these two files.
    `phase 7/14 public TLS and relay  10:21:04Z → 10:25:40Z  4m36s  ok`.
 2. **At the end of the run**, one summary line: the total since phase 1 began,
    across every resume; phase 11's wall time; the number of stops; and the
-   three slowest phases with their durations.
+   three slowest phases with their durations. Built for `standup` except the
+   slowest phases across resumes (above).
 3. **The run record** keeps the same rows per phase and the summary row, in
    the timing file both drivers write, so a run driven by either reads back
    the same way. The step rows stay, and the image pull, each observability
@@ -132,11 +153,13 @@ avenue writes these two files.
 4. **Every stop records its cause code**: the `GB-nnn` code from
    `ops/errors/catalog.yaml` for a refusal or a known failure, `operator` for
    phase 11, and `uncatalogued` for an exit no code covers. Gate row C5
-   treats each `uncatalogued` stop as a missing catalog entry.
+   treats each `uncatalogued` stop as a missing catalog entry. Built for a
+   failed step of `standup`, `join-node` and `teardown` (above); a refusal
+   before the first step writes no row.
 5. **The measurement counts the stops.** A stop is any exit before the last
    phase: a failure, the operator step, or a deliberate stop after a phase.
    A founder run with phase 11 as its only stop is a run with no defect
-   stops.
+   stops. Built for `standup`'s summary (above).
 
 ## The cloud tree
 

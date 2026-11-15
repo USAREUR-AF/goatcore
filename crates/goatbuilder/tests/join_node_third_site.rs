@@ -698,7 +698,7 @@ fn a_joiner_core_node_runs_its_mesh_dns_replica() {
 }
 
 /// The node's timings file: one row per step a run executed, with the columns
-/// standup's file has (time written, phase, label, seconds, exit code).
+/// standup's file has (time written, phase, label, seconds, exit code, cause).
 fn timing_rows(s: &Site) -> Option<Vec<Vec<String>>> {
     let f = s
         .root
@@ -726,10 +726,10 @@ fn a_join_node_run_records_each_step_it_ran_and_a_dry_run_records_none() {
     let ran = phases(&v);
     assert_eq!(rows.len(), ran.len(), "one row per step run: {rows:?}");
     for (row, n) in rows.iter().zip(&ran) {
-        assert_eq!(row.len(), 5, "{row:?}");
+        assert_eq!(row.len(), 6, "{row:?}");
         assert_eq!(row[1], n.to_string(), "{row:?}");
         assert!(!row[2].is_empty() && row[3].parse::<u64>().is_ok(), "{row:?}");
-        assert_eq!(row[4], "0", "{row:?}");
+        assert_eq!((row[4].as_str(), row[5].as_str()), ("0", "ok"), "{row:?}");
     }
     let checks = v["checks"].as_array().unwrap();
     assert!(

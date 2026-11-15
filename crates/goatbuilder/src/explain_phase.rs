@@ -370,6 +370,18 @@ pub fn runner_log(phase: &str) -> Option<String> {
         .and_then(|c| c.log)
 }
 
+/// The cause a timings row records for `verb`'s failed step `key`: the catalog
+/// code its output (read from `log`) carries or matches, else `uncatalogued`,
+/// including when the phase catalog has no such step.
+pub fn cause(verb: &str, key: &str, log: Option<&str>) -> String {
+    let output = log
+        .and_then(|l| std::fs::read_to_string(l).ok())
+        .unwrap_or_default();
+    failed_phase(verb, key, &output, log)
+        .and_then(|f| f.code)
+        .unwrap_or_else(|| "uncatalogued".to_string())
+}
+
 /// F5 (docs/design/goatbuilder-legibility.md, step 7): the `interpreted` row
 /// for `verb`'s failed step `key`, its output read from `log` and matched
 /// against the error catalog ([`failed_phase`]). None when the phase catalog

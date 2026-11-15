@@ -712,19 +712,101 @@ pub(crate) fn plan_commands(repo: &Path, s: &Site, o: &Options) -> Vec<String> {
 }
 
 /// One row per executed step in `<state_dir>/<file>`, with the columns
-/// goat-standup.sh writes (ts, phase, label, seconds, rc), so every run reads
-/// back the same way: standup writes `standup-<site>-timings.tsv`, join-node
-/// `join-node-<site>-<node>-timings.tsv`, teardown `teardown-<site>-timings.tsv`.
-pub(crate) fn record_timing(state_dir: &str, file: &str, n: u32, label: &str, secs: u64, rc: i32) {
+/// goat-standup.sh writes (ts, phase, label, seconds, rc, cause), so every run
+/// reads back the same way: standup writes `standup-<site>-timings.tsv`,
+/// join-node `join-node-<site>-<node>-timings.tsv`, teardown
+/// `teardown-<site>-timings.tsv`. The cause is `ok` for a step that passed,
+/// the catalog code a failed step's output matched, `uncatalogued` when no code
+/// covers it ([`crate::explain_phase::cause`]), and `operator` for phase 11.
+pub(crate) fn record_timing(state_dir: &str, file: &str, n: u32, label: &str, secs: u64, rc: i32, cause: &str) {
+    append_row(state_dir, file, &format!("{}\t{n}\t{label}\t{secs}\t{rc}\t{cause}", crate::push::stamp_pub()));
+}
+
+/// A stop with no duration yet: the run left at step `n` (`operator` at
+/// phase 11, `stopped` after a phase that stops the run on purpose). The
+/// resumed run closes an `operator` row ([`close_operator_stop`]).
+pub(crate) fn record_stop(state_dir: &str, file: &str, n: u32, label: &str, cause: &str) {
+    append_row(state_dir, file, &format!("{}\t{n}\t{label}\t-\t-\t{cause}", crate::push::stamp_pub()));
+}
+
+fn append_row(state_dir: &str, file: &str, line: &str) {
     use std::io::Write;
     let dir = Path::new(state_dir);
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
-    let path = dir.join(file);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{}\t{n}\t{label}\t{secs}\t{rc}", crate::push::stamp_pub());
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(file)) {
+        let _ = writeln!(f, "{line}");
     }
+}
+
+fn row_time(ts: &str) -> Option<chrono::NaiveDateTime> {
+    chrono::NaiveDateTime::parse_from_str(ts, "%Y%m%dT%H%M%SZ").ok()
+}
+
+/// A run resumed `--from <from>` after the operator step: when the file's last
+/// row is an open `operator` row for an earlier phase, write its closing row,
+/// with the wall time from the stop to `now`. The seconds written, or None
+/// when there was no open row to close.
+pub(crate) fn close_operator_stop(state_dir: &str, file: &str, from: u32, now: chrono::NaiveDateTime) -> Option<u64> {
+    let text = std::fs::read_to_string(Path::new(state_dir).join(file)).ok()?;
+    let last: Vec<&str> = text.lines().last()?.split('\t').collect();
+    let [ts, n, label, "-", "-", "operator"] = last[..] else { return None };
+    if n.parse::<u32>().ok()? >= from {
+        return None;
+    }
+    let secs = (now - row_time(ts)?).num_seconds().max(0) as u64;
+    append_row(state_dir, file, &format!("{}\t{n}\t{label}\t{secs}\t0\toperator", now.format("%Y%m%dT%H%M%SZ")));
+    Some(secs)
+}
+
+/// The founder run's numbers (docs/design/goatbuilder-hardware-measurement.md,
+/// "What the binary prints and keeps"), read from a standup timings file: from
+/// the latest phase-1 row to `now`, the wall time across every resume; phase
+/// 11's closed row; the total without it; and the stops. A stop is an open row
+/// (the operator step, or a deliberate stop) or a failed step; a failed step is
+/// a defect stop, named by its cause. None when the file has no phase-1 row.
+pub(crate) fn run_evidence(file: &str, now: chrono::NaiveDateTime) -> Option<String> {
+    let rows: Vec<Vec<&str>> = file.lines().map(|l| l.split('\t').collect()).filter(|r: &Vec<&str>| r.len() >= 5).collect();
+    let first = rows.iter().rposition(|r| r[1] == "1")?;
+    let rows = &rows[first..];
+    let start = row_time(rows[0][0])? - chrono::Duration::seconds(rows[0][3].parse().unwrap_or(0));
+    let total = (now - start).num_seconds().max(0) as u64;
+    let cause = |r: &Vec<&str>| r.get(5).copied().unwrap_or("").to_string();
+    let p11: Option<u64> = rows.iter().rev().find(|r| r[1] == "11" && r[3] != "-").and_then(|r| r[3].parse().ok());
+    let (mut operator, mut deliberate, mut defects) = (0, 0, Vec::new());
+    for r in rows {
+        match (r[3], r[4]) {
+            ("-", _) if cause(r) == "operator" => operator += 1,
+            ("-", _) => deliberate += 1,
+            (_, "0") => {}
+            _ => defects.push(match cause(r).as_str() {
+                "" => format!("exit {}", r[4]),
+                c => c.to_string(),
+            }),
+        }
+    }
+    let p11_text = match p11 {
+        Some(p) => format!("phase 11 {p}s, without phase 11 {}s ({} min)", total.saturating_sub(p), total.saturating_sub(p) / 60),
+        None => "phase 11 not recorded".to_string(),
+    };
+    let mut parts = Vec::new();
+    if operator > 0 {
+        parts.push((operator, "the operator step".to_string()));
+    }
+    if deliberate > 0 {
+        parts.push((deliberate, format!("{} on purpose", if deliberate == 1 { "a stop" } else { "stops" })));
+    }
+    if !defects.is_empty() {
+        parts.push((defects.len(), format!("{}: {}", if defects.len() == 1 { "a defect" } else { "defects" }, defects.join(", "))));
+    }
+    let n: usize = parts.iter().map(|p| p.0).sum();
+    let stops = match n {
+        0 => "no stops".to_string(),
+        1 => format!("1 stop ({})", parts[0].1),
+        _ => format!("{n} stops ({})", parts.iter().map(|(k, w)| format!("{k} {w}")).collect::<Vec<_>>().join(", ")),
+    };
+    Some(format!("since phase 1: {total}s ({} min), {p11_text}; {stops}", total / 60))
 }
 
 /// The run's timing line: total wall-clock and the slowest phases first, so the
@@ -828,7 +910,8 @@ fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks
             let rc = status.code().unwrap_or(1);
             checks.push(row("time", format!("phase 12 {} took {secs}s (exit {rc})", q[i].id)));
             timings.push((12, q[i].label.clone(), secs));
-            record_timing(&s.state_dir, &format!("standup-{}-timings.tsv", s.site), 12, &q[i].label, secs, rc);
+            let cause = if status.success() { "ok".to_string() } else { crate::explain_phase::cause("standup", "12", Some(&log)) };
+            record_timing(&s.state_dir, &format!("standup-{}-timings.tsv", s.site), 12, &q[i].label, secs, rc, &cause);
             if !status.success() {
                 let tail: Vec<String> = std::fs::read_to_string(&log).unwrap_or_default().lines().rev().take(15).map(String::from).collect::<Vec<_>>().into_iter().rev().collect();
                 for l in tail {
@@ -1072,6 +1155,16 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     let dag = load_dag(repo);
     let mut queue: Vec<Queued> = Vec::new();
     let run_started = std::time::Instant::now();
+    let timing_file = format!("standup-{}-timings.tsv", s.site);
+    // A run resumed after the operator step closes that step's open row first,
+    // with the wall time the person took.
+    if !o.dry_run {
+        let now = chrono::Utc::now().naive_utc();
+        if let Some(secs) = close_operator_stop(&s.state_dir, &timing_file, o.from, now) {
+            checks.push(row("time", format!("phase 11 (the operator step) took {secs}s")));
+            timings.push((11, "the operator step".into(), secs));
+        }
+    }
     let mut exit = EXIT_OK;
     'run: for ev in &events {
         let leaving_12 = !matches!(ev, Event::Phase(ph) if ph.n == 12);
@@ -1182,6 +1275,9 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 if ph.kind == "MANUAL" {
                     checks.push(row("note", format!("^ OPERATOR STEP — run the above, then re-run with --from {}", ph.n + 1)));
+                    // The person's work happens between this process and the
+                    // next: an open row, closed by the run resumed after it.
+                    record_stop(&s.state_dir, &timing_file, ph.n, &ph.label, "operator");
                     break 'run;
                 }
                 let t0 = std::time::Instant::now();
@@ -1191,20 +1287,18 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 let rc_now = status.code().unwrap_or(1);
                 checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
                 timings.push((ph.n, ph.label.clone(), secs));
-                record_timing(&s.state_dir, &format!("standup-{}-timings.tsv", s.site), ph.n, &ph.label, secs, rc_now);
+                // F5: the failed phase's output, matched against the error catalog
+                // (explain_phase::failed_phase), as federate does; the runner kept it
+                // in a log. Its code is the row's cause.
+                let phase_id = ph.n.to_string();
+                let log = if status.success() { None } else { crate::explain_phase::runner_log(&phase_id) };
+                let cause = if status.success() { "ok".to_string() } else { crate::explain_phase::cause("standup", &phase_id, log.as_deref()) };
+                record_timing(&s.state_dir, &timing_file, ph.n, &ph.label, secs, rc_now, &cause);
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
                     checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the site is left partway through phase {}. Read the error above; docs/operations/goatnet-standup.md \"The run\" table has this phase's \"Worked when\" and the Troubleshooting table lists the common failures by symptom + fix.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}{prof}", ph.n)) });
-                    // F5: the failed phase's output, matched against the error catalog
-                    // (explain_phase::failed_phase), as federate does; the runner kept it
-                    // in a log. No row when standup's phase catalog has no such phase.
-                    let phase_id = ph.n.to_string();
-                    let log = crate::runner::commands()
-                        .into_iter()
-                        .rev()
-                        .find(|c| c.phase.as_deref() == Some(phase_id.as_str()) && c.log.is_some())
-                        .and_then(|c| c.log);
+                    // No row when standup's phase catalog has no such phase.
                     checks.extend(interpreted(&phase_id, log.as_deref()));
                     exit = EXIT_REFUSED;
                     break 'run;
@@ -1216,6 +1310,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 if ph.stop_after && rs.pubsub_token.is_none() {
                     checks.push(row("note", format!("stopped after this phase on purpose: reload the environment it wrote, then resume: {resume} --from {}", ph.n)));
+                    record_stop(&s.state_dir, &timing_file, ph.n, &ph.label, "stopped");
                     break 'run;
                 }
             }
@@ -1235,7 +1330,13 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
         checks.push(row("footer", format!("obs leg complete for {}.", s.site)));
     }
     if !o.dry_run && !timings.is_empty() {
-        checks.push(row("timings", timing_summary(&timings, run_started.elapsed().as_secs())));
+        let mut line = timing_summary(&timings, run_started.elapsed().as_secs());
+        // The founder run's numbers, across every resume, from the record.
+        let record = std::fs::read_to_string(Path::new(&s.state_dir).join(&timing_file)).unwrap_or_default();
+        if let Some(ev) = run_evidence(&record, chrono::Utc::now().naive_utc()) {
+            line.push_str(&format!("; {ev}"));
+        }
+        checks.push(row("timings", line));
     }
     if let Some((mut child, log)) = pulling {
         let _ = child.try_wait();
@@ -1664,7 +1765,8 @@ fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, st
         let secs = t0.elapsed().as_secs();
         checks.push(row("time", format!("teardown {component} took {secs}s (exit {rc})")));
         timings.push((*n, label.clone(), secs));
-        record_timing(state_dir, &file, *n, label, secs, rc);
+        let cause = if status.success() { "ok".to_string() } else { crate::explain_phase::cause("teardown", &n.to_string(), None) };
+        record_timing(state_dir, &file, *n, label, secs, rc, &cause);
         if !status.success() {
             checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc}; the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
             ok = false;

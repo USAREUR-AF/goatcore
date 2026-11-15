@@ -494,7 +494,10 @@ step() {   # step <n> <kind> <label> <command...>
       else "$REPO/ops/scripts/standup-phase-run" --check "$*" && eval "$*"; rc=$?; fi
       local dt=$(( $(date +%s) - t0 ))
       printf '    phase %s took %ss (exit %s)\n' "$n" "$dt" "$rc"
-      printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$n" "$label" "$dt" "$rc" >> "$STATE_DIR/standup-$SITE-timings.tsv" 2>/dev/null || true
+      # The sixth column is the row's cause, as goatbuilder standup writes it;
+      # this script does not match a failed phase's output against the error
+      # catalog, so a failed row's cause is "failed", never a code.
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$n" "$label" "$dt" "$rc" "$( [ "$rc" -eq 0 ] && echo ok || echo failed )" >> "$STATE_DIR/standup-$SITE-timings.tsv" 2>/dev/null || true
       if [ "$rc" -ne 0 ]; then
         cat >&2 <<RECOVER
 
@@ -560,7 +563,7 @@ dag_flush() {
         [ -f "$rcf" ] && r="$(cat "$rcf")"
         local rc="${r%% *}" dt="${r#* }"
         printf '    phase 12 %s took %ss (exit %s)\n' "${Q_ID[$i]}" "$dt" "$rc"
-        printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "12" "${Q_LABEL[$i]}" "$dt" "$rc" >> "$STATE_DIR/standup-$SITE-timings.tsv" 2>/dev/null || true
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "12" "${Q_LABEL[$i]}" "$dt" "$rc" "$( [ "$rc" = 0 ] && echo ok || echo failed )" >> "$STATE_DIR/standup-$SITE-timings.tsv" 2>/dev/null || true
         [ "$rc" = 0 ] || failed="$failed ${Q_ID[$i]}"
       fi
       i=$((i+1))

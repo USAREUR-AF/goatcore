@@ -837,7 +837,8 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         let (secs, rc_now) = (t0.elapsed().as_secs(), status.code().unwrap_or(1));
         checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
         timings.push((ph.n, ph.label.clone(), secs));
-        crate::standup::record_timing(&state_dir, &timing_file, ph.n, &ph.label, secs, rc_now);
+        let cause = if status.success() { "ok".to_string() } else { crate::explain_phase::cause("join-node", &ph.n.to_string(), crate::explain_phase::runner_log(&ph.n.to_string()).as_deref()) };
+        crate::standup::record_timing(&state_dir, &timing_file, ph.n, &ph.label, secs, rc_now, &cause);
         // Each checkout file the phase changed, in the summary and the run
         // record, so a person sees the checkout changed and commits it.
         for (f, was) in ph.writes.iter().zip(before) {
