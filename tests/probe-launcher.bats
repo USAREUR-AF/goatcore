@@ -205,3 +205,55 @@ later() { echo $(( $(date +%s) + ${1:-30} )); }
   run grep -nE 'openssl|-CAkey|BEGIN (EC |RSA )?PRIVATE KEY' "$PL" "$REPO_ROOT/ops/federation/standup/probe.json5"
   [ "$status" -eq 1 ]
 }
+
+@test "probe-launcher: stop deletes the key on the edge host and says the deletion was verified" {
+  run "$PL" start agreed run-15 "$(later)"
+  [ "$status" -eq 0 ]
+  [ -e "$FED_PL_STATE/goat-probe-agreed-run-15/key.pem" ]
+  run "$PL" stop goat-probe-agreed-run-15
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"KEY_DELETED=verified"* ]]
+  [ ! -e "$FED_PL_STATE/goat-probe-agreed-run-15/key.pem" ]
+}
+
+@test "probe-launcher: a key that is still there after stop is reported, and stop fails" {
+  run "$PL" start agreed run-16 "$(later)"
+  [ "$status" -eq 0 ]
+  mkdir -p "$STUB/norm"
+  printf '#!/bin/sh\nexit 0\n' > "$STUB/norm/rm"; chmod +x "$STUB/norm/rm"
+  PATH="$STUB/norm:$PATH" run "$PL" stop goat-probe-agreed-run-16
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"KEY_DELETED=failed"* ]]
+  [[ "$output" == *"X-PROBE-003"* ]]
+  [ -e "$FED_PL_STATE/goat-probe-agreed-run-16/key.pem" ]
+}
+
+@test "probe-launcher: a start interrupted after the key is on the host removes it, on any exit" {
+  # curl never answers in time: the start waits, and is then terminated mid-run.
+  printf '#!/usr/bin/env bash\nsleep 30\n' > "$STUB/bin/curl"
+  FED_PL_WAIT_STEP=1 "$PL" start agreed run-17 "$(later)" > "$STUB/start.out" 2> "$STUB/start.err" &
+  pid=$!
+  for _ in $(seq 1 50); do [ -e "$FED_PL_STATE/goat-probe-agreed-run-17/key.pem" ] && break; sleep 0.1; done
+  [ -e "$FED_PL_STATE/goat-probe-agreed-run-17/key.pem" ]
+  sleep 0.5
+  kill -TERM "$pid"
+  rc=0; wait "$pid" || rc=$?
+  [ "$rc" -eq 143 ]
+  [ ! -e "$FED_PL_STATE/goat-probe-agreed-run-17" ]
+  [ ! -e "$STUB/docker/goat-probe-agreed-run-17" ]
+  grep -q 'KEY_DELETED=verified' "$STUB/start.out"
+  grep -q 'interrupted' "$STUB/start.err"
+}
+
+@test "probe-launcher: a start that fails after the key is on the host removes it" {
+  cat > "$STUB/bin/docker" <<'STUBEOF'
+#!/usr/bin/env bash
+# docker run fails; every other call succeeds.
+printf '%s\n' "$*" >> "$STUB/docker.log"
+[ "$1" != run ] || exit 125
+STUBEOF
+  run "$PL" start agreed run-18 "$(later)"
+  [ "$status" -ne 0 ]
+  [ ! -e "$FED_PL_STATE/goat-probe-agreed-run-18" ]
+  [[ "$output" == *"KEY_DELETED=verified"* ]]
+}
