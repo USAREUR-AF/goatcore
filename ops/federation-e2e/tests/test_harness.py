@@ -595,6 +595,26 @@ def refused_marks_checks():
           "refused marks: rot_one still skips the second side's rotate once the first side was refused")
 
 
+def refused_changed_nothing_checks():
+    """A refused rotation's proof that it changed nothing counts in the verdict: the catalog
+    has refused-changed-nothing-<key>-<side> for every key, on the unit's own step, and a
+    rotation that runs marks it NOT APPLICABLE, so a key that rotates is never BLOCKED by it."""
+    cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
+    sc = [s for s in cat["scenarios"] if s["id"] == "key-rotation"]
+    checks = {c["id"]: c.get("step") for c in (sc[0]["checks"] if sc else [])}
+    for k in ("leaves", "carrier", "transport", "signing"):
+        for o, side in (("first", "{A}"), ("second", "{B}")):
+            cid = f"refused-changed-nothing-{k}-{o}"
+            check(checks.get(cid) == f"rot-refused-{k}-{side}-changed-nothing",
+                  f"refused changed nothing: key-rotation has no check {cid} on step rot-refused-{k}-{side}-changed-nothing (got {checks.get(cid)!r})")
+    src = open(os.path.join(ROOT, "units", "rotation.sh"), encoding="utf-8").read()
+    body = src.split("rot_one() {", 1)[1].split("\n}\n", 1)[0] if "rot_one() {" in src else ""
+    after = body.split("local f0=", 1)[-1] if "local f0=" in body else ""
+    ran = body.split("local f0=", 1)[0].rsplit("return 0\n  fi", 1)[-1] + after.split('rec "rot-rotate-$k-$s-ran"', 1)[0]
+    check('mark "key-rotation.refused-changed-nothing-$k-$ord" "NOT APPLICABLE"' in ran,
+          "refused changed nothing: a rotation that runs does not mark its refused-changed-nothing check NOT APPLICABLE before it records rotate-<key>-ran")
+
+
 catalog_checks()
 backout_edge_check()
 srctree_checks()
@@ -606,6 +626,7 @@ handoff_checks()
 samples_checks()
 drive_rotate_checks()
 refused_marks_checks()
+refused_changed_nothing_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")
