@@ -14,7 +14,9 @@ use super::package::{decode_verifying_key, parse_package, warnings};
 use std::path::{Path, PathBuf};
 
 fn root(tree: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation").join(tree)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../ops/federation")
+        .join(tree)
 }
 
 fn pinned_now() -> chrono::NaiveDate {
@@ -25,7 +27,9 @@ fn pinned_now() -> chrono::NaiveDate {
 fn testkeys() -> KeyRing {
     let mut ring = KeyRing::default();
     for sid in ["xaa", "xab"] {
-        let b64 = std::fs::read_to_string(root("vectors").join(format!("testkeys/{sid}.public.b64"))).unwrap();
+        let b64 =
+            std::fs::read_to_string(root("vectors").join(format!("testkeys/{sid}.public.b64")))
+                .unwrap();
         ring.insert(sid, decode_verifying_key(b64.trim()).unwrap());
     }
     ring
@@ -36,10 +40,17 @@ fn bytes(p: &Path) -> Vec<u8> {
 }
 
 fn pair(dir: &Path) -> (Vec<u8>, Vec<u8>) {
-    (bytes(&dir.join("package-xaa.canonical.json")), bytes(&dir.join("package-xab.canonical.json")))
+    (
+        bytes(&dir.join("package-xaa.canonical.json")),
+        bytes(&dir.join("package-xab.canonical.json")),
+    )
 }
 
-const COMPOSING: [&str; 3] = ["compose-no-next", "compose-next-one-side", "compose-next-both-sides"];
+const COMPOSING: [&str; 3] = [
+    "compose-no-next",
+    "compose-next-one-side",
+    "compose-next-both-sides",
+];
 
 const REFUSALS: [(&str, &str); 2] = [
     // One v1 package and one v2: never composed under either version's rules.
@@ -61,16 +72,39 @@ fn every_v2_composing_pair_reproduces_its_agreement_and_digest() {
         let (a, b) = pair(&dir);
         let (pa, pb) = (parse_package(&a).unwrap(), parse_package(&b).unwrap());
         for (raw, p) in [(&a, &pa), (&b, &pb)] {
-            assert_eq!(p.canonical().as_bytes(), raw.as_slice(), "{name}: canonical form");
-            let si = bytes(&dir.join(format!("package-{}.signing-input.canonical.json", p.sovereign_id)));
-            assert_eq!(p.signing_input().as_bytes(), si.as_slice(), "{name}: signing input");
+            assert_eq!(
+                p.canonical().as_bytes(),
+                raw.as_slice(),
+                "{name}: canonical form"
+            );
+            let si = bytes(&dir.join(format!(
+                "package-{}.signing-input.canonical.json",
+                p.sovereign_id
+            )));
+            assert_eq!(
+                p.signing_input().as_bytes(),
+                si.as_slice(),
+                "{name}: signing input"
+            );
         }
         // Order of the two packages does not matter.
         for (p, q) in [(&pa, &pb), (&pb, &pa)] {
             match compose_any(p, q, now, &keys) {
-                Composed::Agreement { canonical, digest, .. } => {
-                    assert_eq!(canonical.as_bytes(), bytes(&dir.join("agreement.canonical.json")).as_slice(), "{name}");
-                    assert_eq!(digest, String::from_utf8(bytes(&dir.join("agreement.digest.txt"))).unwrap().trim(), "{name}");
+                Composed::Agreement {
+                    canonical, digest, ..
+                } => {
+                    assert_eq!(
+                        canonical.as_bytes(),
+                        bytes(&dir.join("agreement.canonical.json")).as_slice(),
+                        "{name}"
+                    );
+                    assert_eq!(
+                        digest,
+                        String::from_utf8(bytes(&dir.join("agreement.digest.txt")))
+                            .unwrap()
+                            .trim(),
+                        "{name}"
+                    );
                 }
                 Composed::Refused(f) => panic!("{name}: refused — {f}"),
             }
@@ -118,15 +152,27 @@ fn a_v1_pair_routes_to_the_frozen_v1_path_unchanged() {
     for e in std::fs::read_dir(root("vectors")).unwrap() {
         let dir = e.unwrap().path();
         let n = dir.file_name().unwrap().to_string_lossy().into_owned();
-        if !(n.starts_with("compose-") || n.starts_with("refuse-")) || n == "refuse-both-v2" || n == "refuse-version-mismatch" {
+        if !(n.starts_with("compose-") || n.starts_with("refuse-"))
+            || n == "refuse-both-v2"
+            || n == "refuse-version-mismatch"
+        {
             continue;
         }
-        let mut pk: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path())
-            .filter(|p| { let f = p.file_name().unwrap().to_string_lossy(); f.starts_with("package-") && f.ends_with(".canonical.json") && !f.contains("signing-input") })
+        let mut pk: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                let f = p.file_name().unwrap().to_string_lossy();
+                f.starts_with("package-")
+                    && f.ends_with(".canonical.json")
+                    && !f.contains("signing-input")
+            })
             .collect();
         pk.sort();
         let (a, b) = (bytes(&pk[0]), bytes(&pk[1]));
-        let (Ok(pa), Ok(pb)) = (parse_package(&a), parse_package(&b)) else { continue };
+        let (Ok(pa), Ok(pb)) = (parse_package(&a), parse_package(&b)) else {
+            continue;
+        };
         let one = format!("{:?}", compose(&pa, &pb, now, &keys));
         let any = format!("{:?}", compose_any(&pa, &pb, now, &keys));
         assert_eq!(one, any, "{n}");
@@ -139,22 +185,39 @@ fn a_v1_pair_routes_to_the_frozen_v1_path_unchanged() {
 /// not v1's member and is not read as a next CA.
 #[test]
 fn a_v1_package_carrying_the_member_has_no_next_ca() {
-    let raw = bytes(&root("vectors-v2").join("compose-next-one-side").join("package-xaa.pretty.json"));
+    let raw = bytes(
+        &root("vectors-v2")
+            .join("compose-next-one-side")
+            .join("package-xaa.pretty.json"),
+    );
     let mut v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
     v["spec"] = "federation-package/v1".into();
     let p = parse_package(serde_json::to_string(&v).unwrap().as_bytes()).unwrap();
     assert!(p.identity.ca_fingerprint_next.is_none());
-    let p2 = parse_package(&bytes(&root("vectors-v2").join("compose-next-one-side").join("package-xaa.canonical.json"))).unwrap();
+    let p2 = parse_package(&bytes(
+        &root("vectors-v2")
+            .join("compose-next-one-side")
+            .join("package-xaa.canonical.json"),
+    ))
+    .unwrap();
     assert!(p2.identity.ca_fingerprint_next.is_some());
 }
 
 /// lint names a version this build composes as no warning, and any other as one.
 #[test]
 fn lint_warns_only_for_a_version_this_build_does_not_compose() {
-    let ok = bytes(&root("vectors-v2").join("compose-next-one-side").join("package-xaa.canonical.json"));
+    let ok = bytes(
+        &root("vectors-v2")
+            .join("compose-next-one-side")
+            .join("package-xaa.canonical.json"),
+    );
     let w = warnings(&parse_package(&ok).unwrap(), &ok);
     assert!(!w.iter().any(|w| w.rule.starts_with("W_SPEC")), "{w:?}");
-    let v3 = bytes(&root("vectors-v2").join("refuse-both-v3").join("package-xaa.canonical.json"));
+    let v3 = bytes(
+        &root("vectors-v2")
+            .join("refuse-both-v3")
+            .join("package-xaa.canonical.json"),
+    );
     let w = warnings(&parse_package(&v3).unwrap(), &v3);
     assert!(w.iter().any(|w| w.rule.starts_with("W_SPEC")), "{w:?}");
 }
