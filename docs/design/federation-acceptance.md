@@ -194,8 +194,35 @@ names, and no production edge, core or tunnel is started or stopped. The synthet
 themselves stay in the receiving store under its normal retention; nothing claims to delete them
 downstream.
 
-The launcher is the deployment's or the drill's: it holds whatever certificates the probes need
-(approved negative test identities, never the CA). None ships with this change.
+The launcher is the deployment's or the drill's: it is given whatever certificates the probes
+need (approved negative test identities, never the CA).
+
+**A deployment's launcher: built, not measured.** `ops/federation/standup/probe-launcher.sh`
+meets this contract on a real edge host, reached over ssh with sudo (`FED_PL_SSH`) or run on the
+edge host itself (`FED_PL_LOCAL=1`). It serves as a drill's launcher (`FED_PROBE_LAUNCHER`, on the
+partner's edge host with the partner's identities) or as a side's own (`FED_PROBE_LAUNCHER_OURS`,
+§6.4, on our edge host with our identities); which, is only where it runs and which certificates
+`FED_PL_DIR` holds. It carries no identity and mints nothing. Each probe is a zenoh client in a
+container whose image is the edge host's `zenoh_router_image` from its `pins.yml`
+(`FED_PL_PINS`), pinned by digest (X-PROBE-002 otherwise); its zenoh config is
+`ops/federation/standup/probe.json5`. Its files live under `/run/goat-probe` (tmpfs, so a key
+does not outlive a reboot), the key mode 0600 in a folder of mode 0700. Its REST port binds to
+one address (`FED_PL_REST_IP`; 0.0.0.0 is refused), because whoever reaches that port writes as
+the probe's identity. `start` prints the handle before the session answers, so a run stopped
+from then on still cleans it up, and removes a probe whose REST port does not answer within a
+minute (exit 1, X-PROBE-003). `alive` exits 1 only when the edge host answers that the probe is
+gone; an edge host that does not answer is exit 2. `stop` removes the probe's folder, the key
+with it, and prints `KEY_DELETED=verified` only once the edge host shows the key gone
+(`KEY_DELETED=failed` and exit 1 when it is still there). A `start` that does not end with a
+session that answered, whether it fails, is interrupted or is terminated, removes what it put on
+the edge host in an exit trap and prints the same line. The run records each probe's answer in
+its manifest as `key_deleted` (`verified`, `failed`, or `not reported` for a launcher that says
+nothing, such as the test environment's), and `cleanup/probes` fails, required, on a key that
+was not deleted. A value that goes into a command on the edge
+host is checked for its form first, and a handle it did not give is refused (X-PROBE-001).
+Tested with stubbed ssh, sudo, docker and curl (`tests/probe-launcher.bats`, an interrupted
+start among them) and, for the manifest's `key_deleted`, in `test_acceptance.py`; not yet run
+against a real edge host. How the identities it is given are issued is not built.
 
 **A side's own launcher, in a bilateral session** (built in the runner and on the in-process
 fabric, tests `test_own_surfaces_*` in `test_acceptance.py`; §6.4). `FED_PROBE_LAUNCHER_OURS`
@@ -213,7 +240,8 @@ none, counts as an authorization; a log that cannot be read leaves the row BLOCK
 refused beside `FED_PROBE_LAUNCHER`, which is a drill's and holds the partner's identities, and
 outside a session (exit 2). The federation test environment's launcher
 (`ops/federation-e2e/lib/probe-launcher.sh`) serves both, by where it runs and which
-certificates it is given.
+certificates it is given, and so does a deployment's (`ops/federation/standup/probe-launcher.sh`,
+§2.4).
 
 **What the script cannot verify.** It does not see a launcher's certificates. It cannot tell
 whether the agreed probe holds the agreed name, whether the forged name is one nobody agreed, or
