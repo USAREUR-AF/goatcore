@@ -193,6 +193,26 @@ class A1DeprecationPeriod(unittest.TestCase):
         self.assertIn("goatbuilder deploy --env", p[0])
         self.assertIn("2.0.0", p[0])
 
+    def test_an_unreadable_build_version_is_the_same_major(self):
+        # One reading for both checks (goatbuilder_version, _major): a version that is
+        # not <x.y.z>, or none at all, never counts as a later major.
+        for version in ("", "x.y.z", "2", "2.0"):
+            p = self.problems(version=version)
+            self.assertEqual(len(p), 1, (version, p))
+            self.assertIn("major release", p[0])
+
+    def test_an_unreadable_build_version_is_named_as_such(self):
+        p = self.problems(version="")
+        self.assertIn("a build of an unreadable version", p[0])
+
+    def test_one_helper_reads_the_build_version(self):
+        self.assertFalse(hasattr(compat, "_build_version"))
+
+    def test_a_checkout_without_the_crate_reads_as_no_version(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as repo:
+            self.assertEqual(compat.goatbuilder_version(repo), "")
+
     def test_a_removal_with_fewer_than_two_later_minor_releases_is_refused(self):
         tags = {k: v for k, v in self.TAGS.items() if k != "goatbuilder/v1.4.0"}
         p = self.problems(tags=tags)
