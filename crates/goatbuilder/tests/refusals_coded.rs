@@ -194,7 +194,8 @@ fn exit_of(doc: &toml::Value) -> Option<i64> {
 fn codes_in(text: &str) -> Vec<String> {
     let b = text.as_bytes();
     let digits_at = |i: usize| {
-        b.get(i..i + 3).is_some_and(|d| d.iter().all(u8::is_ascii_digit))
+        b.get(i..i + 3)
+            .is_some_and(|d| d.iter().all(u8::is_ascii_digit))
             && b.get(i + 3).is_none_or(|c| !c.is_ascii_digit())
     };
     let mut out = Vec::new();
@@ -202,7 +203,10 @@ fn codes_in(text: &str) -> Vec<String> {
         if b[i..].starts_with(b"GB-") && digits_at(i + 3) {
             out.push(text[i..i + 6].to_string());
         } else if b[i..].starts_with(b"X-") && (i == 0 || !b[i - 1].is_ascii_alphanumeric()) {
-            let tool = b[i + 2..].iter().take_while(|c| c.is_ascii_uppercase()).count();
+            let tool = b[i + 2..]
+                .iter()
+                .take_while(|c| c.is_ascii_uppercase())
+                .count();
             let dash = i + 2 + tool;
             if tool > 0 && b.get(dash) == Some(&b'-') && digits_at(dash + 1) {
                 out.push(text[i..dash + 4].to_string());

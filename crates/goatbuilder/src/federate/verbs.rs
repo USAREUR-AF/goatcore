@@ -231,16 +231,17 @@ pub fn exit_of(cmd: FederateCmd, site: &SiteArgs, measure: &MeasureArgs, repo: O
 }
 
 /// The code of a fault the shared library raised without one: a federation
-/// verb faulted, the message naming what (a file, a flag, a party). It exits
-/// 1, as the fault did before and as it does in goat. The library has no codes
-/// of its own, and `goat federate` maps its faults for itself.
+/// verb faulted, the message naming what (in practice, its report could not
+/// be written). It exits 1, as the fault did before and as it does in goat.
+/// The library's own refusals carry their codes (X-FED-nnn).
 pub const LIBRARY_FAULT: &str = "GB-338";
 
 /// Print a verb's fault as goatbuilder's refusal line and return its exit
-/// code: a coded refusal (GB-100) exits with its catalog code. A fault the
-/// library raised with no code prints [`LIBRARY_FAULT`] the same way and
-/// exits 1, its catalog exit, as it does in goat, so the two binaries still
-/// exit alike.
+/// code: a coded refusal (GB-100) exits with its catalog code. One of the
+/// library's own refusals (X-FED-nnn) has no catalog exit, the library not
+/// being a binary, and exits 1, as in goat. A fault the library raised with
+/// no code prints [`LIBRARY_FAULT`] the same way and exits 1, its catalog
+/// exit, as it does in goat, so the two binaries still exit alike.
 pub fn fault_exit(e: &anyhow::Error) -> i32 {
     eprintln!("goatbuilder: {e:#}");
     if e.downcast_ref::<clap::Error>().is_some() {
@@ -249,9 +250,10 @@ pub fn fault_exit(e: &anyhow::Error) -> i32 {
     match e.downcast_ref::<goat_errors::Coded>() {
         Some(c) => {
             eprintln!("  ({} — goatbuilder explain {})", c.code, c.code);
-            goat_errors::explain(&c.code)
-                .and_then(|x| x.exit)
-                .unwrap_or(2)
+            match goat_errors::explain(&c.code) {
+                Some(x) => x.exit.unwrap_or(1),
+                None => 2,
+            }
         }
         None => {
             eprintln!("  ({LIBRARY_FAULT} — goatbuilder explain {LIBRARY_FAULT})");
@@ -318,7 +320,8 @@ mod tests {
     fn a_library_refusal_with_no_catalog_exit_exits_1() {
         for n in 1..=7 {
             let code = format!("X-FED-{n:03}");
-            let e = goat_errors::explain(&code).unwrap_or_else(|| panic!("{code} is in the catalog"));
+            let e =
+                goat_errors::explain(&code).unwrap_or_else(|| panic!("{code} is in the catalog"));
             assert_eq!(e.exit, None, "{code} has no catalog exit");
             let fault = anyhow::Error::from(goat_errors::coded(&code, "the library refused"));
             assert_eq!(fault_exit(&fault), 1, "{code}");
