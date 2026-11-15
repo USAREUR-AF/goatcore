@@ -22,8 +22,12 @@ their zenoh ids beside this run's challenge, for the partner to judge on its
 own edge's trace. With `FED_SPIRE_OURS` the run also stages your server's
 bundle and one workload certificate, never a key, and checks the partner's
 against the bundle your server holds. A staged value holding private key
-material stops the run. `FED_PROBE_LAUNCHER_OURS` is refused outside a
-session and beside `FED_PROBE_LAUNCHER`. Without it, the partner's refusal
+material stops the run. A probe kind is staged only when its session
+answered, with the run's start beside the ids; the partner counts only its
+edge's lines for an id from that start on, and refuses one id staged for
+two kinds, so each session's id must be unique to its kind and run.
+`FED_PROBE_LAUNCHER_OURS` is refused outside a session and beside
+`FED_PROBE_LAUNCHER`. Without it, the partner's refusal
 rows stay BLOCKED and name you (#815).
 
 #### Fixed: phase 14 in a bilateral session no longer fails each side's own staging row
