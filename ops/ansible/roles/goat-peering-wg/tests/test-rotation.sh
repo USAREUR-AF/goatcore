@@ -190,6 +190,43 @@ else
   fail "peering: wrong refusal for a bad rotation id, or the key moved"; grep -E 'fatal' -A3 "$LOG" | head -6 || true
 fi
 
+# Paths with a space: the peering key's generation and live check, and the
+# forwarder's carrier keys, reach their files through a shell redirect, so each
+# path is quoted there.
+mkdir -p "$T/edge sp2"
+PS="$T/edge sp2/wg-fed0.key"
+if peering -e "{\"peering_wg_key_path\": \"$PS\"}" && [ -s "$PS" ] && live_is "$PS" \
+   && peering -e "{\"peering_wg_key_path\": \"$PS\"}" -e peering_wg_transport_rotation=t2 \
+   && [ -s "$PS" ] && [ -e "$T/restarted" ]; then
+  pass "peering: a key path with a space is made and read whole, and the rotation restarts the link"
+else
+  fail "peering: a key path with a space broke the key tasks"; tail -15 "$LOG"
+fi
+mkdir -p "$T/fwd sp"
+if forwarder -e "{\"peering_forwarder_config_dir\": \"$T/fwd sp\"}" \
+   && [ -s "$T/fwd sp/wg-carry0.key" ] && [ -s "$T/fwd sp/wg-carry1.key" ]; then
+  pass "forwarder: a config directory with a space gets each carrier's key"
+else
+  fail "forwarder: a config directory with a space broke the carrier keys"; tail -15 "$LOG"
+fi
+
+# The link environment files name the key's path for systemd's EnvironmentFile,
+# which splits an unquoted value at whitespace: the path is written in double
+# quotes, and both systemd's reading (the quotes removed) and a shell's give it back whole.
+mkdir -p "$T/env"
+envval() { # $1 file, $2 name: the value as systemd reads a double-quoted one
+  sed -n "s/^$2=\"\(.*\)\"\$/\1/p" "$1" | sed 's/\\\(["\\]\)/\1/g'
+}
+if ANSIBLE_NOCOLOR=1 ANSIBLE_RETRY_FILES_ENABLED=0 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
+     ansible-playbook -i localhost, "$HERE/env-files.yml" -e "env_out=$T/env" \
+     -e "{\"peering_wg_key_path\": \"$PS\", \"peering_wg_carrier_key_path\": \"$KS\"}" > "$LOG" 2>&1 \
+   && [ "$(envval "$T/env/link.env" WG_KEY_FILE)" = "$PS" ] && [ "$(envval "$T/env/carrier.env" WG_KEY_FILE)" = "$KS" ] \
+   && [ "$(sh -c '. "$1"; printf %s "$WG_KEY_FILE"' sh "$T/env/link.env")" = "$PS" ]; then
+  pass "env files: a key path with a space is written quoted and read back whole"
+else
+  fail "env files: a key path with a space is not read back whole"; grep WG_KEY_FILE "$T/env/"*.env 2>/dev/null; tail -15 "$LOG"
+fi
+
 if [ "$FAILS" -eq 0 ]; then
   echo "goat-peering-wg test-rotation: PASS"
 else

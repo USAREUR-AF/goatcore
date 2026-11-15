@@ -889,6 +889,19 @@ mod tests {
         agreed_mtu: Option<i64>,
         our_offer: Option<i64>,
     ) -> String {
+        rerun_at(declared, interface, applied, agreed_mtu, our_offer, false)
+    }
+
+    /// [`rerun`], with our package written after the agreement when
+    /// `ours_newer` (compose runs after phase 3, so the agreement is newer).
+    fn rerun_at(
+        declared: i64,
+        interface: i64,
+        applied: Option<i64>,
+        agreed_mtu: Option<i64>,
+        our_offer: Option<i64>,
+        ours_newer: bool,
+    ) -> String {
         let (_d, site) = site_with(&DECL.replace("measured_mtu = 1380", &format!("measured_mtu = {declared}")));
         let work = tempfile::tempdir().unwrap();
         if let Some(m) = agreed_mtu {
@@ -904,6 +917,15 @@ mod tests {
                 format!(r#"{{"sovereign_id": "xaa", "transport_offer": {{"endpoint": "192.0.2.10:51820", "listener": true, "measured_mtu": {o}}}}}"#),
             )
             .unwrap();
+        }
+        // Phase 3 wrote our package, then compose wrote the agreement.
+        let now = std::time::SystemTime::now();
+        let earlier = now - std::time::Duration::from_secs(60);
+        let (ours_at, agreement_at) = if ours_newer { (now, earlier) } else { (earlier, now) };
+        for (name, at) in [("ours.canonical.json", ours_at), ("agreement.json", agreement_at)] {
+            if let Ok(f) = std::fs::File::options().write(true).open(work.path().join(name)) {
+                f.set_modified(at).unwrap();
+            }
         }
         let measure = |i: Option<&str>| {
             Ok(derive::Measured {
@@ -969,6 +991,22 @@ mod tests {
             assert!(!out.contains("carries the agreed MTU"), "{agreed:?} {ours:?}: {out}");
             assert!(out.contains("blocked") && out.contains("re-measure"), "{agreed:?} {ours:?}: {out}");
         }
+    }
+
+    /// Our package newer than the agreement the interface carries: an earlier
+    /// phase 3 wrote it without the cross-check (an unreadable interface, a
+    /// SKIP), and no agreement has been composed from it, so its offer was
+    /// checked by nothing. Even when it equals the declaration, the cross-check
+    /// is blocked, never skipped as "checked earlier".
+    #[test]
+    fn a_package_newer_than_the_agreement_is_blocked() {
+        let out = rerun_at(1500, 1300, Some(1300), Some(1300), Some(1500), true);
+        assert!(!out.contains("carries the agreed MTU"), "{out}");
+        assert!(out.contains("blocked") && out.contains("re-measure"), "{out}");
+        assert!(out.contains("newer"), "{out}");
+        // The same files in the order phase 3 and compose write them: a SKIP.
+        let ordered = rerun_at(1380, 1300, Some(1300), Some(1300), Some(1380), false);
+        assert!(ordered.contains("carries the agreed MTU 1300"), "{ordered}");
     }
 
     /// A host that cannot be reached is the caller's error, returned as is.

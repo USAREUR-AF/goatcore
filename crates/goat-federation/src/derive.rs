@@ -1690,7 +1690,7 @@ mod tests {
         let state = "/var/log/goat-peering-wg-wg-fed0-state.json";
         let with = |text: &'static str| {
             edge_host()
-                .answer(STAT_STATE, Ok("root:root:regular file\n"))
+                .answer(STAT_STATE, Ok("0:0:81a4\n"))
                 .file(state, Ok(text))
         };
         assert_eq!(
@@ -1709,7 +1709,7 @@ mod tests {
         assert!(!is_read_only_probe("cat", &["--", "/var/log/syslog"]));
     }
 
-    const STAT_STATE: &str = "stat -c %U:%G:%F -- /var/log/goat-peering-wg-wg-fed0-state.json";
+    const STAT_STATE: &str = "stat -c %u:%g:%f -- /var/log/goat-peering-wg-wg-fed0-state.json";
 
     /// The role writes the state file BEFORE its FIPS gate, so a refused run
     /// leaves one too: only a file whose `decision` is one the role applies
@@ -1719,7 +1719,7 @@ mod tests {
         let state = "/var/log/goat-peering-wg-wg-fed0-state.json";
         let with = |text: &'static str| {
             edge_host()
-                .answer(STAT_STATE, Ok("root:root:regular file\n"))
+                .answer(STAT_STATE, Ok("0:0:81a4\n"))
                 .file(state, Ok(text))
         };
         let doc = |decision: &str| {
@@ -1737,18 +1737,24 @@ mod tests {
     }
 
     /// /var/log is group-writable on some distributions: the state file is
-    /// read only when it is a regular file owned root:root, never through a
-    /// symbolic link, and an unanswered check is no applied MTU. The file is
-    /// not read at all when the check refuses it.
+    /// read only when it is a regular file owned root:root (uid and gid 0),
+    /// never through a symbolic link, and an unanswered check is no applied
+    /// MTU. The file is not read at all when the check refuses it. The check
+    /// asks for numbers (`%u:%g:%f`, the raw mode in hex), never the localised
+    /// words `%F` prints, so an edge in another language reads the same.
     #[test]
     fn the_state_file_is_read_only_when_root_owned_and_not_a_link() {
         let state = "/var/log/goat-peering-wg-wg-fed0-state.json";
         const DOC: &str = r#"{"interface": "wg-fed0", "decision": "proceed-no-claim", "transport": {"mtu": 1300}}"#;
         for (stat, want) in [
-            (Ok("root:root:regular file\n"), Some(1300)),
-            (Ok("root:root:symbolic link\n"), None),
-            (Ok("syslog:adm:regular file\n"), None),
-            (Ok("root:adm:regular file\n"), None),
+            (Ok("0:0:81a4\n"), Some(1300)),
+            (Ok("0:0:8180\n"), Some(1300)),
+            (Ok("0:0:a1ff\n"), None),
+            (Ok("0:0:41ed\n"), None),
+            (Ok("104:4:81a4\n"), None),
+            (Ok("0:4:81a4\n"), None),
+            (Ok("0:0:fichier\n"), None),
+            (Ok("0:0\n"), None),
             (Err("stat: cannot statx"), None),
         ] {
             let edge = edge_host().answer(STAT_STATE, stat).file(state, Ok(DOC));
@@ -1756,9 +1762,10 @@ mod tests {
             let read = edge.asked.borrow().iter().any(|a| a == &format!("read {state}"));
             assert_eq!(read, want.is_some(), "{stat:?}: {:?}", edge.asked.borrow());
         }
-        assert!(is_read_only_probe("stat", &["-c", "%U:%G:%F", "--", state]));
-        assert!(!is_read_only_probe("stat", &["-c", "%U:%G:%F", "--", "/etc/shadow"]));
-        assert!(!is_read_only_probe("stat", &["-L", "-c", "%U:%G:%F", "--", state]));
+        assert!(is_read_only_probe("stat", &["-c", "%u:%g:%f", "--", state]));
+        assert!(!is_read_only_probe("stat", &["-c", "%u:%g:%f", "--", "/etc/shadow"]));
+        assert!(!is_read_only_probe("stat", &["-L", "-c", "%u:%g:%f", "--", state]));
+        assert!(!is_read_only_probe("stat", &["-c", "%U:%G:%F", "--", state]));
     }
 
     #[test]
