@@ -1,0 +1,83 @@
+# Gate rows E1, E2 and E3 on darwin-amd64 (docs/design/goatbuilder-v1-gate.md).
+# goatbuilder ships a darwin-amd64 binary, cross-compiled on Apple Silicon
+# (_release-binary.yml), which no pull-request job can run. This workflow runs
+# the three upgrade tests on GitHub's Intel macOS runner, with the released
+# darwin-amd64 binaries, at each goatbuilder release tag and once a week.
+#
+# It does not run on pull requests: jobs for the Intel pool can queue for a
+# long time, and the pull-request workflow (goatbuilder-pr.yml) runs the same
+# tests on linux-amd64, linux-arm64 and darwin-arm64.
+#
+# The runner is macos-15-intel. macos-13 was GitHub's Intel image until its
+# retirement on 4 December 2025; macos-15-intel replaces it, and x86_64 macOS
+# runners end with that image's retirement (announced for 2027). When it goes,
+# darwin-amd64 returns to "built, not run" in gate row E3.
+#
+# Rollback: rm this file, and gate row E3 says darwin-amd64 is built, not run.
+name: goatbuilder-upgrade-darwin-amd64
+
+on:
+  push:
+    tags:
+      - 'goatbuilder/v*'
+  schedule:
+    - cron: '23 4 * * 1'   # Mondays 04:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: crates
+
+jobs:
+  upgrade:
+    name: darwin-amd64 upgrade test (gate rows E1, E2, E3)
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: The runner is an x86_64 Mac
+        run: test "$(uname -s)-$(uname -m)" = "Darwin-x86_64"
+      - name: Install Rust toolchain (1.100.0)
+        uses: dtolnay/rust-toolchain@1.100.0
+      - name: Cache cargo registry + git deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-goatbuilder-upgrade-macos-intel-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            cargo-goatbuilder-upgrade-macos-intel-
+      - name: Cache cargo build target
+        uses: actions/cache@v4
+        with:
+          path: crates/target
+          key: target-goatbuilder-upgrade-macos-intel-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            target-goatbuilder-upgrade-macos-intel-
+      - name: Install the Python the pins and promote flows render with
+        run: python3 -m pip install --quiet --break-system-packages pyyaml jsonschema || python3 -m pip install --quiet pyyaml jsonschema
+      - name: Cache the released goatbuilder binaries the upgrade test runs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/goatbuilder-upgrade
+          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
+      - name: Fetch the released binaries, checked against their pins
+        run: goatbuilder/tests/upgrade/fetch.sh ~/.cache/goatbuilder-upgrade
+      - name: Mark the time before the tests, for the state-directory guard
+        run: touch "$RUNNER_TEMP/goatbuilder-tests-start"
+      - name: cargo test (upgrade, gate rows E1, E2 and E3)
+        env:
+          GOATBUILDER_UPGRADE_REQUIRED: '1'
+        run: GOATBUILDER_UPGRADE_DIR="$HOME/.cache/goatbuilder-upgrade" cargo test -p goatbuilder --test upgrade --test upgrade_federation --test upgrade_update
+      - name: The tests wrote nothing into the real state directory
+        working-directory: ${{ github.workspace }}
+        run: bash ops/ci/check-goatbuilder-tests-leave-home.sh --after "$RUNNER_TEMP/goatbuilder-tests-start"

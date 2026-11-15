@@ -472,9 +472,9 @@ jobs:
   # Gate rows E1, E2 and E3 on linux-arm64: goatbuilder ships a linux-arm64
   # binary (goatbuilder-release.yml), so a 0.x install there must move to this
   # build and back as on linux-amd64. Only the three upgrade tests run here; the
-  # host job runs every other gate. darwin-amd64 is built and shipped but run by
-  # no job: the release cross-compiles it on Apple Silicon, and no runner here
-  # executes an x86_64 macOS binary (docs/design/goatbuilder-v1-gate.md, E3).
+  # host job runs every other gate. darwin-amd64 runs in
+  # goatbuilder-upgrade-darwin-amd64.yml, at each release tag and weekly, not on
+  # pull requests: the Intel macOS pool queues long (gate row E3).
   linux-arm64:
     name: linux-arm64 upgrade test (gate rows E1, E2, E3)
     needs: scope
