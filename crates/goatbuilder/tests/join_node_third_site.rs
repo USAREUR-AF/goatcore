@@ -224,12 +224,24 @@ fn join_node_with(s: &Site, from: Option<&str>, extra: &[&str]) -> (Output, serd
         "--class".into(),
         "core".into(),
         "--address".into(),
-        "192.0.2.30".into(),
+        extra
+            .iter()
+            .position(|a| *a == "--address")
+            .and_then(|i| extra.get(i + 1))
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| "192.0.2.30".into()),
     ];
     if let Some(n) = from {
         args.extend(["--from".to_string(), n.to_string()]);
     }
-    args.extend(extra.iter().map(|a| a.to_string()));
+    let given = extra.iter().position(|a| *a == "--address");
+    args.extend(
+        extra
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| given.is_none_or(|g| *i != g && *i != g + 1))
+            .map(|(_, a)| a.to_string()),
+    );
     let path = format!(
         "{}:{}",
         s.root.join("bin").display(),
@@ -818,6 +830,29 @@ fn a_jump_host_that_refuses_is_not_the_node_answering() {
     assert!(all.contains("GB-314"), "{all}");
     let log = std::fs::read_to_string(&s.log).unwrap_or_default();
     assert!(!log.lines().any(|l| l.starts_with("play ") || l.starts_with("sshpass")), "something ran past phase 1:\n{log}");
+}
+
+/// A Jetson's USB device-mode bridge address, 192.168.55.0/24 (l4tbr0), runs
+/// sshd on the box itself and finishes a key exchange, but it is reachable
+/// only over a direct USB-C cable, never from the site: phase 1 refuses it
+/// before any connection, with GB-314 and the way to the real LAN address.
+#[test]
+fn the_jetson_usb_bridge_address_is_refused_at_phase_1() {
+    for address in ["192.168.55.1", "192.168.55.100"] {
+        let s = site();
+        let (out, v) = join_node_with(&s, None, &["--address", address]);
+        let all = says(&out);
+        assert!(!out.status.success(), "{address}: {all}");
+        assert_eq!(phases(&v), vec![1], "{address}: {all}");
+        assert!(all.contains("GB-314") && all.contains("l4tbr0") && all.contains("--address"), "{address}: {all}");
+        let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+        assert!(!log.lines().any(|l| l.starts_with("ssh ") && !l.starts_with("ssh -G")), "{address}: phase 1 connected:\n{log}");
+        assert!(!log.lines().any(|l| l.starts_with("play ") || l.starts_with("sshpass")), "{address}: something ran past phase 1:\n{log}");
+    }
+    // An address beside it is not the bridge.
+    let s = site();
+    let (out, v) = join_node_with(&s, None, &["--address", "192.168.56.1"]);
+    assert!(phases(&v).contains(&2), "{}", says(&out));
 }
 
 /// A node that takes only its first-login password answers, though it
