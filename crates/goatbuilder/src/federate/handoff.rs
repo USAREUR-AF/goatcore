@@ -30,8 +30,18 @@
 //! the core half's file checks on it (GB-114, [`import_edge_half`]), places
 //! it and journals its sha256; the controller's `--from 3` hashes it again
 //! and runs the core half against it (`--side core --edge-half <file>
-//! --edge-half-sha256 <journaled sha256>`). Not built: the edge driver's run,
-//! the import and core half of phase 2 and of 11 and later, and `status`
+//! --edge-half-sha256 <journaled sha256>`).
+//!
+//! Built for phase 2: phase 2 is one `peering-prepare.yml` run, and its halves
+//! name `peering_prepare_half` on it ([`phase_2_half`]). The edge driver's
+//! run makes the federation interface on the edge and writes its public key
+//! to `<work>/handoff/2/edge.json` ([`PHASE_2_SCHEMA`]); `import` checks it
+//! is this peering's interface and key, or no interface at all; the
+//! controller's `--from 2` hashes it again and runs the core half, the SPIRE
+//! bundle export on the SPIRE server host, which never reaches the edge. A
+//! phase 2 with a forwarder's steps spliced around it is refused as not
+//! built. Not built: the edge's leaf keys and signing requests in phase 2, the
+//! edge driver's run, the import and core half of 11 and later, and `status`
 //! showing the object.
 
 use crate::Check;
@@ -154,7 +164,7 @@ pub const NOT_THE_CONTROLLERS: &str = "GB-278";
 
 /// The phases whose edge driver's run is built.
 pub fn edge_half_built(n: u32) -> bool {
-    matches!(n, 1 | 3)
+    matches!(n, 1..=3)
 }
 
 /// What the edge driver's run carries into the phase loop: the commit its
@@ -188,7 +198,7 @@ pub fn edge_run(
         return Err(goat_errors::coded("GB-189", format!("--side edge runs one phase, as a hand-off names it: --from N --to N (given --from {from} --to {to})")).into());
     }
     if !edge_half_built(from) {
-        return Err(goat_errors::coded(NOT_BUILT, format!("--side edge: the edge driver's run of phase {from} is not built yet; only phase 1's and phase 3's are (docs/design/federation-two-drivers.md); run the peering with one driver for now")).into());
+        return Err(goat_errors::coded(NOT_BUILT, format!("--side edge: the edge driver's run of phase {from} is not built yet; only phases 1, 2 and 3's are (docs/design/federation-two-drivers.md); run the peering with one driver for now")).into());
     }
     let Some(expect) = a.expect_commit.as_deref() else {
         return Err(not_the_controllers("--side edge needs --expect-commit <commit>, the commit the controller's hand-off names: without it the edge driver cannot know its checkout is the controller's".into()));
@@ -306,7 +316,7 @@ pub fn way_back(with: &str, n: u32, e: &EdgeRun) -> anyhow::Result<Stop> {
 }
 
 /// `goatbuilder federate import <partner> <phase> <result> --sha256 <code>`:
-/// the hand-off object's `import`. Built for phases 1 and 3 ([`import`]);
+/// the hand-off object's `import`. Built for phases 1, 2 and 3 ([`import`]);
 /// another phase's import is refused as not built (GB-267).
 #[derive(clap::Args, Debug, Clone)]
 pub struct ImportArgs {
@@ -334,7 +344,77 @@ pub const UNIMPORTABLE: &str = "GB-277";
 
 /// The phases whose import and core half are built.
 pub fn core_half_built(n: u32) -> bool {
-    matches!(n, 1 | 3)
+    matches!(n, 1..=3)
+}
+
+/// Phase 2's edge result: the federation interface the edge driver's half
+/// made on the edge, and its public key (`peering-prepare.yml` with
+/// `peering_prepare_half=edge`). No private key leaves the edge.
+pub const PHASE_2_SCHEMA: &str = "goatbuilder.phase2-edge/v1";
+
+/// Phase 2's command for one half: its one `peering-prepare.yml` run with
+/// `peering_prepare_half` named, and for the edge half the peering and the
+/// result file the play writes on the driver. None when phase 2 is not that
+/// one run (a forwarder's steps spliced around it reach the forwarder host,
+/// whose hand-off is not designed).
+pub fn phase_2_half(cmd: &str, with: &str, half: &str, result: Option<&Path>) -> Option<String> {
+    const PLAY: &str = " peering-prepare.yml";
+    if cmd.contains(") && (") || !cmd.ends_with(PLAY) {
+        return None;
+    }
+    let sq = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let mut vars = format!(" -e peering_prepare_half={half}");
+    if let Some(r) = result {
+        vars.push_str(&format!(
+            " -e peering_prepare_peering={} -e peering_prepare_result={}",
+            sq(with),
+            sq(&r.display().to_string())
+        ));
+    }
+    Some(format!("{}{vars}{PLAY}", &cmd[..cmd.len() - PLAY.len()]))
+}
+
+/// The refusal of a two-driver phase 2 that is not one play.
+pub fn phase_2_spliced() -> Check {
+    Check {
+        name: "handoff".into(),
+        ok: false,
+        detail: format!("{NOT_BUILT}: phase 2 of this peering also runs its forwarder's steps (forwarder: on its peerings: entry), which reach the forwarder host, and a two-driver phase 2 with a forwarder is not built (docs/design/federation-two-drivers.md). Nothing of phase 2 ran"),
+        fix: Some(ONE_DRIVER.into()),
+    }
+}
+
+/// Whether `doc` is phase 2's edge result for `with`.
+fn phase_2_edge_result(doc: &serde_json::Value, with: &str) -> Result<(), String> {
+    if doc["schema"] != PHASE_2_SCHEMA {
+        return Err(format!("it is not a phase 2 result (schema {}, not {PHASE_2_SCHEMA})", doc["schema"]));
+    }
+    if doc["peering"] != with {
+        return Err(format!("it is peering {}'s result, not {with}'s", doc["peering"]));
+    }
+    if doc["side"] != "edge" {
+        return Err(format!("it holds the {} side's half, not the edge's", doc["side"]));
+    }
+    match (&doc["interface"], &doc["public_key"]) {
+        (serde_json::Value::Null, serde_json::Value::Null) => Ok(()),
+        (serde_json::Value::String(i), serde_json::Value::String(k)) => {
+            let name_ok = !i.is_empty()
+                && i.len() <= 15
+                && i.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                && !i.starts_with('.');
+            if !name_ok {
+                return Err(format!("its interface '{i}' is not an interface name"));
+            }
+            let key_ok = k.len() == 44
+                && k.ends_with('=')
+                && k[..43].chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/');
+            if !key_ok {
+                return Err(format!("its public key '{k}' is not a WireGuard public key (44 base64 characters)"));
+            }
+            Ok(())
+        }
+        _ => Err("it names an interface with no public key, or a public key with no interface".into()),
+    }
 }
 
 /// The result a phase-`n` hand-off names, under the writer's `<work>`:
@@ -443,7 +523,12 @@ pub fn import(a: &ImportArgs, work: &Path, repo: &Path) -> anyhow::Result<crate:
     }
     let doc: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|e| unimportable(format!("import: {} is not JSON ({e})", a.result.display())))?;
-    phase_1_edge_result(&doc, &a.with).map_err(|why| {
+    let holds = if a.phase == 2 {
+        phase_2_edge_result(&doc, &a.with)
+    } else {
+        phase_1_edge_result(&doc, &a.with)
+    };
+    holds.map_err(|why| {
         unimportable(format!(
             "import: {} is not phase {}'s edge result for {}: {why}",
             a.result.display(),
@@ -826,7 +911,7 @@ pub fn stop(with: &str, n: u32, commit: &str) -> Stop {
         Check {
             name: "note".into(),
             ok: true,
-            detail: "phase 1's and phase 3's edge driver's run, import and core half are built; phase 2's and those of 11 and later are not (docs/design/federation-two-drivers.md, What has to be built)".into(),
+            detail: "phases 1, 2 and 3's edge driver's run, import and core half are built; those of 11 and later are not (docs/design/federation-two-drivers.md, What has to be built)".into(),
             fix: None,
         },
     ];
@@ -864,16 +949,16 @@ mod tests {
     fn phase_2_halves_name_the_half_on_its_one_play() {
         let cmd = "cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' peering-prepare.yml";
         assert_eq!(
-            phase_2_half(cmd, "edge", Some(Path::new("/e/handoff/2/edge.json"))).as_deref(),
-            Some("cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' -e peering_prepare_half=edge -e peering_prepare_result='/e/handoff/2/edge.json' peering-prepare.yml")
+            phase_2_half(cmd, "xab", "edge", Some(Path::new("/e/handoff/2/edge.json"))).as_deref(),
+            Some("cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' -e peering_prepare_half=edge -e peering_prepare_peering='xab' -e peering_prepare_result='/e/handoff/2/edge.json' peering-prepare.yml")
         );
         assert_eq!(
-            phase_2_half(cmd, "core", None).as_deref(),
+            phase_2_half(cmd, "xab", "core", None).as_deref(),
             Some("cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' -e peering_prepare_half=core peering-prepare.yml")
         );
         let spliced = format!("({cmd}) && (x peering-carrier-keys.yml) && (x peering-forwarder.yml) && ({cmd})");
-        assert_eq!(phase_2_half(&spliced, "edge", None), None);
-        assert_eq!(phase_2_half("x peering-wg.yml", "core", None), None);
+        assert_eq!(phase_2_half(&spliced, "xab", "edge", None), None);
+        assert_eq!(phase_2_half("x peering-wg.yml", "xab", "core", None), None);
     }
 
     /// Phase 2's edge result: the edge side's interface and public key for

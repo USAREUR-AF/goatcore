@@ -904,6 +904,24 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                         checks.push(row("handoff", format!("phase 3's edge half, imported at {bound}: its core half runs here")));
                         half = Some((env.clone(), words));
                     }
+                    // Phase 2's core half: its play with the core half named,
+                    // the SPIRE bundle export, which never reaches the edge.
+                    Ok(_) if ph.n == 2 => match handoff::phase_2_half(&ph.cmd, o.with, "core", None) {
+                        Some(c) => {
+                            checks.push(row("handoff", format!("phase 2's edge half, imported at {bound}: its core half (the SPIRE bundle export) runs here")));
+                            core_cmd = Some(c);
+                        }
+                        None => {
+                            let refusal = handoff::phase_2_spliced();
+                            let d = refusal.detail.clone();
+                            checks.push(refusal);
+                            if let Some(r) = run.as_mut() {
+                                r.end(ph, state::Outcome::Failed, &d);
+                            }
+                            exit = EXIT_REFUSED;
+                            break;
+                        }
+                    },
                     Ok(edge) => {
                         let problems = handoff::phase_1_edge_problems(&edge);
                         if !problems.is_empty() {
@@ -949,6 +967,19 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                     words.extend(["--side".to_string(), "edge".into(), "--half-out".into(), e.result.display().to_string()]);
                     half = Some((env, words));
                 }
+                _ if ph.n == 2 => match handoff::phase_2_half(&ph.cmd, o.with, "edge", Some(&e.result)) {
+                    Some(c) => edge_cmd = Some(c),
+                    None => {
+                        let refusal = handoff::phase_2_spliced();
+                        let d = refusal.detail.clone();
+                        checks.push(refusal);
+                        if let Some(r) = run.as_mut() {
+                            r.end(ph, state::Outcome::Failed, &d);
+                        }
+                        exit = EXIT_REFUSED;
+                        break;
+                    }
+                },
                 _ => edge_cmd = Some(format!("{} --side edge --result '{}'", ph.cmd, e.result.display())),
             }
         }

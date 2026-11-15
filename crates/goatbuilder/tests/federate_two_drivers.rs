@@ -1456,7 +1456,9 @@ fn the_edge_driver_runs_phase_2_and_the_controller_imports_it() {
         bytes
     );
     w.clear_log();
-    let (out, v) = w.run(&["hello-ally", "--from", "2"]);
+    // `then`, as the controller runs it: phase 3 measures over SSH.
+    let ssh = w.over_ssh();
+    let (out, v) = w.run_over_ssh(&ssh, &["hello-ally", "--from", "2"]);
     assert!(out.status.success(), "then: {}", says(&out));
     let log = w.log();
     let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();

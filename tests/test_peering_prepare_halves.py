@@ -68,6 +68,7 @@ class PreparePlayHalves(unittest.TestCase):
             extra["peering_prepare_half"] = half
         if result:
             extra["peering_prepare_result"] = str(result)
+            extra["peering_prepare_peering"] = "xab"
         env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", ANSIBLE_NOCOLOR="1",
                    ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_LOCALHOST_WARNING="0",
                    ANSIBLE_HOST_KEY_CHECKING="0", ANSIBLE_BECOME="0")
@@ -95,6 +96,7 @@ class PreparePlayHalves(unittest.TestCase):
         doc = json.loads(result.read_text())
         self.assertEqual(doc["schema"], "goatbuilder.phase2-edge/v1")
         self.assertEqual(doc["side"], "edge")
+        self.assertEqual(doc["peering"], "xab")
         # peering_wg_enabled is off here: an edge with no federation interface.
         self.assertIsNone(doc["interface"])
         self.assertIsNone(doc["public_key"])
