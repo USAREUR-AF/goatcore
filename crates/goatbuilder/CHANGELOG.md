@@ -114,7 +114,10 @@ is in place, not confirmed, and the old one is at the copy (GB-184). A
 package not signed by the bound key, one the parser refuses, or one issued more
 than 7 days after today (UTC) is refused (GB-191) and set aside, and the
 directory step does not save one issued that far ahead; one that came
-through the partner's single pointer is asked about saying so. A package issued before the one held, or without a
+through the partner's single pointer is asked about saying so. A package that names a
+party other than the peering's partner (`peerings: with`) is refused (GB-191)
+before its signature is checked, placed by hand or offered by the directory, and
+the directory step does not save one for phase 5. A package issued before the one held, or without a
 readable issued date while the held one has one, is refused (GB-308) even with
 its digest given, so a replay is never asked about. When the keys confirmed before are
 unchanged, the new package's digest is the only question: phase 5 carries on

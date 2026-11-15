@@ -1101,6 +1101,16 @@ pub fn keys_unchanged(paths: &Paths, st: &State) -> bool {
 /// new question. A package issued before the one held is refused (a replay
 /// is never asked about), even with its digest given. `None` when there is
 /// none, or before their key is bound (the first exchange places theirs).
+/// The partner this peering declares: FED_COUNTERPARTY_ID (goatbuilder.yaml
+/// `peerings: with`, the value [`exchange`] checks their half against), else the
+/// peering's own name.
+fn declared_partner(st: &State) -> String {
+    crate::federate::runenv::var("FED_COUNTERPARTY_ID")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| st.peering.clone())
+}
+
 pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Option<Step> {
     let held = paths.work.join(INCOMING);
     let pointer_marker = paths.work.join(INCOMING_POINTER);
@@ -1129,7 +1139,20 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
         Err(_) => return None,
     };
     let placed_v: serde_json::Value = serde_json::from_slice(&placed).ok()?;
-    let them = field(&placed_v, &["sovereign_id"]).filter(|id| plain_id(id))?;
+    let named = field(&placed_v, &["sovereign_id"]).filter(|id| plain_id(id))?;
+    // The partner is the one the peering declares, never the one a file names: a
+    // package that names another party is refused before its signature is checked.
+    let them = declared_partner(st);
+    if named != them {
+        return Some(fail(
+            "GB-191",
+            format!(
+                "{} names '{named}', and this peering's partner is '{them}'; nothing was placed",
+                paths.counterparty.display()
+            ),
+            format!("put {them}'s package back at {}, or ask {them} to publish their current package again", paths.counterparty.display()),
+        ));
+    }
     let their_key = keyring_key(&paths.keyring, &them)?;
     let (body, by_hand) = match std::fs::read(&held) {
         Ok(b) if b == placed => {
@@ -1149,6 +1172,20 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
     };
     let digest = sha256(&body);
     let new_v: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+    if !by_hand {
+        if let Some(other) = field(&new_v, &["sovereign_id"]).filter(|id| id != &them) {
+            drop_marker();
+            let aside = match set_aside(&held, "refused") {
+                Ok(p) => format!("it was set aside at {}", p.display()),
+                Err(e) => format!("it could not be set aside ({e}); remove {}", held.display()),
+            };
+            return Some(fail(
+                "GB-191",
+                format!("the package offered as {them}'s new one names '{other}', and this peering's partner is '{them}'; {aside}; nothing was placed"),
+                "do not use it; tell the partner, and ask them to publish their current package again",
+            ));
+        }
+    }
     // The parser's refusal first: a package it refuses (an `issued` that is not
     // a date among them) is not checked for a signature, ordered or asked about.
     if let Err(f) = goat_federation::package::parse_package(&body) {

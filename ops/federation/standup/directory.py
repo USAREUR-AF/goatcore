@@ -1167,6 +1167,15 @@ def offer_new_package(a, their_id: str, bound_key, body: bytes, theirs: dict, on
                 with contextlib.suppress(OSError):
                     os.remove(f)
         return
+    # The partner is the one the peering declares (--their-id, FED_COUNTERPARTY_ID), never
+    # the one a file names: a package that names another party is not offered, and this is
+    # checked before any signature.
+    declared = getattr(a, "their_id", None)
+    named = theirs.get("sovereign_id")
+    if not declared or their_id != declared or named != declared or on_disk.get("sovereign_id") != declared:
+        warnings.append(f"GB-191: `{their_id}` serves a package naming `{named}`, and this peering's partner is "
+                        f"`{declared or '(not set: FED_COUNTERPARTY_ID)'}`; it is not offered, and {a.theirs} is what composes")
+        return
     verified = False
     if bound_key and theirs.get("sovereign_id") == on_disk.get("sovereign_id") == their_id:
         try:
