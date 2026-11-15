@@ -82,7 +82,7 @@ One file per goatnet, `group_vars/<site>_hosts/deception.yml`, declares everythi
 
 ```yaml
 deception_enabled: true
-deception_seed_ref: "op://example-vault/deception-seed/value"   # a reference, never the value
+deception_seed: "{{ lookup('env', 'EXAMPLE_DECEPTION_SEED') }}"   # resolved per command, never stored
 deception_zone: "archive.example.internal"
 deception_zenoh_prefix: "legacy/archive"
 deception_reply_delay_ms: 3000
@@ -91,17 +91,17 @@ deception_templates_dir: "files/deception-templates/"
 deception_entry_points:
   - kind: false-documentation
     hosts: "core"
-    path: "/srv/backup-old-k7q2m4xa/README.restore.md"
+    path: "/srv/backup-old-{tag}/README.restore.md"
     template: "restore-notes"
     stop_notice: false
   - kind: decoy-credential
     hosts: "core"
-    path: "/srv/backup-old-k7q2m4xa/.env.restore"
+    path: "/srv/backup-old-{tag}/.env.restore"
     credential: "cloud-access-key"
 ```
 
-- **The seed is a secret.** The declaration holds a reference to it ([ADR 1186](../adr/1186-credentials-at-rest-are-references-only.md)). A reader who holds the seed and the templates can compute every answer and so recognize the decoy world.
-- **Decoys are planted on hosts, never committed.** The play renders each entry point onto its host from the declaration. No decoy file or decoy credential value is stored in a git tree, public or private.
+- **The seed is a secret.** The declaration names the environment variable that carries it for the length of one command; the value is stored only in the goatnet's secret store ([ADR 1186](../adr/1186-credentials-at-rest-are-references-only.md)). A reader who holds the seed and the templates can compute every answer and so recognize the decoy world.
+- **Decoys are planted on hosts, never committed.** The play renders each entry point onto its host from the declaration and replaces `{tag}` in a path with the keyed tag (§Recognizing our own decoys). No decoy file or decoy credential value is stored in a git tree, public or private.
 - **Entry points sit where no declared automation uses them.** The play enforces this (§Recognizing our own decoys). A touch by the goatnet's own tooling or by an operator's AI agent is handled as a defect in the placement or in the tooling, and one of the two is changed.
 
 ## Recognizing our own decoys
