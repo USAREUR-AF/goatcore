@@ -311,15 +311,6 @@ against (today, UTC) and the date the 90 days end. Before 1.0 an entry
 excuses a removal at once, as before. goatbuilder-pr fetches the release tags
 for this check (#800).
 
-#### Added: the release check starts at the cut-off, and the tag's tree check decides a rerun
-
-The rules that hold while a release is cut (`docs/reference/goatbuilder/02-install.md`)
-gain a fourth: the release check in the federation test environment starts on the version
-commit at the cut-off, before the version pull request is opened. The tag goes on that pull
-request's merge commit. Before the tag, a diff between the checked commit and the merge
-commit must name nothing under `crates/`, `ops/ansible/` or `ops/federation-e2e/`, or each
-stage those paths feed runs again on the merge commit (#772).
-
 #### Added: join-node's peer-groups query is measured against NetBird's own schema
 
 `ops/netbird/tests/peer-groups-query.sh` starts the pinned NetBird management
@@ -329,6 +320,15 @@ join-node's phase 10 to read the groups the minting host's peer holds.
 `tests/test_mesh_enroll_peer_groups.py` holds the query's shape always, and
 its result when the script runs it. The query was designed and is now
 measured. (#754)
+
+#### Added: the release check starts at the cut-off, and the tag's tree check decides a rerun
+
+The rules that hold while a release is cut (`docs/reference/goatbuilder/02-install.md`)
+gain a fourth: the release check in the federation test environment starts on the version
+commit at the cut-off, before the version pull request is opened. The tag goes on that pull
+request's merge commit. Before the tag, a diff between the checked commit and the merge
+commit must name nothing under `crates/`, `ops/ansible/` or `ops/federation-e2e/`, or each
+stage those paths feed runs again on the merge commit (#772).
 
 <!-- END generated: changelog unreleased -->
 
