@@ -622,6 +622,15 @@ pub fn pointer(
 /// package from the partner that phase 5 has not placed yet (ADR 1229).
 pub const INCOMING: &str = "theirs.incoming.json";
 
+/// Beside `INCOMING` when the directory step took the package through the
+/// partner's single pointer (no slot for this peering), so it may be the
+/// package of another of their peerings.
+pub const INCOMING_POINTER: &str = "theirs.incoming.json.pointer";
+
+/// How many days past our UTC date an offered package's `issued` may be. One
+/// further ahead would make every honest later package read as older (GB-308).
+pub const ISSUED_AHEAD_DAYS: i64 = 7;
+
 /// The code for a partner's package older than the one we hold (ADR 1229).
 pub const OLDER_PACKAGE: &str = "GB-308";
 
@@ -2134,6 +2143,65 @@ mod tests {
         st2.confirmations.retain(|c| c.kind != "keys");
         st2.confirm("r", 5, "partner-package", "flag", &sha256(&std::fs::read(&w2.paths.counterparty).unwrap()), BTreeMap::new());
         assert!(compose_guard(&w2.paths, &st2).is_none());
+    }
+
+    /// backout 1: an offered `issued` far in the future would lock the peering
+    /// (every honest later package would read as older). One more than seven days
+    /// past our UTC date is refused as not well formed; nothing is placed.
+    #[test]
+    fn an_offered_package_issued_far_in_the_future_is_refused() {
+        let (w, mut st) = bound();
+        let held = std::fs::read(&w.paths.counterparty).unwrap();
+        let future = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some("2099-01-01"));
+        std::fs::write(w.paths.work.join(INCOMING), &future).unwrap();
+        let mut s = surface(flag(&sha256(&future)), &[]);
+        let step = incoming_step(&w, &mut s, &mut st);
+        assert_eq!(code(&step), "GB-191");
+        let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("2099-01-01") && text.contains("days"), "{text}");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), held);
+        // Within the seven days: asked as usual.
+        let (w, mut st) = bound();
+        let soon = (chrono::Utc::now().date_naive() + chrono::Duration::days(3)).format("%Y-%m-%d").to_string();
+        let near = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(&soon));
+        std::fs::write(w.paths.work.join(INCOMING), &near).unwrap();
+        let mut s = surface(flag(&sha256(&near)), &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
+    }
+
+    /// backout 2: with no package held (it was lost) and a new one offered, the
+    /// step names the missing package and phase 5, not a writable working folder.
+    #[test]
+    fn a_missing_held_package_is_named_not_reported_as_a_folder_problem() {
+        let (w, mut st) = bound();
+        std::fs::remove_file(&w.paths.counterparty).unwrap();
+        let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
+        std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
+        let mut s = surface(flag(&sha256(&new)), &[]);
+        let step = incoming_step(&w, &mut s, &mut st);
+        let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
+        assert!(matches!(step.verdict, Verdict::Fail(_)), "{text}");
+        assert!(text.contains("no package held at") && text.contains("phase 5"), "{text}");
+        assert!(!text.contains("writable"), "{text}");
+    }
+
+    /// backout 3: a package that came through the partner's single pointer is
+    /// asked about saying so: it may be the package of another of their peerings.
+    #[test]
+    fn a_package_through_their_pointer_is_asked_about_saying_so() {
+        let (w, mut st) = bound();
+        let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
+        std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
+        std::fs::write(w.paths.work.join(INCOMING_POINTER), "").unwrap();
+        let mut s = surface(Values::default(), &[]);
+        let step = incoming_step(&w, &mut s, &mut st);
+        assert_eq!(code(&step), "GB-192");
+        let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("pointer") && text.contains("another of"), "{text}");
+        // Confirmed and placed: the marker goes with the saved copy.
+        let mut s = surface(flag(&sha256(&new)), &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
+        assert!(!w.paths.work.join(INCOMING_POINTER).exists());
     }
 
     #[test]

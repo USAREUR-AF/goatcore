@@ -1523,6 +1523,7 @@ def test_a_new_package_under_the_bound_key_is_saved_as_incoming_and_not_placed(s
     assert rc == 0, out
     assert theirs.read_bytes() == first, "the file on disk is not replaced by the directory"
     assert (work / "theirs.incoming.json").read_bytes() == new
+    assert not (work / "theirs.incoming.json.pointer").exists(), "from their slot for us, not their pointer"
     assert d.sha256_of(new) in out and "--accept-partner-package" in out, out
     assert "transport_offer.endpoint" in out, out
     # Offered again once it is the package on disk: the saved copy goes.
@@ -1571,6 +1572,8 @@ def test_a_partner_with_only_a_pointer_also_delivers_a_new_package_for_confirmat
     assert theirs.read_bytes() == first
     assert (work / "theirs.incoming.json").read_bytes() == new, out
     assert d.sha256_of(new) in out, out
+    # It came through their pointer, not a slot for this peering: phase 5 is told so.
+    assert (work / "theirs.incoming.json.pointer").exists(), out
 
 
 @needs_ed25519
