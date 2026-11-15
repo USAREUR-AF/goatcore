@@ -486,6 +486,17 @@ def samples_checks():
     body = re.sub(r"(?ms)^rot_snap\(\).*?^}\n", "", unit)
     raw = [l.strip() for l in body.splitlines() if re.search(r"-(before|after)\.txt", l)]
     check(not raw, f"rotation: a snapshot path is spelled outside rot_snap: {raw}")
+    # The partner's step after a transport rotation stops at phase 10's hand-off (drive_x
+    # 5 14), so it must go on from phase 11, where the partner replaces our peer key;
+    # without it the tunnel stays down. It stops at 13: the unit's own acceptance step
+    # covers 14, and phase 14 through drive has no acceptance surfaces.
+    one = re.search(r"(?ms)^rot_one\(\).*?^}\n", unit)
+    body1 = one.group(0) if one else ""
+    step = body1.find("drive_x '$them' '$s' '$AVENUE' 5 14")
+    back = body1.find('rec "rot-tunnel-back-$k-$s"')
+    on = body1.find('-- drive "$them" "$s" "$AVENUE" 11 13', step if step >= 0 else 0)
+    check(step >= 0 and back > step and step < on < back,
+          "rotation: the partner's step does not go on from phase 11 (drive $them $s $AVENUE 11 13) before the tunnel check")
     cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
     ids = {c["id"] for sc in cat["scenarios"] if sc["id"] == "key-rotation" for c in sc.get("checks", [])}
     script = ('eval "$(sed -n \'/^rot_checks()/,/^}/p\' units/rotation.sh)"; '
