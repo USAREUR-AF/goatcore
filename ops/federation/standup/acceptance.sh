@@ -140,8 +140,9 @@ done
 #   FED_ACCEPTANCE_TRACE=deferred  fires every probe and reads no edge log. It writes
 #       <work>/acceptance/ids.json (goatbuilder.acceptance-ids/v1: the run id, which
 #       every probe's key carries, the probe sessions' zenoh ids, and the window they
-#       were fired in), records each row that needs our edge's ACL trace as pending,
-#       and exits 0 when every other check passed.
+#       were fired in), and records each row that needs our edge's ACL trace as
+#       PENDING. A pending row is required and is not a pass, so this half exits 3
+#       (INCOMPLETE) even when every other check passed, and 1 when one failed.
 #   FED_EDGE_TRACE_FILE=<file>     the edge driver's answer: edge_trace_filter.py's
 #       output over our edge's log, only the lines that carry one of those ids. This
 #       run fires nothing and reads no surface: it decides the pending rows from what
@@ -1093,13 +1094,13 @@ session_of() { lines "$1" | grep -E 'is authorized to ' | tail -1 \
 # TRACE_IDS: the probe sessions' ids a deferred run fired, beside the run id itself.
 TRACE_IDS=""
 trace_id() { case ",$TRACE_IDS," in *",$1,"*) ;; *) TRACE_IDS="${TRACE_IDS:+$TRACE_IDS,}$1" ;; esac; }
-# pend NAME MESSAGE: a row that needs our edge's trace, deferred. It is optional while
-# pending, so the controller's half passes on the rows it decided itself; the run
-# that reads the edge's file decides it, required, and replaces it.
+# pend NAME MESSAGE: a row that needs our edge's trace, deferred. It is PENDING and
+# required, so the controller's half is never a pass on its own; the run that reads
+# the edge's file decides it and replaces it.
 pend() {
   printf '  pending  %s\n' "$2"
   obs pending edge-trace
-  record "$1" inbound negative SKIP "pending: $2 is decided from our edge's trace lines that carry this run's ids (FED_EDGE_TRACE_FILE)" --optional
+  record "$1" inbound negative PENDING "pending: $2 is decided from our edge's trace lines that carry this run's ids (FED_EDGE_TRACE_FILE)"
 }
 # decide_control: the agreed identity's write in its lane (IN), read back on our core.
 decide_control() {
@@ -1281,7 +1282,7 @@ b = json.load(open(sys.argv[1]))
 names = []
 with open(sys.argv[2], "a") as out:
     for c in b.get("checks", []):
-        if c.get("observations", {}).get("pending") == "edge-trace":
+        if c.get("verdict") == "PENDING" and c.get("observations", {}).get("pending") == "edge-trace":
             names.append(c["name"])
         else:
             out.write(json.dumps(c, sort_keys=False) + "\n")

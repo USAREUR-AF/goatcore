@@ -14,8 +14,9 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 For a peering driven from two machines, `acceptance.sh` takes
 `FED_ACCEPTANCE_TRACE=deferred`: it fires every probe, reads no edge log,
-leaves the five rows that need the edge's ACL trace pending, and writes the
-ids it fired and their window to `<work>/acceptance/ids.json`. On the edge,
+records the five rows that need the edge's ACL trace as PENDING, and writes the
+ids it fired and their window to `<work>/acceptance/ids.json`. A PENDING check
+is required and never a pass, so this half exits 3 (INCOMPLETE). On the edge,
 `ops/federation/standup/edge_trace_filter.py --ids … --window …` keeps only
 the log lines that carry one of those ids, within the window and 5 minutes
 either side. `FED_EDGE_TRACE_FILE=<that file>` then decides the pending rows
