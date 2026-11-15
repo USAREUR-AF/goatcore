@@ -38,7 +38,8 @@ pub enum Refusal {
     /// Over the receiver's `bytes_per_message`. Never truncated — half a
     /// sample is worse than no sample, because the receiver cannot tell.
     Oversize { len: usize, limit: usize },
-    /// Over the receiver's `hz` for this second.
+    /// The receiver accepts no publications (`hz` 0). Any other rate is paced,
+    /// not shed (ADR 1244).
     RateShed { limit: u64 },
     /// A new distinct wire key beyond the receiver's `distinct_keys`. Keys
     /// already seen keep flowing; the ceiling bounds cardinality, not volume.
@@ -69,7 +70,7 @@ impl std::fmt::Display for Refusal {
                 write!(f, "{len} bytes exceeds the receiver's ceiling of {limit}")
             }
             Refusal::RateShed { limit } => {
-                write!(f, "over the receiver's ceiling of {limit} publications/s")
+                write!(f, "the receiver accepts {limit} publications/s")
             }
             Refusal::CardinalityShed { limit } => write!(
                 f,
@@ -83,16 +84,18 @@ pub struct Policy {
     map: KeyMap,
     envelope: Envelope,
     expires: NaiveDate,
-    // Fixed one-second window. A token bucket would smooth bursts, but the
-    // receiver's declared figure is "publications per second" and a fixed
-    // window is what that sentence means.
-    window_start_ms: u64,
-    window_count: u64,
+    // No rate window here: the receiver's `hz` is the lane's aggregate ceiling,
+    // one message per 1/hz (ADR 1244), and the publisher paces to it
+    // (`edge::run_publisher`). Shedding a burst by the second here would lose
+    // samples a spaced send delivers.
     seen_keys: HashSet<String>,
     // The cardinality-shed warning: when it last fired, and the refusals held
     // back since (see `cardinality_shed_warning`).
     shed_warned_ms: Option<u64>,
     shed_held: u64,
+    // The same for samples dropped because the paced queue is full.
+    full_warned_ms: Option<u64>,
+    full_held: u64,
 }
 
 /// At most one cardinality-shed warning per this many milliseconds.
@@ -141,11 +144,11 @@ impl Policy {
             map,
             envelope,
             expires,
-            window_start_ms: 0,
-            window_count: 0,
             seen_keys: HashSet::new(),
             shed_warned_ms: None,
             shed_held: 0,
+            full_warned_ms: None,
+            full_held: 0,
         }
     }
 
@@ -155,6 +158,22 @@ impl Policy {
 
     pub fn distinct_keys_seen(&self) -> usize {
         self.seen_keys.len()
+    }
+
+    /// Called once per sample dropped because the paced queue is full. `Some(n)`
+    /// when this one should be logged as a warning, `n` being the drops held
+    /// back since the last warning; `None` when it is only counted.
+    pub fn queue_full_warning(&mut self, now_ms: u64) -> Option<u64> {
+        match self.full_warned_ms {
+            Some(t) if now_ms.saturating_sub(t) < SHED_WARN_INTERVAL_MS => {
+                self.full_held += 1;
+                None
+            }
+            _ => {
+                self.full_warned_ms = Some(now_ms);
+                Some(std::mem::take(&mut self.full_held))
+            }
+        }
     }
 
     /// Called once per cardinality-shed refusal. `Some(n)` when this one should
@@ -173,18 +192,13 @@ impl Policy {
         }
     }
 
-    /// `now_ms` is any monotonic millisecond counter; `today` is UTC.
+    /// `today` is UTC. No clock is needed here: the rate is paced by the
+    /// publisher, not shed by the second (ADR 1244).
     ///
     /// Order matters and is deliberate: the release-set check runs FIRST, so a
     /// key that must never cross is refused for that reason and not masked by
-    /// a rate shed that happened to fire on the same sample.
-    pub fn decide(
-        &mut self,
-        staging_key: &str,
-        payload_len: usize,
-        now_ms: u64,
-        today: NaiveDate,
-    ) -> Decision {
+    /// a later refusal of the same sample.
+    pub fn decide(&mut self, staging_key: &str, payload_len: usize, today: NaiveDate) -> Decision {
         let wire = match self.map.map(staging_key) {
             Ok(w) => w,
             Err(MapError::NotReleased) => return Decision::Refuse(Refusal::NotReleased),
@@ -211,16 +225,11 @@ impl Policy {
             self.seen_keys.insert(wire.clone());
         }
 
-        if now_ms.saturating_sub(self.window_start_ms) >= 1000 {
-            self.window_start_ms = now_ms;
-            self.window_count = 0;
+        // A receiver that accepts no publications gets none. Any other rate is
+        // the publisher's pacing to enforce, not a shed here (ADR 1244).
+        if self.envelope.hz == 0 {
+            return Decision::Refuse(Refusal::RateShed { limit: 0 });
         }
-        if self.window_count >= self.envelope.hz {
-            return Decision::Refuse(Refusal::RateShed {
-                limit: self.envelope.hz,
-            });
-        }
-        self.window_count += 1;
 
         Decision::Publish(wire)
     }
@@ -259,7 +268,7 @@ mod tests {
     fn a_released_sample_gets_its_wire_key() {
         let mut p = policy(&["release/weather/**"], roomy());
         assert_eq!(
-            p.decide("release/weather/forecast", 12, 0, today()),
+            p.decide("release/weather/forecast", 12, today()),
             Decision::Publish("from/zagros/weather/forecast".into())
         );
     }
@@ -268,11 +277,11 @@ mod tests {
     fn two_release_prefixes_both_flow() {
         let mut p = policy(&["release/weather/**", "release/imagery/**"], roomy());
         assert_eq!(
-            p.decide("release/weather/forecast", 1, 0, today()),
+            p.decide("release/weather/forecast", 1, today()),
             Decision::Publish("from/zagros/weather/forecast".into())
         );
         assert_eq!(
-            p.decide("release/imagery/tile/7", 1, 0, today()),
+            p.decide("release/imagery/tile/7", 1, today()),
             Decision::Publish("from/zagros/imagery/tile/7".into())
         );
     }
@@ -283,7 +292,7 @@ mod tests {
         // Oversize AND undeclared: the refusal must name the release set, so
         // that raising a ceiling can never turn into a disclosure.
         assert_eq!(
-            p.decide("release/secret/keys", 1 << 30, 0, today()),
+            p.decide("release/secret/keys", 1 << 30, today()),
             Decision::Refuse(Refusal::NotReleased)
         );
     }
@@ -292,14 +301,14 @@ mod tests {
     fn an_expired_agreement_stops_the_flow_with_no_operator_action() {
         let mut p = policy(&["release/weather/**"], roomy());
         let after = NaiveDate::from_ymd_opt(2026, 11, 21).unwrap();
-        match p.decide("release/weather/forecast", 1, 0, after) {
+        match p.decide("release/weather/forecast", 1, after) {
             Decision::Refuse(Refusal::AgreementExpired(_)) => {}
             other => panic!("{other:?}"),
         }
         // Still valid on the expiry date itself.
         let on = NaiveDate::from_ymd_opt(2026, 11, 20).unwrap();
         assert!(matches!(
-            p.decide("release/weather/forecast", 1, 0, on),
+            p.decide("release/weather/forecast", 1, on),
             Decision::Publish(_)
         ));
     }
@@ -314,37 +323,54 @@ mod tests {
             },
         );
         assert_eq!(
-            p.decide("release/weather/f", 101, 0, today()),
+            p.decide("release/weather/f", 101, today()),
             Decision::Refuse(Refusal::Oversize {
                 len: 101,
                 limit: 100
             })
         );
         assert!(matches!(
-            p.decide("release/weather/f", 100, 0, today()),
+            p.decide("release/weather/f", 100, today()),
             Decision::Publish(_)
         ));
     }
 
+    /// ADR 1244: the publisher paces the lane to 1/hz, so the policy no longer
+    /// sheds a burst by the second. Shedding a burst here would lose data a
+    /// spaced send delivers.
     #[test]
-    fn the_rate_ceiling_sheds_and_the_next_second_recovers() {
+    fn a_burst_inside_one_second_is_left_to_the_publishers_pacing() {
         let mut p = policy(&["release/weather/**"], Envelope { hz: 2, ..roomy() });
-        assert!(matches!(
-            p.decide("release/weather/f", 1, 0, today()),
-            Decision::Publish(_)
-        ));
-        assert!(matches!(
-            p.decide("release/weather/f", 1, 10, today()),
-            Decision::Publish(_)
-        ));
+        for t in [0, 10, 20, 30] {
+            assert!(
+                matches!(
+                    p.decide("release/weather/f", 1, today()),
+                    Decision::Publish(_)
+                ),
+                "sample at {t} ms"
+            );
+        }
+    }
+
+    #[test]
+    fn a_receiver_that_accepts_no_publications_gets_none() {
+        let mut p = policy(&["release/weather/**"], Envelope { hz: 0, ..roomy() });
         assert_eq!(
-            p.decide("release/weather/f", 1, 20, today()),
-            Decision::Refuse(Refusal::RateShed { limit: 2 })
+            p.decide("release/weather/f", 1, today()),
+            Decision::Refuse(Refusal::RateShed { limit: 0 })
         );
-        assert!(matches!(
-            p.decide("release/weather/f", 1, 1_000, today()),
-            Decision::Publish(_)
-        ));
+    }
+
+    /// A sample dropped because the paced queue is full is counted every time
+    /// and warned about at most once a minute, with the drops held back since.
+    #[test]
+    fn a_full_paced_queue_warns_at_most_once_a_minute() {
+        let mut p = policy(&["release/weather/**"], roomy());
+        assert_eq!(p.queue_full_warning(0), Some(0));
+        assert_eq!(p.queue_full_warning(1_000), None);
+        assert_eq!(p.queue_full_warning(30_000), None);
+        assert_eq!(p.queue_full_warning(60_000), Some(2));
+        assert_eq!(p.queue_full_warning(60_001), None);
     }
 
     #[test]
@@ -357,21 +383,21 @@ mod tests {
             },
         );
         assert!(matches!(
-            p.decide("release/weather/a", 1, 0, today()),
+            p.decide("release/weather/a", 1, today()),
             Decision::Publish(_)
         ));
         assert!(matches!(
-            p.decide("release/weather/b", 1, 0, today()),
+            p.decide("release/weather/b", 1, today()),
             Decision::Publish(_)
         ));
         assert_eq!(
-            p.decide("release/weather/c", 1, 0, today()),
+            p.decide("release/weather/c", 1, today()),
             Decision::Refuse(Refusal::CardinalityShed { limit: 2 })
         );
         // The two already-admitted keys keep flowing — the ceiling bounds
         // cardinality, not throughput.
         assert!(matches!(
-            p.decide("release/weather/a", 1, 0, today()),
+            p.decide("release/weather/a", 1, today()),
             Decision::Publish(_)
         ));
         assert_eq!(p.distinct_keys_seen(), 2);
@@ -390,11 +416,11 @@ mod tests {
             },
         );
         assert!(matches!(
-            p.decide("release/weather/a", 1, 0, today()),
+            p.decide("release/weather/a", 1, today()),
             Decision::Publish(_)
         ));
         assert_eq!(
-            p.decide("release/weather/b", 1, 0, today()),
+            p.decide("release/weather/b", 1, today()),
             Decision::Refuse(Refusal::CardinalityShed { limit: 1 })
         );
         assert_eq!(

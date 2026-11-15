@@ -79,6 +79,8 @@ class Faults:
         self.refuse_probe_put = set()      # sides whose core answers a PUT of a round-trip probe with 403
         self.probe_put_codes = {}          # side -> HTTP codes its core answers successive probe PUTs
         #                                    with (anything but 200 stages nothing); then 200
+        self.drop_samples = {}             # side -> {key regex: n}: its edge drops the first n samples
+        #                                    arriving there on a matching key, as downsampling does
         self.hang_get_after = {}           # side -> after this many probes it accepted, its core's
         #                                    REST GETs hang (a core under load) for 30 s
 
@@ -232,6 +234,10 @@ class Fabric:
                 and self.faults.drop_probes.get(side, 0) > 0:
             self.faults.drop_probes[side] -= 1
             return
+        for rx, n in self.faults.drop_samples.get(side, {}).items():
+            if n > 0 and re.fullmatch(rx, key):
+                self.faults.drop_samples[side][rx] = n - 1
+                return
         store = side not in self.faults.no_storage
         interest = side not in self.faults.storage_interest_refused or any(
             _match(ke, key) for ke, clients in self.subscribers(side) if clients != [self.cores[side].zid])

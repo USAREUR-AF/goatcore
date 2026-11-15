@@ -466,6 +466,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1239 | [A moon pod is a learning tool and not a sovereignty guarantee](1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md) | Proposed | Amends 0223, 0856, 1025, 1157, 1164 |
 | 1240 | [A platform-admin grant not made at the hub arrives without the group, and is recorded and alerted](1240-a-platform-admin-grant-not-made-at-the-hub-arrives-without-the-group-and-is-recorded.md) | Proposed | Amends 1205 |
 | 1242 | [A party's next CA is announced in package v2, so its CA rotates without a gap](1242-a-partys-next-ca-is-announced-in-package-v2-so-its-ca-rotates-without-a-gap.md) | Proposed | — |
+| 1244 | [A lane's `accept_hz` is its aggregate ceiling, and the sender paces to it](1244-a-lanes-accept-hz-is-its-aggregate-ceiling-and-the-sender-paces-to-it.md) | Accepted — decided by the operator on 2026-11-15. The pacing is built and measured once in the federation test environment at 1.1/`hz`; the 3 ms jitter floor is built and unit-tested, not run on a lane | — |
 
 <!-- END generated: adr-index -->
 
