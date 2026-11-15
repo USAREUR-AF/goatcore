@@ -844,9 +844,6 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             }
         }
     }
-    // Before the first phase after 5 this run reaches, run or skipped: the
-    // partner's package on disk is the one the last confirmation names.
-    let mut package_checked = false;
     // `rotate <partner> transport`: our package changes (the new WireGuard key),
     // so phases 5 and 6 run again with nothing on our side to decide when the
     // keys and the agreement are as confirmed (see phase 5 and 6 below).
@@ -862,10 +859,12 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         if !s.runs(ph.n, o.from, o.to) {
             continue;
         }
-        if ph.n > 5 && !package_checked {
-            package_checked = true;
+        // Before each phase after 5 this run reaches, run or skipped: the
+        // partner's package on disk is the one the last confirmation names. A
+        // phase in between (compose, a play) could have replaced it.
+        if ph.n > 5 {
             if let Some(r) = run.as_mut() {
-                if let Some(step) = confirm::compose_guard(&r.paths, &r.state) {
+                if let Some(step) = confirm::compose_guard(&r.paths, &r.state, ph.n) {
                     checks.extend(step.rows);
                     if let confirm::Verdict::Fail(d) | confirm::Verdict::Stop(d) = step.verdict {
                         r.end(ph, state::Outcome::Failed, &d);
@@ -1005,13 +1004,17 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 // A transport rotation of ours: only our package changed. With the
                 // keys confirmed before unchanged on both sides, and no new package of
                 // the partner's waiting, phase 5 has nothing to ask; the partner
-                // confirms our new package on their side. The agreement digest is
-                // checked after compose (phase 6 below). Any change stops here as before.
+                // confirms our new package on their side. The agreement on disk must
+                // be the one whose digest was confirmed, and phase 6 checks the digest
+                // again after compose. Any change stops here as before.
                 if transport_rotation && !s.values.active() {
                     if let Some(r) = run.as_mut() {
-                        if !r.paths.work.join(confirm::INCOMING).exists() && confirm::keys_unchanged(&r.paths, &r.state) {
-                            checks.push(row("confirm", "a transport rotation of ours: our package changed (the new WireGuard key), and the keys confirmed before are unchanged on both sides, so phase 5 has nothing to ask; the partner confirms our new package on their side, and the agreement digest is checked after compose".into()));
-                            r.end(ph, state::Outcome::Passed, "a transport rotation: our package changed; the keys confirmed before are unchanged");
+                        if !r.paths.work.join(confirm::INCOMING).exists()
+                            && confirm::keys_unchanged(&r.paths, &r.state)
+                            && confirm::agreement_unchanged(&r.paths, &r.state)
+                        {
+                            checks.push(row("confirm", "a transport rotation of ours: our package changed (the new WireGuard key), the keys confirmed before are unchanged on both sides, and the agreement is the one whose digest was confirmed, so phase 5 has nothing to ask; the partner confirms our new package on their side, and the agreement digest is checked again after compose".into()));
+                            r.end(ph, state::Outcome::Passed, "a transport rotation: our package changed; the keys and the agreement confirmed before are unchanged");
                             replanned = Some(plan(repo, o, &work, &edge_group, &resume));
                             continue;
                         }

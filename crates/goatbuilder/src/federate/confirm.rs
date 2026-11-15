@@ -714,6 +714,9 @@ fn copy_aside(path: &Path, tag: &str) -> std::io::Result<std::path::PathBuf> {
         aside = path.with_file_name(format!("{name}.{tag}-{stamp}-{n}"));
     }
     std::fs::copy(path, &aside)?;
+    // On disk before the new package is placed: after a crash the old one is
+    // still somewhere, even if the rename landed and the copy had not.
+    std::fs::File::open(&aside)?.sync_all()?;
     Ok(aside)
 }
 
@@ -773,9 +776,10 @@ fn replace_counterparty(
         let _ = std::fs::remove_file(path.with_extension("placing"));
         return Err(ReplaceError::BeforeRename(e));
     }
-    if let Err(e) = hook(Stage::AfterRename).and_then(|_| sync_dir(path)) {
-        let _ = std::fs::remove_file(&aside);
-        return Err(ReplaceError::BeforeRename(e));
+    // The rename has landed: the new package is in place and the old one is
+    // only in the aside copy, so the copy stays and the caller says so.
+    if let Err(error) = hook(Stage::AfterRename).and_then(|_| sync_dir(path)) {
+        return Err(ReplaceError::AfterRename { aside, error });
     }
     Ok(aside)
 }
@@ -898,7 +902,7 @@ fn partner_keys_hold(paths: &Paths, st: &State, bytes: &[u8]) -> Option<bool> {
 /// Before any phase after 5: the package on disk is the one the last
 /// confirmation names (GB-191, naming phase 5), whatever phase the run
 /// started from. `None` when it is, or before their key is bound.
-pub fn compose_guard(paths: &Paths, st: &State) -> Option<Step> {
+pub fn compose_guard(paths: &Paths, st: &State, phase: u32) -> Option<Step> {
     let (want, _) = confirmed_package(st)?;
     let them = st.peering.clone();
     let fix = format!("run phase 5 again, which asks about a package that changed: goatbuilder federate {them} --from 5");
@@ -907,7 +911,7 @@ pub fn compose_guard(paths: &Paths, st: &State) -> Option<Step> {
             fail(
                 "GB-191",
                 format!(
-                    "the partner's package at {} was confirmed at phase 5, but the keys confirmed there do not hold for it: its CA fingerprint, or the key the keyring binds, is not the one read aloud; nothing after phase 5 ran",
+                    "the partner's package at {} was confirmed at phase 5, but the keys confirmed there do not hold for it: its CA fingerprint, or the key the keyring binds, is not the one read aloud; phase {phase} did not run",
                     paths.counterparty.display()
                 ),
                 format!("confirm the keys again with them on the call: goatbuilder federate {them} --from 5 --partner-key <key> --partner-ca-fingerprint <fp>"),
@@ -916,7 +920,7 @@ pub fn compose_guard(paths: &Paths, st: &State) -> Option<Step> {
         Ok(b) => Some(fail(
             "GB-191",
             format!(
-                "{} holds package {}, not the one confirmed at phase 5 ({want}); it changed after phase 5, so nothing after phase 5 ran",
+                "{} holds package {}, not the one confirmed at phase 5 ({want}); it changed after phase 5, so phase {phase} did not run",
                 paths.counterparty.display(),
                 sha256(&b)
             ),
@@ -925,12 +929,20 @@ pub fn compose_guard(paths: &Paths, st: &State) -> Option<Step> {
         Err(e) => Some(fail(
             "GB-191",
             format!(
-                "{} cannot be read ({e}); the package confirmed at phase 5 is {want}, so nothing after phase 5 ran",
+                "{} cannot be read ({e}); the package confirmed at phase 5 is {want}, so phase {phase} did not run",
                 paths.counterparty.display()
             ),
             fix,
         )),
     }
+}
+
+/// Whether the agreement on disk is the one whose digest was compared with
+/// the partner at phase 6 (journaled as the agreement confirmation).
+pub fn agreement_unchanged(paths: &Paths, st: &State) -> bool {
+    std::fs::read(&paths.agreement)
+        .map(|b| st.confirmed("agreement", 6, &sha256(&b)).is_some())
+        .unwrap_or(false)
 }
 
 /// After a new package from the partner is confirmed and placed (ADR 1229):
@@ -2259,16 +2271,16 @@ mod tests {
     #[test]
     fn compose_refuses_a_package_that_is_not_the_one_confirmed_naming_phase_5() {
         let (w, st) = bound();
-        assert!(compose_guard(&w.paths, &st).is_none(), "the confirmed package passes");
+        assert!(compose_guard(&w.paths, &st, 6).is_none(), "the confirmed package passes");
         let other = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(LATER));
         std::fs::write(&w.paths.counterparty, &other).unwrap();
-        let step = compose_guard(&w.paths, &st).expect("refused");
+        let step = compose_guard(&w.paths, &st, 6).expect("refused");
         assert_eq!(code(&step), "GB-191");
         let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
         assert!(text.contains("phase 5") && text.contains(&sha256(&other)), "{text}");
         // Before their key is bound there is nothing to compare against.
         let w2 = world();
-        assert!(compose_guard(&w2.paths, &State::new("xab")).is_none());
+        assert!(compose_guard(&w2.paths, &State::new("xab"), 6).is_none());
     }
 
     /// Lab finding (window 6): after a new package is confirmed and placed,
@@ -2312,7 +2324,7 @@ mod tests {
         let mut s = surface(flag(&sha256(&new)), &[]);
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
         assert!(!keys_unchanged(&w.paths, &st));
-        let step = compose_guard(&w.paths, &st).expect("refused until the keys are confirmed again");
+        let step = compose_guard(&w.paths, &st, 6).expect("refused until the keys are confirmed again");
         assert_eq!(code(&step), "GB-191");
         let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
         assert!(text.contains("phase 5") && text.contains("CA fingerprint"), "{text}");
@@ -2320,7 +2332,7 @@ mod tests {
         let (w2, mut st2) = bound();
         st2.confirmations.retain(|c| c.kind != "keys");
         st2.confirm("r", 5, "partner-package", "flag", &sha256(&std::fs::read(&w2.paths.counterparty).unwrap()), BTreeMap::new());
-        assert!(compose_guard(&w2.paths, &st2).is_none());
+        assert!(compose_guard(&w2.paths, &st2, 6).is_none());
     }
 
     /// backout 1: an offered `issued` far in the future would lock the peering
@@ -2421,7 +2433,7 @@ mod tests {
             c.values.insert(key.to_string(), swap(&v));
             assert!(!keys_unchanged(&w.paths, &st), "{key} differs in case only");
             if key == "partner_key" {
-                assert!(compose_guard(&w.paths, &st).is_some(), "{key}: compose refuses it");
+                assert!(compose_guard(&w.paths, &st, 6).is_some(), "{key}: compose refuses it");
             }
         }
     }
@@ -2435,7 +2447,7 @@ xac=x"}"#[..]] {
             let (w, mut st) = bound();
             std::fs::write(&w.paths.counterparty, garbage).unwrap();
             st.confirm("r", 5, "partner-package", "flag", &sha256(garbage), BTreeMap::new());
-            let step = compose_guard(&w.paths, &st).expect("fails closed");
+            let step = compose_guard(&w.paths, &st, 6).expect("fails closed");
             assert_eq!(code(&step), "GB-191");
         }
     }
