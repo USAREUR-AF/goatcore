@@ -189,7 +189,7 @@ Status: built (`crates/goatbuilder/src/federate/forwarder.rs`, `ops/ansible/peer
 
 A peering says a forwarder relays it with `forwarder:` in its goatbuilder.yaml `peerings:` entry. A peering without it is unchanged.
 
-The federation test environment's scenario `forwarder-by-goatbuilder` (`ops/federation-e2e/units/forwarder-gb.sh`) brings one relayed peering up this way, with no play run by hand: built, not run ([federation-e2e-environment.md](federation-e2e-environment.md), "The forwarder applied by the command").
+The federation test environment's scenario `forwarder-by-goatbuilder` (`ops/federation-e2e/units/forwarder-gb.sh`) brings one relayed peering up this way, with no play run by hand: built, not run ([federation-e2e-environment.md](federation-e2e-environment.md), "The forwarder applied by the command"). The scenario `forwarder-two-peerings-by-goatbuilder` (`ops/federation-e2e/units/forwarder-gb-two.sh`) relays two peerings of one side through one forwarder, this section's gate: built, not run.
 
 ```yaml
 peerings:
