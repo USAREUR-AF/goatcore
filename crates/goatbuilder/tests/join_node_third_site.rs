@@ -164,9 +164,10 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         &root.join("bin/ssh"),
         &format!(
             "#!/bin/sh\nprintf 'ssh %s\\n' \"$*\" >> '{l}'\n\
+             if [ -f '{st}/unreachable' ]; then echo 'ssh: connect to host 192.0.2.30 port 22: Connection timed out' >&2; exit 255; fi\n\
              case \"$*\" in *BatchMode=yes*)\n\
                if [ -f '{st}/password-only' ]; then\n\
-                 case \"$*\" in *'sudo -n true'*) [ -f '{st}/sudo-seeded' ] || exit 1 ;; *) [ -f '{st}/key-seeded' ] || exit 255 ;; esac\n\
+                 case \"$*\" in *'sudo -n true'*) [ -f '{st}/sudo-seeded' ] || exit 1 ;; *) [ -f '{st}/key-seeded' ] || {{ echo 'goat@192.0.2.30: Permission denied (publickey,password).' >&2; exit 255; }} ;; esac\n\
                fi ;;\n\
              esac\n\
              case \"$*\" in *'bash -s'*|*'sudo -S'*) cat >> '{i}' ;; esac\n\
@@ -337,38 +338,17 @@ fn resume_at(v: &serde_json::Value) -> Option<String> {
 #[test]
 fn a_third_site_that_declares_federation_off_joins_from_phase_1_to_15() {
     let s = site();
-    let mut from: Option<String> = None;
-    let mut ran: Vec<u64> = Vec::new();
-    for _ in 0..6 {
-        if from.as_deref() == Some("11") {
-            // The operator's step at phase 10: the node enrolled, and its mesh
-            // address is recorded in the site's vars and the mesh inventory.
-            for f in [
-                "ops/ansible/group_vars/gamma_hosts/vars.yml",
-                "ops/ansible/inventory/mgmt-hosts-mesh.ini",
-            ] {
-                let p = s.checkout.join(f);
-                let t = std::fs::read_to_string(&p).unwrap();
-                std::fs::write(&p, t.replace("TBD_GAMMA_MESH_IP_A", "100.127.0.3")).unwrap();
-            }
-        }
-        let (out, v) = join_node(&s, from.as_deref());
-        assert!(
-            out.status.success(),
-            "join-node {} stopped with a refusal after phases {ran:?} + {:?}:\n{}\nplays:\n{}",
-            from.as_deref()
-                .map(|n| format!("--from {n}"))
-                .unwrap_or_else(|| "(no --from)".into()),
-            phases(&v),
-            says(&out),
-            std::fs::read_to_string(&s.log).unwrap_or_default()
-        );
-        ran.extend(phases(&v));
-        match resume_at(&v) {
-            Some(next) => from = Some(next),
-            None => break,
-        }
-    }
+    // One run, with no --from: phase 1 checks the node answers and goes on.
+    let (out, v) = join_node(&s, None);
+    assert!(
+        out.status.success(),
+        "join-node stopped after phases {:?}:\n{}\nplays:\n{}",
+        phases(&v),
+        says(&out),
+        std::fs::read_to_string(&s.log).unwrap_or_default()
+    );
+    assert_eq!(resume_at(&v), None, "a stop for a person: {}", says(&out));
+    let ran = phases(&v);
     let mut seen = ran.clone();
     seen.dedup();
     assert_eq!(
@@ -399,20 +379,15 @@ fn a_third_site_that_declares_federation_off_joins_from_phase_1_to_15() {
     );
 }
 
-/// Gate row H2: with no operator step between phase 2 and phase 15. The run
-/// stops only at phase 1, reaching the node; from 2 it runs to 15 in one go,
+/// Gate row H2: with no operator step between phase 1 and phase 15. Phase 1
+/// checks the node answers; the run goes on to 15 in one go,
 /// enrolling the node from a key minted where it is used and recording its
 /// mesh address itself, and no secret is in any argument list.
 #[test]
-fn from_phase_2_a_node_joins_with_no_operator_step_and_no_secret_in_any_argv() {
+fn from_phase_1_a_node_joins_with_no_operator_step_and_no_secret_in_any_argv() {
     let s = site();
     let (out, v) = join_node(&s, None);
-    assert!(out.status.success(), "{}", says(&out));
-    assert_eq!(phases(&v), vec![1], "only phase 1 is a person's step");
-    assert_eq!(resume_at(&v).as_deref(), Some("2"), "{}", says(&out));
-    let mut printed = says(&out);
-    let (out, v) = join_node(&s, Some("2"));
-    printed.push_str(&says(&out));
+    let printed = says(&out);
     assert!(
         out.status.success(),
         "{}\nargv:\n{}",
@@ -427,7 +402,7 @@ fn from_phase_2_a_node_joins_with_no_operator_step_and_no_secret_in_any_argv() {
     );
     let mut seen = phases(&v);
     seen.dedup();
-    assert_eq!(seen, (2..=15).collect::<Vec<u64>>(), "{}", says(&out));
+    assert_eq!(seen, (1..=15).collect::<Vec<u64>>(), "{}", says(&out));
     // The node's mesh address is in the checkout, and the run says which files it wrote.
     let gv = std::fs::read_to_string(
         s.checkout
@@ -454,12 +429,8 @@ fn from_phase_2_a_node_joins_with_no_operator_step_and_no_secret_in_any_argv() {
         .iter()
         .filter(|(p, _)| p.ends_with("run.json"))
         .map(|(_, t)| serde_json::from_str::<serde_json::Value>(t).unwrap())
-        .find(|r| {
-            r["args"]
-                .as_array()
-                .is_some_and(|a| a.iter().any(|x| x == "--from"))
-        })
-        .expect("a record of the run from phase 2");
+        .find(|r| r["args"].as_array().is_some_and(|a| a.iter().any(|x| x == "join-node")))
+        .expect("a record of the run");
     assert_eq!(
         rec["wrote"],
         serde_json::json!([
@@ -760,3 +731,33 @@ fn a_failed_join_node_step_is_recorded_with_its_exit_code() {
     assert_ne!(rows[0][4], "0", "{rows:?}");
 }
 
+
+/// Phase 1 checks the node answers over SSH before anything is done on it
+/// (GB-314). A node that does not answer stops the run at phase 1, with the
+/// instruction for a person and `--from 1`, and nothing after it runs. A
+/// node that answers but refuses the login (no key yet: phase 2 seeds it)
+/// has answered: phase 1 cannot prove a login before phase 2.
+#[test]
+fn a_node_that_does_not_answer_stops_the_run_at_phase_1() {
+    let s = site();
+    std::fs::write(s.root.join("state/unreachable"), "").unwrap();
+    let (out, v) = join_node(&s, None);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert_eq!(phases(&v), vec![1], "{all}");
+    assert!(all.contains("GB-314") && all.contains("Connection timed out"), "{all}");
+    assert!(all.contains("--address"), "the instruction names --address: {all}");
+    assert!(all.contains("--from 1"), "{all}");
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(!log.lines().any(|l| l.starts_with("play ") || l.starts_with("sshpass")), "something ran past phase 1:\n{log}");
+}
+
+/// A node that takes only its first-login password answers, though it
+/// refuses a key login before phase 2: the run goes on past phase 1.
+#[test]
+fn a_password_only_node_answers_at_phase_1() {
+    let s = site_with(true, NODE_PASS);
+    let (out, v) = join_node(&s, None);
+    assert!(out.status.success(), "{}", says(&out));
+    assert!(phases(&v).contains(&2), "{}", says(&out));
+}

@@ -649,27 +649,20 @@ fn a_phone_site_passes_the_config_preflight_with_no_class_value_written_by_hand(
 }
 
 /// Gate rows H3 and H4, the whole run. A phone whose VM is as the Terminal
-/// app installs it joins from phase 2 to 15 with no operator step: phase 2
+/// app installs it joins from phase 1 to 15 in one run with no operator step:
+/// phase 1 checks the phone answers over USB, phase 2
 /// prepares the VM and passes the integrity checks, the node is reached over
 /// the Android debug bridge until phase 12 and at its mesh address after it,
 /// and the plays reach the goatnet's other hosts over the mesh.
 #[test]
-fn a_phone_joins_over_usb_from_phase_2_to_15() {
+fn a_phone_joins_over_usb_from_phase_1_to_15() {
     let s = site(false);
     operator_key(&s);
     let (out, v) = join_phone(&s, &[]);
-    assert!(out.status.success(), "{}", says(&out));
-    assert_eq!(phases(&v), vec![1], "phase 1 is attaching the phone");
-    assert!(
-        says(&out).contains("attach the phone by USB") && says(&out).contains("--from 2"),
-        "{}",
-        says(&out)
-    );
-
-    let (out, v) = join_phone(&s, &["--from", "2"]);
     let log = s.log();
     assert!(out.status.success(), "{}\nargv:\n{log}", says(&out));
-    assert_eq!(phases(&v), (2..=15).collect::<Vec<u64>>(), "{}", says(&out));
+    assert_eq!(phases(&v), (1..=15).collect::<Vec<u64>>(), "{}", says(&out));
+    assert!(log.lines().any(|l| l == "adb get-state"), "phase 1 asked adb:\n{log}");
     assert!(
         !says(&out).contains("OPERATOR STEP"),
         "no operator step after phase 1: {}",
@@ -926,11 +919,17 @@ fn a_vm_that_does_not_come_back_on_the_new_kernel_is_refused() {
     assert!(!s.log().lines().any(|l| l.starts_with("play ")));
 }
 
-/// Gate row H3: no phone on the cable is refused with GB-299 at phase 2.
+/// Gate row H3: no phone on the cable stops the run at phase 1 (GB-314), with
+/// the instruction for a person; from phase 2 it is refused with GB-299.
 #[test]
 fn no_phone_on_the_cable_is_refused() {
     let s = site(true);
     s.flag("no-phone");
+    let (out, v) = join_phone(&s, &[]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert_eq!(phases(&v), vec![1], "{all}");
+    assert!(all.contains("GB-314") && all.contains("allow USB debugging") && all.contains("--from 1"), "{all}");
     let (out, v) = join_phone(&s, &["--from", "2"]);
     let all = says(&out);
     assert!(!out.status.success(), "{all}");
