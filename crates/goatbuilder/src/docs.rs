@@ -34,7 +34,7 @@ pub fn run(markdown: bool) -> anyhow::Result<()> {
         if e.kind() == std::io::ErrorKind::BrokenPipe {
             return Ok(());
         }
-        return Err(e.into());
+        return Err(goat_errors::coded("GB-322", format!("could not write the reference: {e}")).into());
     }
     Ok(())
 }

@@ -1212,7 +1212,7 @@ pub fn run_init(
                     "phase 3, edge half of peering {peering}: measured on {} and written to {} (sha256 {digest}). Nothing was built or signed.",
                     edge.name,
                     path.display()
-                )?;
+                ).map_err(|e| goat_errors::coded("GB-322", format!("could not write the report: {e}")))?;
                 return Ok(0);
             }
             writeln!(
@@ -1223,7 +1223,7 @@ pub fn run_init(
                 edge.name,
                 path.display(),
                 code = confirm_code(&digest)
-            )?;
+            ).map_err(|e| goat_errors::coded("GB-322", format!("could not write the report: {e}")))?;
             Ok(0)
         }
         Some(_) => {
