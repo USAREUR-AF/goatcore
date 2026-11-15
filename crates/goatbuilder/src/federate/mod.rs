@@ -997,10 +997,13 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             // advisory: its exit status is never read.
             let phase_started = std::time::SystemTime::now();
             if ph.n == 5 {
-                if let Some(args) = directory_args(repo, &work) {
+                let directory_ran = if let Some(args) = directory_args(repo, &work) {
                     let _ = runenv::command("python3").args(&args).current_dir(repo).status();
                     checks.push(row("directory", "the directory step ran; it is advisory and its result changes no phase".into()));
-                }
+                    true
+                } else {
+                    false
+                };
                 // A transport rotation of ours: only our package changed. With the
                 // keys confirmed before unchanged on both sides, and no new package of
                 // the partner's waiting, phase 5 has nothing to ask; the partner
@@ -1013,7 +1016,14 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                             && confirm::keys_unchanged(&r.paths, &r.state)
                             && confirm::agreement_unchanged(&r.paths, &r.state)
                         {
-                            checks.push(row("confirm", "a transport rotation of ours: our package changed (the new WireGuard key), the keys confirmed before are unchanged on both sides, and the agreement is the one whose digest was confirmed, so phase 5 has nothing to ask; the partner confirms our new package on their side, and the agreement digest is checked again after compose".into()));
+                            // With no directory step (the hand exchange) nobody has
+                            // sent our new package yet.
+                            let send = if directory_ran {
+                                "the partner confirms our new package on their side".to_string()
+                            } else {
+                                format!("send our new package, {}, to them now; they confirm it on their side", r.paths.ours.display())
+                            };
+                            checks.push(row("confirm", format!("a transport rotation of ours: our package changed (the new WireGuard key), the keys confirmed before are unchanged on both sides, and the agreement is the one whose digest was confirmed, so phase 5 has nothing to ask; {send}, and the agreement digest is checked again after compose")));
                             r.end(ph, state::Outcome::Passed, "a transport rotation: our package changed; the keys and the agreement confirmed before are unchanged");
                             replanned = Some(plan(repo, o, &work, &edge_group, &resume));
                             continue;

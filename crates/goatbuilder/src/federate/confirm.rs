@@ -717,6 +717,9 @@ fn copy_aside(path: &Path, tag: &str) -> std::io::Result<std::path::PathBuf> {
     // On disk before the new package is placed: after a crash the old one is
     // still somewhere, even if the rename landed and the copy had not.
     std::fs::File::open(&aside)?.sync_all()?;
+    // And its name in the folder (POSIX: a file's fsync does not sync the
+    // directory entry that names it).
+    sync_dir(&aside)?;
     Ok(aside)
 }
 
@@ -749,12 +752,16 @@ fn sync_dir(path: &Path) -> std::io::Result<()> {
 /// the old package or the new one, never part of one. `hook` runs at each
 /// stage (a test injects a failure there).
 fn place(path: &Path, body: &[u8], hook: &mut dyn FnMut(Stage) -> std::io::Result<()>) -> Result<(), ReplaceError> {
-    hook(Stage::BeforePlace)
+    let before = hook(Stage::BeforePlace)
         .and_then(|_| write_staged(path, body))
-        .and_then(|tmp| std::fs::rename(&tmp, path))
-        .and_then(|_| hook(Stage::AfterRename))
+        .and_then(|tmp| std::fs::rename(&tmp, path));
+    if let Err(e) = before {
+        let _ = std::fs::remove_file(path.with_extension("placing"));
+        return Err(ReplaceError::BeforeRename(e));
+    }
+    hook(Stage::AfterRename)
         .and_then(|_| sync_dir(path))
-        .map_err(ReplaceError::BeforeRename)
+        .map_err(ReplaceError::SyncAfterRename)
 }
 
 /// Replace the package at `path` with `body`, keeping the old one at
@@ -1261,20 +1268,32 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
                 return Some(fail(
                     "GB-184",
                     format!("{them}'s new package is in place at {} but the folder could not be synced ({error}), so it was not recorded as confirmed; the old one is kept at {}", paths.counterparty.display(), aside.display()),
-                    "check the working folder's disk, then run phase 5 again: it asks about the package on disk",
+                    format!("check the working folder's disk, then run phase 5 again: it asks again about {them}'s held incoming package ({}), the one now in place", held.display()),
                 ));
             }
         }
         let _ = std::fs::remove_file(&held);
         drop_marker();
-    } else if let Err(ReplaceError::BeforeRename(e) | ReplaceError::SyncAfterRename(e) | ReplaceError::CopyAside(e) | ReplaceError::AfterRename { error: e, .. }) = place(&paths.counterparty, &body, &mut |_| Ok(())) {
+    } else {
         // The bytes confirmed are the bytes placed, whatever was copied over
         // the file while the person was asked.
-        return Some(fail(
-            "GB-184",
-            format!("cannot write the working folder: the package confirmed could not be written to {} ({e})", paths.counterparty.display()),
-            "check the working folder is writable, then run phase 5 again",
-        ));
+        match place(&paths.counterparty, &body, &mut |_| Ok(())) {
+            Ok(()) => {}
+            Err(ReplaceError::SyncAfterRename(e)) => {
+                return Some(fail(
+                    "GB-184",
+                    format!("the package confirmed is in place at {} but the folder could not be synced ({e}), so it was not recorded as confirmed", paths.counterparty.display()),
+                    "check the working folder's disk, then run phase 5 again: it asks about the package on disk",
+                ));
+            }
+            Err(e) => {
+                return Some(fail(
+                    "GB-184",
+                    format!("cannot write the working folder: the package confirmed could not be written to {} ({}); the file there is as it was", paths.counterparty.display(), match &e { ReplaceError::BeforeRename(e) | ReplaceError::CopyAside(e) | ReplaceError::SyncAfterRename(e) | ReplaceError::AfterRename { error: e, .. } => e }),
+                    "check the working folder is writable, then run phase 5 again",
+                ));
+            }
+        }
     }
     st.confirm(
         run,
