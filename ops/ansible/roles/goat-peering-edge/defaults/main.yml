@@ -189,6 +189,9 @@ peering_edge_rotation_confirm_seconds: "{{ peering_edge_dpd_timeout | regex_repl
 # make_before_break), so a rotation's switch has no gap. Explicit, because the
 # packaged strongSwan's default has changed between releases.
 peering_edge_make_before_break: true
+# A scheduled IKE rekey due within the confirm window plus this margin is done
+# before the rotation notes the SA ids, so it cannot pass the confirm on the old leaf.
+peering_edge_rotation_rekey_margin_seconds: 30
 peering_edge_cert_next_path: "{{ peering_edge_cert_path | regex_replace('\\.pem$', '.next.pem') }}"
 peering_edge_key_next_path: "{{ peering_edge_key_path | regex_replace('\\.pem$', '.next.pem') }}"
 peering_edge_local_ca_next_path: "{{ peering_edge_swanctl_dir }}/x509ca/{{ peering_edge_name }}-local-ca.next.pem"

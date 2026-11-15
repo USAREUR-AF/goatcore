@@ -186,6 +186,55 @@
 # With make-before-break the old IKE SA stays ESTABLISHED while the new one
 # negotiates, so the confirm counts only an SA whose unique id was not up before
 # the re-authentication: the SA the new leaf authenticated.
+# A scheduled IKE rekey makes a new IKE SA, with a new unique id and a fresh
+# established time, but keeps the old authentication (strongSwan's documented
+# behaviour; not measured here). One due within the confirm window could pass the
+# confirm on the old leaf, so it is done now, before the ids are noted: a plain
+# rekey, which restarts the rekey timer.
+- name: peering-edge | rotation | seconds until the IKE SA's scheduled rekey
+  ansible.builtin.shell:
+    cmd: >-
+      swanctl --list-sas --ike {{ peering_edge_name | quote }} |
+      awk 'match($0, /rekeying in [0-9]+s/) { v = substr($0, RSTART + 12, RLENGTH - 13) + 0; if (m == "" || v < m) m = v }
+      END { print m }'
+  register: _pe_rot_rekey_in
+  changed_when: false
+
+- name: peering-edge | rotation | rekey now when a scheduled rekey falls in the confirm window
+  when:
+    - _pe_rot_rekey_in.stdout | trim | length > 0
+    - (_pe_rot_rekey_in.stdout | trim | int) < ((peering_edge_rotation_confirm_seconds | int) + (peering_edge_rotation_rekey_margin_seconds | int))
+  block:
+    - name: peering-edge | rotation | the IKE SAs up before the rekey
+      ansible.builtin.shell:
+        cmd: >-
+          swanctl --list-sas --ike {{ peering_edge_name | quote }} |
+          awk -v n={{ peering_edge_name | quote }} 'index($0, n ": #") == 1 { split(substr($0, length(n) + 4), a, ","); printf " %s", a[1] + 0 }'
+      register: _pe_rot_prerekey_ids
+      changed_when: false
+    - name: peering-edge | rotation | rekey the IKE SA (no re-authentication)
+      ansible.builtin.command:
+        argv: [swanctl, --rekey, --ike, "{{ peering_edge_name }}"]
+      changed_when: true
+    - name: peering-edge | rotation | wait for the rekeyed SA
+      ansible.builtin.shell:
+        cmd: >-
+          swanctl --list-sas --ike {{ peering_edge_name | quote }} |
+          awk -v n={{ peering_edge_name | quote }} -v old={{ (_pe_rot_prerekey_ids.stdout ~ ' ') | quote }}
+          'index($0, n ": #") == 1 { split(substr($0, length(n) + 4), a, ","); cur = a[1] + 0; est = ($0 ~ /ESTABLISHED/); next }
+          /INSTALLED/ && est && index(old, " " cur " ") == 0 { ok = 1 }
+          END { exit ok ? 0 : 1 }'
+      register: _pe_rot_prerekey
+      until: _pe_rot_prerekey.rc == 0
+      retries: "{{ [((peering_edge_rotation_confirm_seconds | int) / 5) | round(0, 'ceil') | int, 1] | max }}"
+      delay: "{{ 5 if (peering_edge_rotation_confirm_seconds | int) >= 5 else 1 }}"
+      changed_when: false
+      failed_when: false
+
+- name: peering-edge | rotation | the rekey before the switch did not complete
+  ansible.builtin.set_fact:
+    _pe_rot_prerekey_failed: "{{ (_pe_rot_prerekey.rc | default(0)) != 0 }}"
+
 - name: peering-edge | rotation | the IKE SAs up before the re-authentication
   ansible.builtin.shell:
     cmd: >-
@@ -198,6 +247,7 @@
   ansible.builtin.shell:
     cmd: "swanctl --load-creds && swanctl --rekey --ike {{ peering_edge_name | quote }} --reauth"
   changed_when: true
+  when: not (_pe_rot_prerekey_failed | bool)
 
 - name: peering-edge | rotation | wait for a new SA on the new leaf
   ansible.builtin.shell:
@@ -207,15 +257,21 @@
       'index($0, n ": #") == 1 { split(substr($0, length(n) + 4), a, ","); cur = a[1] + 0; est = ($0 ~ /ESTABLISHED/); next }
       /INSTALLED/ && est && index(old, " " cur " ") == 0 { ok = 1 }
       END { exit ok ? 0 : 1 }'
-  register: _pe_rot_up
-  until: _pe_rot_up.rc == 0
+  register: _pe_rot_up_wait
+  until: _pe_rot_up_wait.rc == 0
   retries: "{{ [((peering_edge_rotation_confirm_seconds | int) / 5) | round(0, 'ceil') | int, 1] | max }}"
   delay: "{{ 5 if (peering_edge_rotation_confirm_seconds | int) >= 5 else 1 }}"
   changed_when: false
   failed_when: false
+  when: not (_pe_rot_prerekey_failed | bool)
+
+- name: peering-edge | rotation | the confirm's result
+  ansible.builtin.set_fact:
+    _pe_rot_up:
+      rc: "{{ 1 if (_pe_rot_prerekey_failed | bool) else _pe_rot_up_wait.rc }}"
 
 - name: peering-edge | rotation | put the old pair back and stop (GB-302)
-  when: _pe_rot_up.rc != 0
+  when: (_pe_rot_up.rc | int) != 0
   block:
     # Marked first, so a run killed during the roll-back resumes as rolled back
     # (and finishes it), never as switched.
@@ -240,7 +296,9 @@
       ansible.builtin.fail:
         msg: >-
           goat-peering-edge (GB-302): the IKE SA of {{ peering_edge_name }} did not come up on the
-          new leaf within {{ peering_edge_rotation_confirm_seconds }} s on {{ inventory_hostname }}.
+          new leaf within {{ peering_edge_rotation_confirm_seconds }} s on {{ inventory_hostname }}{{
+          ' (the rekey before the switch did not complete, so the re-authentication was not tried)'
+          if (_pe_rot_prerekey_failed | bool) else '' }}.
           The old pair was put back from {{ _pe_rot_aside }} and loaded: the old leaf is live{{
           '; with an ipsec-ca rotation whose partner no longer trusts our old CA, it cannot carry the link'
           if peering_edge_rotation_kind == 'ca' else '' }}. Read `swanctl --list-sas` and the charon log

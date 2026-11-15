@@ -301,7 +301,11 @@ the new leaf is live, and never moves the live pair, the staged pair or our CA
 re-authentication made, not the old one still up beside it, and the role now
 sets `make_before_break = yes` in its charon drop-in on every IPsec peering
 edge, instead of leaving it to the packaged strongSwan's default
-(`peering_edge_make_before_break`). `peering_edge_remote_ca_next_path` accepts a
+(`peering_edge_make_before_break`). The first apply after this change restarts
+strongSwan once on each ipsec-fips edge, which drops that peering's link
+briefly: apply both sides of a peering in one window. A scheduled IKE rekey due
+within the confirm window is done before the switch, so it cannot pass the
+confirm on the old leaf. `peering_edge_remote_ca_next_path` accepts a
 partner's new CA beside the current one during their rotation. It is opt-in,
 and without a rotation id nothing changes. `goatbuilder federate rotate` does
 not drive it yet.
