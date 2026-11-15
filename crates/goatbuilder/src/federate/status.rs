@@ -666,9 +666,11 @@ pub fn status(
 ) -> Result<Report> {
     let cfg = config::load(cfg_path)?;
     if partner.is_none() && work.is_some() {
-        return Err(anyhow::anyhow!(
-            "--work names one peering's folder: give the partner (goatbuilder federate status <partner> --work <dir>), or set FED_WORK_ROOT for every peering"
-        ));
+        return Err(goat_errors::coded(
+            "GB-325",
+            "--work names one peering's folder: give the partner (goatbuilder federate status <partner> --work <dir>), or set FED_WORK_ROOT for every peering",
+        )
+        .into());
     }
     let on_env = |e: &str| env.map(|x| x == e).unwrap_or(true);
     if let Some(p) = partner {
