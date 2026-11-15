@@ -199,6 +199,10 @@ fn site() -> Site {
 }
 
 fn join_node(s: &Site, from: Option<&str>) -> (Output, serde_json::Value) {
+    join_node_with(s, from, &[])
+}
+
+fn join_node_with(s: &Site, from: Option<&str>, extra: &[&str]) -> (Output, serde_json::Value) {
     let mut args = vec![
         "-C".to_string(),
         s.checkout.display().to_string(),
@@ -219,6 +223,7 @@ fn join_node(s: &Site, from: Option<&str>) -> (Output, serde_json::Value) {
     if let Some(n) = from {
         args.extend(["--from".to_string(), n.to_string()]);
     }
+    args.extend(extra.iter().map(|a| a.to_string()));
     let path = format!(
         "{}:{}",
         s.root.join("bin").display(),
@@ -691,3 +696,67 @@ fn a_joiner_core_node_runs_its_mesh_dns_replica() {
     let dns_line = log.lines().position(|l| l == p).unwrap();
     assert!(dns_line < acceptance, "mesh DNS runs before phase 15");
 }
+
+/// The node's timings file: one row per step a run executed, with the columns
+/// standup's file has (time written, phase, label, seconds, exit code).
+fn timing_rows(s: &Site) -> Option<Vec<Vec<String>>> {
+    let f = s
+        .root
+        .join(".goat/state/join-node-gamma-gamma-core-1-timings.tsv");
+    let text = std::fs::read_to_string(f).ok()?;
+    Some(
+        text.lines()
+            .map(|l| l.split('\t').map(String::from).collect())
+            .collect(),
+    )
+}
+
+/// Like standup, a join-node run leaves a row per executed step in the state
+/// directory, and a timing line in its summary; a dry run leaves no file.
+#[test]
+fn a_join_node_run_records_each_step_it_ran_and_a_dry_run_records_none() {
+    let s = site();
+    let (out, _) = join_node_with(&s, Some("2"), &["--dry-run"]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert!(timing_rows(&s).is_none(), "a dry run writes no timings file");
+
+    let (out, v) = join_node(&s, Some("2"));
+    assert!(out.status.success(), "{}", says(&out));
+    let rows = timing_rows(&s).expect("a timings file in the state directory");
+    let ran = phases(&v);
+    assert_eq!(rows.len(), ran.len(), "one row per step run: {rows:?}");
+    for (row, n) in rows.iter().zip(&ran) {
+        assert_eq!(row.len(), 5, "{row:?}");
+        assert_eq!(row[1], n.to_string(), "{row:?}");
+        assert!(!row[2].is_empty() && row[3].parse::<u64>().is_ok(), "{row:?}");
+        assert_eq!(row[4], "0", "{row:?}");
+    }
+    let checks = v["checks"].as_array().unwrap();
+    assert!(
+        checks
+            .iter()
+            .any(|c| c["name"] == "timings" && c["detail"].as_str().unwrap().starts_with("total ")),
+        "{}",
+        says(&out)
+    );
+    assert!(
+        checks
+            .iter()
+            .any(|c| c["name"] == "time" && c["detail"].as_str().unwrap().starts_with("phase 2 took ")),
+        "{}",
+        says(&out)
+    );
+}
+
+/// A failed step is recorded with its exit code, and nothing after it is.
+#[test]
+fn a_failed_join_node_step_is_recorded_with_its_exit_code() {
+    let s = site_with(true, "op://zagros/gamma-core-1/password");
+    let (out, _) = join_node(&s, Some("2"));
+    assert!(!out.status.success(), "{}", says(&out));
+    let rows = timing_rows(&s).expect("a timings file in the state directory");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0][1], "2", "{rows:?}");
+    assert_ne!(rows[0][4], "0", "{rows:?}");
+}
+

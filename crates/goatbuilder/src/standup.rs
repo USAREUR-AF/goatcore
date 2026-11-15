@@ -1683,6 +1683,31 @@ mod tests {
         assert!(teardown_decl(&decls, "a step nobody declared").is_none());
     }
 
+    /// Each stop teardown runs is a row in <state_dir>/teardown-<site>-timings.tsv,
+    /// with standup's columns; a failed stop is the last row, with its exit code,
+    /// and the run's summary carries the timing line.
+    #[test]
+    fn teardown_records_each_stop_it_ran_in_its_timings_file() {
+        let t = tempfile::tempdir().unwrap();
+        let state = t.path().join("state");
+        let steps = vec![
+            (14, "cross-goatnet surfaces".to_string(), "cross-env".to_string(), "true".to_string()),
+            (12, "portal".to_string(), "goat-zenoh-portal".to_string(), "exit 3".to_string()),
+            (12, "grant-keyd".to_string(), "grant-keyd".to_string(), "true".to_string()),
+        ];
+        let (checks, ok) = run_teardown_steps(t.path(), state.to_str().unwrap(), "zagros", "RESUME", &steps).unwrap();
+        assert!(!ok);
+        let text = std::fs::read_to_string(state.join("teardown-zagros-timings.tsv")).unwrap();
+        let rows: Vec<Vec<&str>> = text.lines().map(|l| l.split('\t').collect()).collect();
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(&rows[0][1..3], &["14", "cross-goatnet surfaces"]);
+        assert_eq!(rows[0][4], "0");
+        assert_eq!(&rows[1][1..3], &["12", "portal"]);
+        assert_eq!(rows[1][4], "3");
+        assert!(checks.iter().any(|c| c.name == "timings" && c.detail.starts_with("total ")), "{checks:?}");
+        assert!(checks.iter().any(|c| c.name == "failed" && c.detail.contains("goat-zenoh-portal")), "{checks:?}");
+    }
+
     #[test]
     fn a_full_teardown_of_a_live_site_is_refused_and_services_only_is_not() {
         let o = Options { env: "zagros_dev", site: "zagros-dev", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
