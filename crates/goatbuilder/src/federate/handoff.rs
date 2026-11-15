@@ -585,7 +585,7 @@ fn import_edge_half(a: &ImportArgs, work: &Path, repo: &Path) -> anyhow::Result<
         "import: {} changed while it was read",
         a.result.display()
     );
-    let checked = vec![Check {
+    let mut checked = vec![Check {
         name: "edge-half".into(),
         ok: true,
         detail: format!(
@@ -596,7 +596,63 @@ fn import_edge_half(a: &ImportArgs, work: &Path, repo: &Path) -> anyhow::Result<
         ),
         fix: None,
     }];
+    if let Some(agrees) = handed_key_agrees(work, a, &half)? {
+        checked.push(Check { name: "edge-half".into(), ok: true, detail: agrees, fix: None });
+    }
     place(a, work, &bytes, &sha, checked)
+}
+
+/// Phase 3's edge half against phase 2's edge result, when phase 2 ran with
+/// two drivers: the interface phase 3 measured on and its public key must be
+/// the ones phase 2 handed over. Either differing means the interface changed
+/// between the phases (phase 2 run again on the edge and not imported, or
+/// another interface), and the package would offer a key the agreement's
+/// tunnel does not hold: GB-114, nothing placed. `None` when there is nothing
+/// to compare: no phase 2 result imported here, one that names no interface,
+/// or a key phase 3 could not measure (the package refuses that later).
+fn handed_key_agrees(
+    work: &Path,
+    a: &ImportArgs,
+    half: &super::measure::ImportedEdgeHalf,
+) -> anyhow::Result<Option<String>> {
+    let Some(state) = super::state::State::read(work)? else {
+        return Ok(None);
+    };
+    let Some((file, bound)) = imported(&state, 2) else {
+        return Ok(None);
+    };
+    let refuse = |why: String| -> anyhow::Error {
+        goat_errors::coded(
+            "GB-114",
+            format!(
+                "the edge half {} cannot be used for peering {} (GB-114): {why}; nothing was placed or recorded. Run the edge driver's phase 2 again, import its result, then measure phase 3's edge half again",
+                a.result.display(),
+                a.with
+            ),
+        )
+        .into()
+    };
+    let doc = check_imported(work, 2, &file, &bound).map_err(|c| refuse(c.detail))?;
+    let (Some(iface), Some(handed)) = (doc["interface"].as_str(), doc["public_key"].as_str()) else {
+        return Ok(None);
+    };
+    if half.interface.as_deref() != Some(iface) {
+        return Err(refuse(format!(
+            "phase 3 measured interface {}, and phase 2's edge result, imported at {bound}, handed over {iface}",
+            half.interface.as_deref().unwrap_or("(none)")
+        )));
+    }
+    let Some(Ok(measured)) = half.half.public_key.as_ref().map(|k| k.outcome.as_ref()) else {
+        return Ok(None);
+    };
+    if measured != handed {
+        return Err(refuse(format!(
+            "phase 3 measured the public key {measured} on {iface}, and phase 2's edge result, imported at {bound}, handed over {handed}: the interface's key changed between phase 2 and phase 3"
+        )));
+    }
+    Ok(Some(format!(
+        "phase 3's edge half measured on {iface} the public key phase 2's edge result handed over (imported at {bound})"
+    )))
 }
 
 /// The import's last part, for every phase: this peering's journal must be
