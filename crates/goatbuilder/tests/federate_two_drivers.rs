@@ -1543,8 +1543,26 @@ fn edge_answers_its_key(ssh: &federate_world::OverSsh, key: &str) {
 /// edge half measured on an edge whose interface answers `measured`, and its
 /// import on the controller.
 fn phase_3_import_after_phase_2(handed: &str, measured: &str) -> (World, std::process::Output) {
+    phase_3_import_after(Some(handed), Some(measured))
+}
+
+/// The same, with `handed` None for a phase 2 result that names no interface
+/// (and so no key), and `measured` None for an edge that answers no `wg`.
+fn phase_3_import_after(handed: Option<&str>, measured: Option<&str>) -> (World, std::process::Output) {
     let w = world();
-    plays_logging_their_arguments(&w, handed);
+    match handed {
+        Some(k) => plays_logging_their_arguments(&w, k),
+        None => {
+            let log = w.root.path().join("log");
+            federate_world::exe(
+                &w.repo.join("ops/scripts/ansible-preflight.sh"),
+                &format!(
+                    "#!/bin/sh\nfor a; do last=$a; done\necho \"play $last args: $*\" >> '{log}'\nfor a; do case $a in peering_prepare_result=*) f=${{a#peering_prepare_result=}}; mkdir -p \"$(dirname \"$f\")\"; printf '%s\\n' '{{\"schema\": \"goatbuilder.phase2-edge/v1\", \"peering\": \"hello-ally\", \"side\": \"edge\", \"interface\": null, \"public_key\": null}}' > \"$f\";; esac; done\nexit 0\n",
+                    log = log.display()
+                ),
+            );
+        }
+    }
     let commit = two_drivers(&w);
     let (out, _) = w.run(&["hello-ally", "--from", "2", "--to", "2"]);
     assert!(out.status.success(), "{}", says(&out));
@@ -1557,12 +1575,16 @@ fn phase_3_import_after_phase_2(handed: &str, measured: &str) -> (World, std::pr
     let (out, _) = w.run(&["import", "hello-ally", "2", carried.to_str().unwrap(), "--sha256", &code]);
     assert!(out.status.success(), "phase 2's import: {}", says(&out));
     let ssh = w.over_ssh();
-    edge_answers_its_key(&ssh, measured);
+    if let Some(k) = measured {
+        edge_answers_its_key(&ssh, k);
+    }
     let (out, _) = w.run_over_ssh(&ssh, &["hello-ally", "--from", "2"]);
     assert!(out.status.success(), "then: {}", says(&out));
     let (bytes, h) = phase_3_edge_half(&w, &ssh, &commit, &edge_work);
     let half: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(half["public_key"]["ok"], measured, "the edge half measured another key: {half}");
+    if let Some(k) = measured {
+        assert_eq!(half["public_key"]["ok"], k, "the edge half measured another key: {half}");
+    }
     let code = h["confirm_code"].as_str().unwrap().to_string();
     let carried = w.root.path().join("carried-edge-half.json");
     std::fs::write(&carried, &bytes).unwrap();
@@ -1589,4 +1611,31 @@ fn phase_3s_edge_half_must_measure_the_key_phase_2_handed_over() {
     assert!(out.status.success(), "{}", says(&out));
     assert!(w.work.join("handoff/3/edge-half.json").exists());
     assert!(says(&out).contains("phase 2's edge result"), "the import says it compared: {}", says(&out));
+}
+
+/// When there is nothing to compare, the import says so in a row of its own:
+/// the key binding between phase 2 and phase 3 was not checked, and why. A
+/// phase 2 result that names no interface, and an edge half that could not
+/// measure the key, are each imported with that row, never silently.
+#[test]
+fn an_unchecked_key_binding_is_a_row_that_says_why() {
+    for (handed, measured, why) in [
+        (None, Some(public_b64("xaa")), "phase 2's edge result names no interface"),
+        (Some(public_b64("xaa")), None, "phase 3's edge half could not measure"),
+    ] {
+        let (w, out) = phase_3_import_after(handed.as_deref(), measured.as_deref());
+        let all = says(&out);
+        assert!(out.status.success(), "{why}: {all}");
+        assert!(w.work.join("handoff/3/edge-half.json").exists(), "{why}: {all}");
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let row = v["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["detail"].as_str().is_some_and(|d| d.contains("key binding")))
+            .unwrap_or_else(|| panic!("{why}: no row says the key binding was not checked: {all}"));
+        let d = row["detail"].as_str().unwrap();
+        assert!(d.starts_with("not checked") && d.contains("NOT checked") && d.contains(why), "{d}");
+        assert_eq!(row["skipped"], true, "{row}");
+    }
 }
