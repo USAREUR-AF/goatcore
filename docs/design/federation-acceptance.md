@@ -197,6 +197,23 @@ downstream.
 The launcher is the deployment's or the drill's: it holds whatever certificates the probes need
 (approved negative test identities, never the CA). None ships with this change.
 
+**A side's own launcher, in a bilateral session** (built in the runner and on the in-process
+fabric, tests `test_own_surfaces_*` in `test_acceptance.py`; §6.4). `FED_PROBE_LAUNCHER_OURS`
+takes the same contract, and its three sessions hold this side's own identities: its agreed
+leaf, a name nobody agreed and a leaf naming the partner's core, the last two from its own CA,
+each dialling the partner's edge. The run writes through them the keys the partner's refusal rows
+look for, and stages only their zenoh ids, beside this run's challenge, for the partner. It is
+refused beside `FED_PROBE_LAUNCHER`, which is a drill's and holds the partner's identities, and
+outside a session. The federation test environment's launcher
+(`ops/federation-e2e/lib/probe-launcher.sh`) serves both, by where it runs and which
+certificates it is given.
+
+**What the script cannot verify.** It does not see a launcher's certificates. It cannot tell
+whether the agreed probe holds the agreed name, whether the forged name is one nobody agreed, or
+whether a certificate came from this side's CA or the partner's. The rows judge what the
+receiving edge records for each session; that the sessions hold the identities they are meant to
+is the launcher's, and its operator's, responsibility.
+
 ### 2.5 Our own surfaces, from the declarations
 
 **Built.** Status: not measured: the gate names two real environments, so it waits on goatbuilder 1.0 gate row B9 — gate: phase 14 run by `goatbuilder federate <partner>` on two real
