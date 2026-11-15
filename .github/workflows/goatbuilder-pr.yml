@@ -99,6 +99,8 @@ on:
       - 'ops/scripts/standup-phase-run'
       - 'ops/secrets/posture.py'
       - 'tests/test_standup_phase_run.py'
+      - 'ops/scripts/standup-timings-close.py'
+      - 'tests/test_standup_timings_close.py'
       - 'tests/test_deploy_secrets_*.py'
       - 'ops/scripts/goatlite-render.py'
       - 'tests/test_goatlite_render_*.py'
@@ -371,6 +373,10 @@ jobs:
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 tests/test_standup_phase_run.py
+      - name: goat-standup.sh closes the operator step's timings row when the run resumes, as goatbuilder standup does
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: python3 tests/test_standup_timings_close.py
       - name: The deploy secrets check names every env lookup the play reaches — role defaults and task lookups
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}

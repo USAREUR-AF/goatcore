@@ -814,7 +814,53 @@ pub(crate) fn run_evidence(file: &str, now: chrono::NaiveDateTime) -> Option<Str
         1 => format!("1 stop ({})", parts[0].1),
         _ => format!("{n} stops ({})", parts.iter().map(|(k, w)| format!("{k} {w}")).collect::<Vec<_>>().join(", ")),
     };
-    Some(format!("since phase 1: {total}s ({} min), {p11_text}; {stops}", total / 60))
+    let slowest: Vec<String> = slowest_phases(rows).iter().take(3).map(|(n, secs)| format!("{n} {secs}s")).collect();
+    let slowest = if slowest.is_empty() { String::new() } else { format!("; slowest phases: {}", slowest.join(", ")) };
+    Some(format!("since phase 1: {total}s ({} min), {p11_text}; {stops}{slowest}", total / 60))
+}
+
+/// Each phase's time across resumes, slowest first, phase 11 left out (it is
+/// reported on its own): the wall time of each stretch of consecutive rows of
+/// one phase, from the earliest step's start (its row's time less its seconds)
+/// to the latest row, summed over the phase's stretches. Steps run side by side
+/// in phase 12's waves count once; a failed step ends its stretch, so the time
+/// until the resume is not the phase's, nor is the wait after an open row.
+fn slowest_phases(rows: &[Vec<&str>]) -> Vec<(u32, u64)> {
+    let mut by: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut stretch: Option<(u32, chrono::NaiveDateTime, chrono::NaiveDateTime)> = None;
+    let mut end = |s: &mut Option<(u32, chrono::NaiveDateTime, chrono::NaiveDateTime)>| {
+        if let Some((n, a, b)) = s.take() {
+            *by.entry(n).or_default() += (b - a).num_seconds().max(0) as u64;
+        }
+    };
+    for r in rows {
+        let (Ok(n), Ok(secs), Some(t)) = (r[1].parse::<u32>(), r[3].parse::<i64>(), row_time(r[0])) else {
+            // An open row is a stop: the wait until the resume is no phase's.
+            end(&mut stretch);
+            continue;
+        };
+        if n == 11 {
+            continue;
+        }
+        let start = t - chrono::Duration::seconds(secs);
+        match &mut stretch {
+            Some((m, a, b)) if *m == n => {
+                *a = (*a).min(start);
+                *b = (*b).max(t);
+            }
+            _ => {
+                end(&mut stretch);
+                stretch = Some((n, start, t));
+            }
+        }
+        if r[4] != "0" {
+            end(&mut stretch);
+        }
+    }
+    end(&mut stretch);
+    let mut v: Vec<(u32, u64)> = by.into_iter().collect();
+    v.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
+    v
 }
 
 /// The run's timing line: total wall-clock and the slowest phases first, so the
