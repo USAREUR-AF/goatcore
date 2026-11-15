@@ -604,9 +604,11 @@ and `a_stage_plan_table_lists_only_the_stage_phases`).
 session) and tested on the in-process fabric (`test_own_surfaces_*` in `test_acceptance.py`:
 two sides holding only their own surfaces reach a combined PASS; without the partner's probes
 our refusal rows are BLOCKED naming it; probe ids from an earlier run, a forged probe our edge
-authorizes and an SVID from our own root fail; no staged value is key material). **Not
-measured:** not yet run by the federation test environment's bilateral unit, nor on two real
-environments (goatbuilder 1.0 gate rows B2 and B9).
+authorizes and an SVID from our own root fail; no staged value is key material). The
+federation test environment's bilateral unit gives each side its own launcher and requires both
+combined verdicts to be PASS (`federation-e2e-environment.md`, "The partner's half of
+acceptance"). **Not measured:** that unit has not been run on this change, and no two real
+environments have run it (goatbuilder 1.0 gate rows B2 and B9).
 
 In a session, each side holds only its own core, edge and SPIRE server. Before this, two groups
 of rows could not pass that way, so a combined verdict stayed open (exit 3) even when everything
