@@ -91,7 +91,10 @@ case "$1" in
   --rekey)
     [ -e "$T/sa-up" ] || exit 0
     case "$*" in
-      *--reauth*) [ -e "$T/reauth-stalls" ] && exit 0; rm -f "$T/partner-rekey-on"; newsa ;;
+      *--reauth*) [ -e "$T/reauth-stalls" ] && exit 0; rm -f "$T/partner-rekey-on"
+        if [ -e "$T/old-lingers" ]; then # make-before-break not completed: the old SA stays listed
+          n=$(($(cut -d' ' -f1 "$T/sas" | sort -n | tail -1) + 1)); echo "$n $now" >> "$T/sas"
+        else newsa; fi ;;
       *) rm -f "$T/partner-rekey-on"; newsa
          # A run killed right after the rekey, before the re-authentication.
          [ -e "$T/die-after-rekey" ] && exit 1 ;;
@@ -139,7 +142,7 @@ leaf short ca1 fed.xaa.xab.01 10
 
 S="$T/swanctl"
 fresh() { # a fresh edge: live leaf of ca1, our CA ca1, nothing staged
-  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails" "$T/rekey-at" "$T/rekey-soon" "$T/partner-rekey-on" "$T/listings" "$T/die-after-rekey"
+  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails" "$T/rekey-at" "$T/rekey-soon" "$T/partner-rekey-on" "$T/listings" "$T/die-after-rekey" "$T/old-lingers"
   mkdir -p "$S/x509" "$S/private" "$S/x509ca"
   cp "$T/pki/live.pem" "$S/x509/xab-cert.pem"; cp "$T/pki/live.key" "$S/private/xab-key.pem"
   chmod 600 "$S/private/xab-key.pem"
@@ -158,9 +161,11 @@ rot() { # rest: extra arguments
 }
 live_is() { [ "$(sha "$S/x509/xab-cert.pem")" = "$(sha "$T/pki/$1.pem")" ] && [ "$(sha "$S/private/xab-key.pem")" = "$(sha "$T/pki/$1.key")" ]; }
 calls() { grep -c -- "$1" "$T/swanctl.log" 2>/dev/null || true; }
-# Every credential and marker on the edge, but the confirm's record, which each
-# confirmed run rewrites with its own SA id (moving nothing).
-snap() { find "$S" -type f ! -name confirmed -exec openssl sha256 -r {} + 2>/dev/null | sort; }
+snap() { find "$S" -type f -exec openssl sha256 -r {} + 2>/dev/null | sort; }
+# For a successful re-run with the same id only: every file but the confirm's record,
+# which each confirmed run rewrites with its own SA id; the record is compared by
+# existence there.
+snap_but_record() { find "$S" -type f ! -name confirmed -exec openssl sha256 -r {} + 2>/dev/null | sort; }
 
 echo "goat-peering-edge test-rotation"
 
@@ -207,8 +212,8 @@ if rot -e peering_edge_rotation=r1 && live_is good && [ -f "$S/.previous-r1/xab-
 else
   fail "the good pair was not switched as designed"; tail -15 "$LOG"; cat "$T/swanctl.log" 2>/dev/null || true
 fi
-aside=$(snap)
-if rot -e peering_edge_rotation=r1 && live_is good && [ "$(snap)" = "$aside" ]; then
+aside=$(snap_but_record)
+if rot -e peering_edge_rotation=r1 && live_is good && [ "$(snap_but_record)" = "$aside" ] && [ -e "$S/.previous-r1/confirmed" ]; then
   pass "a rerun with the same id moves nothing"
 else
   fail "a rerun with the same id changed files"; tail -12 "$LOG"
@@ -228,8 +233,8 @@ fi
 fresh; touch "$T/sa-up"
 mkdir -m 700 "$S/.previous-r3"; cp -p "$S/x509/xab-cert.pem" "$S/private/xab-key.pem" "$S/.previous-r3/"
 cp "$T/pki/good.pem" "$S/x509/xab-cert.pem"; cp "$T/pki/good.key" "$S/private/xab-key.pem"
-before=$(snap)
-if rot -e peering_edge_rotation=r3 && live_is good && [ "$(snap)" = "$before" ] \
+before=$(snap_but_record)
+if rot -e peering_edge_rotation=r3 && live_is good && [ "$(snap_but_record)" = "$before" ] && [ -e "$S/.previous-r3/confirmed" ] \
    && [ "$(calls --load-creds)" = 1 ] && [ "$(calls '--reauth')" = 1 ]; then
   pass "stopped after the switch: loads and re-authenticates once, moves nothing"
 else
@@ -238,7 +243,8 @@ fi
 
 # The SA never comes up: the old pair is put back, GB-302.
 fresh; stage good
-if ! rot -e peering_edge_rotation=r4 && grep -q "GB-302" "$LOG" && live_is live && [ "$(calls '--reauth')" = 2 ]; then
+if ! rot -e peering_edge_rotation=r4 && grep -q "GB-302" "$LOG" && live_is live && [ "$(calls '--reauth')" = 2 ] \
+   && [ ! -e "$S/.previous-r4/confirmed" ]; then
   pass "SA not up on the new leaf: the old pair is put back and loaded, GB-302"
 else
   fail "the roll-back did not restore the old pair"; tail -15 "$LOG"
@@ -379,7 +385,7 @@ fi
 # within the confirm window is done first, before the ids are noted, so it cannot pass
 # the confirm on the old leaf.
 fresh; stage good; touch "$T/sa-up" "$T/reauth-stalls" "$T/rekey-soon"
-if ! rot -e peering_edge_rotation=r11 && grep -q "GB-302" "$LOG" && live_is live; then
+if ! rot -e peering_edge_rotation=r11 && grep -q "GB-302" "$LOG" && live_is live && [ ! -e "$S/.previous-r11/confirmed" ]; then
   pass "a rekey due in the confirm window, the reauth stalled: no pass on the rekeyed SA, GB-302"
 else
   fail "a scheduled rekey in the confirm window passed the confirm on the old leaf"; tail -12 "$LOG"
@@ -395,7 +401,7 @@ fi
 # A rekey the partner starts follows its own timer, so our "rekeying in" does not
 # warn of it: the rotation always rekeys first, which resets both sides' timers.
 fresh; stage good; touch "$T/sa-up" "$T/reauth-stalls"; echo 3 > "$T/partner-rekey-on"
-if ! rot -e peering_edge_rotation=r13 && grep -q "GB-302" "$LOG" && live_is live; then
+if ! rot -e peering_edge_rotation=r13 && grep -q "GB-302" "$LOG" && live_is live && [ ! -e "$S/.previous-r13/confirmed" ]; then
   pass "a rekey the partner starts in the confirm window, the reauth stalled: no pass, GB-302"
 else
   fail "a partner-started rekey in the confirm window passed the confirm on the old leaf"; tail -12 "$LOG"
@@ -450,6 +456,39 @@ if ! rot -e peering_edge_rotation=r17 -e peering_edge_rotation_retire=true && gr
   pass "killed after the confirm, before the marker: retire refuses; the re-run confirms; retire then passes"
 else
   fail "a rotation without its confirmed marker was retired, or the re-run did not write it"; tail -12 "$LOG"
+fi
+
+# A malformed confirm record fails closed: retire needs both id= and at=.
+fresh; stage good; touch "$T/sa-up"
+rot -e peering_edge_rotation=r18 || { fail "setup: r18 did not pass"; tail -12 "$LOG"; }
+for body in "" "id=5"; do
+  printf '%s\n' "$body" > "$S/.previous-r18/confirmed"
+  if ! rot -e peering_edge_rotation=r18 -e peering_edge_rotation_retire=true && grep -q "$RETIRE_CODE" "$LOG" \
+     && grep -q "unreadable" "$LOG" && [ -f "$S/.previous-r18/xab-key.pem" ]; then
+    pass "a confirm record without id= and at= (\"$body\"): retire refuses, $RETIRE_CODE unreadable"
+  else
+    fail "retire passed on a malformed confirm record (\"$body\")"; tail -12 "$LOG"
+  fi
+done
+
+# The old-leaf SA must be gone before the confirm is recorded (make-before-break done):
+# a lingering one could later rekey into an SA established after the record.
+fresh; stage good; touch "$T/sa-up" "$T/old-lingers"
+if ! rot -e peering_edge_rotation=r19 && grep -q "GB-302" "$LOG" && live_is live \
+   && [ ! -e "$S/.previous-r19/confirmed" ]; then
+  pass "the old SA still listed after the new one came up: no record, rolled back, GB-302"
+else
+  fail "the confirm was recorded while the old-leaf SA was still up"; tail -12 "$LOG"
+fi
+
+# A roll-back removes an earlier confirm record, so a rolled-back re-run leaves none.
+fresh; stage good; touch "$T/sa-up"
+rot -e peering_edge_rotation=r20 || { fail "setup: r20 did not pass"; tail -12 "$LOG"; }
+rm -f "$T/sa-up"
+if ! rot -e peering_edge_rotation=r20 && grep -q "GB-302" "$LOG" && [ ! -e "$S/.previous-r20/confirmed" ]; then
+  pass "a re-run that rolls back removes the earlier confirm record"
+else
+  fail "a rolled-back re-run left a confirm record"; tail -12 "$LOG"
 fi
 
 # Retire: the SA must be established after the rotation set the old pair aside.
