@@ -4,13 +4,13 @@ args = ["explain", "teardown"]
 stdout = """
 teardown: 9 phases. goatbuilder explain teardown <phase> answers for one, by number or id.
 
-  2  baseline        A  phase 2: the host baseline is kept; the observability host's Forgejo comes down
-  5  mgmt-stack      A  phase 5: the mgmt stack is refused; the relay client stops
-  6  ory             A  phase 6: the identity stack and the account seed are refused
-  7  public-tls      A  phase 7: the certificate is kept; the relay tier is refused
-  8  mesh-enroll     A  phase 8: the enrolment is kept
-  9  router          A  phase 9: the router and SPIRE stop; signal federation is refused
- 10  surfaces        A  phase 10: the dashboard stops; the OIDC clients are refused
- 12  control-plane   A  phase 12: the services stop; the declared ACL and the account baseline are refused
- 14  cross-goatnet   A  phase 14: the cross-goatnet surfaces are taken out
+  2  baseline         A         phase 2: the host baseline is kept; the observability host's Forgejo comes down
+  5  mgmt-stack       A + GATE  phase 5: the mgmt stack is refused; the relay client stops
+  6  ory              GATE      phase 6: the identity stack and the account seed are refused
+  7  public-tls       GATE      phase 7: the certificate is kept; the relay tier is refused
+  8  mesh-enroll      GATE      phase 8: the enrolment is kept
+  9  router           A + GATE  phase 9: the router and SPIRE stop; signal federation is refused
+ 10  surfaces         A + GATE  phase 10: the dashboard stops; the OIDC clients are refused
+ 12  control-plane    A + GATE  phase 12: the services stop; the declared ACL and the account baseline are refused
+ 14  cross-goatnet    T         phase 14: the cross-goatnet surfaces are taken out
 """
