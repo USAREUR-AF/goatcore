@@ -320,20 +320,15 @@ pub fn rotate(repo: &Path, o: &Options, key: &str) -> Result<crate::Report> {
 /// anything runs, and before the id is kept. A peering has a forwarder when
 /// goatbuilder.yaml declares one, or when its edge group's hand-written
 /// group_vars turn on `peering_wg_via_forwarder` (a hand-run deployment's
-/// declaration, the role's own switch for the carrier). An undeclared peering
+/// declaration, the role's own switch for the carrier), read in the group the
+/// run deploys to ([`super::run_edge_group`]). An undeclared peering
 /// is left to the run's own refusal (GB-149).
 fn no_carrier_refused(repo: &Path, o: &Options) -> Result<()> {
     let cfg = super::config::load(&super::config_path(repo, o))?;
     match super::declaration::peering(&cfg, o.with, o.env)? {
         Some(p)
-            if p.forwarder.is_none() && {
-                let edge_group = o
-                    .edge_group
-                    .map(String::from)
-                    .or_else(|| p.values.edge_group.clone())
-                    .unwrap_or_else(|| format!("{}_edge", o.with));
-                !super::peering_files::via_forwarder(repo, &edge_group)
-            } =>
+            if p.forwarder.is_none()
+                && !super::peering_files::via_forwarder(repo, &super::run_edge_group(o)) =>
         {
             Err(goat_errors::coded(
             "GB-189",

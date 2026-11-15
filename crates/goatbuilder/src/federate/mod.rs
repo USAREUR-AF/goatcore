@@ -706,6 +706,15 @@ pub(crate) fn refuse_two_drivers_before(repo: &Path, o: &Options, runs: impl Fn(
     refuse_two_drivers(&config::load(&config_path(repo, o))?, o, runs)
 }
 
+/// The edge group a run deploys the peering's edge half to: `--edge-group`,
+/// else `<partner>_edge`. One place, so a check made before the run (the
+/// carrier rotation's forwarder switch) reads the group the run deploys to.
+pub(super) fn run_edge_group(o: &Options) -> String {
+    o.edge_group
+        .map(String::from)
+        .unwrap_or_else(|| format!("{}_edge", o.with))
+}
+
 /// A run with what the caller asked for beyond the phases (run.rs). A real
 /// run holds the peering's lock and is recorded in `<work>/state.json`.
 pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report> {
@@ -765,7 +774,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     } else {
         o
     };
-    let edge_group = o.edge_group.map(String::from).unwrap_or_else(|| format!("{}_edge", o.with));
+    let edge_group = run_edge_group(o);
     let resume = format!("goatbuilder federate {}{}", o.with, o.env.map(|e| format!(" --env {e}")).unwrap_or_default());
     // Once `goatbuilder federate allocate` has recorded this peering, the run must use its values.
     peering_files::driver_agrees(&cfg, cfg_path.parent().unwrap_or(repo), o, &work, &edge_group)?;
