@@ -291,7 +291,7 @@ async fn ingest_loop(
         let (decision, shed_warning) = {
             let mut p = policy.lock().unwrap();
             let now = now_ms();
-            let d = p.decide(&staging_key, payload.len(), now, Utc::now().date_naive());
+            let d = p.decide(&staging_key, payload.len(), Utc::now().date_naive());
             metrics
                 .distinct_wire_keys
                 .set(p.distinct_keys_seen() as i64);

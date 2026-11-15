@@ -147,9 +147,14 @@ pub async fn run_publisher<S: EdgeSink>(
     mut rx: mpsc::Receiver<Outbound>,
     sink: S,
     metrics: Metrics,
-    _min_interval: std::time::Duration,
+    min_interval: std::time::Duration,
 ) {
     let mut was_linked: Option<bool> = None;
+    // When the last put left. The next one waits until `min_interval` after it,
+    // so the receiving edge never sees two of our puts closer than its agreed
+    // rate (ADR 1244). Waiting here holds the next sample in the bounded queue;
+    // it is never dropped for being early.
+    let mut last_put: Option<tokio::time::Instant> = None;
 
     // Publish the gauge on a timer as well as on traffic. Setting it ONLY in the
     // receive loop means it reads 0 until the first sample arrives, which is
@@ -190,6 +195,10 @@ pub async fn run_publisher<S: EdgeSink>(
             metrics.dropped.with_label_values(&["edge_down"]).inc();
             continue;
         }
+        if let Some(t) = last_put {
+            tokio::time::sleep_until(t + min_interval).await;
+        }
+        last_put = Some(tokio::time::Instant::now());
         match sink.publish(&out) {
             Ok(()) => {
                 metrics
