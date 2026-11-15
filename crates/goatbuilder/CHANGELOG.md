@@ -141,7 +141,7 @@ writes a row for each component it stops to
 written, phase, step label, seconds, exit code. Both runs now end with
 standup's timing line (the total and the five slowest steps), and join-node
 prints "phase <n> took <s>s" for each step. A dry run writes nothing, and a
-failed step is the last row, with its exit code.
+failed step is the last row, with its exit code (#802).
 
 #### Added: goatbuilder federate plan --accept host-allocation records a judged SKIP
 
