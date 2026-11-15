@@ -53,3 +53,19 @@ updates:
       # matched and Dependabot proposed 16 -> 18 (#59). Pin the major by range.
       - dependency-name: "ghcr.io/pgedge/pgedge-postgres"
         versions: [">=17"]
+
+  # Action revisions in workflows are pinned to full
+  # commit SHAs with the version in a trailing comment (.github/ACTION-PINS.md).
+  # Dependabot moves the SHA and the comment together, so a pin is reviewed and
+  # moved rather than left behind its tag.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+    open-pull-requests-limit: 5
