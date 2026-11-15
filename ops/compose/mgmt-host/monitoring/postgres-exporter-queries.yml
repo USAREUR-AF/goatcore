@@ -158,8 +158,8 @@ spock_config:
   #
   # `setting` is the postgres-internal stored value; `unit` tells us
   # the unit it's measured in. For max_slot_wal_keep_size, postgres
-  # stores the value with unit '8kB' (PostgreSQL's standard WAL block
-  # accounting unit). Multiply by 8192 to get bytes. `setting='-1'`
+  # stores the value in WAL blocks (unit 8 kilobytes, PostgreSQL's
+  # standard accounting unit). Multiply by 8192 to get bytes. `setting='-1'`
   # means unlimited; we emit a sentinel 2^63-1 so the rule's >0.8
   # ratio comparison never fires (no false positive even if the cap is dropped
   # to unlimited).

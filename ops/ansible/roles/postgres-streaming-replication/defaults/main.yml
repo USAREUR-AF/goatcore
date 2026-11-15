@@ -107,11 +107,11 @@ postgres_wal_keep_size: "2GB"
 # Per-replication-slot WAL retention cap (PG 13+: max_slot_wal_keep_size).
 # Closes the disk-fill class: Postgres default is `-1`
 # (unlimited), so any offline / slow subscriber's slot pins WAL on
-# disk indefinitely. With `max_slot_wal_keep_size = 6GB` and N slots
-# (Spock subscriptions to other sites), worst-case retained WAL is
-# `N × 6GB` — bounded; subscribers whose restart_lsn falls more than
-# 6GB behind the primary's current LSN get invalidated and must
-# re-snapshot on return.
+# disk indefinitely. With the cap set below and N slots (Spock
+# subscriptions to other sites), worst-case retained WAL is N times the
+# cap — bounded; subscribers whose restart_lsn falls more than the cap
+# behind the primary's current LSN get invalidated and must re-snapshot
+# on return.
 #
 # Per F-093 + docs/design/compute-spec-minimums.md, 6GB is sized for:
 #   - 18 hours of retention at an elevated write rate (~330 MB/hr,

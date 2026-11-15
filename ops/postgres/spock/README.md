@@ -62,7 +62,7 @@ The bits of `postgresql.conf` that matter for replication correctness
 | `wal_level` | `logical` | Required for any logical replication |
 | `max_replication_slots` | `10` | One slot per remote subscriber per DB |
 | `max_wal_senders` | `10` | Same — one per outbound replication stream |
-| `max_slot_wal_keep_size` | `1GB` here; raised on a pair's primary (below) | Safety valve — invalidates a slow slot before disk fills. **Critical for island-mode scenarios.** See "The slot WAL cap" |
+| `max_slot_wal_keep_size` | set here, and raised on a pair's primary (both values below) | Safety valve — invalidates a slow slot before disk fills. **Critical for island-mode scenarios.** See "The slot WAL cap" |
 | `track_commit_timestamp` | `on` | Required for LWW conflict resolution |
 | `shared_preload_libraries` | `spock` | Loads the Spock extension at startup |
 
@@ -94,8 +94,12 @@ How long a subscriber may be away depends on the site that holds its slot:
 the cap there divided by that site's WAL rate. Read the live value on that
 site (`SHOW max_slot_wal_keep_size;`, or the exporter's
 `spock_config_max_slot_wal_keep_size_bytes`). Never assume either number.
-`ops/ci/check-slot-wal-cap-agrees.py` holds this section to the two values
-the image and the role set.
+`ops/ci/check-slot-wal-cap-agrees.py` holds this section's table to the two
+values, row by row: the image's as Postgres reads it (the last assignment,
+includes followed) and the role's default. It refuses a command line that
+passes the setting, and a size written beside `max_slot_wal_keep_size` in any
+other file, except a file listed with its reason in
+`ops/ci/slot-wal-cap-mentions.allow`.
 
 ## Operational notes
 

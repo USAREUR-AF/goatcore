@@ -1,0 +1,4 @@
+# Files that write a size beside max_slot_wal_keep_size on purpose, each with
+# its reason (ops/ci/check-slot-wal-cap-agrees.py). Every other file points at
+# ops/postgres/spock/README.md, "The slot WAL cap", instead.
+docs/operations/goat-ha-dev-validation.md  the invalidation drill sets a small cap on purpose, to invalidate a slot quickly; it is not a statement of the configured cap
