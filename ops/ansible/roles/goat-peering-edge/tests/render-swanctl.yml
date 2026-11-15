@@ -1,0 +1,18 @@
+---
+# Renders a swanctl.conf template (src) with the fixed peering of render-peering.yml,
+# for test-rotation.sh. The second vars file overrides the role defaults.
+- name: render swanctl.conf
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+    - render-peering.yml
+  vars:
+    ansible_managed: managed
+  tasks:
+    - name: render
+      ansible.builtin.template:
+        src: "{{ src }}"
+        dest: "{{ out }}"
+        mode: "0600"

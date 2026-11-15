@@ -18,7 +18,7 @@ and re-distributing every trust bundle by hand.
 |---|---|---|
 | The node holding the SPIRE server is lost | Promote a passive node with the staged CA key (this runbook). A person does it; workloads hold a one-hour SVID, so identity lapses if promotion takes longer | play and runbook written |
 | A site is cut off from the issuer | A SPIRE server and trust domain per site, recognised by federation ([ADR 1164](../adr/1164-per-site-spire-trust-domains.md)) | designed, not built |
-| The server is lost and nobody is there to promote | Not built. SPIRE's own high availability needs every server to see one consistent datastore; the `spire` database is one instance on one node, and a Spock-replicated copy would not qualify. [ADR 1236](../adr/1236-a-sites-spire-server-is-made-redundant-by-two-independent-servers-after-a-gated-trial.md) proposes two independent servers behind spire-ha-agent, gated on a trial | not built |
+| The server is lost and nobody is there to promote | Not built. SPIRE's own high availability needs every server to see one consistent datastore; the `spire` database is one instance on one node, and a Spock-replicated copy would not qualify. [ADR 1236](../adr/1236-a-sites-spire-server-is-made-redundant-by-two-independent-servers-after-a-gated-trial.md) proposes two independent servers behind spire-ha-agent in broker mode, gated on a trial | not built |
 
 ## What survives the loss, and what does not
 

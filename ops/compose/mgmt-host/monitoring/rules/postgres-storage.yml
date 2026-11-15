@@ -38,7 +38,7 @@ groups:
           severity: warning
           component: postgres
         annotations:
-          summary: "pg_wal at {{ $labels.site }} is > 50% of total used data-volume"
+          summary: "pg_wal at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} is > 50% of total used data-volume"
           description: "pg_wal directory is consuming more than half of the used capacity on /opt/docker-data. This means an offline subscriber slot is pinning WAL — investigate via the SpockSlotInactive / SpockSlotWALSenderLag siblings. If unaddressed, an offline-too-long subscriber will eventually trip this site's max_slot_wal_keep_size cap (spock_config_max_slot_wal_keep_size_bytes; ops/postgres/spock/README.md, The slot WAL cap) and self-invalidate (which is the safety net — but the disk-headroom signal is a chance to do something graceful first)."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -57,7 +57,7 @@ groups:
           severity: critical
           component: storage
         annotations:
-          summary: "Data volume at {{ $labels.site }} is < 10% free"
+          summary: "Data volume at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} is < 10% free"
           description: "/opt/docker-data has dropped below 10% free. Postgres will start restart-looping on `pg_wal: No space left on device` if this continues. Check pg_wal usage (`pg_wal_dir_bytes`), per-database sizes (`pg_database_extended_size_bytes`), and per-table top sizes (`pg_table_top_sizes_size_bytes`) for the root cause. F-093 was the inaugural incident in this class."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/docker-data-root-migration.md"
 
@@ -76,7 +76,7 @@ groups:
           severity: warning
           component: storage
         annotations:
-          summary: "/ at {{ $labels.site }} is > 60% used (post-F-093 eMMC should be ~20%)"
+          summary: "/ at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} is > 60% used (post-F-093 eMMC should be ~20%)"
           description: "Post-F-093 closure (2026-05-09), eMMC should hold OS + boot only — 10-20% used in steady state. > 60% used indicates docker data-root or containerd root drifted back to /var/lib/{docker,containerd}, or apt/journal/tmp is bloating. Run `df -h /var/lib/docker /var/lib/containerd /opt/docker-data` to see where the bytes are landing."
 
   - name: postgres.wal-rate
@@ -95,7 +95,7 @@ groups:
           severity: warning
           component: postgres
         annotations:
-          summary: "Postgres WAL generation rate at {{ $labels.site }} > 100 MB/s for 10m"
+          summary: "Postgres WAL generation rate at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} > 100 MB/s for 10m"
           description: "Sustained high WAL generation rate. F-093 incident-time write rate was ~330 MB/hr (~92 KB/s) — 100 MB/s is 1000x that. Likely culprits: bulk INSERT/UPDATE/DELETE without batching, schema migration on a large table, or a runaway feedback loop. Check `pg_stat_activity` for long-running statements."
 
   - name: postgres.cluster-config
@@ -112,6 +112,6 @@ groups:
           severity: warning
           component: postgres
         annotations:
-          summary: "max_slot_wal_keep_size is unbounded at {{ $labels.site }}"
+          summary: "max_slot_wal_keep_size is unbounded at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}"
           description: "The Postgres setting `max_slot_wal_keep_size` is back to the upstream `-1` (unlimited) default. This is the F-093 root cause — any offline subscriber's slot can pin WAL on disk indefinitely. The Spock image sets a cap, and on a pair's primary the `postgres-streaming-replication` role raises it (ops/postgres/spock/README.md, The slot WAL cap). Check that postgres-a started with the image's config_file, that the role was applied on a pair's primary, and that no out-of-band ALTER SYSTEM cleared the value."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/findings/F-093-docker-data-root-default-plus-spock-unbounded-wal.md"

@@ -16,7 +16,7 @@
 | R3 | No schedule fires more than once an hour: the minute field of every cron is one literal minute. | A frequent schedule spends runner time without new inputs. |
 | R4 | A pull-request workflow with no `paths` or `paths-ignore` filter is listed in `ops/ci/unfiltered-pr-workflows.txt` with its reason, and every listed file exists. | A workflow that runs on every pull request is a decision, so it is written down. The list shrinks; it does not rot. |
 
-Six workflows are listed under R4 today. `leak-gate` and `contributor-trust` are required checks on `main` and must report on every pull request. `ci` and `agent-references` scan whatever a change touches. `acl-assertions` always reports and decides inside its jobs whether to build. `stable-guard` is filtered by branch instead of by path.
+Eight workflows are listed under R4 today. `leak-gate` and `contributor-trust` are required checks on `main` and must report on every pull request. `ci`, `agent-references` and `slot-wal-cap` scan whatever a change touches. `codeql` analyzes every pull request and every push to `main`, so that every merged commit carries a code-scanning result; a run takes about three minutes. `acl-assertions` always reports and decides inside its jobs whether to build. `stable-guard` is filtered by branch instead of by path.
 
 ## Every ops/ci script is run by something
 

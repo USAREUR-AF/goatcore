@@ -3,6 +3,7 @@
 # A file named here must exist; remove its line when it gains a filter.
 acl-assertions.yml      # always reports a check; its jobs start the Rust build only when the ACL declaration, evaluator or Cargo inputs change
 agent-references.yml    # an assistant session link can land in any file, most often a doc; scans only the changed files
+codeql.yml              # every pull request carries a code-scanning result; a run that does not start leaves the commit unanalyzed. About three minutes, not a required check
 ci.yml                  # the public build and the always-on guards; its `changes` job decides which jobs need to run
 contributor-trust.yml   # required check on main (ADR 1221): decides from the author and paths whether a security review is needed
 leak-gate.yml           # required check on main: a deployment name or key can be added in any file
