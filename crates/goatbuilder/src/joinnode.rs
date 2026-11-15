@@ -586,7 +586,9 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     } else {
         ev.push(p(14, "T", "unmask the apt timers now that the node is finished", format!("ssh {user_w}@{addr} {unmask}")));
     }
-    ev.push(p(15, "GATE", "done means proven: every applicable acceptance row PASS, never UNKNOWN (a joiner adds the replicating-both-ways evidence)", format!("python3 '{r}/ops/validation/generate-values.py' {site} && python3 '{r}/ops/validation/run-acceptance.py' --env {site} --values '{r}/ops/validation/values-{site}.yaml' --all-eligible --by-layer")));
+    // Standup's acceptance line: the site's end-state model first, so a row
+    // whose services the site declares absent reads N/A, not FAIL (ADR 1206).
+    ev.push(p(15, "GATE", "done means proven: every applicable acceptance row PASS, never UNKNOWN (a joiner adds the replicating-both-ways evidence)", crate::assay::phase13(repo, site, &crate::settings::state_dir_abs(repo)).phase_line()));
     Ok(ev)
 }
 

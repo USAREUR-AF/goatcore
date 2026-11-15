@@ -713,11 +713,11 @@ phases:
   id: proven
   kind: GATE
   title: done means proven
-  what: Derives the acceptance values and runs every eligible acceptance row; every applicable row must PASS, never UNKNOWN. A joiner adds the replicating-both-ways evidence.
-  why: A node is joined when its acceptance rows are green, not when its plays exit 0.
-  changes: Nothing on a host; it writes the acceptance values.
+  what: Derives the site's end state and the acceptance values, then runs every eligible acceptance row against that end state; every applicable row must PASS, never UNKNOWN. A row whose services the site declares absent reads N/A. A joiner adds the replicating-both-ways evidence.
+  why: A node is joined when its acceptance rows are green, not when its plays exit 0. Without the end state, a row for a service the site declares absent reads FAIL and stops a run that has nothing to fix.
+  changes: Nothing on a host; it writes the end-state model in the state directory and the acceptance values.
   verify: '`run-acceptance.py` reports every applicable row PASS'
-  runs: ops/validation/generate-values.py, ops/validation/run-acceptance.py
+  runs: ops/goatbuilder/endstate/endstate.py, ops/validation/generate-values.py, ops/validation/run-acceptance.py
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 15 --to 15 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#done-means-proven-not-deployed
   failed_because: an applicable row is not PASS

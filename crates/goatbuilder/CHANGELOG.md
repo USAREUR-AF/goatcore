@@ -255,6 +255,13 @@ login, and phase 2 proves the login.
 A box that does not answer stops the run at phase 1 with GB-314 and the step
 for a person. Resume with `--from 1`.
 
+#### Fixed: join-node's phase 15 runs the acceptance rows against the site's end state
+
+Phase 15 ran `run-acceptance.py` with no `--endstate`. A row for a service the
+site declares absent read FAIL and stopped the run. Phase 15 now runs the same
+acceptance line as standup: it writes the site's end-state model to the state
+directory and passes it with `--endstate`, so such a row reads N/A.
+
 #### Added: join-node builds a node on a phone with --class phone --via usb
 
 `goatbuilder join-node <environment> --site <site> --node <node> --class phone

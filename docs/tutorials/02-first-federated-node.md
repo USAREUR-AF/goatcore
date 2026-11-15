@@ -219,6 +219,10 @@ that proves it, so the same steps can be run one at a time.
 
 ## Done means proven, not deployed
 
+join-node's phase 15 runs the acceptance rows against the site's end state
+(`endstate.py model <site>`, passed as `--endstate`): a row for a service the
+site declares absent reads N/A, not FAIL.
+
 **Checkpoint 2.** `goatbuilder assay <joiner-site>` is green for the joiner,
 with the fresh-peer rows run from the joiner's network and a goat context for
 each site on the machine that runs it. The cross-site round trip uses the
