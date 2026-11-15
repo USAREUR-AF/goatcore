@@ -6,9 +6,10 @@
 # no goatnet in ops/pins, no live ladder rung), so the gates here are the ones
 # that run on the code, its fixtures and the mock: unit, golden and flow tests,
 # the parity gates that read only this tree, the standup and teardown plans on
-# fixtures, and the tutorials' rehearsals. The gates that read a declared
-# deployment (validate/doctor, the deploy, release, verify, fresh-source, pins,
-# promote and standup parity gates against its goatnets, the live-site input
+# fixtures (standup parity on the fixture's one site), and the tutorials'
+# rehearsals. The gates that read a declared deployment (validate/doctor, the
+# deploy, release, verify, fresh-source, pins, promote and standup parity
+# gates against its goatnets, the live-site input
 # scan, the end-state check of its sites, the image pre-pull test, join-node on
 # its sites, the catalog-wide presence-flag check) run in the CI of the
 # repository that declares it, on its assembled tree.
@@ -427,6 +428,17 @@ jobs:
         env:
           GOAT_MESH_PROBE: "0"
         run: ops/goatbuilder/parity-teardown.sh crates/target/debug/goatbuilder zagros_prod:zagros-prod zagros:uk zagros_dev:zagros-dev
+      - name: Parity gate — `standup --dry-run` plans exactly the phases goat-standup.sh plans, on the fixture's one site
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        env:
+          GOAT_MESH_PROBE: "0"
+        run: |
+          ops/goatbuilder/parity-standup.sh --self-test
+          # This tree declares no deployment; a scratch worktree of this commit declares the fixture's.
+          git worktree add --detach "$RUNNER_TEMP/standup-parity" HEAD
+          cp ops/goatbuilder/fixtures/standup-parity/goatbuilder.yaml "$RUNNER_TEMP/standup-parity/ops/goatbuilder/goatbuilder.yaml"
+          "$RUNNER_TEMP/standup-parity/ops/goatbuilder/parity-standup.sh" "$PWD/crates/target/debug/goatbuilder" zagros_dev:zagros-dev
       - name: Parity gate — `federate --dry-run` plans exactly the phases peering-standup.sh plans
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
