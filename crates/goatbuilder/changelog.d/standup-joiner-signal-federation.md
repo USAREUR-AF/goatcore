@@ -12,4 +12,5 @@ pin, and the delivery proof. A joiner that declares
 `signal_federation_absent_reason` gets the gate and a SKIP line. Before this,
 standup left signal federation off, and the operator ran those plays by hand.
 `ops/scripts/goat-standup.sh` plans the same steps. A founder's plan is
-unchanged.
+unchanged. `goatbuilder teardown` refuses those steps by name, since they
+leave state at the founder. (#824)
