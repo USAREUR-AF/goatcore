@@ -1,0 +1,13 @@
+# grow refuses a four-fact goatlite: its full configuration has no repo or components (GB-306).
+bin.name = "goatbuilder"
+args = ["grow", "-C", "tests/fixtures/grow/four-facts", "--dry-run"]
+status.code = 1
+stdout = ""
+stderr = """
+goatbuilder: the full configuration grown from this goatlite is incomplete:
+  (root): "components" is a required property
+  (root): "repo" is a required property
+
+A full configuration declares repo and components of its own; the lite preset took them from the checkout's config, and this checkout has none. Add them to goatlite.yaml, then grow again.
+  (GB-306 — goatbuilder explain GB-306)
+"""
