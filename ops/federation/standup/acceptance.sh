@@ -671,7 +671,7 @@ bilateral_round() {
 BEFORE_DIR="$EVID/before"
 RT_SCRIPT="$HERE/../roundtrip/fedcheck.sh"
 RT_WAIT="${FED_ACCEPTANCE_RT_TIMEOUT:-25}"
-# fedcheck.sh sends a fresh probe once per gap until one is acknowledged: the
+# fedcheck.sh sends a fresh probe until one is acknowledged, never closer than the gap: the
 # partner's edge drops a sample inside its downsampling interval, and in a session
 # their runner's traffic shares that interval with ours. Never faster than our gap.
 RT_GAP="${FED_ACCEPTANCE_GAP:-$GAP_DEFAULT}"

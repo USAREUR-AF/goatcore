@@ -9,9 +9,10 @@
 # PARTNER'S OWN ROUTER to a process on their side, and the answer returned across
 # the same agreement.
 #
-# Until an acknowledgement arrives it stages a probe with a FRESH nonce once per
-# gap, never faster, and an acknowledgement of any probe it sent completes the
-# round trip. The receiving edge's downsampling drops a second sample inside its
+# Until an acknowledgement arrives it stages a probe with a FRESH nonce, the first
+# resend one gap after the first probe and each later one twice as long after the
+# last, up to 4 s (never closer than the gap), and an acknowledgement of any probe
+# it sent completes the round trip. The receiving edge's downsampling drops a second sample inside its
 # interval with nothing logged; when both sides run at once, our probe can arrive
 # just behind their responder's acknowledgement of their own probe and be dropped.
 # The nonce is fresh each time because the responder answers a key once only.
@@ -44,38 +45,56 @@ digest() {
   else printf '%s' "$1" | sha256sum | cut -d' ' -f1; fi
 }
 
-# Probes are polled every half second; a probe is due after this many polls,
-# so two probes are never closer than the gap, nor than one poll.
+# Acknowledgements are polled every half second. The first resend is due one gap
+# (at least one poll) after the first probe was sent, by the clock, so two probes are
+# never closer than the gap; each later resend waits twice as long as the one before,
+# up to CAP seconds (4, or the gap when it is longer). A 25 s wait at a half-second
+# gap sends 9 probes.
 POLL=0.5
-EVERY=$(python3 -c "import math;print(max(1, math.ceil($GAP / $POLL)))")
+EVERY=$(python3 -c "print(max($GAP, $POLL))")
+CAP=$(python3 -c "print(max($GAP, 4))")
 DEADLINE=$(python3 -c "import time;print(time.time() + $TIMEOUT)")
 RUN="rt$(date +%s)$$r${RANDOM}"
 
 SENT=""        # "<nonce>=<epoch seconds>" per probe our core accepted, in order
 n=0; accepted=0; unanswered=0
 
-# send: stage one probe with a fresh nonce. A core that answers anything but 2xx
-# refused it: nothing was staged, and no later probe would be either.
+# left: whole seconds before the deadline, at least 1, for a curl's own timeout, so
+# no request outlives the deadline by more than a second. 0 once it has passed.
+left() { python3 -c "import math,time; d=$DEADLINE-time.time(); print(0 if d <= 0 else max(1, math.ceil(d)))"; }
+
+# send: stage one probe with a fresh nonce. While no probe has been staged, a core
+# that answers anything but 2xx refused it, and the check fails at once. After one
+# was staged, a refusal (a core under load) is counted like a PUT that got no
+# answer, and the check goes on waiting for an acknowledgement.
 send() {
-  local nonce code
+  local nonce code t sent_at
   n=$((n + 1))
   nonce="${RUN}n${n}"
-  code=$(curl -s -m 8 -o /dev/null -w '%{http_code}' -X PUT -d "fedcheck-$nonce" "$BASE/$OUR_SET/fedcheck/$nonce")
+  t=$(left); [ "$t" -gt 8 ] && t=8; [ "$t" -ge 1 ] || t=1
+  sent_at=$(now); LAST=$sent_at
+  code=$(curl -s -m "$t" -o /dev/null -w '%{http_code}' -X PUT -d "fedcheck-$nonce" "$BASE/$OUR_SET/fedcheck/$nonce")
   case "$code" in
-    2??) accepted=$((accepted + 1)); SENT="$SENT $nonce=$(now)" ;;
+    2??) accepted=$((accepted + 1)); SENT="$SENT $nonce=$sent_at" ;;
     000|'') unanswered=$((unanswered + 1)) ;;
-    *) echo "  FAIL  our core refused the probe with HTTP $code ($BASE/$OUR_SET/fedcheck/$nonce); nothing was staged"
-       exit 1 ;;
+    *) if [ "$accepted" -eq 0 ]; then
+         echo "  FAIL  our core refused the probe with HTTP $code ($BASE/$OUR_SET/fedcheck/$nonce); nothing was staged"
+         exit 1
+       fi
+       unanswered=$((unanswered + 1)) ;;
   esac
 }
 
-# check: is any probe acknowledged? Sets HIT, HIT_AT and GOT.
+# check: is any probe acknowledged? Sets HIT, HIT_AT and GOT. Each read's timeout is
+# what is left before the deadline (at most 5 s), and the pass stops at the deadline.
 check() {
-  local e nonce r v
+  local e nonce r v t
   for e in $SENT; do
     nonce=${e%%=*}
+    t=$(left); [ "$t" -ge 1 ] || return 1
+    [ "$t" -gt 5 ] && t=5
     # `**`: the ack arrives under whichever of their sets they answer on.
-    r=$(curl -s -m 5 "$BASE/$THEIR_WIRE/**/fedcheck-ack/$nonce" 2>/dev/null)
+    r=$(curl -s -m "$t" "$BASE/$THEIR_WIRE/**/fedcheck-ack/$nonce" 2>/dev/null)
     v=$(printf '%s' "$r" | grep -oE '"value":"[^"]*"' | head -1 | sed 's/.*"value":"//;s/"$//')
     if [ -n "$v" ]; then
       HIT=$nonce; HIT_AT=${e#*=}; GOT=$(printf '%s' "$v" | base64 -d 2>/dev/null)
@@ -86,14 +105,16 @@ check() {
 }
 
 HIT=""; HIT_AT=""; GOT=""
+LAST=""; every=$EVERY
 send
-since=0
 while :; do
   if check; then break; fi
-  python3 -c "import sys,time; sys.exit(0 if time.time() < $DEADLINE else 1)" || break
-  if [ "$since" -ge "$EVERY" ]; then send; since=0; fi
+  [ "$(left)" -ge 1 ] || break
+  if python3 -c "import sys,time; sys.exit(0 if time.time() - $LAST >= $every else 1)"; then
+    send
+    every=$(python3 -c "print(min($every * 2, $CAP))")
+  fi
   sleep "$POLL"
-  since=$((since + 1))
 done
 t1=$(now)
 
@@ -103,7 +124,7 @@ if [ -z "$HIT" ]; then
     exit 1
   fi
   echo "  FAIL  no acknowledgement in ${TIMEOUT}s — the sample did not complete the round trip"
-  echo "        ($n probes sent, at least ${GAP}s apart; $unanswered not answered by our core)"
+  echo "        ($n probes sent, at least ${GAP}s apart; $unanswered not accepted by our core)"
   echo "        (a one-way check would have passed here if their router never delivered it)"
   exit 1
 fi

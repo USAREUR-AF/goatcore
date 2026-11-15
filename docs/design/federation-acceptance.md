@@ -63,9 +63,10 @@ Rules that keep the checks honest:
   only among one runner's own samples. In a bilateral session both runners run the round
   trip at once, so our probe can reach the partner's edge just behind their responder's
   acknowledgement of their own probe and be dropped (measured in the hermetic two-sided
-  run). So the round trip sends a fresh probe once per gap, never faster, until one is
-  acknowledged, and any acknowledged probe passes (`fedcheck.sh`, built; tests
-  `test_roundtrip.py`). Not yet measured on a real edge.
+  run). So the round trip sends a fresh probe until one is acknowledged, the first resend one
+  gap after the first probe and each later one twice as long after the last, up to 4 s, never
+  closer than the gap, and any acknowledged probe passes; its reads stop at its timeout
+  (`fedcheck.sh`, built; tests `test_roundtrip.py`). Not yet measured on a real edge.
 - **Where the probes run.** From the operator's machine. Reads and writes go through
   `FED_SSH_OURS` / `FED_SSH_THEIRS` when set (curl runs on the core host), else directly. The
   round-trip script is streamed over that ssh with `bash -s`; nothing is copied to a host.

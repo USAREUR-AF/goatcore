@@ -74,15 +74,20 @@ On the publishing sovereign, whenever you want the answer:
 ./fedcheck.sh release/<one of our sets> from/<them> [timeout] [gap]   # e.g. release/weather from/xaa 20 1
 ```
 
-Until an acknowledgement arrives, `fedcheck.sh` stages a probe with a fresh nonce once per
-`gap` seconds (default 1, and never more often than its half-second poll), and an
-acknowledgement of any probe it sent completes the round trip. The partner's edge
+Until an acknowledgement arrives, `fedcheck.sh` stages a probe with a fresh nonce: the first
+resend `gap` seconds after the first probe (default 1, and never sooner than its half-second
+poll), each later one twice as long after the one before, up to 4 seconds (or the gap, when
+longer). An acknowledgement of any probe it sent completes the round trip. A 25-second wait at
+a half-second gap sends 9 probes, so a run leaves at most that many probe keys and
+acknowledgements per set in the stores. Each read waits no longer than the time left, so the
+check ends within its timeout and one second. The partner's edge
 downsamples what it receives from us: a second sample inside its interval is dropped with
 nothing logged. When both sides run phase 14 at once, our probe can arrive just behind their
 responder's acknowledgement of their own probe and be dropped; the next probe, one gap later,
 gets through. The nonce is fresh each time because the responder answers a key once only. A
-probe our core refuses (anything but HTTP 2xx) fails the check at once, naming the status; a
-core that never answers is named as such. Phase 14 passes its own sample gap, which is never
+first probe our core refuses (anything but HTTP 2xx) fails the check at once, naming the
+status; once a probe is staged, a later refusal (a core under load) is counted and the check
+keeps waiting. A core that never answers is named as such. Phase 14 passes its own sample gap, which is never
 shorter than the agreement's rate allows.
 
 `responder.py` reads `BASE` (default `http://127.0.0.1:8000`) as `fedcheck.sh` does. An
