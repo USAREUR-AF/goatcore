@@ -19,6 +19,9 @@
 #     -i localhost, --connection local \
 #     netbird-acl-bootstrap.yml -e target_site=<site>
 #
+#   # A site cut off from the others: refuses to create a missing group (GB-295)
+#   ... netbird-acl-bootstrap.yml -e target_site=<site> -e cut_off=true
+#
 #   # Dry-run (prints which groups would be created)
 #   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ansible-playbook \
 #     -i localhost, --connection local \
@@ -165,6 +168,26 @@
     # --------------------------------------------------------------
     # Phase 2 — Create missing groups
     # --------------------------------------------------------------
+
+    # A site cut off from the others (cut_off=true, island mode, ADR 1165) may
+    # not create a group: NetBird assigns a created group's id, so two cut-off
+    # sites that each create one leave two groups of one name after the heal,
+    # as for a policy (F-591, netbird-acl-cutover.yml). The flag is the
+    # operator's statement; nothing here detects a cut. Nothing is written.
+    - name: "Cut-off mode: no group is created (GB-295)"
+      ansible.builtin.assert:
+        that:
+          - missing_group_names | length == 0
+        fail_msg: |
+          GB-295: '{{ target_site }}' runs cut off (cut_off=true), so this run may not create a group. It would have:
+          {% for n in missing_group_names | sort %}
+            created group '{{ n }}' (NetBird assigns its id)
+          {% endfor %}
+          Nothing was written. A group is created at the hub after the heal:
+          two cut-off sites that each create it leave two groups of one name.
+          Run it again without cut_off=true once this site reaches the hub, or
+          run it at the hub.
+      when: cut_off | default(false) | bool
 
     - name: "POST missing groups to mgmt-server"
       ansible.builtin.uri:

@@ -3620,15 +3620,16 @@ entries:
 
   - code: GB-295
     tool: goatbuilder
-    title: a cut-off site's access-rule cutover would have created or deleted a policy
-    what: "ops/ansible/netbird-acl-cutover.yml ran with cut_off=true, for a site cut off from the others. While cut off, a site may only update the access-rule policies it already has, by their ids: NetBird assigns a created policy's id, so two cut-off sites that each create the same rule leave two policies after the heal, and a delete at one site is undone or doubled by the other. This run would have created or deleted at least one policy (the message names each policy it would have created and each id it would have deleted), so it stopped before it wrote anything, updates included."
+    title: a cut-off site's access-rule run would have created a group, or created or deleted a policy
+    what: "ops/ansible/netbird-acl-cutover.yml or ops/ansible/netbird-acl-bootstrap.yml ran with cut_off=true, for a site cut off from the others. The flag is the operator's statement; nothing detects a cut. While cut off, a site may only update the access-rule policies it already has, by their ids, and may create no group: NetBird assigns a created policy's or group's id, so two cut-off sites that each create the same rule or group leave two of them after the heal, and a delete at one site is undone or doubled by the other. This run would have created a group, or created or deleted a policy (the message names each group and policy it would have created and each id it would have deleted), so it stopped before it wrote anything, updates included."
     causes:
       - the access-rule matrix names a rule the site has no policy for yet
+      - the group taxonomy names a group the site does not have yet (netbird-acl-bootstrap.yml, which standup runs before the cutover)
       - reap_orphans=true, and the site holds a generated policy the matrix no longer names
       - enforce with the Default policy action delete
       - the teardown play, which only deletes
     fixes:
-      - "wait for the heal; the hub then runs ops/ansible/netbird-acl-cutover.yml without cut_off and makes the creates and deletes"
+      - "wait for the heal; the hub then runs ops/ansible/netbird-acl-bootstrap.yml and netbird-acl-cutover.yml without cut_off and makes the creates and deletes"
       - "when the message names only deletes: drop reap_orphans=true, or set the Default policy action to disable, and run again with cut_off=true"
     read: docs/design/island-mode-write-inventory.md
     exit: 2
