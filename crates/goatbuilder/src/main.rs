@@ -25,6 +25,7 @@ mod fastlane;
 mod federate;
 mod fresh;
 mod fun;
+mod grow;
 mod i18n;
 mod inputs;
 mod inspect;
@@ -431,6 +432,16 @@ pub enum Cmd {
         #[arg(long, default_value_t = 99)]
         to: u32,
         /// Print every phase and command; run nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Hand a goatlite over to the full preset (gate row G1): goatlite.yaml grown
+    /// into ops/goatbuilder/goatbuilder.yaml with the same values, the generated
+    /// headers taken off the files its render wrote, and goatlite.yaml removed.
+    /// Shows the difference first; --dry-run stops there.
+    Grow {
+        /// Show the full configuration's difference from goatlite.yaml and what
+        /// would change; write nothing.
         #[arg(long)]
         dry_run: bool,
     },
@@ -1174,6 +1185,7 @@ fn verb_name(cmd: &Cmd) -> &'static str {
         Cmd::Endstate { .. } => "endstate",
         Cmd::Assay { .. } => "assay",
         Cmd::JoinNode { .. } => "join-node",
+        Cmd::Grow { .. } => "grow",
         Cmd::Explain { .. } => "explain",
         _ => "this verb",
     }
@@ -1648,6 +1660,20 @@ fn main() {
                 joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
             }
         }
+        Cmd::Grow { dry_run } => {
+            if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                Err(goat_errors::coded("GB-008", "grow is a mutation: pass --yes without a terminal (C10)").into())
+            } else if !cli.yes && !*dry_run && federate::prompt::Terminal::present() {
+                // At a terminal without --yes: every write is shown, then asked.
+                grow::grow_with(&repo, false, Some(&mut federate::prompt::Terminal))
+            } else if !cli.yes && !*dry_run {
+                // stdin is a terminal but stderr is not (`grow 2>file`): a question
+                // could not be seen, so without --yes nothing is written (C10).
+                Err(goat_errors::coded("GB-008", "grow is a mutation: pass --yes without a terminal (C10); its question needs stdin and stderr at a terminal").into())
+            } else {
+                grow::grow(&repo, *dry_run)
+            }
+        }
         Cmd::Federate { verb: Some(federate::plan::Stage::Backout(b)), .. } => {
             if !cli.yes && !b.dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "federate backout is a mutation: pass --yes without a terminal (C10)").into())
@@ -1662,7 +1688,7 @@ fn main() {
             } else if !cli.yes && !r.dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "federate rotate is a mutation: pass --yes without a terminal (C10)").into())
             } else {
-                federate::rotation::rotate(&repo, &r.options(cli.mock.as_deref(), matches!(cli.output, OutputFormat::Table)), &r.key)
+                federate::rotation::rotate(&repo, &r.options(cli.mock.as_deref(), matches!(cli.output, OutputFormat::Table)), &r.key, r.partner_holds_ipsec_ca.as_deref(), r.retire.as_deref())
             }
         }
         Cmd::Federate { verb: Some(stage), site, measure, .. } => {

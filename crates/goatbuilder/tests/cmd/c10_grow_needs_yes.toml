@@ -1,0 +1,9 @@
+# C10: grow.
+bin.name = "goatbuilder"
+args = ["grow", "-C", "tests/fixtures/grow/four-facts"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: grow is a mutation: pass --yes without a terminal (C10)
+  (GB-008 — goatbuilder explain GB-008)
+"""

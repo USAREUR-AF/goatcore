@@ -169,6 +169,11 @@ design does.
 that originates with us. There is no our-form and their-form of the file — the partner runs the
 same code path against the same bytes and gets their own flow.
 
+It reads `federation-agreement/v1` and `federation-agreement/v2` (ADR 1242). v2 is v1 with
+`spec` changed and a party's optional `ca_fingerprint_next`; its `flows` are v1's, and this
+process never reads `parties`, so a v2 agreement yields exactly the flow its v1 form would. Any
+other `spec` is refused at startup, naming the two it reads.
+
 Everything comes from it:
 
 | From the agreement | Used as |

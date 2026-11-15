@@ -13,6 +13,12 @@ Rules (docs/design/ci-discipline.md):
   R4  a pull_request-triggered workflow with no `paths:` / `paths-ignore:`
       filter is listed in ops/ci/unfiltered-pr-workflows.txt with its reason,
       and every listed file still exists (the list shrinks, it never rots).
+  R5  every GitHub Actions cache export (`cache-to: type=gha...`, or a
+      `--cache-to type=gha...` argument) carries `ignore-error=true`, so a
+      cache blob the service lost (404 BlobNotFound) cannot fail the build.
+      A workflow not yet changed is listed in ops/ci/gha-cache-export-
+      exceptions.txt with its reason; a listed file that complies, or that
+      no longer exists, fails (the list only shrinks).
 
 Usage:
   ops/ci/check-workflow-discipline.py [ROOT]     # exit 1 on any violation
@@ -35,6 +41,9 @@ except ImportError:  # pragma: no cover
 
 WORKFLOW_DIR = ".github/workflows"
 ALLOWLIST = "ops/ci/unfiltered-pr-workflows.txt"
+CACHE_EXCEPTIONS = "ops/ci/gha-cache-export-exceptions.txt"
+# a cache export to the GitHub Actions cache: the with: key or the buildx argument, then type=gha
+CACHE_TO_GHA = re.compile(r"(?:^|\s|-)cache-to(?::|=|\s)\s*['\"]?type=gha\b")
 PR_EVENTS = ("pull_request", "pull_request_target")
 CONCURRENCY_EVENTS = PR_EVENTS + ("push",)
 MINUTE = re.compile(r"^(?:[0-9]|[1-5][0-9])$")
@@ -70,6 +79,7 @@ def check(root: Path) -> list[str]:
     problems: list[str] = []
     wf_dir = root / WORKFLOW_DIR
     allow = read_allowlist(root / ALLOWLIST)
+    cache_exc = read_allowlist(root / CACHE_EXCEPTIONS)
     seen: set[str] = set()
 
     for path in sorted(wf_dir.glob("*.yml")) + sorted(wf_dir.glob("*.yaml")):
@@ -121,6 +131,23 @@ def check(root: Path) -> list[str]:
             elif not allow[name]:
                 problems.append(f"{name}: listed in {ALLOWLIST} without a reason (R4)")
 
+        # R5 -- a lost cache blob must not fail the build
+        exposed = [n for n, line in enumerate(path.read_text().splitlines(), 1)
+                   if not line.lstrip().startswith("#") and CACHE_TO_GHA.search(line)
+                   and "ignore-error=true" not in line]
+        if name in cache_exc:
+            if not cache_exc[name]:
+                problems.append(f"{name}: listed in {CACHE_EXCEPTIONS} without a reason (R5)")
+            elif not exposed:
+                problems.append(f"{CACHE_EXCEPTIONS}: '{name}' sets ignore-error=true on every cache export now; remove the line (R5)")
+        else:
+            for n in exposed:
+                problems.append(f"{name}:{n}: cache-to type=gha without ignore-error=true, so a lost cache blob fails the build (R5)")
+
+    for listed in cache_exc:
+        if listed not in seen:
+            problems.append(f"{CACHE_EXCEPTIONS}: '{listed}' names no workflow file; remove the line (R5)")
+
     for listed in allow:
         if listed not in seen:
             problems.append(f"{ALLOWLIST}: '{listed}' names no workflow file; remove the line (R4)")
@@ -142,7 +169,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - run: true
+      - uses: docker/build-push-action@v6
+        with:
+          cache-from: type=gha,scope=good
+          cache-to: type=gha,mode=max,scope=good,ignore-error=true
+      - run: docker buildx build --cache-to type=gha,mode=max,ignore-error=true .
 """
 
 FIXTURE_BAD = """\
@@ -155,8 +186,15 @@ jobs:
   a:
     runs-on: ubuntu-24.04
     steps:
-      - run: true
+      - uses: docker/build-push-action@v6
+        with:
+          cache-from: type=gha,scope=bad
+          cache-to: type=gha,mode=max,scope=bad
+      - run: docker buildx build --cache-to type=gha,mode=max .
 """
+
+# listed as an exception, but it complies: the line must go
+FIXTURE_FIXED = FIXTURE_GOOD.replace("name: good", "name: fixed")
 
 
 def self_test() -> int:
@@ -166,7 +204,9 @@ def self_test() -> int:
         (root / "ops/ci").mkdir(parents=True)
         (root / WORKFLOW_DIR / "good.yml").write_text(FIXTURE_GOOD)
         (root / WORKFLOW_DIR / "bad.yml").write_text(FIXTURE_BAD)
+        (root / WORKFLOW_DIR / "fixed.yml").write_text(FIXTURE_FIXED)
         (root / ALLOWLIST).write_text("gone.yml  # a file that no longer exists\n")
+        (root / CACHE_EXCEPTIONS).write_text("fixed.yml  # complies now\ngone.yml  # a file that no longer exists\n")
         found = check(root)
         want = {
             "R1": "bad.yml: job 'a' has no timeout-minutes (R1)",
@@ -174,6 +214,10 @@ def self_test() -> int:
             "R3": "bad.yml: cron '2-59/5 * * * *' fires more than once an hour (R3)",
             "R4-unlisted": f"bad.yml: runs on every pull_request with no paths filter and is not listed in {ALLOWLIST} (R4)",
             "R4-stale": f"{ALLOWLIST}: 'gone.yml' names no workflow file; remove the line (R4)",
+            "R5-with": "bad.yml:13: cache-to type=gha without ignore-error=true, so a lost cache blob fails the build (R5)",
+            "R5-argument": "bad.yml:14: cache-to type=gha without ignore-error=true, so a lost cache blob fails the build (R5)",
+            "R5-complies": f"{CACHE_EXCEPTIONS}: 'fixed.yml' sets ignore-error=true on every cache export now; remove the line (R5)",
+            "R5-stale": f"{CACHE_EXCEPTIONS}: 'gone.yml' names no workflow file; remove the line (R5)",
         }
         ok = True
         for label, msg in want.items():
@@ -186,7 +230,7 @@ def self_test() -> int:
         if extra:
             print(f"  FAIL unexpected: {extra}")
             ok = False
-        if any(p.startswith("good.yml") for p in found):
+        if any(p.startswith("good.yml") or p.startswith("fixed.yml") for p in found):
             print("  FAIL the clean fixture was flagged")
             ok = False
         print("self-test: " + ("PASS" if ok else "FAIL"))
@@ -203,7 +247,7 @@ def main(argv: list[str]) -> int:
         for p in problems:
             print(f"  {p}")
         return 1
-    print(f"ok: every workflow under {WORKFLOW_DIR} keeps R1-R4")
+    print(f"ok: every workflow under {WORKFLOW_DIR} keeps R1-R5")
     return 0
 
 

@@ -37,12 +37,20 @@ class AcmeDnsResolvers(unittest.TestCase):
             ["--certificatesresolvers.le.acme.dnschallenge.resolvers=192.0.2.53:53"],
         )
 
-    def test_skipping_authoritative_checks_adds_the_propagation_flag(self):
+    def test_skipping_authoritative_checks_adds_the_check_and_a_wait(self):
         got = flags(acme_dns_resolvers=["192.0.2.53:53"], acme_dns_skip_authoritative_checks=True)
         self.assertEqual(got, [
             "--certificatesresolvers.le.acme.dnschallenge.resolvers=192.0.2.53:53",
             "--certificatesresolvers.le.acme.dnschallenge.propagation.disableANSChecks=true",
+            "--certificatesresolvers.le.acme.dnschallenge.propagation.delayBeforeChecks=90s",
         ])
+
+    def test_the_wait_is_a_per_goatnet_setting(self):
+        got = flags(acme_dns_skip_authoritative_checks=True, acme_dns_propagation_delay="180s")
+        self.assertIn("--certificatesresolvers.le.acme.dnschallenge.propagation.delayBeforeChecks=180s", got)
+
+    def test_no_wait_while_the_authoritative_check_runs(self):
+        self.assertFalse([f for f in flags(acme_dns_propagation_delay="180s") if "delayBeforeChecks" in f])
 
     def test_no_resolver_address_is_written_outside_the_variable(self):
         text = TEMPLATE.read_text()

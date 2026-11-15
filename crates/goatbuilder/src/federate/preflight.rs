@@ -22,7 +22,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::config;
 use crate::Check;
@@ -612,7 +612,7 @@ pub fn recheck_slot_anchors(repo: &Path, peering: &str, work: &str) -> Result<Sl
         .arg(&result)
         .current_dir(repo)
         .status()
-        .with_context(|| format!("python3 {}", script.display()))?;
+        .map_err(|e| goat_errors::coded("GB-320", format!("could not start python3 {}: {e}", script.display())))?;
     let r = read_slot_result(&result)?;
     anyhow::ensure!(
         status.success() == r.allows_restart(),
@@ -626,13 +626,13 @@ pub fn recheck_slot_anchors(repo: &Path, peering: &str, work: &str) -> Result<Sl
 #[allow(dead_code)]
 fn read_slot_result(path: &Path) -> Result<SlotRecheck> {
     let text = std::fs::read_to_string(path)
-        .with_context(|| format!("no preflight result at {}", path.display()))?;
-    let doc: serde_json::Value =
-        serde_json::from_str(&text).with_context(|| format!("{} is not JSON", path.display()))?;
+        .map_err(|e| goat_errors::coded("GB-321", format!("no preflight result at {} ({e})", path.display())))?;
+    let doc: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| goat_errors::coded("GB-321", format!("{} is not JSON ({e})", path.display())))?;
     let r = doc["results"]
         .as_array()
         .and_then(|rs| rs.iter().find(|r| r["check"] == "slot-anchors"))
-        .with_context(|| format!("{} has no slot-anchors result", path.display()))?;
+        .ok_or_else(|| goat_errors::coded("GB-321", format!("{} has no slot-anchors result", path.display())))?;
     Ok(SlotRecheck {
         outcome: r["outcome"].as_str().unwrap_or("").to_string(),
         detail: r["detail"].as_str().unwrap_or("").to_string(),

@@ -82,10 +82,14 @@ pub fn peering<'a>(cfg: &'a Config, with: &str, env: Option<&str>) -> Result<Opt
         .collect();
     if hits.len() > 1 {
         let envs: Vec<&str> = hits.iter().map(|p| p.environment.as_str()).collect();
-        return Err(anyhow::anyhow!(
-            "peering '{with}' is declared on several environments ({}); pass --env",
-            envs.join(", ")
-        ));
+        return Err(goat_errors::coded(
+            "GB-252",
+            format!(
+                "peering '{with}' is declared on several environments ({}); pass --env",
+                envs.join(", ")
+            ),
+        )
+        .into());
     }
     Ok(hits.first().copied())
 }

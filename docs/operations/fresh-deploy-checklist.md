@@ -10,7 +10,7 @@ Everything a new team needs to deploy goat from scratch on new accounts and hard
 |---------|---------|-------|
 | AWS | VPS relays, bridges, SSM, Secrets Manager | Create account, configure `aws-vault add <profile>` |
 | Cloudflare | DNS, TLS certificates, DNSSEC | Register domain, create API token (see below) |
-| Anthropic (optional) | AI analysis in secwatch | API key from console.anthropic.com |
+| Anthropic (optional) | AI analysis in secwatch | An API key from the provider's console, exported as `ANTHROPIC_API_KEY` (below) |
 
 ### Cloudflare API token
 

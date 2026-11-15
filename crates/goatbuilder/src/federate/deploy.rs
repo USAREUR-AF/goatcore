@@ -35,7 +35,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use super::lock::Want;
 use super::plan::{self as fplan, Plan};
@@ -305,8 +305,11 @@ pub fn baseline(a: &Approved) -> Option<Plan> {
 pub fn record_baseline(a: &Approved) -> Result<()> {
     let (_, now, _) = fplan::inputs_now(&a.repo, &a.path, &a.peering, None)?;
     let p = baseline_path(a);
+    let cannot = |what: &str, e: std::io::Error| {
+        goat_errors::coded("GB-184", format!("cannot write the working folder: {what} {} ({e})", p.display()))
+    };
     if let Some(d) = p.parent() {
-        std::fs::create_dir_all(d)?;
+        std::fs::create_dir_all(d).map_err(|e| cannot("make the folder of", e))?;
     }
     let tmp = p.with_extension("json.tmp");
     std::fs::write(
@@ -315,8 +318,9 @@ pub fn record_baseline(a: &Approved) -> Result<()> {
             plan_hash: a.hash.clone(),
             sections: now,
         })?,
-    )?;
-    std::fs::rename(&tmp, &p).with_context(|| format!("{}", p.display()))?;
+    )
+    .map_err(|e| cannot("write", e))?;
+    std::fs::rename(&tmp, &p).map_err(|e| cannot("rename into", e))?;
     Ok(())
 }
 
