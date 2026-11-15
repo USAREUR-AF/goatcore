@@ -87,7 +87,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=zenoh-pqc-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=zenoh-pqc-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=zenoh-pqc-${{ matrix.arch }},ignore-error=true
       - name: Smoke — plugin ABI + PQ provider boot
         run: |
           set -euo pipefail

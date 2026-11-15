@@ -101,7 +101,7 @@ jobs:
           load: true
           tags: postgres-spock:smoke
           cache-from: type=gha,scope=postgres-spock
-          cache-to: type=gha,mode=max,scope=postgres-spock
+          cache-to: type=gha,mode=max,scope=postgres-spock,ignore-error=true
 
       - name: Verify running container (single-instance config check)
         run: |
@@ -391,4 +391,4 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=postgres-spock
-          cache-to: type=gha,mode=max,scope=postgres-spock
+          cache-to: type=gha,mode=max,scope=postgres-spock,ignore-error=true

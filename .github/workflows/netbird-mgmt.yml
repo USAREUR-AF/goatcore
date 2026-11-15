@@ -127,7 +127,7 @@ jobs:
           build-args: |
             NETBIRD_REF=${{ needs.resolve.outputs.ref }}
           cache-from: type=gha,scope=netbird-mgmt-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=netbird-mgmt-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=netbird-mgmt-${{ matrix.arch }},ignore-error=true
           outputs: |
             type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
 

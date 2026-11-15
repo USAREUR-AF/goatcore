@@ -89,7 +89,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=zenoh-pqc-fips-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=zenoh-pqc-fips-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=zenoh-pqc-fips-${{ matrix.arch }},ignore-error=true
       - name: Build probe stage (${{ matrix.arch }})
         uses: docker/build-push-action@v6
         with:
