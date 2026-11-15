@@ -216,6 +216,11 @@ pub struct Peering {
     /// transport). Absent: wireguard. The one field for the transport.
     #[serde(default)]
     pub tunnel: Option<String>,
+    /// The federation package version this peering runs: `v1` or `v2`
+    /// (ADR 1242). Absent: v1. Both parties select the same one before either
+    /// emits it; read through [`Peering::package_version`].
+    #[serde(default)]
+    pub package: Option<String>,
     /// Release sets this peering offers, narrowing the `[data] release` of the
     /// goat context's federation.toml, which owns them. Absent: all of them.
     /// Checked by federate/declaration.rs: it may narrow, never widen.
@@ -248,6 +253,14 @@ pub struct Peering {
     #[serde(default)]
     #[allow(dead_code)] // read where the forwarder is rendered and applied
     pub forwarder: Option<PeeringForwarder>,
+}
+
+impl Peering {
+    /// The package version this peering runs, `v1` unless it selects `v2`.
+    /// The schema admits only those two, so anything else never reaches here.
+    pub fn package_version(&self) -> &str {
+        self.package.as_deref().unwrap_or("v1")
+    }
 }
 
 /// Where the edge and the core are, as the inventory reaches them.
@@ -529,6 +542,16 @@ pub fn cross_field(cfg: &Config) -> Vec<String> {
 /// `cross_field`, with the peering allocation record read from `record_dir`.
 pub fn cross_field_at(cfg: &Config, record_dir: Option<&Path>) -> Vec<String> {
     let mut out = Vec::new();
+    // ADR 1242: `package: v2` is in the schema, and nothing in this build reads
+    // it yet. Refused rather than quietly run as v1; the change that wires v2
+    // into the phases removes this.
+    for (pi, p) in cfg.peerings.iter().enumerate() {
+        if p.package_version() == "v2" {
+            out.push(format!(
+                "peerings/{pi}/package: package v2 is not yet supported by this goatbuilder; leave it out (v1) until a goatbuilder that runs v2 is installed on both sides"
+            ));
+        }
+    }
     let names: Vec<&str> = cfg.environments.iter().map(|e| e.name.as_str()).collect();
     let mut dupes: Vec<&str> = names
         .iter()
@@ -775,6 +798,35 @@ mod tests {
         v["peerings"] = json!([{"with": "velmara", "environment": "dev", "site": "alpha", "edge_class": "edge",
             "tunnel": "wireguard", "trust": "spire-federation", "ingress_prefix": "from/velmara/"}]);
         assert_eq!(problems(&v).unwrap(), Vec::<String>::new());
+    }
+
+    /// ADR 1242: a peering selects its package version, v1 or v2; absent is v1.
+    #[test]
+    fn a_peering_selects_its_package_version_and_v1_is_the_default() {
+        let peering = |extra: serde_json::Value| {
+            let mut p = json!({"with": "velmara", "environment": "dev", "site": "alpha", "edge_class": "edge"});
+            if let (Some(o), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+                o.extend(e.clone());
+            }
+            p
+        };
+        for (extra, want) in [(json!({}), "v1"), (json!({"package": "v1"}), "v1"), (json!({"package": "v2"}), "v2")] {
+            let mut v = with_sites();
+            v["peerings"] = json!([peering(extra.clone())]);
+            let p: Peering = serde_json::from_value(v["peerings"][0].clone()).unwrap();
+            assert_eq!(p.package_version(), want, "{extra}");
+            if want == "v1" {
+                assert_eq!(problems(&v).unwrap(), Vec::<String>::new(), "{extra}");
+            }
+        }
+        // Nothing acts on `package: v2` in this build, so it is refused rather
+        // than quietly run as v1 (GB-025, the config does not validate).
+        let mut v = with_sites();
+        v["peerings"] = json!([peering(json!({"package": "v2"}))]);
+        rejected(&v, "package v2 is not yet supported by this goatbuilder");
+        let mut v = with_sites();
+        v["peerings"] = json!([peering(json!({"package": "v3"}))]);
+        rejected(&v, "package");
     }
 
     #[test]

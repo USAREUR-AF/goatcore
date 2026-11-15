@@ -377,6 +377,11 @@
           "enum": ["wireguard", "ipsec"],
           "default": "wireguard"
         },
+        "package": {
+          "description": "The federation package version this peering runs (ADR 1242; docs/design/federation-package-v2-spec.md). v2 adds the announcement of a next CA, so a CA rotates without a gap. Both parties select the same version in reviewed configuration before either emits it: a pair of one v1 and one v2 package is refused, never composed.",
+          "enum": ["v1", "v2"],
+          "default": "v1"
+        },
         "trust": {
           "description": "Step 2: how trust material is exchanged and refreshed. v1 knows one mechanism.",
           "const": "spire-federation"
