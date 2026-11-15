@@ -4192,6 +4192,49 @@ entries:
     read: docs/design/federation-acceptance.md
     matches:
       - "ACCEPTANCE FAILED — [0-9]+ passed, [0-9]+ SKIPPED"
+  - code: X-PROBE-001
+    tool: probe-launcher.sh
+    title: "the probe launcher is missing a setting, or a setting is not well-formed"
+    what: "ops/federation/standup/probe-launcher.sh (phase 14's run-owned acceptance probes) refused before it touched the edge host: a setting it needs is not set, a value that goes into a command on the edge host is not of its form, or the call is not one of start, stop and alive with their arguments. The message names the setting."
+    causes:
+      - "FED_PL_SSH (user@address of the edge host) or FED_PL_LOCAL=1 is not set"
+      - "FED_PL_REST_IP, FED_PL_FAR_IP, FED_PL_DIR, FED_PL_PORT or FED_PL_PINS is not set, or an address is not one IPv4 address"
+      - "FED_PL_REST_IP is 0.0.0.0: the probe's REST port writes as the probe's identity, so it binds to one address"
+      - "FED_PL_DIR lacks <kind>-cert.pem, <kind>-key.pem or far-ca.pem for the kind asked"
+      - "a stop or alive handle is not one this launcher gave (goat-probe-<kind>-<run>)"
+    fixes:
+      - "set the setting the message names in the environment phase 14 runs in (the list is at the top of ops/federation/standup/probe-launcher.sh), then run phase 14 again"
+    read: docs/design/federation-acceptance.md
+    matches:
+      - "^probe-launcher: .*\\(X-PROBE-001\\)"
+  - code: X-PROBE-002
+    tool: probe-launcher.sh
+    title: "the edge host's pins carry no zenoh image pinned by digest"
+    what: "ops/federation/standup/probe-launcher.sh takes the probe's image from the edge host's group_vars pins.yml (FED_PL_PINS), its zenoh_router_image. The file cannot be read, or that value is not an image pinned by @sha256 digest, so no probe was started."
+    causes:
+      - "FED_PL_PINS names another file than the edge host's group_vars/<group>/pins.yml"
+      - "the pins are not rendered yet, or zenoh_router_image is a tag or a template expression"
+    fixes:
+      - "goatbuilder pins   (render every member's pins.yml from ops/pins/fleet-pins.yaml)"
+      - "point FED_PL_PINS at the edge host's group_vars/<group>/pins.yml"
+    read: ops/pins/fleet-pins.yaml
+    matches:
+      - "^probe-launcher: .*\\(X-PROBE-002\\)"
+  - code: X-PROBE-003
+    tool: probe-launcher.sh
+    title: "a probe session did not answer, or the edge host did not say whether it runs"
+    what: "ops/federation/standup/probe-launcher.sh started a probe and its REST port did not answer within a minute, so the probe was removed and start exited 1; or, on alive, the edge host did not answer, so the launcher exited 2 rather than report the probe gone."
+    causes:
+      - "the probe container could not start: the image is not on the edge host, or its zenoh config was refused"
+      - "the probe's REST port is not reachable from where phase 14 runs (a firewall, or FED_PL_REST_IP is not an address of the edge host)"
+      - "ssh to the edge host failed (FED_PL_SSH, its key, or sudo)"
+    fixes:
+      - "ssh <FED_PL_SSH> sudo docker ps -a --filter label=goat-probe=1   (the probe containers and their state)"
+      - "ssh <FED_PL_SSH> sudo docker logs <handle>"
+      - "run phase 14 again; it stops an earlier run's probes first"
+    read: docs/design/federation-acceptance.md
+    matches:
+      - "^probe-launcher: .*\\(X-PROBE-003\\)"
   - code: X-DIGEST-001
     tool: image-digest
     title: "no tool could read the image's digest"
