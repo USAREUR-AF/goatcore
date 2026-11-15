@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use jsonschema::{Draft, JSONSchema};
 use serde::Deserialize;
 use serde_json::Value;
@@ -476,12 +476,14 @@ pub fn derive_lite(value: &Value, checkout: Option<&Value>) -> Value {
 /// choices) are already in the file set the render wrote, which the learner
 /// keeps. Refused unless the result validates: a four-fact file with no checkout
 /// config has no `repo` or `components`, and growth asks for them then.
-#[allow(dead_code)] // the verb's wiring in main.rs is a separate change; the tests call this
 pub fn grow(value: &Value, checkout: Option<&Value>) -> Result<Value> {
     if value.get("preset").and_then(Value::as_str) != Some("lite") {
-        return Err(anyhow!("grow takes a goatlite config: this one does not declare preset: lite"));
+        return Err(goat_errors::coded(NOT_LITE_CODE, "grow takes a goatlite config: this one does not declare preset: lite").into());
     }
-    let lite = value.get("lite").and_then(Value::as_object).ok_or_else(|| anyhow!("grow takes a goatlite config: this one has no lite: block"))?;
+    let lite = value
+        .get("lite")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow::Error::from(goat_errors::coded(NOT_LITE_CODE, "grow takes a goatlite config: this one has no lite: block")))?;
     let mut out = derive_lite(value, checkout);
     let obj = out.as_object_mut().expect("derive_lite keeps an object");
     obj.remove("lite");
@@ -515,7 +517,7 @@ pub fn grow(value: &Value, checkout: Option<&Value>) -> Result<Value> {
         } else {
             format!("\n\nA full configuration declares {} of its own; the lite preset took them from the checkout's config, and this checkout has none. Add them to goatlite.yaml, then grow again.", missing.join(" and "))
         };
-        return Err(anyhow!("the grown configuration does not validate:\n  {}{ask}", problems.join("\n  ")));
+        return Err(goat_errors::coded(GROWN_INCOMPLETE_CODE, format!("the full configuration grown from this goatlite is incomplete:\n  {}{ask}", problems.join("\n  "))).into());
     }
     Ok(out)
 }
@@ -649,6 +651,12 @@ pub fn load(path: &Path) -> Result<Config> {
     serde_json::from_value(derive_lite(&value, checkout.as_ref())).context("config does not match the typed model")
 }
 
+/// `grow` was given a file that is not a goatlite (ops/errors/catalog.yaml).
+pub const NOT_LITE_CODE: &str = "GB-304";
+/// The full configuration a goatlite grows into does not pass the schema or the
+/// cross-field rules: a four-fact file names no `repo` or `components`.
+pub const GROWN_INCOMPLETE_CODE: &str = "GB-306";
+
 /// The catalog code of a config that does not validate (ops/errors/catalog.yaml).
 pub const REFUSED_CODE: &str = "GB-025";
 
@@ -679,7 +687,7 @@ pub fn validate_report(path: &Path) -> Result<Report> {
     Ok(Report::new("validate", checks, EXIT_REFUSED))
 }
 
-fn schema_version() -> String {
+pub fn schema_version() -> String {
     serde_json::from_str::<Value>(SCHEMA_JSON)
         .ok()
         .and_then(|s| {

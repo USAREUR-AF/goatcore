@@ -52,7 +52,7 @@ so a full configuration grown from one behaves the same: `cloud: none`
 means no play asks for a cloud account; `owner` is the bootstrap owner,
 used in place of `$OWNER_EMAIL`; `cross_goatnet: false` means standup
 phase 14 does not reach the cross-goatnet boxes. Undeclared, nothing
-changes. The `grow` command that writes them is not built yet (#765).
+changes. `goatbuilder grow` writes them for a goatlite it hands over (#765).
 
 #### Changed: every site's end state declares every service, and a joining site's missing ones are named gaps
 
@@ -152,6 +152,20 @@ the run on a clock that is unsynchronized or over the budget. It is opt-in:
 without `--bilateral`, phase 14 runs as before and its exit is unchanged. A partner result that does not verify is GB-272,
 one from another session or run GB-273, and an unset or unresolved signing key
 GB-142. (#720)
+
+#### Added: goatbuilder grow hands a goatlite over to the full preset
+
+`goatbuilder grow` rewrites `goatlite.yaml` as a full configuration with the
+same values and shows the difference, leaf by leaf; `--dry-run` stops there.
+A real run (`--yes` without a terminal) writes
+`ops/goatbuilder/goatbuilder.yaml`, takes the generated header off every file
+the goatlite's render wrote, so each is yours, and removes `goatlite.yaml`.
+It refuses, and changes nothing, when `goatlite.yaml` is not a goatlite
+(GB-304), when `ops/goatbuilder/goatbuilder.yaml` already holds another
+configuration (GB-305), or when the grown configuration is incomplete
+(GB-306: a four-fact file names no `repo` or `components`). It is step 3 of
+the growth design; the other steps are not built, and it has not run on
+hardware.
 
 #### Added: join-node refuses a node whose clock is off, before changing it
 
