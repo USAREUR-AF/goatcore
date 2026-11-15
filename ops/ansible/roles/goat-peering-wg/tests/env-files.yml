@@ -1,8 +1,8 @@
 ---
 # Renders the role's link environment files (templates/link-interface.env.j2,
-# phase 2's first one; templates/link.env.j2; templates/carrier.env.j2) on
-# localhost into env_out, with the values given as
-# extra vars, so test-rotation.sh can read the key path back the way systemd's
+# phase 2's first one; templates/link.env.j2; templates/carrier.env.j2), and the
+# forwarder role's carrier environment file, on localhost into env_out, with the values given as
+# extra vars, so test-rotation.sh can read the key and ruleset paths back the way systemd's
 # EnvironmentFile and a shell read it.
 - name: goat-peering-wg link environment files
   hosts: localhost
@@ -35,3 +35,17 @@
         src: ../templates/carrier.env.j2
         dest: "{{ env_out }}/carrier.env"
         mode: "0600"
+    - name: The forwarder's carrier environment, for one carrier
+      ansible.builtin.template:
+        src: ../../goat-peering-forwarder/templates/carrier.env.j2
+        dest: "{{ env_out }}/forwarder-carrier.env"
+        mode: "0600"
+      vars:
+        item:
+          interface: wg-carry0
+          carrier_port: 51900
+          carrier_mtu: 1380
+          carrier_local_ip: 169.254.78.1
+          carrier_remote_ip: 169.254.78.0
+          carrier_prefix_len: 31
+          edge_carrier_public_key: EDGEKEYfixture=

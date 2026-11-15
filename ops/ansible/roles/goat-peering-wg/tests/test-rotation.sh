@@ -219,13 +219,15 @@ mkdir -p "$T/env"
 envval() { # $1 file, $2 name: the value as systemd reads a double-quoted one
   sed -n "s/^$2=\"\(.*\)\"\$/\1/p" "$1" | sed 's/\\\([\\"$`]\)/\1/g'
 }
-envfiles() { # $1 peering key path, $2 carrier key path
+envfiles() { # $1 peering key path, $2 carrier key path, $3 directory for the rulesets and the forwarder's keys
   ANSIBLE_NOCOLOR=1 ANSIBLE_RETRY_FILES_ENABLED=0 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
     ansible-playbook -i localhost, "$HERE/env-files.yml" -e "env_out=$T/env" \
-    -e "$(python3 -c 'import json,sys; print(json.dumps({"peering_wg_key_path": sys.argv[1], "peering_wg_carrier_key_path": sys.argv[2]}))' "$1" "$2")" \
+    -e "$(python3 -c 'import json,sys; print(json.dumps({"peering_wg_key_path": sys.argv[1], "peering_wg_carrier_key_path": sys.argv[2], "peering_wg_nft_path": sys.argv[3] + "/wg-fed0.nft", "peering_forwarder_config_dir": sys.argv[3], "peering_forwarder_nft_path": sys.argv[3] + "/forwarder.nft"}))' "$1" "$2" "${3:-/etc/goat-peering-wg}")" \
     > "$LOG" 2>&1
 }
-sourced() { sh -c '. "$1"; printf %s "$WG_KEY_FILE"' sh "$1"; }
+sourced() { # $1 file, $2 name (default WG_KEY_FILE): the value as a shell that sources the file reads it
+  sh -c '. "$1"; eval "printf %s \"\${$2}\""' sh "$1" "${2:-WG_KEY_FILE}"
+}
 # shellcheck disable=SC2016 # a literal $ and backtick in the path, not expansions
 DS="$T/edge \$HOME \`id\`/wg-fed0.key"
 for pair in "$PS|$KS" "$DS|$DS"; do
@@ -240,6 +242,31 @@ for pair in "$PS|$KS" "$DS|$DS"; do
     fail "env files: the key path '$p' is not read back whole"; grep WG_KEY_FILE "$T/env/"*.env 2>/dev/null || true; tail -15 "$LOG"
   fi
 done
+# The ruleset paths beside them (WG_NFT_FILE) and the forwarder's carrier key,
+# under a directory with a space, and one with $HOME and a backtick.
+# shellcheck disable=SC2016 # a literal $ and backtick in the path, not expansions
+for dir in "$T/etc sp" "$T/etc \$HOME \`id\`"; do
+  if envfiles "$PS" "$KS" "$dir" \
+     && [ "$(envval "$T/env/link.env" WG_NFT_FILE)" = "$dir/wg-fed0.nft" ] \
+     && [ "$(sourced "$T/env/link.env" WG_NFT_FILE)" = "$dir/wg-fed0.nft" ] \
+     && [ "$(envval "$T/env/forwarder-carrier.env" WG_NFT_FILE)" = "$dir/forwarder.nft" ] \
+     && [ "$(sourced "$T/env/forwarder-carrier.env" WG_NFT_FILE)" = "$dir/forwarder.nft" ] \
+     && [ "$(envval "$T/env/forwarder-carrier.env" WG_KEY_FILE)" = "$dir/wg-carry0.key" ] \
+     && [ "$(sourced "$T/env/forwarder-carrier.env")" = "$dir/wg-carry0.key" ]; then
+    pass "env files: the ruleset and forwarder key paths under '$dir' are written quoted and read back whole by both readers"
+  else
+    fail "env files: the ruleset or forwarder key paths under '$dir' are not read back whole"; grep -E 'WG_(NFT|KEY)_FILE' "$T/env/"*.env 2>/dev/null || true; tail -15 "$LOG"
+  fi
+done
+NLD="$T/etc
+x"
+if envfiles "$PS" "$KS" "$NLD"; then
+  fail "env files: a ruleset path holding a newline was written"
+elif grep -qF "peering_wg_nft_path holds a newline" "$LOG"; then
+  pass "env files: a ruleset path holding a newline is refused, naming why"
+else
+  fail "env files: wrong refusal for a ruleset path holding a newline"; tail -15 "$LOG"
+fi
 NL="$T/edge
 x/wg-fed0.key"
 if envfiles "$NL" "$KS"; then
