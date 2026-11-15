@@ -15,6 +15,8 @@ For each catalog service with `present.var`, the guard must appear in one of:
     `<ledger>-deploy.yml`);
   - the files the catalog row names under `guard:` — then EVERY one of them must read it
     (a service two plays can deploy is guarded only when both do).
+ops/ci/presence-flag-allowlist.txt names rows refused today for a known reason (shrink-only:
+a listed row that stops failing makes its line stale, and the check refuses it).
 A row whose code lives in a sibling repository names it under `home:` (goatstuff,
 goatrodeo). In a tree without that code (goatcore alone) the row is printed as SKIP and
 not judged; in an assembled tree it is checked like any other.
@@ -85,8 +87,27 @@ def guarded(text, var):
     return False
 
 
+def read_allowlist(repo):
+    """{service: reason} from ALLOWLIST: one service per line, the reason the comment
+    lines above it (the section it sits in)."""
+    p = repo / ALLOWLIST
+    out, reason = {}, []
+    if not p.is_file():
+        return out
+    for ln in p.read_text().splitlines():
+        s = ln.strip()
+        if not s:
+            reason = []
+        elif s.startswith("#"):
+            reason.append(s.lstrip("#").strip())
+        else:
+            out[s] = " ".join(reason) or "(no reason given)"
+    return out
+
+
 def check(repo):
     cat = yaml.safe_load((repo / "ops/goatbuilder/endstate/catalog.yaml").read_text()) or {}
+    allow = read_allowlist(repo)
     errs, ok, skipped = [], 0, []
     for name, spec in (cat.get("services") or {}).items():
         var = (spec.get("present") or {}).get("var")
@@ -123,13 +144,27 @@ def check(repo):
         errs.append(f"{name}: no deploying code reads {var}, so a site that declares it off still gets it deployed. "
                     f"Guard {first.relative_to(repo)}: move its tasks to deploy.yml and make main.yml\n    "
                     + SHAPE.format(var=var, default=default).replace("\n", "\n    "))
+    # The shrink-only allowlist: a listed row that fails is a known gap; a listed row that
+    # does not fail (or is not in the catalog) makes its line stale.
+    known = []
+    failing = {e.split(":", 1)[0] for e in errs}
+    for name, why in allow.items():
+        if name in failing:
+            known.append(f"{name}: {why}")
+            errs = [e for e in errs if e.split(":", 1)[0] != name]
+        else:
+            errs.append(f"{name}: listed in {ALLOWLIST}, and the check no longer refuses it "
+                        f"(or it is not in the catalog): the line is stale, remove it")
     for e in skipped:
         print(f"SKIP {e}")
+    for e in known:
+        print(f"KNOWN {e}")
     for e in errs:
         print(f"FAIL {e}")
     if not errs:
         print(f"ok: {ok} catalog services; every presence flag is read by the code that deploys it"
-              + (f"; {len(skipped)} deployed from a sibling repository, not in this tree" if skipped else ""))
+              + (f"; {len(skipped)} deployed from a sibling repository, not in this tree" if skipped else "")
+              + (f"; {len(known)} known gap(s) on the shrink-only allowlist ({ALLOWLIST})" if known else ""))
     return 1 if errs else 0
 
 

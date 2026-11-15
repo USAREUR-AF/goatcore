@@ -72,6 +72,7 @@ on:
       - 'ops/scripts/goat-teardown.sh'
       - 'ops/scripts/goatnet-endstate.sh'
       - 'ops/ci/check-role-honours-presence-flag.py'
+      - 'ops/ci/presence-flag-allowlist.txt'
       - 'ops/scripts/envrc-var.sh'
       - 'ops/scripts/standup-required-inputs.py'
       - 'ops/scripts/test_standup_required_inputs.py'
@@ -344,9 +345,11 @@ jobs:
         run: |
           python3 ops/goatbuilder/endstate/endstate.py --self-test
           ops/goatbuilder/parity-endstate.sh crates/target/debug/goatbuilder
-          # a service a site declares off is never deployed: the checker's own cases here; the
-          # catalog-wide run needs the roles goatstuff carries, so it runs on an assembled tree
+          # a service a site declares off is never deployed: the checker's own cases, then the
+          # catalog-wide run, which judges goatcore's own roles and names (SKIP) the rows deployed
+          # from goatstuff or goatrodeo; those are judged on an assembled tree
           python3 ops/ci/check-role-honours-presence-flag.py --self-test
+          python3 ops/ci/check-role-honours-presence-flag.py
       - name: Fresh source on an assembled tree — goatcore at goatcore.ref plus an overlay is judged against that pair (C3)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}

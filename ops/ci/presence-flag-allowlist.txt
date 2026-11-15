@@ -1,0 +1,8 @@
+# check-role-honours-presence-flag.py allowlist: catalog rows the check refuses today
+# for a known reason. Shrink-only: a row that stops failing makes its line stale and
+# the check refuses until the line goes. One service per line; the reason is the
+# comment above it. docs/design/goatnet-end-state.md has the rule.
+
+# No deploying role or play found in goatcore, goatstuff, goatrodeo or goatenv; owner
+# unknown. Its authenticated door is in ops/ansible/authenticated-doors.yml.
+brief
