@@ -777,6 +777,11 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         checks.extend(listing_probes.iter().map(|l| row("probe-ran", l.clone())));
     }
     let mut exit = EXIT_OK;
+    // Each executed step is a row in <state_dir>/join-node-<site>-<node>-timings.tsv,
+    // with standup's columns, and the summary gets standup's timing line.
+    let (state_dir, timing_file) = (crate::settings::state_dir_abs(repo), format!("join-node-{}-{}-timings.tsv", o.site, o.node));
+    let mut timings: Vec<(u32, String, u64)> = Vec::new();
+    let run_started = std::time::Instant::now();
     if o.via == "door" {
         let open = door_open_cmd(repo, o.env);
         checks.push(row("door", format!("=== Before phase 1: open the env door to {} — every play below goes through it (mgmt-hosts.ini + doors-groupvars.ini, never the mesh inventory too) ===", o.env)));
@@ -826,7 +831,13 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         }
         crate::runner::phase(&ph.n.to_string(), &ph.label, "");
         let before: Vec<Option<Vec<u8>>> = ph.writes.iter().map(|f| std::fs::read(repo.join(f)).ok()).collect();
+        let t0 = std::time::Instant::now();
         let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
+        // Timed as standup times its phases (standup::record_timing).
+        let (secs, rc_now) = (t0.elapsed().as_secs(), status.code().unwrap_or(1));
+        checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
+        timings.push((ph.n, ph.label.clone(), secs));
+        crate::standup::record_timing(&state_dir, &timing_file, ph.n, &ph.label, secs, rc_now);
         // Each checkout file the phase changed, in the summary and the run
         // record, so a person sees the checkout changed and commits it.
         for (f, was) in ph.writes.iter().zip(before) {
@@ -845,6 +856,9 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
             exit = EXIT_REFUSED;
             break;
         }
+    }
+    if !o.dry_run && !timings.is_empty() {
+        checks.push(row("timings", crate::standup::timing_summary(&timings, run_started.elapsed().as_secs())));
     }
     // What the site does not run yet, in the plan and in a real run's summary alike.
     checks.extend(not_run(repo, o.site));

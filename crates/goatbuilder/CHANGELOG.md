@@ -132,6 +132,17 @@ is made (GB-280). See ADR 1235 (#678).
 
 Every other class and transport plans and runs as before (#747).
 
+#### Added: join-node and teardown keep a timings file, as standup does
+
+`goatbuilder join-node` now writes a row for each step it runs to
+`<state_dir>/join-node-<site>-<node>-timings.tsv`, and `goatbuilder teardown`
+writes a row for each component it stops to
+`<state_dir>/teardown-<site>-timings.tsv`. The columns are standup's: time
+written, phase, step label, seconds, exit code. Both runs now end with
+standup's timing line (the total and the five slowest steps), and join-node
+prints "phase <n> took <s>s" for each step. A dry run writes nothing, and a
+failed step is the last row, with its exit code.
+
 #### Added: goatbuilder federate plan --accept host-allocation records a judged SKIP
 
 A deployment that declares its other peerings by hand may not be able to make

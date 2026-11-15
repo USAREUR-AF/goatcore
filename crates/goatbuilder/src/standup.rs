@@ -711,16 +711,17 @@ pub(crate) fn plan_commands(repo: &Path, s: &Site, o: &Options) -> Vec<String> {
         .collect()
 }
 
-/// One row per executed phase in `<state_dir>/standup-<site>-timings.tsv`, the
-/// same file and columns goat-standup.sh writes (ts, phase, label, seconds, rc),
-/// so either avenue's runs read back the same way.
-fn record_timing(state_dir: &str, site: &str, n: u32, label: &str, secs: u64, rc: i32) {
+/// One row per executed step in `<state_dir>/<file>`, with the columns
+/// goat-standup.sh writes (ts, phase, label, seconds, rc), so every run reads
+/// back the same way: standup writes `standup-<site>-timings.tsv`, join-node
+/// `join-node-<site>-<node>-timings.tsv`, teardown `teardown-<site>-timings.tsv`.
+pub(crate) fn record_timing(state_dir: &str, file: &str, n: u32, label: &str, secs: u64, rc: i32) {
     use std::io::Write;
     let dir = Path::new(state_dir);
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
-    let path = dir.join(format!("standup-{site}-timings.tsv"));
+    let path = dir.join(file);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "{}\t{n}\t{label}\t{secs}\t{rc}", crate::push::stamp_pub());
     }
@@ -728,7 +729,7 @@ fn record_timing(state_dir: &str, site: &str, n: u32, label: &str, secs: u64, rc
 
 /// The run's timing line: total wall-clock and the slowest phases first, so the
 /// next run knows where its hour went.
-fn timing_summary(t: &[(u32, String, u64)], total: u64) -> String {
+pub(crate) fn timing_summary(t: &[(u32, String, u64)], total: u64) -> String {
     let mut by: Vec<&(u32, String, u64)> = t.iter().collect();
     by.sort_by_key(|x| std::cmp::Reverse(x.2));
     let top: Vec<String> = by.iter().take(5).map(|(n, l, s)| format!("{n} {l} {s}s")).collect();
@@ -827,7 +828,7 @@ fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks
             let rc = status.code().unwrap_or(1);
             checks.push(row("time", format!("phase 12 {} took {secs}s (exit {rc})", q[i].id)));
             timings.push((12, q[i].label.clone(), secs));
-            record_timing(&s.state_dir, &s.site, 12, &q[i].label, secs, rc);
+            record_timing(&s.state_dir, &format!("standup-{}-timings.tsv", s.site), 12, &q[i].label, secs, rc);
             if !status.success() {
                 let tail: Vec<String> = std::fs::read_to_string(&log).unwrap_or_default().lines().rev().take(15).map(String::from).collect::<Vec<_>>().into_iter().rev().collect();
                 for l in tail {
@@ -1190,7 +1191,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 let rc_now = status.code().unwrap_or(1);
                 checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
                 timings.push((ph.n, ph.label.clone(), secs));
-                record_timing(&s.state_dir, &s.site, ph.n, &ph.label, secs, rc_now);
+                record_timing(&s.state_dir, &format!("standup-{}-timings.tsv", s.site), ph.n, &ph.label, secs, rc_now);
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
@@ -1597,7 +1598,7 @@ pub fn teardown(repo: &Path, o: &Options, services: bool) -> Result<Report> {
         Event::LegStart { leg, label, .. } => { let n = if *leg == "stack" { 9 } else { 2 }; Some((n, format!("observability leg \"{leg}\" [A ∥]"), label.as_str())) }
         _ => None,
     }).filter(|(n, _, _)| *n >= o.from && *n <= o.to).collect();
-    let mut cmds: Vec<(String, String)> = Vec::new();
+    let mut cmds: Vec<(u32, String, String, String)> = Vec::new();
     let mut blocking: Vec<String> = Vec::new();
     for (n, head, label) in applied.iter().rev() {
         checks.push(row("phase", format!("=== Teardown of {head} {label} ===")));
@@ -1611,7 +1612,7 @@ pub fn teardown(repo: &Path, o: &Options, services: bool) -> Result<Report> {
             checks.push(row("note", format!("{}: {}{why}", d.action, teardown_what(&d.action, &d.component))));
             checks.push(row("cmd", cmd.clone()));
             if SERVICE_ACTIONS.contains(&d.action.as_str()) || !services {
-                cmds.push((d.component.clone(), cmd));
+                cmds.push((*n, label.to_string(), d.component.clone(), cmd));
             } else {
                 blocking.push(format!("{n} {label} ({})", d.action));
             }
@@ -1637,19 +1638,43 @@ pub fn teardown(repo: &Path, o: &Options, services: bool) -> Result<Report> {
     if o.dry_run {
         return Ok(Report::new("teardown", checks, EXIT_OK));
     }
-    for (component, cmd) in &cmds {
+    let (ran, ok) = run_teardown_steps(repo, &s.state_dir, &s.site, &resume, &cmds)?;
+    checks.extend(ran);
+    if !ok {
+        let mut r = Report::new("teardown", checks, EXIT_REFUSED);
+        r.exit = EXIT_REFUSED;
+        return Ok(r);
+    }
+    Ok(Report::new("teardown", checks, EXIT_OK))
+}
+
+/// Run teardown's stops in order (phase, step label, component, command), each
+/// timed into `<state_dir>/teardown-<site>-timings.tsv` as standup times its
+/// phases; stop at the first that fails. The rows, and whether every stop passed.
+fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, steps: &[(u32, String, String, String)]) -> Result<(Vec<Check>, bool)> {
+    let file = format!("teardown-{site}-timings.tsv");
+    let started = std::time::Instant::now();
+    let mut checks = Vec::new();
+    let mut timings: Vec<(u32, String, u64)> = Vec::new();
+    let mut ok = true;
+    for (n, label, component, cmd) in steps {
         let t0 = std::time::Instant::now();
         let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
         let rc = status.code().unwrap_or(1);
-        checks.push(row("time", format!("teardown {component} took {}s (exit {rc})", t0.elapsed().as_secs())));
+        let secs = t0.elapsed().as_secs();
+        checks.push(row("time", format!("teardown {component} took {secs}s (exit {rc})")));
+        timings.push((*n, label.clone(), secs));
+        record_timing(state_dir, &file, *n, label, secs, rc);
         if !status.success() {
             checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc}; the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
-            let mut r = Report::new("teardown", checks, EXIT_REFUSED);
-            r.exit = EXIT_REFUSED;
-            return Ok(r);
+            ok = false;
+            break;
         }
     }
-    Ok(Report::new("teardown", checks, EXIT_OK))
+    if !timings.is_empty() {
+        checks.push(row("timings", timing_summary(&timings, started.elapsed().as_secs())));
+    }
+    Ok((checks, ok))
 }
 
 #[cfg(test)]

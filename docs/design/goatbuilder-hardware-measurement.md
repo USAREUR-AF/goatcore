@@ -103,9 +103,17 @@ observability host's legs run in the background (`Event::PullStart` and
 write no row. Their time appears only in the total, and the time the run waits
 at each join is credited to no phase.
 
-`teardown` prints `teardown <component> took <s>s (exit <rc>)` for each
-component, and writes no timing file and no summary. `join-node` records no
-timing.
+**Built**, in `join-node` and `teardown`, with the same `record_timing` and
+`timing_summary` (`crates/goatbuilder/src/joinnode.rs`; `run_teardown_steps`
+in `crates/goatbuilder/src/standup.rs`). `join-node` prints
+`phase <n> took <s>s (exit <rc>)` for each step it runs and writes a row per
+step to `<state_dir>/join-node-<site>-<node>-timings.tsv`. `teardown` prints
+`teardown <component> took <s>s (exit <rc>)` for each component it stops and
+writes a row per stop to `<state_dir>/teardown-<site>-timings.tsv`, with the
+phase and label of the step the component came from. Both files have
+standup's columns, and both runs end with standup's summary line. A dry run
+writes no row; a failed step is the last row, with its exit code. No script
+avenue writes these two files.
 
 **Designed**, for `standup`, `join-node` and `teardown`, built with gate group F
 (the tool shows its work):
