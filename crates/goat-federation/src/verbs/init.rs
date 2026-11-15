@@ -378,8 +378,9 @@ pub fn run_init_measured(
                     // less. The offer was cross-checked when it was first made,
                     // so it is skipped only while it is still that offer: our
                     // offer in the agreement the interface carries, read from
-                    // <work> (where --out writes our package). A changed offer
-                    // could be checked against nothing here, and is blocked.
+                    // phase 6's copy in <work> (where --out writes our package).
+                    // A changed offer could be checked against nothing here,
+                    // and is blocked.
                     Some(mtu) if measured.applied_mtu == Some(mtu) && t.measured_mtu > mtu => {
                         match agreed_offer(a.out.as_deref(), mtu) {
                             Ok(ours) if ours == t.measured_mtu => outcomes.push(FedOutcome::skip(
@@ -679,8 +680,12 @@ where
 
 /// Our offer in the agreement the federation interface carries: `<work>` is
 /// where `--out` writes our package. `<work>/agreement.json` must name the MTU
-/// the interface was given (`applied`), and `<work>/ours.canonical.json` is the
-/// package we offered in it, whose `transport_offer.measured_mtu` is returned.
+/// the interface was given (`applied`), and `<work>/ours.composed.json` is
+/// phase 6's copy of the package that agreement was composed from, whose
+/// `transport_offer.measured_mtu` is returned. ours.canonical.json is never
+/// read for this: phase 3 rewrites it on every run, so after a retry that
+/// stopped before compose it holds an offer no agreement used. A missing
+/// copy is an error (blocked, fail closed).
 fn agreed_offer(out: Option<&std::path::Path>, applied: i64) -> Result<i64, String> {
     let work = out
         .and_then(|o| o.parent())
@@ -690,23 +695,6 @@ fn agreed_offer(out: Option<&std::path::Path>, applied: i64) -> Result<i64, Stri
         let text = std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?;
         crate::json::parse_document(&text).map_err(|e| format!("{}: {e:?}", p.display()))
     };
-    // Compose runs after phase 3, so the agreement is newer than the package
-    // it was composed from. A package written after it was published by a
-    // later phase 3 no agreement has been composed from, whose offer nothing
-    // checked (an interface that could not be read, a SKIP): it is not the
-    // offer the interface carries.
-    let modified = |name: &str| {
-        std::fs::metadata(work.join(name))
-            .and_then(|m| m.modified())
-            .map_err(|e| format!("{}: {e}", work.join(name).display()))
-    };
-    if modified("ours.canonical.json")? > modified("agreement.json")? {
-        return Err(format!(
-            "{} is newer than {}: a later phase 3 wrote our package, and no agreement has been composed from it",
-            work.join("ours.canonical.json").display(),
-            work.join("agreement.json").display()
-        ));
-    }
     let agreement = read("agreement.json")?;
     match agreement.get("transport").and_then(|t| t.get("mtu")).and_then(JVal::as_int) {
         Some(m) if m == applied => {}
@@ -718,12 +706,16 @@ fn agreed_offer(out: Option<&std::path::Path>, applied: i64) -> Result<i64, Stri
         }
         None => return Err(format!("{} has no transport.mtu", work.join("agreement.json").display())),
     }
-    read("ours.canonical.json")?
+    read(COMPOSED)
+        .map_err(|e| format!("{e} (phase 6 keeps it beside the agreement; run phase 6 again to make it)"))?
         .get("transport_offer")
         .and_then(|t| t.get("measured_mtu"))
         .and_then(JVal::as_int)
-        .ok_or_else(|| format!("{} offers no transport_offer.measured_mtu", work.join("ours.canonical.json").display()))
+        .ok_or_else(|| format!("{} offers no transport_offer.measured_mtu", work.join(COMPOSED).display()))
 }
+
+/// Phase 6's copy of our package as composed into the agreement, in `<work>`.
+const COMPOSED: &str = "ours.composed.json";
 
 fn finish_init(
     out: &mut dyn Write,

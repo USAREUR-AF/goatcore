@@ -1182,6 +1182,16 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             }
         }
         if let Some(r) = run.as_mut() {
+            // The package the agreement was composed from, kept beside it.
+            if ph.n == 6 {
+                if let Err(e) = run::keep_composed(&r.paths) {
+                    let d = format!("phase 6 could not keep {} as {}/ours.composed.json: {e}", r.paths.ours.display(), r.paths.work.display());
+                    checks.push(Check { name: "failed".into(), ok: false, detail: d.clone(), fix: Some(format!("goatbuilder federate {} --from 6", o.with)) });
+                    r.end(ph, state::Outcome::Failed, &d);
+                    exit = EXIT_REFUSED;
+                    break;
+                }
+            }
             // Confirmation 1, second half: the agreement digest after compose.
             if ph.n == 6 && s.values.active() {
                 let step = confirm::agreement(&r.paths, s, &mut r.state, &r.id.clone());

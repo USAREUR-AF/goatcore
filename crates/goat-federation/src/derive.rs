@@ -917,11 +917,13 @@ pub fn applied_mtu_on(probe: &dyn Probe, interface: &str) -> Option<i64> {
     let kind = probe
         .run("stat", &["-c", STATE_STAT_FORMAT, "--", &path])
         .ok()?;
-    // uid 0, gid 0, and a regular file (S_IFREG in the mode's type bits).
+    // uid 0, gid 0, a regular file (S_IFREG in the mode's type bits), and
+    // writable by its owner only.
     let mut parts = kind.trim().splitn(3, ':');
     let (uid, gid, mode) = (parts.next()?, parts.next()?, parts.next()?);
     let mode = u32::from_str_radix(mode, 16).ok()?;
-    if uid != "0" || gid != "0" || mode & 0o170000 != 0o100000 {
+    // Neither the group nor anyone else may write it.
+    if uid != "0" || gid != "0" || mode & 0o170000 != 0o100000 || mode & 0o022 != 0 {
         return None;
     }
     let text = probe.read_file(&path).ok()?;

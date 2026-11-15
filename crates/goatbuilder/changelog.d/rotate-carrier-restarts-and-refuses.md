@@ -21,7 +21,10 @@ Three fixes to `goatbuilder federate rotate <partner> carrier`:
   measurement off the federation interface, since the interface cannot bound
   it. The same applies to a re-run after `rotate <partner> transport`. The
   role's state file counts only when it records a decision that applies, is a
-  regular file owned by root and is not a link. Our package newer than the
-  agreement is blocked too: no agreement has been composed from it.
+  regular file owned by root, writable by root alone, and is not a link. Our
+  offer in the agreement is read from `<work>/ours.composed.json`, the copy of
+  our package that phase 6 now keeps beside the agreement; without it the
+  cross-check is blocked.
 - The peering and carrier key paths are quoted wherever a shell or systemd's
-  EnvironmentFile reads them, so a path with a space is read whole.
+  EnvironmentFile reads them, so a path with a space, `$` or a backtick is read
+  as written. A key path holding a newline is refused.
