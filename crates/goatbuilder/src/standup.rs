@@ -1708,6 +1708,53 @@ mod tests {
         assert!(teardown_decl(&decls, "a step nobody declared").is_none());
     }
 
+    /// The founder run's numbers come from the record: from the latest phase-1
+    /// row, the wall time across resumes, phase 11's closed row, and every stop
+    /// (an open row, or a failed step); a failed step is a defect stop.
+    #[test]
+    fn the_run_evidence_reads_the_founder_numbers_from_the_record() {
+        let file = "20270101T095000Z\t1\told run\t5\t0\tok\n\
+20270101T100010Z\t1\tgates\t10\t0\tok\n\
+20270101T100500Z\t3\tcerts\t290\t0\tok\n\
+20270101T101000Z\t7\ttls\t300\t4\tX-SSH-001\n\
+20270101T102000Z\t7\ttls\t300\t0\tok\n\
+20270101T102100Z\t11\tfirst login\t-\t-\toperator\n\
+20270101T103100Z\t11\tfirst login\t600\t0\toperator\n\
+20270101T104000Z\t14\tcross\t60\t0\tok\n";
+        let now = chrono::NaiveDate::from_ymd_opt(2027, 1, 1).unwrap().and_hms_opt(10, 40, 0).unwrap();
+        let s = run_evidence(file, now).unwrap();
+        assert_eq!(s, "since phase 1: 2400s (40 min), phase 11 600s, without phase 11 1800s (30 min); 2 stops (1 the operator step, 1 a defect: X-SSH-001)");
+        assert!(run_evidence("20270101T100010Z\t3\tcerts\t10\t0\tok\n", now).is_none(), "no phase-1 row, no founder numbers");
+    }
+
+    #[test]
+    fn a_row_carries_its_cause_and_an_open_stop_has_no_duration() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path().to_str().unwrap();
+        record_timing(d, "f.tsv", 3, "certs", 12, 0, "ok");
+        record_stop(d, "f.tsv", 11, "first login", "operator");
+        let text = std::fs::read_to_string(t.path().join("f.tsv")).unwrap();
+        let rows: Vec<Vec<&str>> = text.lines().map(|l| l.split('\t').collect()).collect();
+        assert_eq!(&rows[0][1..], &["3", "certs", "12", "0", "ok"]);
+        assert_eq!(&rows[1][1..], &["11", "first login", "-", "-", "operator"]);
+        let later = chrono::NaiveDateTime::parse_from_str(rows[1][0], "%Y%m%dT%H%M%SZ").unwrap() + chrono::Duration::seconds(75);
+        assert_eq!(close_operator_stop(d, "f.tsv", 12, later), Some(75));
+        assert_eq!(close_operator_stop(d, "f.tsv", 12, later), None, "closed once");
+        let text = std::fs::read_to_string(t.path().join("f.tsv")).unwrap();
+        assert!(text.lines().last().unwrap().ends_with("\t11\tfirst login\t75\t0\toperator"), "{text}");
+    }
+
+    /// goat-standup.sh writes the same six columns, so either driver's runs read back the same way.
+    #[test]
+    fn the_script_writes_the_cause_column_too() {
+        let sh = std::fs::read_to_string(repo_root().join("ops/scripts/goat-standup.sh")).unwrap();
+        let rows: Vec<&str> = sh.lines().filter(|l| l.contains("standup-$SITE-timings.tsv")).collect();
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        for l in rows {
+            assert!(l.contains(r"'%s\t%s\t%s\t%s\t%s\t%s\n'"), "{l}");
+        }
+    }
+
     /// Each stop teardown runs is a row in <state_dir>/teardown-<site>-timings.tsv,
     /// with standup's columns; a failed stop is the last row, with its exit code,
     /// and the run's summary carries the timing line.

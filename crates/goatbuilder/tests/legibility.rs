@@ -2003,3 +2003,82 @@ fn a_json_run_keeps_its_children_off_stdout() {
     let logged = run_records(&root, "federate").iter().flat_map(|r| r["commands"].as_array().cloned().unwrap_or_default()).filter_map(|c| c["log"].as_str().and_then(|l| std::fs::read_to_string(l).ok())).any(|l| l.contains(SAID));
     assert!(logged, "the child's line is not in its log");
 }
+
+// --- gate row C1's evidence: the timings record of a founder run ---------------
+
+/// The rows of the hollow world's standup timings file, split on tabs.
+fn timing_rows(h: &Hollow) -> Vec<Vec<String>> {
+    let f = h
+        .root
+        .path()
+        .join("home/.goat/state/standup-alpha-timings.tsv");
+    let text = std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
+    text.lines()
+        .map(|l| l.split('\t').map(String::from).collect())
+        .collect()
+}
+
+/// Every row carries its cause: `ok` for a step that passed, the catalog code a
+/// failed step's output matched (docs/design/goatbuilder-hardware-measurement.md,
+/// "Every stop records its cause code").
+#[test]
+fn c1_a_failed_standup_step_records_the_code_its_output_matched() {
+    let h = hollow();
+    let out = h
+        .command(&["-o", "json", "standup", "-C", h.repo(), "dev", "--site", "alpha", "--ack", "A Person", "--yes"])
+        .env("GB_REC_SAY_WHEN", "ansible-preflight.sh")
+        .env("GB_REC_SAY", SSH_REFUSED)
+        .env("GB_REC_SAY_EXIT", "4")
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "a phase fails: {}", text(&out));
+    let rows = timing_rows(&h);
+    let (last, before) = rows.split_last().unwrap();
+    assert_eq!(last.len(), 6, "{rows:?}");
+    assert_eq!((last[4].as_str(), last[5].as_str()), ("4", "X-SSH-001"), "{rows:?}");
+    assert!(
+        before.iter().all(|r| r.len() == 6 && r[4] == "0" && r[5] == "ok"),
+        "{rows:?}"
+    );
+}
+
+/// Phase 11, the one person inside the clock, is a row when the run stops at it,
+/// closed by the resumed run with its wall time; the summary of the resumed run
+/// reads the founder run's numbers from the record.
+#[test]
+fn c1_the_operator_step_is_recorded_open_and_closed_and_summarized() {
+    let h = hollow();
+    let run = |extra: &[&str]| {
+        let mut args = vec!["-o", "json", "standup", "-C", h.repo(), "dev", "--site", "alpha", "--ack", "A Person", "--yes"];
+        args.extend(extra);
+        h.command(&args).output().unwrap()
+    };
+    let out = run(&[]);
+    assert!(out.status.success(), "{}", text(&out));
+    let rows = timing_rows(&h);
+    let open = rows.last().unwrap();
+    assert_eq!(open[1], "11", "{rows:?}");
+    assert_eq!((open[3].as_str(), open[4].as_str(), open[5].as_str()), ("-", "-", "operator"), "{rows:?}");
+    let opened = rows.len();
+
+    let out = run(&["--from", "12"]);
+    let rows = timing_rows(&h);
+    let close = &rows[opened];
+    assert_eq!(close[1], "11", "the resumed run closes phase 11 first: {rows:?}");
+    assert!(close[3].parse::<u64>().is_ok(), "{rows:?}");
+    assert_eq!((close[4].as_str(), close[5].as_str()), ("0", "operator"), "{rows:?}");
+    let v = json(&out);
+    let summary: Vec<String> = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"] == "timings")
+        .map(|c| c["detail"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(summary.len(), 1, "{}", text(&out));
+    let s = &summary[0];
+    assert!(s.contains("since phase 1: "), "{s}");
+    assert!(s.contains(&format!("phase 11 {}s", close[3])), "{s}");
+    assert!(s.contains("without phase 11 "), "{s}");
+    assert!(s.contains("1 stop (the operator step)") || s.contains("stops: 1"), "{s}");
+}
