@@ -106,20 +106,23 @@
     - name: peering-edge | rotation | what the half-done switch left
       ansible.builtin.shell:
         cmd: |
-          pk() { openssl pkey -pubout -in "$1" 2>/dev/null | openssl sha256; }
-          pc() { openssl x509 -noout -pubkey -in "$1" 2>/dev/null | openssl sha256; }
+          set -o pipefail
+          # A file that does not parse gives no digest (never the digest of empty input),
+          # so two unreadable halves never match.
+          pk() { local o; o=$(openssl pkey -pubout -in "$1" 2>/dev/null) || return 0; printf '%s' "$o" | openssl sha256; }
+          pc() { local o; o=$(openssl x509 -noout -pubkey -in "$1" 2>/dev/null) || return 0; printf '%s' "$o" | openssl sha256; }
           sum() { openssl sha256 -r < "$1" 2>/dev/null | cut -d' ' -f1; }
           a={{ _pe_rot_aside | quote }}
           lk={{ peering_edge_key_path | quote }}; lc={{ peering_edge_cert_path | quote }}
           nk={{ peering_edge_key_next_path | quote }}; nc={{ peering_edge_cert_next_path | quote }}
           if [ -e "$nc" ] && [ ! -e "$nk" ]; then
-            if [ "$(sum "$lk")" != "$(sum "$a/$(basename "$lk")")" ] && [ -n "$(pk "$lk")" ] && [ "$(pk "$lk")" = "$(pc "$nc")" ]; then
+            if [ "$(sum "$lk")" != "$(sum "$a/$(basename "$lk")")" ] && [ -n "$(pk "$lk")" ] && [ -n "$(pc "$nc")" ] && [ "$(pk "$lk")" = "$(pc "$nc")" ]; then
               echo finish-cert
             else
               echo "refuse:the key moved in is not the staged certificate's key, or is the set-aside one"
             fi
           elif [ -e "$nk" ] && [ ! -e "$nc" ]; then
-            if [ "$(sum "$lc")" != "$(sum "$a/$(basename "$lc")")" ] && [ -n "$(pc "$lc")" ] && [ "$(pc "$lc")" = "$(pk "$nk")" ]; then
+            if [ "$(sum "$lc")" != "$(sum "$a/$(basename "$lc")")" ] && [ -n "$(pc "$lc")" ] && [ -n "$(pk "$nk")" ] && [ "$(pc "$lc")" = "$(pk "$nk")" ]; then
               echo finish-key
             else
               echo "refuse:the certificate moved in is not the staged key's certificate, or is the set-aside one"
@@ -260,6 +263,10 @@
         - "{{ peering_edge_cert_path }}"
         - "{{ peering_edge_key_path }}"
       changed_when: true
+    - name: peering-edge | rotation | the set-aside on disk before it is put in place
+      ansible.builtin.command:
+        argv: [sync, -f, "{{ _pe_rot_aside }}.tmp"]
+      changed_when: false
     - name: peering-edge | rotation | the set-aside, complete, in place
       ansible.builtin.command:
         argv: [mv, -T, "--", "{{ _pe_rot_aside }}.tmp", "{{ _pe_rot_aside }}"]

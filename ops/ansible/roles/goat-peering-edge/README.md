@@ -166,7 +166,7 @@ rekey falls in the confirm after the one the rotation makes; otherwise it refuse
 defaults (4h minus 10m, against the DPD timeout plus 30 s) leave ample room.
 
 A rerun with the same id moves nothing, so a killed run finishes. The set-aside is built in
-`.previous-<id>.tmp` and renamed into place, so `.previous-<id>/` exists only complete; a leftover `.tmp` is
+`.previous-<id>.tmp`, synced to disk and renamed into place, so `.previous-<id>/` exists only complete; a leftover `.tmp` is
 discarded and the set-aside redone. A run killed between the switch's two moves (key moved in, certificate not)
 is finished by the next run when the staged file left is the moved one's match, and refused with GB-311, nothing
 moved, when it is not. `peering_edge_rotation_retire: true`, after

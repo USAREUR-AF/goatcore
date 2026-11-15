@@ -1017,7 +1017,7 @@ gb-309-cause-3 = the rotation was not confirmed: it stopped after the switch and
 gb-309-cause-4 = the confirm's record is unreadable: it lacks the id= or at= line the confirm writes
 gb-309-cause-5 = neither the IKE SA the confirm recorded nor one established since is up, or the live key is not the live certificate's
 gb-311-title = an IPsec rotation stopped half way through its switch, and what is left does not finish it
-gb-311-what = The switch of an IPsec credential rotation (goat-peering-edge) moves the staged key, then the staged certificate, over the live names. A run killed between the two moves leaves one moved in and the other still staged. The next run finishes the remaining move when what is left is the moved one's match: the moved file is not the set-aside one, and the two halves are one key pair. Here they are not, so the live pair would be mixed: nothing was moved.
+gb-311-what = The switch of an IPsec credential rotation (goat-peering-edge) moves the staged key, then the staged certificate, over the live names. A run killed between the two moves leaves one moved in and the other still staged. The next run finishes the remaining move when what is left is the moved one's match: the moved file is not the set-aside one, and the two halves are one key pair (each parsed by openssl; a file that does not parse matches nothing). Here they are not, so the live pair would be mixed: nothing was moved.
 gb-311-cause-1 = the staged file left behind was replaced after the run stopped
 gb-311-cause-2 = someone moved or edited the live or set-aside files by hand
 x-ansible-001-title = a host was unreachable

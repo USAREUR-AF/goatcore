@@ -3701,7 +3701,7 @@ entries:
   - code: GB-311
     tool: goatbuilder
     title: an IPsec rotation stopped half way through its switch, and what is left does not finish it
-    what: "The switch of an IPsec credential rotation (goat-peering-edge) moves the staged key, then the staged certificate, over the live names. A run killed between the two moves leaves one moved in and the other still staged. The next run finishes the remaining move when what is left is the moved one's match: the moved file is not the set-aside one, and the two halves are one key pair. Here they are not, so the live pair would be mixed: nothing was moved."
+    what: "The switch of an IPsec credential rotation (goat-peering-edge) moves the staged key, then the staged certificate, over the live names. A run killed between the two moves leaves one moved in and the other still staged. The next run finishes the remaining move when what is left is the moved one's match: the moved file is not the set-aside one, and the two halves are one key pair (each parsed by openssl; a file that does not parse matches nothing). Here they are not, so the live pair would be mixed: nothing was moved."
     causes:
       - "the staged file left behind was replaced after the run stopped"
       - "someone moved or edited the live or set-aside files by hand"
