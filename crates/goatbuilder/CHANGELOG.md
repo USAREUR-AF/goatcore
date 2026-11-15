@@ -341,7 +341,8 @@ Three fixes to `goatbuilder federate rotate <partner> carrier`:
 - The peering and carrier key paths, and the ruleset paths beside them, are
   quoted wherever a shell or systemd's EnvironmentFile reads them, so a path
   with a space, `$` or a backtick is read as written. A path holding a newline
-  is refused.
+  is refused. The forwarder's back-out and the host firewall's apply hand the
+  ruleset path to `nft` as one argument.
 
 #### Changed: standup for a joiner site turns signal federation on
 
