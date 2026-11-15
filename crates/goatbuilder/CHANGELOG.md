@@ -10,6 +10,74 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Fixed: join-node reads goatnet_founder as Ansible does
+
+`join-node` decided whether a site joins a goatnet by matching the line
+`goatnet_founder: false` in the site group's vars.yml. So `False`, `"false"`,
+`no` and `off` read as a founder, and a `goatnet_founder` nested under another
+key read as the site's own. It now reads the top-level key with Ansible's
+booleans, as site-bootstrap does (`goatnet_founder | default(true) | bool`).
+
+#### Fixed: a joiner's join-node needs no OWNER_EMAIL
+
+A joiner's phase 13 passed `-e bootstrap_owner_email="$OWNER_EMAIL"` to its
+bootstrap passes. A joiner's account arrives from the founder, so the value
+was never used, but a run with no `OWNER_EMAIL` set stopped at phase 13
+(unbound variable). A joiner's phase 13 no longer passes it. A founder site's
+join-node still does.
+
+#### Changed: join-node's phase 1 checks the node answers and goes on, so one run goes from phase 1 to 15
+
+Phase 1 of `goatbuilder join-node` used to be a person's step, "reach the box
+on the site LAN". Every run stopped there and went on only with `--from 2`.
+It is now a check: the node answers over SSH at `--address`, or a phone answers
+over USB (`adb get-state`). The run goes on to phase 15 with no operator step.
+
+A box that refuses the login still counts as answering. Before phase 2 seeds
+your key, a box that takes only its first-login password refuses every batch
+login, and phase 2 proves the login.
+
+A box that does not answer stops the run at phase 1 with GB-314 and the step
+for a person. Resume with `--from 1`. So does a Jetson's USB bridge address,
+192.168.55.0/24: its sshd answers, but it is reachable only over a direct
+USB-C cable. Pass the box's real LAN address.
+
+#### Fixed: join-node's phase 15 runs the acceptance rows against the site's end state
+
+Phase 15 ran `run-acceptance.py` with no `--endstate`. A row for a service the
+site declares absent read FAIL and stopped the run. Phase 15 now runs the same
+acceptance line as standup: it writes the site's end-state model to the state
+directory and passes it with `--endstate`, so such a row reads N/A.
+
+<!-- END generated: changelog unreleased -->
+
+## 0.7.1 — 2026-11-15
+
+What changed since 0.7.0, the previous release. `join-node` builds a node on a
+phone with `--class phone --via usb`, on a fixture and not yet measured on a
+phone, runs a joining site's own mesh DNS, and refuses a node whose clock is
+off. `standup` for a joiner turns signal federation on, and standup,
+join-node and teardown keep timings files whose rows name their cause. Every
+site's end state declares every service a cut-off site needs, and what a
+joining site does not run yet is named as a gap. `federate rotate <partner>
+leaves` replaces a running peering's leaves; `federate test
+--bilateral` completes the partner's half of acceptance, opt-in; on a
+two-driver peering the edge driver runs phases 1 and 3. A back-out keeps the
+core leaf another peering still uses and removes the peering's host-firewall
+entry. After a signing-key rotation, phase 5 hands the peering directory over
+to the new key, and a host-allocation SKIP says what clears it or is accepted
+into the plan. `goatbuilder.yaml` takes three optional `deploy` fields,
+`cloud`, `owner` and `cross_goatnet`; undeclared, nothing changes.
+
+Three behaviour changes: an environment that declares `converger: pull-agent` is
+refused by `doctor` and by every verb that pushes to real hosts, with GB-307;
+`join-node` refuses a node whose clock is unsynchronized or more than 250 ms
+off, with GB-297; and a back-out with no other peering set up, and no record
+of what the core leaf's paths held before, stops with GB-293 where it stopped
+with GB-221.
+
+### For someone deploying
+
 #### Fixed: phase 14's round trip sends a fresh probe until one is acknowledged, so one dropped probe does not fail it
 
 In a bilateral acceptance session both sides run the round trip at once.
@@ -220,22 +288,6 @@ machine's owner. A clock that could not be read is reported as not verified,
 never as passed. The rule is the federation preflight's clock check
 (GB-268) (#766).
 
-#### Fixed: join-node reads goatnet_founder as Ansible does
-
-`join-node` decided whether a site joins a goatnet by matching the line
-`goatnet_founder: false` in the site group's vars.yml. So `False`, `"false"`,
-`no` and `off` read as a founder, and a `goatnet_founder` nested under another
-key read as the site's own. It now reads the top-level key with Ansible's
-booleans, as site-bootstrap does (`goatnet_founder | default(true) | bool`).
-
-#### Fixed: a joiner's join-node needs no OWNER_EMAIL
-
-A joiner's phase 13 passed `-e bootstrap_owner_email="$OWNER_EMAIL"` to its
-bootstrap passes. A joiner's account arrives from the founder, so the value
-was never used, but a run with no `OWNER_EMAIL` set stopped at phase 13
-(unbound variable). A joiner's phase 13 no longer passes it. A founder site's
-join-node still does.
-
 #### Added: join-node runs mesh DNS at a joining site
 
 A site that joins a goatnet now runs its own mesh DNS, so it still resolves
@@ -248,29 +300,6 @@ API, with the founder's token (`<FOUNDER>_NB_API_TOKEN`), resolved through
 the secrets injector; an unset or unresolved token is refused before the
 step (GB-281). A site with no zone file to serve is refused when the plan
 is made (GB-280). See ADR 1235 (#678).
-
-#### Changed: join-node's phase 1 checks the node answers and goes on, so one run goes from phase 1 to 15
-
-Phase 1 of `goatbuilder join-node` used to be a person's step, "reach the box
-on the site LAN". Every run stopped there and went on only with `--from 2`.
-It is now a check: the node answers over SSH at `--address`, or a phone answers
-over USB (`adb get-state`). The run goes on to phase 15 with no operator step.
-
-A box that refuses the login still counts as answering. Before phase 2 seeds
-your key, a box that takes only its first-login password refuses every batch
-login, and phase 2 proves the login.
-
-A box that does not answer stops the run at phase 1 with GB-314 and the step
-for a person. Resume with `--from 1`. So does a Jetson's USB bridge address,
-192.168.55.0/24: its sshd answers, but it is reachable only over a direct
-USB-C cable. Pass the box's real LAN address.
-
-#### Fixed: join-node's phase 15 runs the acceptance rows against the site's end state
-
-Phase 15 ran `run-acceptance.py` with no `--endstate`. A row for a service the
-site declares absent read FAIL and stopped the run. Phase 15 now runs the same
-acceptance line as standup: it writes the site's end-state model to the state
-directory and passes it with `--endstate`, so such a row reads N/A.
 
 #### Added: join-node builds a node on a phone with --class phone --via usb
 
@@ -464,7 +493,9 @@ request's merge commit. Before the tag, a diff between the checked commit and th
 commit must name nothing under `crates/`, `ops/ansible/` or `ops/federation-e2e/`, or each
 stage those paths feed runs again on the merge commit (#772).
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.0 — 2026-11-14
 
