@@ -220,6 +220,14 @@ machine's owner. A clock that could not be read is reported as not verified,
 never as passed. The rule is the federation preflight's clock check
 (GB-268) (#766).
 
+#### Fixed: join-node reads goatnet_founder as Ansible does
+
+`join-node` decided whether a site joins a goatnet by matching the line
+`goatnet_founder: false` in the site group's vars.yml. So `False`, `"false"`,
+`no` and `off` read as a founder, and a `goatnet_founder` nested under another
+key read as the site's own. It now reads the top-level key with Ansible's
+booleans, as site-bootstrap does (`goatnet_founder | default(true) | bool`).
+
 #### Fixed: a joiner's join-node needs no OWNER_EMAIL
 
 A joiner's phase 13 passed `-e bootstrap_owner_email="$OWNER_EMAIL"` to its

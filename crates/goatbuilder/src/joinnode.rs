@@ -167,6 +167,31 @@ fn gv_matches(file: &Path, key: &str, value: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the group's vars.yml declares a joiner, as site-bootstrap reads it:
+/// `goatnet_founder | default(true) | bool`, from the top-level key only.
+/// Ansible's `bool` is true only for its true words (y, yes, on, 1, true, t,
+/// any case) and the number 1; anything else set is false. A file that does
+/// not parse, or no top-level key, is a founder, as the default is.
+fn declares_joiner(file: &Path) -> bool {
+    let Some(doc) = std::fs::read_to_string(file).ok().and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok()) else {
+        return false;
+    };
+    let Some(v) = doc.get("goatnet_founder") else {
+        return false;
+    };
+    !ansible_bool(v)
+}
+
+/// Ansible's `bool` filter on a YAML value.
+fn ansible_bool(v: &serde_yaml::Value) -> bool {
+    match v {
+        serde_yaml::Value::Bool(b) => *b,
+        serde_yaml::Value::Number(n) => n.as_f64() == Some(1.0),
+        serde_yaml::Value::String(s) => matches!(s.trim().to_ascii_lowercase().as_str(), "y" | "yes" | "on" | "1" | "true" | "t"),
+        _ => false,
+    }
+}
+
 fn gv_first(file: &Path, key: &str) -> String {
     std::fs::read_to_string(file)
         .ok()
@@ -396,7 +421,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let inv_before = if usb { format!("{inv} -i {}", sh_quote(&format!("{base}.ini"))) } else { inv.to_string() };
     let pass_var = o.pass_var.map(String::from).unwrap_or_else(|| format!("{upper}_NODE_PASS"));
     let gv = repo.join("ops/ansible/group_vars").join(&site_group).join("vars.yml");
-    let joiner = gv_matches(&gv, "goatnet_founder", "false");
+    let joiner = declares_joiner(&gv);
     let founder_site = gv_first(&gv, "join_founder_site");
     let founder_group = if founder_site.is_empty() { String::new() } else { format!("{}_hosts", founder_site.replace('-', "_")) };
     let intra_pair = gv_matches(&gv, "intra_site_pair", "true");
@@ -770,7 +795,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
     }
     if o.class == "phone" {
         let gv = repo.join("ops/ansible/group_vars").join(class_group(&o.site.replace('-', "_"), o.class)).join("vars.yml");
-        if !gv_matches(&gv, "goatnet_founder", "false") {
+        if !declares_joiner(&gv) {
             return Err(goat_errors::coded("GB-301", format!("--class phone at {}, which does not declare goatnet_founder: false: a phone node joins a goatnet. It takes no public ingress, so it is not the site other nodes enrol at (docs/design/phone-node.md)", o.site)).into());
         }
     }
