@@ -301,7 +301,7 @@ the variable (gate row B6; [goatbuilder.md](goatbuilder.md), stage 11.5). With i
    package from the partner that verifies under the recorded key and differs from the one on
    disk (after they rotated their WireGuard key) is saved at `$FED_WORK/theirs.incoming.json`
    and never placed: phase 5 of `goatbuilder federate` places it once its digest is compared on
-   the call (`--accept-partner-package`, ADR 1229, proposed;
+   the call (`--accept-partner-package`, ADR 1229, accepted;
    [federation-key-rotation.md](federation-key-rotation.md) §5). A partner rotation of their
    CA or bundle still reaches us only when the operator, having confirmed it on a call, removes
    the old files and runs phase 5 again. Without the flag, the single-package flow places both as

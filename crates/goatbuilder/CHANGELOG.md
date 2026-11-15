@@ -120,7 +120,7 @@ starts from, the package on disk must be the last one confirmed, with the keys
 confirmed for it (GB-191, naming phase 5). A peering confirmed by an earlier build has
 its held package recorded as confirmed on its first run, as a migration; one
 that cannot be read stops the run (GB-310). This follows ADR 1229, which is
-proposed.
+accepted.
 
 `goatbuilder federate rotate <partner> transport` now replaces our WireGuard
 peering key from phase 2, and carries our run past phase 5 and phase 6 when the

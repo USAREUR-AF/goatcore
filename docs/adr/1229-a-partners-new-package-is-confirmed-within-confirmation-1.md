@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted (2026-11-15, operator) |
 | Date | 2026-11-13 |
 | Deciders | operator |
 | Repo scope | goat core (`crates/goatbuilder/src/federate/confirm.rs`, `ops/federation/standup/directory.py`, `docs/design/federation-key-rotation.md`) |
