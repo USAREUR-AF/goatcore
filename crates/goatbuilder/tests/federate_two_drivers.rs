@@ -1523,3 +1523,70 @@ fn a_phase_2_edge_result_that_does_not_hold_is_not_imported() {
     let (out, _) = w.run(&["import", "hello-ally", "2", carried.to_str().unwrap(), "--sha256", &code]);
     assert!(out.status.success(), "an edge with no interface: {}", says(&out));
 }
+
+/// The stand-in edge answers `wg show wg-fed1 public-key` with `key`; every
+/// other command is as `over_ssh` answers it.
+fn edge_answers_its_key(ssh: &federate_world::OverSsh, key: &str) {
+    federate_world::exe(
+        &ssh.bin.join("ssh"),
+        &format!(
+            "#!/bin/sh\nwhile [ $# -gt 0 ] && [ \"$1\" != -- ]; do shift; done\nshift\ndest=$1\nshift\necho \"ssh $dest $*\" >> '{l}'\nif [ -f '{u}' ] && grep -qx \"$dest\" '{u}'; then echo \"ssh: connect to host $dest port 22: Connection refused\" >&2; exit 255; fi\n[ \"$*\" = 'LC_ALL=C true' ] && exit 0\ncase \"$*\" in *'wg show wg-fed1 public-key'*) [ \"$dest\" = '{edge}' ] && {{ echo '{key}'; exit 0; }} ;; esac\necho \"stand-in host $dest: nothing answers $*\" >&2\nexit 1\n",
+            l = ssh.log.display(),
+            u = ssh.unreachable.display(),
+            edge = EDGE_ADDRESS,
+        ),
+    );
+}
+
+/// Two drivers through phase 2 (the edge driver's result, which hands over
+/// the federation interface's public key `handed`, imported), then phase 3's
+/// edge half measured on an edge whose interface answers `measured`, and its
+/// import on the controller.
+fn phase_3_import_after_phase_2(handed: &str, measured: &str) -> (World, std::process::Output) {
+    let w = world();
+    plays_logging_their_arguments(&w, handed);
+    let commit = two_drivers(&w);
+    let (out, _) = w.run(&["hello-ally", "--from", "2", "--to", "2"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let edge_work = w.root.path().join("edge-work");
+    let (out, v) = edge_run_phase(&w, "2", &commit, &edge_work);
+    assert!(out.status.success(), "{}", says(&out));
+    let code = v["handoff"]["confirm_code"].as_str().unwrap().to_string();
+    let carried = w.root.path().join("carried.json");
+    std::fs::copy(edge_work.join("handoff/2/edge.json"), &carried).unwrap();
+    let (out, _) = w.run(&["import", "hello-ally", "2", carried.to_str().unwrap(), "--sha256", &code]);
+    assert!(out.status.success(), "phase 2's import: {}", says(&out));
+    let ssh = w.over_ssh();
+    edge_answers_its_key(&ssh, measured);
+    let (out, _) = w.run_over_ssh(&ssh, &["hello-ally", "--from", "2"]);
+    assert!(out.status.success(), "then: {}", says(&out));
+    let (bytes, h) = phase_3_edge_half(&w, &ssh, &commit, &edge_work);
+    let half: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(half["public_key"]["ok"], measured, "the edge half measured another key: {half}");
+    let code = h["confirm_code"].as_str().unwrap().to_string();
+    let carried = w.root.path().join("carried-edge-half.json");
+    std::fs::write(&carried, &bytes).unwrap();
+    let (out, _) = w.run_over_ssh(&ssh, &["import", "hello-ally", "3", carried.to_str().unwrap(), "--sha256", &code]);
+    (w, out)
+}
+
+/// Phase 3's edge half measures the federation interface's public key that
+/// phase 2's edge result handed over. A different key means the interface
+/// changed between the two (phase 2 run again on the edge and not imported,
+/// or another interface): the import refuses it with GB-114 and both keys,
+/// and nothing is placed. The same key is imported.
+#[test]
+fn phase_3s_edge_half_must_measure_the_key_phase_2_handed_over() {
+    let (w, out) = phase_3_import_after_phase_2(&public_b64("xaa"), &public_b64("xab"));
+    let all = says(&out);
+    assert_eq!(out.status.code(), Some(1), "{all}");
+    assert!(all.contains("GB-114"), "{all}");
+    assert!(all.contains(&public_b64("xaa")) && all.contains(&public_b64("xab")), "both keys named: {all}");
+    assert!(all.contains("phase 2"), "{all}");
+    assert!(!w.work.join("handoff/3/edge-half.json").exists(), "the half was placed: {all}");
+
+    let (w, out) = phase_3_import_after_phase_2(&public_b64("xaa"), &public_b64("xaa"));
+    assert!(out.status.success(), "{}", says(&out));
+    assert!(w.work.join("handoff/3/edge-half.json").exists());
+    assert!(says(&out).contains("phase 2's edge result"), "the import says it compared: {}", says(&out));
+}
