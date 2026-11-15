@@ -33,6 +33,18 @@ pub const EXISTS_CODE: &str = "GB-305";
 const HEADER: &str = "# written by goatbuilder grow from goatlite.yaml (docs/design/goatlite-growth.md §6).\n# The goatlite is handed over: this file is yours, and `goatbuilder validate` checks it.\n";
 
 pub fn grow(repo: &Path, dry_run: bool) -> Result<Report> {
+    grow_with(repo, dry_run, None)
+}
+
+/// [`grow`], asking `ask` before it changes anything: at a terminal without
+/// `--yes`, the run shows every write first (the difference, the config, each
+/// file handed over, the removal) and goes on only on a typed yes. `None` is
+/// `--yes`, or no terminal (where C10 already required `--yes`).
+pub fn grow_with(
+    repo: &Path,
+    dry_run: bool,
+    ask: Option<&mut dyn crate::federate::prompt::Ask>,
+) -> Result<Report> {
     let lite_path = repo.join(LITE_FILE);
     let lite = config::load_value(&lite_path)?;
     let checkout = config::checkout_for(&lite_path);
@@ -42,14 +54,23 @@ pub fn grow(repo: &Path, dry_run: bool) -> Result<Report> {
     // stopped after writing it; anything else is the learner's, and is never replaced.
     let already = if target.is_file() {
         if config::load_value(&target).ok().as_ref() != Some(&grown) {
-            return Err(goat_errors::coded(
-                EXISTS_CODE,
+            // grow's own header: a file an earlier run wrote, since edited, or
+            // grown from a goatlite.yaml that has changed since.
+            let ours = std::fs::read_to_string(&target)
+                .map(|t| t.starts_with(HEADER))
+                .unwrap_or(false);
+            let msg = if ours {
+                format!(
+                    "{TARGET} is grow's own file from an earlier run, and it no longer holds what {LITE_FILE} grows into: it was edited, or {LITE_FILE} changed since. Nothing was changed. \
+                     Keep the edits by merging them into {LITE_FILE} and deleting {TARGET}, or delete it to grow afresh, then grow again."
+                )
+            } else {
                 format!(
                     "{TARGET} already exists and holds another configuration, so grow would replace it. Nothing was changed. \
                      Move it aside (or merge what it declares into goatlite.yaml), then grow again."
-                ),
-            )
-            .into());
+                )
+            };
+            return Err(goat_errors::coded(EXISTS_CODE, msg).into());
         }
         true
     } else {
@@ -82,29 +103,101 @@ pub fn grow(repo: &Path, dry_run: bool) -> Result<Report> {
         "kept",
         "lite.host has no field here: the inventory and zone the render wrote carry it, and become yours".to_string(),
     ));
-    if dry_run {
-        checks.push(row(
-            "plan",
+    // The renderer command the real run executes, shown verbatim in the plan.
+    let renderer = repo.join(RENDERER);
+    let render_args: Vec<std::ffi::OsString> = vec![
+        "--site".into(),
+        name.clone().into(),
+        "--config".into(),
+        lite_path.clone().into_os_string(),
+        "--hand-over".into(),
+    ];
+    let shown = format!(
+        "python3 {} {}",
+        renderer.display(),
+        render_args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let interactive = ask.as_ref().is_some_and(|a| a.interactive());
+    if dry_run || interactive {
+        let mut plan = vec![
             if already {
                 format!("keep {TARGET}: it already holds the grown configuration")
             } else {
                 format!("would write {TARGET}")
             },
+            format!("would hand the rendered files over: {shown}"),
+        ];
+        // The same command with --check lists each file and changes nothing.
+        let out = crate::runner::Cmd::new("python3")
+            .arg(&renderer)
+            .args(&render_args)
+            .arg("--check")
+            .current_dir(repo)
+            .output()
+            .map_err(|e| {
+                goat_errors::coded(
+                    "GB-254",
+                    format!("cannot run python3 {RENDERER} --check: {e}"),
+                )
+            })?;
+        if !matches!(out.status.code(), Some(0 | 1)) {
+            return Err(goat_errors::coded(
+                "GB-254",
+                format!(
+                    "{RENDERER} --hand-over --check could not say which files the hand-over takes ({}):\n{}{}",
+                    out.status,
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                ),
+            )
+            .into());
+        }
+        for line in String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| l.starts_with("  "))
+        {
+            let l = line.trim();
+            if let Some(i) = l.find("  would hand over") {
+                plan.push(format!("would hand over {}", l[..i].trim_end()));
+            }
+        }
+        plan.push(format!("would remove {LITE_FILE}"));
+        if dry_run {
+            checks.extend(plan.into_iter().map(|p| row("plan", p)));
+            checks.push(row(
+                "next",
+                format!(
+                    "goatbuilder grow --yes, then goatbuilder standup {env} --site {name} --dry-run"
+                ),
+            ));
+            return Ok(Report::new("grow", checks, EXIT_REFUSED));
+        }
+        let ask = ask.expect("interactive");
+        let mut text: Vec<String> = checks
+            .iter()
+            .map(|c| format!("  {}  {}", c.name, c.detail))
+            .collect();
+        text.extend(plan.iter().map(|p| format!("  plan  {p}")));
+        ask.say(&format!(
+            "goatbuilder grow hands {LITE_FILE} over to the full preset. It changes files in this checkout only, never a host; before you commit, git undoes it.\n{}\n",
+            text.join("\n")
         ));
-        checks.push(row(
-            "plan",
-            format!(
-                "would hand the rendered files over: python3 {RENDERER} --site {name} --hand-over"
-            ),
+        let answer = ask.ask(&format!(
+            "Hand the goatlite over? Type yes to write {TARGET}, take the headers off and remove {LITE_FILE}, or press Enter to stop:"
         ));
-        checks.push(row("plan", format!("would remove {LITE_FILE}")));
-        checks.push(row(
-            "next",
-            format!(
-                "goatbuilder grow --yes, then goatbuilder standup {env} --site {name} --dry-run"
-            ),
-        ));
-        return Ok(Report::new("grow", checks, EXIT_REFUSED));
+        if !crate::federate::prompt::is_yes(&answer) {
+            checks.push(Check {
+                name: "stopped".into(),
+                ok: false,
+                detail: "not confirmed: nothing was changed".into(),
+                fix: Some("goatbuilder grow, and type yes; or goatbuilder grow --yes".into()),
+            });
+            return Ok(Report::new("grow", checks, EXIT_REFUSED));
+        }
     }
 
     if already {
@@ -120,10 +213,8 @@ pub fn grow(repo: &Path, dry_run: bool) -> Result<Report> {
         checks.push(row("wrote", format!("wrote {TARGET}")));
     }
     let out = crate::runner::Cmd::new("python3")
-        .arg(repo.join(RENDERER))
-        .args(["--site", &name, "--config"])
-        .arg(&lite_path)
-        .arg("--hand-over")
+        .arg(&renderer)
+        .args(&render_args)
         .current_dir(repo)
         .output()
         .map_err(|e| goat_errors::coded("GB-254", format!("cannot run python3 {RENDERER}: {e}")))?;
@@ -250,10 +341,11 @@ mod tests {
             dir.join(RENDERER),
             "import sys, pathlib\n\
              root = pathlib.Path(__file__).resolve().parents[2]\n\
+             v = root / 'ops/ansible/group_vars/pasture_hosts/vars.yml'\n\
+             if '--check' in sys.argv: (root / 'renderer-check-args').write_text(' '.join(sys.argv[1:])); print('goatlite-render: pasture -- would hand over:'); print('  ' + str(v) + '  would hand over (take the generated header off)'); sys.exit(1)\n\
              (root / 'renderer-args').write_text(' '.join(sys.argv[1:]))\n\
              assert (root / 'goatlite.yaml').exists(), 'the hand-over runs before goatlite.yaml goes'\n\
              assert (root / 'ops/goatbuilder/goatbuilder.yaml').exists(), 'the config is written first'\n\
-             v = root / 'ops/ansible/group_vars/pasture_hosts/vars.yml'\n\
              v.write_text(v.read_text().split('\\n', 1)[1])\n\
              print('goatlite-render: pasture -- handed over:')\n\
              print('  ' + str(v) + '  handed over')\n",
@@ -310,7 +402,18 @@ mod tests {
         assert!(!dir.join(TARGET).exists(), "a dry run writes no config");
         assert!(
             !dir.join("renderer-args").exists(),
-            "a dry run runs no renderer"
+            "a dry run runs the renderer only to check"
+        );
+        let vars = dir.join("ops/ansible/group_vars/pasture_hosts/vars.yml");
+        assert!(
+            all.contains(&format!("would hand over {}", vars.display())),
+            "the dry run lists each file the hand-over takes: {all}"
+        );
+        assert!(
+            std::fs::read_to_string(&vars)
+                .unwrap()
+                .starts_with("# generated by"),
+            "the dry run takes no header off"
         );
         assert_eq!(
             std::fs::read_to_string(dir.join(LITE_FILE)).unwrap(),
@@ -367,6 +470,90 @@ mod tests {
             all.contains("goatbuilder standup pasture --site pasture --dry-run"),
             "the next step names --site: {all}"
         );
+    }
+
+    /// F3: the dry run shows the renderer command the real run executes, verbatim,
+    /// and checks the hand-over with the same command and --check.
+    #[test]
+    fn the_dry_run_shows_the_renderer_command_the_real_run_executes() {
+        let dir = checkout();
+        let plan = details(&grow(&dir, true).unwrap());
+        let check_args = std::fs::read_to_string(dir.join("renderer-check-args")).unwrap();
+        grow(&dir, false).unwrap();
+        let args = std::fs::read_to_string(dir.join("renderer-args")).unwrap();
+        let shown = format!("python3 {} {args}", dir.join(RENDERER).display());
+        assert!(
+            plan.contains(&format!("would hand the rendered files over: {shown}")),
+            "{shown}\n{plan}"
+        );
+        assert_eq!(check_args, format!("{args} --check"));
+    }
+
+    /// At a terminal, without --yes, the run shows every write first (the
+    /// difference, the config, each file handed over, the removal) and asks;
+    /// anything but a typed yes changes nothing.
+    #[test]
+    fn at_a_terminal_every_write_is_shown_before_it_asks() {
+        let dir = checkout();
+        let mut no = crate::federate::prompt::Scripted::new(&[""]);
+        let r = grow_with(&dir, false, Some(&mut no)).unwrap();
+        assert!(
+            !r.ok,
+            "a run that was not confirmed is not a success: {}",
+            details(&r)
+        );
+        assert!(
+            details(&r).contains("nothing was changed"),
+            "{}",
+            details(&r)
+        );
+        let shown = no.transcript.clone();
+        let vars = dir.join("ops/ansible/group_vars/pasture_hosts/vars.yml");
+        for want in [
+            "~ preset: \"lite\" -> \"full\"".to_string(),
+            format!("would write {TARGET}"),
+            format!("would hand over {}", vars.display()),
+            "would remove goatlite.yaml".to_string(),
+        ] {
+            assert!(
+                shown.contains(&want),
+                "shown before asking: {want}\n{shown}"
+            );
+        }
+        let asked = shown.rfind("Type yes").unwrap();
+        assert!(
+            shown.find("would remove goatlite.yaml").unwrap() < asked,
+            "{shown}"
+        );
+        assert!(
+            !dir.join(TARGET).exists()
+                && dir.join(LITE_FILE).exists()
+                && !dir.join("renderer-args").exists()
+        );
+        let mut yes = crate::federate::prompt::Scripted::new(&["yes"]);
+        let r = grow_with(&dir, false, Some(&mut yes)).unwrap();
+        assert!(r.ok, "{}", details(&r));
+        assert!(dir.join(TARGET).exists() && !dir.join(LITE_FILE).exists());
+    }
+
+    /// GB-305 on a file grow wrote in an earlier run and someone edited says so,
+    /// rather than only asking for it to be moved aside.
+    #[test]
+    fn an_edited_file_from_an_earlier_grow_is_named_as_grows() {
+        let dir = checkout();
+        let want = config::grow(&config::load_value(&dir.join(LITE_FILE)).unwrap(), None).unwrap();
+        std::fs::create_dir_all(dir.join("ops/goatbuilder")).unwrap();
+        let edited = format!("{HEADER}{}", serde_yaml::to_string(&want).unwrap())
+            .replace("ssh_user: ubuntu", "ssh_user: someone");
+        assert!(edited.contains("ssh_user: someone"));
+        std::fs::write(dir.join(TARGET), &edited).unwrap();
+        let e = grow(&dir, true).unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some(EXISTS_CODE), "{e:#}");
+        assert!(
+            format!("{e:#}").contains("grow's own file from an earlier run"),
+            "{e:#}"
+        );
+        assert_eq!(std::fs::read_to_string(dir.join(TARGET)).unwrap(), edited);
     }
 
     /// A run that stopped after writing the config carries on: the same config is kept.

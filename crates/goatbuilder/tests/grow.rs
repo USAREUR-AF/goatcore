@@ -26,6 +26,16 @@ fn lite_fixture() -> String {
 fn grow_dry_run_on_the_lite_fixture_shows_a_valid_full_config_and_writes_nothing() {
     let t = tempfile::tempdir().unwrap();
     std::fs::write(t.path().join("goatlite.yaml"), lite_fixture()).unwrap();
+    // The dry run asks the checkout's own renderer which files the hand-over
+    // takes (`--hand-over --check`, which writes nothing); nothing is rendered
+    // here, so it names none.
+    let renderer = t.path().join("ops/scripts/goatlite-render.py");
+    std::fs::create_dir_all(renderer.parent().unwrap()).unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts/goatlite-render.py"),
+        &renderer,
+    )
+    .unwrap();
     let out = test_home::isolate(&mut Command::new(env!("CARGO_BIN_EXE_goatbuilder")))
         .args(["-C"])
         .arg(t.path())
@@ -64,6 +74,14 @@ fn grow_dry_run_on_the_lite_fixture_shows_a_valid_full_config_and_writes_nothing
         all.contains("plan would write ops/goatbuilder/goatbuilder.yaml"),
         "{all}"
     );
+    assert!(
+        all.contains(&format!(
+            "plan would hand the rendered files over: python3 {} --site pasture --config {} --hand-over",
+            renderer.display(),
+            t.path().join("goatlite.yaml").display()
+        )),
+        "the dry run shows the command the real run executes: {all}"
+    );
     let mut left: Vec<String> = std::fs::read_dir(t.path())
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -71,7 +89,11 @@ fn grow_dry_run_on_the_lite_fixture_shows_a_valid_full_config_and_writes_nothing
     left.sort();
     assert_eq!(
         left,
-        vec!["goatlite.yaml".to_string()],
+        vec!["goatlite.yaml".to_string(), "ops".to_string()],
         "a dry run writes nothing into the checkout"
+    );
+    assert!(
+        !t.path().join("ops/goatbuilder").exists(),
+        "a dry run writes no config"
     );
 }

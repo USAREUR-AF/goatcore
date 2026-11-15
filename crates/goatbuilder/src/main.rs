@@ -1653,6 +1653,9 @@ fn main() {
         Cmd::Grow { dry_run } => {
             if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "grow is a mutation: pass --yes without a terminal (C10)").into())
+            } else if !cli.yes && !*dry_run && federate::prompt::Terminal::present() {
+                // At a terminal without --yes: every write is shown, then asked.
+                grow::grow_with(&repo, false, Some(&mut federate::prompt::Terminal))
             } else {
                 grow::grow(&repo, *dry_run)
             }
