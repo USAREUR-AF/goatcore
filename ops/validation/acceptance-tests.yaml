@@ -285,39 +285,58 @@ tests:
   - id: fed-founder-netbird-subscriptions-replicating
     aspect: federation/inter-site-spock
     probe: cmd-assert
-    applies_when: spock_founder_peers
+    applies_when: spock_founder_subs
     params:
       host: "{{ orin_a }}"
-      # The founder's half of tutorial 2's checkpoint 3: the subscriptions the
-      # founder-side mirror created, pulling FROM each joiner. Read on the
-      # founder, where they live; the joiner's rows above read only its own
-      # inbound leg. Same all-or-'no-subscriptions' shape.
-      cmd: "docker exec postgres-a psql -U postgres -d netbird -tAc \"SELECT CASE WHEN count(*)=0 THEN 'no-subscriptions' WHEN count(*)=count(*) FILTER (WHERE status='replicating') THEN 'all-replicating' ELSE 'some-not-replicating' END FROM spock.sub_show_status()\""
-      expect: "all-replicating"
+      # The founder's half of tutorial 2's checkpoint 3: each subscription the
+      # founder must hold FROM a peer, by the name spock-mesh-peering gives it
+      # (sub_<peer node>_to_<founder node>), one per peer the role wires
+      # (generate-values.py: spock_founder_subs). Each must exist and be
+      # replicating; a missing one reads 'missing'. Read on node A, where the
+      # role wires them; an A/B pair's B is a streaming standby.
+      cmd_template: "docker exec postgres-a psql -U postgres -d netbird -tAc \"SELECT coalesce((SELECT status FROM spock.sub_show_status() WHERE subscription_name = '{item}'), 'missing')\""
+      for_each: spock_founder_subs
+      expect: "replicating"
     requires: [postgres-spock, spock-mesh-peering]
     severity: gate
     caught_would_have: >-
-      A founder whose mirror never subscribed to the joiner, or whose
-      subscription stalled, takes none of the joiner's writes while the
+      A founder whose mirror never subscribed to a joiner, or whose
+      subscription stalled, takes none of that joiner's writes while the
       joiner's own rows all pass: replication one way only, which the
-      joiner's assay cannot see.
-  - id: fed-founder-ory-narrow-subscriptions-replicating
+      joiner's assay cannot see. With two peers, one missing subscription
+      is named, not hidden behind the other's 'replicating'.
+  - id: fed-founder-kratos-subscriptions-replicating
     aspect: federation/ory-narrow
     probe: cmd-assert
-    applies_when: spock_founder_ory_dbs
+    applies_when: spock_founder_kratos_subs
     params:
       host: "{{ orin_a }}"
-      # The founder's kratos and hydra subscriptions from each joiner, per Ory
-      # DB, as the joiner's row reads its own.
-      cmd_template: "docker exec postgres-a psql -U postgres -d {item} -tAc \"SELECT CASE WHEN count(*)=0 THEN 'no-subscriptions' WHEN count(*)=count(*) FILTER (WHERE status='replicating') THEN 'all-replicating' ELSE 'some-not-replicating' END FROM spock.sub_show_status()\""
-      for_each: spock_founder_ory_dbs
-      expect: "all-replicating"
+      # The founder's kratos subscription from each peer that enables
+      # ory_narrow too, by ory-narrow-repset's name
+      # (ory_sub_<peer node>_kratos_to_<founder node>_kratos).
+      cmd_template: "docker exec postgres-a psql -U postgres -d kratos -tAc \"SELECT coalesce((SELECT status FROM spock.sub_show_status() WHERE subscription_name = '{item}'), 'missing')\""
+      for_each: spock_founder_kratos_subs
+      expect: "replicating"
     requires: [postgres-spock, ory-narrow-repset]
     severity: gate
     caught_would_have: >-
-      An identity created or changed at the joiner never reaching the
-      founder, so the two sites' login planes diverge in that direction
-      while every row on the joiner passes.
+      An identity created or changed at a joiner never reaching the founder,
+      so the two sites' login planes diverge in that direction while every
+      row on the joiner passes.
+  - id: fed-founder-hydra-subscriptions-replicating
+    aspect: federation/ory-narrow
+    probe: cmd-assert
+    applies_when: spock_founder_hydra_subs
+    params:
+      host: "{{ orin_a }}"
+      # As the kratos row, for hydra (OAuth2 clients).
+      cmd_template: "docker exec postgres-a psql -U postgres -d hydra -tAc \"SELECT coalesce((SELECT status FROM spock.sub_show_status() WHERE subscription_name = '{item}'), 'missing')\""
+      for_each: spock_founder_hydra_subs
+      expect: "replicating"
+    requires: [postgres-spock, ory-narrow-repset]
+    severity: gate
+    caught_would_have: >-
+      An OAuth2 client registered at a joiner never reaching the founder.
   - id: fed-inter-site-postgres-dsn-reachable
     aspect: federation/inter-site-spock
     probe: cmd-assert
