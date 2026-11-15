@@ -179,12 +179,28 @@ class A1DeprecationPeriod(unittest.TestCase):
 
     SHIPPED = {"goatbuilder/v1.2.0": [ENV], "goatbuilder/v1.3.0": [ENV], "goatbuilder/v1.4.0": [ENV]}
 
-    def problems(self, base_release="goatbuilder/v1.4.0", version="2.0.0", deps=None, tags=None, today=datetime.date(2027, 4, 10), shipped=None):
+    def problems(self, base_release="goatbuilder/v1.4.0", version="2.0.0", deps=None, tags=None, today=datetime.date(2027, 4, 10), shipped=None, base_version="1.4.0"):
         return compat.period_problems(
             surface(), self.removed(), [self.ENV] if deps is None else deps,
             base_release, version, self.TAGS if tags is None else tags, today,
-            self.SHIPPED if shipped is None else shipped,
+            self.SHIPPED if shipped is None else shipped, base_version,
         )
+
+    def test_a_removal_lands_only_in_the_pull_request_that_sets_the_major_version(self):
+        """The base branch already at 2.0.0 means the version pull request has
+        merged; its tag goes on that merge, so a removal merged after it ships
+        in 2.1.0, a minor release. Only the pull request that moves the
+        version from 1.x to 2.0.0 may carry it."""
+        self.assertEqual(self.problems(base_version="1.4.0"), [])
+        p = self.problems(base_version="2.0.0")
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("the base branch is already at 2.0.0", p[0])
+        self.assertIn("the pull request that sets the version to 2.0.0", p[0])
+
+    def test_a_base_version_that_cannot_be_read_is_refused(self):
+        p = self.problems(base_version="")
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("cannot read the base branch's version", p[0])
 
     def test_a_backdated_entry_is_refused(self):
         """An entry that names a release whose shipped list did not carry it: no
@@ -291,13 +307,13 @@ class A1DeprecationPeriod(unittest.TestCase):
 
     def test_an_entry_whose_item_is_still_there_is_not_held_to_the_period(self):
         new = surface()
-        self.assertEqual(compat.period_problems(surface(), new, [self.ENV], "goatbuilder/v1.2.0", "1.3.0", {}, datetime.date(2027, 1, 11), {}), [])
+        self.assertEqual(compat.period_problems(surface(), new, [self.ENV], "goatbuilder/v1.2.0", "1.3.0", {}, datetime.date(2027, 1, 11), {}, "1.2.0"), [])
 
     def test_a_removed_command_and_a_removed_value_are_held_to_it_too(self):
         new = surface()
         del new["goatbuilder promote graduate"]
         cmd = {"command": "goatbuilder promote graduate", "replacement": "goatbuilder promote hop", "deprecated_in": "goatbuilder/v1.2.0"}
-        p = compat.period_problems(surface(), new, [cmd], "goatbuilder/v1.4.0", "1.5.0", self.TAGS, datetime.date(2027, 4, 10), {"goatbuilder/v1.2.0": [cmd]})
+        p = compat.period_problems(surface(), new, [cmd], "goatbuilder/v1.4.0", "1.5.0", self.TAGS, datetime.date(2027, 4, 10), {"goatbuilder/v1.2.0": [cmd]}, "1.4.0")
         self.assertEqual(len(p), 1, p)
         self.assertIn("goatbuilder promote graduate", p[0])
         base = surface()
@@ -305,7 +321,7 @@ class A1DeprecationPeriod(unittest.TestCase):
         new = surface()
         new["goatbuilder deploy"]["values"] = {"--env": ["hall"]}
         val = {"command": "goatbuilder deploy", "flag": "--env", "value": "door", "replacement": "--env hall", "deprecated_in": "goatbuilder/v1.2.0"}
-        p = compat.period_problems(base, new, [val], "goatbuilder/v1.4.0", "2.0.0", self.TAGS, datetime.date(2027, 4, 9), {"goatbuilder/v1.2.0": [val]})
+        p = compat.period_problems(base, new, [val], "goatbuilder/v1.4.0", "2.0.0", self.TAGS, datetime.date(2027, 4, 9), {"goatbuilder/v1.2.0": [val]}, "1.4.0")
         self.assertEqual(len(p), 1, p)
         self.assertIn("goatbuilder deploy --env door", p[0])
 
@@ -339,7 +355,7 @@ class A1DeprecationPeriod(unittest.TestCase):
             self.assertEqual(len(p), 1, p)
             self.assertIn("removed in 1.5.0", p[0])
 
-    def _tagged_repo(self, repo, version, listed_at_v120):
+    def _tagged_repo(self, repo, version, listed_at_v120, base="1.4.0"):
         """A checkout at `version` with the three releases tagged, and v1.2.0's
         deprecations.yaml naming ENV or not."""
         import subprocess
@@ -367,8 +383,16 @@ class A1DeprecationPeriod(unittest.TestCase):
         git("commit", "-q", "--allow-empty", "-am", "list", when="2027-01-15T12:00:00+00:00")
         for tag, when in (("v1.3.0", "2027-01-20T12:00:00+00:00"), ("v1.4.0", "2027-02-01T12:00:00+00:00")):
             git("tag", "-a", "-m", tag, f"goatbuilder/{tag}", when=when)
+        # As CI checks a pull request out: the merge of the pull request's commit
+        # into its base, so the base is the merge's first parent.
+        write("crates/goatbuilder/Cargo.toml", f'[package]\nname = "goatbuilder"\nversion = "{base}"\n')
+        git("commit", "-q", "--allow-empty", "-am", f"base {base}", when="2027-04-19T12:00:00+00:00")
+        git("branch", "-q", "base")
+        git("checkout", "-q", "-b", "pr")
         write("crates/goatbuilder/Cargo.toml", f'[package]\nname = "goatbuilder"\nversion = "{version}"\n')
-        git("commit", "-q", "-am", version, when="2027-04-20T12:00:00+00:00")
+        git("commit", "-q", "--allow-empty", "-am", version, when="2027-04-20T12:00:00+00:00")
+        git("checkout", "-q", "base")
+        git("merge", "-q", "--no-ff", "-m", "merge", "pr", when="2027-04-20T13:00:00+00:00")
 
     def test_the_check_reads_the_list_each_release_shipped_from_its_tag(self):
         import tempfile
@@ -389,6 +413,12 @@ class A1DeprecationPeriod(unittest.TestCase):
             p = compat.period_rows(repo, Base(), self.removed(), [self.ENV], today=datetime.date(2027, 5, 1))
             self.assertEqual(len(p), 1, p)
             self.assertIn("did not name it", p[0])
+        with tempfile.TemporaryDirectory() as repo:
+            self._tagged_repo(repo, "2.0.0", listed_at_v120=True, base="2.0.0")
+            self.assertEqual(compat.base_branch_version(repo), "2.0.0")
+            p = compat.period_rows(repo, Base(), self.removed(), [self.ENV], today=datetime.date(2027, 5, 1))
+            self.assertEqual(len(p), 1, p)
+            self.assertIn("the base branch is already at 2.0.0", p[0])
 
     def test_tag_dates_are_read_from_the_annotated_tags(self):
         tags = compat.release_tag_dates(REPO)
