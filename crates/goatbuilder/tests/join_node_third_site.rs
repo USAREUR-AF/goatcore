@@ -99,6 +99,8 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         "ops/scripts/inventory-hosts.py",
         "ops/scripts/with-secrets",
         "ops/scripts/seed-ssh-key.sh",
+        // Phase 1: the node answers.
+        "ops/scripts/join-node-reach.sh",
         "ops/secrets/posture.py",
         "ops/scripts/require-secret.sh",
         // Every health publisher's play: a play in the checkout is not a

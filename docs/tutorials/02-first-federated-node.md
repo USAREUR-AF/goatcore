@@ -152,6 +152,13 @@ takes `inventory/mgmt-hosts.ini` with `inventory/doors-groupvars.ini`, never the
 mesh inventory as well, and the plan's first line opens the door
 (`ops/scripts/door-open.sh <env>`); a run opens it before phase 1.
 
+Phase 1 checks the box answers over SSH at `--address`, and the run goes on:
+one batch-mode connection that reaches the box's SSH server is enough, even when
+the box refuses the login, because before phase 2 seeds your key a box that
+takes only its first-login password refuses every batch login. A box that does
+not answer stops the run at phase 1 with GB-314: reach it on the site LAN
+(`ssh <user>@<address>`), pass its real address, and resume with `--from 1`.
+
 Phase 2 seeds the SSH key only when the box needs it: it first tries
 `ssh -o BatchMode=yes <user>@<address> sudo -n true`, and a box installed
 unattended with your key and passwordless sudo passes that and skips the seed.

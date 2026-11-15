@@ -51,7 +51,7 @@ private address changes between boots.
 
 | Stage | Path | Status |
 |---|---|---|
-| Before enrolment | SSH carried over the Android debug bridge on a USB cable (`adb shell nc <vm address> 22` as the SSH proxy command) | Measured: Ansible ran the host baseline through it |
+| Before enrolment | SSH carried over the Android debug bridge on a USB cable (`adb shell nc <vm address> 22` as the SSH proxy command). join-node's phase 1 checks the phone answers (`adb get-state` says `device`) and goes on; it stops with GB-314 only when no single phone answers | Measured: Ansible ran the host baseline through it. The phase 1 check is built on the fixture, not measured |
 | After enrolment | The node's mesh address, like every other node | Measured: the three-pass join and the fabric plays ran over the mesh |
 | On the mesh | Relayed connections, not direct ones | Measured: about 50 ms from the founder |
 

@@ -5,7 +5,7 @@
 //! docs/tutorials/02-first-federated-node.md walks through it. `--dry-run` prints every phase and
 //! command and runs nothing; `--from`/`--to` resume; every phase is idempotent.
 //!
-//!   1  MANUAL reach the box on the SITE LAN (not the USB bridge address)
+//!   1  GATE   the node answers (over SSH at --address, or a phone over USB); stops only when it does not (GB-314)
 //!   2  T      seed-ssh-key.sh — key auth + NOPASSWD sudo, password from an env var;
 //!             skipped when `ssh -o BatchMode=yes <user>@<addr> sudo -n true` already
 //!             passes (a box installed unattended with the key and NOPASSWD sudo)
@@ -423,12 +423,15 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         }
         Phase { n: 10, kind: "T", label: "record the node's mesh address in the checkout (group_vars, mesh inventory) for phase 12; the router certificate is left as it is".into(), cmd: format!("python3 '{r}/ops/scripts/standup-mesh-record.py' {site} --ips {}{group_arg} --no-mint", sh_quote(&mesh_ips)), writes }
     };
-    // Phase 1 is the one step for a person: reaching the node. A node on a
-    // USB cable is reached by attaching the phone.
+    // Phase 1 checks the node answers before anything is done on it, and goes
+    // on (gate row H1: one run from phase 1 to 15). It stops only when the node
+    // does not answer, with the step for a person (GB-314). It cannot prove a
+    // login: before phase 2 seeds this machine's key, a password-only node
+    // refuses every batch login (ops/scripts/join-node-reach.sh).
     let reach = if usb {
-        p(1, "MANUAL", "attach the phone by USB", "attach the phone to this machine by USB, allow USB debugging on it, accept this machine's key on its screen, and unlock it — `adb devices` then lists it as `device`. With more than one device attached, set ANDROID_SERIAL. A phone node has no LAN address: pass no --address.".to_string())
+        p(1, "GATE", "the phone answers over USB (`adb get-state`: device) — attached, USB debugging allowed from this machine, unlocked; ANDROID_SERIAL picks one of several", format!("'{r}/ops/scripts/join-node-reach.sh' usb"))
     } else {
-        p(1, "MANUAL", "reach the box on the SITE LAN", format!("ssh {user}@{addr} — find the box's real LAN address before anything else and pass it as --address. On a Jetson the address handed over may be 192.168.55.1: that is l4tbr0, the USB device-mode bridge on the box itself, reachable only over a direct USB-C cable."))
+        p(1, "GATE", "the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address", format!("'{r}/ops/scripts/join-node-reach.sh' ssh {user_w}@{addr}"))
     };
     // Phase 2 gives the plays key auth and NOPASSWD sudo. For a phone it
     // prepares the VM, which creates the deploy user with both, and refuses
@@ -934,11 +937,13 @@ mod tests {
     /// proves the kernel ACL plane, and records the mesh address, the core
     /// pair's for a core node and only the mesh inventory line for another class.
     #[test]
-    fn only_phase_1_is_manual_and_the_key_is_minted_where_it_is_used() {
+    fn no_phase_is_manual_and_the_key_is_minted_where_it_is_used() {
         let t = joiner_checkout();
         let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
         let manual: Vec<u32> = ph.iter().filter(|p| p.kind == "MANUAL").map(|p| p.n).collect();
-        assert_eq!(manual, vec![1]);
+        assert_eq!(manual, Vec::<u32>::new(), "phase 1 checks the node answers; no phase stops for a person");
+        assert_eq!((ph[0].n, ph[0].kind), (1, "GATE"));
+        assert!(ph[0].cmd.ends_with("/ops/scripts/join-node-reach.sh' ssh <deploy.ssh_user>@<the node's LAN address>") || ph[0].cmd.contains("join-node-reach.sh' ssh "), "{}", ph[0].cmd);
         assert!(ph.iter().all(|p| !p.cmd.contains("NB_SETUP_KEY")), "no phase reads a setup key");
         let p9 = ph.iter().find(|p| p.n == 9).unwrap();
         assert!(p9.cmd.ends_with("'bash -s -- --key-at-enrolment'") && !p9.cmd.contains("SETUP_KEY"), "{}", p9.cmd);
@@ -973,7 +978,7 @@ mod tests {
         let r = join_node(&repo(), &opts("uk", "core", "zagros")).unwrap();
         assert_eq!(r.exit, EXIT_OK);
         let phases: Vec<&str> = r.checks.iter().filter(|c| c.name == "phase").map(|c| c.detail.as_str()).collect();
-        assert!(phases[0].starts_with("=== Phase 1 [MANUAL] reach the box"));
+        assert!(phases[0].starts_with("=== Phase 1 [GATE] the node answers over SSH"));
         let core: Vec<&&str> = phases.iter().filter(|p| p.contains("[core, joiner]")).collect();
         assert_eq!(core.len(), 6, "{phases:?}");
         assert!(core[0].contains("pass 1") && core[2].contains("pass 2") && core[3].contains("pass 3") && core[4].contains("founder-side mirror on zagros_hosts") && core[5].contains("Spock wiring again"));
@@ -1022,7 +1027,7 @@ mod tests {
         // ssh runs what it is piped (`... | ssh <node> 'bash -s'`) as the node would.
         let ssh = bin.join("ssh");
         crate::test_support::executable(&ssh, &format!("#!/bin/sh\nfor a; do printf '%s\\n' \"$a\"; done >> '{}'\nfor a; do [ \"$a\" = 'bash -s' ] && exec bash -s; done\nexit 0\n", log.display()));
-        for s in ["ops/scripts/with-aws", "ops/scripts/ansible-preflight.sh", "ops/scripts/seed-ssh-key.sh", "ops/scripts/door-open.sh", "ops/scripts/phone-node-provision.sh", "ops/scripts/phone-node-ssh.sh"] {
+        for s in ["ops/scripts/with-aws", "ops/scripts/ansible-preflight.sh", "ops/scripts/seed-ssh-key.sh", "ops/scripts/door-open.sh", "ops/scripts/phone-node-provision.sh", "ops/scripts/phone-node-ssh.sh", "ops/scripts/join-node-reach.sh"] {
             exe(&repo.join(s));
         }
         std::fs::write(repo.join("ops/preflight-enrollment.sh"), "true\n").unwrap();
@@ -1072,8 +1077,8 @@ mod tests {
         let o = Options { via: "usb", ..opts("zagros-b", "phone", "zagros") };
         let ph = plan(t.path(), &o).unwrap();
         let base = usb_base(t.path(), "zagros-b", "node-x");
-        assert_eq!(ph.iter().filter(|p| p.kind == "MANUAL").map(|p| p.n).collect::<Vec<_>>(), vec![1]);
-        assert!(ph[0].label.contains("attach the phone by USB") && ph[0].cmd.contains("pass no --address"), "{}", ph[0].cmd);
+        assert_eq!(ph.iter().filter(|p| p.kind == "MANUAL").count(), 0);
+        assert!(ph[0].kind == "GATE" && ph[0].label.contains("the phone answers over USB") && ph[0].cmd.ends_with("/ops/scripts/join-node-reach.sh' usb"), "{}", ph[0].cmd);
         let p2: Vec<&Phase> = ph.iter().filter(|p| p.n == 2).collect();
         assert_eq!(p2.iter().map(|p| p.kind).collect::<Vec<_>>(), vec!["T", "GATE"]);
         let script = format!("/ops/scripts/phone-node-provision.sh' --node node-x --user <deploy.ssh_user> --base '{base}' ");

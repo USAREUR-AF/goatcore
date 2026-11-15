@@ -146,6 +146,8 @@ fn site(prepared: bool) -> Site {
         "ops/ansible/fabric-crawler-deploy.yml",
         // The real phone scripts and the class's declarations.
         "ops/scripts/phone-node-ssh.sh",
+        // Phase 1: the phone answers over USB.
+        "ops/scripts/join-node-reach.sh",
         "ops/scripts/phone-node-provision.sh",
         "ops/scripts/phone-node-guest-prepare.sh",
         "ops/scripts/phone-node-integrity.sh",
@@ -662,7 +664,10 @@ fn a_phone_joins_over_usb_from_phase_1_to_15() {
     let log = s.log();
     assert!(out.status.success(), "{}\nargv:\n{log}", says(&out));
     assert_eq!(phases(&v), (1..=15).collect::<Vec<u64>>(), "{}", says(&out));
-    assert!(log.lines().any(|l| l == "adb get-state"), "phase 1 asked adb:\n{log}");
+    assert!(
+        log.lines().any(|l| l == "adb get-state"),
+        "phase 1 asked adb:\n{log}"
+    );
     assert!(
         !says(&out).contains("OPERATOR STEP"),
         "no operator step after phase 1: {}",
@@ -929,7 +934,10 @@ fn no_phone_on_the_cable_is_refused() {
     let all = says(&out);
     assert!(!out.status.success(), "{all}");
     assert_eq!(phases(&v), vec![1], "{all}");
-    assert!(all.contains("GB-314") && all.contains("allow USB debugging") && all.contains("--from 1"), "{all}");
+    assert!(
+        all.contains("GB-314") && all.contains("allow USB debugging") && all.contains("--from 1"),
+        "{all}"
+    );
     let (out, v) = join_phone(&s, &["--from", "2"]);
     let all = says(&out);
     assert!(!out.status.success(), "{all}");
