@@ -83,12 +83,23 @@ rot_checks() { # $1 key, $2 first|second
 # The keys this run refused, each with the refusal's first line.
 ROT_REFUSED=""
 
+# One snapshot file of a side's material. A side's own snapshot is named for it alone;
+# the partner's, taken while the other side rotates, carries both names, so the second
+# rotation never overwrites the first side's own before-file.
+rot_snap() { # $1 key, $2 whose material, $3 the rotating side, $4 before|after
+  if [ "$2" = "$3" ]; then echo "$RECORD/rot-$1-$2-$4.txt"
+  else echo "$RECORD/rot-$1-$3-partner-$2-$4.txt"; fi
+}
+
 rot_one() { # $1 key, $2 side
   local k="$1" s="$2" them h out rc ord c o why; them="$(other "$s")"; h="$(drv_host "$s")"
   ord="$([ "$s" = "$NATED" ] && echo first || echo second)"
   case " $ROT_REFUSED " in *" $k "*) return 0 ;; esac
-  rot_all_material "$s" "$RECORD/rot-$k-$s-before.txt"
-  rot_all_material "$them" "$RECORD/rot-$k-$them-before.txt"
+  local sb sa pb pa
+  sb="$(rot_snap "$k" "$s" "$s" before)"; sa="$(rot_snap "$k" "$s" "$s" after)"
+  pb="$(rot_snap "$k" "$them" "$s" before)"; pa="$(rot_snap "$k" "$them" "$s" after)"
+  rot_all_material "$s" "$sb"
+  rot_all_material "$them" "$pb"
   out="$RECORD/rot-$k-$s-rotate.out"
   rc=0; ROT_KEY="$k" drive_rotate "$s" "$them" goatbuilder 0 0 > "$out" 2>&1 || rc=$?
   why="$(grep -m1 -oE '(GB-189|GB-282)[^|]*' "$out" || true)"
@@ -104,16 +115,16 @@ rot_one() { # $1 key, $2 side
   local f0="$FAILS"
   rec "rot-rotate-$k-$s-ran" -- bash -c "tail -30 '$out'; exit $rc"
   [ "$FAILS" = "$f0" ] || rot_die "\`goatbuilder federate rotate $them $k\` failed on $s (exit $rc): $out"
-  rot_all_material "$s" "$RECORD/rot-$k-$s-after.txt"
+  rot_all_material "$s" "$sa"
   if [ "$k" = signing ]; then
     # Signing: the seed must change here; the partner's keyring is its own check below.
     rec "rot-rotated-$k-$s" -- bash -c \
-      "a=\$(grep '^seed ' '$RECORD/rot-$k-$s-before.txt'); b=\$(grep '^seed ' '$RECORD/rot-$k-$s-after.txt'); echo \"before: \$a\"; echo \"after:  \$b\"; [ -n \"\$a\" ] && [ -n \"\$b\" ] && [ \"\$a\" != \"\$b\" ]"
+      "a=\$(grep '^seed ' '$sb'); b=\$(grep '^seed ' '$sa'); echo \"before: \$a\"; echo \"after:  \$b\"; [ -n \"\$a\" ] && [ -n \"\$b\" ] && [ \"\$a\" != \"\$b\" ]"
   else
   rec "rot-rotated-$k-$s" -- bash -c \
-    "diff <(sed -n '/^## $k\$/,/^## /p' '$RECORD/rot-$k-$s-before.txt') <(sed -n '/^## $k\$/,/^## /p' '$RECORD/rot-$k-$s-after.txt') && { echo 'the $k material did not change'; exit 1; } || exit 0"
+    "diff <(sed -n '/^## $k\$/,/^## /p' '$sb') <(sed -n '/^## $k\$/,/^## /p' '$sa') && { echo 'the $k material did not change'; exit 1; } || exit 0"
   fi
-  rec "rot-kept-$k-$s" -- python3 - "$RECORD/rot-$k-$s-before.txt" "$RECORD/rot-$k-$s-after.txt" "$k" <<'PY'
+  rec "rot-kept-$k-$s" -- python3 - "$sb" "$sa" "$k" <<'PY'
 import re, sys
 def parts(p):
     out, cur = {}, None
@@ -132,8 +143,8 @@ for x in a:
 print("other keys:", sorted(x for x in a if x != k), "; problems:", problems or "none")
 sys.exit(1 if problems else 0)
 PY
-  rot_all_material "$them" "$RECORD/rot-$k-$them-after.txt"
-  rec "rot-partner-kept-$k-$s" -- diff "$RECORD/rot-$k-$them-before.txt" "$RECORD/rot-$k-$them-after.txt"
+  rot_all_material "$them" "$pa"
+  rec "rot-partner-kept-$k-$s" -- diff "$pb" "$pa"
   if [ "$k" = signing ]; then
     # Our new verifying key in the partner's keyring is the partner's step (§5), not built yet.
     local ord; ord="$([ "$s" = "$NATED" ] && echo first || echo second)"
@@ -188,7 +199,7 @@ rot_retired() { # $1 key
   case "$k" in
     transport)
       for s in "$NATED" "$PARTNER"; do them="$(other "$s")"
-        old="$(sed -n '/^## transport$/,/^## /p' "$RECORD/rot-$k-$s-before.txt" | grep -vE '^## ' | head -1)"
+        old="$(sed -n '/^## transport$/,/^## /p' "$(rot_snap "$k" "$s" "$s" before)" | grep -vE '^## ' | head -1)"
         printf '%s %s\n' "$s" "$old" >> "$RECORD/rot-$k-old-keys.txt"
       done
       rec "rot-old-retired-$k" -- bash -c \
@@ -196,7 +207,7 @@ rot_retired() { # $1 key
            [ -n \"\$old\" ] || { echo \"no old key was read for \$s\"; exit 1; }
            ! printf '%s\\n' \"\$p\" | grep -qxF \"\$old\" || { echo \"\$them still holds \$s's old key\"; exit 1; }; done < '$RECORD/rot-$k-old-keys.txt'; echo 'no old key in a peer list'" ;;
     carrier)
-      old="$(sed -n '/^## carrier$/,/^## /p' "$RECORD/rot-$k-$NATED-before.txt" | grep -vE '^## ' | head -1)"
+      old="$(sed -n '/^## carrier$/,/^## /p' "$(rot_snap "$k" "$NATED" "$NATED" before)" | grep -vE '^## ' | head -1)"
       rec "rot-old-retired-$k" -- bash -c \
         "p=\$(docker exec $FWD_HOST wg show wg-carry0 peers) || { echo 'could not read the forwarder peers'; exit 1; }
          [ -n '$old' ] || { echo 'no old carrier key was read'; exit 1; }
