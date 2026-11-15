@@ -1665,14 +1665,18 @@ mod tests {
     #[test]
     fn the_applied_mtu_is_the_role_state_files_transport_mtu() {
         let state = "/var/log/goat-peering-wg-wg-fed0-state.json";
-        let with = |text: &'static str| edge_host().file(state, Ok(text));
+        let with = |text: &'static str| {
+            edge_host()
+                .answer(STAT_STATE, Ok("root:root:regular file\n"))
+                .file(state, Ok(text))
+        };
         assert_eq!(
-            applied_mtu_on(&with(r#"{"interface": "wg-fed0", "transport": {"kind": "wireguard", "mtu": 1300}}"#), "wg-fed0"),
+            applied_mtu_on(&with(r#"{"interface": "wg-fed0", "decision": "proceed-no-claim", "transport": {"kind": "wireguard", "mtu": 1300}}"#), "wg-fed0"),
             Some(1300)
         );
         assert_eq!(applied_mtu_on(&edge_host(), "wg-fed0"), None);
         assert_eq!(
-            applied_mtu_on(&with(r#"{"interface": "wg-fed1", "transport": {"mtu": 1300}}"#), "wg-fed0"),
+            applied_mtu_on(&with(r#"{"interface": "wg-fed1", "decision": "proceed-no-claim", "transport": {"mtu": 1300}}"#), "wg-fed0"),
             None
         );
         assert_eq!(applied_mtu_on(&with("not json"), "wg-fed0"), None);
@@ -1680,6 +1684,58 @@ mod tests {
         assert!(is_read_only_probe("cat", &["--", state]));
         assert!(!is_read_only_probe("cat", &["--", "/var/log/goat-peering-wg-../../etc/shadow-state.json"]));
         assert!(!is_read_only_probe("cat", &["--", "/var/log/syslog"]));
+    }
+
+    const STAT_STATE: &str = "stat -c %U:%G:%F -- /var/log/goat-peering-wg-wg-fed0-state.json";
+
+    /// The role writes the state file BEFORE its FIPS gate, so a refused run
+    /// leaves one too: only a file whose `decision` is one the role applies
+    /// (proceed-no-claim, proceed-waived) says an agreement was applied.
+    #[test]
+    fn the_applied_mtu_needs_the_decision_that_applies() {
+        let state = "/var/log/goat-peering-wg-wg-fed0-state.json";
+        let with = |text: &'static str| {
+            edge_host()
+                .answer(STAT_STATE, Ok("root:root:regular file\n"))
+                .file(state, Ok(text))
+        };
+        let doc = |decision: &str| {
+            format!(r#"{{"interface": "wg-fed0", {decision}"transport": {{"mtu": 1300}}}}"#)
+        };
+        for (decision, want) in [
+            (r#""decision": "proceed-no-claim", "#, Some(1300)),
+            (r#""decision": "proceed-waived", "#, Some(1300)),
+            (r#""decision": "refuse", "#, None),
+            ("", None),
+        ] {
+            let text: &'static str = Box::leak(doc(decision).into_boxed_str());
+            assert_eq!(applied_mtu_on(&with(text), "wg-fed0"), want, "{decision}");
+        }
+    }
+
+    /// /var/log is group-writable on some distributions: the state file is
+    /// read only when it is a regular file owned root:root, never through a
+    /// symbolic link, and an unanswered check is no applied MTU. The file is
+    /// not read at all when the check refuses it.
+    #[test]
+    fn the_state_file_is_read_only_when_root_owned_and_not_a_link() {
+        let state = "/var/log/goat-peering-wg-wg-fed0-state.json";
+        const DOC: &str = r#"{"interface": "wg-fed0", "decision": "proceed-no-claim", "transport": {"mtu": 1300}}"#;
+        for (stat, want) in [
+            (Ok("root:root:regular file\n"), Some(1300)),
+            (Ok("root:root:symbolic link\n"), None),
+            (Ok("syslog:adm:regular file\n"), None),
+            (Ok("root:adm:regular file\n"), None),
+            (Err("stat: cannot statx"), None),
+        ] {
+            let edge = edge_host().answer(STAT_STATE, stat).file(state, Ok(DOC));
+            assert_eq!(applied_mtu_on(&edge, "wg-fed0"), want, "{stat:?}");
+            let read = edge.asked.borrow().iter().any(|a| a == &format!("read {state}"));
+            assert_eq!(read, want.is_some(), "{stat:?}: {:?}", edge.asked.borrow());
+        }
+        assert!(is_read_only_probe("stat", &["-c", "%U:%G:%F", "--", state]));
+        assert!(!is_read_only_probe("stat", &["-c", "%U:%G:%F", "--", "/etc/shadow"]));
+        assert!(!is_read_only_probe("stat", &["-L", "-c", "%U:%G:%F", "--", state]));
     }
 
     #[test]

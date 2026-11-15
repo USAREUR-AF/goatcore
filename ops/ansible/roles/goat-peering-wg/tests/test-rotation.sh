@@ -117,6 +117,18 @@ else
   fail "edge: wrong refusal for a bad rotation id, or the key moved"; grep -E 'fatal' -A3 "$LOG" | head -6 || true
 fi
 
+# A key path with a space in it: the carrier's live check reads the key on disk
+# through a shell redirect, so the path is quoted there.
+mkdir -p "$T/edge sp"
+KS="$T/edge sp/wg-carry0.key"
+if edge -e "{\"peering_wg_carrier_key_path\": \"$KS\"}" && [ -s "$KS" ] && live_is "$KS" \
+   && edge -e "{\"peering_wg_carrier_key_path\": \"$KS\"}" -e peering_wg_carrier_rotation=r2 \
+   && [ -e "$T/carrier-restarted" ] && ! grep -q 'No such file\|ambiguous redirect' "$LOG"; then
+  pass "edge: a carrier key path with a space is read whole, and the rotation restarts the carrier"
+else
+  fail "edge: a carrier key path with a space broke the live check"; tail -15 "$LOG"
+fi
+
 mkdir -p "$T/fwd"
 if forwarder && [ -s "$T/fwd/wg-carry0.key" ] && [ -s "$T/fwd/wg-carry1.key" ]; then
   pass "forwarder: each carrier's key is made"

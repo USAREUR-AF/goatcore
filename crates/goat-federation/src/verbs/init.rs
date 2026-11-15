@@ -822,35 +822,98 @@ mod tests {
         assert!(text.contains(&gone.display().to_string()), "{text}");
     }
 
-    /// After phase 11 the federation interface carries the agreed MTU,
-    /// min(both offers). A re-run of phase 3 (a rotation, a resume from 2)
-    /// then reads an interface MTU below our offer whenever the partner
-    /// offered less: that bounds nothing about our offer, so it is a SKIP
-    /// naming the agreement, not a refusal. With no applied agreement, an
-    /// interface below the offer is still refused.
-    #[test]
-    fn an_interface_carrying_the_agreed_mtu_does_not_refuse_our_offer() {
-        let (_d, site) = site_with(DECL);
-        let run = |applied: Option<i64>| {
-            let measure = |i: Option<&str>| {
-                Ok(derive::Measured {
-                    interface_mtu: i.map(|_| 1300),
-                    applied_mtu: applied,
-                    ..fixed(i)
-                })
-            };
-            let mut out = Vec::new();
-            run_init_measured(&site, &args(true), &mut out, &measure).unwrap();
-            String::from_utf8(out).unwrap()
+    /// One phase-3 re-run after phase 11: the interface MTU is `interface`,
+    /// the role's state file says an agreement applied `applied`, the
+    /// declaration offers `declared`, and `<work>` (where `--out` writes our
+    /// package) holds the agreement the interface carries (`agreed_mtu`) and
+    /// the package we offered in it (`our_offer`). Returns init's output.
+    fn rerun(
+        declared: i64,
+        interface: i64,
+        applied: Option<i64>,
+        agreed_mtu: Option<i64>,
+        our_offer: Option<i64>,
+    ) -> String {
+        let (_d, site) = site_with(&DECL.replace("measured_mtu = 1380", &format!("measured_mtu = {declared}")));
+        let work = tempfile::tempdir().unwrap();
+        if let Some(m) = agreed_mtu {
+            std::fs::write(
+                work.path().join("agreement.json"),
+                format!(r#"{{"transport": {{"kind": "wireguard", "listener": "xaa", "mtu": {m}}}}}"#),
+            )
+            .unwrap();
+        }
+        if let Some(o) = our_offer {
+            std::fs::write(
+                work.path().join("ours.canonical.json"),
+                format!(r#"{{"sovereign_id": "xaa", "transport_offer": {{"endpoint": "192.0.2.10:51820", "listener": true, "measured_mtu": {o}}}}}"#),
+            )
+            .unwrap();
+        }
+        let measure = |i: Option<&str>| {
+            Ok(derive::Measured {
+                interface_mtu: i.map(|_| interface),
+                applied_mtu: applied,
+                ..fixed(i)
+            })
         };
-        let before = run(None);
+        let mut a = args(true);
+        a.out = Some(work.path().join("ours.canonical.json"));
+        let mut out = Vec::new();
+        run_init_measured(&site, &a, &mut out, &measure).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    /// After phase 11 the federation interface carries the agreed MTU,
+    /// min(both offers). A re-run of phase 3 after a carrier rotation reads an
+    /// interface MTU below our offer whenever the partner offered less: that
+    /// bounds nothing about our offer, so while our declared offer is the one
+    /// we made in the agreement the interface carries, it is a SKIP naming the
+    /// agreement. With no applied agreement, an interface below the offer is
+    /// still refused, and an applied MTU that is not the interface's says
+    /// nothing about it.
+    #[test]
+    fn an_unchanged_offer_over_the_agreed_mtu_is_skipped_after_a_carrier_rotation() {
+        let before = rerun(1380, 1300, None, Some(1300), Some(1380));
         assert!(before.contains("declared 1380 exceeds interface `wg-fed0` MTU 1300"), "{before}");
-        let after = run(Some(1300));
+        let after = rerun(1380, 1300, Some(1300), Some(1300), Some(1380));
         assert!(!after.contains("exceeds interface"), "{after}");
         assert!(after.contains("carries the agreed MTU 1300"), "{after}");
-        // An applied MTU that is not the interface's says nothing about it.
-        let other = run(Some(1340));
+        let other = rerun(1380, 1300, Some(1340), Some(1300), Some(1380));
         assert!(other.contains("declared 1380 exceeds interface `wg-fed0` MTU 1300"), "{other}");
+    }
+
+    /// The same re-run after `rotate <partner> transport`: on the side behind
+    /// NAT, phase 2 restarts the link onto the new key, and phase 3 then reads
+    /// the agreed 1300 on wg-fed0 under our unchanged offer of 1380. A
+    /// rotation changes a key, not the offer, so it is the same SKIP.
+    #[test]
+    fn an_unchanged_offer_over_the_agreed_mtu_is_skipped_after_a_transport_rotation() {
+        let out = rerun(1380, 1300, Some(1300), Some(1300), Some(1380));
+        assert!(!out.contains("exceeds interface"), "{out}");
+        assert!(out.contains("carries the agreed MTU 1300"), "{out}");
+        assert!(out.contains("1380"), "{out}");
+    }
+
+    /// The interface carries an agreed MTU, so it cannot bound a NEW offer:
+    /// applied 1300, our offer in that agreement 1380, and the declaration now
+    /// raised to 1500 on a path that is really 1380. Skipping would publish
+    /// 1500 unchecked, and the next agreement could black-hole the link; it is
+    /// refused as blocked, asking for a measurement off the federation
+    /// interface. The same when the agreement or our package in <work> cannot
+    /// be read, or names another MTU than the one applied.
+    #[test]
+    fn a_changed_offer_over_the_agreed_mtu_is_blocked() {
+        let raised = rerun(1500, 1300, Some(1300), Some(1300), Some(1380));
+        assert!(!raised.contains("carries the agreed MTU"), "{raised}");
+        assert!(raised.contains("blocked"), "{raised}");
+        assert!(raised.contains("re-measure"), "{raised}");
+        assert!(raised.contains("1500") && raised.contains("1380"), "{raised}");
+        for (agreed, ours) in [(None, Some(1380)), (Some(1300), None), (Some(1280), Some(1380))] {
+            let out = rerun(1380, 1300, Some(1300), agreed, ours);
+            assert!(!out.contains("carries the agreed MTU"), "{agreed:?} {ours:?}: {out}");
+            assert!(out.contains("blocked") && out.contains("re-measure"), "{agreed:?} {ours:?}: {out}");
+        }
     }
 
     /// A host that cannot be reached is the caller's error, returned as is.
