@@ -124,14 +124,19 @@ impl EdgeSink for ZenohEdge {
 }
 
 /// The least time between two puts on a lane whose receiver accepts `hz`
-/// messages a second (ADR 1244): 1/`hz`, plus a tenth for jitter on the way, so
-/// that two puts never reach the receiving edge closer than its downsampling
-/// interval. Zero for `hz == 0`, which the policy refuses before it gets here.
+/// messages a second (ADR 1244): 1/`hz`, plus an allowance for jitter on the
+/// way of a tenth of 1/`hz` but never less than 3 ms, so that two puts never
+/// reach the receiving edge closer than its downsampling interval. At 100 Hz
+/// that is 13 ms, a ceiling of about 77 messages a second. Zero for `hz == 0`,
+/// which the policy refuses before it gets here.
 pub fn pacing_interval(hz: u64) -> std::time::Duration {
     if hz == 0 {
         return std::time::Duration::ZERO;
     }
-    std::time::Duration::from_nanos(1_100_000_000_u64.div_ceil(hz))
+    const JITTER_FLOOR_NS: u64 = 3_000_000;
+    let tenth_more = 1_100_000_000_u64.div_ceil(hz);
+    let floor_more = 1_000_000_000_u64.div_ceil(hz) + JITTER_FLOOR_NS;
+    std::time::Duration::from_nanos(tenth_more.max(floor_more))
 }
 
 /// How often the edge-link gauge is refreshed when no traffic is flowing, so it
