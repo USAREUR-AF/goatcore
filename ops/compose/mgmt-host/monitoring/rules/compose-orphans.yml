@@ -52,11 +52,11 @@ groups:
           severity: warning
           component: compose
         annotations:
-          summary: "Compose service {{ $labels.service }} on {{ $labels.site }} not running ({{ $labels.state }})"
+          summary: "Compose service {{ $labels.service }} on {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} not running ({{ $labels.state }})"
           description: |
             Service `{{ $labels.service }}` defined in /opt/mgmt-host/docker-compose.*.yml
             has been in state `{{ $labels.state }}` (not running) for >5m on
-            {{ $labels.site }}. Either:
+            {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}. Either:
               (a) it's a one-shot migration / bootstrap container that genuinely
                   completed — confirm via `docker logs {{ $labels.service }}`
                   on the host and silence the alert if expected, OR
@@ -78,10 +78,10 @@ groups:
           severity: critical
           component: compose
         annotations:
-          summary: "CRITICAL: {{ $labels.service }} on {{ $labels.site }} not running"
+          summary: "CRITICAL: {{ $labels.service }} on {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} not running"
           description: |
             Long-running mgmt-stack service `{{ $labels.service }}` is
-            not in 'running' state on {{ $labels.site }}. This is in the
+            not in 'running' state on {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}. This is in the
             critical-services list (traefik / management-a / signal-a /
             postgres-a / kratos / hydra / selfservice-ui / dashboard /
             admit-audit) — the dashboard auth flow + mesh-mgmt API depend
@@ -108,7 +108,7 @@ groups:
           severity: warning
           component: compose
         annotations:
-          summary: "mgmt-host-compose-watch watcher on {{ $labels.site }} has not refreshed metrics in >2m"
+          summary: "mgmt-host-compose-watch watcher on {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} has not refreshed metrics in >2m"
           description: |
             The mgmt-host-compose-watch service emits compose_service_running
             metrics every 30s. If those metrics haven't refreshed in 2+ min,
@@ -135,7 +135,7 @@ groups:
           severity: warning
           component: compose
         annotations:
-          summary: "{{ $labels.service }} on {{ $labels.site }}: live RestartPolicy ({{ $labels.live }}) does not match the compose file ({{ $labels.declared }})"
+          summary: "{{ $labels.service }} on {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}: live RestartPolicy ({{ $labels.live }}) does not match the compose file ({{ $labels.declared }})"
           description: |
             `docker compose config` renders restart="{{ $labels.declared }}"
             for `{{ $labels.service }}` from the files on disk now; the

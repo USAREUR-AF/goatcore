@@ -8,6 +8,10 @@
 #   SHA256SUMS                     every asset's digest
 #   SHA256SUMS.cosign-bundle       a keyless cosign signature over SHA256SUMS,
 #                                  made under this workflow's GitHub OIDC identity
+#   <asset>.sigstore.json          one per binary: a keyless cosign signature
+#                                  over that file, under the same identity
+#   wg-cp0.intoto.jsonl            SLSA build provenance naming every binary by
+#                                  digest, made by actions/attest-build-provenance
 #
 # The same shape as _release-binary.yml, which builds this repository's Rust
 # binaries: a tag is built only when it is on main and was pushed by a
@@ -17,7 +21,8 @@
 #
 # Dry paths: workflow_dispatch builds and signs without publishing, and a pull
 # request that edits this file builds every leg and writes SHA256SUMS (and signs
-# it when the branch is in this repository). Per-PR builds of the source itself
+# it and each binary, and writes the provenance, when the branch is in this
+# repository). Per-PR builds of the source itself
 # are wg-cp0-accessor.yml's.
 
 name: wg-cp0-release
@@ -46,7 +51,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - name: The pusher holds the admin role
@@ -89,8 +94,8 @@ jobs:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           # 'stable', as wg-cp0-accessor.yml: a pinned patch level goes stale
           # on standard-library security fixes.
@@ -112,7 +117,7 @@ jobs:
           sum=$(sha256sum "$out" | awk '{print $1}')
           echo "$sum  $out" > "$out.sha256"
           echo "- \`$out\` sha256 \`$sum\`" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wg-cp0-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
@@ -120,16 +125,19 @@ jobs:
           retention-days: 30
 
   checksums:
-    name: SHA256SUMS, signed with cosign (keyless)
+    name: SHA256SUMS, signatures and provenance (cosign, keyless)
     needs: [build]
     if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
+      # The keyless signatures and the provenance are made under this job's OIDC identity.
       id-token: write
+      # The provenance is also recorded in this repository's attestations.
+      attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
           pattern: wg-cp0-*
@@ -142,7 +150,7 @@ jobs:
           (cd artifacts && sha256sum -c ../SHA256SUMS)
           { echo '```'; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       # A pull request from a fork gets no OIDC token, so it cannot sign.
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
       - name: Sign SHA256SUMS, then verify it the way a downloader does
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -153,12 +161,49 @@ jobs:
             --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - name: Sign each asset SHA256SUMS names, then verify each signature
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          # One keyless signature per binary or archive, written beside it as
+          # <asset>.sigstore.json (the Sigstore bundle format). SHA256SUMS.cosign-bundle
+          # above is unchanged, and stays the signature the update commands check.
+          while read -r _ asset <&3; do
+            cosign sign-blob --yes --new-bundle-format --bundle "$asset.sigstore.json" "artifacts/$asset"
+            cosign verify-blob --new-bundle-format --bundle "$asset.sigstore.json" \
+              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "artifacts/$asset"
+            test -s "$asset.sigstore.json"
+          done 3< SHA256SUMS
+      - name: SLSA build provenance for every asset SHA256SUMS names
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: SHA256SUMS
+      - name: Stage the provenance as wg-cp0.intoto.jsonl, then verify it for each asset
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          OUT: wg-cp0.intoto.jsonl
+        run: |
+          set -euo pipefail
+          test -s "$BUNDLE"
+          cp "$BUNDLE" "$OUT"
+          while read -r _ asset <&3; do
+            gh attestation verify "artifacts/$asset" --bundle "$OUT" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/wg-cp0-release.yml"
+          done 3< SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wg-cp0-checksums
           path: |
             SHA256SUMS
             SHA256SUMS.cosign-bundle
+            *.sigstore.json
+            *.intoto.jsonl
           if-no-files-found: ignore
           retention-days: 30
 
@@ -171,8 +216,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
           merge-multiple: true
@@ -182,7 +227,7 @@ jobs:
           ls -la release-assets/
           test -s release-assets/SHA256SUMS.cosign-bundle
           (cd release-assets && sha256sum -c SHA256SUMS)
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ github.ref_name }}
           files: release-assets/*

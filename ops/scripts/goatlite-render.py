@@ -42,7 +42,7 @@ A file whose first line is gone is the learner's (make-it-yours): it is REPORTED
 and never overwritten. A marker block (`# BEGIN goatlite <name>` .. `# END goatlite
 <name>`) is the renderer's; hand content outside the markers is never touched.
 
-usage: goatlite-render.py --site <name> [--config <path>] [--check] [--remove] [--verify]
+usage: goatlite-render.py --site <name> [--config <path>] [--check] [--remove] [--verify] [--hand-over]
   --check   exit 1 if anything would change; write nothing
   --verify  check the rendered vars.yml carries internet-correct values; write nothing
   --remove  undo the render (a retired goatlite, or a rehearsal): delete the
@@ -2092,14 +2092,40 @@ def generated_remove(path: Path, rep: "Report", check: bool, status: str) -> Non
     rep.add(path, "would remove" if check else status)
 
 
+def whole_files(f: dict) -> list:
+    """Every whole file the render can write for this goatnet (LAN or internet)."""
+    gv = REPO / "ops/ansible/group_vars" / f["group"]
+    return [gv / n for n in ("vars.yml", "spire.yml", "grant-keyd.yml", "minio.yml", "audit-subscriber.yml")] + \
+           [REPO / "ops/enrollment/manifests" / f"{f['name']}-certs.yaml",
+            REPO / "ops/dns" / f["name"] / f"{f['zone']}.hosts",
+            REPO / "ops/dns" / f["name"] / "mesh-hosts",
+            REPO / f"terraform-{f['name']}" / "main.tf"]
+
+
+def hand_over(f: dict, check: bool) -> Report:
+    """The hand-over to the full preset (`goatbuilder grow`, docs/design/goatlite-growth.md §6):
+    take the generated header off every whole file the render wrote, so each is the
+    learner's and no render overwrites it. Marker blocks stay: once goatlite.yaml is
+    gone the renderer refuses to run, so nothing rewrites them."""
+    rep = Report()
+    for p in whole_files(f):
+        if not p.exists():
+            continue
+        text = p.read_text(encoding="utf-8")
+        if not text.startswith(HEADER + "\n"):
+            rep.add(p, "already yours (no generated header); kept")
+            continue
+        if not check:
+            p.write_text(text[len(HEADER) + 1:], encoding="utf-8")
+        rep.add(p, "would hand over (take the generated header off)" if check else "handed over (generated header taken off; the file is yours)")
+        rep.changed = True
+    return rep
+
+
 def remove(f: dict, check: bool) -> Report:
     rep = Report()
     gv = REPO / "ops/ansible/group_vars" / f["group"]
-    for p in [gv / n for n in ("vars.yml", "spire.yml", "grant-keyd.yml", "minio.yml", "audit-subscriber.yml")] + \
-             [REPO / "ops/enrollment/manifests" / f"{f['name']}-certs.yaml",
-              REPO / "ops/dns" / f["name"] / f"{f['zone']}.hosts",
-              REPO / "ops/dns" / f["name"] / "mesh-hosts",
-              REPO / f"terraform-{f['name']}" / "main.tf"]:
+    for p in whole_files(f):
         if p.exists():
             if p.read_text(encoding="utf-8").startswith(HEADER + "\n"):
                 if not check:
@@ -2157,9 +2183,13 @@ def main() -> int:
     ap.add_argument("--config", default=str(REPO / "goatlite.yaml"), help="default <repo>/goatlite.yaml")
     ap.add_argument("--check", action="store_true", help="exit 1 if anything would change; write nothing")
     ap.add_argument("--remove", action="store_true", help="undo the render (a retired goatlite, or a rehearsal)")
+    ap.add_argument("--hand-over", action="store_true",
+                    help="take the generated header off every whole file the render wrote (goatbuilder grow)")
     ap.add_argument("--verify", action="store_true",
                     help="check the rendered vars.yml carries internet-correct values (lite.internet); write nothing")
     a = ap.parse_args()
+    if a.hand_over and (a.remove or a.verify):
+        ap.error("--hand-over takes no --remove or --verify")
     try:
         f = facts(load_config(Path(a.config), a.site))
         if a.verify:
@@ -2171,17 +2201,19 @@ def main() -> int:
             print(f"goatlite-render: {f['name']} internet values: "
                   + (f"{len(problems)} problem(s)" if problems else "ok (ACME, public apex, relays, mesh-only routes, secrets as lookups)"))
             return 1 if problems else 0
-        rep = remove(f, a.check) if a.remove else render(f, a.check)
+        rep = hand_over(f, a.check) if a.hand_over else remove(f, a.check) if a.remove else render(f, a.check)
     except Refuse as e:
         print(f"goatlite-render: {e}", file=sys.stderr)
         return 1
-    verb = "would remove" if (a.remove and a.check) else "removed" if a.remove else \
+    verb = ("would hand over" if a.check else "handed over") if a.hand_over else \
+        "would remove" if (a.remove and a.check) else "removed" if a.remove else \
         "would render" if a.check else "rendered"
     where = f"internet zone {f['internet']['zone']}" if f.get("internet") else f"zone {f['zone']}"
     print(f"goatlite-render: {f['name']} ({f['group']}, {where}, host {f['host']}) — {verb}:")
     rep.print()
     if a.check and rep.changed:
-        print("goatlite-render: --check: the checkout is not what goatlite.yaml renders; run without --check")
+        print("goatlite-render: --check: files still carry the generated header; run without --check to hand them over"
+              if a.hand_over else "goatlite-render: --check: the checkout is not what goatlite.yaml renders; run without --check")
         return 1
     return 0
 

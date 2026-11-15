@@ -104,7 +104,8 @@ reachable), which is the CI runner.
 Every step of every tier goes through `ops/e2e/rec.py`: one JSON object per
 step in `report.jsonl` (`ops/e2e/report.schema.json`: name, command, exit,
 expected exit, duration, started, the log file, the tail, why it failed, whether
-the failure was expected), the ledger rows read at the end in `ledgers.jsonl`,
+the failure was expected; a command that cannot start is a failed step with exit 127
+and the reason, never a missing one, and never an expected failure), the ledger rows read at the end in `ledgers.jsonl`,
 and the stubs' call logs. `ops/e2e/report.py` renders one page of Markdown and
 judges the run; CI uploads the directory as an artifact and appends the page to
 the job summary. An operator running the live canary gets the same directory.

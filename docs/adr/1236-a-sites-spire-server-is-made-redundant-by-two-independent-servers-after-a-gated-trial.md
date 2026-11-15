@@ -5,7 +5,7 @@
 | Status | **Proposed.** Nothing in a running goatnet changes on merge. The decision is the direction and the gates; the build follows a trial that passes them |
 | Date | 2026-11-14 |
 | Deciders | operator |
-| Repo scope | goat core (the `spire` role, `spire-trust-sync`, the peering SPIRE role) |
+| Repo scope | goat core (the `spire` role, including its router trust sync timer, and the peering SPIRE role, `goat-peering-spire`) |
 | Amends | [ADR 1164](1164-per-site-spire-trust-domains.md) D5 (a second server at one site) |
 | Supersedes | — |
 | Superseded by | — |
@@ -41,6 +41,14 @@ A site that needs its SPIRE server to survive the loss of a node runs two SPIRE 
 
 Each workload node runs one SPIRE agent per server, with [spire-ha-agent](https://github.com/spiffe/spire-ha-agent) in front. It gives workloads one Workload API socket, serves the united bundle and sends each request to a server that is answering. The design is described in [the SPIFFE project's account of it](https://spiffe.io/blog/2026-07-19-bottom-turtle-ha-architecture/).
 
+Three properties of spire-ha-agent, each stated in [its README](https://github.com/spiffe/spire-ha-agent/blob/main/README.md), fix the shape of the trial:
+
+- **Broker mode.** spire-ha-agent has two modes. The default, `-mode=delegated`, does not serve federated bundles to workloads. `-mode=broker` does, and it uses the SPIFFE Broker API, which the README calls experimental. goat federates trust domains ([ADR 1157](1157-cross-sovereign-federation-edge-terminated.md)), so the trial runs `-mode=broker`. In this mode a workload receives a partner's bundle from whichever server answered, so both servers carry the same federation configuration.
+- **The other server's bundle at startup.** spire-ha-agent starts only when both servers are reachable, unless each side already holds the other side's trust bundle. The spire-ha-agent project ships a service for this, also named `spire-trust-sync` (unit `spire-trust-sync@.service` in that repository), which copies each server's bundle to the other under a cross-trust name, `spire-ha`. The trial runs it. The two servers therefore share no datastore and no keys, and each holds the other's public bundle.
+- **The union is served to workloads only.** spire-ha-agent serves the union of both servers' authorities on the Workload API socket. A SPIRE server's bundle endpoint, which is what a federated partner reads, serves that one server's authorities. No maintained SPIFFE component serves the union to partners: [spiffe/spire issue 7200](https://github.com/spiffe/spire/issues/7200) asked for one and was closed without it, with the advice to build a simple server. The trial therefore serves the union itself: spiffe-helper reads it from the spire-ha-agent Workload API socket, a web server on the node publishes it as a SPIFFE bundle document under an SVID of the site's trust domain, and the forward that `goat-peering-spire` sets up points at this endpoint in place of one server's bundle endpoint.
+
+Two different things carry the name `spire-trust-sync`. goat's is a timer and script in the `spire` role (`spire-trust-sync.timer`, `spire-trust-sync.sh`) that keeps the Zenoh router's trust file current and rescues an agent whose SVID expired. The spire-ha-agent project's is the bundle copy between the two servers described above. This ADR calls the first "goat's router trust sync" and the second "the spire-ha-agent trust sync". Both run on a node that holds a SPIRE server.
+
 ### D2 — Adoption waits for a trial that passes every gate
 
 The trial runs on two nodes of one site in a lab environment. Each gate is shown by a command and its output, recorded as a measurement.
@@ -48,11 +56,11 @@ The trial runs on two nodes of one site in a lab environment. Each gate is shown
 | Gate | Passes when |
 |---|---|
 | G1 Loss of either server | With either server stopped, every SPIFFE-identified goat service renews its SVID past the one-hour lifetime with no person acting |
-| G2 Start with one side down | A node that reboots while one server is unreachable brings its workloads up with valid SVIDs |
-| G3 Federation | A federated trust domain validates SVIDs issued by either server, through the bundle endpoint arrangement the peering SPIRE role sets up, and keeps doing so across a CA rotation on one side |
-| G4 Router trust | The Zenoh router's trust file carries both servers' CAs and `spire-trust-sync` keeps it current as each rotates. The router matches certificate names only (F-424), so the trial states which names each server may issue and shows they are the same set |
+| G2 Cold start with one server down | With the spire-ha-agent trust sync running, a workload node is powered off and started again while one server is unreachable. spire-ha-agent starts and every workload on the node gets a valid SVID with no person acting. Shown once for each server being the one that is down |
+| G3 Federation | spire-ha-agent runs in `-mode=broker`. A federated trust domain reads the union of both servers' authorities from the endpoint described in D1, reached through the forward `goat-peering-spire` sets up, and validates SVIDs issued by either server. It keeps doing so after a CA rotation on the first server and, separately, after a CA rotation on the second, and while either server is stopped. In the other direction, a goat workload receives the partner's bundle through spire-ha-agent from whichever server answers |
+| G4 Router trust | The Zenoh router's trust file carries both servers' CAs and goat's router trust sync (`spire-trust-sync.timer` in the `spire` role) keeps it current as each rotates. It runs on the same node as the spire-ha-agent trust sync, and neither replaces the other's unit or files. The router matches certificate names only (F-424), so the trial states which names each server may issue and shows they are the same set |
 | G5 Rebuild | A destroyed server is rebuilt from declared configuration, gets new keys, and rejoins without re-issuing identities on the surviving side |
-| G6 Standing of the component | spire-ha-agent's own documentation calls it early in development. Adoption needs either that statement to change upstream or the operator's recorded acceptance of it for this use |
+| G6 Standing of the component | spire-ha-agent's README calls it early in development and not for production, and calls the Broker API that `-mode=broker` depends on experimental. Adoption needs either those statements to change upstream or the operator's recorded acceptance of them for this use. The trial records the SPIRE version whose agent serves the Broker API endpoint, and the serving of the union to partners as a part goat maintains |
 
 A trial that fails a gate ends with the failure written down. The manual promotion runbook stays the answer until then.
 
@@ -71,6 +79,7 @@ A trial that fails a gate ends with the failure written down. The manual promoti
 ## Consequences
 
 - Two CA keys per site to hold in custody, and two rotating CAs for every relying party to follow.
-- Each workload node runs two SPIRE agents and spire-ha-agent in place of one agent.
+- Each workload node runs two SPIRE agents and spire-ha-agent in broker mode in place of one agent. Each node that holds a SPIRE server also runs the spire-ha-agent trust sync.
+- goat maintains the endpoint that serves the united bundle to federated partners, because no SPIFFE project component does. A partner that reads one server's bundle endpoint directly rejects SVIDs issued by the other server.
 - ADR 1164 D5 no longer points at shared-datastore high availability; it points here.
 - A component outside goat's control enters the identity path. G6 exists for that reason.

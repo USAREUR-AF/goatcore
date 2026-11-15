@@ -54,6 +54,10 @@ Commands:
               with its gates (reach, key, repo work first, baseline, kernel WireGuard before and
               after enrolment, the kernel ACL plane as the enrolment gate, the class's converge,
               acceptance)
+  grow        Hand a goatlite over to the full preset (gate row G1): goatlite.yaml grown into
+              ops/goatbuilder/goatbuilder.yaml with the same values, the generated headers taken off
+              the files its render wrote, and goatlite.yaml removed. Shows the difference first;
+              --dry-run stops there
   federate    A sovereign peering declared, converged and verified (ADR 1157): our half measured,
               the packages exchanged through the peering directory, one agreement composed and
               verified, the leaves minted from it, the rules rendered by the one writer, the edge

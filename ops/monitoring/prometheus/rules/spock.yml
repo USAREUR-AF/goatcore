@@ -24,7 +24,7 @@ groups:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock subscription {{ $labels.subscription_name }} at {{ $labels.site }} lagging >60s for 2m"
+          summary: "Spock subscription {{ $labels.subscription_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} lagging >60s for 2m"
           description: "Replication replay lag exceeds 60s. Check network path to provider, provider WAL senders, and subscriber apply worker. Sustained lag past a few minutes can cascade into slot-retention issues."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -43,7 +43,7 @@ groups:
           severity: critical
           component: spock
         annotations:
-          summary: "Spock slot {{ $labels.slot_name }} at {{ $labels.site }} > 80% of max_slot_wal_keep_size"
+          summary: "Spock slot {{ $labels.slot_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} > 80% of max_slot_wal_keep_size"
           description: "Replication slot is retaining WAL and approaching max_slot_wal_keep_size. If it hits the ceiling, Postgres invalidates the slot and the disconnected peer will require a full pg_basebackup + Spock re-subscribe to recover. Investigate why the subscriber isn't consuming — network partition, crashed apply worker, or a schema mismatch stopping replay."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -55,7 +55,7 @@ groups:
           severity: critical
           component: spock
         annotations:
-          summary: "Spock slot {{ $labels.slot_name }} at {{ $labels.site }} INVALIDATED — rebuild required"
+          summary: "Spock slot {{ $labels.slot_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} INVALIDATED — rebuild required"
           description: "Slot wal_status is 'lost'. The subscriber cannot resume from this slot. Run the slot-rebuild runbook: docker compose stop postgres on the disconnected node; rm -rf pgdata; pg_basebackup from a healthy peer; spock.sub_create with the new base; monitor catchup."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -71,7 +71,7 @@ groups:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock conflict(s) logged at {{ $labels.site }} in last 5m"
+          summary: "Spock conflict(s) logged at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} in last 5m"
           description: "New rows in spock.resolutions (needs spock.save_resolutions=on; Spock 5 has no spock.conflict_log). LWW resolved it automatically, but at our single-digit TPS write rate a conflict means two admins simultaneously changed the same row from two sites. Review the conflict contents, confirm LWW picked the correct winner, and consider operational-discipline adjustments (primary-admin designation per docs/design/ha-multi-site.md §7.4)."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -86,7 +86,7 @@ groups:
           severity: critical
           component: postgres
         annotations:
-          summary: "postgres-exporter at {{ $labels.site }}:{{ $labels.instance }} unreachable for 2m"
+          summary: "postgres-exporter at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} unreachable for 2m"
           description: "Prometheus cannot scrape postgres-exporter. Either the exporter is down, or postgres itself is down (exporter fails open on a dead DB). Check `docker compose ps postgres postgres-exporter` on the mgmt-host."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -112,7 +112,7 @@ groups:
           component: spock
           subsystem: ory
         annotations:
-          summary: "Ory narrow-repset subscription {{ $labels.subscription_name }} at {{ $labels.site }} not replicating for 5m"
+          summary: "Ory narrow-repset subscription {{ $labels.subscription_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} not replicating for 5m"
           description: "Subscription in the ory_sub_* namespace has status != 'replicating' for 5 minutes. Identity-row changes at the provider site are NOT propagating; cross-site authentication using rows newer than the lag window will fail at this subscriber. Investigate per the post-partition convergence runbook. Possible causes: provider postgres down, network partition, replication slot invalidated (see SpockSlotInvalidated above)."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -131,6 +131,6 @@ groups:
           component: spock
           subsystem: ory
         annotations:
-          summary: "Ory narrow-repset subscription {{ $labels.subscription_name }} at {{ $labels.site }} lag > 60s for 2m"
+          summary: "Ory narrow-repset subscription {{ $labels.subscription_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} lag > 60s for 2m"
           description: "Identity-row replication lag exceeds 60s on this subscription. Operators registering at one site will see 'user not found' at peers until the lag clears. Same investigation path as SpockSubscriptionLag but the user-visible impact is more immediate."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
