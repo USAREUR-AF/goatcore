@@ -814,7 +814,53 @@ pub(crate) fn run_evidence(file: &str, now: chrono::NaiveDateTime) -> Option<Str
         1 => format!("1 stop ({})", parts[0].1),
         _ => format!("{n} stops ({})", parts.iter().map(|(k, w)| format!("{k} {w}")).collect::<Vec<_>>().join(", ")),
     };
-    Some(format!("since phase 1: {total}s ({} min), {p11_text}; {stops}", total / 60))
+    let slowest: Vec<String> = slowest_phases(rows).iter().take(3).map(|(n, secs)| format!("{n} {secs}s")).collect();
+    let slowest = if slowest.is_empty() { String::new() } else { format!("; slowest phases: {}", slowest.join(", ")) };
+    Some(format!("since phase 1: {total}s ({} min), {p11_text}; {stops}{slowest}", total / 60))
+}
+
+/// Each phase's time across resumes, slowest first, phase 11 left out (it is
+/// reported on its own): the wall time of each stretch of consecutive rows of
+/// one phase, from the earliest step's start (its row's time less its seconds)
+/// to the latest row, summed over the phase's stretches. Steps run side by side
+/// in phase 12's waves count once; a failed step ends its stretch, so the time
+/// until the resume is not the phase's, nor is the wait after an open row.
+fn slowest_phases(rows: &[Vec<&str>]) -> Vec<(u32, u64)> {
+    let mut by: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut stretch: Option<(u32, chrono::NaiveDateTime, chrono::NaiveDateTime)> = None;
+    let mut end = |s: &mut Option<(u32, chrono::NaiveDateTime, chrono::NaiveDateTime)>| {
+        if let Some((n, a, b)) = s.take() {
+            *by.entry(n).or_default() += (b - a).num_seconds().max(0) as u64;
+        }
+    };
+    for r in rows {
+        let (Ok(n), Ok(secs), Some(t)) = (r[1].parse::<u32>(), r[3].parse::<i64>(), row_time(r[0])) else {
+            // An open row is a stop: the wait until the resume is no phase's.
+            end(&mut stretch);
+            continue;
+        };
+        if n == 11 {
+            continue;
+        }
+        let start = t - chrono::Duration::seconds(secs);
+        match &mut stretch {
+            Some((m, a, b)) if *m == n => {
+                *a = (*a).min(start);
+                *b = (*b).max(t);
+            }
+            _ => {
+                end(&mut stretch);
+                stretch = Some((n, start, t));
+            }
+        }
+        if r[4] != "0" {
+            end(&mut stretch);
+        }
+    }
+    end(&mut stretch);
+    let mut v: Vec<(u32, u64)> = by.into_iter().collect();
+    v.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
+    v
 }
 
 /// The run's timing line: total wall-clock and the slowest phases first, so the
@@ -1854,8 +1900,24 @@ mod tests {
 20270101T104000Z\t14\tcross\t60\t0\tok\n";
         let now = chrono::NaiveDate::from_ymd_opt(2027, 1, 1).unwrap().and_hms_opt(10, 40, 0).unwrap();
         let s = run_evidence(file, now).unwrap();
-        assert_eq!(s, "since phase 1: 2400s (40 min), phase 11 600s, without phase 11 1800s (30 min); 2 stops (1 the operator step, 1 a defect: X-SSH-001)");
+        assert_eq!(s, "since phase 1: 2400s (40 min), phase 11 600s, without phase 11 1800s (30 min); 2 stops (1 the operator step, 1 a defect: X-SSH-001); slowest phases: 7 600s, 3 290s, 14 60s");
         assert!(run_evidence("20270101T100010Z\t3\tcerts\t10\t0\tok\n", now).is_none(), "no phase-1 row, no founder numbers");
+    }
+
+    /// A phase's time across resumes is the wall time of each stretch of its
+    /// rows, summed: steps run side by side in waves count once, and the time
+    /// between a failed step and its resume is not the phase's.
+    #[test]
+    fn the_slowest_phases_are_wall_time_across_resumes() {
+        let file = "20270101T100010Z\t1\tgates\t10\t0\tok\n\
+20270101T100030Z\t12\ta\t30\t0\tok\n\
+20270101T100031Z\t12\tb\t31\t0\tok\n\
+20270101T100100Z\t12\tc\t29\t0\tok\n\
+20270101T100200Z\t13\td\t20\t5\tuncatalogued\n\
+20270101T101000Z\t13\td\t50\t0\tok\n";
+        let now = chrono::NaiveDate::from_ymd_opt(2027, 1, 1).unwrap().and_hms_opt(10, 10, 0).unwrap();
+        let s = run_evidence(file, now).unwrap();
+        assert!(s.ends_with("; slowest phases: 13 70s, 12 60s, 1 10s"), "{s}");
     }
 
     #[test]
@@ -1875,12 +1937,22 @@ mod tests {
         assert!(text.lines().last().unwrap().ends_with("\t11\tfirst login\t75\t0\toperator"), "{text}");
     }
 
+    /// goat-standup.sh writes phase 11 as standup does: an open row at the
+    /// operator step, closed by the resumed run (ops/scripts/standup-timings-close.py,
+    /// tested by tests/test_standup_timings_close.py).
+    #[test]
+    fn the_script_records_the_operator_step_too() {
+        let sh = std::fs::read_to_string(repo_root().join("ops/scripts/goat-standup.sh")).unwrap();
+        assert!(sh.contains(r#""$n" "$label" '-' '-' operator >> "$STATE_DIR/standup-$SITE-timings.tsv""#), "the open row");
+        assert!(sh.contains(r#"standup-timings-close.py" "$STATE_DIR/standup-$SITE-timings.tsv" "$FROM""#), "the close");
+    }
+
     /// goat-standup.sh writes the same six columns, so either driver's runs read back the same way.
     #[test]
     fn the_script_writes_the_cause_column_too() {
         let sh = std::fs::read_to_string(repo_root().join("ops/scripts/goat-standup.sh")).unwrap();
-        let rows: Vec<&str> = sh.lines().filter(|l| l.contains("standup-$SITE-timings.tsv")).collect();
-        assert_eq!(rows.len(), 2, "{rows:?}");
+        let rows: Vec<&str> = sh.lines().filter(|l| l.contains("printf") && l.contains("standup-$SITE-timings.tsv")).collect();
+        assert_eq!(rows.len(), 3, "a step, a wave step and the operator step: {rows:?}");
         for l in rows {
             assert!(l.contains(r"'%s\t%s\t%s\t%s\t%s\t%s\n'"), "{l}");
         }

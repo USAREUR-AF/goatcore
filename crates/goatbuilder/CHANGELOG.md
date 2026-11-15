@@ -7,6 +7,32 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+<!-- END generated: changelog unreleased -->
+
+## 0.7.1 — 2026-11-15
+
+What changed since 0.7.0, the previous release. `join-node` builds a node on a
+phone with `--class phone --via usb`, on a fixture and not yet measured on a
+phone, runs a joining site's own mesh DNS, and refuses a node whose clock is
+off. `standup` for a joiner turns signal federation on, and standup,
+join-node and teardown keep timings files whose rows name their cause. Every
+site's end state declares every service a cut-off site needs, and what a
+joining site does not run yet is named as a gap. `federate rotate <partner>
+leaves` replaces a running peering's leaves; `federate test
+--bilateral` completes the partner's half of acceptance, opt-in; on a
+two-driver peering the edge driver runs phases 1 and 3. A back-out keeps the
+core leaf another peering still uses and removes the peering's host-firewall
+entry. After a signing-key rotation, phase 5 hands the peering directory over
+to the new key, and a host-allocation SKIP says what clears it or is accepted
+into the plan. `goatbuilder.yaml` takes three optional `deploy` fields,
+`cloud`, `owner` and `cross_goatnet`; undeclared, nothing changes.
+
+Three behaviour changes: an environment that declares `converger: pull-agent` is
+refused by `doctor` and by every verb that pushes to real hosts, with GB-307;
+`join-node` refuses a node whose clock is unsynchronized or more than 250 ms
+off, with GB-297; and a back-out with no other peering set up, and no record
+of what the core leaf's paths held before, stops with GB-293 where it stopped
+with GB-221.
 
 ### For someone deploying
 
@@ -159,13 +185,14 @@ keeps waiting for this run's. With only an earlier run's samples there, those
 rows are BLOCKED and the run ends open (exit 3). A partner whose runner
 stages no start time is read as before.
 
-Limits: this rests on both sides' clocks agreeing within `FED_SESSION_WAIT`,
-and phase 1 does not check the clocks yet, so keep each host's clock
-synchronized. A partner's earlier run that started within `FED_SESSION_WAIT`
-of ours is not told apart; its result is still refused (GB-273), so the
-verdicts can differ until a rerun, but a stale result never passes.
-`goatbuilder federate` does not run a derived session yet. Tested on the
-in-process fabric only, not on hosts (#786).
+Limits: this rests on both sides' clocks agreeing within `FED_SESSION_WAIT`.
+`goatbuilder federate test <partner> --bilateral`, which runs phase 14 on a
+derived session (#720), runs phase 1's clock check (GB-268) alone first and
+stops on a clock that is unsynchronized or over the budget. A partner's
+earlier run that started within `FED_SESSION_WAIT` of ours is not told
+apart; its result is still refused (GB-273), so the verdicts can differ
+until a rerun, but a stale result never passes. Tested on the in-process
+fabric only, not on hosts (#786).
 
 #### Fixed: backing out one of two peerings keeps the core leaf the other still uses
 
@@ -198,7 +225,24 @@ checkout is that commit with nothing changed, and each file given with
 `--expect <file>=<sha256>` has that digest (GB-278). It then runs preflight's
 edge checks into `<work>/handoff/1/edge.json` and prints the way back: the
 confirm code, and the `import` and `then` commands for the controller. The
-edge driver's run of phase 2 and later is not built yet (gate row B10).
+edge driver's run of phase 3 is built too; phase 2's and those of 11 and
+later are not yet (gate row B10).
+
+#### Added: a two-driver peering hands phase 3 to the edge driver and joins its edge half
+
+On a peering declared `drivers: two`, the controller now stops at phase 3
+with a hand-off object whose result is the edge half
+(`handoff/3/edge-half.json`). On the edge driver, `goatbuilder federate
+<peering> --side edge --from 3 --to 3 --expect-commit <commit>` measures the
+edge half over SSH, reaching only the edge host, and prints the way back with
+its confirm code. On the controller, `goatbuilder federate import <peering> 3
+<file> --sha256 <code>` checks the file as the core half would (GB-114): the
+code, the peering, the 24-hour bound, and the edge host the inventory names
+(`--edge-group` for a group other than `<peering>_edge`). Then
+`goatbuilder federate <peering> --from 3` hashes the file again and measures
+the core half against it, reaching only the core host. A two-driver run from
+phase 3 with `FED_MEASURE=here` is refused before it acts (GB-267). Phase 2
+and phases 11 to 14 are not built yet (gate row B10).
 
 #### Added: `goatbuilder federate rotate <partner> leaves` and `carrier` replace a peering's keys, and an interrupted rotation finishes
 
@@ -368,6 +412,16 @@ total since phase 1 across every resume, phase 11's time, the total without
 it, and the run's stops. `ops/scripts/goat-standup.sh` writes the sixth column
 too, as `ok` or `failed` (#805).
 
+#### Added: goat-standup.sh times phase 11, and standup's timing line names the slowest phases
+
+`ops/scripts/goat-standup.sh` now writes an open row to the timings file when
+it stops at phase 11 for the operator step, and the run resumed with
+`--from 12` closes it with the time the step took, as `goatbuilder standup`
+does. A run driven by the script, or by both drivers in turn, now has phase
+11's time in its record. `goatbuilder standup`'s timing line now ends with the
+three slowest phases across every resume, phase 11 left out, each counted by
+wall time, so steps run side by side count once (#814).
+
 ### For someone contributing
 
 #### Fixed: a changelog entry title written in quotes renders without them
@@ -445,7 +499,9 @@ request's merge commit. Before the tag, a diff between the checked commit and th
 commit must name nothing under `crates/`, `ops/ansible/` or `ops/federation-e2e/`, or each
 stage those paths feed runs again on the merge commit (#772).
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.0 — 2026-11-14
 

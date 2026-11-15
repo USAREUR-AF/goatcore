@@ -755,13 +755,14 @@ mod tests {
         assert!(e.to_string().contains("this goatbuilder reads"), "{e}");
     }
 
-    /// A v1 journal written by a later goatbuilder: an outcome word and fields
+    /// A v1 journal written by a later goatbuilder (a version no release reaches,
+    /// so the fixture stays later as the crate version moves): an outcome word and fields
     /// this build does not know.
     const LATER: &str = r#"{
   "schema": "goatbuilder.federate.state/v1",
   "peering": "xab",
   "updated": "2026-11-12T00:00:00Z",
-  "written_by": "goatbuilder 0.7.0",
+  "written_by": "goatbuilder 99.0.0",
   "runs": [{"id": "run-1", "stage": "federate", "started": "s", "ended": "e", "from": 1, "to": 14, "resume": false, "outcome": "deferred", "budget": 3}],
   "phases": {
     "13": {"outcome": "passed", "inputs": "sha256:i13", "outputs": "", "at": "a", "run": "run-1", "attempts": 1},
@@ -805,7 +806,7 @@ mod tests {
         assert_eq!(after["owned"][0], before["owned"][0]);
         assert_eq!(after["attempts"][0], before["attempts"][0]);
         // written_by keeps the latest goatbuilder that wrote the file.
-        assert_eq!(after["written_by"], "goatbuilder 0.7.0");
+        assert_eq!(after["written_by"], "goatbuilder 99.0.0");
         assert_eq!(latest_writer("", "0.6.0"), "goatbuilder 0.6.0");
         assert_eq!(latest_writer("goatbuilder 0.5.1", "0.6.0"), "goatbuilder 0.6.0");
         assert_eq!(latest_writer("goatbuilder 9.9.0", "0.6.0"), "goatbuilder 9.9.0");

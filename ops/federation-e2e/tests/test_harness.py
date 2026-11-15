@@ -33,6 +33,11 @@
    arrived late, naming the gap, and fails one with a number lost, naming the gap's length.
    Every check units/rotation.sh marks for a refused key (rot_checks) is a check of the
    key-rotation scenario, so a refusal can never mark a check the catalog does not hold.
+7. lib/hostfw.sh's edge values, rendered by roles/goat-host-firewall and read by
+   lib/fwdeclared.py: the probe sessions' REST ports (PL_PORT to PL_PORT+2) are admitted
+   from the docker host and from the ops host, the driver's address when FE2E_DRIVER is
+   workspace (a driver on the edge reaches them over loopback), and not from an address the
+   values do not name.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -258,6 +263,65 @@ table inet goat_host_firewall {
         check(r and r["tcp"] == [7447], "fwdeclared: a rule outside chain input or a fixed expression was counted")
         write_text(f, "table inet other {}\n")
         check(run("198.51.100.10", "eth0") is None, "fwdeclared: a file without the goat_host_firewall table was read as a rule set")
+
+
+def hostfw_checks():
+    """lib/hostfw.sh: the edge's other-tcp override admits a side's own driver to its probe ports."""
+    import re
+    engine = open(os.path.join(ROOT, "lib", "engine.sh"), encoding="utf-8").read()
+    helpers = []
+    for name in ("party_pos", "octet", "core_ip", "edge_ip", "ops_ip", "partners", "probe_port"):
+        m = re.search(r"^%s\(\) \{.*\}.*$" % name, engine, re.M)
+        check(m is not None, f"hostfw: engine.sh defines no one-line {name}()")
+        if m:
+            helpers.append(m.group(0))
+    m = re.search(r"^pidx\(\) \{.*?^\}$", engine, re.M | re.S)
+    check(m is not None, "hostfw: engine.sh defines no pidx()")
+    if not m or len(helpers) != 7:
+        return
+    helpers.append(m.group(0))
+    render = os.path.join(os.path.dirname(ROOT), "ansible", "roles", "goat-host-firewall", "files",
+                          "goat-host-firewall-render.py")
+    with tempfile.TemporaryDirectory() as d:
+        edge, core = os.path.join(d, "edge.yml"), os.path.join(d, "core.yml")
+        script = "\n".join(['NB=10.77; PARTIES="xaa xab"; P_xaa=xab; P_xab=xaa'] + helpers +
+                           ['. "%s"' % os.path.join(ROOT, "lib", "hostfw.sh"),
+                            'fw_profile_vars xaa 0 "$1" "$2"',
+                            'echo "$PL_PORT $(ops_ip xaa) $NB.$(octet xaa).1"'])
+        p = subprocess.run(["bash", "-c", script, "hostfw", edge, core], capture_output=True, text=True)
+        check(p.returncode == 0, f"hostfw: fw_profile_vars failed: {p.stderr.strip()}")
+        if p.returncode != 0:
+            return
+        pl, ops, gw = p.stdout.split()
+        pl = int(pl)
+        v = read_yaml(edge)
+        inp = {"schema": "goat-host-firewall-input/v1", "profile": "edge",
+               "host": {"ssh_port": 22, "management_sources": v["goat_host_firewall_management_sources"],
+                        "mesh_interface": "wt0", "mesh_udp_ports": []},
+               "peerings": [{"name": "wg-fed0", "transport": "wireguard", "listen_port": 51820,
+                             "peer_addr": "10.77.2.20", "tunnel_interface": "wg-fed0",
+                             "remote_link_ip": "169.254.10.1", "edge_port": 7448, "extra_tcp_ports": [],
+                             "via_forwarder": False}]}
+        write_text(os.path.join(d, "in.json"), json.dumps(inp))
+        write_text(os.path.join(d, "ov.json"), json.dumps(v["goat_host_firewall_override"]))
+        r = subprocess.run([sys.executable, render, "--input", os.path.join(d, "in.json"),
+                            "--override", os.path.join(d, "ov.json")], capture_output=True, text=True)
+        check(r.returncode == 0, f"hostfw: the role refused the edge values: {r.stderr.strip()}")
+        if r.returncode != 0:
+            return
+        rules = os.path.join(d, "edge.nft")
+        write_text(rules, r.stdout)
+
+        def tcp(saddr):
+            q = subprocess.run([sys.executable, os.path.join(ROOT, "lib", "fwdeclared.py"), "--ruleset", rules,
+                                "--saddr", saddr, "--iif", "eth0"], capture_output=True, text=True)
+            return set(json.loads(q.stdout)["tcp"]) if q.returncode == 0 else set()
+
+        want = {pl, pl + 1, pl + 2}
+        check(want <= tcp(gw), f"hostfw: the docker host {gw} is not admitted to the probe ports {sorted(want)}")
+        check(want <= tcp(ops), f"hostfw: the ops host {ops}, a workspace driver, is not admitted to its own "
+                                f"probe ports {sorted(want)} (got {sorted(tcp(ops))})")
+        check(not (want & tcp("10.77.1.99")), "hostfw: an address the values do not name reaches the probe ports")
 
 
 def srctree_checks():
@@ -555,13 +619,40 @@ def samples_checks():
     check(marked <= ids, f"rotation: rot_checks names checks the catalog does not hold: {sorted(marked - ids)}")
 
 
+def drive_rotate_checks():
+    """units/rotation.sh copies lib/engine.sh's drive() as drive_rotate with only its
+    goatbuilder command line swapped. The copy is refused when the swap finds no
+    line, or when it changes any line but that one."""
+    engine = os.path.join(ROOT, "lib", "engine.sh")
+    real = subprocess.run(["sed", "-n", "/^drive()/,/^}/p", engine], capture_output=True, text=True).stdout
+    check("--from \"$from\" --to \"$to\"" in real, "drive_rotate: lib/engine.sh's drive() was not read")
+    line = '    goatbuilder) docker exec "${env[@]}" -w /opt/goat "$h" goatbuilder -C /opt/goat --yes federate "$them" --as "$s" --from "$from" --to "$to" ;;'
+    twice = real.replace(line, line + "\n" + line.replace("goatbuilder)", "again)"), 1)
+    none = real.replace('--from "$from" --to "$to" ;;', '--from "$from" ;;', 1)
+    def run(drive):
+        script = ('die() { echo "DIE $*"; exit 3; }; '
+                  'eval "$(sed -n \'/^make_drive_rotate()/,/^}/p\' units/rotation.sh)"; '
+                  'eval "$DRIVE"; make_drive_rotate; declare -f drive_rotate | grep -c "federate rotate"')
+        p = subprocess.run(["bash", "-c", script], cwd=ROOT, capture_output=True, text=True,
+                           env={**os.environ, "DRIVE": drive})
+        return p.returncode, (p.stdout + p.stderr).strip()
+    rc, out = run(real)
+    check(rc == 0 and out.endswith("1"), f"drive_rotate: the copy of today's drive() is refused: {rc} {out}")
+    rc, out = run(twice)
+    check(rc == 3 and "DIE" in out and "diff lines" in out, f"drive_rotate: a copy that changes a second line is not refused: {rc} {out}")
+    rc, out = run(none)
+    check(rc == 3 and "no longer has the command line" in out, f"drive_rotate: a drive() with no line to swap is not refused: {rc} {out}")
+
+
 catalog_checks()
 srctree_checks()
 srcclone_checks()
 verdict_checks()
 fwdeclared_checks()
+hostfw_checks()
 handoff_checks()
 samples_checks()
+drive_rotate_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")
