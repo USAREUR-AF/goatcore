@@ -703,6 +703,49 @@ fn place(path: &Path, body: &[u8]) -> std::io::Result<()> {
     std::fs::rename(tmp, path)
 }
 
+/// Replace the package at `path` with `body`, keeping the old one at
+/// `<path>.<tag>-<UTC time>`. `between` runs after the old one is kept and
+/// before the new one is written (a test injects a failure or a crash there).
+fn replace_counterparty(
+    path: &Path,
+    body: &[u8],
+    tag: &str,
+    between: &mut dyn FnMut() -> std::io::Result<()>,
+) -> Result<std::path::PathBuf, (bool, std::io::Error)> {
+    let aside = set_aside(path, tag).map_err(|e| (false, e))?;
+    between().map_err(|e| (true, e))?;
+    place(path, body).map_err(|e| (true, e))?;
+    Ok(aside)
+}
+
+/// The package digest the last confirmation of this peering names, and its
+/// `issued` date when it was readable: the keys confirmation of phase 5, a
+/// partner-package confirmation (ADR 1229), or the migration record a build
+/// writes for a peering confirmed before it recorded the package. The most
+/// recent of them, in journal order. `None` before their key is bound.
+pub fn confirmed_package(_st: &State) -> Option<(String, Option<String>)> {
+    None
+}
+
+/// The code for a held package that cannot be read when a peering confirmed
+/// before this build is recorded (ADR 1229 migration).
+pub const UNREADABLE_HELD: &str = "GB-310";
+
+/// A peering whose phase 5 was confirmed by a build that did not record the
+/// package: record the package held now as the confirmed one, journaled as a
+/// migration, not as a person's confirmation. Stops (GB-310) when the held
+/// package cannot be read. `None` when there is nothing to record.
+pub fn migrate(_paths: &Paths, _st: &mut State, _run: &str) -> Option<Step> {
+    None
+}
+
+/// Before any phase after 5: the package on disk is the one the last
+/// confirmation names (GB-191, naming phase 5), whatever phase the run
+/// started from. `None` when it is, or before their key is bound.
+pub fn compose_guard(_paths: &Paths, _st: &State) -> Option<Step> {
+    None
+}
+
 /// Phase 5, before the keys: a new package from the partner under the key
 /// already bound (ADR 1229). It is new when the directory step, or a person
 /// on the hand path, left a package at `<work>/theirs.incoming.json` that
@@ -862,22 +905,22 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
     };
     let mut rows = Vec::new();
     if !by_hand {
-        match set_aside(&paths.counterparty, "previous") {
+        match replace_counterparty(&paths.counterparty, &body, "previous", &mut || Ok(())) {
             Ok(p) => rows.push(ok("partner-package", format!("the package it replaces is kept at {}", p.display()))),
-            Err(e) => {
+            Err((false, e)) => {
                 return Some(fail(
                     "GB-184",
                     format!("cannot write the working folder: {} could not be moved aside ({e}); nothing was placed", paths.counterparty.display()),
                     "check the working folder is writable, then run phase 5 again",
                 ))
             }
-        }
-        if let Err(e) = place(&paths.counterparty, &body) {
-            return Some(fail(
-                "GB-184",
-                format!("cannot write the working folder: {them}'s new package could not be placed at {} ({e}); the old one is kept aside", paths.counterparty.display()),
-                "check the working folder is writable, then run phase 5 again",
-            ));
+            Err((true, e)) => {
+                return Some(fail(
+                    "GB-184",
+                    format!("cannot write the working folder: {them}'s new package could not be placed at {} ({e}); the old one is kept aside", paths.counterparty.display()),
+                    "check the working folder is writable, then run phase 5 again",
+                ));
+            }
         }
         let _ = std::fs::remove_file(&held);
     }
@@ -1691,6 +1734,174 @@ mod tests {
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
         assert!(st.confirmed("partner-package", 5, &sha256(&new)).is_some());
         assert!(incoming_step_opt(&w, &mut s, &mut st).is_none());
+    }
+
+    // ---- ADR 1229 fixes: the counterparty is never missing, the confirmed bytes
+    // ---- are placed, older peerings are recorded, and compose checks the digest.
+
+    /// Item 1: a failure, or a crash, between keeping the old package and placing
+    /// the new one leaves the old package where it was, never no package.
+    #[test]
+    fn an_interrupted_replacement_leaves_the_old_package_in_place() {
+        let (w, _st) = bound();
+        let old = std::fs::read(&w.paths.counterparty).unwrap();
+        let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
+        let r = replace_counterparty(&w.paths.counterparty, &new, "previous", &mut || {
+            Err(std::io::Error::other("injected between the two steps"))
+        });
+        assert!(r.is_err());
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), old, "a failure leaves the old package in place");
+        // A crash at the same point: the process dies there.
+        let path = w.paths.counterparty.clone();
+        let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = replace_counterparty(&path, &new, "previous", &mut || panic!("crash between the two steps"));
+        }));
+        assert!(crashed.is_err());
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), old, "a crash leaves the old package in place");
+        // And when nothing interrupts it: the new one is placed, the old one kept.
+        replace_counterparty(&w.paths.counterparty, &new, "previous", &mut || Ok(())).unwrap();
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new);
+        assert!(previous_copies(&w).iter().any(|p| std::fs::read(p).unwrap() == old));
+    }
+
+    /// An asker that copies another file over the package while the person is
+    /// being asked, then says yes.
+    struct SwapsThenYes {
+        path: std::path::PathBuf,
+        with: Vec<u8>,
+    }
+
+    impl prompt::Ask for SwapsThenYes {
+        fn interactive(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _text: &str) {}
+        fn ask(&mut self, _question: &str) -> Option<String> {
+            std::fs::write(&self.path, &self.with).unwrap();
+            Some("yes".into())
+        }
+    }
+
+    /// Item 2: on the hand path, the bytes confirmed are the bytes placed, even
+    /// when another package is copied over the file while the person is asked.
+    #[test]
+    fn on_the_hand_path_the_confirmed_bytes_are_placed() {
+        let (w, mut st) = bound();
+        let held = std::fs::read(&w.paths.counterparty).unwrap();
+        let new = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(LATER));
+        std::fs::write(&w.paths.counterparty, &new).unwrap();
+        let mut s = Surface {
+            values: Values {
+                ask: true,
+                ..Default::default()
+            },
+            ask: Some(Box::new(SwapsThenYes {
+                path: w.paths.counterparty.clone(),
+                with: held.clone(),
+            })),
+            ..Default::default()
+        };
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new, "the package confirmed is the one on disk");
+        assert!(st.confirmed("partner-package", 5, &sha256(&new)).is_some());
+    }
+
+    /// A state as a build before ADR 1229 left it: the keys confirmed, the
+    /// package they were given for not recorded.
+    fn bound_before_1229() -> (World, State) {
+        let (w, mut st) = bound();
+        for c in st.confirmations.iter_mut() {
+            c.values.remove("partner_package");
+            c.values.remove("partner_package_issued");
+        }
+        (w, st)
+    }
+
+    /// Item 3: the package held for a peering confirmed before this build is
+    /// recorded once, as a migration (not a person's confirmation), and from
+    /// then on an older package copied over it is refused.
+    #[test]
+    fn a_peering_confirmed_before_1229_records_its_held_package_as_a_migration() {
+        let (w, mut st) = bound_before_1229();
+        let held = std::fs::read(&w.paths.counterparty).unwrap();
+        assert!(confirmed_package(&st).is_none());
+        let step = migrate(&w.paths, &mut st, "r2").expect("a migration is recorded");
+        assert_eq!(code(&step), "continue");
+        let (digest, issued) = confirmed_package(&st).expect("recorded");
+        assert_eq!(digest, sha256(&held));
+        assert_eq!(issued.as_deref(), Some("2026-09-05"));
+        let c = st.confirmations.last().unwrap();
+        assert_eq!(c.how, "migration", "journaled as a migration, not a person's confirmation");
+        assert!(migrate(&w.paths, &mut st, "r3").is_none(), "recorded once");
+        let older = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(EARLIER));
+        std::fs::write(&w.paths.counterparty, &older).unwrap();
+        let mut s = surface(flag(&sha256(&older)), &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), OLDER);
+    }
+
+    #[test]
+    fn a_held_package_that_cannot_be_read_stops_the_migration_with_gb_310() {
+        let (w, mut st) = bound_before_1229();
+        std::fs::remove_file(&w.paths.counterparty).unwrap();
+        let step = migrate(&w.paths, &mut st, "r2").expect("a stop");
+        assert_eq!(code(&step), UNREADABLE_HELD);
+        assert!(matches!(step.verdict, Verdict::Fail(_)));
+        assert!(confirmed_package(&st).is_none(), "nothing recorded");
+    }
+
+    #[test]
+    fn a_migrated_package_with_no_readable_date_records_none_and_asks_order_unknown() {
+        let (w, mut st) = bound_before_1229();
+        // A held package whose issued date cannot be read.
+        let mut held: serde_json::Value = serde_json::from_slice(&std::fs::read(&w.paths.counterparty).unwrap()).unwrap();
+        held["issued"] = serde_json::Value::String("not a date".into());
+        std::fs::write(&w.paths.counterparty, serde_json::to_vec(&held).unwrap()).unwrap();
+        assert_eq!(code(&migrate(&w.paths, &mut st, "r2").unwrap()), "continue");
+        let (_, issued) = confirmed_package(&st).unwrap();
+        assert_eq!(issued, None);
+        assert!(!st.confirmations.last().unwrap().values.values().any(|v| v.is_empty()), "never journals an empty value");
+        // Item 4(b): a newer package, held date unknown: asked, saying the order is unknown.
+        let new = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(LATER));
+        std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
+        let mut s = surface(Values::default(), &[]);
+        let step = incoming_step(&w, &mut s, &mut st);
+        assert_eq!(code(&step), "GB-192");
+        let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("order unknown: the package held has no readable issued date"), "{text}");
+    }
+
+    /// Item 4(a): an offered package whose issued date is missing or cannot be
+    /// read, while the held one's is known, is refused, never asked about.
+    #[test]
+    fn an_offered_package_without_a_readable_date_is_refused_when_the_held_date_is_known() {
+        for bad in ["2026-13-45", "yesterday"] {
+            let (w, mut st) = bound();
+            let held = std::fs::read(&w.paths.counterparty).unwrap();
+            let offered = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(bad));
+            std::fs::write(w.paths.work.join(INCOMING), &offered).unwrap();
+            let mut s = surface(flag(&sha256(&offered)), &[]);
+            let step = incoming_step(&w, &mut s, &mut st);
+            assert_eq!(code(&step), OLDER, "{bad}");
+            assert!(matches!(step.verdict, Verdict::Fail(_)), "{bad}");
+            assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), held, "{bad}");
+        }
+    }
+
+    /// Item 5: before any phase after 5, the package on disk must be the one
+    /// the last confirmation names.
+    #[test]
+    fn compose_refuses_a_package_that_is_not_the_one_confirmed_naming_phase_5() {
+        let (w, st) = bound();
+        assert!(compose_guard(&w.paths, &st).is_none(), "the confirmed package passes");
+        let other = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", Some(LATER));
+        std::fs::write(&w.paths.counterparty, &other).unwrap();
+        let step = compose_guard(&w.paths, &st).expect("refused");
+        assert_eq!(code(&step), "GB-191");
+        let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("phase 5") && text.contains(&sha256(&other)), "{text}");
+        // Before their key is bound there is nothing to compare against.
+        let w2 = world();
+        assert!(compose_guard(&w2.paths, &State::new("xab")).is_none());
     }
 
     #[test]

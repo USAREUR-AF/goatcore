@@ -1599,3 +1599,35 @@ def test_a_package_older_than_the_one_on_disk_is_not_offered(server, tmp_path):
     assert theirs.read_bytes() == held
     assert not (work / "theirs.incoming.json").exists(), out
     assert "issued 2026-09-01, before the one on disk (2026-09-20)" in out, out
+
+
+@needs_ed25519
+def test_a_package_without_a_readable_issued_date_is_not_offered_when_the_held_date_is_known(server, tmp_path):
+    """ADR 1229, item 4: a package whose issued date is missing or not a date, while the one on
+    disk has one, cannot be ordered against it: it is not saved for phase 5, which refuses it
+    too (GB-308). With the held date unknown, it is offered, and phase 5 says the order is unknown."""
+    base = {k: v for k, v in json.loads(XAA.read_bytes()).items() if k != "signature"}
+    seed = d.load_seed(str(KEY["xaa"]))
+
+    def signed(pkg):
+        return d.canonical(dict(pkg, signature=d.b64(d.sign(seed, d.canonical(pkg)))))
+
+    moved = dict(base["transport_offer"], endpoint="192.0.2.10:51831")
+    for held_issued, offered_issued, offered in (("2026-09-20", "yesterday", False),
+                                                 ("2026-09-20", "2026-13-45", False),
+                                                 ("not a date", "2026-09-21", True)):
+        work = tmp_path / f"w-{offered_issued}"
+        work.mkdir()
+        publish = tmp_path / f"xaa-{offered_issued}.json"
+        publish.write_bytes(signed(dict(base, issued=offered_issued, transport_offer=moved)))
+        run("--url", server, "--ours", publish, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+        theirs = work / "theirs.canonical.json"
+        held = signed(dict(base, issued=held_issued))
+        theirs.write_bytes(held)
+        rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                      "--keyring", keyring_for(tmp_path, "xaa"), "--work", work, "--per-counterparty")
+        assert rc == 0, out
+        assert theirs.read_bytes() == held
+        assert (work / "theirs.incoming.json").exists() is offered, (held_issued, offered_issued, out)
+        if not offered:
+            assert "no readable issued date" in out, out

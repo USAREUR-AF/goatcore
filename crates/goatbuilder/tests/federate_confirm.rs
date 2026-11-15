@@ -234,3 +234,60 @@ fn accept_partner_package_belongs_to_phase_5() {
     let (out, _) = w.run(&["deploy", "hello-ally", "--accept-partner-package", "sha256:00"]);
     assert!(says(&out).contains("GB-189"), "{}", says(&out));
 }
+
+/// ADR 1229, item 5: a package copied over the placed one by hand is refused
+/// before compose even when the run resumes past phase 5, naming phase 5.
+#[test]
+fn a_resume_past_phase_5_refuses_a_package_that_is_not_the_one_confirmed() {
+    let w = world();
+    let fp = sha256_hex(b"fake-ca-der");
+    let key = their_key();
+    let (out, _) = w.run(&["hello-ally", "--partner-key", &key, "--partner-ca-fingerprint", &fp]);
+    assert!(out.status.success(), "{}", says(&out));
+    let other = resigned_with_transport("xab", &fp, Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="));
+    std::fs::write(w.work.join("theirs.canonical.json"), &other).unwrap();
+    w.clear_log();
+    let (out, _) = w.run(&["hello-ally", "--from", "6"]);
+    assert!(!out.status.success(), "{}", says(&out));
+    assert!(says(&out).contains("GB-191") && says(&out).contains("phase 5"), "{}", says(&out));
+    assert!(!w.log().contains("federate compose"), "compose did not run: {}", w.log());
+}
+
+/// ADR 1229, item 3: a peering whose keys were confirmed by a build that did
+/// not record the package has it recorded, as a migration, on its first run.
+/// A held package that cannot be read stops the run with GB-310.
+#[test]
+fn a_peering_confirmed_before_1229_is_recorded_or_stopped_with_gb_310() {
+    let w = world();
+    let fp = sha256_hex(b"fake-ca-der");
+    let key = their_key();
+    let (out, _) = w.run(&["hello-ally", "--partner-key", &key, "--partner-ca-fingerprint", &fp]);
+    assert!(out.status.success(), "{}", says(&out));
+    // As a build before ADR 1229 journaled it: no package recorded.
+    let path = w.work.join("state.json");
+    let mut st = w.state();
+    for c in st["confirmations"].as_array_mut().unwrap() {
+        if let Some(v) = c["values"].as_object_mut() {
+            v.remove("partner_package");
+            v.remove("partner_package_issued");
+        }
+    }
+    std::fs::write(&path, serde_json::to_vec_pretty(&st).unwrap()).unwrap();
+    let theirs = w.work.join("theirs.canonical.json");
+    let held = std::fs::read(&theirs).unwrap();
+    std::fs::rename(&theirs, w.work.join("held.json")).unwrap();
+    let (out, _) = w.run(&["hello-ally", "--from", "6"]);
+    assert_eq!(out.status.code(), Some(1), "{}", says(&out));
+    assert!(says(&out).contains("GB-310"), "{}", says(&out));
+    std::fs::rename(w.work.join("held.json"), &theirs).unwrap();
+    let (out, _) = w.run(&["hello-ally", "--from", "6"]);
+    assert!(!says(&out).contains("GB-310"), "{}", says(&out));
+    let st = w.state();
+    let m = st["confirmations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["how"] == "migration")
+        .expect("recorded as a migration");
+    assert_eq!(m["bound_to"], sha256_hex(&held).as_str());
+}

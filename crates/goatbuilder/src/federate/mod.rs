@@ -824,13 +824,50 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     }
     let mut exit = EXIT_OK;
     let mut stopped = false;
+    // A peering confirmed by a build that did not record the partner's package:
+    // the package held now is recorded as the confirmed one, as a migration
+    // (ADR 1229), before any phase, so the checks below hold for it too. A held
+    // package that cannot be read stops the run (GB-310).
+    let mut migration_stopped = false;
+    if let Some(r) = run.as_mut() {
+        let id = r.id.clone();
+        if let Some(step) = confirm::migrate(&r.paths, &mut r.state, &id) {
+            checks.extend(step.rows);
+            match step.verdict {
+                confirm::Verdict::Continue => {}
+                confirm::Verdict::Stop(_) | confirm::Verdict::Fail(_) => {
+                    exit = EXIT_REFUSED;
+                    migration_stopped = true;
+                }
+            }
+        }
+    }
+    // Before the first phase after 5 this run reaches, run or skipped: the
+    // partner's package on disk is the one the last confirmation names.
+    let mut package_checked = false;
     // Phase 5 confirmed in this run writes the keyring phase 6 reads: the
     // phases after it are planned again from what is there now.
     let mut replanned: Option<Vec<Phase>> = None;
     for planned in &phases {
+        if migration_stopped {
+            break;
+        }
         let ph = replanned.as_ref().and_then(|v| v.iter().find(|p| p.n == planned.n)).unwrap_or(planned);
         if !s.runs(ph.n, o.from, o.to) {
             continue;
+        }
+        if ph.n > 5 && !package_checked {
+            package_checked = true;
+            if let Some(r) = run.as_mut() {
+                if let Some(step) = confirm::compose_guard(&r.paths, &r.state) {
+                    checks.extend(step.rows);
+                    if let confirm::Verdict::Fail(d) | confirm::Verdict::Stop(d) = step.verdict {
+                        r.end(ph, state::Outcome::Failed, &d);
+                    }
+                    exit = EXIT_REFUSED;
+                    break;
+                }
+            }
         }
         if let Some(r) = run.as_mut().filter(|r| r.skips(ph)) {
             checks.push(r.skipped(ph));
