@@ -956,6 +956,63 @@ class AcceptanceRun(unittest.TestCase):
         for name in self.xab_names():
             self.assertEqual(rows["delivery/inbound/release/" + name]["verdict"], "PASS", (name, out))
 
+    def test_derived_a_stampless_partner_s_second_challenge_is_two_runs_not_a_byte_fail(self):
+        # A partner that never stamps: the first set's sample teaches NEW after one
+        # wait; the second set holds an earlier run's unstamped sample (OLD). It is
+        # BLOCKED as two runs, not a FAIL on other bytes, and the learned row says its
+        # run identity is not proven.
+        first, second = self.xab_names()[0], self.xab_names()[1]
+        before = self.xab_keys(first, self.NEW_CHALLENGE)
+        before.update(self.xab_keys(second, self.OLD_CHALLENGE))
+        rc, out, rows = self.lone_xaa(before, wait="4")
+        row1 = rows["delivery/inbound/release/" + first]
+        self.assertEqual(row1["verdict"], "PASS", out)
+        self.assertEqual(row1["observations"].get("run_identity"), "unstamped: run identity not proven", row1)
+        for row in ("delivery/inbound/release/" + second, "persistence/inbound/release/" + second):
+            self.assertEqual(rows[row]["verdict"], "BLOCKED", (row, rows[row], out))
+            self.assertIn("two of xab's runs", rows[row]["reason"], (row, out))
+
+    def test_derived_a_stamp_s_own_sample_read_at_the_end_of_the_wait_is_this_run_s(self):
+        # xab's stamp is there from the start; every read of its sample inside the
+        # loop fails, and the read at the end of the wait finds the stamp's own sample.
+        # That is this run's sample, not "an earlier run's".
+        import time
+        now = int(time.time())
+        before = {}
+        for name in self.xab_names():
+            before.update(self.xab_keys(name, self.NEW_CHALLENGE, started=now))
+        state = os.path.join(self.tmp, "last-read")
+        real = shutil.which("curl")
+        flaky = self.stand_in("curl", (
+            'put=0; url=""\n'
+            'for a in "$@"; do [ "$a" = PUT ] && put=1; case "$a" in http*) url="$a";; esac; done\n'
+            'if [ "$put" = 0 ] && [[ "$url" == */run ]]; then echo stamp > %s; fi\n'
+            'if [ "$put" = 0 ] && [[ "$url" =~ /acceptance/[^/]+/xab$ ]]; then\n'
+            '  if [ "$(cat %s 2>/dev/null)" = stamp ]; then echo sample > %s; exit 7; fi\n'
+            'fi\n'
+            'exec %s "$@"\n') % (state, state, state, real))
+        self.fabric.faults.stale["xaa"] = before
+        ev = os.path.join(self.tmp, "ev-xaa")
+        p = self.derived_side("xaa", ev, wait="4", extra=flaky)
+        out = p.communicate(timeout=240)[0]
+        rows = self.checks(ev)
+        for name in self.xab_names():
+            row = rows["delivery/inbound/release/" + name]
+            self.assertEqual(row["verdict"], "PASS", (name, row, out))
+
+    def test_derived_a_garbled_stamp_counts_as_a_stamp_seen(self):
+        # The first set's stamp is garbled; the second holds only an unstamped earlier
+        # sample. xab's runner stamps (badly), so the unstamped sample is never learned.
+        first, second = self.xab_names()[0], self.xab_names()[1]
+        wire = "from/xab/%s/acceptance/%s/xab" % (first, self.session_id())
+        before = {wire + "/run": b"xab-not-a-stamp"}
+        before.update(self.xab_keys(second, self.OLD_CHALLENGE))
+        rc, out, rows = self.lone_xaa(before, wait="4")
+        row = rows["delivery/inbound/release/" + second]
+        self.assertEqual(row["verdict"], "BLOCKED", (row, out))
+        self.assertIn("no run stamp", row["reason"], out)
+        self.assertNotIn(self.OLD_CHALLENGE, self.evidence_text())
+
     def test_derived_clocks_apart_by_less_than_the_wait_keep_a_fresh_sample(self):
         # xaa's clock runs 8 s behind, the wait is 10 s, and xab starts 3 s after xaa:
         # the runs overlap and the clocks agree within the wait, so xab keeps xaa's
