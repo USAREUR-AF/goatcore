@@ -110,14 +110,30 @@ chmod 755 "$T/bin/swanctl"
 cat > "$T/bin/cp" <<'SH'
 #!/bin/sh
 T=@T@
+for a in "$@"; do last=$a; done
 if [ -e "$T/cp-fails" ]; then
-  for a in "$@"; do last=$a; done
   case "$*" in *.previous-*) case "$last" in *.previous-*) ;; *) exit 1 ;; esac ;; esac
+fi
+# A run killed during the set-aside, after the certificate and before the key.
+if [ -e "$T/cp-dies-on-key" ]; then
+  case "$last" in *.previous-*) case "$*" in *xab-key.pem*) exit 1 ;; esac ;; esac
 fi
 exec /bin/cp "$@"
 SH
 sed -i "s|@T@|$T|" "$T/bin/cp"
 chmod 755 "$T/bin/cp"
+# An mv that dies moving the staged certificate while $T/mv-dies exists: a run killed
+# between the switch's two moves (the key moved in, the certificate not).
+cat > "$T/bin/mv" <<'SH'
+#!/bin/sh
+T=@T@
+if [ -e "$T/mv-dies" ]; then
+  case "$*" in *cert.next*) exit 1 ;; esac
+fi
+exec /bin/mv "$@"
+SH
+sed -i "s|@T@|$T|" "$T/bin/mv"
+chmod 755 "$T/bin/mv"
 
 # Certificates made at test time: two CAs, then leaves.
 P384=(-newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -nodes)
@@ -142,7 +158,7 @@ leaf short ca1 fed.xaa.xab.01 10
 
 S="$T/swanctl"
 fresh() { # a fresh edge: live leaf of ca1, our CA ca1, nothing staged
-  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails" "$T/rekey-at" "$T/rekey-soon" "$T/partner-rekey-on" "$T/listings" "$T/die-after-rekey" "$T/old-lingers"
+  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails" "$T/rekey-at" "$T/rekey-soon" "$T/partner-rekey-on" "$T/listings" "$T/die-after-rekey" "$T/old-lingers" "$T/mv-dies" "$T/cp-dies-on-key"
   mkdir -p "$S/x509" "$S/private" "$S/x509ca"
   cp "$T/pki/live.pem" "$S/x509/xab-cert.pem"; cp "$T/pki/live.key" "$S/private/xab-key.pem"
   chmod 600 "$S/private/xab-key.pem"
@@ -489,6 +505,48 @@ if ! rot -e peering_edge_rotation=r20 && grep -q "GB-302" "$LOG" && [ ! -e "$S/.
   pass "a re-run that rolls back removes the earlier confirm record"
 else
   fail "a rolled-back re-run left a confirm record"; tail -12 "$LOG"
+fi
+
+# K1: killed between the switch's two moves (the key moved in, the certificate not).
+# The re-run finishes the switch; it never leaves the live pair mixed.
+fresh; stage good; touch "$T/sa-up" "$T/mv-dies"
+rot -e peering_edge_rotation=r21 || true
+rm -f "$T/mv-dies"
+mixed=no
+[ "$(sha "$S/private/xab-key.pem")" = "$(sha "$T/pki/good.key")" ] && [ "$(sha "$S/x509/xab-cert.pem")" = "$(sha "$T/pki/live.pem")" ] && mixed=yes
+if [ "$mixed" = yes ] && rot -e peering_edge_rotation=r21 && live_is good && [ ! -e "$S/x509/xab-cert.next.pem" ] \
+   && [ -e "$S/.previous-r21/confirmed" ]; then
+  pass "killed between the switch's moves: the re-run finishes the switch and confirms"
+else
+  fail "a run killed between the switch's moves did not finish (mixed setup: $mixed)"; tail -12 "$LOG"
+fi
+# The same, but what is left staged is not the moved key's certificate: refused, nothing moved.
+fresh; stage good; touch "$T/sa-up" "$T/mv-dies"
+rot -e peering_edge_rotation=r22 || true
+rm -f "$T/mv-dies"
+cp "$T/pki/good2.pem" "$S/x509/xab-cert.next.pem"
+before=$(snap)
+if ! rot -e peering_edge_rotation=r22 && grep -q "GB-310" "$LOG" && [ "$(snap)" = "$before" ]; then
+  pass "a half-done switch whose staged remainder does not match: GB-310, nothing moved"
+else
+  fail "a half-done switch with a mismatched remainder was not refused, or something moved"; tail -12 "$LOG"
+fi
+
+# K2: killed during the set-aside (certificate copied, key not). The set-aside exists
+# only when complete, so the re-run redoes it, and a roll-back restores both files.
+fresh; stage good; touch "$T/cp-dies-on-key"
+rot -e peering_edge_rotation=r23 || true
+rm -f "$T/cp-dies-on-key"
+if [ ! -e "$S/.previous-r23" ] && live_is live; then
+  pass "killed during the set-aside: no set-aside directory, the live pair untouched"
+else
+  fail "a set-aside killed half way left a set-aside directory or touched the live pair"; ls -la "$S" 2>/dev/null
+fi
+if ! rot -e peering_edge_rotation=r23 && grep -q "GB-302" "$LOG" && live_is live \
+   && [ -f "$S/.previous-r23/xab-key.pem" ] && [ -f "$S/.previous-r23/xab-cert.pem" ] && [ ! -e "$S/.previous-r23.tmp" ]; then
+  pass "the re-run redoes the set-aside, and its roll-back restores both files"
+else
+  fail "after a set-aside killed half way, the roll-back did not restore both files"; tail -12 "$LOG"
 fi
 
 # Retire: the SA must be established after the rotation set the old pair aside.
