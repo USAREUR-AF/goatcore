@@ -158,7 +158,9 @@ rot() { # rest: extra arguments
 }
 live_is() { [ "$(sha "$S/x509/xab-cert.pem")" = "$(sha "$T/pki/$1.pem")" ] && [ "$(sha "$S/private/xab-key.pem")" = "$(sha "$T/pki/$1.key")" ]; }
 calls() { grep -c -- "$1" "$T/swanctl.log" 2>/dev/null || true; }
-snap() { find "$S" -type f -exec openssl sha256 -r {} + 2>/dev/null | sort; }
+# Every credential and marker on the edge, but the confirm's record, which each
+# confirmed run rewrites with its own SA id (moving nothing).
+snap() { find "$S" -type f ! -name confirmed -exec openssl sha256 -r {} + 2>/dev/null | sort; }
 
 echo "goat-peering-edge test-rotation"
 

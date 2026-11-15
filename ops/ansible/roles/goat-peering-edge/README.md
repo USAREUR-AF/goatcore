@@ -168,8 +168,10 @@ defaults (4h minus 10m, against the DPD timeout plus 30 s) leave ample room.
 A rerun with the same id moves nothing, so a killed run finishes. `peering_edge_rotation_retire: true`, after
 both sides pass phase 14, removes the set-aside key and keeps its certificate (`tasks/rotate-retire.yml`). It
 never moves the live pair, the staged pair or our CA, and it removes the key only when the new leaf is live:
-the live pair is not the set-aside one, the live key is the live certificate's, and an SA established since the
-old pair was set aside has an installed CHILD SA. Otherwise, or for an id with no `.previous-<id>/` here, it refuses (GB-309). Our new
+the confirm recorded it (`.previous-<id>/confirmed`, the new IKE SA's id and time, written once an SA the
+re-authentication made is up), the live pair is not the set-aside one, the live key is the live certificate's,
+and that SA, or one established since the confirm, has an installed CHILD SA. Without the record it refuses
+(GB-309): run the rotation again with the same id, which re-authenticates, confirms and writes it. Otherwise, or for an id with no `.previous-<id>/` here, it refuses (GB-309). Our new
 CA replaces the current one only on the switch, and only with the partner's read-back (GB-303). During a partner's own CA
 rotation, `peering_edge_remote_ca_next_path` makes `remote.cacerts` accept their new CA beside the current one.
 `tests/test-rotation.sh` covers each step with a stand-in `swanctl` and certificates made at test time.

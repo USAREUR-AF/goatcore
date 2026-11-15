@@ -3683,14 +3683,15 @@ entries:
   - code: GB-309
     tool: goatbuilder
     title: the retire step finds no confirmed rotation to retire
-    what: "The retire step of an IPsec credential rotation (goat-peering-edge, peering_edge_rotation_retire) removes the set-aside key in .previous-<id>/ on the edge, and nothing else: it never moves the live pair, the staged pair or our CA. It removes the key only once the new leaf is live: the live pair is not the set-aside one, the live key is the live certificate's, and an IKE SA established since the old pair was set aside has an installed CHILD SA (the SA that was up before authenticated the old leaf). This edge has no .previous-<id>/ for the id given, or the rotation is not confirmed live, so nothing was moved or removed."
+    what: "The retire step of an IPsec credential rotation (goat-peering-edge, peering_edge_rotation_retire) removes the set-aside key in .previous-<id>/ on the edge, and nothing else: it never moves the live pair, the staged pair or our CA. It removes the key only once the new leaf is live: the confirm recorded it in .previous-<id>/confirmed (the unique id of the IKE SA the re-authentication made, and the time), the live pair is not the set-aside one, the live key is the live certificate's, and that SA, or one established since the confirm, has an installed CHILD SA. This edge has no .previous-<id>/ for the id given, or the rotation is not confirmed live, so nothing was moved or removed."
     causes:
       - "the id is mistyped, or names a rotation of another edge"
       - "the rotation stopped before its switch, so the live pair is still the set-aside one"
-      - "the IKE SA is down, the only SA up was established before the rotation, or the live key is not the live certificate's"
+      - "the rotation was not confirmed: it stopped after the switch and before its confirm wrote .previous-<id>/confirmed"
+      - "neither the IKE SA the confirm recorded nor one established since is up, or the live key is not the live certificate's"
     fixes:
       - "check the id the rotation printed (ls /etc/swanctl/.previous-*)"
-      - "finish the rotation by running it again with the same id, confirm the link on both sides, then retire"
+      - "run the rotation again with the same id: it re-authenticates, confirms and writes .previous-<id>/confirmed; then retire once both sides passed phase 14"
     read: docs/design/federation-key-rotation.md
     exit: 2
     matches:

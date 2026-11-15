@@ -274,8 +274,8 @@
       swanctl --list-sas --ike {{ peering_edge_name | quote }} |
       awk -v n={{ peering_edge_name | quote }} -v old={{ (_pe_rot_before.stdout ~ ' ') | quote }}
       'index($0, n ": #") == 1 { split(substr($0, length(n) + 4), a, ","); cur = a[1] + 0; est = ($0 ~ /ESTABLISHED/); next }
-      /INSTALLED/ && est && index(old, " " cur " ") == 0 { ok = 1 }
-      END { exit ok ? 0 : 1 }'
+      /INSTALLED/ && est && index(old, " " cur " ") == 0 { ok = 1; id = cur }
+      END { if (ok) print id; exit ok ? 0 : 1 }'
   register: _pe_rot_up_wait
   until: _pe_rot_up_wait.rc == 0
   retries: "{{ [((peering_edge_rotation_confirm_seconds | int) / 5) | round(0, 'ceil') | int, 1] | max }}"
@@ -288,6 +288,19 @@
   ansible.builtin.set_fact:
     _pe_rot_up:
       rc: "{{ 1 if (_pe_rot_prerekey_failed | bool) else _pe_rot_up_wait.rc }}"
+
+# The confirm's proof, written before the rotation reports success: the unique id of
+# the IKE SA the re-authentication made on the new leaf, and when. The retire step
+# requires it; an SA established after the set-aside proves nothing alone, because
+# the rekey before the re-authentication makes one that still runs on the old leaf.
+- name: peering-edge | rotation | record the confirm (the new SA's id and time)
+  ansible.builtin.shell:
+    cmd: >-
+      umask 077 && printf 'id=%s\nat=%s\n' {{ (_pe_rot_up_wait.stdout | trim) | quote }} "$(date +%s)"
+      > {{ (_pe_rot_aside ~ '/confirmed.tmp') | quote }}
+      && mv -f {{ (_pe_rot_aside ~ '/confirmed.tmp') | quote }} {{ (_pe_rot_aside ~ '/confirmed') | quote }}
+  changed_when: true
+  when: (_pe_rot_up.rc | int) == 0
 
 - name: peering-edge | rotation | put the old pair back and stop (GB-302)
   when: (_pe_rot_up.rc | int) != 0
