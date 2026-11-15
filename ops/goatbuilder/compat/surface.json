@@ -626,6 +626,8 @@
    "--edge-group": true,
    "--env": true,
    "--from": true,
+   "--partner-holds-ipsec-ca": true,
+   "--retire": true,
    "--work": true
   },
   "values": {
@@ -671,6 +673,24 @@
    "--side": [
     "edge",
     "core"
+   ]
+  }
+ },
+ "goatbuilder grow": {
+  "args": [],
+  "flags": {
+   "--dry-run": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
    ]
   }
  },

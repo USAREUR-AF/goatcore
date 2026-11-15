@@ -1,9 +1,9 @@
 # The release this directory holds goatbuilder to (README.md). Written by
 # `compat.py refresh` when a release is published; never edited by hand.
-release: goatbuilder/v0.7.1
-commit: 56d0f6506dd79ad6a31dbb402e2158888469f2d2
-binary_sha256: 1b481a837407c8835a96d389f8b48803413190acb94675bd589e33f40f594146
+release: goatbuilder/v0.7.2
+commit: e7205628370d29cb662de134593127561a949727
+binary_sha256: bbe890c74f8abf38213690bdec50cf70cf6f6d3fbd002787e3ddd42d1e5452f1
 recorded: '2026-11-15'
 binary: goatbuilder-linux-amd64
-sums_sha256: 77fc8dedd797d377b31a3d96eff87e0d0345c73c276763756404977c073d3bfa
-documents_sha256: c67ce49e3d1d883b0f1375cb3245888b17194390e02fb0b37c87340ddb2a0a14
+sums_sha256: 98f4764931eb2049d920fec19499bf019b2d2b1070657a533efe73cfccba2e2f
+documents_sha256: ccefa1c7b43807839305318ee37cade7b7c37798e5807ba4a9000ce769dec71b
