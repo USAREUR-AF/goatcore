@@ -11,7 +11,8 @@ request's, not our CA's, not another leaf's in the output folder or a previous
 set there, and not one --key-record lists as signed before. The certificate's
 names come from the arguments, never from the request. Each signed key's
 fingerprint is appended to --key-record, which lives outside the output folder
-so that the check survives the folder being cleaned.
+so that the check survives the folder being cleaned; one that resolves inside it,
+links followed, is refused before anything is signed.
 
 A rotation (--rotate) is resumable. The new pairs are minted and validated in a
 private staging directory beside a copy of the pairs they replace (mode 0600),
@@ -501,6 +502,12 @@ def main():
     if requests and args.rotate:
         raise ValueError('rotating a leaf whose key the edge makes is not built: '
                          + ', '.join(sorted(requests)))
+    # The key record outlives the output folder, so the reuse check does: one
+    # inside it (or in a previous set or the rotation staging there, which are
+    # inside it too) would go with the folder. Links are resolved first.
+    if args.key_record is not None and args.key_record.resolve().is_relative_to(args.out.resolve()):
+        raise ValueError('--key-record ' + str(args.key_record) + ' is inside --out ' + str(args.out)
+                         + ': the key record must live outside the output folder')
     out = args.out.absolute()
     ca = args.ca_cert.absolute()
     if ca.read_text().count('-----BEGIN CERTIFICATE-----') != 1:

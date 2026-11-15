@@ -41,7 +41,8 @@
 # refused (GB-313) unless its subject is exactly CN=<the derived name>, it has no
 # extension or attribute, its key is EC P-256 and new, and it is signed with
 # SHA-256 or stronger. --key-record (FED_LEAF_KEY_RECORD) names the record of every
-# edge key signed for the peering, kept outside <out-dir>; it is required with
+# edge key signed for the peering, kept outside <out-dir> (one that resolves inside
+# it, links followed, is refused before anything is signed); it is required with
 # --request.
 #
 # Environment: FED_CA_CERT, FED_CA_KEY, FED_CA_KEY_FROM_AGE, FED_CA_KEY_AGE,
@@ -89,7 +90,7 @@ while [ $# -gt 0 ]; do
       esac
       shift 2 ;;
     --key-record) KEY_RECORD="$2"; shift 2 ;;
-    -h|--help)  sed -n '2,55p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,60p' "$0"; exit 0 ;;
     -*)         echo "unknown flag $1" >&2; exit 2 ;;
     *)          if [ -z "$AGREEMENT" ]; then AGREEMENT="$1"; else OUT="$1"; fi; shift ;;
   esac

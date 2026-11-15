@@ -405,7 +405,8 @@ one is not designed.
   ECDSA with SHA-256, or a self-signature that does not verify; and a reused key: the other
   request's, our CA's, another leaf's in the output folder or a previous set there, or one
   the key record lists. The key record holds each signed key's fingerprint, outside the
-  output folder, so the check outlives the folder being cleaned
+  output folder, so the check outlives the folder being cleaned; a `--key-record` that resolves
+  inside the output folder, links followed, is refused before anything is signed
   (`ops/federation/standup/peering_leaf_material.py`, tests in
   `ops/federation/standup/test_peering_leaf_requests.py` with real OpenSSL). Not built: the
   edge making its keys and requests in phase 2, goatbuilder passing the imported requests to
