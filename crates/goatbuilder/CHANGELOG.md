@@ -10,6 +10,75 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Added: `goatbuilder explain release` and `explain fastlane` answer for each of their steps
+
+The phase catalog now describes `release`'s eight numbered steps (preflight,
+tag, dev pin, dev deploy, dev rows, preprod, soak, prod) and `fastlane`'s
+eight (component, graduation set, digest, dry run, move fleet, record the
+debt, land, deploy). `goatbuilder explain release` lists them, and
+`goatbuilder explain release 6` (or `explain release preprod`) says what the
+step does, why, what it changes, how to tell it worked, the command by hand
+and what to do when it failed, as `explain` already did for `standup`,
+`join-node`, `deploy` and `federate`. A test holds each verb's entries to the
+step lines it prints, so a new step cannot ship without one. Nothing a run
+does changes.
+
+#### Fixed: join-node reads goatnet_founder as Ansible does
+
+`join-node` decided whether a site joins a goatnet by matching the line
+`goatnet_founder: false` in the site group's vars.yml. So `False`, `"false"`,
+`no` and `off` read as a founder, and a `goatnet_founder` nested under another
+key read as the site's own. It now reads the top-level key with Ansible's
+booleans, as site-bootstrap does (`goatnet_founder | default(true) | bool`).
+
+#### Fixed: a joiner's join-node needs no OWNER_EMAIL
+
+A joiner's phase 13 passed `-e bootstrap_owner_email="$OWNER_EMAIL"` to its
+bootstrap passes. A joiner's account arrives from the founder, so the value
+was never used, but a run with no `OWNER_EMAIL` set stopped at phase 13
+(unbound variable). A joiner's phase 13 no longer passes it. A founder site's
+join-node still does.
+
+#### Changed: join-node's phase 1 checks the node answers and goes on, so one run goes from phase 1 to 15
+
+Phase 1 of `goatbuilder join-node` used to be a person's step, "reach the box
+on the site LAN". Every run stopped there and went on only with `--from 2`.
+It is now a check: the node answers over SSH at `--address`, or a phone answers
+over USB (`adb get-state`). The run goes on to phase 15 with no operator step.
+
+A box that refuses the login still counts as answering. Before phase 2 seeds
+your key, a box that takes only its first-login password refuses every batch
+login, and phase 2 proves the login.
+
+A box that does not answer stops the run at phase 1 with GB-314 and the step
+for a person. Resume with `--from 1`. So does a Jetson's USB bridge address,
+192.168.55.0/24: its sshd answers, but it is reachable only over a direct
+USB-C cable. Pass the box's real LAN address.
+
+#### Fixed: join-node's phase 15 runs the acceptance rows against the site's end state
+
+Phase 15 ran `run-acceptance.py` with no `--endstate`. A row for a service the
+site declares absent read FAIL and stopped the run. Phase 15 now runs the same
+acceptance line as standup: it writes the site's end-state model to the state
+directory and passes it with `--endstate`, so such a row reads N/A.
+
+<!-- END generated: changelog unreleased -->
+
+## 0.7.2 — 2026-11-15
+
+What changed since 0.7.1, the previous release. `goatbuilder federate rotate
+<partner> ipsec-leaf` and `ipsec-ca` rotate an `ipsec-fips` peering's IPsec
+leaf: the edge role switches to the staged leaf and puts the old pair back if
+the link does not come up. `goatbuilder grow` hands a goatlite over to the full
+preset in the checkout, never on a host.
+
+One behaviour change: the edge role sets `make_before_break = yes` on every
+IPsec peering edge, so the first apply after this release restarts strongSwan
+once on each ipsec-fips edge and drops that peering's link briefly. Apply both
+sides of a peering in one window.
+
+### For someone deploying
+
 #### Fixed: a failed phase prints its fix once, and an incomplete acceptance names the command that resumes it
 
 A failed phase's `interpreted` row printed the error catalog's fix twice:
@@ -62,45 +131,6 @@ fails or refuses stops it with the renderer's own words (GB-258). Run again
 after it finished, it says the goatlite was already handed over. It is step 3 of
 the growth design; the other steps are not built, and it has not run on
 hardware.
-
-#### Fixed: join-node reads goatnet_founder as Ansible does
-
-`join-node` decided whether a site joins a goatnet by matching the line
-`goatnet_founder: false` in the site group's vars.yml. So `False`, `"false"`,
-`no` and `off` read as a founder, and a `goatnet_founder` nested under another
-key read as the site's own. It now reads the top-level key with Ansible's
-booleans, as site-bootstrap does (`goatnet_founder | default(true) | bool`).
-
-#### Fixed: a joiner's join-node needs no OWNER_EMAIL
-
-A joiner's phase 13 passed `-e bootstrap_owner_email="$OWNER_EMAIL"` to its
-bootstrap passes. A joiner's account arrives from the founder, so the value
-was never used, but a run with no `OWNER_EMAIL` set stopped at phase 13
-(unbound variable). A joiner's phase 13 no longer passes it. A founder site's
-join-node still does.
-
-#### Changed: join-node's phase 1 checks the node answers and goes on, so one run goes from phase 1 to 15
-
-Phase 1 of `goatbuilder join-node` used to be a person's step, "reach the box
-on the site LAN". Every run stopped there and went on only with `--from 2`.
-It is now a check: the node answers over SSH at `--address`, or a phone answers
-over USB (`adb get-state`). The run goes on to phase 15 with no operator step.
-
-A box that refuses the login still counts as answering. Before phase 2 seeds
-your key, a box that takes only its first-login password refuses every batch
-login, and phase 2 proves the login.
-
-A box that does not answer stops the run at phase 1 with GB-314 and the step
-for a person. Resume with `--from 1`. So does a Jetson's USB bridge address,
-192.168.55.0/24: its sshd answers, but it is reachable only over a direct
-USB-C cable. Pass the box's real LAN address.
-
-#### Fixed: join-node's phase 15 runs the acceptance rows against the site's end state
-
-Phase 15 ran `run-acceptance.py` with no `--endstate`. A row for a service the
-site declares absent read FAIL and stopped the run. Phase 15 now runs the same
-acceptance line as standup: it writes the site's end-state model to the state
-directory and passes it with `--endstate`, so such a row reads N/A.
 
 #### Added: goat-peering-edge rotates an IPsec peering's leaf from staged material, and puts the old one back if the link does not come up
 
@@ -155,7 +185,9 @@ published binaries (`crates/goatbuilder/tests/upgrade/releases.sha256`), and
 v0.7.1's configuration files are kept for gate row A2 with the outcome its
 published binary gives each.
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.1 — 2026-11-15
 

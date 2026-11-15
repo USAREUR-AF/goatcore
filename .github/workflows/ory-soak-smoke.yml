@@ -62,18 +62,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+permissions:
+  contents: read
+
 jobs:
   build-postgres-spock-image:
     name: build postgres-spock-test:contribs
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build postgres-spock-test:contribs
         run: docker build -t postgres-spock-test:contribs ops/postgres/spock
       - name: Save image to artifact
         run: docker save postgres-spock-test:contribs -o /tmp/postgres-spock-test.tar
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: postgres-spock-test
           path: /tmp/postgres-spock-test.tar
@@ -85,8 +88,8 @@ jobs:
     needs: build-postgres-spock-image
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4.3.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: postgres-spock-test
           path: /tmp
@@ -115,7 +118,7 @@ jobs:
           TICKS=$(python3 ops/ansible/roles/ory/tests/soak/summarize.py --json "$EVIDENCE" | python3 -c "import sys,json; print(json.load(sys.stdin)['ticks'])")
           echo "ticks: $TICKS"
           [ "$TICKS" -ge 3 ] || { echo "::error::soak produced fewer than 3 ticks — likely a driver regression"; exit 1; }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: single-node-soak-evidence
@@ -127,8 +130,8 @@ jobs:
     needs: build-postgres-spock-image
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4.3.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: postgres-spock-test
           path: /tmp
@@ -157,7 +160,7 @@ jobs:
           TICKS=$(python3 ops/ansible/roles/ory/tests/soak/summarize.py --json "$EVIDENCE" | python3 -c "import sys,json; print(json.load(sys.stdin)['ticks'])")
           echo "ticks: $TICKS"
           [ "$TICKS" -ge 3 ] || { echo "::error::soak produced fewer than 3 ticks — likely a driver regression"; exit 1; }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: twonode-spock-soak-evidence

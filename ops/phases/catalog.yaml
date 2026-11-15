@@ -806,3 +806,227 @@ phases:
   read: docs/operations/goatbuilder-first-run.md#a-deploy-with-its-proof
   failed_because: a host's newest row names another ref, or the deploy did not finish
   then: read that host's ledger; deploy again, or roll back
+- verb: release
+  phase: 1
+  id: preflight
+  kind: GATE
+  title: the nominator, the candidate tag and the secrets
+  what: 'Prints the component, its image and its three rungs, then checks that this checkout can run the candidate: the nominator holds admin on the repository (on the overlay repository, from an assembled tree), the repository runs rc-validate.yml, and the candidate tag is chosen (the next free rc number, unless --rc or --tag names one). Before anything is tagged it derives, for every rung the run deploys to, the variables the component''s play templates from this environment, and refuses when one is not set.'
+  why: A release candidate is attributed to an admin, as rc-validate.yml enforces, and a tag cut on a repository that does not validate it, or for a deploy that will refuse for a missing secret, is a tag left behind for nothing.
+  changes: Nothing; it only reads (git, the GitHub API, the pins and the plays).
+  verify: it prints the nominator's role and `candidate tag <image>/vX.Y.Z-rc.N on main <sha>`, and a `secrets:` line per rung with every variable set
+  runs: gh (api user, the collaborator permission, the rc-validate.yml workflow); goatbuilder deploy's plan for each rung's secrets
+  by_hand: gh api repos/<owner>/<repo>/collaborators/<you>/permission -q .role_name, then goatbuilder deploy --component <component> --env <rung> --dry-run for each rung
+  read: docs/design/release-candidate-validation.md#who-may-nominate
+  failed_because: the nominator is not an admin, the repository does not run rc-validate.yml, or a variable the play templates is not set
+  then: run as an admin of the repository it names, from a checkout whose origin is the primary repository; for secrets, set the variables it names (the note under the refusal says where their references live) and run the same command again
+- verb: release
+  phase: 2
+  id: tag
+  kind: T
+  title: the candidate tag on main, its checks and its image
+  what: Cuts the annotated tag <image>/vX.Y.Z-rc.N on origin/main and pushes it, or validates an existing tag as it is (--tag). It then waits for rc-validate.yml and the image workflow on the tag, and resolves the image's digest under the image namespace.
+  why: The tag is what decides that the expensive tests run (ADR 1173), and the candidate is pinned by digest, so the same bytes are what every rung runs.
+  changes: 'On origin: the tag. Nothing on a goatnet.'
+  verify: '`rc-validate.yml: success` and the image workflow''s `success`, then `candidate ref ghcr.io/…:<tag>@sha256:…`'
+  runs: git (tag, push), gh (run list, run watch, run view), ops/scripts/image-digest
+  by_hand: git tag -a <image>/vX.Y.Z-rc.N origin/main -m '<message>' && git push origin <tag>; gh run watch <run> --exit-status; ops/scripts/image-digest <namespace>/<image>:<tag>
+  read: docs/design/release-candidate-validation.md#the-tag
+  failed_because: rc-validate deleted the tag (the pusher is not maintain or admin, or the commit is not on main), the image build failed, or no digest was found
+  then: read the workflow run it names; fix on main and cut the next rc number
+- verb: release
+  phase: 3
+  id: dev-pin
+  kind: T
+  title: the candidate on the dev rung, as a landed pin
+  what: In a scratch worktree of origin/main, declares the candidate as the dev rung's deviation for the component, reconciles records the pin makes stale, regenerates the pins and intents, re-signs every intent whose body changed, runs the gates (promote check, pins --check), and lands the change as a pull request.
+  why: 'A goatnet runs what its pins say, from main: the candidate reaches dev only as a declared, signed, reviewed deviation, never by a deploy of an unpinned ref.'
+  changes: 'On main, through a merged pull request: ops/pins/fleet-pins.yaml (the dev deviation), the regenerated group_vars and intents, and their signatures.'
+  verify: '`chore(pins): <dev> runs release candidate <tag>` lands; `goatbuilder pins --check` passes'
+  runs: goatbuilder pins (regenerate, --check), ops/enrollment intent-sign, goatbuilder promote check, ops/scripts/pr-land.sh
+  by_hand: goatbuilder release <component> --tag <tag> --from dev --ack '<name>' (from this step on)
+  read: docs/design/release-candidate-validation.md#running-a-candidate-step-by-step
+  failed_because: a gate refused (pins drift, a record check, a missing CA key) or the pull request did not land
+  then: read the gate's line; for a CA key, run where the goatnet's root key is; then resume with --from dev
+- verb: release
+  phase: 4
+  id: dev-deploy
+  kind: T
+  title: deploy the candidate to the dev rung
+  what: Deploys the component to the dev rung with this binary's push converger, from the checkout now at the merged pin, and reads every host's ledger.
+  why: The live rows that follow test the candidate only once every host of the rung runs it.
+  changes: 'On the dev rung''s hosts: the component, at the candidate''s ref; the deploy ledger rows.'
+  verify: the deploy's verify step names the candidate's ref on every host
+  runs: goatbuilder deploy
+  by_hand: goatbuilder deploy --component <component> --env <dev>
+  read: docs/design/goatbuilder.md
+  failed_because: a host did not converge or is unreachable
+  then: read `goatbuilder explain deploy` for the failed step; resume with --from dev once the host is back
+- verb: release
+  phase: 5
+  id: dev-rows
+  kind: GATE
+  title: the live acceptance rows on the dev rung
+  what: Maps what the candidate changed to the live acceptance rows it affects (ops/validation/affected-flows.py, from flow-map.yaml) and runs them against the dev rung (ops/validation/run-acceptance.py), keeping the evidence file under ops/validation/evidence/. No row mapped means the evidence is the cheap suites only, and it says so.
+  why: The candidate goes to preprod only on evidence from a live goatnet, for the flows its change touches.
+  changes: 'In this checkout: the evidence file. Nothing on the goatnet beyond what the rows exercise.'
+  verify: every row PASS, or `no live rows are mapped`
+  runs: ops/validation/affected-flows.py, ops/validation/run-acceptance.py
+  by_hand: python3 ops/validation/affected-flows.py --component <component> --head <tag> --json, then python3 ops/validation/run-acceptance.py for the rows it names
+  read: docs/design/release-candidate-validation.md#which-flows-a-change-affects
+  failed_because: 'a live row FAILED on dev: the candidate is dead'
+  then: fix on main and cut the next rc number (delete the tag); resume with --from rows only to re-run the rows
+- verb: release
+  phase: 6
+  id: preprod
+  kind: T
+  title: the candidate record, the preprod rung, its deploy and rows
+  what: Opens the candidate record with the dev evidence (or reuses the open record when preprod already runs the tag), abandons other open ladder candidates it supersedes, declares the preprod deviation, regenerates, re-signs and lands it; then deploys to preprod, runs the affected live rows there, records the convergence evidence, runs promote check and lands the evidence.
+  why: Preprod is the rung the soak runs on; the record carries the evidence graduation reads, and one record per ref keeps promote check honest.
+  changes: 'On main, through merged pull requests: the record under ops/release/records/<component>/, the preprod deviation, regenerated pins and intents, the evidence. On the preprod rung: the component at the candidate''s ref.'
+  verify: both pull requests land; the preprod rows PASS; `goatbuilder promote check` passes
+  runs: goatbuilder promote (open, abandon, check), goatbuilder pins, ops/enrollment intent-sign, ops/scripts/pr-land.sh, goatbuilder deploy, ops/validation/run-acceptance.py
+  by_hand: goatbuilder release <component> --tag <tag> --from preprod --ack '<name>' (or --from preprod-rows when preprod already runs the tag)
+  read: docs/design/release-candidate-validation.md#evidence-and-the-ladder
+  failed_because: a gate refused, a pull request did not land, a host did not converge, or a live row FAILED on preprod after the dev PASS
+  then: for a failed row, leave the candidate open and investigate (graduation refuses without convergence evidence); otherwise resume with --from preprod-rows
+- verb: release
+  phase: 7
+  id: soak
+  kind: MANUAL
+  title: 'the soak: the prod command, and when it may run'
+  what: Prints that the candidate is the preprod candidate, the soak's minimum days, and the exact command that graduates it after the soak with an operator's ack.
+  why: Production waits a declared soak on preprod; graduation is an operator's act, never automatic (ADR 1177).
+  changes: Nothing.
+  verify: it prints `goatbuilder release <component> --tag <tag> --from prod --ack '<name>'`
+  runs: 'nothing it starts: it reads the soak minimum from the release records'' policy'
+  by_hand: goatbuilder promote status shows the candidate and its soak
+  read: docs/design/release-graduation.md
+  failed_because: nothing fails here
+  then: after the soak, an operator runs the printed command
+- verb: release
+  phase: 8
+  id: prod
+  kind: T
+  title: graduate, fold into fleet:, deploy prod, read every rung
+  what: 'With --from prod: graduates the record (refused until the soak gate is met), folds the candidate into fleet: and deletes the rung deviations that carried it, abandons hotfix records it supersedes, regenerates, re-signs and lands it; deploys prod, then reads every other rung''s ledger (a verify-only deploy) so every rung is shown to run the fleet value.'
+  why: One fleet value on every rung is the end state the ladder exists to reach; reading each ledger proves it rather than assuming it.
+  changes: 'On main, through a merged pull request: the record graduated, fleet: moved, the deviations deleted, pins and intents regenerated and re-signed. On the prod rung: the component at the fleet value.'
+  verify: '`chore(release): <tag> graduates` lands; prod''s deploy and every rung''s ledger read name the fleet value'
+  runs: goatbuilder promote (graduate, abandon), goatbuilder pins, ops/enrollment intent-sign, ops/scripts/pr-land.sh, goatbuilder deploy (and --verify-only for every rung)
+  by_hand: goatbuilder release <component> --tag <tag> --from prod --ack '<name>'
+  read: docs/design/release-graduation.md
+  failed_because: graduation refused (the soak or a gate), the pull request did not land, or a rung's ledger does not name the fleet value
+  then: read the refusal; for a ledger, deploy that rung with goatbuilder deploy --component <component> --env <rung>
+- verb: fastlane
+  phase: 1
+  id: component
+  kind: GATE
+  title: the component, its role, its play, and a pin revert undoes it
+  what: 'Reads the component''s declaration in the pins: refuses an unknown component (naming the known ones), one with no Ansible role under its ledger name, one with no deploy playbook, and one a pin revert cannot undo (ADR 1127). With deploys on, it refuses a goatnet the component is on that declares the pull converger.'
+  why: Fastlane skips the ladder, so it is allowed only where flipping the pin back is a complete rollback, and only through the component's own deploy path.
+  changes: Nothing; it only reads ops/pins/fleet-pins.yaml and ops/ansible/.
+  verify: it prints `current fleet ref:` and `ledger component:`
+  runs: 'nothing it starts: it reads ops/pins/fleet-pins.yaml and ops/ansible/roles/'
+  by_hand: goatbuilder preflight <component> --env <env> shows the component's rollout facts
+  read: docs/design/fastlane.md#what-fastlane-is
+  failed_because: the component is unknown, has no role or play, or is not cleanly reversible
+  then: use the ladder (goatbuilder release) for a component a pin revert cannot undo
+- verb: fastlane
+  phase: 2
+  id: graduation-set
+  kind: GATE
+  title: not a member of an open graduation set
+  what: 'Refuses a component that belongs to an open graduation set: the set''s members move together (ADR 1125), and fastlane moves one component.'
+  why: Moving one member of a set alone breaks the compatibility the set exists to keep.
+  changes: Nothing.
+  verify: it prints `not in an open set`
+  runs: 'nothing it starts: it reads the graduation sets'
+  by_hand: goatbuilder promote status
+  read: docs/design/release-graduation.md
+  failed_because: the component is in an open graduation set
+  then: graduate the set normally
+- verb: fastlane
+  phase: 3
+  id: digest
+  kind: T
+  title: the image digest the registry holds for the tag
+  what: Derives the image from the current fleet ref and resolves the tag's digest through the GitHub packages API (every page), under the owner goatbuilder.yaml declares; a ref given with a digest must be the digest the registry holds. It refuses a ref that is already the fleet value.
+  why: The new fleet value is pinned by digest, and only to an image CI built from a merged commit.
+  changes: Nothing.
+  verify: 'it prints the digest and `new fleet ref: ghcr.io/…:<tag>@sha256:…`'
+  runs: gh api (the organisation's container package versions)
+  by_hand: gh api --paginate '/orgs/<owner>/packages/container/<image>/versions?per_page=100' --jq '.[]|select(.metadata.container.tags|index("<tag>"))|.name'
+  read: docs/design/fastlane.md#the-floor-it-does-not-skip
+  failed_because: gh is missing, the registry cannot be read, the tag is not built, or the digest given is not the registry's
+  then: check that CI built the tag from a merged commit, and that this account can read the organisation's packages
+- verb: fastlane
+  phase: 4
+  id: dry-run
+  kind: GATE
+  title: a dry run stops here, before any change
+  what: 'With --dry-run the run stops here and prints what a real run would do: the fleet value it would set, the deviations it would clear and the ones it would keep (absent: true is topology), and the play it would deploy with. A real run passes through.'
+  why: Every check that reads is done before anything is written, so a dry run shows a complete, refusal-free plan or the refusal itself.
+  changes: Nothing.
+  verify: it prints `would set`, `would clear deviations` and `would deploy via`
+  runs: nothing it starts
+  by_hand: goatbuilder fastlane <component> --ref <ref> --reason '<why>' --ack '<name>' --dry-run
+  read: docs/design/fastlane.md#absent-true-survives--it-is-topology-not-skew
+  failed_because: nothing fails here
+  then: read the plan; run without --dry-run to ship it
+- verb: fastlane
+  phase: 5
+  id: move-fleet
+  kind: T
+  title: 'fleet: moves to the new ref; pins and intents regenerated and re-signed'
+  what: 'Sets the component''s fleet value to the new ref and clears its deviations except absent: true, recording the reason and the ack; regenerates the pins and intents; and re-signs every goatnet intent whose body changed with that goatnet''s root key.'
+  why: Fastlane moves the value of record, not a deviation, so every goatnet runs the new ref and a pin revert restores the old one (fastlane.md, why fleet:).
+  changes: 'In this checkout: ops/pins/fleet-pins.yaml, the regenerated group_vars and intents, and their signatures.'
+  verify: '`wrote …` for each regenerated file and a signature for each changed intent'
+  runs: goatbuilder pins (regenerate), ops/enrollment intent-sign
+  by_hand: edit components.<component>.fleet in ops/pins/fleet-pins.yaml, then goatbuilder pins; cd ops/enrollment && go run ./cmd/intent-sign --intent <intent.json> --root-key <key>
+  read: docs/design/fastlane.md#why-fleet-and-not-a-deviation
+  failed_because: a goatnet's root key is not on this machine
+  then: run where that goatnet's root key is (the refusal names the path it looked at)
+- verb: fastlane
+  phase: 6
+  id: record-debt
+  kind: T
+  title: the hotfix record that owes a backfill; candidates it overtook abandoned
+  what: Writes a hotfix record for the new ref, owing a backfill until it graduates normally, and abandons every open candidate record for the component whose ref this fastlane superseded.
+  why: Skipping the ladder is a debt written as data, not a memory; a candidate whose ref no longer runs anywhere is closed with the reason.
+  changes: 'In this checkout: the hotfix record and the abandoned records under ops/release/records/.'
+  verify: '`hotfix record written` and an abandon line for each superseded record (or `none were open`)'
+  runs: goatbuilder promote (hotfix, abandon)
+  by_hand: goatbuilder promote hotfix <component> --ref <ref> --reason '<why>'; goatbuilder promote abandon <record> --reason '<why>' --superseded-by <ref>
+  read: docs/design/fastlane.md#debt-is-written-as-data
+  failed_because: an abandon was refused
+  then: read the refusal; it names the record
+- verb: fastlane
+  phase: 7
+  id: land
+  kind: GATE
+  title: the gates that still apply, then the pin PR lands
+  what: Runs the gates that still apply (promote check, pins --check), then lands the pins, group_vars, intents and records as one pull request on a chore/fastlane branch, and returns this checkout to main at the merge.
+  why: 'The ladder is skipped, the gates are not: the change lands on main through review like any other, and the deploys run from main.'
+  changes: 'On main, through a merged pull request: the pins, group_vars, intents and records the steps before wrote.'
+  verify: the pull request lands and the checkout is back on main at origin/main
+  runs: goatbuilder promote check, goatbuilder pins --check, ops/scripts/pr-land.sh
+  by_hand: goatbuilder promote check && goatbuilder pins --check; ops/scripts/pr-land.sh --worktree . --branch chore/fastlane-<component>-<tag> --title '<title>' --body-file <file> --paths ops/pins/fleet-pins.yaml ops/ansible/group_vars ops/consistency/intent ops/release/records
+  read: docs/design/fastlane.md#the-floor-it-does-not-skip
+  failed_because: a gate failed, the pins were already current, the pull request did not land, or the checkout could not return to main
+  then: read the gate's line; when the pin landed but the checkout did not return, fast-forward it and deploy each goatnet with goatbuilder deploy
+- verb: fastlane
+  phase: 8
+  id: deploy
+  kind: A
+  title: deploy to every goatnet the component belongs on
+  what: Deploys the component to every goatnet it belongs on with this binary's push converger, reading each host's ledger, then prints the result. With --no-deploy it stops after the landing and prints the deploy command per goatnet.
+  why: A fastlane is one command from a merged commit to every goatnet; the ledger read is the proof each one runs it.
+  changes: 'On every goatnet the component belongs on: the component at the new ref; the deploy ledger rows.'
+  verify: '`<component> is <tag> on every goatnet, ledger-verified`, or `NOT converged on:` naming each goatnet'
+  runs: goatbuilder deploy
+  by_hand: goatbuilder deploy --component <component> --env <goatnet> for each goatnet
+  read: docs/design/fastlane.md#what-fastlane-is
+  failed_because: a goatnet did not converge or is unreachable
+  then: 'the pin is in main: re-run goatbuilder deploy for that goatnet once its hosts are reachable, or goatbuilder rollback <component>'
