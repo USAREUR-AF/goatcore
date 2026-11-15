@@ -303,9 +303,10 @@ sets `make_before_break = yes` in its charon drop-in on every IPsec peering
 edge, instead of leaving it to the packaged strongSwan's default
 (`peering_edge_make_before_break`). The first apply after this change restarts
 strongSwan once on each ipsec-fips edge, which drops that peering's link
-briefly: apply both sides of a peering in one window. A scheduled IKE rekey due
-within the confirm window is done before the switch, so it cannot pass the
-confirm on the old leaf. `peering_edge_remote_ca_next_path` accepts a
+briefly: apply both sides of a peering in one window. The rotation always
+rekeys the IKE SA before the re-authentication, so no rekey of either side, which
+keeps the old authentication, can pass the confirm on the old leaf, and it refuses
+an IKE rekey interval too short to hold the confirm. `peering_edge_remote_ca_next_path` accepts a
 partner's new CA beside the current one during their rotation. It is opt-in,
 and without a rotation id nothing changes. `goatbuilder federate rotate` does
 not drive it yet.

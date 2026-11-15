@@ -2,6 +2,30 @@
 # The switch of a credential rotation (K6, docs/design/federation-key-rotation.md
 # §8), included by rotate.yml when this is not the retire step. Never run on retire.
 
+
+# The confirm must fit inside one IKE rekey interval, or a scheduled rekey of either
+# side could fall in it after the rekey this rotation makes first. Checked before
+# anything moves. Durations are strongSwan's: a number with s, m, h or d.
+- name: peering-edge | rotation | the IKE rekey interval leaves room for the confirm
+  vars:
+    _pe_mult: { s: 1, m: 60, h: 3600, d: 86400 }
+    _pe_rk: "{{ peering_edge_ike_rekey_time | string | trim }}"
+    _pe_rd: "{{ peering_edge_ike_rand_time | string | trim }}"
+    _pe_rk_s: "{{ (_pe_rk | regex_replace('[smhd]$', '') | int) * _pe_mult[_pe_rk[-1:] if _pe_rk[-1:] in 'smhd' else 's'] }}"
+    _pe_rd_s: "{{ (_pe_rd | regex_replace('[smhd]$', '') | int) * _pe_mult[_pe_rd[-1:] if _pe_rd[-1:] in 'smhd' else 's'] }}"
+    _pe_need: "{{ (peering_edge_rotation_confirm_seconds | int) + (peering_edge_rotation_rekey_margin_seconds | int) }}"
+  ansible.builtin.assert:
+    that:
+      - (_pe_rk_s | int) - (_pe_rd_s | int) > (_pe_need | int)
+    fail_msg: >-
+      goat-peering-edge refuses the rotation on {{ inventory_hostname }}: peering_edge_ike_rekey_time
+      ({{ _pe_rk }}) minus peering_edge_ike_rand_time ({{ _pe_rd }}) is {{ (_pe_rk_s | int) - (_pe_rd_s | int) }} s,
+      not more than the confirm window and its margin ({{ _pe_need }} s:
+      peering_edge_rotation_confirm_seconds plus peering_edge_rotation_rekey_margin_seconds), so a
+      scheduled IKE rekey could fall in the confirm. Lengthen the rekey interval or shorten the
+      confirm. Nothing was moved.
+    quiet: true
+
 - name: peering-edge | rotation | where things stand
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -186,32 +210,27 @@
 # With make-before-break the old IKE SA stays ESTABLISHED while the new one
 # negotiates, so the confirm counts only an SA whose unique id was not up before
 # the re-authentication: the SA the new leaf authenticated.
-# A scheduled IKE rekey makes a new IKE SA, with a new unique id and a fresh
-# established time, but keeps the old authentication (strongSwan's documented
-# behaviour; not measured here). One due within the confirm window could pass the
-# confirm on the old leaf, so it is done now, before the ids are noted: a plain
-# rekey, which restarts the rekey timer.
-- name: peering-edge | rotation | seconds until the IKE SA's scheduled rekey
+# An IKE rekey makes a new IKE SA, with a new unique id and a fresh established
+# time, but keeps the old authentication. Each side schedules its own (rekey_time
+# minus a random part up to rand_time), so one the partner starts can land in the
+# confirm window while ours is hours away, and pass the confirm on the old leaf.
+# So the rotation always rekeys first (a plain rekey, no re-authentication) and
+# waits for it: a completed IKE rekey restarts both sides' rekey timers, and the
+# check at the top of this file leaves the confirm window inside that interval.
+# This is strongSwan's documented behaviour, not measured here.
+- name: peering-edge | rotation | the IKE SAs up before the rekey
   ansible.builtin.shell:
     cmd: >-
       swanctl --list-sas --ike {{ peering_edge_name | quote }} |
-      awk 'match($0, /rekeying in [0-9]+s/) { v = substr($0, RSTART + 12, RLENGTH - 13) + 0; if (m == "" || v < m) m = v }
-      END { print m }'
-  register: _pe_rot_rekey_in
+      awk -v n={{ peering_edge_name | quote }} 'index($0, n ": #") == 1 { split(substr($0, length(n) + 4), a, ","); printf " %s", a[1] + 0 }'
+  register: _pe_rot_prerekey_ids
   changed_when: false
 
-- name: peering-edge | rotation | rekey now when a scheduled rekey falls in the confirm window
-  when:
-    - _pe_rot_rekey_in.stdout | trim | length > 0
-    - (_pe_rot_rekey_in.stdout | trim | int) < ((peering_edge_rotation_confirm_seconds | int) + (peering_edge_rotation_rekey_margin_seconds | int))
+# With no IKE SA up there is nothing to rekey, and no rekey of either side can
+# come before the re-authentication makes the first one.
+- name: peering-edge | rotation | rekey the IKE SA before the switch
+  when: _pe_rot_prerekey_ids.stdout | trim | length > 0
   block:
-    - name: peering-edge | rotation | the IKE SAs up before the rekey
-      ansible.builtin.shell:
-        cmd: >-
-          swanctl --list-sas --ike {{ peering_edge_name | quote }} |
-          awk -v n={{ peering_edge_name | quote }} 'index($0, n ": #") == 1 { split(substr($0, length(n) + 4), a, ","); printf " %s", a[1] + 0 }'
-      register: _pe_rot_prerekey_ids
-      changed_when: false
     - name: peering-edge | rotation | rekey the IKE SA (no re-authentication)
       ansible.builtin.command:
         argv: [swanctl, --rekey, --ike, "{{ peering_edge_name }}"]
