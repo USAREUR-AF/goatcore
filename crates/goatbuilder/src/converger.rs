@@ -474,6 +474,42 @@ mod tests {
         assert!(refuse_pull_agent(none.path(), "dev").is_ok());
     }
 
+    /// The real-host verbs take their converger from the environment's
+    /// declaration: push-ansible is the one implementation and admits; an
+    /// environment declaring pull-agent anywhere gets the pull converger, which
+    /// refuses with GB-307 and the same words the verbs and doctor print, a
+    /// verify-only deploy (which converges nothing) excepted. A checkout with no
+    /// config, or no such environment, is pushed to as before.
+    #[test]
+    fn the_host_converger_follows_the_declaration_and_pull_refuses() {
+        let push = repo_with("push-ansible");
+        let c = for_environment(push.path(), "dev");
+        assert_eq!(c.kind(), "push-ansible");
+        assert!(c.admit().is_ok());
+        let pull = repo_with("pull-agent");
+        let c = for_environment(pull.path(), "dev");
+        assert_eq!(c.kind(), "pull-agent");
+        let e = c.admit().unwrap_err();
+        let coded = e.downcast_ref::<goat_errors::Coded>().expect("a coded refusal");
+        assert_eq!(coded.code, PULL_NOT_BUILT);
+        assert_eq!(coded.message, pull_agent_refusal("dev", &["environment dev".to_string()]));
+        // The deploy entry refuses through the trait before any step, a dry run too.
+        for dry_run in [false, true] {
+            let o = crate::push::Options { component: "portal", goatnet: "dev", only_group: None, dry_run, verify_only: false, ack: "" };
+            let e = c.deploy(pull.path(), &o).unwrap_err();
+            assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some(PULL_NOT_BUILT), "{e:#}");
+        }
+        assert_eq!(for_environment(pull.path(), "other").kind(), "push-ansible");
+        let none = tempfile::tempdir().unwrap();
+        assert_eq!(for_environment(none.path(), "dev").kind(), "push-ansible");
+        // The same choice from a parsed environment, as doctor makes it.
+        let env = env_of(serde_json::json!({"name": "dev", "converger": "push-ansible", "sites": [{"name": "bravo", "classes": {"core": {}, "pod": {"converger": "pull-agent"}}}]}));
+        let c = for_config(&env);
+        assert_eq!(c.kind(), "pull-agent");
+        let e = c.admit().unwrap_err();
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.message.clone()), Some(pull_agent_refusal("dev", &["site bravo class pod".to_string()])));
+    }
+
     /// Mock records carry ISO 8601 UTC like every other record (the walkthrough
     /// saw `epoch+20758d43085s` beside `2026-10-20T10:00:00Z` in `history`).
     #[test]
