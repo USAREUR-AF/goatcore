@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed.** The per-step timing file and its summary line are built for `standup`, `join-node` and `teardown`, each row with its cause; standup records phase 11 as a row of its own and its summary reads the founder run's numbers from the file (below). Everything else on this page is designed and not built. No run on hardware has been measured against it |
-| Proves | Gate rows C1 (a founder site in 60 minutes or less, a node in 15, a burn-down in 15) and C2 (tutorials 2 and 3 on real machines) of the goatbuilder 1.0 gate |
+| Status | **Designed.** The per-step timing file and its summary line are built for `standup`, `join-node` and `teardown`, each row with its cause; standup records phase 11 as a row of its own and its summary reads the founder run's numbers from the file (below). The row C3 procedure ("`status` on a standing goatnet", below) uses only built verbs and a built script. Everything else on this page is designed and not built. No run on hardware has been measured against it |
+| Proves | Gate rows C1 (a founder site in 60 minutes or less, a node in 15, a burn-down in 15) C2 (tutorials 2 and 3 on real machines) and C3 (`status` agrees with `verify` and `diff` on a standing goatnet) of the goatbuilder 1.0 gate |
 | Design | [goatbuilder-speed.md](goatbuilder-speed.md) (the targets and the modelled budget) · [goatnet-tutorials.md](goatnet-tutorials.md) (the tutorials and their checkpoints) · [goatnet-standup.md](../operations/goatnet-standup.md) (the prerequisites and the phases) |
 
 A timed run is worth something only if a second person can repeat it and get a
@@ -208,6 +208,56 @@ two people, or that the counterparty's side works from the published text
 alone. Accepting it for row C2 is an operator decision, recorded in the gate
 row as "both goatnets run by one party". Without that decision, it is a
 rehearsal.
+
+## `status` on a standing goatnet (row C3)
+
+Gate row C3 asks that `status`, `diff` and `verify` give the same verdict for
+every machine of a standing goatnet. It does not ask that the goatnet is
+converged: a goatnet with drift or unreachable machines is a valid
+measurement. The three verbs only read. No play runs and nothing is written on
+a host. This is the shortest of the operator's runs, about fifteen minutes.
+
+**Before the run.** A release binary, the goatnet's checkout at the commit it
+deploys from, `jq` and `python3`, and the same credentials and reach `diff`
+needs. `goatbuilder doctor --env <goatnet>` prints the transport the verbs will
+use.
+
+**The run.** From the root of the checkout, run the block in
+[goatbuilder.md](goatbuilder.md), "`status` on real hosts (gate row C3)", with
+`E` set to the goatnet's key. It runs `status` and `diff` once each with
+`-o json`, then `verify` once for each component `status` names, then
+`ops/goatbuilder/c3-agreement.py` over the reports. Time each verb.
+
+| The script ends with | It means |
+|---|---|
+| exit 0, `c3: transport: …` and `c3: agree on N machine(s), M component(s): … reached R of N machine(s)` | C3 is measured for the R machines reached |
+| exit 3 and `c3: DISAGREE <host>/<component>: status …, verify …, diff …` | C3 fails. Each line is a defect in goatbuilder, filed with the three reports' rows for that machine |
+| exit 3 and `c3: status names component(s) verify was not run for: …` | The loop missed a component. Run `verify` for it and compare again |
+| any other exit | Not a measurement. Fix what it names and run the sequence again |
+
+A transport that reaches only part of the goatnet, such as a door to one site,
+leaves the other machines `unknown` under all three verbs. That is still a C3
+measurement, but only of the R machines reached.
+
+**What to keep.**
+
+| Field | Content |
+|---|---|
+| Build | the goatcore commit and the `goatbuilder --version` output |
+| Transport | `doctor`'s transport line and the script's `c3: transport:` line |
+| Reach | `reached R of N machine(s)` |
+| Result | the script's exit code and its `c3: agree` line, verbatim |
+| Times | the wall time of `status`, `diff` and each `verify` |
+| Reports | `status.json`, `diff.json` and every `verify-<component>.json` |
+
+The reports and the goatnet's key name a real deployment's hosts, so they go
+to the operator's private record. The gate row records only the version, the
+commit, the kind of transport, R of N, the number of components and the
+verdict.
+
+The same three verbs run through the binary on a stand-in transport in
+`crates/goatbuilder/tests/status_real_hosts.rs`, so the procedure can be
+rehearsed without a goatnet.
 
 ## What a measurement records
 
