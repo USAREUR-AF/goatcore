@@ -1,0 +1,4 @@
+schema: goatbuilder/v1
+preset: lite
+repo:
+  source: example-org/pasture

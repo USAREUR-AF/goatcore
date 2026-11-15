@@ -34,6 +34,7 @@ Build and ship a goat environment: declare, converge, verify — under one deplo
 - [`goatbuilder standup`](#goatbuilder-standup) — A site from nothing to verified: the standup's phases in the doctrine's order with a fail-closed gate at each end, the observability host as a parallel leg, the rescue classes and the cross-goatnet surfaces last (ADR 1183). Replaces ops/scripts/goat-standup.sh step for step. On a fixture (`--mock`) every component of every class is converged by the scripted converger and the declared → verified time is the one-hour goatnet's measure
 - [`goatbuilder teardown`](#goatbuilder-teardown) — A site from verified to nothing — standup's mirror, records kept (a burn-down appends teardown rows, never erases). On a fixture (`--mock`) it rehearses the burn-down in reverse phase order; on real hosts it prints the order and refuses to execute until each phase declares its teardown play (docs/design/goatbuilder-speed.md)
 - [`goatbuilder join-node`](#goatbuilder-join-node) — One more machine of a class at a live site, declared → converged → verified: the node-addition sequence of docs/tutorials/02-first-federated-node.md as numbered phases with its gates (reach, key, repo work first, baseline, kernel WireGuard before and after enrolment, the kernel ACL plane as the enrolment gate, the class's converge, acceptance)
+- [`goatbuilder grow`](#goatbuilder-grow) — Hand a goatlite over to the full preset (gate row G1): goatlite.yaml grown into ops/goatbuilder/goatbuilder.yaml with the same values, the generated headers taken off the files its render wrote, and goatlite.yaml removed. Shows the difference first; --dry-run stops there
 - [`goatbuilder federate`](#goatbuilder-federate) — A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step
 - [`goatbuilder pins`](#goatbuilder-pins) — ONE resolution pass with TWO renderings: every listed member's group_vars pins.yml and every listed goatnet's IntentV1 artifact, from ops/pins/fleet-pins.yaml. Replaces ops/pins/generate-pins.py byte for byte. `--check` validates, regenerates and refuses drift, an unsigned or tampered intent, and a governed pin defined outside pins.yml (exit 1)
 - [`goatbuilder promote`](#goatbuilder-promote) — Guide and observe release graduation across the goatnet ladder (ADR 1120, 1125): status, open a candidate, graduate, graduate a set, the hotfix path, review, readiness, abandon, check. Replaces ops/release/graduate.py step for step. Nothing here graduates by itself: a mutation runs only when invoked, prints what it did, and asks for --yes without a terminal (C10, ADR 1177)
@@ -254,6 +255,16 @@ One more machine of a class at a live site, declared → converged → verified:
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |
 
+## `goatbuilder grow`
+
+Hand a goatlite over to the full preset (gate row G1): goatlite.yaml grown into ops/goatbuilder/goatbuilder.yaml with the same values, the generated headers taken off the files its render wrote, and goatlite.yaml removed. Shows the difference first; --dry-run stops there
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--dry-run` | Show the full configuration's difference from goatlite.yaml and what would change; write nothing |  |
+
 ## `goatbuilder federate`
 
 A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step.
@@ -321,7 +332,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 - [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
 - [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
 - [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
-- [`goatbuilder federate rotate`](#goatbuilder-federate-rotate) — Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14) or `rotate <partner> carrier` (phases 2 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
+- [`goatbuilder federate rotate`](#goatbuilder-federate-rotate) — Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14), `rotate <partner> carrier` (phases 2 to 14), or on an ipsec-fips peering `rotate <partner> ipsec-leaf\|ipsec-ca` (phases 11 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
 - [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phases 1 and 3; another phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
 
 ## `goatbuilder federate init`
@@ -511,19 +522,21 @@ Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federa
 
 ## `goatbuilder federate rotate`
 
-Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14) or `rotate <partner> carrier` (phases 2 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
+Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14), `rotate <partner> carrier` (phases 2 to 14), or on an ipsec-fips peering `rotate <partner> ipsec-leaf|ipsec-ca` (phases 11 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
 
 **Arguments**
 
 | Argument | Description |
 |---|---|
 | `<PARTNER>` | The partner whose peering's key is replaced (the peering name, as declared) |
-| `<KEY>` | The key: leaves, carrier, transport, signing or ca. This build rotates leaves and carrier |
+| `<KEY>` | The key: leaves, carrier, ipsec-leaf, ipsec-ca, transport, signing or ca. This build rotates leaves, carrier, ipsec-leaf and ipsec-ca |
 
 **Options**
 
 | Flag | Description | Default |
 |---|---|---|
+| `--partner-holds-ipsec-ca <PARTNER_HOLDS_IPSEC_CA>` | ipsec-ca only: the partner's attestation that it placed our new IPsec CA beside its current one: the sha256 fingerprint it read back from the file it placed. goatbuilder checks the fingerprint is our staged CA's; it cannot check the partner's edge |  |
+| `--retire <RETIRE>` | ipsec-leaf or ipsec-ca: run the retire step of this rotation id, which removes the set-aside key. Only once phase 14 passed here after the switch (check the partner's on the call), and only while no other rotation is under way |  |
 | `--env <ENV>` | The environment the peering is declared on |  |
 | `--as <AS_PARTY>` | Which party we are |  |
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |

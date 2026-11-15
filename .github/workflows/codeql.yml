@@ -1,34 +1,15 @@
 name: codeql
 
 # Keep the same language categories on pull requests and main so GitHub can
-# compare every baseline configuration. Path filters avoid unrelated runs;
-# within a run, Go builds every module and Python/JavaScript read source.
+# compare every baseline configuration. No path filter: every pull request
+# and every push to main is analyzed, so every merged commit carries a
+# code-scanning result. Go builds every module and Python/JavaScript read source.
 # The separately managed Code Quality scan may also run until disabled by an admin.
 
 on:
   pull_request:
-    paths:
-      - '**.go'
-      - '**/go.mod'
-      - '**/go.sum'
-      - '**.py'
-      - '**.js'
-      - '**.jsx'
-      - '**.ts'
-      - '**.tsx'
-      - '.github/workflows/codeql.yml'
   push:
     branches: [main]
-    paths:
-      - '**.go'
-      - '**/go.mod'
-      - '**/go.sum'
-      - '**.py'
-      - '**.js'
-      - '**.jsx'
-      - '**.ts'
-      - '**.tsx'
-      - '.github/workflows/codeql.yml'
   schedule:
     # Weekly full analysis of main, so query-pack updates reach the baseline.
     - cron: '23 5 * * 1'
@@ -50,7 +31,7 @@ jobs:
       languages: ${{ steps.pick.outputs.languages }}
       go_modules: ${{ steps.pick.outputs.go_modules }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 2
       - name: Select the same languages and Go modules as main
@@ -81,15 +62,15 @@ jobs:
       matrix:
         language: ${{ fromJSON(needs.detect.outputs.languages) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         if: matrix.language == 'go'
         with:
           go-version: '1.26.11'
           cache-dependency-path: '**/go.sum'
 
-      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           languages: ${{ matrix.language }}
           # Go's extractor traces a real build; the other two read source.
@@ -117,6 +98,6 @@ jobs:
             echo "::endgroup::"
           done
 
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           category: "/language:${{ matrix.language }}"

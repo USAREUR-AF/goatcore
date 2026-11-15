@@ -203,13 +203,15 @@ pub fn run_measured_to(
         (None, cmd) => run_to(cmd, site, out),
         (Some(_), FederateCmd::Init(a)) => {
             let repo = repo.ok_or_else(|| {
-                anyhow::anyhow!("init --over-ssh reads the plays' inventory: pass -C <repository>")
+                goat_errors::coded("GB-325", "init --over-ssh reads the plays' inventory: pass -C <repository>")
             })?;
             super::measure::run_init(repo, &resolve_site(site)?, &a, measure, out)
         }
-        (Some(_), _) => Err(anyhow::anyhow!(
-            "--over-ssh and its host flags apply to `goatbuilder federate init` only"
-        )),
+        (Some(_), _) => Err(goat_errors::coded(
+            "GB-239",
+            "--over-ssh and its host flags apply to `goatbuilder federate init` only",
+        )
+        .into()),
     }
 }
 
@@ -272,10 +274,10 @@ pub fn run_argv(argv: &[String]) -> Result<i32> {
 
 /// [`run_argv`], with the verb's report on `out`.
 pub fn run_argv_to(argv: &[String], out: &mut dyn Write) -> Result<i32> {
-    // The clap error stays in the chain, so `fault_exit` exits 2 for it, as
-    // goat does for a command line it cannot parse.
+    // GB-242, goatbuilder's code for a command line it cannot parse, raised as a
+    // coded error: `fault_exit` exits with its catalog exit, 2, as goat does.
     let line = VerbLine::try_parse_from(argv).map_err(|e| {
-        anyhow::Error::new(e).context(format!("goatbuilder federate {}", argv.join(" ")))
+        goat_errors::coded("GB-242", format!("goatbuilder federate {}: {e}", argv.join(" ")))
     })?;
     run_measured_to(line.cmd, &line.site, &line.measure, line.repo.as_deref(), out)
 }
@@ -423,6 +425,15 @@ mod tests {
         }
         w.extend(extra.iter().map(|s| s.to_string()));
         w
+    }
+
+    /// A verb line the in-process driver cannot parse is GB-242, a coded error,
+    /// and exits 2 (usage), as before it was coded.
+    #[test]
+    fn an_unparsable_verb_line_is_gb_242_and_exits_2() {
+        let e = run_argv(&["lint".to_string(), "--no-such-flag".to_string()]).unwrap_err();
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-242"), "{e:#}");
+        assert_eq!(fault_exit(&e), 2);
     }
 
     /// Every composing vector composes to its normative digest, in process.

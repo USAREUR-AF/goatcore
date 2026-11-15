@@ -74,7 +74,11 @@ Mode is **advisory-only** at v1: drift-watch *reports*, never *corrects*. Per [A
 
 ### 3.4 Federation health (signal-server)
 
-Already shipped in [`signal-server.yml`](../../ops/compose/mgmt-host/monitoring/rules/signal-server.yml) — `SignalServerForwardRPCErrors`, `SignalServerRelayMissSpike`, `SignalServerDown`. Two gaps closed by the tactical pack:
+Already shipped in [`signal-server.yml`](../../ops/compose/mgmt-host/monitoring/rules/signal-server.yml) — `SignalServerForwardRPCErrors`, `SignalServerRelayMissSpike`, `SignalServerDown`.
+
+The rate alerts (`SignalServerForwardRPCErrors`, `SignalServerRelayMissSpike`, `SignalServerOutboundFull`) judge each scraped signal server on its own. The mgmt host scrapes its own server and its peer site's ([`prometheus.yml`](../../ops/compose/mgmt-host/monitoring/prometheus.yml), jobs `signal-server` and `signal-server-peer`), and neither series carries `site`, which is an external label only. So they group by `(job, instance, node)`, plus `peer` for forward errors, and name the server's node and instance. Before, the alerts summed both scraped signal servers into one series. Built; promtool cases in [`signal-server-per-server.test.yml`](../../ops/compose/mgmt-host/monitoring/tests/signal-server-per-server.test.yml).
+
+Two gaps closed by the tactical pack:
 
 - **Forward RPC deadline** tightened in code from 5s → **200ms per peer with a 500ms total broadcast budget**, matching `ha-multi-site-validation.md` §5.5. Wave 3.4 probe prereq.
 - A peer-reachability *liveness* probe (separate from error-rate) folds into Block 38 chaos catalog — explicitly not in the tactical pack so we don't fork another framework.
