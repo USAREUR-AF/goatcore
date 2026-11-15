@@ -748,7 +748,8 @@ scenarios:
       each way, so adding the second peering did not break the first. The forwarder holds
       no WireGuard or TLS key of any party, and its configuration holds exactly the two
       carriers' keys, environments and its table. Strict acceptance passes from {A} with
-      {B} and from {C} with {B}, and nothing is written by hand outside
+      {B} and from {C} with {B}; after {C}'s peering is up, {A}-{B}'s agreement digest on both
+      sides is the one from before it, and acceptance from {A} with {B} passes again, and nothing is written by hand outside
       nothing-hand-written's lab-only lines and the forwarder machine's own values.
     checks:
       - {id: first-peering-declared, step: "nh-{B}-allocate"}
@@ -773,6 +774,8 @@ scenarios:
       - {id: forwarder-holds-no-key, step: "fg2-forwarder-holds-no-peering-key"}
       - {id: first-acceptance, step: "nh-acceptance-as-{A}-with-{B}"}
       - {id: second-acceptance, step: "nh2-acceptance-as-{C}-with-{B}"}
+      - {id: first-agreement-unchanged-by-second, step: "fg2-{A}-{B}-agreement-unchanged-by-the-second-peering"}
+      - {id: first-acceptance-after-second, step: "fg2-acceptance-as-{A}-with-{B}-after-the-second-peering"}
       - {id: nothing-hand-written, step: "nh-nothing-hand-written"}
 
   - id: port-51820-held
