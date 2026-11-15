@@ -925,13 +925,20 @@ pub fn migrate(paths: &Paths, st: &mut State, run: &str) -> Option<Step> {
     }
     st.record_migration(run, 5, MIGRATED, &digest, values);
     Some(Step {
-        rows: vec![ok(
-            "partner-package",
-            format!(
-                "recorded the package held for {them} ({digest}{}) as the one confirmed: phase 5 was confirmed by a build that did not record it. A migration, not a confirmation; from now on a package older than it is refused and compose checks it",
-                when.map(|d| format!(", issued {d}")).unwrap_or_else(|| ", no readable issued date".into())
+        rows: vec![
+            ok(
+                "partner-package",
+                format!(
+                    "recorded the package held for {them} ({digest}{}) as the one confirmed: phase 5 was confirmed by a build that did not record it. A migration, not a confirmation; from now on a package older than it is refused and compose checks it",
+                    when.map(|d| format!(", issued {d}")).unwrap_or_else(|| ", no readable issued date".into())
+                ),
             ),
-        )],
+            // No person confirmed this package: its digest is read aloud at the next call.
+            ok(
+                "partner-package-digest",
+                format!("the digest recorded without a person, {}: compare it with the partner at the next call", groups(&digest)),
+            ),
+        ],
         verdict: Verdict::Continue,
     })
 }

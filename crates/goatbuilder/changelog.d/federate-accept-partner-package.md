@@ -28,7 +28,8 @@ applies the same check to a package in a peering's working folder: one that is
 not the package confirmed at phase 5 there is refused (GB-191, exit 1, the
 contract's "refused: a precondition failed"); a package outside a working
 folder composes as before. A peering confirmed by an earlier build has
-its held package recorded as confirmed on its first run, as a migration; one
+its held package recorded as confirmed on its first run, as a migration, and the
+run prints that package's digest to compare with the partner at the next call; one
 that cannot be read stops the run (GB-310). This follows ADR 1229, which is
 accepted.
 
