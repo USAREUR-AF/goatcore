@@ -1,0 +1,15 @@
+# explain lists the steps of fastlane from the phase catalog, numbered as fastlane.rs numbers them.
+bin.name = "goatbuilder"
+args = ["explain", "fastlane"]
+stdout = """
+fastlane: 8 phases. goatbuilder explain fastlane <phase> answers for one, by number or id.
+
+  1  component         GATE  the component, its role, its play, and a pin revert undoes it
+  2  graduation-set    GATE  not a member of an open graduation set
+  3  digest            T     the image digest the registry holds for the tag
+  4  dry-run           GATE  a dry run stops here, before any change
+  5  move-fleet        T     fleet: moves to the new ref; pins and intents regenerated and re-signed
+  6  record-debt       T     the hotfix record that owes a backfill; candidates it overtook abandoned
+  7  land              GATE  the gates that still apply, then the pin PR lands
+  8  deploy            A     deploy to every goatnet the component belongs on
+"""
