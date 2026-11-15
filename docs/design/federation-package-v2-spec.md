@@ -63,13 +63,19 @@ the same set of CAs for each party.
 An implementation that composes both versions routes a pair as follows:
 
 1. **Step 0 first.** It verifies both signatures (§6 step 0) before it acts on either `spec`
-   value, since a `spec` value is a claim of an unauthenticated package until then.
+   value, since a `spec` value is a claim of an unauthenticated package until then. This is sound
+   because `spec` is inside the signed bytes in both versions: the signing input is the canonical
+   form with only `signature` removed. A package relabelled to another version after signing fails
+   verification (`C_SIGNATURE`) and is never composed under either version
+   (`vectors-v2/refuse-downgrade-*`, `refuse-relabel-v1-as-v2`).
 2. **Both v1.** The pair is composed by the v1 rules exactly, through the same steps, findings and
    bytes.
 3. **Both v2.** The pair is composed by the v1 rules, with step 1's pin set to
    `federation-package/v2` and the agreement of §3.
-4. **One of each.** The pair is refused: `C_SPEC_MIXED`. A mixed pair is never composed under either
-   version.
+4. **One of each.** The pair is refused at composition, before any agreement is written:
+   `C_SPEC_MIXED`. A mixed pair is never composed under either version, and no agreement or digest
+   exists for it. The two parties then agree one version and select it in reviewed configuration:
+   either both publish v2, or both stay on v1 and the side that published v2 publishes v1 again.
 5. **Any other version.** The pair is refused: `C_SPEC_PIN`.
 
 There is no retry and no downgrade.
@@ -83,7 +89,7 @@ An implementation that composes v1 only keeps v1's literal pin. It refuses every
 |---|---|---|
 | `M_CA_FINGERPRINT` | `identity.ca_fingerprint_next` | the next CA is not in the fingerprint format |
 | `M_CA_NEXT_SAME` | `identity.ca_fingerprint_next` | the next CA equals the current one |
-| `C_SPEC_MIXED` | `spec` | one package is v1 and the other v2 |
+| `C_SPEC_MIXED` | `spec` | one package is v1 and the other v2. Refused at composition, before any agreement is written, so neither side holds an agreement for the pair. Next: both parties select one version, and either both publish v2 or both stay on v1 |
 | `C_SPEC_PIN` | `<party>.spec` | a version this implementation does not compose |
 
 ## 6. Vectors
