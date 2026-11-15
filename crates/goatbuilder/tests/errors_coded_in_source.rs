@@ -10,10 +10,11 @@
 //! It reads every file under `src/` (test modules and `#[cfg(test)]` items
 //! left out) for the places an error is made: `anyhow!(…)`, `bail!(…)`,
 //! `.context(…)` and `.with_context(…)`. A place is coded when its expression
-//! names a `GB-nnn` code or calls `coded(`, or when the error catalog's own
-//! interpretation codes its message (a code it quotes, or a `matches:` pattern
-//! it meets). Every other place is listed in [`BASELINE`], one line each, as
-//! `<file> :: <kind> :: <message>`.
+//! names a `GB-nnn` code or calls `coded(`. A message that only meets one of the
+//! catalog's `matches:` patterns is not: main.rs prints a code without the
+//! explanation only for an error raised with `goat_errors::coded`, so a drill
+//! log of a pattern-matched error carries none. Every other place is listed in
+//! [`BASELINE`], one line each, as `<file> :: <kind> :: <message>`.
 //!
 //! The list only shrinks. A new uncoded place fails this test; a listed place
 //! that is coded now, or gone, fails it too until its line is removed. Some
@@ -147,19 +148,6 @@ fn one_line(s: &str) -> String {
     s.replace("\\\n", " ").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Whether the error catalog's interpretation codes `message`: a code it
-/// quotes, or a `matches:` pattern it meets.
-fn catalog_codes(message: &str) -> bool {
-    let text = regex::Regex::new(r"\{[^{}]*\}")
-        .unwrap()
-        .replace_all(message, "x")
-        .to_string();
-    goat_errors::interpret(&text)
-        .hits
-        .iter()
-        .any(|h| matches!(h.layer, goat_errors::Layer::Code | goat_errors::Layer::Pattern))
-}
-
 /// Every uncoded place in one file's text.
 fn uncoded_in(file: &str, text: &str) -> Vec<Site> {
     let lines = non_test_lines(text);
@@ -213,7 +201,6 @@ fn uncoded_in(file: &str, text: &str) -> Vec<Site> {
                 continue;
             }
             let message = match first_literal(&expr).map(|l| one_line(&l)) {
-                Some(l) if catalog_codes(&l) => continue,
                 Some(l) => l,
                 None => {
                     let inner = expr[opener.len()..].split_whitespace().collect::<Vec<_>>().join(" ");
@@ -318,8 +305,8 @@ fn every_error_the_source_makes_is_coded_or_listed() {
 }
 
 /// The scanner itself: an uncoded `anyhow!` and `.context` are found, with
-/// their messages; a coded one, one the catalog codes by its words, and one in
-/// a test module are not.
+/// their messages; a coded one, and one in a test module, are not; one the
+/// catalog would only match by its words is.
 #[test]
 fn the_scanner_finds_uncoded_errors_and_only_those() {
     let src = r#"
@@ -337,6 +324,10 @@ fn b() -> Result<()> {
     ))
 }
 
+fn d() -> Result<()> {
+    Err(anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
+}
+
 #[cfg(test)]
 mod tests {
     fn c() { let _ = anyhow!("a test's own error"); }
@@ -348,6 +339,7 @@ mod tests {
         vec![
             "src/x.rs :: context :: the plan file".to_string(),
             "src/x.rs :: anyhow :: an empty plan: {}".to_string(),
+            "src/x.rs :: anyhow :: federate is a mutation: pass --yes without a terminal (C10)".to_string(),
         ]
     );
 }
