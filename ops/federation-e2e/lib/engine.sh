@@ -184,6 +184,42 @@ final() { [ "$KEEP" = 1 ] || teardown; }
 host_exec() { local h="$1"; shift; docker exec -i "$h" "$@"; }
 
 # --- the sovereign, generated fresh ---------------------------------------------------
+# One sovereign's declarations in its clone (overlay.py): a peering entry, inventory and
+# group_vars for each partner, except those named in FE2E_LATER_<sovereign>, whose peering is
+# declared only when it starts (declare_later), as a deployment adds a second peering.
+overlay_declare() { # $1 sovereign, $2 its clone
+  local s="$1" c="$2" also=() first later t
+  first="$(partners "$s" | awk '{print $1}')"; eval "later=\${FE2E_LATER_$s:-}"
+  for t in $(partners "$s"); do
+    [ "$t" = "$first" ] && continue
+    case " $later " in *" $t "*) continue ;; esac
+    also+=(--also "$t:$(iface "$s" "$t"):$(wgport "$s" "$t"):$(spire_out "$s" "$t"):$(rp_metrics "$s" "$t")")
+  done
+  # FE2E_OVERLAY_ARGS_<sovereign>: more overlay.py arguments for one sovereign only (a unit
+  # sets --no-peering for a sovereign whose peering must come from its operator and the
+  # command, units/nohand.sh).
+  local more=""; eval "more=\${FE2E_OVERLAY_ARGS_$s:-}"
+  # shellcheck disable=SC2086,SC2046 # the optional flags are meant to split into words
+  python3 "$HERE/overlay.py" "$c" "$s" "$first" "$(octet "$s")" "$ZENOH_IMAGE" --republisher-image "$RP_IMAGE" \
+    --core-addr "$(core_ip "$s")" --spire-listen "$(edge_ip "$s")" ${also[@]+"${also[@]}"} \
+    $([ "$FE2E_DRIVER" = workspace ] && echo "--edge-addr $(edge_ip "$s")") $more
+  if [ "$FE2E_CORE" = role ]; then core_role_overlay "$s" "$c"; fi
+}
+
+# Declare a peering of $1's that FE2E_LATER_<$1> held back, now that it starts: the same
+# overlay with $2 included, committed and pulled onto the driver as any change to the
+# deployment's repository (core_declare).
+declare_later() { # $1 sovereign, $2 the partner
+  local s="$1" t="$2" c="$WORK/$1/clone" v="FE2E_LATER_$1" rest="" x
+  for x in ${!v:-}; do [ "$x" = "$t" ] || rest="$rest${rest:+ }$x"; done
+  printf -v "$v" '%s' "$rest"
+  overlay_declare "$s" "$c"
+  git -C "$c" add -A
+  git -C "$c" diff --cached --quiet || git -C "$c" commit -q -m "$s: declare the peering with $t"
+  git -C "$c" push -q origin HEAD:main
+  host_exec "$(drv_host "$s")" git -C /opt/goat pull -q --ff-only origin main
+}
+
 gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identity
   local s="$1" d
   d="$WORK/$s"
@@ -227,20 +263,7 @@ gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identi
   git clone -q --depth 1 --single-branch "file://$SRC" "$d/clone"
   git -C "$d/clone" checkout -q -B main
   git -C "$d/clone" config user.name "$s operator"; git -C "$d/clone" config user.email "ops@$s.test"
-  local also=() first; first="$(partners "$s" | awk '{print $1}')"
-  for t in $(partners "$s"); do
-    [ "$t" = "$first" ] && continue
-    also+=(--also "$t:$(iface "$s" "$t"):$(wgport "$s" "$t"):$(spire_out "$s" "$t"):$(rp_metrics "$s" "$t")")
-  done
-  # FE2E_OVERLAY_ARGS_<sovereign>: more overlay.py arguments for one sovereign only (a unit
-  # sets --no-peering for a sovereign whose peering must come from its operator and the
-  # command, units/nohand.sh).
-  local more=""; eval "more=\${FE2E_OVERLAY_ARGS_$s:-}"
-  # shellcheck disable=SC2086,SC2046 # the optional flags are meant to split into words
-  python3 "$HERE/overlay.py" "$d/clone" "$s" "$first" "$(octet "$s")" "$ZENOH_IMAGE" --republisher-image "$RP_IMAGE" \
-    --core-addr "$(core_ip "$s")" --spire-listen "$(edge_ip "$s")" ${also[@]+"${also[@]}"} \
-    $([ "$FE2E_DRIVER" = workspace ] && echo "--edge-addr $(edge_ip "$s")") $more
-  if [ "$FE2E_CORE" = role ]; then core_role_overlay "$s" "$d/clone"; fi
+  overlay_declare "$s" "$d/clone"
   # Each edge with the host firewall baseline on (lib/hostfw.sh).
   edge_fw_declare "$s" "$d/clone"
   git -C "$d/clone" add -A
