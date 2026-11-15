@@ -70,19 +70,22 @@ fn surface_claiming(version: &str, bin: Vec<u8>, sum: &str) -> String {
     serve(version, bin, sum, sums, bundle.into_bytes())
 }
 
-/// The published 0.5.1 as its release serves it: the binary, its line of the
+/// A published release as it serves itself: the binary, its line of the
 /// published SHA256SUMS, and the published SHA256SUMS.cosign-bundle, which the
-/// real Sigstore signed.
-fn surface_published_0_5_1(bin: Vec<u8>) -> String {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/signature/v0.5.1");
-    let sums = std::fs::read(dir.join("SHA256SUMS")).unwrap();
+/// real Sigstore signed (kept in tests/fixtures/signature/<version>).
+fn surface_published(version: &str, bin: Vec<u8>) -> String {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/signature")
+        .join(version);
+    let sums = std::fs::read(dir.join("SHA256SUMS"))
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.join("SHA256SUMS").display()));
     let bundle = std::fs::read(dir.join("SHA256SUMS.cosign-bundle")).unwrap();
     let sum = sha256(&bin);
     assert!(
         String::from_utf8_lossy(&sums).contains(&format!("{sum}  {}", released::asset())),
-        "the published SHA256SUMS does not list this binary"
+        "the published {version} SHA256SUMS does not list this binary"
     );
-    serve("0.5.1", bin, &sum, sums, bundle)
+    serve(version.trim_start_matches('v'), bin, &sum, sums, bundle)
 }
 
 fn serve(version: &str, bin: Vec<u8>, sum: &str, sums: Vec<u8>, bundle: Vec<u8>) -> String {
@@ -216,9 +219,44 @@ fn installed(i: &Install) -> Vec<u8> {
     std::fs::read(&i.exe).unwrap()
 }
 
+/// Every 0.x release pinned in tests/upgrade/releases.sha256, oldest first: a
+/// release pinned later is tested without a change here.
+fn pinned_0x() -> Vec<String> {
+    let mut v: Vec<(u32, u32, u32)> = include_str!("upgrade/releases.sha256")
+        .lines()
+        .filter_map(|l| l.split_once("  ")?.1.split('/').next())
+        .filter_map(|tag| {
+            let mut n = tag
+                .strip_prefix('v')?
+                .split('.')
+                .map(|x| x.parse::<u32>().ok());
+            Some((n.next()??, n.next()??, n.next()??))
+        })
+        .filter(|&(major, _, _)| major == 0)
+        .collect();
+    v.sort();
+    v.dedup();
+    let v: Vec<String> = v.iter().map(|(a, b, c)| format!("v{a}.{b}.{c}")).collect();
+    assert!(
+        v.first().map(String::as_str) == Some("v0.4.3"),
+        "pinned: {v:?}"
+    );
+    v
+}
+
 #[test]
-fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
-    let Some(old_bin) = released::binary("v0.5.1") else {
+fn e3_update_moves_an_install_of_each_pinned_0x_to_this_build_and_back() {
+    for tag in pinned_0x() {
+        moves_to_this_build_and_back(&tag);
+    }
+}
+
+/// `update` moves an install of the released `tag` to the build under test, and
+/// `update --force` takes it back to `tag`, verified by that release's own
+/// signature.
+fn moves_to_this_build_and_back(tag: &str) {
+    let want = tag.trim_start_matches('v');
+    let Some(old_bin) = released::binary(tag) else {
         return;
     };
     let old = std::fs::read(&old_bin).unwrap();
@@ -229,14 +267,14 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
         let probe = install_of(Path::new(env!("CARGO_BIN_EXE_goatbuilder")));
         version_of(&probe)
     });
-    assert_eq!(old_v, "0.5.1", "the released copy reports {old_v}");
+    assert_eq!(old_v, want, "the released copy reports {old_v}");
 
     // 1. There.
     let there = surface(&new_v, new.clone());
-    if !goat_selfupdate::is_outdated(&old_v, &new_v) {
+    let there_out = if !goat_selfupdate::is_outdated(&old_v, &new_v) {
         let o = run(&i, &there, &["update"]);
         step(
-            "there: 0.5.1 runs `update`, served a build that is not newer",
+            &format!("there: {want} runs `update`, served a build that is not newer"),
             &o,
         );
         assert_eq!(o.status.code(), Some(0), "{}", says(&o));
@@ -246,17 +284,18 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
             "a plain update to a version that is not newer installed it"
         );
         let o = run(&i, &there, &["update", "--force"]);
-        step("there: 0.5.1 runs `update --force`", &o);
+        step(&format!("there: {want} runs `update --force`"), &o);
         assert_eq!(
             o.status.code(),
             Some(0),
             "update --force to the build under test: {}",
             says(&o)
         );
+        o
     } else {
         let o = run(&i, &there, &["update"]);
         step(
-            "there: 0.5.1 runs a plain `update`, served the newer build under test",
+            &format!("there: {want} runs a plain `update`, served the newer build under test"),
             &o,
         );
         assert_eq!(
@@ -264,6 +303,24 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
             Some(0),
             "update to the build under test: {}",
             says(&o)
+        );
+        o
+    };
+    // The way there is the released binary's own check. From 0.6.0 it verifies
+    // the signature in process (here against the stand-in Sigstore, as the
+    // signer's release); before that it checks one only with cosign on PATH,
+    // and PATH here has none.
+    let in_process = goat_selfupdate::is_outdated("0.5.99", want);
+    let text = says(&there_out);
+    if in_process {
+        assert!(
+            text.contains("SHA256SUMS signed by"),
+            "{want} did not verify the signature of the build under test: {text}"
+        );
+    } else {
+        assert!(
+            text.contains("signature not checked: cosign is not on PATH"),
+            "{want} did not say the signature was not checked: {text}"
         );
     }
     assert!(
@@ -273,12 +330,12 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
     assert_eq!(version_of(&i), new_v);
 
     // 2. Back: an older served version needs --force.
-    // Back: the published 0.5.1, signed by the real Sigstore.
-    let back = surface_published_0_5_1(old.clone());
+    // Back: the published release, signed by the real Sigstore.
+    let back = surface_published(tag, old.clone());
     if old_v != new_v {
         let o = run(&i, &back, &["update"]);
         step(
-            "back: the build under test runs a plain `update`, served the older 0.5.1",
+            &format!("back: the build under test runs a plain `update`, served the older {want}"),
             &o,
         );
         assert_eq!(o.status.code(), Some(0), "{}", says(&o));
@@ -295,30 +352,30 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
     }
     let o = run(&i, &back, &["update", "--force"]);
     step(
-        "back: the build under test runs `update --force`, served 0.5.1",
+        &format!("back: the build under test runs `update --force`, served {want}"),
         &o,
     );
     assert_eq!(
         o.status.code(),
         Some(0),
-        "update --force back to 0.5.1: {}",
+        "update --force back to {want}: {}",
         says(&o)
     );
     // The way back checked the published release's own signature, offline.
     assert!(
-        says(&o).contains("SHA256SUMS signed by https://github.com/USAREUR-AF/goatcore/.github/workflows/goatbuilder-release.yml@refs/tags/goatbuilder/v0.5.1"),
-        "the published 0.5.1 signature was not verified: {}",
+        says(&o).contains(&format!("SHA256SUMS signed by https://github.com/USAREUR-AF/goatcore/.github/workflows/goatbuilder-release.yml@refs/tags/goatbuilder/{tag}")),
+        "the published {want} signature was not verified: {}",
         says(&o)
     );
     assert!(
         installed(&i) == old,
-        "the install is not 0.5.1 after going back"
+        "the install is not {want} after going back"
     );
     assert_eq!(
         sha256(&installed(&i)),
-        released::pin("v0.5.1", &released::asset()).unwrap()
+        released::pin(tag, &released::asset()).unwrap()
     );
-    assert_eq!(version_of(&i), "0.5.1");
+    assert_eq!(version_of(&i), want);
 }
 
 /// After going back, a run journal that a later build wrote can name a phase
