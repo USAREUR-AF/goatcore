@@ -26,6 +26,7 @@ that cannot be read stops the run (GB-310). This follows ADR 1229, which is
 proposed.
 
 `goatbuilder federate rotate <partner> transport` now replaces our WireGuard
-peering key from phase 2. The tunnel is down until the partner runs
+peering key from phase 2, and carries our run past phase 5 and phase 6 when the
+keys and the agreement are as confirmed before. The tunnel is down until the partner runs
 `goatbuilder federate <us> --from 5 --accept-partner-package <digest>` with the
 digest compared on the call. Neither is measured on a running peering.

@@ -847,6 +847,10 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     // Before the first phase after 5 this run reaches, run or skipped: the
     // partner's package on disk is the one the last confirmation names.
     let mut package_checked = false;
+    // `rotate <partner> transport`: our package changes (the new WireGuard key),
+    // so phases 5 and 6 run again with nothing on our side to decide when the
+    // keys and the agreement are as confirmed (see phase 5 and 6 below).
+    let transport_rotation = s.rotate_transport.is_some();
     // Phase 5 confirmed in this run writes the keyring phase 6 reads: the
     // phases after it are planned again from what is there now.
     let mut replanned: Option<Vec<Phase>> = None;
@@ -997,6 +1001,21 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 if let Some(args) = directory_args(repo, &work) {
                     let _ = runenv::command("python3").args(&args).current_dir(repo).status();
                     checks.push(row("directory", "the directory step ran; it is advisory and its result changes no phase".into()));
+                }
+                // A transport rotation of ours: only our package changed. With the
+                // keys confirmed before unchanged on both sides, and no new package of
+                // the partner's waiting, phase 5 has nothing to ask; the partner
+                // confirms our new package on their side. The agreement digest is
+                // checked after compose (phase 6 below). Any change stops here as before.
+                if transport_rotation && !s.values.active() {
+                    if let Some(r) = run.as_mut() {
+                        if !r.paths.work.join(confirm::INCOMING).exists() && confirm::keys_unchanged(&r.paths, &r.state) {
+                            checks.push(row("confirm", "a transport rotation of ours: our package changed (the new WireGuard key), and the keys confirmed before are unchanged on both sides, so phase 5 has nothing to ask; the partner confirms our new package on their side, and the agreement digest is checked after compose".into()));
+                            r.end(ph, state::Outcome::Passed, "a transport rotation: our package changed; the keys confirmed before are unchanged");
+                            replanned = Some(plan(repo, o, &work, &edge_group, &resume));
+                            continue;
+                        }
+                    }
                 }
             }
             // Confirmation 1, when asked for: a package the directory held
@@ -1206,7 +1225,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         }
         if let Some(r) = run.as_mut() {
             // Confirmation 1, second half: the agreement digest after compose.
-            if ph.n == 6 && s.values.active() {
+            // A transport rotation of ours checks the digest too: unchanged, it goes
+            // on (it was compared before); changed, it stops for the comparison.
+            if ph.n == 6 && (s.values.active() || transport_rotation) {
                 let step = confirm::agreement(&r.paths, s, &mut r.state, &r.id.clone());
                 checks.extend(step.rows);
                 match step.verdict {
