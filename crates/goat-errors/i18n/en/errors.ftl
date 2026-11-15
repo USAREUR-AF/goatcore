@@ -1000,6 +1000,13 @@ gb-290-what = Before an IPsec credential rotation moves anything, goat-peering-e
 gb-290-cause-1 = the leaf was issued for another peering or another identity
 gb-290-cause-2 = the leaf was issued by another CA, or the staged key belongs to another certificate
 gb-290-cause-3 = the leaf uses another key type, or expires too soon
+gb-295-title = a cut-off site's access-rule run would have created a group, or created or deleted a policy
+gb-295-what = ops/ansible/netbird-acl-cutover.yml or ops/ansible/netbird-acl-bootstrap.yml ran with cut_off=true, for a site cut off from the others. The flag is the operator's statement; nothing detects a cut. While cut off, a site may only update the access-rule policies it already has, by their ids, and may create no group: NetBird assigns a created policy's or group's id, so two cut-off sites that each create the same rule or group leave two of them after the heal, and a delete at one site is undone or doubled by the other. This run would have created a group, or created or deleted a policy (the message names each group and policy it would have created and each id it would have deleted), so it stopped before it wrote anything, updates included.
+gb-295-cause-1 = the access-rule matrix names a rule the site has no policy for yet
+gb-295-cause-2 = the group taxonomy names a group the site does not have yet (netbird-acl-bootstrap.yml, which standup runs before the cutover)
+gb-295-cause-3 = reap_orphans=true, and the site holds a generated policy the matrix no longer names
+gb-295-cause-4 = enforce with the Default policy action delete
+gb-295-cause-5 = the teardown play, which only deletes
 gb-302-title = the IPsec link did not come up on the new leaf; the old pair was put back
 gb-302-what = After switching to the staged leaf, goat-peering-edge loaded the credentials, re-authenticated the IKE SA and waited up to peering_edge_rotation_confirm_seconds (the DPD timeout by default) for an established IKE SA with an installed CHILD SA. None came up, so it put the set-aside pair back from .previous-<id>/, loaded it and re-authenticated: the old leaf is live. It marks the rotation rolled back (.previous-<id>/rolled-back), so every later run of the same id, a resume or a retire, reports GB-302 again, moves nothing and never replaces our CA. For ipsec-ca with --no-overlap, a partner that no longer trusts our old CA cannot carry the link on the old pair either.
 gb-302-cause-1 = the partner does not trust the CA that issued the new leaf
