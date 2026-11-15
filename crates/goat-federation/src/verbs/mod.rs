@@ -359,8 +359,32 @@ pub(crate) fn emit_json<T: Serialize>(out: &mut dyn Write, v: &T) -> std::io::Re
     }
 }
 
+/// A refusal of this library's own, with its catalog code (X-FED-nnn in
+/// ops/errors/catalog.yaml). Every front end prints the code under the
+/// message; the codes have no catalog exit, and goat and goatbuilder both
+/// exit 1 for them. A fault with no code (writing the report to a closed
+/// output) stays uncoded, and each front end gives it its own.
+pub(crate) fn refusal(code: &str, message: impl Into<String>) -> anyhow::Error {
+    goat_errors::coded(code, message).into()
+}
+
+/// A file a verb reads could not be read.
+pub(crate) const FILE_UNREADABLE: &str = "X-FED-001";
+/// A file a verb writes could not be written.
+pub(crate) const FILE_UNWRITABLE: &str = "X-FED-002";
+/// `--now` is not a YYYY-MM-DD date.
+pub(crate) const BAD_NOW: &str = "X-FED-003";
+/// A bound key from `--key` or `--keyring` cannot be used.
+pub(crate) const BAD_BOUND_KEY: &str = "X-FED-004";
+/// The signing key is not an Ed25519 seed.
+pub(crate) const BAD_SIGNING_KEY: &str = "X-FED-005";
+/// `apply --confirm` without `--out`.
+pub(crate) const CONFIRM_NEEDS_OUT: &str = "X-FED-006";
+/// No `--as`, and no declaration to read the party from.
+pub(crate) const NO_PARTY: &str = "X-FED-007";
+
 pub(crate) fn read_file(p: &Path) -> anyhow::Result<Vec<u8>> {
-    std::fs::read(p).map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))
+    std::fs::read(p).map_err(|e| refusal(FILE_UNREADABLE, format!("{}: {e}", p.display())))
 }
 
 pub(crate) fn label(p: &Path) -> String {
@@ -382,8 +406,8 @@ pub(crate) fn sign_with(path: &Path, message: &[u8]) -> anyhow::Result<String> {
     if message.starts_with(crate::acceptance_sig::RESULT_DOMAIN.as_bytes()) {
         anyhow::bail!("refusing to sign an acceptance-result statement with the package signer");
     }
-    let text =
-        std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| refusal(FILE_UNREADABLE, format!("{}: {e}", path.display())))?;
     let text = text.trim();
     let seed: [u8; 32] = if text.len() == 64 && text.bytes().all(|c| c.is_ascii_hexdigit()) {
         let mut b = [0u8; 32];
@@ -397,9 +421,12 @@ pub(crate) fn sign_with(path: &Path, message: &[u8]) -> anyhow::Result<String> {
             .ok()
             .and_then(|v| <[u8; 32]>::try_from(v).ok())
             .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "{}: expected an Ed25519 seed as 64 hex characters or 32 bytes base64",
-                    path.display()
+                refusal(
+                    BAD_SIGNING_KEY,
+                    format!(
+                        "{}: expected an Ed25519 seed as 64 hex characters or 32 bytes base64",
+                        path.display()
+                    ),
                 )
             })?
     };

@@ -1,8 +1,8 @@
 // compose: two packages, one agreement, one digest. Pure.
 
 use super::{
-    emit_json, label, print_outcomes, read_file, FedOutcome, Verdict, EXIT_FED_MALFORMED,
-    EXIT_FED_REFUSED, EXIT_OK,
+    emit_json, label, print_outcomes, read_file, refusal, FedOutcome, Verdict, BAD_BOUND_KEY,
+    BAD_NOW, EXIT_FED_MALFORMED, EXIT_FED_REFUSED, EXIT_OK, FILE_UNWRITABLE,
 };
 use crate::compose::{compose, Composed, KeyRing};
 use crate::json::JVal;
@@ -127,7 +127,7 @@ pub fn run_compose(a: &ComposeArgs, out: &mut dyn Write) -> anyhow::Result<i32> 
                 // a trailing newline is the single commonest way to produce a
                 // different digest over an identical agreement.
                 std::fs::write(path, c.as_bytes())
-                    .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+                    .map_err(|e| refusal(FILE_UNWRITABLE, format!("{}: {e}", path.display())))?;
                 outcomes.push(FedOutcome::ok(
                     "write",
                     format!("{} — canonical bytes, no trailing newline", path.display()),
@@ -259,7 +259,7 @@ fn describe_agreement(v: &JVal) -> String {
 fn evaluation_date(explicit: Option<&str>) -> anyhow::Result<NaiveDate> {
     match explicit {
         Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
-            .map_err(|_| anyhow::anyhow!("--now `{s}` is not a YYYY-MM-DD date")),
+            .map_err(|_| refusal(BAD_NOW, format!("--now `{s}` is not a YYYY-MM-DD date"))),
         None => Ok(chrono::Utc::now().date_naive()),
     }
 }
@@ -271,23 +271,33 @@ pub fn build_keyring(flags: &[String], file: Option<&Path>) -> anyhow::Result<Ke
         let bytes = read_file(path)?;
         let map: std::collections::BTreeMap<String, String> = serde_json::from_slice(&bytes)
             .map_err(|e| {
-                anyhow::anyhow!(
-                    "{}: expected a JSON object of sovereign_id → base64 key: {e}",
-                    path.display()
+                refusal(
+                    BAD_BOUND_KEY,
+                    format!(
+                        "{}: expected a JSON object of sovereign_id → base64 key: {e}",
+                        path.display()
+                    ),
                 )
             })?;
         for (sid, b64) in map {
-            let key = decode_verifying_key(&b64)
-                .map_err(|e| anyhow::anyhow!("{}: key for `{sid}`: {e}", path.display()))?;
+            let key = decode_verifying_key(&b64).map_err(|e| {
+                refusal(
+                    BAD_BOUND_KEY,
+                    format!("{}: key for `{sid}`: {e}", path.display()),
+                )
+            })?;
             ring.insert(&sid, key);
         }
     }
     for flag in flags {
-        let (sid, b64) = flag
-            .split_once('=')
-            .ok_or_else(|| anyhow::anyhow!("--key `{flag}` is not `<sovereign_id>=<base64>`"))?;
-        let key =
-            decode_verifying_key(b64).map_err(|e| anyhow::anyhow!("--key for `{sid}`: {e}"))?;
+        let (sid, b64) = flag.split_once('=').ok_or_else(|| {
+            refusal(
+                BAD_BOUND_KEY,
+                format!("--key `{flag}` is not `<sovereign_id>=<base64>`"),
+            )
+        })?;
+        let key = decode_verifying_key(b64)
+            .map_err(|e| refusal(BAD_BOUND_KEY, format!("--key for `{sid}`: {e}")))?;
         ring.insert(sid, key);
     }
     Ok(ring)
