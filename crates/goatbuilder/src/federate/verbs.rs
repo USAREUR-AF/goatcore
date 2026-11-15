@@ -569,7 +569,7 @@ mod tests {
             .join("../../ops/federation/fixtures/far-term/agreement.canonical.json")
             .display()
             .to_string();
-        let l = line(&["verify", &far, "--as", "test-fixture-a", "--json"]);
+        let l = line(&["verify", &far, "--as", "xta", "--json"]);
         let mut out = Vec::new();
         let unreachable = || -> Result<Site> { Err(anyhow!("no site here")) };
         let code = verbs::run(l.cmd, &unreachable, &mut out).unwrap();

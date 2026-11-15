@@ -57,10 +57,10 @@ runs() {   # one verb invocation per line, the words after `federate`
   echo "apply compose-full/agreement.canonical.json --as xab --json"
   # The far-term test fixture (expires 2099-12-31) is the agreement both
   # binaries must attest and render on any date the gate runs.
-  echo "verify $FAR --as test-fixture-a"
-  echo "verify $FAR --as test-fixture-a --json"
-  echo "apply $FAR --as test-fixture-a --edge-group g"
-  echo "apply $FAR --as test-fixture-b --json"
+  echo "verify $FAR --as xta"
+  echo "verify $FAR --as xta --json"
+  echo "apply $FAR --as xta --edge-group g"
+  echo "apply $FAR --as xtb --json"
   echo "init"
   echo "init --json"
 }
@@ -102,7 +102,7 @@ done < <(set +e; runs)
 
 # verify and apply decide acceptance, so neither binary takes a caller-supplied
 # evaluation date for them: an expired agreement must never be judged current.
-for verb in "verify $FAR --as test-fixture-a" "apply $FAR --as test-fixture-a"; do
+for verb in "verify $FAR --as xta" "apply $FAR --as xta"; do
   for bin in "$GOAT" "$GB"; do
     # shellcheck disable=SC2086 # the words are split on purpose
     (cd "$V" && "$bin" federate $verb --now 2026-09-05 >/dev/null 2>&1); rc=$?
