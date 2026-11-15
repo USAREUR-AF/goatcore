@@ -71,16 +71,25 @@ admission audit, its own Zenoh router and the node-scoped health publishers.
 | Container limits that have a variable were set for a 4 GB host | Built in the site's group_vars | router 1G, Traefik 512M, management 384M, signal 256M |
 | Limits that had no variable exceeded the host | Measured; variables built | Postgres 2G, the fabric crawler 3,968M; Postgres `shared_buffers` 768MB and `max_connections` 300 in the image. Each is now a variable with that value as its default: `mgmt_postgres_memory`, `fabric_crawler_memory_limit`, `mgmt_postgres_shared_buffers`, `mgmt_postgres_max_connections` |
 
-**Open decision: what a phone node replicates.** A full joiner holds a copy of
+**Decided: what a phone node replicates.** A full joiner holds a copy of
 the goatnet's control-plane databases, and the founder holds a replication slot
 for it. A phone that is off for days falls behind the founder's WAL limit and
-must be seeded again. The alternative is a phone profile that is a mesh peer
-with its own router and local services and is not a replication member. The
-first phone is a full member, to prove the standard path; which of the two a
-phone node is by default is not decided. How long a full member may be off
-before a site invalidates its slot is measured during gate row H8's week
+must be seeded again. The operator decided (15 Nov) that for 1.0 a phone node
+is a full `core` joiner by default, the path measured on hardware (gate group
+D). Before gate row H8, how long a full member may be off before a site
+invalidates its slot is measured during H8's week
 ([goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md),
-"How long a phone may be off").
+"How long a phone may be off"), and the re-seed gets a `goatbuilder` path: not
+built.
+
+**The peer profile, a later class value.** A phone that is a mesh peer with its
+own router and local services, and is not a replication member, holds no slot
+on any site and is never seeded again. It cannot admit people or enrol machines
+while it is cut off: it is a node, not a site. It is added after 1.0 as a value
+of the `phone` class (for example `--class phone --profile peer`), and is the
+second item after 1.0 in the gate's "Fast follow after 1.0". Designed in this
+paragraph; which services run with no local database, and where they read
+from, is not designed; not built.
 
 ## Staying up
 

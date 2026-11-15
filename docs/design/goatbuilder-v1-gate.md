@@ -92,19 +92,26 @@ remains after it.
 ### D. Scope is decided
 
 Each designed item is either in 1.0 or named as later. The answers below
-are proposed; an item moves only by a change to this table.
+are proposed unless marked decided; an item moves only by a change to this
+table. The operator decided (15 Nov) the two open decisions, the pull converger
+and what a phone node replicates: neither holds 1.0 up beyond the small items
+each leaves before 1.0, which are rows here, and the larger work each names
+comes first after 1.0 ("Fast follow after 1.0").
 
 | Item | Status | Proposed | Reason |
 |---|---|---|---|
 | `status` on real hosts | designed | In (C3) | A 1.0 tool reports real state |
-| A pull converger | designed | **Open decision** | Fleet doctrine is that convergence is pulled ([fleet-management.md](fleet-management.md), P8). If 1.0 ships with the push converger only, the promise in "What 1.0 promises" must hold when the pull converger arrives: the configuration field `converger:` and the verbs stay as they are, and pull is added as a value. The decision is whether that is enough, or whether 1.0 waits for a pull converger so that its first promise is made on the intended model |
+| A pull converger | designed ([goatbuilder-pull-converger-options.md](goatbuilder-pull-converger-options.md)); not built. `converger: pull-agent` is refused on real hosts with GB-307 (built, #803): `doctor` and every verb that pushes refuse it, so an environment declared to pull is never pushed to | **Decided: later.** 1.0 ships push only; pull arrives as a value of `converger:` | The operator decided (15 Nov): option A of the options paper. The surfaces people build on (the configuration, the verbs, the `-o json` documents, the codes) are the same with or without pull; a refusal is the one meaning of `pull-agent` that a later release can turn into "it works" without changing what a 1.0 file means; the cut-off site's autonomy is carried by group I, not by the converger. Pull is the first work after 1.0 ([ADR 1198](../adr/1198-goatbuilder-config-driven-deploy-release-cli.md), item 5: the converger is a value per environment and class) |
+| The push converger behind the converger trait, for the real-host verbs | not built: the trait (`crates/goatbuilder/src/converger.rs`) is implemented only by the fixture's scripted converger, and `deploy`, `release`, `rollback` and `status` on real hosts call the push code directly | In, before 1.0 (from the pull decision) | Pull then arrives as a second implementation of the same trait, with the verbs unchanged |
+| Per-machine `pending` and `unknown` in the `-o json` documents, and in A4's kept set | not built: the text pages of `status` and `verify` name converged, pending and unknown machines; no document in A4's kept set (`ops/goatbuilder/compat/`) carries them | In, before 1.0 (from the pull decision) | Contract C7: a machine that has not pulled is pending and an unreadable record is unknown, never done. A 1.0 reader keeps the shape pull fills in |
 | Zero-SaaS standup, measured | not built | In, as part of C1 | "No outside account" is a stated property; it is measured once or not claimed |
 | Forge adapter | designed | Later | The release path works on one forge; the adapter adds a value and breaks nothing |
 | OpenBao injector | designed | Later | A store is a declared, pluggable dependency |
 | Semantic error matcher | designed | Later | It adds a matcher after the existing ones |
 | A `boundary` machine class | not built | Later | The boundary node is the router `goatbuilder federate` deploys; no tutorial needs the class |
 | A `phone` machine class and `--via usb` | built on the fixture; not measured on hardware | In (H3 to H5) | A phone is built by the command that builds a computer, or it is not a goatbuilder node |
-| What a phone node replicates | designed ([phone-node.md](phone-node.md)) | **Open decision** | A full joiner is a replication member; a phone that is off for days falls behind and must be seeded again. The alternative is a phone profile that is a mesh peer with its own router and is not a replication member. The class in H5 is declared either way; the decision is which one `--class phone` means by default |
+| What a phone node replicates | designed ([phone-node.md](phone-node.md)) | **Decided: a full `core` joiner for 1.0.** The lighter peer profile is a later value of the class | The operator decided (15 Nov). The full joiner is the path measured on hardware, and H7 and H8 are planned on it. A phone profile that is a mesh peer with its own router and local services, and not a replication member, is added later as a class value (for example `--class phone --profile peer`), which keeps the 1.x promise. It is the second item after 1.0 |
+| How long a phone may be off before a site invalidates its replication slot, and a `goatbuilder` path for the re-seed | not measured; the re-seed is documented by hand ([post-partition-convergence-runbook.md](../operations/post-partition-convergence-runbook.md), "A. Slot rebuild"); a `goatbuilder` path for it is not built | In, before H8 (from the phone decision) | Postgres invalidates a slot that holds more WAL than `max_slot_wal_keep_size` (`ops/postgres/spock/conf/postgresql.conf`). The time is measured during H8's week ([goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md), "How long a phone may be off"), and the re-seed is the documented response, run by the tool |
 | A launcher on the phone that starts the VM at boot | built (`ops/phone/vm-launcher`), measured once on one phone after a reboot and one unlock; no release or signing key of its own yet | Later | It is an Android app with its own release. Until it exists, H8's "without a person" is met by a computer on the USB cable and a phone with no screen lock |
 
 ### E. Upgrading is tested
@@ -177,7 +184,7 @@ The requirements depend on one another in this order. No dates are set here.
 5. **The tool shows its work.** F1 to F6, in 0.x releases, beside the steps above.
    **A node on a phone.** H1, H2 and H6 first, because they are faults on every new node; then H3 to H5.
    **A joined site runs cut off.** I3 beside H1 and H2, in `join-node`. I1, I2 and I6 before I4; I4 before I5.
-6. **The promise.** A1 to A5 and the decision in D on the pull converger. From this point the surfaces are frozen.
+6. **The promise.** A1 to A5, and the items the pull decision in D leaves before 1.0 (push behind the converger trait; per-machine pending and unknown in the `-o json` documents). From this point the surfaces are frozen.
 7. **Upgrade tests.** E1 to E3, against the release that froze the surfaces.
 8. **The cold-read drill.** C4 and C5, on a release candidate `goatbuilder/v1.0.0-rc.N`.
 9. **1.0.** Every row of the gate reads "passed", with a link to its test run or measurement.
@@ -194,15 +201,19 @@ Three releases after 0.5.2 reach 1.0, with the 0.7.x releases that carry group I
 | 0.7.x | A joined site runs cut off, one write class at a time, each behind its own switch, after every path of that class has a measured verdict | I1, I2, I6, I4 |
 | 1.0.0-rc.N, then 1.0.0 | Surfaces frozen; proof on hardware and by people who did not build it | C1, C2, C4, C5; D agreed; H7, H8; I5 |
 
-Rows that need a person or a machine outside the build: B9 (a real partner), C1 and C2 (hardware), H7 and H8 (a phone), I5 (two standing two-site goatnets), C4 (a person outside the team), A1 and D (decisions). Each is prepared so that the act itself is short.
+Rows that need a person or a machine outside the build: B9 (a real partner), C1 and C2 (hardware), H7 and H8 (a phone), I5 (two standing two-site goatnets), C4 (a person outside the team), A1 (a decision). Each is prepared so that the act itself is short.
 
 ## Fast follow after 1.0
 
 The operator decided on 2026-11-14 that these follow 1.0 soon after it, and are not
-gate rows: 1.0 does not wait for them. Each is designed and none is built.
+gate rows: 1.0 does not wait for them. The operator decided (15 Nov) that the
+pull converger and the phone peer profile are the first of them, in that order
+(group D). Each is designed and none is built.
 
 | Item | Design |
 |---|---|
+| The pull converger: an agent on each machine, on a timer, fetches its environment's signed index (a per-environment index with a serial that only increases, made from the signed intent document `goatbuilder pins` writes), verifies it and applies its class's release; `converger: pull-agent` then converges in place of GB-307's refusal | [goatbuilder-pull-converger-options.md](goatbuilder-pull-converger-options.md); [ADR 1198](../adr/1198-goatbuilder-config-driven-deploy-release-cli.md) item 5; [ADR 1109](../adr/1109-fleet-management-dimension-and-pull-convergence.md) |
+| The phone peer profile: a phone that is a mesh peer with its own router and local services, and not a replication member, as a later value of the `phone` class | [phone-node.md](phone-node.md), "What it runs, and what it costs" |
 | A site joins, and a severed site rejoins, only on the hub's authorization (`admit_site`, or a `restore_site` after the sever) | [ADR 1205](../adr/1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md) D9 |
 | The sever-and-restore drill on a standing two-site goatnet, with the operator present: the hub severs a site, the site's later writes reach no one, and the site returns only by rebuild, re-seed from the hub and the hub's `restore_site` | ADR 1205 D4 and D12 |
 | After a sever, the hub lists every row the severed site committed since a stated time, by commit origin, and revokes them | ADR 1205 D11 |
