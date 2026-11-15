@@ -1233,6 +1233,20 @@ pub fn agreement(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> S
         }
     };
     let digest = sha256(&bytes);
+    // The same agreement, its digest already compared with the partner: not a
+    // new question. A transport rotation recomposes it unchanged, since the
+    // agreement carries no WireGuard key (ADR 1229; key-rotation design, K4).
+    if s.values.agreement_digest.is_none() {
+        if let Some(c) = st.confirmed("agreement", 6, &digest) {
+            return Step {
+                rows: vec![ok(
+                    "confirm",
+                    format!("agreement digest {digest} was confirmed with the partner before ({}, run {}): the agreement is unchanged, so it is not asked again", c.how, c.run),
+                )],
+                verdict: Verdict::Continue,
+            };
+        }
+    }
     let interactive = s.values.ask && s.asker().interactive();
     let how = match s.values.agreement_digest.clone() {
         Some(v) if prompt::same_value(&v, &digest) => "flag",
