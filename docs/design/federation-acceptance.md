@@ -206,7 +206,10 @@ look for, and stages only their zenoh ids, beside this run's challenge and this 
 (epoch seconds), for the partner. A kind is staged only when its session answered every write
 with HTTP 2xx. Each session's zenoh id must be unique to its kind and its run: the partner refuses
 one id staged for two kinds, and counts only its edge's lines for an id that are stamped at or
-after this run's start, so a line an earlier run left for a reused id proves nothing. It is
+after this run's start less 30 seconds (a fixed bound for clock skew between the two hosts), so
+a line an earlier run left for a reused id proves nothing; the ids' uniqueness to their run is
+the main guard. A line for the id whose timestamp cannot be read, or an authorization with
+none, counts as an authorization; a log that cannot be read leaves the row BLOCKED. It is
 refused beside `FED_PROBE_LAUNCHER`, which is a drill's and holds the partner's identities, and
 outside a session (exit 2). The federation test environment's launcher
 (`ops/federation-e2e/lib/probe-launcher.sh`) serves both, by where it runs and which
@@ -362,6 +365,7 @@ broken on purpose (`Faults`). `test_acceptance.py` runs the real script against 
 | a bilateral session, each side on its own core: first runner, second runner, first again; import twice; combine | first: inbound BLOCKED, exit 3; second: inbound PASS with the partner's challenge, outbound BLOCKED naming the partner's row; first again: inbound PASS; second import refused as a replay; outbound PASS (peer-reported), scope INCOMPLETE where refusals were not configured |
 | two operators, each with their own core, edge trace, probes and SPIRE commands, run one session and exchange bundles | both `combine` results PASS |
 | a session in which each side holds only its own surfaces and its own launcher; no partner probes; probe ids from an earlier run; a forged probe our edge authorizes; an SVID from our own root; both launchers; a staged value holding key material | both `combine` results PASS; our refusal rows BLOCKED naming the partner; FAIL; FAIL; FAIL; refused; no such value is staged |
+| own surfaces: a valid unmatched line, a line with an impossible timestamp, then an authorization; an edge log the filter cannot read; our edge's clock 20 s behind; two minutes behind | FAIL; BLOCKED; PASS; BLOCKED |
 | own surfaces: a reused id whose only unmatched line is from an earlier run; a probe session that does not answer (forged; agreed); one id staged for two kinds; key material let past the certificate filter; our own launcher outside a session | BLOCKED naming the partner's run start; not staged, our row BLOCKED naming the partner's launcher (the control BLOCKED, not "did not land"); refused, ACL trace BLOCKED; the run stops, exit 1, nothing staged; exit 2 |
 | a session manifest made for another agreement | exit 2 |
 | a passing bilateral result with cleanup and two approvers; any of them missing, or a level that moves nothing; an open scope; a published record after expiry, a later failure, a changed agreement | a proposed file and diff, the deployment's file unchanged, one block after a second session; refused, nothing written; refused naming the open row; stale, degraded, stale, nothing written |
@@ -636,7 +640,8 @@ key material before it is written, and the run stops (exit 1) on one; the receiv
 such a value and its row is BLOCKED. The partner's staged ids and certificate are taken only
 beside this run's challenge of theirs, so values from an earlier run prove nothing. The forged
 and impersonation rows count only the edge's lines for the staged id stamped at or after the
-partner's staged run start, and the three ids must differ (§2.4); a kind the partner did not
+partner's staged run start less 30 seconds, never failing open on a line whose timestamp cannot
+be read, and the three ids must differ (§2.4); a kind the partner did not
 stage, because its launcher started none or its session did not answer, leaves our row BLOCKED,
 naming the partner. The time rule rests on the two sides' clocks agreeing, as the session's
 timing does (§6.3).

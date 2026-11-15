@@ -513,6 +513,9 @@ OWN_KEY_SET=""; THEIR_KEY_SET=""
 for _s in $(list "$OUR_SETS"); do OWN_KEY_SET="$_s"; break; done
 for _s in $(list "$THEIR_SETS"); do THEIR_KEY_SET="$_s"; break; done
 PEER_PROBES=""; PEER_PROBES_KEY=""; PEER_PROBES_WHY="no probes from $THEM in this session"; PEER_STARTED=""
+# How far before the partner's staged start an edge line for one of its probe ids still
+# counts (seconds): a fixed bound for clock skew between their host and our edge (§2.4).
+RUN_START_SLACK=30
 # own_probe_put URL KEY VALUE: one write through one of our own probe sessions; true
 # only when the session answered it with HTTP 2xx. A kind whose session did not is not
 # staged, so the partner never judges its edge's log for a session that wrote nothing.
@@ -1229,39 +1232,53 @@ edge_refusals() {
                   else ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; fi; }
       lines()   { grep -F "$1" "$TRACE" | grep -E 'is (un)?authorized to ' | tail -3; }
       # zid_lines ZID: the log's lines naming ZID. For the partner's own probes, only the
-      # lines stamped at or after their run's start (PEER_STARTED, staged with the ids):
-      # an id is the evidence's only tie to a session, and a line an earlier run left for
-      # the same id is not this run's. A line with no timestamp is not counted then. It
-      # rests on the two sides' clocks agreeing, as the session's timing does (§6.3).
+      # lines stamped at or after their run's start (PEER_STARTED, staged with the ids)
+      # less RUN_START_SLACK: an id is the evidence's only tie to a session, and a line an
+      # earlier run left for the same id is not this run's. The slack lets an edge clock
+      # behind the partner's by up to that much keep the partner's honest lines; the ids'
+      # uniqueness to their run (§2.4) stays the main guard. The rule rests on the two
+      # sides' clocks agreeing within the slack, as the session's timing does (§6.3).
+      # Never fails open: a line naming ZID whose timestamp cannot be read (ISO-shaped
+      # but impossible) is printed as an authorization, and so is an authorization with
+      # no timestamp; an unmatched line with no timestamp is not counted. A non-zero
+      # exit (the log could not be read) is the caller's BLOCKED.
       zid_lines() {
         if [ -z "$PEER_PROBES" ]; then grep -F "$1" "$TRACE"; return 0; fi
         [ -n "$PEER_STARTED" ] || return 0
-        python3 - "$TRACE" "$1" "$PEER_STARTED" <<'PY'
+        python3 - "$TRACE" "$1" "$PEER_STARTED" "$RUN_START_SLACK" <<'PY'
 import datetime, re, sys
-path, zid, since = sys.argv[1], sys.argv[2], int(sys.argv[3])
+path, zid, since = sys.argv[1], sys.argv[2], int(sys.argv[3]) - int(sys.argv[4])
 ansi = re.compile(r"\x1b\[[0-9;]*m")
 ts = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?(Z|[+-]\d\d:?\d\d)?")
+AUTH = "is authorized to "
 for raw in open(path, encoding="utf-8", errors="replace"):
     line = ansi.sub("", raw)
     if zid not in line:
         continue
     m = ts.search(line)
     if not m:
+        if AUTH in line:
+            sys.stdout.write(line)
         continue
-    t = datetime.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")
-    off = m.group(2) or "Z"
-    if off != "Z":
-        sign = 1 if off[0] == "+" else -1
-        h, mi = int(off[1:3]), int(off[-2:])
-        t -= sign * datetime.timedelta(hours=h, minutes=mi)
-    if t.replace(tzinfo=datetime.timezone.utc).timestamp() >= since:
+    try:
+        t = datetime.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")
+        off = m.group(2) or "Z"
+        if off != "Z":
+            sign = 1 if off[0] == "+" else -1
+            h, mi = int(off[1:3]), int(off[-2:])
+            t -= sign * datetime.timedelta(hours=h, minutes=mi)
+        when = t.replace(tzinfo=datetime.timezone.utc).timestamp()
+    except (ValueError, OverflowError):
+        sys.stdout.write("%s (an unreadable timestamp, counted as: %s) %s" % (zid, AUTH.strip(), line))
+        continue
+    if when >= since:
         sys.stdout.write(line)
 PY
       }
       # since_run: how a row names the window it read, for the partner's own probes.
       since_run() {
         [ -n "$PEER_PROBES" ] || return 0
-        if [ -n "$PEER_STARTED" ]; then printf ' since %s'"'"'s run started (%s)' "$THEM" "$(date -u -d "@$PEER_STARTED" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "$PEER_STARTED")"
+        if [ -n "$PEER_STARTED" ]; then printf ' since %s'"'"'s run started (%s, less %ss for clock skew)' "$THEM" "$(date -u -d "@$PEER_STARTED" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "$PEER_STARTED")" "$RUN_START_SLACK"
         else printf ' (%s staged no run start beside its probe ids, so no line can be tied to this run)' "$THEM"; fi
       }
       # verdict [SESSION-FILTER] KEY-FILTER: the last decision, of one session when given.
@@ -1338,14 +1355,17 @@ PY
         FORGED="$THEIR_WIRE/acceptance-forged/$S"; begin
         if [ -z "$PEER_PROBES" ]; then probe "$FED_PROBE_FORGED_REST" "$FORGED" "nope-$S"; settle 6; fi
         trace
-        zl=$(zid_lines "$FED_PROBE_FORGED_ZID")
+        zl=$(zid_lines "$FED_PROBE_FORGED_ZID"); zrc=$?
         unmatched=$(printf '%s\n' "$zl" | grep -c 'did not match any configured ACL subject' || true)
         allows=$(printf '%s\n' "$zl" | grep -c 'is authorized to ' || true)
         get_side ours "$FORGED"
         obs zid "$FED_PROBE_FORGED_ZID"; obs unmatched "$unmatched"; obs authorizations "$allows"; obs received "$GOT"
         [ -n "$PEER_PROBES" ] && obs since "$PEER_STARTED"
         obs trace "$(printf '%s\n' "$zl" | grep -v '^$' | tail -3)"
-        if [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ]; then
+        if [ "$zrc" -ne 0 ]; then
+          blk refusal/forged-name inbound negative "the forged name: our edge's log could not be read for that session" \
+            "Its decision lines are the evidence; without them the refusal is not proven."
+        elif [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ]; then
           ok refusal/forged-name inbound negative "a name their CA minted and nobody agreed: our edge matched it to no subject, ZERO authorizations, nothing landed"
         elif [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -ne 0 ]; then
           blk refusal/forged-name inbound negative "the forged name: our core's REST surface did not answer" "$GOT_ERR"
@@ -1377,7 +1397,7 @@ PY
           settle 6
         fi
         trace
-        zl=$(zid_lines "$FED_PROBE_IMPERSONATE_ZID")
+        zl=$(zid_lines "$FED_PROBE_IMPERSONATE_ZID"); zrc=$?
         unmatched=$(printf '%s\n' "$zl" | grep -c 'did not match any configured ACL subject' || true)
         allows=$(printf '%s\n' "$zl" | grep -c 'is authorized to ' || true)
         landed=""; unread=""
@@ -1387,7 +1407,10 @@ PY
         obs zid "$FED_PROBE_IMPERSONATE_ZID"; obs unmatched "$unmatched"; obs authorizations "$allows"; obs received "$landed"
         [ -n "$PEER_PROBES" ] && obs since "$PEER_STARTED"
         obs trace "$(printf '%s\n' "$zl" | grep -v '^$' | tail -3)"
-        if [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -z "$unread" ]; then
+        if [ "$zrc" -ne 0 ]; then
+          blk refusal/impersonation inbound negative "the impersonation: our edge's log could not be read for that session" \
+            "Its decision lines are the evidence; without them the refusal is not proven."
+        elif [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -z "$unread" ]; then
           ok refusal/impersonation inbound negative "their certificate bearing our core's name: our edge matched it to no subject, ZERO authorizations on any key, nothing landed"
         elif [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -n "$unread" ]; then
           blk refusal/impersonation inbound negative "the impersonation: our core's REST surface did not answer for$unread"
