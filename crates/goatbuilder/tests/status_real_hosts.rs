@@ -270,3 +270,178 @@ fn status_on_real_hosts_agrees_with_verify_and_diff_for_every_machine() {
     assert_eq!(by_diff, want, "diff, every machine:\n{dtext}");
     assert_eq!(by_verify, want, "verify, every machine");
 }
+
+// --- The operator's C3 run as one command: ops/goatbuilder/c3-measure.sh ---
+//
+// The script runs doctor, status, diff and one verify per component, then
+// ops/goatbuilder/c3-agreement.py, times each verb, keeps the reports and a
+// record.json in a private directory, and prints one summary line that is safe
+// for the gate row. These tests run it on the same fixture, with the built
+// binary, and a wrapper that can change one verb's report where a case needs it.
+
+const WRAPPER: &str = r#"#!/usr/bin/env python3
+import json, os, subprocess, sys
+args = sys.argv[1:]
+mode = os.environ.get("C3_WRAP", "")
+p = subprocess.run([os.environ["C3_REAL_GOATBUILDER"]] + args, capture_output=True, text=True)
+out = p.stdout
+verb = next((a for a in args if a in ("doctor", "status", "diff", "verify")), "")
+if mode == "disagree" and verb == "verify" and "portal" in args:
+    doc = json.loads(out)
+    for c in doc["checks"]:
+        if c["name"].endswith("/core-a") and c["detail"].startswith("converged on"):
+            c["detail"] = "NOT converged: changed by the test"
+    out = json.dumps(doc)
+if mode == "unread" and verb == "verify":
+    out = json.dumps({"verb": "verify", "checks": [{"name": "zagros/transport", "detail": "read failed"}]})
+if mode == "token" and verb == "doctor":
+    doc = json.loads(out) if out.strip().startswith("{") else {"verb": "doctor", "checks": []}
+    doc.setdefault("checks", []).append(
+        {"name": "env:zagros:transport", "detail": "door with " + os.environ["C3_TOKEN"]})
+    out = json.dumps(doc)
+sys.stdout.write(out)
+sys.stderr.write(p.stderr)
+sys.exit(p.returncode)
+"#;
+
+/// A token-shaped value, built at run time so no file holds one.
+fn token() -> String {
+    format!("gh{}_{}", "p", "A1b2C3d4".repeat(5).chars().take(36).collect::<String>())
+}
+
+fn token_shaped(text: &str) -> bool {
+    regex::Regex::new(r"(gh[opsu]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})")
+        .unwrap()
+        .is_match(text)
+}
+
+struct Measured {
+    code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+fn measure(repo: &Path, wrap: &str, out: Option<&Path>, tmp: &Path) -> Measured {
+    let wrapper = repo.join("c3-test-goatbuilder");
+    test_support::executable(&wrapper, WRAPPER);
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/c3-measure.sh");
+    let mut cmd = Command::new("bash");
+    test_home::isolate(&mut cmd)
+        .arg(&script)
+        .args(["--env", "zagros", "-C", repo.to_str().unwrap()])
+        .current_dir(repo)
+        .env("GOATBUILDER", &wrapper)
+        .env("C3_REAL_GOATBUILDER", env!("CARGO_BIN_EXE_goatbuilder"))
+        .env("C3_WRAP", wrap)
+        .env("C3_TOKEN", token())
+        .env("GITHUB_TOKEN", token())
+        .env("TMPDIR", tmp)
+        .env("GOAT_MESH_PROBE", "0")
+        .env("GOAT_DOOR_OPEN", "0")
+        .env("GOAT_EXPLAIN", "0");
+    if let Some(o) = out {
+        cmd.args(["--out", o.to_str().unwrap()]);
+    }
+    let o = cmd.output().unwrap();
+    Measured {
+        code: o.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+    }
+}
+
+/// The one summary line, with every name of the fixture's goatnet checked absent.
+fn summary(m: &Measured) -> String {
+    let lines: Vec<&str> = m.stdout.lines().filter(|l| l.starts_with("c3 <env>: ")).collect();
+    assert_eq!(lines.len(), 1, "exactly one summary line:\n{}\n{}", m.stdout, m.stderr);
+    let s = lines[0].to_string();
+    for name in ["zagros", "core-a", "core-b", "core-c", "core-f", "zagros_hosts"] {
+        assert!(!s.contains(name), "the summary line names {name:?}: {s}");
+    }
+    assert!(!token_shaped(&s), "a token-shaped value in the summary line: {s}");
+    s
+}
+
+#[test]
+fn c3_measure_keeps_a_private_record_and_prints_one_line_with_no_names() {
+    let w = world();
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("rec");
+    let m = measure(w.path(), "", Some(&out), tmp.path());
+    assert_eq!(m.code, 0, "the three verbs agree on the fixture:\n{}\n{}", m.stdout, m.stderr);
+    let s = summary(&m);
+    assert!(s.contains("AGREE"), "{s}");
+    assert!(s.contains("reached 2 of 4 machine(s)"), "{s}");
+    assert!(s.contains("2 component(s)"), "{s}");
+    assert!(s.contains("goatbuilder 0."), "the version is in the line: {s}");
+    for f in ["status.json", "diff.json", "verify-portal.json", "verify-herd.json", "record.json"] {
+        assert!(out.join(f).is_file(), "{f} kept in the private directory");
+    }
+    let rec: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("record.json")).unwrap()).unwrap();
+    for k in ["build", "transport", "reach", "result", "times_s", "reports", "summary"] {
+        assert!(!rec[k].is_null(), "record.json keeps {k}: {rec}");
+    }
+    assert_eq!(rec["result"]["exit"], 0, "{rec}");
+    assert_eq!(rec["reach"], "reached 2 of 4 machine(s)", "{rec}");
+    for v in ["status", "diff", "verify:portal", "verify:herd"] {
+        assert!(rec["times_s"][v].is_number(), "the wall time of {v}: {rec}");
+    }
+}
+
+#[test]
+fn c3_measure_without_out_makes_a_private_directory_of_its_own() {
+    let w = world();
+    let tmp = tempfile::tempdir().unwrap();
+    let m = measure(w.path(), "", None, tmp.path());
+    assert_eq!(m.code, 0, "{}\n{}", m.stdout, m.stderr);
+    summary(&m);
+    let made: Vec<_> = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().join("record.json").is_file())
+        .collect();
+    assert_eq!(made.len(), 1, "one directory under TMPDIR holds the record");
+    let dir = made[0].path();
+    assert!(m.stderr.contains(dir.to_str().unwrap()), "the script names where it kept the record:\n{}", m.stderr);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "the private directory is the operator's alone");
+    }
+}
+
+#[test]
+fn c3_measure_fails_on_a_disagreement() {
+    let w = world();
+    let tmp = tempfile::tempdir().unwrap();
+    let m = measure(w.path(), "disagree", Some(&tmp.path().join("rec")), tmp.path());
+    assert_eq!(m.code, 3, "a disagreement fails C3:\n{}\n{}", m.stdout, m.stderr);
+    let s = summary(&m);
+    assert!(s.contains("DISAGREE"), "{s}");
+}
+
+#[test]
+fn c3_measure_says_a_failed_read_is_not_a_measurement() {
+    let w = world();
+    let tmp = tempfile::tempdir().unwrap();
+    let m = measure(w.path(), "unread", Some(&tmp.path().join("rec")), tmp.path());
+    assert_eq!(m.code, 2, "a verify that read no machine is not a measurement:\n{}\n{}", m.stdout, m.stderr);
+    let s = summary(&m);
+    assert!(s.contains("NOT A MEASUREMENT"), "{s}");
+}
+
+#[test]
+fn c3_measure_keeps_no_token_shaped_value_in_the_record() {
+    let w = world();
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("rec");
+    let m = measure(w.path(), "token", Some(&out), tmp.path());
+    assert_eq!(m.code, 0, "{}\n{}", m.stdout, m.stderr);
+    summary(&m);
+    let rec = std::fs::read_to_string(out.join("record.json")).unwrap();
+    assert!(rec.contains("door with"), "the doctor row reached the record (redacted): {rec}");
+    assert!(!token_shaped(&rec), "record.json holds a token-shaped value: {rec}");
+    assert!(!token_shaped(&m.stdout) && !token_shaped(&m.stderr), "the run printed a token-shaped value");
+}
