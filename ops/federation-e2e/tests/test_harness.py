@@ -524,6 +524,23 @@ def samples_checks():
     on = body1.find('-- drive "$them" "$s" "$AVENUE" 11 13', step if step >= 0 else 0)
     check(step >= 0 and back > step and step < on < back,
           "rotation: the partner's step does not go on from phase 11 (drive $them $s $AVENUE 11 13) before the tunnel check")
+    # The partner's step from phase 11 runs through rec.py, which starts its command as
+    # a program: a shell function named there is not found and the step never starts.
+    # The line is run here through the real rec.py, with `drive` a stub exported the
+    # way lib/engine.sh's export_helpers exports it.
+    line = next((l.strip() for l in unit.splitlines() if 'rec "rot-partner-step-from-11-' in l), "")
+    with tempfile.TemporaryDirectory() as d:
+        script = (f'REC={os.path.join(os.path.dirname(ROOT), "e2e", "rec.py")!r}; export E2E_RECORD_DIR={d!r}; FAILS=0\n'
+                  'rec() { python3 "$REC" "$@" || FAILS=$((FAILS + 1)); }\n'
+                  'drive() { echo "drive $*" > "$E2E_RECORD_DIR/drive.called"; }; export -f drive\n'
+                  'k=transport s=xaa them=xab AVENUE=wg\n'
+                  f'{line}\n'
+                  'echo "FAILS=$FAILS"\n')
+        p = subprocess.run(["bash", "-c", script], cwd=ROOT, capture_output=True, text=True)
+        called = os.path.join(d, "drive.called")
+        got = open(called).read().strip() if os.path.exists(called) else ""
+        check(line and "FAILS=0" in p.stdout and got == "drive xab xaa wg 11 13",
+              f"rotation: the partner's step from phase 11 does not start through rec.py: {line!r} {got!r} {p.stdout.strip()} {p.stderr.strip()[-300:]}")
     # The samples check is given each rotated side's window: from the side's rotation to
     # the end of its partner's step, recorded around rot_one.
     check(re.search(r"side-start\\t%s\\n' \"\$\(date [^)]*\)\" \"\$s\"", unit) and re.search(r"side-end\\t%s\\n' \"\$\(date [^)]*\)\" \"\$s\"", unit) and "--rotation" in unit,
