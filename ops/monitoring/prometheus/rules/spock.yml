@@ -37,8 +37,7 @@ groups:
       - alert: SpockSlotWALNearLimit
         expr: |
           pg_replication_slot_retained_wal_bytes
-            / ignoring(slot_name) group_left() on(instance)
-              (max_slot_wal_keep_size_bytes) > 0.8
+            / on(instance) group_left() spock_config_max_slot_wal_keep_size_bytes > 0.8
         for: 5m
         labels:
           severity: critical

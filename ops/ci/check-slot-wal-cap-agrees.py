@@ -20,11 +20,17 @@ The rule and both values are written once, in ops/postgres/spock/README.md,
   * a command line that passes the setting (`-c max_slot_wal_keep_size=`),
     which the README says nothing does;
   * a size or a byte count written on the same line as max_slot_wal_keep_size,
-    or on the line after it, in any tracked file other than the two places
-    and the README's section: such a value goes stale when either place moves.
-    The unlimited sentinel 2^63-1 is not a size. A file that sets a value on
+    or on the line after it when the sentence runs on, in any tracked file
+    other than the two places and the README's section: such a value goes
+    stale when either place moves. A bare number counts as bytes only in
+    configuration files (.yml, .yaml, .conf, .j2, .json), and the unlimited
+    sentinel 2^63-1 is not a size. A file that sets a value on
     purpose (a drill) is listed in ops/ci/slot-wal-cap-mentions.allow with
-    its reason.
+    its reason; an entry must name a tracked file, and never the README, the
+    image's conf or the role's defaults.
+
+It runs on every pull request (.github/workflows/slot-wal-cap.yml), since a
+mention can land in any file.
 
 Sizes compare in bytes, with Postgres's units (kB, MB, GB, TB, binary; a bare
 number is megabytes, the setting's unit), so 1024MB and 1GB agree and prose
@@ -67,7 +73,7 @@ COMMAND_LINE = re.compile(r"(-c\s*|--)" + SETTING + r"\s*=")
 def size_bytes(v: str):
     """Bytes in a Postgres size (`1GB`, `1.5 GB`, `512kB`, a bare number of
     megabytes), -1 for unlimited, or None when it is not a size."""
-    v = v.strip().strip("'\"")
+    v = v.strip().replace("`", "").replace("**", "").strip().strip("'\"")
     if v == "-1":
         return -1
     m = re.fullmatch(r"(\d+(?:\.\d+)?)\s?([A-Za-z]*)", v)
@@ -173,7 +179,7 @@ def tracked_files(repo: str) -> list[str]:
     return out
 
 
-def allowed(repo: str, bad: list[str]) -> set[str]:
+def allowed(repo: str, bad: list[str], tracked: set[str]) -> set[str]:
     p = os.path.join(repo, ALLOW)
     if not os.path.isfile(p):
         return set()
@@ -185,14 +191,35 @@ def allowed(repo: str, bad: list[str]) -> set[str]:
         if len(parts) < 2 or not parts[1].strip():
             bad.append(f"{ALLOW}:{n}: '{parts[0]}' needs its reason after the path")
             continue
+        if parts[0] in (README, IMAGE_CONF, ROLE_DEFAULTS):
+            bad.append(f"{ALLOW}:{n}: '{parts[0]}' is where the cap is set or stated; it cannot be exempted")
+            continue
+        if parts[0] not in tracked:
+            bad.append(f"{ALLOW}:{n}: '{parts[0]}' names no tracked file; remove the line")
+            continue
         out.add(parts[0])
     return out
 
 
-def has_value(line: str) -> bool:
+# Files where a bare number beside the setting is a byte count (a threshold, a
+# setting); in prose a seven-digit number is as likely a row count or a date.
+BYTE_FILES = (".yml", ".yaml", ".conf", ".j2", ".json")
+
+
+def has_value(line: str, rel: str) -> bool:
     if SIZE.search(line):
         return True
-    return any(m.group(1) != SENTINEL for m in BYTES.finditer(line))
+    return rel.endswith(BYTE_FILES) and any(m.group(1) != SENTINEL for m in BYTES.finditer(line))
+
+
+def runs_on(line: str, nxt: str) -> bool:
+    """Whether `nxt` continues the sentence `line` is in: the line does not end
+    one, and the next line is not blank, a new list item, a heading or a table row."""
+    t = line.rstrip()
+    n = nxt.strip()
+    if not n or t.endswith((".", "!", "?", ":")):
+        return False
+    return not re.match(r"^([-*+]\s|\d+[.)]\s|#|\|)", n)
 
 
 def check(repo: str) -> list[str]:
@@ -222,11 +249,12 @@ def check(repo: str) -> list[str]:
                 bad.append(f"{README} {SECTION!r}: the row for {name} value says {rows[key]!r}, "
                            f"but {name.split()[0]} {name.split()[1]} value is {human(want)}{where}")
 
-    allow = allowed(repo, bad)
+    files = tracked_files(repo)
+    allow = allowed(repo, bad, set(files))
     sec_lines = set()
     if sec_line is not None:
         sec_lines = set(range(sec_line, sec_line + body.count("\n") + 1))
-    for rel in tracked_files(repo):
+    for rel in files:
         if rel in SELF or rel in allow:
             continue
         try:
@@ -247,8 +275,10 @@ def check(repo: str) -> list[str]:
                 continue
             if rel == README and n in sec_lines:
                 continue
-            window = [line] + ([lines[i + 1]] if i + 1 < len(lines) and SETTING not in lines[i + 1] else [])
-            if any(has_value(w) for w in window):
+            window = [line]
+            if i + 1 < len(lines) and SETTING not in lines[i + 1] and runs_on(line, lines[i + 1]):
+                window.append(lines[i + 1])
+            if any(has_value(w, rel) for w in window):
                 bad.append(f"{rel}:{n}: a size beside {SETTING}; point at {README}, {SECTION!r}, "
                            f"or list the file in {ALLOW} with its reason")
     return bad

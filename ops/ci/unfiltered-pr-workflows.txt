@@ -6,4 +6,5 @@ agent-references.yml    # an assistant session link can land in any file, most o
 ci.yml                  # the public build and the always-on guards; its `changes` job decides which jobs need to run
 contributor-trust.yml   # required check on main (ADR 1221): decides from the author and paths whether a security review is needed
 leak-gate.yml           # required check on main: a deployment name or key can be added in any file
+slot-wal-cap.yml        # the slot WAL cap check reads every tracked file, so a size beside the setting can land in any path; it takes a second
 stable-guard.yml        # filtered by branch instead: runs only for pull requests into `stable`, which it closes (ADR 1231)
