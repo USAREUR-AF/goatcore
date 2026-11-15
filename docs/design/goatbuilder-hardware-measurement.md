@@ -235,12 +235,13 @@ text as you go. A difference is a finding even when the command exits 0.
 | `status --env <env>` lists both sites' machines, every one `converged` | Checkpoint 4 holds |
 | a phase fails, or `assay` exits 3 | Not yet a measurement. Note the phase, the code and the output. Fix the tool or the text, then resume with `--from <phase>` |
 
-Checkpoint 3 is not fully covered by a command today. `assay` at the joiner
-reads the joiner's inbound subscriptions (netbird, kratos and hydra) and the
-founder's rows present on the joiner. `assay` at the founder reads the
-founder's subscriptions from the joiner. Nothing yet writes a row at the
-founder and deletes it at the joiner. Until a command does, the run records
-that leg as not measured.
+Checkpoint 3 is covered by commands. `assay` at the joiner reads the joiner's
+inbound subscriptions (netbird, kratos and hydra) and the founder's rows present
+on the joiner. `assay` at the founder reads the founder's subscriptions from the
+joiner. The write and the deletion across the sites have an opt-in probe,
+`ops/validation/identity-roundtrip.sh --write --founder <url> --joiner <url>`.
+It passes on exit 0 with `identity-roundtrip: PASS …`. It writes one test
+identity and deletes it, so it runs only when the operator chooses to.
 
 **What to keep.**
 
@@ -557,7 +558,6 @@ phases are the next three levers.
 | A generator for a full goatnet's cloud tree | not built |
 
 None of the three clocks has been measured on hardware, and neither tutorial
-has been followed on hardware. Two parts of the tutorial runs are not built:
-- a command for tutorial 2's checkpoint 3 write and deletion across the sites;
+has been followed on hardware. One part of the tutorial runs is not built:
 - federation-acceptance.md §6.4, which a two-party tutorial 3 run needs for a
   PASS.
