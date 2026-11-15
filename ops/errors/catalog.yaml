@@ -3700,13 +3700,15 @@ entries:
   - code: GB-302
     tool: goatbuilder
     title: the IPsec link did not come up on the new leaf; the old pair was put back
-    what: "After switching to the staged leaf, goat-peering-edge loaded the credentials, re-authenticated the IKE SA and waited up to peering_edge_rotation_confirm_seconds (the DPD timeout by default) for an established IKE SA with an installed CHILD SA. None came up, so it put the set-aside pair back from .previous-<id>/, loaded it and re-authenticated: the old leaf is live. It marks the rotation rolled back (.previous-<id>/rolled-back), so every later run of the same id, a resume or a retire, reports GB-302 again, moves nothing and never replaces our CA. For ipsec-ca with --no-overlap, a partner that no longer trusts our old CA cannot carry the link on the old pair either."
+    what: "After switching to the staged leaf, goat-peering-edge loaded the credentials, re-authenticated the IKE SA and waited up to peering_edge_rotation_confirm_seconds (the DPD timeout by default) for an established IKE SA with an installed CHILD SA. Once one is up it reloads the credentials from the files alone (swanctl --load-creds --clear) and needs charon to hold the live leaf's serial with its private key and no other certificate of our id with one, because swanctl --list-sas names only the identities. None came up, or the leaf was not proven, so it put the set-aside pair back from .previous-<id>/, loaded it and re-authenticated: the old leaf is live. It marks the rotation rolled back (.previous-<id>/rolled-back), so every later run of the same id, a resume or a retire, reports GB-302 again, moves nothing and never replaces our CA. For ipsec-ca with --no-overlap, a partner that no longer trusts our old CA cannot carry the link on the old pair either."
     causes:
       - the partner does not trust the CA that issued the new leaf
       - the partner's edge expects another identity, or is not reachable
       - "this rotation id was rolled back by an earlier run"
+      - "charon did not load the new pair, or another certificate of our id is still loadable with its key from the swanctl directory (the message names its serial)"
     fixes:
       - "read swanctl --list-sas and the charon log on both edges, then stage the new pair again and start a rotation with a new id"
+      - "when the message names another serial, remove that certificate and key from the swanctl directory, then start a rotation with a new id"
     read: docs/design/federation-key-rotation.md
     exit: 2
     matches:
@@ -3793,6 +3795,22 @@ entries:
     exit: 1
     matches:
       - "has no play to pass .* to \\(no `-e fed_work=` in its command\\)"
+
+  - code: GB-341
+    tool: goatbuilder
+    title: the IPsec rotation was not tested with this strongSwan
+    what: "An IPsec credential rotation (goat-peering-edge) relies on what strongSwan does when the switch loads the credentials: that swanctl --load-creds unloads the old leaf's key, and what --load-creds --clear and --list-certs show after it. That was measured on a real charon of the series in peering_edge_rotation_strongswan_tested (5.9 and 6.0 by default: 5.9.8 and 6.0.4). Before anything moves, the rotation reads the running charon's version (swanctl --version --daemon --raw). It reported a series not in the list, or no version at all, so nothing was moved."
+    causes:
+      - "the edge runs a strongSwan release of another series than the rotation was measured on"
+      - "charon is not running, or swanctl cannot reach it over vici"
+    fixes:
+      - "run the rotation on an edge whose charon is of a tested series"
+      - "or run the rotation on this series in a lab first, then add the series (major.minor) to peering_edge_rotation_strongswan_tested in the deployment's group_vars"
+      - "when no version was read, start charon (or fix the vici socket) and run the rotation again with the same id"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-341\\)"
 
   - code: X-ANSIBLE-001
     tool: ansible
