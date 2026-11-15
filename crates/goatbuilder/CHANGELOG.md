@@ -10,6 +10,78 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Changed: phase 6 composes the agreement only with the peering's declared partner
+
+Phase 6 now tells `compose` which two parties the agreement is between: us
+and the peering's declared partner (`FED_COUNTERPARTY_ID`, from
+`goatbuilder.yaml`). A counterparty package of any other party is refused
+(GB-191) and no agreement is written, even when the keyring binds that party's
+key, as a keyring shared by several peerings can. Only the two parties' keyring
+lines are passed to compose. `goat federate compose` takes the parties as
+`--party <sovereign_id>`, once or twice; without it, compose behaves as before.
+
+#### Added: goat-peering-edge rotates an IPsec peering's leaf from staged material, and puts the old one back if the link does not come up
+
+An `ipsec-fips` peering's edge role, `goat-peering-edge`, rotates its IPsec
+leaf when `peering_edge_rotation` names a rotation id. The role still writes
+no secret: the offline ceremony issues the new leaf, and an operator stages it
+beside the live files as `.next` files. The role checks the staged pair
+(GB-289, GB-290), sets the live pair aside once in `.previous-<id>/`, switches,
+re-authenticates the IKE SA, and puts the old pair back if the SA does not
+come up (GB-302); a rotation rolled back stays reported as rolled back on
+every later run of its id. An `ipsec-ca` rotation also needs the partner's
+read-back of our new CA's fingerprint (GB-303) before our new CA replaces the
+current one. `peering_edge_rotation_retire` removes the set-aside key only once
+the confirm recorded the new leaf live (`.previous-<id>/confirmed`, the IKE SA
+the re-authentication made), and never moves the live pair, the staged pair or
+our CA (GB-309 for an id with nothing to retire, or a rotation not confirmed
+or with an unreadable record; a re-run with the same id confirms it). The
+confirm is recorded only once the SA from before the re-authentication is gone,
+and a roll-back removes the record. A run killed during the set-aside or between
+the switch's two moves is finished by the next run, or refused with nothing
+moved (GB-311); the live pair is never left mixed. The confirm counts only an IKE SA the
+re-authentication made, not the old one still up beside it, and the role now
+sets `make_before_break = yes` in its charon drop-in on every IPsec peering
+edge, instead of leaving it to the packaged strongSwan's default
+(`peering_edge_make_before_break`). The first apply after this change restarts
+strongSwan once on each ipsec-fips edge, which drops that peering's link
+briefly: apply both sides of a peering in one window. The rotation always
+rekeys the IKE SA before the re-authentication, so no rekey of either side, which
+keeps the old authentication, can pass the confirm on the old leaf, and it refuses
+an IKE rekey interval too short to hold the confirm. `peering_edge_remote_ca_next_path` accepts a
+partner's new CA beside the current one during their rotation. It is opt-in,
+and without a rotation id nothing changes. `goatbuilder federate rotate` does
+not drive it yet.
+
+<!-- END generated: changelog unreleased -->
+
+## 0.7.1 — 2026-11-15
+
+What changed since 0.7.0, the previous release. `join-node` builds a node on a
+phone with `--class phone --via usb`, on a fixture and not yet measured on a
+phone, runs a joining site's own mesh DNS, and refuses a node whose clock is
+off. `standup` for a joiner turns signal federation on, and standup,
+join-node and teardown keep timings files whose rows name their cause. Every
+site's end state declares every service a cut-off site needs, and what a
+joining site does not run yet is named as a gap. `federate rotate <partner>
+leaves` replaces a running peering's leaves; `federate test
+--bilateral` completes the partner's half of acceptance, opt-in; on a
+two-driver peering the edge driver runs phases 1 and 3. A back-out keeps the
+core leaf another peering still uses and removes the peering's host-firewall
+entry. After a signing-key rotation, phase 5 hands the peering directory over
+to the new key, and a host-allocation SKIP says what clears it or is accepted
+into the plan. `goatbuilder.yaml` takes three optional `deploy` fields,
+`cloud`, `owner` and `cross_goatnet`; undeclared, nothing changes.
+
+Three behaviour changes: an environment that declares `converger: pull-agent` is
+refused by `doctor` and by every verb that pushes to real hosts, with GB-307;
+`join-node` refuses a node whose clock is unsynchronized or more than 250 ms
+off, with GB-297; and a back-out with no other peering set up, and no record
+of what the core leaf's paths held before, stops with GB-293 where it stopped
+with GB-221.
+
+### For someone deploying
+
 #### Fixed: phase 14's round trip sends a fresh probe until one is acknowledged, so one dropped probe does not fail it
 
 In a bilateral acceptance session both sides run the round trip at once.
@@ -130,16 +202,6 @@ and the back-out removes everything else of the peering. When no other
 peering is set up and nothing records what the leaf paths held before, the
 back-out stops with GB-293, naming each path and the choice to make, instead
 of stopping as GB-221 or showing the leaf as `absent` (#716).
-
-#### Changed: phase 6 composes the agreement only with the peering's declared partner
-
-Phase 6 now tells `compose` which two parties the agreement is between: us
-and the peering's declared partner (`FED_COUNTERPARTY_ID`, from
-`goatbuilder.yaml`). A counterparty package of any other party is refused
-(GB-191) and no agreement is written, even when the keyring binds that party's
-key, as a keyring shared by several peerings can. Only the two parties' keyring
-lines are passed to compose. `goat federate compose` takes the parties as
-`--party <sovereign_id>`, once or twice; without it, compose behaves as before.
 
 #### Fixed: after a signing-key rotation, phase 5 hands the directory over to the new key
 
@@ -435,7 +497,9 @@ request's merge commit. Before the tag, a diff between the checked commit and th
 commit must name nothing under `crates/`, `ops/ansible/` or `ops/federation-e2e/`, or each
 stage those paths feed runs again on the merge commit (#772).
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.0 — 2026-11-14
 
