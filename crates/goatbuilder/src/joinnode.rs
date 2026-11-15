@@ -689,6 +689,87 @@ fn not_run_line(service: &str, reason: &str) -> String {
     format!("{service} \u{2014} {reason}")
 }
 
+/// What the plan's steps build, by the play each one runs, in the end-state
+/// catalog's service names (gate row I3): the plan and the model are compared
+/// name for name. The health publishers are `PUBLISHERS`; the site's
+/// bootstrap play builds `BOOTSTRAP_BUILDS`. A test holds every name here to
+/// the catalog and every play to the repository.
+const BUILDERS: [(&str, &[&str]); 7] = [
+    ("ory-deploy.yml", &["ory", "kratos-selfservice-ui"]),
+    ("signal-federation-transport.yml", &["federation-proxy"]),
+    ("traefik-acme.yml", &["traefik"]),
+    ("lan-traefik-routes.yml", &["traefik"]),
+    ("zenoh-deploy.yml", &["zenoh-router"]),
+    ("goat-coredns.yml", &["mesh-coredns"]),
+    ("obs-host-bootstrap.yml", &["prometheus", "alertmanager", "grafana", "obs-exporters"]),
+];
+
+/// What a site's bootstrap play (site-bootstrap.yml, through mgmt-host.yml)
+/// builds: the replication core of passes 1 and 3.
+const BOOTSTRAP_BUILDS: [&str; 5] = ["postgres-spock", "netbird-mgmt", "signal-server", "pgbackrest", "traefik"];
+
+/// The catalog services the plan's steps build. A gate, a SKIP line and a
+/// person's step build nothing, so a step the site declares off (signal
+/// federation, a publisher marked absent) is not counted.
+fn built_by(repo: &Path, site: &str, phases: &[Phase]) -> std::collections::BTreeSet<&'static str> {
+    let own = crate::standup::bootstrap_play(repo, site);
+    let own = own.split_whitespace().next().unwrap_or("").to_string();
+    let re = regex::Regex::new(r"[A-Za-z0-9_.-]+\.yml\b").expect("a valid pattern");
+    let mut built = std::collections::BTreeSet::new();
+    for ph in phases.iter().filter(|p| p.kind == "A" || p.kind == "T") {
+        for m in re.find_iter(&ph.cmd) {
+            let play = m.as_str();
+            if play == own || play == "site-bootstrap.yml" {
+                built.extend(BOOTSTRAP_BUILDS);
+            }
+            built.extend(BUILDERS.iter().filter(|(p, _)| *p == play).flat_map(|(_, s)| s.iter().copied()));
+            built.extend(PUBLISHERS.iter().filter(|(_, p)| *p == play).map(|(s, _)| *s));
+        }
+    }
+    built
+}
+
+/// Each service the model marks present on this node that no step of the
+/// run's plan builds and the catalog does not already name as a gap (gate row
+/// I3): one the same verb builds for the node's other class (core, obs: a
+/// single-host site places its obs stack on its core node) names that run;
+/// one no step builds names gate row I3. A node the model's hosts do not
+/// list is read by class: a core run answers for the mgmt-class services, an
+/// obs run for the obs-class ones. Only a joining site's core and obs nodes;
+/// a founder's is standup's to build.
+fn unbuilt(repo: &Path, o: &Options, phases: &[Phase], services: &serde_json::Map<String, serde_json::Value>) -> Vec<Check> {
+    let gv = repo.join("ops/ansible/group_vars").join(format!("{}_hosts", o.site.replace('-', "_"))).join("vars.yml");
+    let (here, other) = match converges_as(o.class) {
+        "core" => ("mgmt", "obs"),
+        "obs" => ("obs", "core"),
+        _ => return Vec::new(),
+    };
+    if !gv_matches(&gv, "goatnet_founder", "false") {
+        return Vec::new();
+    }
+    let built = built_by(repo, o.site, phases);
+    let by_other = plan(repo, &Options { class: other, ..*o }).map(|p| built_by(repo, o.site, &p)).unwrap_or_default();
+    let on = |s: &serde_json::Value| s.get("hosts").and_then(|h| h.as_array()).is_some_and(|h| h.iter().any(|n| n.as_str() == Some(o.node)));
+    let placed = services.values().any(on);
+    let mut rows = Vec::new();
+    for (name, s) in services {
+        if s.get("present") != Some(&serde_json::Value::Bool(true)) || s.get("gap").is_some_and(|g| g.is_object()) || built.contains(name.as_str()) {
+            continue;
+        }
+        let here_too = if placed { on(s) } else { s.get("class").and_then(|c| c.as_str()) == Some(here) };
+        if !here_too {
+            continue;
+        }
+        let why = if by_other.contains(name.as_str()) {
+            format!("declared at {}, built by `join-node --class {other}`, not by this run", o.node)
+        } else {
+            format!("declared at {}, and no join-node step builds it yet (gate row I3)", o.node)
+        };
+        rows.push(row("not-run", not_run_line(name, &why)));
+    }
+    rows
+}
+
 /// What the site does not run yet (docs/design/goatbuilder.md, `join-node`
 /// (d)), under one heading: each gap the end-state model names here ("declared,
 /// not yet built at this site", with the gate row that closes it), then each
@@ -698,9 +779,12 @@ fn not_run_line(service: &str, reason: &str) -> String {
 /// re-derived, so this list and `goatbuilder endstate`'s GAP and N/A rows
 /// cannot disagree. A model that cannot be read is one `not read` line naming
 /// what is missing; the run does not stop for it, and no list is guessed.
-fn not_run(repo: &Path, site: &str) -> Vec<Check> {
+/// With the run's plan, each declared service it does not build follows
+/// (`unbuilt`).
+fn not_run(repo: &Path, o: &Options, phases: Option<&[Phase]>) -> Vec<Check> {
+    let site = o.site;
     let shown = format!("{MODEL} model {site}");
-    let mut rows = vec![row("not-run-heading", format!("What {site} does not run yet: each gap the end-state model names, with the gate row that closes it, and each service the site turns off ({shown})"))];
+    let mut rows = vec![row("not-run-heading", format!("What {site} does not run yet: each gap the end-state model names, with the gate row that closes it, each service the site turns off, and each declared service this run does not build ({shown})"))];
     let services = match model_services(repo, site) {
         Ok(s) => s,
         Err(why) => {
@@ -738,6 +822,10 @@ fn not_run(repo: &Path, site: &str) -> Vec<Check> {
             decls.iter().filter_map(|d| d.get("why").and_then(|w| w.as_str())).collect::<Vec<_>>().join("; ")
         });
         rows.push(row("not-run", not_run_line(name, &reason)));
+    }
+    // Last, what the site declares on this node that this run does not build.
+    if let Some(phases) = phases {
+        rows.extend(unbuilt(repo, o, phases, &services));
     }
     if rows.len() == before {
         rows.push(row("not-run", "nothing: the model names no gap here, and the site turns nothing off".into()));
@@ -872,7 +960,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         checks.push(row("timings", crate::standup::timing_summary(&timings, run_started.elapsed().as_secs())));
     }
     // What the site does not run yet, in the plan and in a real run's summary alike.
-    checks.extend(not_run(repo, o.site));
+    checks.extend(not_run(repo, o, Some(&phases)));
     if o.dry_run {
         checks.extend(crate::inputs::rows(&listed));
         let needs = if o.via == "usb" { "takes no --address: the phone is found over USB" } else { "needs --address" };
@@ -1138,7 +1226,7 @@ mod tests {
             "isitup \u{2014} `isitup_enabled` is false in group_vars"
         );
         let t = tempfile::tempdir().unwrap();
-        let rows = not_run(t.path(), "zagros-b");
+        let rows = not_run(t.path(), &opts("zagros-b", "core", "zagros"), None);
         assert_eq!(rows.len(), 2, "{:?}", rows.iter().map(|r| &r.detail).collect::<Vec<_>>());
         assert_eq!(rows[0].name, "not-run-heading");
         assert!(rows[0].detail.starts_with("What zagros-b does not run yet:") && rows[0].detail.contains("ops/goatbuilder/endstate/endstate.py model zagros-b"), "{}", rows[0].detail);
@@ -1442,6 +1530,97 @@ mod tests {
             assert!(catalog["services"].get(name).is_some(), "{name} is not an end-state catalog service");
             assert!(STAGED_SERVICES.contains(&name), "{name}'s leaf is not staged");
             assert!(repo().join("ops/ansible").join(play).is_file(), "no ops/ansible/{play}");
+        }
+    }
+
+    /// The not-run rows a joiner's plan prints for `node`, the heading left out.
+    fn not_run_rows(repo: &Path, o: &Options) -> Vec<String> {
+        let ph = plan(repo, o).unwrap();
+        not_run(repo, o, Some(&ph)).into_iter().filter(|r| r.name == "not-run").map(|r| r.detail).collect()
+    }
+
+    /// Gate row I3, the declared set: every service the end-state model marks
+    /// present on the node is either built by a step of the plan or named under
+    /// the not-run heading. A catalog gap keeps its own line with its gate rows
+    /// (the admin surfaces: I1, I4). An obs-class service the model places on
+    /// a single-host joiner's core node names the run that builds it
+    /// (`join-node --class obs`). A present service no step builds names gate
+    /// row I3. A service the plan builds, one on another node, and one the
+    /// site does not declare are not named.
+    #[test]
+    fn a_joiner_names_each_declared_service_its_plan_does_not_build() {
+        let t = joiner_checkout();
+        std::fs::write(t.path().join("ops/ansible/fabric-health-deploy.yml"), "---\n").unwrap();
+        fake_model(
+            t.path(),
+            r#"{
+                "zenoh-router": {"present": true, "class": "mgmt", "hosts": ["node-x"]},
+                "mesh-coredns": {"present": true, "class": "mgmt", "hosts": ["node-x"]},
+                "ory": {"present": true, "class": "mgmt", "hosts": ["node-x"]},
+                "netbird-mgmt": {"present": true, "class": "mgmt", "hosts": ["node-x"]},
+                "traefik": {"present": true, "class": "mgmt", "hosts": ["node-x"]},
+                "fabric-health": {"present": true, "class": "mgmt", "hosts": ["node-x"]},
+                "portal": {"present": true, "class": "mgmt", "hosts": ["node-x"], "gap": {"row": "I1, I4", "why": "an admin surface waits"}},
+                "peer-health": {"present": true, "class": "mgmt", "hosts": ["node-x"]},
+                "prometheus": {"present": true, "class": "obs", "hosts": ["node-x"]},
+                "goat-docs": {"present": true, "class": "mgmt", "hosts": ["node-y"]},
+                "isitup": {"present": false, "class": "mgmt", "hosts": ["node-x"], "reason": "`isitup_enabled` is false in group_vars"},
+                "spire": {"present": null, "class": "mgmt", "hosts": ["node-x"]}
+            }"#,
+        );
+        let rows = not_run_rows(t.path(), &opts("zagros-b", "core", "zagros"));
+        assert_eq!(
+            rows,
+            vec![
+                "portal \u{2014} declared, not yet built at this site: an admin surface waits (gate row I1, I4)".to_string(),
+                "isitup \u{2014} `isitup_enabled` is false in group_vars".to_string(),
+                "peer-health \u{2014} declared at node-x, and no join-node step builds it yet (gate row I3)".to_string(),
+                "prometheus \u{2014} declared at node-x, built by `join-node --class obs`, not by this run".to_string(),
+            ]
+        );
+        // An obs run on the same node builds the obs stack, and names the
+        // core run for what that builds.
+        let obs = not_run_rows(t.path(), &opts("zagros-b", "obs", "zagros"));
+        assert!(!obs.iter().any(|d| d.starts_with("prometheus ")), "{obs:#?}");
+        assert!(obs.iter().any(|d| d == "zenoh-router \u{2014} declared at node-x, built by `join-node --class core`, not by this run"), "{obs:#?}");
+        assert!(obs.iter().any(|d| d == "peer-health \u{2014} declared at node-x, and no join-node step builds it yet (gate row I3)"), "{obs:#?}");
+    }
+
+    /// A model that does not place the node on any host (an inventory that does
+    /// not list it yet) is read by class: a core run is answerable for the
+    /// mgmt-class services, an obs run for the obs-class ones.
+    #[test]
+    fn a_node_the_model_does_not_place_is_read_by_its_class() {
+        let t = joiner_checkout();
+        fake_model(t.path(), r#"{"zenoh-router": {"present": true, "class": "mgmt", "hosts": []}, "peer-health": {"present": true, "class": "mgmt"}, "grafana": {"present": true, "class": "obs"}}"#);
+        let core = not_run_rows(t.path(), &opts("zagros-b", "core", "zagros"));
+        assert_eq!(core, vec!["peer-health \u{2014} declared at node-x, and no join-node step builds it yet (gate row I3)".to_string()]);
+        let obs = not_run_rows(t.path(), &opts("zagros-b", "obs", "zagros"));
+        assert!(!obs.iter().any(|d| d.starts_with("grafana ") || d.starts_with("peer-health ")), "{obs:#?}");
+    }
+
+    /// A founder site's node is standup's to build: join-node names no
+    /// declared service of its own there, only the model's gaps and what the
+    /// site turns off.
+    #[test]
+    fn a_founder_sites_node_names_no_unbuilt_service() {
+        let t = joiner_checkout();
+        std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\n").unwrap();
+        fake_model(t.path(), r#"{"peer-health": {"present": true, "class": "mgmt", "hosts": ["node-x"]}}"#);
+        assert_eq!(not_run_rows(t.path(), &opts("zagros-b", "core", "zagros")), vec!["nothing: the model names no gap here, and the site turns nothing off".to_string()]);
+    }
+
+    /// Each service a plan step is held to build is an end-state catalog
+    /// service, and each play named is in this repository.
+    #[test]
+    fn each_built_service_is_a_catalog_service_with_its_play() {
+        let text = std::fs::read_to_string(repo().join("ops/goatbuilder/endstate/catalog.yaml")).unwrap();
+        let catalog: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+        for (play, services) in BUILDERS.iter().chain([("site-bootstrap.yml", &BOOTSTRAP_BUILDS[..])].iter()) {
+            assert!(repo().join("ops/ansible").join(play).is_file(), "no ops/ansible/{play}");
+            for s in *services {
+                assert!(catalog["services"].get(*s).is_some(), "{s} is not an end-state catalog service");
+            }
         }
     }
 
