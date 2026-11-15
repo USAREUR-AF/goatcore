@@ -1005,6 +1005,116 @@ mod tests {
         }
     }
 
+    /// Phase 3 on `work` as it stands: the interface MTU is `interface`, the
+    /// state file's applied MTU `applied`, the declaration offers `declared`.
+    fn phase3_in(work: &std::path::Path, declared: i64, interface: i64, applied: Option<i64>) -> String {
+        let (_d, site) = site_with(&DECL.replace("measured_mtu = 1380", &format!("measured_mtu = {declared}")));
+        let measure = |i: Option<&str>| {
+            Ok(derive::Measured {
+                interface_mtu: i.map(|_| interface),
+                applied_mtu: applied,
+                ..fixed(i)
+            })
+        };
+        let mut a = args(true);
+        a.out = Some(work.join("ours.canonical.json"));
+        let mut out = Vec::new();
+        run_init_measured(&site, &a, &mut out, &measure).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    /// A peering stood up by a build before phase 6 kept its copy:
+    /// agreement.json (MTU `agreed`) and ours.canonical.json (offering
+    /// `canonical`, written `canonical_age` seconds before the agreement when
+    /// positive, after it when negative), and no ours.composed.json.
+    fn stood_up_before_the_copy(agreed: i64, canonical: i64, canonical_age: i64) -> tempfile::TempDir {
+        let work = tempfile::tempdir().unwrap();
+        std::fs::write(
+            work.path().join("agreement.json"),
+            format!(r#"{{"transport": {{"kind": "wireguard", "listener": "xaa", "mtu": {agreed}}}}}"#),
+        )
+        .unwrap();
+        std::fs::write(
+            work.path().join("ours.canonical.json"),
+            format!(r#"{{"sovereign_id": "xaa", "transport_offer": {{"endpoint": "192.0.2.10:51820", "listener": true, "measured_mtu": {canonical}}}}}"#),
+        )
+        .unwrap();
+        let agreement_at = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        let canonical_at = if canonical_age >= 0 {
+            agreement_at - std::time::Duration::from_secs(canonical_age as u64)
+        } else {
+            agreement_at + std::time::Duration::from_secs((-canonical_age) as u64)
+        };
+        for (name, at) in [("agreement.json", agreement_at), ("ours.canonical.json", canonical_at)] {
+            std::fs::File::options().write(true).open(work.path().join(name)).unwrap().set_modified(at).unwrap();
+        }
+        work
+    }
+
+    /// The upgrade path from builds before phase 6 kept its copy: with no
+    /// ours.composed.json, an ours.canonical.json no newer than the agreement
+    /// is the package the agreement was composed from (phase 3 wrote it, then
+    /// compose ran), so it stands in once, and the copy is written from it.
+    /// The same time (written in the same second) counts as not newer.
+    #[test]
+    fn with_no_copy_a_package_no_newer_than_the_agreement_stands_in_once() {
+        for age in [60, 0] {
+            let work = stood_up_before_the_copy(1300, 1380, age);
+            let before = std::fs::read(work.path().join("ours.canonical.json")).unwrap();
+            let out = phase3_in(work.path(), 1380, 1300, Some(1300));
+            assert!(out.contains("carries the agreed MTU 1300"), "age {age}: {out}");
+            assert!(!out.contains("blocked"), "age {age}: {out}");
+            assert_eq!(
+                std::fs::read(work.path().join("ours.composed.json")).ok(),
+                Some(before),
+                "age {age}: the copy was not written from the package"
+            );
+        }
+    }
+
+    /// With no copy, a package newer than the agreement was written by a
+    /// later phase 3 no agreement has been composed from: blocked, and no copy
+    /// is written from it.
+    #[test]
+    fn with_no_copy_a_package_newer_than_the_agreement_is_blocked() {
+        let work = stood_up_before_the_copy(1300, 1380, -60);
+        let out = phase3_in(work.path(), 1380, 1300, Some(1300));
+        assert!(!out.contains("carries the agreed MTU"), "{out}");
+        assert!(out.contains("blocked") && out.contains("re-measure"), "{out}");
+        assert!(!work.path().join("ours.composed.json").exists(), "a copy was written from a newer package");
+    }
+
+    /// `rotate <partner> carrier` (or transport) on a peering stood up before
+    /// the copy existed: phase 2 has rotated the key and restarted the link,
+    /// and phase 3 re-runs with the interface at the agreed 1300 under our
+    /// unchanged 1380. It passes on the stand-in package and writes the copy.
+    /// Phase 3 then writes our new package (newer than the agreement); a
+    /// second phase 3 before phase 6 (the run stopped at 4 or 5) reads the
+    /// copy and passes again, where the fallback alone would block it.
+    #[test]
+    fn a_rotation_on_a_peering_without_the_copy_passes_phase_3_and_keeps_passing() {
+        let work = stood_up_before_the_copy(1300, 1380, 60);
+        let first = phase3_in(work.path(), 1380, 1300, Some(1300));
+        assert!(first.contains("carries the agreed MTU 1300"), "{first}");
+        assert!(work.path().join("ours.composed.json").is_file(), "no copy after the first phase 3");
+        // Phase 3 rewrote our package (its --out), after the agreement.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        std::fs::write(
+            work.path().join("ours.canonical.json"),
+            r#"{"sovereign_id": "xaa", "transport_offer": {"endpoint": "192.0.2.10:51820", "listener": true, "measured_mtu": 1380}}"#,
+        )
+        .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(work.path().join("ours.canonical.json"))
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let second = phase3_in(work.path(), 1380, 1300, Some(1300));
+        assert!(second.contains("carries the agreed MTU 1300"), "{second}");
+        assert!(!second.contains("blocked"), "{second}");
+    }
+
     /// An honest retry: a run passed phase 3, stopped before phase 6 (a lint
     /// failure at 4, phase 5 waiting, a kill), and runs again. Phase 3 rewrote
     /// ours.canonical.json each time, so it is newer than the agreement, and
