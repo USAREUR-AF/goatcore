@@ -222,7 +222,43 @@ was not deleted. A value that goes into a command on the edge
 host is checked for its form first, and a handle it did not give is refused (X-PROBE-001).
 Tested with stubbed ssh, sudo, docker and curl (`tests/probe-launcher.bats`, an interrupted
 start among them) and, for the manifest's `key_deleted`, in `test_acceptance.py`; not yet run
-against a real edge host. How the identities it is given are issued is not built.
+against a real edge host.
+
+**The identities a side's own probes hold: built, not measured.** Each side issues them from its
+own peering CA, and no key or signing act crosses goatnets. `ops/federation/standup/probe-identities.sh`
+is the launcher a side gives as `FED_PROBE_LAUNCHER_OURS`: it wraps `probe-launcher.sh`, and for
+each `start` it puts the probe's identity in a fresh folder of mode 0700 on memory-backed storage
+on this host (`FED_CA_KEY_TMP`, else `/dev/shm`; anything else is refused, X-PROBE-001) and hands
+that folder to the probe launcher as `FED_PL_DIR`:
+
+- `agreed` holds a copy of our outward leaf (`FED_PROBE_PKI/peering-outward.pem` and its key), the
+  leaf the edge already presents; nothing new is issued;
+- `forged` holds a leaf issued for this run, CN `fed.<us>.<them>.acceptance-forged.<the run id's
+  last part>`, a name in our own prefix that no agreement lists;
+- `impersonate` holds a leaf issued for this run bearing the partner's core's name. The agreement
+  does not record that name, so it is given (`FED_PROBE_PARTNER_CORE_CN`) and never defaulted.
+
+The two issued leaves come from `mint-peering-leaves.sh --probe <run id> --probe-kind
+<forged|impersonate>`, which opens the CA key the way it does for the peering leaves. It issues a
+leaf bearing a name outside our own prefix only with `--impersonate-for-run` naming the same run.
+Each leaf is `CA:FALSE`, clientAuth only and digitalSignature only, with the SAN URI
+`urn:goat:acceptance-probe:<run id>`. It is valid from a minute back until `FED_PROBE_TTL` plus 15
+minutes, because nothing on the federation path checks revocation and the lifetime is the only
+control. It is written only into the empty 0700 probe folder, never into a folder of leaves or a
+trust file. Its certificate facts (run, kind, CN, serial, SHA-256, notBefore, notAfter, issuer)
+are appended to our CA's issued-certificates record (`FED_PROBE_ISSUED_RECORD`). On a deployment that
+file is the record the CA's other issuances go to, or a file kept with it, so that every certificate
+the CA has issued is listed in one place. The folder on
+this host lives only while the launcher's `start` copies the identity to the edge host. It is
+deleted on any exit (a success, a failure, an interrupt or a termination, which ends the start
+first so that the start removes the probe from the edge host), and checked: the wrapper prints
+`KEY_DELETED_DRIVER=verified`, or `KEY_DELETED_DRIVER=failed` and exit 1. The run records it in
+its manifest as `key_deleted_driver`, beside `key_deleted`, also for a start that gave no handle
+(status `not started`), and `cleanup/probes` fails, required, on a copy that was not deleted.
+Tested with a CA made in the test and a stand-in probe launcher (`test_probe_identities.py`, an
+interrupted start among them) and, for the manifest, in `test_acceptance.py`. It has not run
+against a real edge host or a deployment's CA. Not built: generating the probe key on the edge
+host and signing its request on the driver, so that the key never crosses the network.
 
 **A side's own launcher, in a bilateral session** (built in the runner and on the in-process
 fabric, tests `test_own_surfaces_*` in `test_acceptance.py`; §6.4). `FED_PROBE_LAUNCHER_OURS`
