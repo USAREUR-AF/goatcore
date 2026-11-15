@@ -805,10 +805,17 @@ mod tests {
         for (extra, want) in [(json!({}), "v1"), (json!({"package": "v1"}), "v1"), (json!({"package": "v2"}), "v2")] {
             let mut v = with_sites();
             v["peerings"] = json!([peering(extra.clone())]);
-            assert_eq!(problems(&v).unwrap(), Vec::<String>::new(), "{extra}");
             let p: Peering = serde_json::from_value(v["peerings"][0].clone()).unwrap();
             assert_eq!(p.package_version(), want, "{extra}");
+            if want == "v1" {
+                assert_eq!(problems(&v).unwrap(), Vec::<String>::new(), "{extra}");
+            }
         }
+        // Nothing acts on `package: v2` in this build, so it is refused rather
+        // than quietly run as v1 (GB-025, the config does not validate).
+        let mut v = with_sites();
+        v["peerings"] = json!([peering(json!({"package": "v2"}))]);
+        rejected(&v, "package v2 is not yet supported by this goatbuilder");
         let mut v = with_sites();
         v["peerings"] = json!([peering(json!({"package": "v3"}))]);
         rejected(&v, "package");
