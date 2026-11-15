@@ -770,13 +770,16 @@ fn place(path: &Path, body: &[u8], hook: &mut dyn FnMut(Stage) -> std::io::Resul
 }
 
 /// Replace the package at `path` with `body`, keeping the old one at
-/// `<path>.<tag>-<UTC time>`. `between` runs after the old one is kept and
-/// before the new one is written (a test injects a failure or a crash there).
+/// `<path>.<tag>-<UTC time>`. `hook` runs at each [`Stage`]: after the old one
+/// is kept and before the new one is written, and after the rename (a test
+/// injects a failure or a crash there).
 ///
 /// The old package is COPIED aside and the new one is renamed over it, so at
 /// every moment, a crash included, `path` holds the old package or the new
-/// one, never neither. On a failure the copy is removed and the old package
-/// is where it was.
+/// one, never neither. A failure before the rename removes the copy, and the
+/// old package is where it was ([`ReplaceError::BeforeRename`]). A failure
+/// after it keeps the copy, and the new package is in place
+/// ([`ReplaceError::AfterRename`]).
 fn replace_counterparty(
     path: &Path,
     body: &[u8],
