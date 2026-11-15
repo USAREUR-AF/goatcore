@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | **Designed, not built.** A later class value. Operator decision, 2026-11-15 (gate group D, D2): goatbuilder 1.0 keeps a phone a full `core` joiner, and this profile is among the first work after 1.0 |
-| Design | [phone-node.md](phone-node.md) · [phone-node-offline-window.md](phone-node-offline-window.md) · [node-topologies-and-replication-mechanisms.md](node-topologies-and-replication-mechanisms.md) · [island-mode-multi-writer.md](island-mode-multi-writer.md) |
+| Design | [phone-node.md](phone-node.md) · [goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md), "How long a phone may be off" · [node-topologies-and-replication-mechanisms.md](node-topologies-and-replication-mechanisms.md) · [island-mode-multi-writer.md](island-mode-multi-writer.md) |
 | Audience | whoever decides what a phone node carries, and whoever builds the class value |
 
 ## Why a second profile
@@ -15,7 +15,7 @@ phone that is often off pays for that:
 
 - every site that keeps a slot for it holds up to a cap of WAL for it;
 - after an absence longer than the cap covers, it must be seeded again
-  ([phone-node-offline-window.md](phone-node-offline-window.md)), and until
+  ([goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md), "How long a phone may be off"), and until
   then it silently receives nothing;
 - under island mode it is a writer that rejoins late, the case the partition
   drill (gate row I5) and the write-path table (I6) must prove safe.

@@ -3,7 +3,7 @@
 How much WAL a provider's slot for an absent subscriber takes before Postgres
 invalidates it, what the subscriber sees when it returns, and the re-seed that
 brings it back. It is the measurement behind
-[docs/design/phone-node-offline-window.md](../../../../../docs/design/phone-node-offline-window.md);
+[docs/design/goatbuilder-hardware-measurement.md](../../../../../docs/design/goatbuilder-hardware-measurement.md), "How long a phone may be off";
 `run.sh`'s header says what it does and what it records.
 
 ```bash

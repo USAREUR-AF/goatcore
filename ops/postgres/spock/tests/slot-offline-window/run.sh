@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034  # PFX, NET, PW are read by ../lib/two-site.sh
 # How long a site may be off the network before the slot its provider keeps for
 # it is invalidated, and what the site sees when it returns
-# (docs/design/phone-node-offline-window.md).
+# (docs/design/goatbuilder-hardware-measurement.md, "How long a phone may be off").
 #
 # Two postgres-spock sites replicate one table both ways, as a founder (A) and
 # a phone node (B) do. B is taken off the network (docker network disconnect:

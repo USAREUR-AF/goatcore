@@ -220,7 +220,7 @@ This appendix is invoked when `wal_status = lost`. The subscriber can no longer 
 
 ### A Spock member
 
-Measured on lab containers ([phone-node-offline-window.md](../design/phone-node-offline-window.md), "Seeding a phone again", which gives each step's query). `goatbuilder` has no verb for it yet; the design is in the same document.
+Measured on lab containers ([goatbuilder-hardware-measurement.md](../design/goatbuilder-hardware-measurement.md), "Seeding a phone again", which gives each step's query). `goatbuilder` has no verb for it yet; the design is in the same document.
 
 1. Confirm the subscriber's slot reads `wal_status = lost` on the provider.
 2. Confirm the provider's subscription from the subscriber reads `replicating` and has caught up with the subscriber's own writes. Do not go on until it has: the next steps truncate the subscriber's tables.
