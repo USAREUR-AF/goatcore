@@ -728,7 +728,7 @@ pub fn measure_core(core: &Target, router_flag: Option<&str>) -> Result<CoreHalf
 
 /// The plays' inventory for this peering: peering-edges.ini, and this
 /// peering's own file when `allocate` rendered one.
-fn peering_inventory(repo: &Path, edge_group: &str) -> Result<Value> {
+pub(crate) fn peering_inventory(repo: &Path, edge_group: &str) -> Result<Value> {
     let own = format!("inventory/peering-{edge_group}.ini");
     if repo.join("ops/ansible").join(&own).is_file() {
         read_inventory(repo, &[INVENTORY, &own])
@@ -1058,8 +1058,8 @@ pub struct MeasureArgs {
     /// joins the edge half read from --edge-half, and builds the package.
     /// Without it, both hosts are measured here, as always. On a peering run,
     /// `--side edge` is the edge driver's run of a two-driver peering
-    /// (`drivers: two`): not built yet, and refused with GB-267
-    /// (docs/design/federation-two-drivers.md).
+    /// (`drivers: two`): built for phases 1 and 3, refused with GB-267 for
+    /// another phase (docs/design/federation-two-drivers.md).
     #[arg(long, value_name = "SIDE", value_parser = ["edge", "core"], global = true)]
     pub side: Option<String>,
     /// init --over-ssh --side edge: the file the edge half is written to.
@@ -1198,6 +1198,17 @@ pub fn run_init(
             let interface = declared_interface(site, a)?;
             let half = measure_edge(&edge, interface.as_deref())?;
             let digest = write_edge_half(path, peering, &edge, interface.as_deref(), &half)?;
+            // Inside the one command (a two-driver peering's phase 3), the
+            // run's way back names the confirm code, the import and then.
+            if crate::federate::runenv::var(PHASE3_IN_RUN).ok().as_deref() == Some("1") {
+                writeln!(
+                    out,
+                    "phase 3, edge half of peering {peering}: measured on {} and written to {} (sha256 {digest}). Nothing was built or signed.",
+                    edge.name,
+                    path.display()
+                )?;
+                return Ok(0);
+            }
             writeln!(
                 out,
                 "phase 3, edge half of peering {peering}: measured on {} and written to {} (sha256 {digest}). Nothing was built or signed.\n\
@@ -1261,6 +1272,12 @@ pub fn run_init(
         }
     }
 }
+
+/// Set (to `1`) in the run's values while phase 3's edge half runs inside
+/// the one command (a two-driver peering's `--side edge --from 3`): its last
+/// line then leaves the confirm code and the next commands to the run's way
+/// back (federate/handoff.rs), instead of naming `init --side core`.
+pub const PHASE3_IN_RUN: &str = "GOATBUILDER_PHASE3_IN_RUN";
 
 /// Whether the driver's phase 3 measures over SSH (`FED_MEASURE` unset, empty
 /// or `ssh`, the default) or the machine the driver runs on (`here`).

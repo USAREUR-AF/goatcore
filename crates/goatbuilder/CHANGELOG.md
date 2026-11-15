@@ -10,6 +10,85 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Added: goat-peering-edge rotates an IPsec peering's leaf from staged material, and puts the old one back if the link does not come up
+
+An `ipsec-fips` peering's edge role, `goat-peering-edge`, rotates its IPsec
+leaf when `peering_edge_rotation` names a rotation id. The role still writes
+no secret: the offline ceremony issues the new leaf, and an operator stages it
+beside the live files as `.next` files. The role checks the staged pair
+(GB-289, GB-290), sets the live pair aside once in `.previous-<id>/`, switches,
+re-authenticates the IKE SA, and puts the old pair back if the SA does not
+come up (GB-302); a rotation rolled back stays reported as rolled back on
+every later run of its id. An `ipsec-ca` rotation also needs the partner's
+read-back of our new CA's fingerprint (GB-303) before our new CA replaces the
+current one. `peering_edge_rotation_retire` removes the set-aside key only once
+the confirm recorded the new leaf live (`.previous-<id>/confirmed`, the IKE SA
+the re-authentication made), and never moves the live pair, the staged pair or
+our CA (GB-309 for an id with nothing to retire, or a rotation not confirmed
+or with an unreadable record; a re-run with the same id confirms it). The
+confirm is recorded only once the SA from before the re-authentication is gone,
+and a roll-back removes the record. A run killed during the set-aside or between
+the switch's two moves is finished by the next run, or refused with nothing
+moved (GB-311); the live pair is never left mixed. The confirm counts only an IKE SA the
+re-authentication made, not the old one still up beside it, and the role now
+sets `make_before_break = yes` in its charon drop-in on every IPsec peering
+edge, instead of leaving it to the packaged strongSwan's default
+(`peering_edge_make_before_break`). The first apply after this change restarts
+strongSwan once on each ipsec-fips edge, which drops that peering's link
+briefly: apply both sides of a peering in one window. The rotation always
+rekeys the IKE SA before the re-authentication, so no rekey of either side, which
+keeps the old authentication, can pass the confirm on the old leaf, and it refuses
+an IKE rekey interval too short to hold the confirm. `peering_edge_remote_ca_next_path` accepts a
+partner's new CA beside the current one during their rotation. It is opt-in,
+and without a rotation id nothing changes. `goatbuilder federate rotate` does
+not drive it yet.
+
+#### Changed: the peering plays require the host firewall baseline on an edge
+
+Every play a peering standup runs on an edge (phases 2, 11 and 12) now checks
+`goat_host_firewall_baseline` first, and refuses with GB-279 when it is not
+true, before anything on the edge changes. Set
+`goat_host_firewall_baseline: true` and `goat_host_firewall_management_sources`
+in the edge's group_vars (copy
+`ops/ansible/group_vars/_examples/peering-host-firewall.example.yml`), then run
+the peering again; phase 11's play applies the baseline. `goatbuilder federate
+plan` shows such an edge as BLOCKED with GB-279. The role's default stays false,
+and a core host keeps the baseline opt-in.
+
+`goatbuilder federate allocate` no longer reads an edge group's file that
+holds only `goat_host_firewall_*` keys as a peering already running from
+hand-written files (GB-230), so the baseline can be set before the peering
+is allocated.
+
+<!-- END generated: changelog unreleased -->
+
+## 0.7.1 — 2026-11-15
+
+What changed since 0.7.0, the previous release. `join-node` builds a node on a
+phone with `--class phone --via usb`, on a fixture and not yet measured on a
+phone, runs a joining site's own mesh DNS, and refuses a node whose clock is
+off. `standup` for a joiner turns signal federation on, and standup,
+join-node and teardown keep timings files whose rows name their cause. Every
+site's end state declares every service a cut-off site needs, and what a
+joining site does not run yet is named as a gap. `federate rotate <partner>
+leaves` replaces a running peering's leaves; `federate test
+--bilateral` completes the partner's half of acceptance, opt-in; on a
+two-driver peering the edge driver runs phases 1 and 3. A back-out keeps the
+core leaf another peering still uses and removes the peering's host-firewall
+entry. After a signing-key rotation, phase 5 hands the peering directory over
+to the new key, and a host-allocation SKIP says what clears it or is accepted
+into the plan. `goatbuilder.yaml` takes three optional `deploy` fields,
+`cloud`, `owner` and `cross_goatnet`; undeclared, nothing changes.
+
+Three behaviour changes: an environment that declares `converger: pull-agent` is
+refused by `doctor` and by every verb that pushes to real hosts, with GB-307;
+`join-node` refuses a node whose clock is unsynchronized or more than 250 ms
+off, with GB-297; and a back-out with no other peering set up, and no record
+of what the core leaf's paths held before, stops with GB-293 where it stopped
+with GB-221.
+
+### For someone deploying
+
 #### Fixed: phase 14's round trip sends a fresh probe until one is acknowledged, so one dropped probe does not fail it
 
 In a bilateral acceptance session both sides run the round trip at once.
@@ -111,13 +190,14 @@ keeps waiting for this run's. With only an earlier run's samples there, those
 rows are BLOCKED and the run ends open (exit 3). A partner whose runner
 stages no start time is read as before.
 
-Limits: this rests on both sides' clocks agreeing within `FED_SESSION_WAIT`,
-and phase 1 does not check the clocks yet, so keep each host's clock
-synchronized. A partner's earlier run that started within `FED_SESSION_WAIT`
-of ours is not told apart; its result is still refused (GB-273), so the
-verdicts can differ until a rerun, but a stale result never passes.
-`goatbuilder federate` does not run a derived session yet. Tested on the
-in-process fabric only, not on hosts (#786).
+Limits: this rests on both sides' clocks agreeing within `FED_SESSION_WAIT`.
+`goatbuilder federate test <partner> --bilateral`, which runs phase 14 on a
+derived session (#720), runs phase 1's clock check (GB-268) alone first and
+stops on a clock that is unsynchronized or over the budget. A partner's
+earlier run that started within `FED_SESSION_WAIT` of ours is not told
+apart; its result is still refused (GB-273), so the verdicts can differ
+until a rerun, but a stale result never passes. Tested on the in-process
+fabric only, not on hosts (#786).
 
 #### Fixed: backing out one of two peerings keeps the core leaf the other still uses
 
@@ -150,7 +230,24 @@ checkout is that commit with nothing changed, and each file given with
 `--expect <file>=<sha256>` has that digest (GB-278). It then runs preflight's
 edge checks into `<work>/handoff/1/edge.json` and prints the way back: the
 confirm code, and the `import` and `then` commands for the controller. The
-edge driver's run of phase 2 and later is not built yet (gate row B10).
+edge driver's run of phase 3 is built too; phase 2's and those of 11 and
+later are not yet (gate row B10).
+
+#### Added: a two-driver peering hands phase 3 to the edge driver and joins its edge half
+
+On a peering declared `drivers: two`, the controller now stops at phase 3
+with a hand-off object whose result is the edge half
+(`handoff/3/edge-half.json`). On the edge driver, `goatbuilder federate
+<peering> --side edge --from 3 --to 3 --expect-commit <commit>` measures the
+edge half over SSH, reaching only the edge host, and prints the way back with
+its confirm code. On the controller, `goatbuilder federate import <peering> 3
+<file> --sha256 <code>` checks the file as the core half would (GB-114): the
+code, the peering, the 24-hour bound, and the edge host the inventory names
+(`--edge-group` for a group other than `<peering>_edge`). Then
+`goatbuilder federate <peering> --from 3` hashes the file again and measures
+the core half against it, reaching only the core host. A two-driver run from
+phase 3 with `FED_MEASURE=here` is refused before it acts (GB-267). Phase 2
+and phases 11 to 14 are not built yet (gate row B10).
 
 #### Added: `goatbuilder federate rotate <partner> leaves` and `carrier` replace a peering's keys, and an interrupted rotation finishes
 
@@ -266,23 +363,6 @@ that first warned and the warning line printed on stderr. A run that used none
 has no such field, so every document is unchanged until the list in
 `ops/goatbuilder/compat/deprecations.yaml` names something (#818).
 
-#### Changed: the peering plays require the host firewall baseline on an edge
-
-Every play a peering standup runs on an edge (phases 2, 11 and 12) now checks
-`goat_host_firewall_baseline` first, and refuses with GB-279 when it is not
-true, before anything on the edge changes. Set
-`goat_host_firewall_baseline: true` and `goat_host_firewall_management_sources`
-in the edge's group_vars (copy
-`ops/ansible/group_vars/_examples/peering-host-firewall.example.yml`), then run
-the peering again; phase 11's play applies the baseline. `goatbuilder federate
-plan` shows such an edge as BLOCKED with GB-279. The role's default stays false,
-and a core host keeps the baseline opt-in.
-
-`goatbuilder federate allocate` no longer reads an edge group's file that
-holds only `goat_host_firewall_*` keys as a peering already running from
-hand-written files (GB-230), so the baseline can be set before the peering
-is allocated.
-
 #### Added: goatbuilder federate plan --accept host-allocation records a judged SKIP
 
 A deployment that declares its other peerings by hand may not be able to make
@@ -336,6 +416,16 @@ row with the time the step took. The resumed run's timing line then adds the
 total since phase 1 across every resume, phase 11's time, the total without
 it, and the run's stops. `ops/scripts/goat-standup.sh` writes the sixth column
 too, as `ok` or `failed` (#805).
+
+#### Added: goat-standup.sh times phase 11, and standup's timing line names the slowest phases
+
+`ops/scripts/goat-standup.sh` now writes an open row to the timings file when
+it stops at phase 11 for the operator step, and the run resumed with
+`--from 12` closes it with the time the step took, as `goatbuilder standup`
+does. A run driven by the script, or by both drivers in turn, now has phase
+11's time in its record. `goatbuilder standup`'s timing line now ends with the
+three slowest phases across every resume, phase 11 left out, each counted by
+wall time, so steps run side by side count once (#814).
 
 ### For someone contributing
 
@@ -414,7 +504,9 @@ request's merge commit. Before the tag, a diff between the checked commit and th
 commit must name nothing under `crates/`, `ops/ansible/` or `ops/federation-e2e/`, or each
 stage those paths feed runs again on the merge commit (#772).
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.0 — 2026-11-14
 

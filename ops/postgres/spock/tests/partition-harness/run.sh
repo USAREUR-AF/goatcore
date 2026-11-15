@@ -139,7 +139,7 @@ for s in a b; do
 done
 sleep 5  # AutoMigrate creates indexes after the tables
 for s in a b; do docker logs "$PFX-nb-$s" 2>&1 | grep -iE 'version|migrat' | head -3 | sed "s/^/  nb-$s: /"; done
-docker rm -f "$PFX-nb-a" "$PFX-nb-b" >/dev/null
+docker rm -fv "$PFX-nb-a" "$PFX-nb-b" >/dev/null
 echo "  ${#NB_TABLES[@]} repset tables present at both sites; management stopped (writes below are SQL)"
 
 echo "== Kratos and Hydra schemas (migrate of the pinned images, each site)"

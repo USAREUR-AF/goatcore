@@ -78,7 +78,7 @@ echo "-- a port in TIME-WAIT as a client's source port: wait, then start"
 stub 2 "$INUSE" $'TIME-WAIT 0 0 127.0.0.1:57736 127.0.0.1:57733\n'
 expect "rc" "$(run_case 57736)" 0
 expect "docker run attempts" "$(calls run)" 3
-expect "half-made container removed before each retry" "$(calls 'rm -f harness-x')" 2
+expect "half-made container removed before each retry" "$(calls 'rm -fv harness-x')" 2
 expect_in "names the holder" "$T/err" "TIME-WAIT 127.0.0.1:57736 127.0.0.1:57733"
 expect_in "says why the port is held" "$T/err" "ephemeral"
 expect_in "says the wait is bounded" "$T/err" "of 10s"
@@ -100,7 +100,7 @@ echo "-- docker's own container publishes the port: no wait, and that container 
 stub 5 'docker: Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint harness-x (f393): Bind for 127.0.0.1:57736 failed: port is already allocated' ''
 expect "rc" "$(run_case 57736)" 125
 expect "docker run attempts" "$(calls run)" 1
-expect "half-made container removed" "$(calls 'rm -f harness-x')" 1
+expect "half-made container removed" "$(calls 'rm -fv harness-x')" 1
 expect_in "names the publishing container" "$T/err" "is published by other-slot-kratos"
 
 echo "-- a listener on another address does not count"
@@ -137,7 +137,7 @@ if [[ -z "${IMAGE:-}" ]] || ! docker info >/dev/null 2>&1 || [[ "$(uname -s)" !=
   echo "  skip  part 2 needs Linux Docker and IMAGE"
 else
   C="port-wait-test-$$"
-  cleanup_real() { docker rm -f "$C" >/dev/null 2>&1 || true; }
+  cleanup_real() { docker rm -fv "$C" >/dev/null 2>&1 || true; }
   # A loopback client takes a port the kernel picks, and closes first: its
   # source port is then in TIME-WAIT for 60 s, with nothing listening on it.
   P="$(python3 - <<'EOF'
@@ -186,7 +186,7 @@ EOF
   rc=$?
   set -e
   left="$(docker ps -a --filter "name=^$C\$" --format '{{.Names}}' | wc -l | tr -d ' ')"
-  docker rm -f "$O" >/dev/null 2>&1 || true
+  docker rm -fv "$O" >/dev/null 2>&1 || true
   cleanup_real
   if [[ "$rc" != 0 ]]; then ok "ts_run_published on a port $O publishes fails"; else fail "ts_run_published on a port $O publishes: rc 0"; fi
   expect_in "it names $O" "$T/owned" "is published by $O"

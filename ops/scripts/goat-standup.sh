@@ -471,6 +471,10 @@ step() {   # step <n> <kind> <label> <command...>
   case "$kind" in
     MANUAL)
       echo "    ^ OPERATOR STEP — run the above, then re-run with --from $((n+1))"
+      # The person's work happens between this run and the next: an open row
+      # (no seconds, no exit code), which the resumed run closes, as
+      # goatbuilder standup does.
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$n" "$label" '-' '-' operator >> "$STATE_DIR/standup-$SITE-timings.tsv" 2>/dev/null || true
       exit 0 ;;
     *)
       # Run the phase. On failure, do not just die on errexit with a bare
@@ -669,6 +673,13 @@ run_obs_leg_fg() {  # --obs-only: the three legs, in order, foreground, phase-st
 
 echo "goat-standup: site=$SITE  group=$GROUP  profile=$PROFILE  obs=$( [ "$OBS" = 1 ] && echo "$OBS_GROUP (parallel leg)" || echo "none — $OBS_WHY" )  $( [ "$PLAN" = 1 ] && echo '(PLAN — nothing executes)')"
 if [ "$OBS_ONLY" = 1 ]; then FROM=1; TO=14; run_obs_leg_fg; echo; echo "obs leg complete for $SITE."; exit 0; fi
+
+# A run resumed after the operator step closes that step's open row first,
+# with the wall time the person took (ops/scripts/standup-timings-close.py).
+if [ "$PLAN" != 1 ]; then
+  OPERATOR_SECS="$(python3 "$REPO/ops/scripts/standup-timings-close.py" "$STATE_DIR/standup-$SITE-timings.tsv" "$FROM" 2>/dev/null || true)"
+  if [ -n "$OPERATOR_SECS" ]; then printf '    phase 11 (the operator step) took %ss\n' "$OPERATOR_SECS"; fi
+fi
 
 # A site whose config surface does not exist yet is the NORMAL state for a new
 # goatnet, not an error — but say so, because every phase below assumes it. The

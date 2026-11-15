@@ -215,8 +215,12 @@ as the founder does. They live on the founder's node A, so the joiner's assay
 cannot see them. `goatbuilder assay <founder-site>` reads one per peer the roles
 wire: a participating site with a primary host under `[mgmt_hosts:children]`,
 filtered by the founder's `inter_site_spock_topology` (`none`, the default:
-none; `explicit`: `inter_site_spock_peers`; `full_mesh`: every such site). A
-founder with no such peer has N/A rows. →
+none; `explicit`, or any other value: `inter_site_spock_peers`; `full_mesh`:
+every such site). A peer is named by the `site_id` in its group_vars
+`vars.yml`, else its group's name; only `vars.yml` is read. With `explicit`,
+the founder's `inter_site_spock_peers` must name each joiner by that `site_id`,
+exactly as written, or the founder uses `full_mesh`. A founder with no such
+peer has N/A rows. →
 `fed-founder-netbird-subscriptions-replicating`,
 `fed-founder-kratos-subscriptions-replicating`,
 `fed-founder-hydra-subscriptions-replicating`.

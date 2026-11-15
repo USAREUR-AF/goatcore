@@ -218,6 +218,14 @@ jobs:
         run: bash ops/ci/test-source-of-record.sh
       - name: Ansible roles and templates resolve
         run: bash ops/ci/check-role-template-refs-resolve.sh
+      - name: A path a role hands to a command stays one argument
+        run: |
+          python3 ops/ci/check-ansible-paths-one-argument.py --self-test
+          python3 ops/ci/check-ansible-paths-one-argument.py
+      - name: The apt sources a joiner's roles add follow the distribution
+        run: |
+          python3 ops/ci/check-joiner-roles-follow-distribution.py --self-test
+          python3 ops/ci/check-joiner-roles-follow-distribution.py
       - name: Container memory limits are variables with defaults
         run: |
           bash ops/ci/check-compose-memory-is-variable.sh --self-test
@@ -291,6 +299,10 @@ jobs:
       - name: a carrier key rotation sets each key aside once and makes a new one (stand-in wg)
         timeout-minutes: 5
         run: bash ops/ansible/roles/goat-peering-wg/tests/test-rotation.sh
+      - name: an IPsec leaf rotation checks the staged pair, sets the live one aside once and rolls back (stand-in swanctl)
+        # about 7.5 minutes: every case runs ansible-playbook against a stand-in swanctl
+        timeout-minutes: 12
+        run: bash ops/ansible/roles/goat-peering-edge/tests/test-rotation.sh
 
   peering-host-firewall:
     needs: changes
