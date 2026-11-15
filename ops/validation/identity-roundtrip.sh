@@ -58,15 +58,18 @@ case "$EMAIL" in
 esac
 
 WORK="$(mktemp -d)"
-ID=""; CREATED=0; DONE=0
+ID=""; ATTEMPTED=0; CREATED=0; DONE=0; CLEANED=0; POLLER=""
+# Every call is bounded, so a stalled admin API (a dead ssh -L forward) ends the run.
+CURL=(curl -sS -m 10 --connect-timeout 5)
+ENC="$(python3 -I -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$EMAIL")"
 # http <METHOD> <url> [json body]  -> prints the status code; the body is in $WORK/body
 http() {
   local c
   : > "$WORK/body"
   if [ $# -ge 3 ]; then
-    c="$(curl -sS -o "$WORK/body" -w '%{http_code}' -X "$1" "$2" -H 'Content-Type: application/json' --data-binary "$3" 2>"$WORK/err")" || c=000
+    c="$("${CURL[@]}" -o "$WORK/body" -w '%{http_code}' -X "$1" "$2" -H 'Content-Type: application/json' --data-binary "$3" 2>"$WORK/err")" || c=000
   else
-    c="$(curl -sS -o "$WORK/body" -w '%{http_code}' -X "$1" "$2" 2>"$WORK/err")" || c=000
+    c="$("${CURL[@]}" -o "$WORK/body" -w '%{http_code}' -X "$1" "$2" 2>"$WORK/err")" || c=000
   fi
   echo "${c:-000}"
 }
@@ -74,9 +77,31 @@ side() { if [ "$1" = "$FOUNDER" ]; then echo founder; else echo joiner; fi; }
 exists() { # exists <url> -> 200 present, 404 absent, other: the code
   http GET "$1/admin/identities/$ID"
 }
+# lookup <url> -> prints the code of a read by address; the hits are in $WORK/body
+lookup() { http GET "$1/admin/identities?credentials_identifier=$ENC"; }
+hits() { python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$WORK/body" 2>/dev/null || echo unreadable; }
+hit_id() { python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["id"])' "$WORK/body"; }
 
 cleanup() {
   local rc=$? left="" u code
+  [ "$CLEANED" = 1 ] && return
+  CLEANED=1
+  trap '' INT TERM HUP
+  if [ -n "$POLLER" ]; then kill "$POLLER" 2>/dev/null || true; wait "$POLLER" 2>/dev/null || true; fi
+  # A create whose reply was lost, or cut short by a signal, may still have
+  # committed: the address finds it.
+  if [ "$ATTEMPTED" = 1 ] && [ "$CREATED" != 1 ]; then
+    code="$(lookup "$FOUNDER")"
+    if [ "$code" = 200 ] && [ "$(hits)" = 1 ]; then
+      ID="$(hit_id)"; CREATED=1
+      echo "identity-roundtrip: the founder holds $ID ($EMAIL) from this run's create; deleting it"
+    elif [ "$code" = 200 ] && [ "$(hits)" = 0 ]; then
+      echo "identity-roundtrip: the founder holds no $EMAIL; nothing was written" >&2
+    else
+      echo "identity-roundtrip: CLEANUP FAILED: could not tell whether the founder created $EMAIL (a read answered $code). Look it up: curl '<founder admin url>/admin/identities?credentials_identifier=$ENC'"
+      rc=3
+    fi
+  fi
   if [ "$CREATED" = 1 ] && [ "$DONE" != 1 ]; then
     for u in "$FOUNDER" "$JOINER"; do
       code="$(http DELETE "$u/admin/identities/$ID")"
@@ -93,7 +118,7 @@ cleanup() {
     if [ -n "$left" ]; then
       echo "identity-roundtrip: CLEANUP FAILED: identity $ID ($EMAIL) may remain at:$left. Remove it with: curl -X DELETE <that site's admin url>/admin/identities/$ID"
       rc=3
-    elif [ "$rc" = 0 ]; then
+    elif [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
       rc=1
     fi
   fi
@@ -101,15 +126,19 @@ cleanup() {
   exit "$rc"
 }
 trap cleanup EXIT
+# A signal ends the run with the shell's code for it; cleanup runs once, on EXIT.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 # Refuse, writing nothing, when the address is already there, or a site does not answer.
 for u in "$FOUNDER" "$JOINER"; do
-  code="$(http GET "$u/admin/identities?credentials_identifier=$EMAIL")"
+  code="$(lookup "$u")"
   if [ "$code" != 200 ]; then
     echo "identity-roundtrip: refused: the $(side "$u")'s admin API ($u) answered $code to a read: $(head -c 200 "$WORK/err" "$WORK/body" 2>/dev/null | tr '\n' ' '); nothing was written" >&2
     exit 2
   fi
-  if [ "$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$WORK/body")" != 0 ]; then
+  if [ "$(hits)" != 0 ]; then
     echo "identity-roundtrip: refused: $EMAIL already exists at the $(side "$u"); nothing was written" >&2
     exit 2
   fi
@@ -120,16 +149,18 @@ import json, secrets, sys
 print(json.dumps({"schema_id": "default", "state": "inactive",
   "traits": {"email": sys.argv[1], "name": "goat round-trip probe (deleted by identity-roundtrip.sh)"},
   "credentials": {"password": {"config": {"password": secrets.token_urlsafe(32)}}}}))' "$EMAIL")"
+ATTEMPTED=1
 code="$(http POST "$FOUNDER/admin/identities" "$BODY")"
-if [ "$code" != 201 ]; then
-  echo "identity-roundtrip: refused: the founder did not create the identity (HTTP $code): $(head -c 300 "$WORK/body" | tr '\n' ' '); nothing was written" >&2
+if [ "$code" != 201 ] || ! ID="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$WORK/body" 2>/dev/null)"; then
+  echo "identity-roundtrip: the founder answered HTTP $code to the create: $(head -c 300 "$WORK/body" | tr '\n' ' '); checking whether it created the identity anyway" >&2
+  ID=""
   exit 2
 fi
-ID="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$WORK/body")"
 CREATED=1
 echo "identity-roundtrip: created $ID ($EMAIL) at the founder, inactive"
 
-# wait_for <url> <code> -> seconds taken, or fails at the timeout
+# wait_for <url> <code> -> seconds taken, or fails at the timeout. It runs as a
+# background job (poll), so a signal ends the wait at once; cleanup stops it.
 wait_for() {
   local start now code
   start="$(date +%s)"
@@ -142,7 +173,16 @@ wait_for() {
   done
 }
 
-if ! seen="$(wait_for "$JOINER" 200)"; then
+poll() { # poll <url> <code> -> 0 and the seconds in $WORK/poll, or 1 at the timeout
+  wait_for "$1" "$2" > "$WORK/poll" &
+  POLLER=$!
+  local rc=0
+  wait "$POLLER" || rc=$?
+  POLLER=""
+  return "$rc"
+}
+
+if poll "$JOINER" 200; then seen="$(cat "$WORK/poll")"; else
   echo "identity-roundtrip: FAIL: $ID did not reach the joiner within ${TIMEOUT}s: the founder's write is not replicating to the joiner"
   exit 1
 fi
@@ -153,7 +193,7 @@ if [ "$code" != 204 ]; then
   exit 1
 fi
 echo "identity-roundtrip: deleted $ID at the joiner"
-if ! gone="$(wait_for "$FOUNDER" 404)"; then
+if poll "$FOUNDER" 404; then gone="$(cat "$WORK/poll")"; else
   echo "identity-roundtrip: FAIL: the joiner's deletion of $ID did not reach the founder within ${TIMEOUT}s: the joiner's writes are not replicating to the founder"
   exit 1
 fi
