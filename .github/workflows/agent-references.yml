@@ -104,10 +104,24 @@ jobs:
     steps:
       # BASE, deliberately — this is what makes `pull_request_target` safe here.
       # The scanning script that runs below is main's, never the pull request's.
+      # No `ref`: with none, a push checks out the pushed commit, and
+      # `pull_request_target` checks out the base branch, never the pull request.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # need the base commit to diff against
-          ref: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.base.sha }}
+
+      # The pull request's recorded base commit is a commit of the base branch.
+      # Its SHA reaches the script through the environment, never as script text.
+      - name: Move the working tree to the pull request's base commit
+        if: github.event_name == 'pull_request_target'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "${BASE_SHA}"
+          fi
+          git checkout --quiet --detach "${BASE_SHA}"
 
       # The head is fetched as DATA and never checked out over the working
       # tree: nothing in it is executed, only read.
