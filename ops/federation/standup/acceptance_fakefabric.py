@@ -27,8 +27,10 @@ import http.server
 import json
 import os
 import re
+import socket
 import subprocess
 import threading
+import time
 import urllib.parse
 
 
@@ -45,6 +47,13 @@ def _match(expr, key):
         return j < len(k) and fnmatch.fnmatchcase(k[j], e[i]) and m(i + 1, j + 1)
 
     return m(0, 0)
+
+
+def stamp(t=None):
+    """A zenoh log line's timestamp, `2026-11-15T00:28:42.610781Z`, now unless given (epoch seconds)."""
+    import datetime
+    t = time.time() if t is None else t
+    return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 class Faults:
@@ -75,6 +84,8 @@ class Faults:
         self.refuse_put = set()            # sides whose REST surface answers every PUT with HTTP 403
         self.svid_from_other_ca = set()    # sides whose spire-server mints a workload SVID the OTHER
         #                                    side's CA issued (a shared or swapped root)
+        self.own_zid = {}                  # side -> {kind: zid} its own launcher reports instead
+        self.own_dead = {}                 # side -> kinds whose own probe session's REST does not answer
 
 
 class Core:
@@ -273,7 +284,7 @@ class Fabric:
         if not self.faults.trace_silent:
             with open(self.trace_paths[edge], "a") as f:
                 for line in lines:
-                    f.write("2026-11-09T00:00:00Z INFO zenoh::net::routing::interceptor::access_control: %s\n" % line)
+                    f.write("%s INFO zenoh::net::routing::interceptor::access_control: %s\n" % (stamp(), line))
 
     # --- serving ---------------------------------------------------------------
     def _handler(self, on_get, on_put, side=None):
@@ -389,11 +400,19 @@ class Fabric:
         os.makedirs(state, exist_ok=True)
         path = os.path.join(self.tmp, "launcher-own-" + side)
         zid = {"agreed": self.agreed_zid, "forged": self.zids["forged"], "impersonate": self.zids["impersonate"]}
+        zid.update(self.faults.own_zid.get(side, {}))
+        dead = self.faults.own_dead.get(side, set())
+        if dead:
+            s = socket.socket()
+            s.bind(("127.0.0.1", 0))
+            closed = "http://127.0.0.1:%d" % s.getsockname()[1]
+            s.close()
         with open(path, "w") as f:
             f.write("#!/bin/sh\nS='%s'\n" % state)
             f.write('case "$1" in\n  start)\n    case "$2" in\n')
             for k in ("agreed", "forged", "impersonate"):
-                f.write('      %s) echo "REST=%s"; echo "ZID=%s" ;;\n' % (k, self.probe_urls[other][k], zid[k]))
+                url = closed if k in dead else self.probe_urls[other][k]
+                f.write('      %s) echo "REST=%s"; echo "ZID=%s" ;;\n' % (k, url, zid[k]))
             f.write('    esac\n    echo "HANDLE=$2-$3"; echo "$4" > "$S/$2-$3" ;;\n')
             f.write('  stop) rm -f "$S/$2" ;;\n  alive) test -f "$S/$2" ;;\nesac\n')
         os.chmod(path, 0o700)

@@ -615,12 +615,12 @@ class AcceptanceRun(unittest.TestCase):
         env.update(extra or {})
         return env
 
-    def derived_side(self, side, evidence, **kw):
+    def derived_side(self, side, evidence, script=None, **kw):
         path = os.path.join(self.tmp, "agreement.json")
         if not os.path.exists(path):
             with open(path, "w") as f:
                 json.dump(self.ag, f)
-        return subprocess.Popen(["bash", str(SCRIPT), path, "--as", side], env=self.derived_env(side, evidence, **kw),
+        return subprocess.Popen(["bash", str(script or SCRIPT), path, "--as", side], env=self.derived_env(side, evidence, **kw),
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     def both_derived(self, delay=1.5, **kw):
@@ -843,6 +843,92 @@ class AcceptanceRun(unittest.TestCase):
                            timeout=60)
         self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
         self.assertIn("FED_PROBE_LAUNCHER_OURS", p.stdout + p.stderr)
+
+    def old_line(self, side, zid):
+        """A line an earlier run left in `side`'s edge log for `zid`: a day old."""
+        import time
+        with open(self.fabric.trace_paths[side], "a") as f:
+            f.write("%s INFO zenoh::net::routing::interceptor::access_control: ACL: peer %s did not match any "
+                    "configured ACL subject\n" % (fakefabric.stamp(time.time() - 86400), zid))
+
+    def staged_probes(self, side):
+        vals = [v.decode() for s, k, v in self.fabric.puts if s == side and k.endswith("/probes")]
+        return vals[-1] if vals else ""
+
+    def test_own_surfaces_a_reused_zid_with_an_earlier_runs_line_is_never_a_pass(self):
+        # xab's launcher reuses fixed zids; this run its forged session reaches xaa's edge
+        # but the edge records nothing for it. A day-old unmatched line for the same zid is
+        # in xaa's log: it is not this run's, so the row is BLOCKED, not PASS.
+        self.fabric.faults.silent_probes.add("forged")
+        self.old_line("xaa", self.fabric.zids["forged"])
+        ev, (rc_a, out_a), _ = self.both_derived(own=True)
+        row = self.rows_of(ev["xaa"])["refusal/forged-name"]
+        self.assertIn(row["verdict"], ("BLOCKED", "FAIL"), out_a)
+        self.assertIn("since xab's run started", row["reason"], out_a)
+        self.assertNotEqual(rc_a, 0, out_a)
+
+    def test_own_surfaces_a_probe_session_that_does_not_answer_is_not_staged(self):
+        # xab's forged session does not answer its PUT: its id is not staged, and xaa's
+        # row is BLOCKED naming xab's launcher, even with an earlier run's line in its log.
+        self.fabric.faults.own_dead["xab"] = {"forged"}
+        self.old_line("xaa", self.fabric.zids["forged"])
+        ev, (rc_a, out_a), _ = self.both_derived(own=True)
+        staged = self.staged_probes("xab")
+        self.assertIn("agreed=", staged)
+        self.assertNotIn("forged=", staged)
+        row = self.rows_of(ev["xaa"])["refusal/forged-name"]
+        self.assertEqual(row["verdict"], "BLOCKED", out_a)
+        self.assertIn("xab", row["reason"])
+        self.assertIn("FED_PROBE_LAUNCHER_OURS", row["reason"] + row.get("observations", {}).get("hint", "") + out_a)
+
+    def test_own_surfaces_an_agreed_probe_that_does_not_answer_blocks_the_control_naming_them(self):
+        self.fabric.faults.own_dead["xab"] = {"agreed"}
+        ev, (rc_a, out_a), _ = self.both_derived(own=True)
+        self.assertNotIn("agreed=", self.staged_probes("xab"))
+        row = self.rows_of(ev["xaa"])["refusal/control-allowed"]
+        self.assertEqual(row["verdict"], "BLOCKED", out_a)
+        self.assertIn("xab", row["reason"])
+        self.assertIn("FED_PROBE_LAUNCHER_OURS", row["reason"])
+        self.assertNotIn("the control did not land", out_a)
+
+    def test_own_surfaces_one_zid_staged_for_two_kinds_is_refused(self):
+        z = self.fabric.zids["forged"]
+        self.fabric.faults.own_zid["xab"] = {"impersonate": z}
+        ev, (rc_a, out_a), _ = self.both_derived(own=True)
+        rows = self.rows_of(ev["xaa"])
+        self.assertEqual(rows["refusal/acl-trace"]["verdict"], "BLOCKED", out_a)
+        self.assertIn("same zenoh id", rows["refusal/acl-trace"]["reason"])
+        for name in ("refusal/forged-name", "refusal/impersonation", "refusal/control-allowed"):
+            self.assertNotEqual(rows.get(name, {}).get("verdict"), "PASS", (name, out_a))
+
+    def test_own_surfaces_the_staged_probe_ids_carry_the_runs_start(self):
+        ev, (rc_a, out_a), _ = self.both_derived(own=True)
+        self.assertEqual(rc_a, 0, out_a)
+        self.assertRegex(self.staged_probes("xab"), r" started=[0-9]{10}( |$)")
+
+    def test_own_surfaces_a_staged_value_holding_key_material_stops_the_run(self):
+        # A copy of the runner whose certificate filter lets the minted key through (the
+        # seam): the guard after it must stop the run, exit 1, with nothing staged.
+        d = os.path.join(self.tmp, "runner")
+        shutil.copytree(HERE, d, ignore=shutil.ignore_patterns("__pycache__", "test_*"))
+        src = open(os.path.join(d, "acceptance.sh")).read()
+        cut = "      | awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{if(f)exit}')"
+        self.assertIn(cut, src)
+        open(os.path.join(d, "acceptance.sh"), "w").write(src.replace(cut, "      | cat)", 1))
+        ev, (rc_a, out_a), _ = self.both_derived(own=True, script=os.path.join(d, "acceptance.sh"),
+                                                 second={"script": None})
+        self.assertEqual(rc_a, 1, out_a)
+        self.assertIn("private key material", out_a)
+        for side, k, v in self.fabric.puts:
+            if side == "xaa":
+                self.assertNotIn(b"PRIVATE KEY", v, k)
+        self.assertFalse([k for s, k, _ in self.fabric.puts if s == "xaa" and k.endswith("/spire-svid")])
+
+    def test_our_own_launcher_outside_a_session_is_refused(self):
+        rc, out = self.run_acceptance(extra={"FED_PROBE_LAUNCHER_OURS": "/bin/false"})
+        self.assertEqual(rc, 2, out)
+        self.assertIn("FED_PROBE_LAUNCHER_OURS", out)
+        self.assertIn("bilateral session", out)
 
     def test_derived_mode_refuses_without_a_signer_or_a_verifier(self):
         for missing in ("FED_ACCEPTANCE_SIGNER", "FED_ACCEPTANCE_VERIFIER"):
