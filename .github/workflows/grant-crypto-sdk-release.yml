@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - name: The pusher holds the admin role
@@ -99,8 +99,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@1961bfc0c4a8bf07e0a0c98e1e2459c642ea70a0 # 1.95.0
       - name: git archive the spec, the vectors and the SDK; re-root to grant-crypto/
         id: stage
         # git archive carries tracked files only, so no target/ or node_modules/.
@@ -130,7 +130,7 @@ jobs:
           test -f verify/grant-crypto/envelope/testdata/vectors/vectors.json \
             || { echo "::error::the conformance vectors are missing from the tarball"; exit 1; }
           (cd verify/grant-crypto/sdk && cargo test --locked)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: grant-crypto-sdk-src
           path: dist/*
@@ -145,7 +145,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: git archive the docs site; re-root to docs/
         # Re-rooted so the goat-get role unpacks it into www/sdk/ and the pages
         # land at www/sdk/docs/ (get.<site>/sdk/docs/).
@@ -162,7 +162,7 @@ jobs:
           tar czf "dist/$out" -C docs-tree docs
           (cd dist && sha256sum "$out" > "$out.sha256")
           echo "- \`$out\` sha256 \`$(awk '{print $1}' "dist/$out.sha256")\`" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: grant-crypto-sdk-docs
           path: dist/*
@@ -205,11 +205,11 @@ jobs:
         shell: bash
         working-directory: ops/grant-crypto/sdk
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@1961bfc0c4a8bf07e0a0c98e1e2459c642ea70a0 # 1.95.0
         with:
           targets: ${{ matrix.rust_target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: ops/grant-crypto/sdk
           key: sdk-release-${{ matrix.rust_target }}
@@ -266,7 +266,7 @@ jobs:
           if command -v sha256sum >/dev/null; then sum=$(sha256sum "$NAME.tar.gz" | awk '{print $1}'); else sum=$(shasum -a 256 "$NAME.tar.gz" | awk '{print $1}'); fi
           echo "$sum  $NAME.tar.gz" > "$NAME.tar.gz.sha256"
           echo "- \`$NAME.tar.gz\` sha256 \`$sum\`" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: grant-crypto-capi-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/*
@@ -286,7 +286,7 @@ jobs:
       # The provenance is also recorded in this repository's attestations.
       attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
           merge-multiple: true
@@ -310,7 +310,7 @@ jobs:
             exit 1
           fi
           { echo '```'; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: Sign SHA256SUMS, then verify the signature
         run: |
           set -euo pipefail
@@ -351,7 +351,7 @@ jobs:
             gh attestation verify "artifacts/$asset" --bundle "$OUT" --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/grant-crypto-sdk-release.yml"
           done 3< SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: grant-crypto-sdk-checksums
           path: |
@@ -371,13 +371,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
           merge-multiple: true
       - run: ls -la release-assets/
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ github.ref_name }}
           files: release-assets/*
