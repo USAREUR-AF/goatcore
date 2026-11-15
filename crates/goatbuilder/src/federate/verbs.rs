@@ -420,6 +420,51 @@ mod tests {
         w
     }
 
+    /// `goatbuilder federate compose` run as a verb on a peering's working folder
+    /// (one with a run journal) composes the partner's package only when it is the
+    /// one confirmed at phase 5 there, as phase 6 of the stage driver does; it is
+    /// refused with GB-191 (exit 1) otherwise. A folder with no journal composes.
+    #[test]
+    fn the_compose_verb_composes_only_the_package_confirmed_at_phase_5() {
+        let (keys, now) = (keys(), now());
+        let work = tempfile::tempdir().unwrap();
+        let src = vectors().join("compose-full");
+        let ours = work.path().join("ours.canonical.json");
+        let theirs = work.path().join("theirs.canonical.json");
+        std::fs::copy(src.join("package-xaa.canonical.json"), &ours).unwrap();
+        std::fs::copy(src.join("package-xab.canonical.json"), &theirs).unwrap();
+        let words = |extra: &[&str]| {
+            let mut w = vec!["compose".to_string(), ours.display().to_string(), theirs.display().to_string()];
+            w.extend(["--now".to_string(), now.clone()]);
+            for k in &keys {
+                w.extend(["--key".to_string(), k.clone()]);
+            }
+            w.extend(extra.iter().map(|s| s.to_string()));
+            w
+        };
+        let run_words = |w: &[String]| {
+            let l = line(&w.iter().map(String::as_str).collect::<Vec<_>>());
+            let mut out = Vec::new();
+            run_to(l.cmd, &l.site, &mut out)
+        };
+        // No journal: composes, as before.
+        assert_eq!(run_words(&words(&[])).unwrap(), verbs::EXIT_OK);
+        // A journal whose phase 5 confirmed another package: refused.
+        let mut st = super::super::state::State::new("xab");
+        st.confirm("r1", 5, "partner-package", "flag", &format!("sha256:{}", "0".repeat(64)), Default::default());
+        std::fs::write(super::super::state::State::path(work.path()), serde_json::to_string(&st).unwrap()).unwrap();
+        let e = run_words(&words(&[])).unwrap_err();
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-191"), "{e:#}");
+        assert!(format!("{e:#}").contains("not the one confirmed at phase 5"), "{e:#}");
+        assert_eq!(fault_exit(&e), 1);
+        // The package confirmed there: composes.
+        let digest = super::super::confirm::sha256(&std::fs::read(&theirs).unwrap());
+        let mut st = super::super::state::State::new("xab");
+        st.confirm("r1", 5, "partner-package", "flag", &digest, Default::default());
+        std::fs::write(super::super::state::State::path(work.path()), serde_json::to_string(&st).unwrap()).unwrap();
+        assert_eq!(run_words(&words(&[])).unwrap(), verbs::EXIT_OK);
+    }
+
     /// Every composing vector composes to its normative digest, in process.
     #[test]
     fn compose_reaches_every_vectors_digest() {
