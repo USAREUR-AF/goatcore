@@ -444,7 +444,29 @@ def samples_checks():
         rc, last = run(sent, late, "--gap")
         check(rc == 0 and "re-delivered after a gap of 4.0 s" in last, f"samples --gap: late but complete is not a PASS naming the gap: {rc} {last}")
         rc, last = run(sent, [a for a in late if a[1] != 5], "--gap")
-        check(rc == 1 and "across a gap of 4.0 s" in last, f"samples --gap: a lost number is not a FAIL naming the gap: {rc} {last}")
+        check(rc == 1 and "1 number(s) lost outside a rotation's gap" in last, f"samples --gap: a number lost in a run too short for a gap is not a FAIL: {rc} {last}")
+
+        # A transport rotation's gap loses what was released while the tunnel was down
+        # (measured, §6): the numbers of each run at least GAP_MIN_S long are recorded
+        # with the run's length and count, and pass; a loss outside such a run fails.
+        def run_window(sent, arrived, t0, t1, *extra):
+            fs, fa = flow(sent, arrived)
+            p = subprocess.run([sys.executable, lib, "check", "--sent", fs, "--arrived", fa, "--from", str(t0), "--to", str(t1), *extra],
+                               capture_output=True, text=True)
+            return p.returncode, (p.stdout.strip().splitlines() or [p.stderr])[-1], p.stdout
+
+        long_sent = [(100 + i, i + 1, "200") for i in range(80)]
+        two_gaps = [(t + 0.2, n) for t, n, _ in long_sent if not (11 <= n <= 30 or 51 <= n <= 70)]
+        rc, last, out = run_window(long_sent, two_gaps, 100, 180, "--gap")
+        check(rc == 0 and "20 number(s) lost in a gap of 21.0 s" in last and last.count("lost in a gap") == 2,
+              f"samples --gap: two rotations' gaps of lost numbers are not a PASS naming each: {rc} {last}")
+        rep = json.loads(out.strip().splitlines()[0])
+        check([(g["first"], g["last"], g["lost"]) for g in rep.get("gaps", [])] == [(11, 30, 20), (51, 70, 20)] and rep.get("lost_outside") == [],
+              f"samples --gap: the report does not list each gap: {rep}")
+        stray = [a for a in two_gaps if a[1] != 76]
+        rc, last, out = run_window(long_sent, stray, 100, 180, "--gap")
+        check(rc == 1 and "1 number(s) lost outside a rotation's gap" in last and json.loads(out.strip().splitlines()[0]).get("lost_outside") == [76],
+              f"samples --gap: a loss outside the gaps is not a FAIL naming it: {rc} {last}")
         rc, last = run([(t + 50, n, c) for t, n, c in sent], [])
         check(rc == 1 and "no sample was released inside the window" in last, f"samples: an empty window is not a FAIL: {rc} {last}")
     cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
