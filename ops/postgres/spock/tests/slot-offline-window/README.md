@@ -2,7 +2,9 @@
 
 How much WAL a provider's slot for an absent subscriber takes before Postgres
 invalidates it, what the subscriber sees when it returns, and the re-seed that
-brings it back. It is the measurement behind
+brings it back. With `RESEED_HELPER`, the re-seed is the six steps of
+`goatbuilder join-node --reseed`'s helper instead of the run's own statements.
+It is the measurement behind
 [docs/design/goatbuilder-hardware-measurement.md](../../../../../docs/design/goatbuilder-hardware-measurement.md), "How long a phone may be off";
 `run.sh`'s header says what it does and what it records.
 
@@ -10,6 +12,7 @@ brings it back. It is the measurement behind
 docker build -t postgres-spock:offwin ops/postgres/spock
 IMAGE=postgres-spock:offwin RATE_MIB=4 ops/postgres/spock/tests/slot-offline-window/run.sh
 IMAGE=postgres-spock:offwin RETURN=restart ops/postgres/spock/tests/slot-offline-window/run.sh
+IMAGE=postgres-spock:offwin RESEED_HELPER="$PWD/ops/scripts/spock-reseed.py" ops/postgres/spock/tests/slot-offline-window/run.sh
 ```
 
 A run writes about one and a half caps of WAL on the founder container, so it
