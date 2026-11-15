@@ -715,6 +715,7 @@ scenarios:
       - {id: allocate-ran, step: "nh-{B}-allocate"}
       - {id: inventory-names-the-forwarder, step: "fgb-{B}-inventory-names-the-forwarder"}
       - {id: forwarder-values-from-the-command, step: "fgb-{B}-forwarder-values-from-the-command"}
+      - {id: no-hand-written-forwarder-file, step: "fgb-{B}-no-hand-written-forwarder-file"}
       - {id: offer-is-the-forwarder, step: "fgb-{B}-federation-toml-offers-the-forwarder"}
       - {id: phase-2-ran-the-forwarder-play, step: "fgb-{B}-phase-2-ran-the-forwarder-play"}
       - {id: forwarder-in-place, step: "fgb-forwarder-carrier-and-table-in-place"}
