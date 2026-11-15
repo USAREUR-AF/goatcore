@@ -344,7 +344,7 @@ fn driver_plan(dc: &DriverCore, partner: &str, dir: &Path) -> Result<serde_json:
     let text = String::from_utf8_lossy(&out.stdout);
     serde_json::from_str(text.trim()).map_err(|_| {
         goat_errors::coded(
-            "GB-321",
+            "GB-315",
             format!(
                 "{} gave no plan: {}",
                 dc.tool.display(),
@@ -1661,7 +1661,7 @@ pub fn backout_with(
     for rec in &recs {
         if rec.peering != t.partner {
             return Err(goat_errors::coded(
-                "GB-321",
+                "GB-253",
                 format!(
                     "{} answered for peering '{}', not '{}'",
                     rec.host, rec.peering, t.partner
@@ -1842,7 +1842,7 @@ pub fn backout_with(
         let mut line = String::new();
         std::io::stdin()
             .read_line(&mut line)
-            .map_err(|e| goat_errors::coded("GB-008", format!("the confirmation could not be read from the terminal ({e}): pass --yes without a terminal")))?;
+            .map_err(|e| goat_errors::coded("GB-316", format!("the confirmation could not be read from the terminal ({e}): pass --yes without a terminal")))?;
         if line.trim() != t.partner {
             checks.push(row(
                 "confirm",

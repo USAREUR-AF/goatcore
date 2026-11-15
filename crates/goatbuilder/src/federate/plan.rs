@@ -971,7 +971,7 @@ fn run_phase1(
         .map_err(|e| goat_errors::coded("GB-320", format!("could not start python3 {}: {e}", script.display())))?;
     let (written, _, _) = read_result(result).map_err(|e| {
         goat_errors::coded(
-            "GB-321",
+            "GB-315",
             format!(
                 "phase 1 exited {}: {} ({e:#})",
                 out.status,
