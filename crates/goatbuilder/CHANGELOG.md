@@ -72,7 +72,7 @@ on the core node, a core run names Prometheus, Alertmanager, Grafana and the
 exporters with the run that builds them, `join-node --class obs`. A service
 no step builds reads "no join-node step builds it yet (gate row I3)". The
 admin surfaces keep their gap line (gate rows I1 and I4). Nothing a run does
-changes.
+changes (#953).
 
 <!-- END generated: changelog unreleased -->
 
