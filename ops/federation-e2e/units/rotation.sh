@@ -170,6 +170,10 @@ PY
       ad="$(docker exec "$(drv_host "$them")" sha256sum "/var/lib/goat-federation/$s/agreement.json" | cut -d' ' -f1)"
       t0="$(date +%s.%N)"; printf '%s\tpartner-step-start\n' "$t0" >> "$RECORD/rot-$k-$s.times"
       rec "rot-partner-step-$k-$s" -- bash -c "DRIVE_EXTRA='--accept-partner-package $d --partner-key $pub --partner-ca-fingerprint $fp --agreement-digest $ad' drive_x '$them' '$s' '$AVENUE' 5 14"
+      # drive_x stops at phase 10's hand-off; phase 11 is where the partner replaces our
+      # peer key. It stops at 13: phase 14 through drive has no acceptance surfaces, and
+      # the acceptance step below covers 14.
+      rec "rot-partner-step-from-11-$k-$s" -- drive "$them" "$s" "$AVENUE" 11 13
       printf '%s\tpartner-step-end\n' "$(date +%s.%N)" >> "$RECORD/rot-$k-$s.times"
       rec "rot-tunnel-back-$k-$s" -- bash -c \
         "i=\$(iface '$s' '$them'); for _ in \$(seq 1 30); do t=\$(docker exec $HP-$s-edge wg show \$i latest-handshakes | cut -f2); [ \"\${t:-0}\" -gt '${t0%%.*}' ] 2>/dev/null && break; sleep 2; done
