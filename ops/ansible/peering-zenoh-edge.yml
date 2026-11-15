@@ -39,6 +39,10 @@
   gather_facts: true
   become: true
   pre_tasks:
+    - name: The peering plays require the host firewall baseline on an edge (GB-279)
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+        tasks_from: require.yml
     - name: Read what `goat federate apply` rendered for this run
       ansible.builtin.include_tasks: tasks/peering-applied-vars.yml
   roles:

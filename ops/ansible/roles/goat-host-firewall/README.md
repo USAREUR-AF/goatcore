@@ -9,8 +9,10 @@ Design, rule table and override contract: [docs/design/peering-host-firewall.md]
 
 ## Where it runs
 
-Opt-in: `goat_host_firewall_baseline: true` in the host's group_vars. Off by default, and with it
-off nothing here runs.
+`goat_host_firewall_baseline: true` in the host's group_vars. Off by default. The peering plays
+require it on an edge: every edge play runs `tasks/require.yml` first and refuses (GB-279) while
+it is not true, before anything on the host changes. On a core it is opt-in, and with it off
+nothing here runs.
 
 | Play | Profile | Phase |
 |---|---|---|
@@ -58,6 +60,8 @@ bash ops/ci/test-host-firewall-role.sh                                 # needs d
 ## Taking it off a host
 
 `systemctl disable --now goat-host-firewall` (stopping it deletes the table),
-`rm -rf /etc/goat-host-firewall`, then set `goat_host_firewall_baseline: false`.
+`rm -rf /etc/goat-host-firewall`, then set `goat_host_firewall_baseline: false`. On an edge, the
+peering plays then refuse (GB-279) until it is switched on again.
 Backing out an edge's last peering (`peering-backout.yml`, which includes `tasks/absent.yml`)
-does the first two; backing out one of several removes only that peering's entry and reloads.
+does the first two, and the host is then no longer a peering edge; backing out one of several
+removes only that peering's entry and reloads.
