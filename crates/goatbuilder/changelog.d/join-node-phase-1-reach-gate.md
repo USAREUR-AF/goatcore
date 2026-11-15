@@ -13,4 +13,6 @@ your key, a box that takes only its first-login password refuses every batch
 login, and phase 2 proves the login.
 
 A box that does not answer stops the run at phase 1 with GB-314 and the step
-for a person. Resume with `--from 1`.
+for a person. Resume with `--from 1`. So does a Jetson's USB bridge address,
+192.168.55.0/24: its sshd answers, but it is reachable only over a direct
+USB-C cable. Pass the box's real LAN address.

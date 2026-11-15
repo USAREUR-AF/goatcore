@@ -22,7 +22,15 @@
 # finishes a key exchange with the node is the stop: no route, refused, timed
 # out, a name that does not resolve, a port that does not speak SSH, or a jump
 # host that refuses. The operator's own known_hosts is not read or written here.
-# Phase 2's ssh checks the node's key against it.
+# Phase 2's ssh RECORDS a new node's key there (accept-new); it checks it only
+# for a node this machine already knows. So phase 1 trusts any SSH server at the
+# address on first use: the address is the operator's word for the node.
+#
+# One address is refused before any connection: 192.168.55.0/24, a Jetson's
+# l4tbr0, the USB device-mode bridge on the box itself. Its sshd answers, so the
+# check above would pass it, but it is reachable only over a direct USB-C cable,
+# never from the site. The address is the one ssh would dial (`ssh -G`, so an
+# alias's HostName counts), else the part after the @.
 #
 # usb: `adb get-state` says `device`: one phone is attached, allows USB debugging
 # from this machine and is unlocked (ANDROID_SERIAL picks one of several).
@@ -34,6 +42,14 @@ set -uo pipefail
 case "${1:-}" in
   ssh)
     target="${2:?usage: join-node-reach.sh ssh <user>@<address>}"
+    host="$(ssh -G "$target" 2>/dev/null | awk '$1 == "hostname" { print $2; exit }')"
+    [ -n "$host" ] || host="${target##*@}"
+    case "$host" in
+      192.168.55.*)
+        echo "GB-314: $target is $host, a Jetson's l4tbr0: the USB device-mode bridge on the box itself, reachable only over a direct USB-C cable, never from the site; nothing was done on it." >&2
+        echo "  Find the box's real LAN address (on the box: ip -4 addr, the interface on the site LAN, not l4tbr0) and pass it as --address." >&2
+        exit 1 ;;
+    esac
     kh="$(mktemp "${TMPDIR:-/tmp}/join-node-reach.XXXXXX")" || exit 1
     trap 'rm -f "$kh"' EXIT
     err="$(ssh -o BatchMode=yes -o ConnectTimeout=10 -o NumberOfPasswordPrompts=0 \
