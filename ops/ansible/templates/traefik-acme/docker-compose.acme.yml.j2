@@ -90,9 +90,14 @@ services:
       # Declared in the target group's vars as a list of host:port entries:
       #   acme_dns_resolvers: ["<resolver address>:53"]
       #   acme_dns_skip_authoritative_checks: true
+      # Without the authoritative check Traefik has nothing to wait on, so it
+      # asks Let's Encrypt to validate the moment the record is created and
+      # Let's Encrypt answers NXDOMAIN. It therefore also waits a fixed time
+      # first: acme_dns_propagation_delay, default 90s.
       - --certificatesresolvers.le.acme.dnschallenge.resolvers={{ acme_dns_resolvers | default(['1.1.1.1:53', '8.8.8.8:53']) | join(',') }}
 {% if acme_dns_skip_authoritative_checks | default(false) | bool %}
       - --certificatesresolvers.le.acme.dnschallenge.propagation.disableANSChecks=true
+      - --certificatesresolvers.le.acme.dnschallenge.propagation.delayBeforeChecks={{ acme_dns_propagation_delay | default('90s') }}
 {% endif %}
     environment:
       # Read at runtime from /opt/mgmt-host/.env (rendered by the playbook).
