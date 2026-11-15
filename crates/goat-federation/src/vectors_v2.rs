@@ -221,3 +221,43 @@ fn lint_warns_only_for_a_version_this_build_does_not_compose() {
     let w = warnings(&parse_package(&v3).unwrap(), &v3);
     assert!(w.iter().any(|w| w.rule.starts_with("W_SPEC")), "{w:?}");
 }
+
+/// The version is inside the signed bytes in both versions: `spec` is a member
+/// of the package, and the signing input is the canonical form without
+/// `signature` alone. So verifying signatures before routing by `spec` is
+/// sound: a package whose `spec` was changed after signing no longer verifies.
+#[test]
+fn the_spec_member_is_inside_the_signed_bytes_in_both_versions() {
+    for (tree, dir, spec) in [
+        ("vectors", "compose-full", "federation-package/v1"),
+        ("vectors-v2", "compose-next-one-side", "federation-package/v2"),
+    ] {
+        let p = parse_package(&bytes(&root(tree).join(dir).join("package-xaa.canonical.json"))).unwrap();
+        assert!(p.signing_input().contains(&format!("\"spec\":\"{spec}\"")), "{tree}/{dir}");
+    }
+}
+
+/// A package relabelled to the other version after it was signed fails step
+/// 0's signature check and is never composed, under either version: a v2
+/// package relabelled v1 with its next CA kept or dropped, and a v1 package
+/// relabelled v2. Its partner in each pair is a valid package of the version
+/// claimed, so nothing but the relabelling can be refused.
+#[test]
+fn a_package_relabelled_to_the_other_version_fails_verification() {
+    let (now, keys) = (pinned_now(), testkeys());
+    for name in ["refuse-downgrade-next-kept", "refuse-downgrade-next-dropped", "refuse-relabel-v1-as-v2"] {
+        let (a, b) = pair(&root("vectors-v2").join(name));
+        let (pa, pb) = (parse_package(&a).unwrap(), parse_package(&b).unwrap());
+        for (p, q) in [(&pa, &pb), (&pb, &pa)] {
+            for composed in [compose_any(p, q, now, &keys), compose(p, q, now, &keys)] {
+                match composed {
+                    Composed::Refused(f) => {
+                        assert_eq!(f.rule, "C_SIGNATURE", "{name}: {f}");
+                        assert!(f.path.contains("xaa"), "{name}: the relabelled package is xaa's: {f}");
+                    }
+                    Composed::Agreement { .. } => panic!("{name}: a relabelled package composed"),
+                }
+            }
+        }
+    }
+}
