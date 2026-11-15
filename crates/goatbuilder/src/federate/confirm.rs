@@ -851,8 +851,31 @@ pub fn compose_guard(paths: &Paths, st: &State) -> Option<Step> {
 /// the CA fingerprint the placed package carries, and our own verifying key
 /// and CA fingerprint as they are now. Then confirmation 1 is not asked
 /// again: the digest compared on the call was the new question.
-pub fn keys_unchanged(_paths: &Paths, _st: &State) -> bool {
-    false
+pub fn keys_unchanged(paths: &Paths, st: &State) -> bool {
+    let Some(keys) = st
+        .confirmations
+        .iter()
+        .rev()
+        .find(|c| c.kind == "keys" && c.phase == 5)
+    else {
+        return false;
+    };
+    let got = |k: &str| keys.values.get(k).filter(|v| !v.is_empty());
+    let read = |p: &Path| -> Option<serde_json::Value> { serde_json::from_slice(&std::fs::read(p).ok()?).ok() };
+    let (Some(theirs), Some(ours)) = (read(&paths.counterparty), read(&paths.ours)) else {
+        return false;
+    };
+    let Some(them) = field(&theirs, &["sovereign_id"]).filter(|id| plain_id(id)) else {
+        return false;
+    };
+    let seed = paths.signing.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+    let now = [
+        ("partner_key", keyring_key(&paths.keyring, &them)),
+        ("partner_ca_fingerprint", field(&theirs, &["identity", "ca_fingerprint"])),
+        ("our_ca_fingerprint", field(&ours, &["identity", "ca_fingerprint"])),
+        ("our_key", our_verifying_key(&seed).ok()),
+    ];
+    now.iter().all(|(k, v)| matches!((got(k), v), (Some(a), Some(b)) if prompt::same_value(a, b)))
 }
 
 /// Phase 5, before the keys: a new package from the partner under the key

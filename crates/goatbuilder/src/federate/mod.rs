@@ -1029,6 +1029,24 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 if let Some(step) = confirm::incoming(&r.paths, s, &mut r.state, &r.id.clone()) {
                     checks.extend(step.rows);
                     match step.verdict {
+                        // The new package is confirmed and placed. When the keys
+                        // confirmed before are unchanged (a transport rotation),
+                        // confirmation 1 is not asked again: phase 5 is done, and
+                        // the phases after it are planned again from the new package.
+                        confirm::Verdict::Continue if s.values.partner_key.is_none()
+                            && s.values.partner_ca_fingerprint.is_none()
+                            && confirm::keys_unchanged(&r.paths, &r.state) =>
+                        {
+                            checks.push(row("confirm", "the keys confirmed before are unchanged for the new package: confirmation 1 is not asked again".into()));
+                            r.end(ph, state::Outcome::Passed, "the partner's new package confirmed; the keys confirmed before are unchanged");
+                            replanned = Some(plan(repo, o, &work, &edge_group, &resume));
+                            if s.rotate_leaves {
+                                if let Some(p) = replanned.as_mut() {
+                                    rotation::leaves(p);
+                                }
+                            }
+                            continue;
+                        }
                         confirm::Verdict::Continue => {}
                         confirm::Verdict::Stop(d) => {
                             r.end(ph, state::Outcome::Stopped, &d);
