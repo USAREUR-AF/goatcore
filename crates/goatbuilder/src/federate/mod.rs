@@ -814,7 +814,10 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         rotation::carrier(&mut phases, c, o.with);
     }
     if let Some(t) = &s.rotate_transport {
-        rotation::transport(&mut phases, t);
+        rotation::transport(&mut phases, t)?;
+    }
+    if let Some(i) = &s.rotate_ipsec {
+        rotation::ipsec(&mut phases, i)?;
     }
     let banner_mode = if o.dry_run {
         "(DRY RUN — nothing executes)"
@@ -1223,7 +1226,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 }
             }
             r.end(ph, state::Outcome::Passed, "");
-            rotation::after_phase(s, ph.n);
+            for w in rotation::after_phase(s, ph.n, Path::new(&work)) {
+                checks.push(row("warning", w));
+            }
         }
     }
     if let Some(r) = run.as_mut() {
@@ -1435,9 +1440,9 @@ mod tests {
         // Once phase 8 has passed, the command that carries on is the plain
         // resume, so following a stop or a failure never mints another set.
         let mut s4 = rotation::leaves_run(&o).1;
-        rotation::after_phase(&mut s4, 7);
+        rotation::after_phase(&mut s4, 7, Path::new("/nonexistent/w"));
         assert!(s4.again.is_some());
-        rotation::after_phase(&mut s4, 8);
+        rotation::after_phase(&mut s4, 8, Path::new("/nonexistent/w"));
         assert!(s4.again.is_none() && !s4.rotate_leaves);
     }
 
@@ -1452,7 +1457,7 @@ mod tests {
         let before = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
         let mut after = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
         let t = rotation::Pending { id: "transport-1".into(), file: work.path().join(rotation::TRANSPORT_FILE) };
-        rotation::transport(&mut after, &t);
+        rotation::transport(&mut after, &t).unwrap();
         for (a, b) in before.iter().zip(after.iter()) {
             if a.n == 2 {
                 assert_eq!(b.cmd, a.cmd.replace(" -e fed_work='", " -e peering_wg_transport_rotation='transport-1' -e fed_work='"));

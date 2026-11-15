@@ -27,6 +27,7 @@ units:
   mixed: {parties: "xaa xab", goat_versions: "xaa=0.5.18"}
   rollback: {parties: "xaa xab", previous_release: true}
   forwarder: {parties: "xaa xab xac"}
+  forwarder-gb: {parties: "xaa xab"}
   preflight: {parties: "xaa xab"}
   killresume: {parties: "xaa xab"}
   pair-role: {parties: "xaa xab xac"}
@@ -111,7 +112,7 @@ scenarios:
       With no responder, probe or other subscriber running on either side, a fresh value
       released on each side is stored by the receiving core's own configured store; and after
       the receiving core's router restarts, with the edge router left running, a fresh value
-      is stored again (the core's interest reaches the edge without an edge restart). After
+      is stored again (the core's interest reaches the edge without an edge restart). Then each receiving edge router restarts, with its core left running, and a fresh value is stored again the same way (released every 2 s, for up to 90 s); the core is not restarted. After
       the restart a fresh value, each with a nonce never used before, is released every 2 s
       for 60 s; the first one stored passes, and the run records how many were lost before it
       and how many seconds after the core answered it was stored. Values released while the
@@ -126,6 +127,10 @@ scenarios:
       - {id: second-to-first-after-core-restart, step: "s{n}-{S}-to-{F}-stored-after-the-receiving-core-restarts"}
       - {id: second-edge-not-restarted, step: "s{n}-{S}-edge-was-not-restarted"}
       - {id: first-edge-not-restarted, step: "s{n}-{F}-edge-was-not-restarted"}
+      - {id: first-to-second-after-edge-restart, step: "s{n}-{F}-to-{S}-stored-after-the-receiving-edge-restarts"}
+      - {id: second-to-first-after-edge-restart, step: "s{n}-{S}-to-{F}-stored-after-the-receiving-edge-restarts"}
+      - {id: second-core-not-restarted, step: "s{n}-{S}-core-was-not-restarted"}
+      - {id: first-core-not-restarted, step: "s{n}-{F}-core-was-not-restarted"}
 
   - id: republisher-boundary
     title: A set that was not offered does not cross the republisher
@@ -681,6 +686,49 @@ scenarios:
       - {id: forwarder-holds-no-key, step: "sfwd-forwarder-holds-no-peering-key"}
       - {id: acceptance-nated, step: "sfwd-acceptance-as-{A}-with-{B}"}
       - {id: acceptance-partner, step: "sfwd-acceptance-as-{B}-with-{A}"}
+
+  - id: forwarder-by-goatbuilder
+    title: The forwarder applied by goatbuilder federate from the peering's forwarder declaration
+    unit: {goatbuilder: forwarder-gb}
+    runs_where: local
+    pass_condition: >
+      nothing-hand-written (units/nohand.sh), with {B} behind a NAT router that forwards
+      nothing inbound and listening through a peering forwarder it operates, as in
+      forwarder-path. {B}'s operator input is nothing-hand-written's, with two more parts:
+      `forwarder: {endpoint, ansible_host}` on its peering entry, and the forwarder machine's
+      own values (its SSH user, its public interface and the address it admits SSH from, in
+      ops/ansible/group_vars/peering_forwarders/), which only its operator knows. Nobody
+      runs a play by hand: `goatbuilder federate allocate` renders the forwarder's inventory
+      group, its group_vars and the offer of the forwarder's public port, and phase 2 of
+      `goatbuilder federate {A}` on {B} runs the edge, carrier-key and forwarder plays itself
+      (peering-forwarder.md §7). Then {A}'s probe of {B}'s edge fails, and the same probe
+      reaches it with the NAT opened. The carrier handshakes. {A}'s WireGuard endpoint is the
+      forwarder's public address, and {B} sees {A} at the forwarder's carrier address. The
+      tunnel carries both ways, a value round-trips each way, and the forwarder holds no
+      WireGuard or TLS key of either party. Strict acceptance passes, and nothing is written
+      by hand outside nothing-hand-written's lab-only lines. One peering only: two peerings
+      relayed by one forwarder (peering-forwarder.md §7's full gate) need nohand.sh to
+      declare a second peering from nothing, and a third sovereign.
+    checks:
+      - {id: starts-with-no-peering, step: "nh-{B}-starts-with-no-peering"}
+      - {id: allocate-ran, step: "nh-{B}-allocate"}
+      - {id: inventory-names-the-forwarder, step: "fgb-{B}-inventory-names-the-forwarder"}
+      - {id: forwarder-values-from-the-command, step: "fgb-{B}-forwarder-values-from-the-command"}
+      - {id: offer-is-the-forwarder, step: "fgb-{B}-federation-toml-offers-the-forwarder"}
+      - {id: phase-2-ran-the-forwarder-play, step: "fgb-{B}-phase-2-ran-the-forwarder-play"}
+      - {id: forwarder-in-place, step: "fgb-forwarder-carrier-and-table-in-place"}
+      - {id: carrier-handshake, step: "fgb-{B}-carrier-handshake"}
+      - {id: partner-cannot-reach-edge, step: "fgb-{A}-cannot-reach-{B}-edge-through-its-nat"}
+      - {id: probe-reaches-without-nat, step: "fgb-the-same-probe-reaches-{B}-edge-with-the-nat-open"}
+      - {id: dialer-endpoint-is-forwarder, step: "fgb-{A}-endpoint-is-the-forwarder"}
+      - {id: listener-sees-carrier, step: "fgb-{B}-sees-{A}-at-the-carrier"}
+      - {id: first-tunnel-carried, step: "fgb-{A}-tunnel-carried-it"}
+      - {id: second-tunnel-carried, step: "fgb-{B}-tunnel-carried-it"}
+      - {id: round-trip-first, step: "fgb-round-trip-{A}-to-{B}"}
+      - {id: round-trip-second, step: "fgb-round-trip-{B}-to-{A}"}
+      - {id: forwarder-holds-no-key, step: "fgb-forwarder-holds-no-peering-key"}
+      - {id: acceptance, step: "nh-acceptance-as-{A}-with-{B}"}
+      - {id: nothing-hand-written, step: "nh-nothing-hand-written"}
 
   - id: port-51820-held
     title: Another service already holds UDP 51820 on an edge

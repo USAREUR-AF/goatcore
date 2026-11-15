@@ -476,7 +476,7 @@ entries:
   - code: GB-008
     tool: goatbuilder
     title: a mutation needs --yes when there is no terminal
-    what: deploy, release, rollback, fastlane, standup, teardown, join-node, federate and apply change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10).
+    what: deploy, release, rollback, fastlane, standup, teardown, join-node, federate, apply and grow change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10). grow asks only when stdin and stderr are both a terminal, so with stderr sent to a file it needs --yes too.
     causes:
       - run from a script, CI or a pipe
     fixes:
@@ -2977,16 +2977,16 @@ entries:
   - code: GB-282
     tool: goatbuilder
     title: rotating our CA needs a decision before it can be built
-    what: "`goatbuilder federate rotate <partner> ca` would replace the CA that signs our peering leaves. Every check accepts exactly one CA per party, the one fingerprint our package carries (federation-package-spec.md §5.1), so the partner could not trust the new CA beside the old one while our leaves change over, and data would stop. The overlap of both CAs is designed in the key-rotation design §4 and needs an ADR superseding §5.1 before it is built. Nothing ran."
+    what: "`goatbuilder federate rotate <partner> ca` would replace the CA that signs our peering leaves. In package v1 every check accepts exactly one CA per party, the one fingerprint our package carries (federation-package-spec.md §5.1), so the partner could not trust the new CA beside the old one while our leaves change over, and data would stop. The overlap of both CAs is decided (ADR 1242: our next CA is announced in package v2) and designed in the key-rotation design §4, but this goatbuilder does not build it yet. Nothing ran."
     causes:
-      - "`rotate <partner> ca` was asked for, and no ADR yet lets a package carry a second CA fingerprint"
+      - "`rotate <partner> ca` was asked for, and this goatbuilder does not yet build the CA overlap ADR 1242 decides"
     fixes:
       - "rotate the leaves instead, under the same CA: goatbuilder federate rotate <partner> leaves"
-      - "read the key-rotation design §4 for the overlap the ADR has to allow"
+      - "read ADR 1242 and the key-rotation design §4 for the CA overlap a later goatbuilder builds"
     read: docs/design/federation-key-rotation.md
     exit: 1
     matches:
-      - "^`rotate [^ ]+ ca` needs a decision first"
+      - "^`rotate [^ ]+ ca` (needs a decision first|is decided, not built)"
 
   - code: GB-190
     tool: goatbuilder
@@ -3589,6 +3589,52 @@ entries:
     matches:
       - "^GB-297: "
 
+  - code: GB-304
+    tool: goatbuilder
+    title: grow was given a file that is not a goatlite
+    what: "goatbuilder grow hands a goatlite over to the full preset, so it reads goatlite.yaml at the checkout root and needs it to declare preset: lite with a lite: block (ADR 1213). This file declares another preset, or has no lite: block, so there is nothing to grow. A checkout already on the full preset needs no grow. grow changes files in the checkout only, never a host: a finished grow is undone with git before it is committed (restore goatlite.yaml and the files whose generated header it took off, and delete ops/goatbuilder/goatbuilder.yaml), and goatbuilder grow --dry-run shows every write first."
+    causes:
+      - "goatlite.yaml declares preset: full, or no preset"
+      - "the lite: block is missing or is not a mapping"
+    fixes:
+      - "goatbuilder validate goatlite.yaml   (it says what the file declares)"
+      - "a full configuration is ops/goatbuilder/goatbuilder.yaml: goatbuilder validate"
+    read: docs/design/goatlite-growth.md
+    exit: 2
+    matches:
+      - "^grow takes a goatlite config: "
+
+  - code: GB-305
+    tool: goatbuilder
+    title: grow would replace a configuration that already exists
+    what: "goatbuilder grow writes the full configuration to ops/goatbuilder/goatbuilder.yaml. That file already exists and holds another configuration (not the one this goatlite grows into, which a run that stopped part way would have left), so grow refused before changing anything: it never replaces a configuration someone wrote. When the file carries grow's own header, the message says it is grow's file from an earlier run, since edited (or goatlite.yaml changed). grow changes files in the checkout only, never a host: a finished grow is undone with git before it is committed (restore goatlite.yaml and the files whose generated header it took off, and delete ops/goatbuilder/goatbuilder.yaml), and goatbuilder grow --dry-run shows every write first."
+    causes:
+      - "the checkout already declares a full configuration of its own"
+      - "the file was edited after an earlier grow wrote it, and goatlite.yaml is still there"
+    fixes:
+      - "move ops/goatbuilder/goatbuilder.yaml aside, then goatbuilder grow --dry-run"
+      - "or merge what it declares into goatlite.yaml, then grow again"
+      - "grow's own file from an earlier run, edited: merge the edits into goatlite.yaml and delete ops/goatbuilder/goatbuilder.yaml, or delete it to grow afresh"
+    read: docs/design/goatlite-growth.md
+    exit: 1
+    matches:
+      - "^ops/goatbuilder/goatbuilder.yaml already exists and holds another configuration"
+      - "^ops/goatbuilder/goatbuilder.yaml is grow's own file from an earlier run"
+
+  - code: GB-306
+    tool: goatbuilder
+    title: the full configuration grown from a goatlite is incomplete
+    what: "goatbuilder grow rewrote goatlite.yaml as a full configuration, and the result fails the schema or a cross-field rule, so it was not written. Most often the goatlite is the four-fact file of the tutorial: the lite preset took repo and components from the checkout, and a full configuration declares its own. The message lists each problem and names the fields to add. grow changes files in the checkout only, never a host: a finished grow is undone with git before it is committed (restore goatlite.yaml and the files whose generated header it took off, and delete ops/goatbuilder/goatbuilder.yaml), and goatbuilder grow --dry-run shows every write first."
+    causes:
+      - "goatlite.yaml declares no repo or components, and the checkout has no configuration to take them from"
+      - "a value in goatlite.yaml is valid for the lite preset but not in the full shape (the message names it)"
+    fixes:
+      - "add repo: and components: to goatlite.yaml (the fixture ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite shows both), then goatbuilder grow --dry-run"
+    read: docs/design/goatlite-growth.md
+    exit: 1
+    matches:
+      - "^the full configuration grown from this goatlite is incomplete"
+
   - code: GB-307
     tool: goatbuilder
     title: an environment declares converger pull-agent, and the pull converger is not built
@@ -3619,6 +3665,134 @@ entries:
     exit: 1
     matches:
       - "\\(GB-278\\)"
+
+  - code: GB-289
+    tool: goatbuilder
+    title: the IPsec rotation's staged material is missing or unreadable
+    what: "A credential rotation of an ipsec-fips peering (goat-peering-edge with peering_edge_rotation set) switches the edge to a new leaf that the offline ceremony issued and an operator staged beside the live files: <name>-cert.next.pem in the swanctl x509 directory, <name>-key.next.pem in its private directory at mode 0600, and for an ipsec-ca rotation our new CA as <name>-local-ca.next.pem in x509ca. The rotation also needs our current IPsec CA certificate at peering_edge_local_ca_path to check the new leaf's chain. One of them is missing, unreadable, or the key is not mode 0600. The role refused before anything moved."
+    causes:
+      - the new leaf, its key, or (for ipsec-ca) our new CA was not staged on this edge
+      - peering_edge_local_ca_path is not set, or names no file on the edge
+      - the staged key was copied without mode 0600
+    fixes:
+      - "stage what the ceremony issued at the paths the message names, with the key at mode 0600, then run the rotation again"
+      - "set peering_edge_local_ca_path in the edge's group_vars to our current per-peering IPsec CA certificate"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-289\\)"
+
+  - code: GB-290
+    tool: goatbuilder
+    title: the staged IPsec certificate is not right for this link
+    what: "Before an IPsec credential rotation moves anything, goat-peering-edge checks the staged certificate: its key is the staged key, it chains to the CA it must chain to (our current CA for ipsec-leaf, the staged new CA for ipsec-ca), its subject CN is peering_edge_local_id, its key is ECDSA P-384 (secp384r1) as the proposals require, it is valid now, and it stays valid for peering_edge_min_valid_days more days (default 30). The message names each check that failed. Nothing was moved."
+    causes:
+      - the leaf was issued for another peering or another identity
+      - the leaf was issued by another CA, or the staged key belongs to another certificate
+      - the leaf uses another key type, or expires too soon
+    fixes:
+      - "have the ceremony issue the leaf again with Subject CN = peering_edge_local_id and an ECDSA P-384 key, from the right CA, then stage it and run the rotation again"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-290\\)"
+
+  - code: GB-302
+    tool: goatbuilder
+    title: the IPsec link did not come up on the new leaf; the old pair was put back
+    what: "After switching to the staged leaf, goat-peering-edge loaded the credentials, re-authenticated the IKE SA and waited up to peering_edge_rotation_confirm_seconds (the DPD timeout by default) for an established IKE SA with an installed CHILD SA. None came up, so it put the set-aside pair back from .previous-<id>/, loaded it and re-authenticated: the old leaf is live. It marks the rotation rolled back (.previous-<id>/rolled-back), so every later run of the same id, a resume or a retire, reports GB-302 again, moves nothing and never replaces our CA. For ipsec-ca with --no-overlap, a partner that no longer trusts our old CA cannot carry the link on the old pair either."
+    causes:
+      - the partner does not trust the CA that issued the new leaf
+      - the partner's edge expects another identity, or is not reachable
+      - "this rotation id was rolled back by an earlier run"
+    fixes:
+      - "read swanctl --list-sas and the charon log on both edges, then stage the new pair again and start a rotation with a new id"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge \\(GB-302\\)"
+
+  - code: GB-303
+    tool: goatbuilder
+    title: the partner has not read back our new IPsec CA
+    what: "An ipsec-ca rotation switches the edge to a leaf issued by our new per-peering CA only once the partner trusts that CA. Nothing on our side can read the partner's trust store, so the switch needs the sha256 fingerprint the partner read back after placing our new CA (peering_edge_rotation_ca_readback, or goatbuilder federate rotate <partner> ipsec-ca --partner-holds-ipsec-ca <sha256>). It was not given, or it is not the staged CA's fingerprint. Nothing was moved."
+    causes:
+      - the partner has not placed our new CA yet, or has not read its fingerprint back on the call
+      - the fingerprint read back belongs to another file
+    fixes:
+      - "have the partner place our new CA beside their current one and read back its sha256 fingerprint, then run the rotation again with that fingerprint"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-303\\)"
+      - "only with the partner's attestation that it placed that CA"
+
+  - code: GB-298
+    tool: goatbuilder
+    title: an IPsec rotation under way, or not yet retired, is not the one asked for
+    what: "goatbuilder federate rotate <partner> ipsec-leaf|ipsec-ca records the rotation it starts in <work>/.rotation-ipsec (its id, its kind and, for ipsec-ca, the partner's attestation: the fingerprint it read back of our new CA) before phase 11 runs, and removes the record once phase 11 passed. Each rotation is also kept in <work>/ipsec-rotations.json, with when it switched, passed phase 14 and was retired. A run that finds a record resumes that rotation with the same id, so goat-peering-edge sets nothing aside twice. This run was refused before anything ran: it asked for another kind or another read-back than the record names (fingerprints are compared in one form, sha256: and lowercase), the record is empty or not a rotation record, a retire was asked while a rotation is under way or of the other kind than the rotation retired, or a new rotation was asked while an earlier one switched and is not retired."
+    causes:
+      - an earlier rotation stopped before phase 11 passed, and a rotation of the other kind was asked for
+      - the partner's read-back changed between the run that started the rotation and this one
+      - an earlier rotation switched and its retire step has not run
+      - the record was emptied or edited by hand
+    fixes:
+      - "finish the rotation the record names with the command that started it (the message names its id and kind)"
+      - "retire the earlier rotation once phase 14 passed here after the switch (and the partner says theirs did): goatbuilder federate rotate <partner> ipsec-leaf|ipsec-ca --retire <id>"
+      - "removing <work>/.rotation-ipsec starts a new rotation id; the edge keeps /etc/swanctl/.previous-<id>/ as it is (after a GB-302 rollback, with the old pair live), and nothing removes it yet"
+    read: docs/design/federation-key-rotation.md
+    exit: 1
+    matches:
+      - "records the IPsec rotation"
+
+  - code: GB-309
+    tool: goatbuilder
+    title: the retire step finds no confirmed rotation to retire
+    what: "The retire step of an IPsec credential rotation (goat-peering-edge, peering_edge_rotation_retire) removes the set-aside key in .previous-<id>/ on the edge, and nothing else: it never moves the live pair, the staged pair or our CA. It removes the key only once the new leaf is live: the confirm recorded it in .previous-<id>/confirmed (the unique id of the IKE SA the re-authentication made, and the time), the live pair is not the set-aside one, the live key is the live certificate's, and that SA, or one established after the confirm's time, has an installed CHILD SA. The confirm is recorded only once the SAs from before the re-authentication are gone, and a roll-back removes the record. This edge has no .previous-<id>/ for the id given, or the rotation is not confirmed live, so nothing was moved or removed."
+    causes:
+      - "the id is mistyped, or names a rotation of another edge"
+      - "the rotation stopped before its switch, so the live pair is still the set-aside one"
+      - "the rotation was not confirmed: it stopped after the switch and before its confirm wrote .previous-<id>/confirmed"
+      - "the confirm's record is unreadable: it lacks the id= or at= line the confirm writes"
+      - "neither the IKE SA the confirm recorded nor one established since is up, or the live key is not the live certificate's"
+      - "goatbuilder federate rotate --retire: this side's ledger (<work>/ipsec-rotations.json) shows no such rotation whose phase 11 switched and whose phase 14 passed here after the switch, or it is already retired"
+    fixes:
+      - "check the id the rotation printed (ls /etc/swanctl/.previous-*, or <work>/ipsec-rotations.json)"
+      - "run the rotation again with the same id: it re-authenticates, confirms and writes .previous-<id>/confirmed; retire once phase 14 passed here after the switch, and the partner says theirs did"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-309\\)"
+      - "the retire step finds no confirmed rotation to retire"
+
+  - code: GB-311
+    tool: goatbuilder
+    title: an IPsec rotation stopped half way through its switch, and what is left does not finish it
+    what: "The switch of an IPsec credential rotation (goat-peering-edge) moves the staged key, then the staged certificate, over the live names. A run killed between the two moves leaves one moved in and the other still staged. The next run finishes the remaining move when what is left is the moved one's match: the moved file is not the set-aside one, and the two halves are one key pair (each parsed by openssl; a file that does not parse matches nothing). Here they are not, so the live pair would be mixed: nothing was moved."
+    causes:
+      - "the staged file left behind was replaced after the run stopped"
+      - "someone moved or edited the live or set-aside files by hand"
+    fixes:
+      - "restore the staged file the ceremony issued for this rotation, then run the rotation again with the same id"
+      - "or put the set-aside pair in /etc/swanctl/.previous-<id>/ back by hand, check it with openssl, and stage the new pair again"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-311\\)"
+
+  - code: GB-328
+    tool: goatbuilder
+    title: a rotation's values reach no play in the phases this run built
+    what: "A key rotation of `goatbuilder federate rotate` passes its values (the rotation id, and for an IPsec rotation its kind and read-back) to the plays of one phase: phase 11 for ipsec-leaf and ipsec-ca, phase 2 for the peering key. It puts them before each play's `-e fed_work=`. The phase this run built has no such play, so the values would reach nothing and the phase would run as a plain one and report the rotation done. Nothing ran. The phases are built from the agreement each run, and the rotation already checked that the agreement chose its transport, so this is goatbuilder's own fault, not the peering's."
+    causes:
+      - "the phase's command in this goatbuilder no longer runs its play with `-e fed_work=`"
+    fixes:
+      - "goatbuilder federate rotate <partner> <key> --dry-run   (it prints the phase's command)"
+      - "report the command and this goatbuilder's version (goatbuilder --version); do not run the phase by hand in its place"
+    read: docs/design/federation-key-rotation.md
+    exit: 1
+    matches:
+      - "has no play to pass .* to \\(no `-e fed_work=` in its command\\)"
 
   - code: X-ANSIBLE-001
     tool: ansible
@@ -4224,7 +4398,7 @@ entries:
       - a probe session the check needs was not started
     fixes:
       - "read the BLOCKED and skipped lines above the acceptance-counts line, or the why field of result.json; set what each names, then run phase 14 again"
-      - "ops/scripts/peering-standup.sh <peering> --from 14"
+      - "goatbuilder federate <peering> --from 14"
     read: docs/design/federation-acceptance.md
     matches:
       - "ACCEPTANCE FAILED — [0-9]+ passed, [0-9]+ SKIPPED"

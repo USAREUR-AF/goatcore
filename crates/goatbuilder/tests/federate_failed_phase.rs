@@ -27,7 +27,15 @@ fn f5_a_failed_phase_carries_its_known_error_s_code_and_fix() {
     let d = interpreted[0];
     let e = goat_errors::explain("X-SSH-001").unwrap();
     assert!(d.starts_with(&format!("X-SSH-001: {}", e.title)), "{d}");
-    assert!(d.contains(&e.fixes[0]), "the fix: {d}");
+    // The fix is the row's own field, printed once on its own line; the
+    // detail does not carry it as well.
+    let fix = v["checks"]
+        .as_array()
+        .and_then(|a| a.iter().find(|c| c["name"] == "interpreted"))
+        .and_then(|c| c["fix"].as_str())
+        .unwrap_or_else(|| panic!("no fix on the row: {}", says(&out)));
+    assert!(fix.contains(&e.fixes[0]), "the fix: {fix}");
+    assert!(!d.contains(&e.fixes[0]), "the fix only once: {d}");
     assert!(d.contains("goatbuilder explain X-SSH-001"), "{d}");
     // The log of phase 12's output, which holds the error.
     let log = d

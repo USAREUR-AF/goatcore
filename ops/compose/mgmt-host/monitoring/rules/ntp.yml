@@ -55,7 +55,7 @@ groups:
           severity: warning
           component: chrony
         annotations:
-          summary: "chrony at {{ $labels.site }}:{{ $labels.instance }} offset >500ms for 2m"
+          summary: "chrony at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} offset >500ms for 2m"
           description: "Last offset {{ $value }}s exceeds 500ms for 2 minutes. LWW conflict resolution across sites is no longer safe — Spock will silently pick wrong winners for conflicts whose clock-skew exceeds their commit-latency gap. Investigate local NTS source health (chronyc sources -v), network path to NTS servers, and whether the VM's underlying clock is misbehaving."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"
 
@@ -77,7 +77,7 @@ groups:
           severity: warning
           component: chrony
         annotations:
-          summary: "chrony source {{ $labels.source_name }} unreachable at {{ $labels.site }} for 5m"
+          summary: "chrony source {{ $labels.source_name }} unreachable at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} for 5m"
           description: "NTS source {{ $labels.source_name }} ({{ $labels.source_address }}) has been unreachable for >5 minutes. Either NTS key-exchange is failing (cert mismatch, clock skew on our side large enough to reject the NTS-KE handshake, upstream NTS server down) or basic UDP reachability to the source is blocked. With only 4 configured NTS sources (time.cloudflare.com, nts.ntp.rnl.se, ptbtime1.ptb.de, ohio.time.system76.com), losing even one narrows the quorum. Investigate before the next source drops."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"
 
@@ -96,7 +96,7 @@ groups:
           severity: critical
           component: chrony
         annotations:
-          summary: "chrony daemon appears down at {{ $labels.site }}:{{ $labels.instance }} for 2m"
+          summary: "chrony daemon appears down at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} for 2m"
           description: "Either chrony_exporter is unscrape-able, or chronyd itself isn't producing tracking data. Without chronyd disciplining the clock, the host will drift — and that drift will silently poison LWW conflict resolution before any other alert notices. Check `systemctl status chrony chrony_exporter` on the host."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"
 
@@ -112,7 +112,7 @@ groups:
           severity: critical
           component: chrony
         annotations:
-          summary: "chrony at {{ $labels.site }}:{{ $labels.instance }} has NO reachable source for 5m"
+          summary: "chrony at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} has NO reachable source for 5m"
           description: "Zero NTS sources reachable for >5 minutes. The host's clock is free-running — steady-state drift at ~1ppm means ~0.1s / day, but an uncorrected oscillator bug can drift orders of magnitude faster. This is a Spock-correctness blocker: get at least one NTS source back before the cluster's been in this state long enough for LWW to silently decide inter-site conflicts on stale timestamps."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"
 
@@ -130,6 +130,6 @@ groups:
           severity: warning
           component: chrony
         annotations:
-          summary: "chrony at {{ $labels.site }}:{{ $labels.instance }} drifting >50 ppm for 10m"
+          summary: "chrony at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} drifting >50 ppm for 10m"
           description: "Hardware clock drift rate {{ $value }} ppm (absolute) sustained for 10m. Typical healthy hardware runs under 10 ppm; >50 ppm suggests the underlying clock source is misbehaving. On a cloud VM this can be hypervisor clock-steering; on an Orin this is a hardware concern worth investigating before the unit ships."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"
