@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, phase 14 on a session both sides derive as the default (it is built behind `federate test --bilateral`, §6.2, §6.3), the command publishing and verifying a partner's signed result (the signing library is built, §6.1), and any automatic bilateral gate |
+| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), in which each side observes the partner's refusals and SPIRE trust on its own surfaces (§6.4), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, phase 14 on a session both sides derive as the default (it is built behind `federate test --bilateral`, §6.2, §6.3), the command publishing and verifying a partner's signed result (the signing library is built, §6.1), and any automatic bilateral gate |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
@@ -197,6 +197,23 @@ downstream.
 The launcher is the deployment's or the drill's: it holds whatever certificates the probes need
 (approved negative test identities, never the CA). None ships with this change.
 
+**A side's own launcher, in a bilateral session** (built in the runner and on the in-process
+fabric, tests `test_own_surfaces_*` in `test_acceptance.py`; §6.4). `FED_PROBE_LAUNCHER_OURS`
+takes the same contract, and its three sessions hold this side's own identities: its agreed
+leaf, a name nobody agreed and a leaf naming the partner's core, the last two from its own CA,
+each dialling the partner's edge. The run writes through them the keys the partner's refusal rows
+look for, and stages only their zenoh ids, beside this run's challenge, for the partner. It is
+refused beside `FED_PROBE_LAUNCHER`, which is a drill's and holds the partner's identities, and
+outside a session. The federation test environment's launcher
+(`ops/federation-e2e/lib/probe-launcher.sh`) serves both, by where it runs and which
+certificates it is given.
+
+**What the script cannot verify.** It does not see a launcher's certificates. It cannot tell
+whether the agreed probe holds the agreed name, whether the forged name is one nobody agreed, or
+whether a certificate came from this side's CA or the partner's. The rows judge what the
+receiving edge records for each session; that the sessions hold the identities they are meant to
+is the launcher's, and its operator's, responsibility.
+
 ### 2.5 Our own surfaces, from the declarations
 
 **Built.** Status: not measured: the gate names two real environments, so it waits on goatbuilder 1.0 gate row B9 — gate: phase 14 run by `goatbuilder federate <partner>` on two real
@@ -340,6 +357,7 @@ broken on purpose (`Faults`). `test_acceptance.py` runs the real script against 
 | a denial logged for another session; an allow from a session that is not the probe; decision lines without session ids | denial FAIL (exit 1); control FAIL (exit 1); denials BLOCKED (exit 3) |
 | a bilateral session, each side on its own core: first runner, second runner, first again; import twice; combine | first: inbound BLOCKED, exit 3; second: inbound PASS with the partner's challenge, outbound BLOCKED naming the partner's row; first again: inbound PASS; second import refused as a replay; outbound PASS (peer-reported), scope INCOMPLETE where refusals were not configured |
 | two operators, each with their own core, edge trace, probes and SPIRE commands, run one session and exchange bundles | both `combine` results PASS |
+| a session in which each side holds only its own surfaces and its own launcher; no partner probes; probe ids from an earlier run; a forged probe our edge authorizes; an SVID from our own root; both launchers; a staged value holding key material | both `combine` results PASS; our refusal rows BLOCKED naming the partner; FAIL; FAIL; FAIL; refused; no such value is staged |
 | a session manifest made for another agreement | exit 2 |
 | a passing bilateral result with cleanup and two approvers; any of them missing, or a level that moves nothing; an open scope; a published record after expiry, a later failure, a changed agreement | a proposed file and diff, the deployment's file unchanged, one block after a second session; refused, nothing written; refused naming the open row; stale, degraded, stale, nothing written |
 | probes from a launcher; a launcher whose stop does nothing; an interrupted run's probe beside a session that is not ours; no launcher | refusal rows and `cleanup/probes` PASS, nothing left; `cleanup/probes` FAIL (exit 1); `cleanup/earlier-runs` PASS and the other session untouched; no `cleanup/` row |
@@ -573,9 +591,19 @@ and `a_stage_plan_table_lists_only_the_stage_phases`).
 
 ### 6.4 A combined PASS with each side's own surfaces only
 
-**Designed, not built.** In a session, each side holds only its own core, edge and SPIRE
-server. Two groups of rows cannot pass that way today, so a combined verdict stays open (exit 3)
-even when everything else passed:
+**Built** in the runner (`acceptance.sh`, `FED_PROBE_LAUNCHER_OURS` and `FED_SPIRE_OURS` in a
+session) and tested on the in-process fabric (`test_own_surfaces_*` in `test_acceptance.py`:
+two sides holding only their own surfaces reach a combined PASS; without the partner's probes
+our refusal rows are BLOCKED naming it; probe ids from an earlier run, a forged probe our edge
+authorizes and an SVID from our own root fail; no staged value is key material). The
+federation test environment's bilateral unit gives each side its own launcher and requires both
+combined verdicts to be PASS (`federation-e2e-environment.md`, "The partner's half of
+acceptance"). **Not measured:** that unit has not been run on this change, and no two real
+environments have run it (goatbuilder 1.0 gate rows B2 and B9).
+
+In a session, each side holds only its own core, edge and SPIRE server. Before this, two groups
+of rows could not pass that way, so a combined verdict stayed open (exit 3) even when everything
+else passed:
 
 - the refusal rows (§2.2) need client sessions that hold the partner's identity: the partner's
   agreed name, a name nobody agreed and our core's name, each on a certificate from the
@@ -592,18 +620,22 @@ and the partner's half crosses in the signed result, as the delivery rows alread
 | `refusal/*` on our edge | the partner's runner starts its three probe sessions from its own side, with its own CA, against our edge, and stages each session's zenoh id and run id beside its samples | our runner, on our own edge's ACL trace (`FED_EDGE_LOG_OURS`), matching the decision lines to the session ids the partner staged (§2.2's rule, with those ids in place of `FED_PROBE_THEIRS_ZID`) |
 | `refusal/*` on the partner's edge | our runner starts our probes, with our CA, against their edge | the partner's runner, on its own trace; our row is BLOCKED and names theirs (`observed_by_peer`) |
 | `spire/refresh`, `spire/bundle-held` | none | each side on its own server (`FED_SPIRE_OURS`), as today |
-| `spire/svid-chains` | each runner stages its own workload's SVID chain (certificates only, no key) beside its samples | the other runner verifies that chain against the bundle its own server holds for the partner, and that it does not chain to its own trust domain |
+| `spire/svid-chains` | each runner stages its own server's bundle and one workload SVID certificate (never its key) beside its challenge | the other runner verifies that certificate against the bundle its own server holds for the partner, and that it does not chain to its own trust domain |
 
 Nothing new is trusted. The probe session ids and the SVID chain reach the partner as staged
 values in an offered set, and each side's verdict on them arrives in its result, signed under the
 key bound at phase 5 (§6.1). `combine` already requires a row marked `observed_by_peer` to be
-decided by the partner's mirror row. The probes are the side's own: its launcher (§2.4) starts
-sessions holding its own identities, so it is an own surface. Today the launcher starts sessions
-holding the partner's identity, which only a drill owning both sides can do.
+decided by the partner's mirror row. The probes are the side's own: its launcher,
+`FED_PROBE_LAUNCHER_OURS` (§2.4), starts sessions holding its own identities, so it is an own
+surface. `FED_PROBE_LAUNCHER` starts sessions holding the partner's identity, which only a drill
+owning both sides can do; the two are refused together. Every staged value is checked for private
+key material before it is written, and the run stops (exit 1) on one. The partner's staged ids
+and certificate are taken only beside this run's challenge of theirs, so values from an earlier
+run prove nothing.
 
-When this is built, a session run with own surfaces only can reach a combined PASS. The
-lab-only variant, which gives each side the partner's `FED_PROBE_LAUNCHER` and
-`FED_SPIRE_THEIRS`, then proves the same rows a second way. It is not a gate.
+A session run with own surfaces only can now reach a combined PASS. The lab-only variant, which
+gives each side the partner's `FED_PROBE_LAUNCHER` and `FED_SPIRE_THEIRS`, proves the same rows
+a second way. It is not a gate.
 
 ## 7. Publishing `exchanging`
 
