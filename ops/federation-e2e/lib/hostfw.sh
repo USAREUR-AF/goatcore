@@ -33,7 +33,10 @@
 #                        reason and the sources narrowed to the edge's address.
 #                        other-tcp on both: the drill's own surfaces (core REST 8000, the
 #                        probe sessions' REST ports on the edge), from the docker host's
-#                        address on that network only, loosened with a reason.
+#                        address on that network only, loosened with a reason. On the edge
+#                        also from the ops host: with FE2E_DRIVER=workspace it is the
+#                        driver, and a bilateral run's own probe launcher starts its
+#                        sessions on this edge (a driver on the edge reaches them over lo).
 # $1 sovereign, $2 1 to add the tightening override (ssh-management on the edge from the
 # scanner and the loopback session only), $3 file to write the edge's values to, $4 the
 # core's.
@@ -57,8 +60,8 @@ fw_profile_vars() {
     echo "goat_host_firewall_override:"
     echo "  other-tcp:"
     echo "    ports: [$probes, $PL_PORT, $((PL_PORT + 1)), $((PL_PORT + 2))]"
-    echo "    sources: [\"$gw/32\"$(for t in $reach; do printf ', "%s/32"' "$t"; done)]"
-    echo "    reason: \"drill only: the federation test reads the probe sessions' REST ports from the docker host and from a partner's drill reach\""
+    echo "    sources: [\"$gw/32\", \"$scan/32\"$(for t in $reach; do printf ', "%s/32"' "$t"; done)]"
+    echo "    reason: \"drill only: the federation test reads the probe sessions' REST ports from the docker host, from the ops host (a workspace driver's own probes) and from a partner's drill reach\""
     if [ "$tight" = 1 ]; then
       echo "  # Tightening: SSH from the management host only (and the play's loopback session)."
       echo "  ssh-management:"
