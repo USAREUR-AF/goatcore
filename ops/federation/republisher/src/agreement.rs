@@ -154,11 +154,49 @@ mod tests {
         assert!(err.contains("no flow"), "{err}");
     }
 
+    /// The vector as an agreement/v2 (ADR 1242): v1 with `spec` changed and,
+    /// in one party, the next CA it announces.
+    fn as_v2(raw: &str) -> String {
+        let raw = raw.replace("federation-agreement/v1", "federation-agreement/v2");
+        let at = raw
+            .find("\"ca_fingerprint\"")
+            .expect("a party names its CA");
+        let next = format!("\"ca_fingerprint_next\": \"sha256:{}\", ", "ab".repeat(32));
+        format!("{}{}{}", &raw[..at], next, &raw[at..])
+    }
+
     #[test]
-    fn a_different_spec_version_is_refused_not_best_effort() {
-        let raw = VECTOR.replace("federation-agreement/v1", "federation-agreement/v2");
-        let err = Agreement::from_json(&raw).unwrap_err().to_string();
-        assert!(err.contains("v2"), "{err}");
+    fn an_agreement_v2_is_read_like_v1_and_its_next_ca_is_not_acted_on() {
+        let v1 = Agreement::from_json(VECTOR).unwrap();
+        let v2 = Agreement::from_json(&as_v2(VECTOR)).expect("an agreement/v2 must parse");
+        assert_eq!(v2.spec, "federation-agreement/v2");
+        assert_eq!(v2.expires, v1.expires);
+        for us in ["xaa", "xab"] {
+            let (a, b) = (v1.outbound_flow(us).unwrap(), v2.outbound_flow(us).unwrap());
+            assert_eq!(
+                (&a.to, &a.publish_under, &a.release),
+                (&b.to, &b.publish_under, &b.release)
+            );
+            assert_eq!(a.envelope.hz, b.envelope.hz);
+            assert_eq!(a.envelope.bytes_per_message, b.envelope.bytes_per_message);
+            assert_eq!(a.envelope.distinct_keys, b.envelope.distinct_keys);
+        }
+    }
+
+    #[test]
+    fn a_spec_version_this_build_does_not_implement_is_refused_not_best_effort() {
+        for other in [
+            "federation-agreement/v3",
+            "federation-agreement/v0",
+            "federation-package/v1",
+        ] {
+            let raw = VECTOR.replace("federation-agreement/v1", other);
+            let err = Agreement::from_json(&raw).unwrap_err().to_string();
+            assert!(
+                err.contains(other) && err.contains("federation-agreement/v2"),
+                "{other}: {err}"
+            );
+        }
     }
 
     #[test]
