@@ -938,6 +938,11 @@ pub struct Report {
     /// (`output::after_view`). `None`: the view stands for every row.
     #[serde(skip)]
     pub view_rows: Option<usize>,
+    /// The deprecated commands, flags and values this run used, each with the
+    /// warning it printed on stderr (ADR 1228, "Deprecation"); absent when
+    /// it used none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub deprecations: Vec<deprecation::Used>,
 }
 
 impl Report {
@@ -952,6 +957,7 @@ impl Report {
             handoff: None,
             printed: false,
             view_rows: None,
+            deprecations: deprecation::recorded(),
         }
     }
 
@@ -1257,13 +1263,17 @@ fn usage_exit(e: clap::Error) -> ! {
 
 /// One stderr line per deprecated command, flag or value this run's command
 /// line uses. The list is compiled in, and a test reads it, so it always reads.
+/// The same items, with those lines, are the `deprecations` field of the run's
+/// document (`deprecation::record`, read by `Report::new` and the error document).
 fn warn_deprecated(matches: &clap::ArgMatches) {
     let argv: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
     match deprecation::shipped() {
         Ok(deps) => {
-            for w in deprecation::warnings(&deps, &Cli::command(), matches, &argv, env!("CARGO_PKG_VERSION")) {
-                eprintln!("{w}");
+            let used = deprecation::in_use(&deps, &Cli::command(), matches, &argv, env!("CARGO_PKG_VERSION"));
+            for u in &used {
+                eprintln!("{}", u.warning);
             }
+            deprecation::record(used);
         }
         Err(e) => eprintln!("goatbuilder: {e}"),
     }
@@ -1822,11 +1832,11 @@ fn main() {
                 // to stdout like every report, so a consumer parses one stream.
                 OutputFormat::Json => {
                     eprintln!("goatbuilder: {text}");
-                    println!("{}", serde_json::to_string_pretty(&ErrorOut { schema: "goatbuilder.error/v1", error: &text, code: code.as_deref(), interpretation: &interp }).unwrap_or_default());
+                    println!("{}", serde_json::to_string_pretty(&ErrorOut { schema: "goatbuilder.error/v1", error: &text, code: code.as_deref(), interpretation: &interp, deprecations: &deprecation::recorded() }).unwrap_or_default());
                 }
                 OutputFormat::Yaml => {
                     eprintln!("goatbuilder: {text}");
-                    println!("{}", serde_yaml::to_string(&ErrorOut { schema: "goatbuilder.error/v1", error: &text, code: code.as_deref(), interpretation: &interp }).unwrap_or_default());
+                    println!("{}", serde_yaml::to_string(&ErrorOut { schema: "goatbuilder.error/v1", error: &text, code: code.as_deref(), interpretation: &interp, deprecations: &deprecation::recorded() }).unwrap_or_default());
                 }
             }
             let exit = code.as_deref().and_then(goat_errors::explain).and_then(|e| e.exit).unwrap_or(EXIT_USAGE);
@@ -1843,6 +1853,9 @@ struct ErrorOut<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<&'a str>,
     interpretation: &'a goat_errors::Interpretation,
+    /// As a report's: the deprecated items this run used, absent when none.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    deprecations: &'a [deprecation::Used],
 }
 
 #[cfg(test)]

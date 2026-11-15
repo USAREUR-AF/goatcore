@@ -128,3 +128,12 @@ parsing prose:
   ]
 }
 ```
+
+A run that uses a deprecated command, flag or value still works. It prints a
+warning on stderr naming what replaces it, and its document (a report, or the
+`goatbuilder.error/v1` document of a refused run) gains a `deprecations` list
+with one entry per item: the `command`, the `flag` and `value` when the entry
+names one, the `replacement`, the release that first warned (`deprecated_in`)
+and the stderr `warning` line itself. A run that used none has no
+`deprecations` field. The items are listed in
+`ops/goatbuilder/compat/deprecations.yaml` (ADR 1228).

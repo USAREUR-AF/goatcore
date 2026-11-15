@@ -4,8 +4,9 @@
 //! `ops/goatbuilder/compat/deprecations.yaml`, with its replacement and the
 //! release that first warns. Until the major release that removes it, it keeps
 //! working: a run that uses it is told so on stderr, with the replacement
-//! (`main.rs` calls [`warnings`]). The same entries in the run's `-o json`
-//! document (ADR 1228) are not built.
+//! (`main.rs` calls [`in_use`]). The same entries, each with its warning
+//! line, are the `deprecations` field of the run's `-o json` and `-o yaml`
+//! document ([`record`], read by `Report::new`), absent when the run used none.
 //! The compatibility check (ops/ci/check-goatbuilder-compat.sh, row A3) lets a
 //! command or flag of the last release be missing only when this list names it.
 
@@ -208,8 +209,36 @@ pub fn used<'a>(
         .collect()
 }
 
+/// One deprecated item a run used, as its document lists it: the entry, and
+/// the warning line the run printed on stderr for it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Used {
+    #[serde(flatten)]
+    pub entry: Deprecation,
+    pub warning: String,
+}
+
+/// The deprecated items a run's command line uses, each with its warning.
+/// `version` is this binary's.
+pub fn in_use(
+    deps: &[Deprecation],
+    root: &Command,
+    matches: &ArgMatches,
+    argv: &[String],
+    version: &str,
+) -> Vec<Used> {
+    used(deps, root, matches, argv)
+        .into_iter()
+        .map(|d| Used {
+            entry: d.clone(),
+            warning: d.warning(version),
+        })
+        .collect()
+}
+
 /// The warnings a run prints on stderr: one line for each deprecated command,
 /// flag or value its command line uses. `version` is this binary's.
+#[allow(dead_code)] // the binary prints each [`Used`]'s warning; the tests read this
 pub fn warnings(
     deps: &[Deprecation],
     root: &Command,
@@ -217,10 +246,24 @@ pub fn warnings(
     argv: &[String],
     version: &str,
 ) -> Vec<String> {
-    used(deps, root, matches, argv)
+    in_use(deps, root, matches, argv, version)
         .into_iter()
-        .map(|d| d.warning(version))
+        .map(|u| u.warning)
         .collect()
+}
+
+static RUN: std::sync::OnceLock<Vec<Used>> = std::sync::OnceLock::new();
+
+/// Keep this run's items for its document; main calls it once, after it warns.
+#[allow(dead_code)] // the module is also compiled alone by tests/deprecation.rs
+pub fn record(used: Vec<Used>) {
+    let _ = RUN.set(used);
+}
+
+/// This run's items, empty before [`record`] or when it used none.
+#[allow(dead_code)]
+pub fn recorded() -> Vec<Used> {
+    RUN.get().cloned().unwrap_or_default()
 }
 
 /// The values given on the command line to the flag (`--env`, `-e`) or
