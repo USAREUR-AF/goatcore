@@ -111,13 +111,14 @@ keeps waiting for this run's. With only an earlier run's samples there, those
 rows are BLOCKED and the run ends open (exit 3). A partner whose runner
 stages no start time is read as before.
 
-Limits: this rests on both sides' clocks agreeing within `FED_SESSION_WAIT`,
-and phase 1 does not check the clocks yet, so keep each host's clock
-synchronized. A partner's earlier run that started within `FED_SESSION_WAIT`
-of ours is not told apart; its result is still refused (GB-273), so the
-verdicts can differ until a rerun, but a stale result never passes.
-`goatbuilder federate` does not run a derived session yet. Tested on the
-in-process fabric only, not on hosts (#786).
+Limits: this rests on both sides' clocks agreeing within `FED_SESSION_WAIT`.
+`goatbuilder federate test <partner> --bilateral`, which runs phase 14 on a
+derived session (#720), runs phase 1's clock check (GB-268) alone first and
+stops on a clock that is unsynchronized or over the budget. A partner's
+earlier run that started within `FED_SESSION_WAIT` of ours is not told
+apart; its result is still refused (GB-273), so the verdicts can differ
+until a rerun, but a stale result never passes. Tested on the in-process
+fabric only, not on hosts (#786).
 
 #### Fixed: backing out one of two peerings keeps the core leaf the other still uses
 
