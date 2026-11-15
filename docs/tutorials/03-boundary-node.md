@@ -235,14 +235,22 @@ ops/scripts/with-secrets \
 The run asks you at **phase 5**, after the directory step has uploaded your
 package and CA and fetched theirs. If their entry is not there yet, run the
 command again once they have run theirs; it resumes where it stopped. Read your
-verifying key and CA fingerprint to each other on one call, then type their key
-and fingerprint, and the agreement digest, when the run asks.
+verifying key and CA fingerprint to each other on one call. The run shows their
+CA fingerprint as the directory served it and asks whether they read the same
+one: type `yes`. Then type their verifying key as they read it, 44 characters.
+
+At **phase 6** the run shows the agreement digest. Read it to them and listen to
+theirs, and type `yes` when the two are the same. If they have not reached
+phase 6 yet, they have no digest to read: press Enter to stop, and run the
+command again once they have. A run again does not ask for what you have
+already confirmed.
 
 At **phase 10** the run makes the plan, shows it and asks you to approve its
 hash. Then it shows what your core will admit: the access fragment, the
 certificates, every file it places and where, and how the core restarts. Only
-you may change your own core, so it asks again before anything there changes.
-On a core deployed by the goat-zenoh role, admission takes the role's own
+you may change your own core, so it asks again before anything there changes:
+type `yes` to approve it, or `pr` to write it to a file for a pull request
+instead, as `--review-in-pr` does below. On a core deployed by the goat-zenoh role, admission takes the role's own
 inventory group, `site_id`, play and org fragment from the role's declarations,
 and needs no restart command. Then the run carries on through acceptance.
 
