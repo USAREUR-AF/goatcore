@@ -52,7 +52,7 @@ fn a_key_this_build_does_not_rotate_is_refused_before_anything_runs() {
         ("everything", "GB-189", "takes one of"),
     ] {
         let (out, _) = w.run(&["rotate", "hello-ally", key]);
-        assert!(!out.status.success(), "{key}: {}", says(&out));
+        assert_eq!(out.status.code(), Some(1), "{key}: {}", says(&out));
         let t = text(&out);
         assert!(t.contains(code) && t.contains(why), "{key}: {t}");
         assert!(w.log().is_empty(), "{key}: something ran: {}", w.log());
@@ -65,15 +65,17 @@ fn a_key_this_build_does_not_rotate_is_refused_before_anything_runs() {
 
 /// `rotate <partner> carrier` on a peering no forwarder relays is refused
 /// before anything runs: its edge has no carrier, so a run would report a
-/// rotation that changed no key. The id is not kept. Phase 2 passing the id
+/// rotation that changed no key. It is a configuration precondition, so
+/// GB-317 with exit 1, not GB-189 (a stage asked the wrong way). The id is not kept. Phase 2 passing the id
 /// to its plays, for a relayed peering, is held by `rotation::tests`.
 #[test]
 fn rotating_the_carrier_of_a_peering_with_no_forwarder_is_refused_before_anything_runs() {
     let w = world();
     let (out, _) = w.run(&["rotate", "hello-ally", "carrier"]);
-    assert!(!out.status.success(), "{}", says(&out));
+    assert_eq!(out.status.code(), Some(1), "{}", says(&out));
     let t = text(&out);
-    assert!(t.contains("GB-189") && t.contains("no forwarder"), "{t}");
+    assert!(t.contains("GB-317") && t.contains("no forwarder"), "{t}");
+    assert!(!t.contains("GB-189"), "{t}");
     assert!(w.log().is_empty(), "something ran: {}", w.log());
     assert!(
         !w.work.join(".rotation-carrier").exists(),
@@ -98,7 +100,7 @@ fn a_hand_declared_forwarder_stops_the_carrier_rotation_before_anything_runs() {
         "peering_wg_via_forwarder: true\npeering_wg_forwarder_endpoint: 192.0.2.20:51900\n",
     );
     let (out, _) = w.run(&["rotate", "hello-ally", "carrier"]);
-    assert!(!out.status.success(), "{}", says(&out));
+    assert_eq!(out.status.code(), Some(1), "a configuration precondition: {}", says(&out));
     let t = text(&out);
     assert!(t.contains("GB-312"), "{t}");
     assert!(!t.contains("no forwarder"), "{t}");
@@ -174,9 +176,9 @@ fn an_edge_group_that_switches_the_forwarder_off_is_still_refused() {
         "peering_wg_via_forwarder: false\n",
     );
     let (out, _) = w.run(&["rotate", "hello-ally", "carrier"]);
-    assert!(!out.status.success(), "{}", says(&out));
+    assert_eq!(out.status.code(), Some(1), "{}", says(&out));
     let t = text(&out);
-    assert!(t.contains("GB-189") && t.contains("no forwarder"), "{t}");
+    assert!(t.contains("GB-317") && t.contains("no forwarder"), "{t}");
     assert!(w.log().is_empty(), "something ran: {}", w.log());
 }
 
@@ -204,12 +206,13 @@ fn the_forwarder_switch_is_read_from_the_group_the_run_deploys_to() {
             "peering_wg_via_forwarder: true\n",
         );
         let (out, _) = w.run(&["rotate", "hello-ally", "carrier"]);
-        (text(&out), w.log())
+        (text(&out), w.log(), out.status.code())
     };
-    let (t, log) = pinned("ally_pinned_edge");
-    assert!(t.contains("GB-189") && t.contains("no forwarder"), "{t}");
+    let (t, log, rc) = pinned("ally_pinned_edge");
+    assert_eq!(rc, Some(1), "{t}");
+    assert!(t.contains("GB-317") && t.contains("no forwarder"), "{t}");
     assert!(log.is_empty(), "something ran: {log}");
-    let (t, _) = pinned("hello-ally_edge");
+    let (t, _, _) = pinned("hello-ally_edge");
     assert!(!t.contains("no forwarder"), "{t}");
 }
 
