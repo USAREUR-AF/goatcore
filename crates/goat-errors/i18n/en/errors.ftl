@@ -1204,3 +1204,8 @@ x-digest-001-what = ops/scripts/image-digest tried crane, skopeo and docker in t
 x-digest-001-cause-1 = none of crane, skopeo or docker is installed
 x-digest-001-cause-2 = the registry refused this laptop's credentials (each tool's error says which)
 x-digest-001-cause-3 = the tag does not exist yet (its image build has not finished)
+gb-338-title = a federation verb faulted (the message names what)
+gb-338-what = One of the federation verbs (goatbuilder federate init|lint|compose|diff|verify|apply, run on their own or inside a peering run) stopped on an error its library raised without a catalog code. goatbuilder prints the library's message unchanged and gives it this code; a file the library could not read or write carries GB-254 instead. Nothing after the error ran.
+gb-338-cause-1 = a flag's value the verb could not use (a --now that is not a date, a --key that is not <sovereign_id>=<base64>, --confirm without --out)
+gb-338-cause-2 = a refusal of the library's own (refusing to sign an acceptance result with the package signer, a party it could not resolve)
+gb-338-cause-3 = the verb's report could not be written to the terminal
