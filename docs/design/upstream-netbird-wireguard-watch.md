@@ -1,0 +1,53 @@
+# Upstream NetBird and WireGuard: departures and watch list
+
+**Status:** written. Governed by [ADR 1248](../adr/1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md) (Proposed).
+**Reviewed by:** the `goat-owners` team.
+**Pinned upstream:** NetBird `NETBIRD_REF` in [`ops/netbird/Dockerfile`](../../ops/netbird/Dockerfile) = `0358be23` (v0.71.4).
+
+goat runs stock NetBird and WireGuard wherever it can (ADR 1248). This page lists
+the places where goat departs from stock upstream and what would retire each one,
+and the upstream work goat watches because it could make the network faster or
+more capable. Adopting any watched item is its own decision, taken in the issue
+the row names.
+
+## How this page is kept current
+
+The `goat-owners` team reviews this page. It is read and updated:
+
+- in the pull request that moves `NETBIRD_REF`: check each departure for an
+  upstream release that retires it, and each watched row for a change in state;
+- in any pull request that changes `goat-relay-protocol/` or
+  [`netbird-relay-wire-protocol.md`](netbird-relay-wire-protocol.md);
+- when an upstream pull request, branch or discussion linked in a row changes
+  state (merged, closed, released, or a new commit on a watched branch).
+
+A row moves to `adopted` in the pull request that adopts it, and to `dropped`
+with one line saying why. Rows are not deleted.
+
+## Departures goat carries today
+
+| Departure | Record | What retires it | Upstream state |
+|---|---|---|---|
+| `skip-migrations.patch`: start management without schema migrations | [ADR 0301](../adr/0301-patched-netbird-management-image.md) | An upstream switch with the same effect | Proposed upstream by us: [netbirdio/netbird#5925](https://github.com/netbirdio/netbird/pull/5925), open |
+| `auto-peer-name.patch`: setup-key label combined with the device hostname | [`ops/netbird/README.md`](../../ops/netbird/README.md) item 2 | An upstream setup-key name field | Not proposed upstream |
+| `peer-id-bound-relay-tokens.patch`: relay token bound to the peer id | ADR 1021, README item 3 | Peer-bound relay tokens upstream | Not proposed upstream |
+| `setupkey-user-id-stamp.patch`: owner user id on setup-key peers | README item 4 | Upstream owner attribution for setup-key enrollment | Not proposed upstream |
+| `client-signal-backoff-jitter.patch`, `client-offer-circuit-breaker.patch` | [ADR 1081](../adr/1081-control-plane-storm-resilience.md) | Jittered backoff and an offer breaker in the upstream client | Not proposed upstream |
+| `service-user-token-bootstrap.patch`: management command to bootstrap a service user | `ops/netbird/patches/` | An upstream equivalent | Not proposed upstream |
+| Rosenpass key distribution by digest (NetBird fork) | [ADR 1134](../adr/1134-rosenpass-key-distribution-by-digest.md) D6 | The same fix upstream, or Rosenpass removed (see watch row 5) | Offer upstream decided in ADR 1134; no upstream pull request found |
+| `goat-relay`, a Rust relay compatible with unmodified NetBird clients | [ADR 0709](../adr/0709-block-33-relay-rewrite-architecture.md) | An upstream relay that meets goat's throughput bar (ADR 0709) | Comparison owed: [goatcore #949](https://github.com/USAREUR-AF/goatcore/issues/949) |
+| `goat-relay` liveness counts any inbound frame | [ADR 1057](../adr/1057-relay-liveness-credits-data-traffic.md) | The same rule in the Go relay | Watch row 3 |
+| Federated signal server | [ADR 0302](../adr/0302-custom-federated-signal-server.md) | Federation in upstream signal | Not proposed upstream |
+| Out-of-tree `wireguard.ko` and dependencies for Jetson kernels | [ADR 1118](../adr/1118-kernel-wireguard-jetson.md) | Vendor kernels with `CONFIG_WIREGUARD` set | Watch row 6 |
+
+## Watch list
+
+| # | Upstream item | What it changes | What it would mean for goat | Adoption trigger | State | goatcore issue |
+|---|---|---|---|---|---|---|
+| 1 | netbirdio/netbird branch `feature/relay-ebpf`, [compare `01526baf5...feature/relay-ebpf`](https://github.com/netbirdio/netbird/compare/01526baf5...feature/relay-ebpf): one commit `e6747a98` (2026-11-15), "[relay] Add eBPF/XDP relay transport POC" | Adds message type 12 `EbpfTransport`, which addresses a peer by a 2-byte channel id. `PeersOnline` carries a channel id after each peer id, so a parser that expects peer ids only rejects the message. The client's WebSocket and QUIC dialers are replaced by a plain UDP dialer (`relay/client/dialer/udp/udp.go`, `net.DialUDP`). The protocol version byte is unchanged. | `goat-relay`, `goat-relay-protocol` and [`netbird-relay-wire-protocol.md`](netbird-relay-wire-protocol.md) must follow before goat pins a client that sends type 12 or the new `PeersOnline`. The UDP transport has no TLS, so relay authentication and peer signaling on the relay leg travel unencrypted; WireGuard payloads stay encrypted. goat would carry it only as an option beside WebSocket over TLS and QUIC (ADR 1248 decision 6). It would add a third relay to the comparison in #949. | Merged to upstream `main`, or in an upstream release | watching | [#950](https://github.com/USAREUR-AF/goatcore/issues/950) |
+| 2 | Client relay data-path socket buffers: [netbirdio/netbird#6774](https://github.com/netbirdio/netbird/pull/6774) "[client] Size relay data-path socket buffers for throughput"; follow-up [#6775](https://github.com/netbirdio/netbird/pull/6775); tracking issue [#6021](https://github.com/netbirdio/netbird/issues/6021) | #6774 grows the receive and send buffers of the client's local WireGuard proxy sockets to 7 MiB (Linux, kernel WireGuard), tunable with `NB_WGPROXY_SOCKET_BUFFER`. #6775 (backpressure and per-packet overhead on the relay data path) states that nothing changes on the wire. | Client-side only; no change to `goat-relay` or the wire protocol. Raises the single-flow ceiling for any relay, so #949 measures with and without it. | #6774 in an upstream release | watching: #6774 open; #6775 closed without merge; #6021 open | [#949](https://github.com/USAREUR-AF/goatcore/issues/949) |
+| 3 | Go relay liveness counts any inbound frame from a peer ([ADR 1057](../adr/1057-relay-liveness-credits-data-traffic.md)) | A peer that is relaying data and misses one health-check reply stays connected. | Retires the behavior difference between `goat-relay` and the Go relay recorded in ADR 1057. No wire change. | Merged upstream with a reproducing test | proposed upstream by us (welcomed on [discussion 8624](https://github.com/netbirdio/netbird/discussions/8624); pull request not opened) | [#950](https://github.com/USAREUR-AF/goatcore/issues/950) |
+| 4 | An upstream, versioned description of the relay wire protocol | Upstream documents the protocol that clients and relays speak, with a way to keep it in sync with protocol changes. | `goat-relay` and other compatible relays read protocol changes from upstream instead of from source. Source text: [`netbird-relay-wire-protocol.md`](netbird-relay-wire-protocol.md) and the conformance fixtures in `goat-relay-protocol/`. | Merged upstream | proposed upstream by us (welcomed on [discussion 8624](https://github.com/netbirdio/netbird/discussions/8624); pull request not opened) | [#950](https://github.com/USAREUR-AF/goatcore/issues/950) |
+| 5 | Rosenpass in NetBird: deprecated by [netbirdio/netbird#8372](https://github.com/netbirdio/netbird/pull/8372) (merged 2026-10-27); hybrid X25519MLKEM768 pre-shared-key exchange over signal proposed in [#7098](https://github.com/netbirdio/netbird/pull/7098) | Rosenpass keeps working and its flags are marked deprecated. #7098 derives the WireGuard pre-shared key from an ML-KEM hybrid exchange, off by default (`NB_ENABLE_PQ_MLKEM`). | [ADR 0602](../adr/0602-rosenpass-hybrid-rekey.md) chose Rosenpass and names "a different intra-mesh hybrid daemon with stronger upstream backing" as its revisit trigger. The ADR 1134 fork delta retires if Rosenpass is removed. An ML-KEM exchange makes no FIPS claim by itself; [ADR 0607](../adr/0607-wireguard-fips-waiver.md) still applies to WireGuard. | #7098 in an upstream release, or Rosenpass removed upstream | watching: #8372 merged; #7098 open | none yet |
+| 6 | WireGuard in NVIDIA Jetson (L4T) kernels | The vendor kernel ships `CONFIG_WIREGUARD=m` and the `lib/crypto` and nftables modules ADR 1118 builds. | Retires the out-of-tree module build in ADR 1118. ADR 1118 records this as advocacy to the vendor. | A vendor kernel release with the modules | watching | none yet |
+| 7 | FIPS validation of WireGuard or its primitives | WireGuard's cryptography is validated under FIPS 140-3. | [ADR 0607](../adr/0607-wireguard-fips-waiver.md) changes status, and the waiver it points to is retired. | A validation certificate covering the primitives goat runs | watching | none yet |

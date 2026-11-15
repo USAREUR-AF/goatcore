@@ -215,10 +215,14 @@ fn pending(work: &Path, name: &str, prefix: &str) -> Result<Pending> {
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
-        return Err(anyhow::anyhow!(
-            "{} holds '{id}', which is not a rotation id; remove the file to start the rotation again",
-            file.display()
-        ));
+        return Err(goat_errors::coded(
+            "GB-321",
+            format!(
+                "{} holds '{id}', which is not a rotation id; remove the file to start the rotation again",
+                file.display()
+            ),
+        )
+        .into());
     }
     Ok(Pending { id, file })
 }
@@ -735,10 +739,11 @@ pub fn rotate(
             super::federate_with(repo, &o, &mut s)
         }
         // A key marked Built without its run here is a mistake in this file.
-        k => Err(anyhow::anyhow!(
-            "`rotate {} {k}` is marked built but has no run",
-            o.with
-        )),
+        k => Err(goat_errors::coded(
+            "GB-322",
+            format!("`rotate {} {k}` is marked built but has no run", o.with),
+        )
+        .into()),
     }
 }
 
