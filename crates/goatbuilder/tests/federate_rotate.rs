@@ -283,3 +283,25 @@ fn phase_6_keeps_the_package_the_agreement_was_composed_from() {
     let composed = std::fs::read(w.work.join("ours.composed.json")).expect("phase 6 wrote no ours.composed.json");
     assert_eq!(composed, std::fs::read(w.work.join("ours.canonical.json")).unwrap());
 }
+
+/// Phase 6 that cannot keep the copy (here a folder stands where the copy
+/// goes) fails with GB-184, the working folder that cannot be written, and
+/// exit 1; `explain` reads the row's words as GB-184.
+#[test]
+fn phase_6_that_cannot_keep_the_copy_is_gb_184() {
+    let w = world();
+    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+    w.run(&["hello-ally"]);
+    federate_world::write(&w.work.join("ours.composed.json/in-the-way"), "");
+    let (out, _) = w.run(&["hello-ally", "--from", "6", "--to", "6"]);
+    assert_eq!(out.status.code(), Some(1), "{}", says(&out));
+    let t = text(&out);
+    let row = t
+        .lines()
+        .find(|l| l.contains("could not keep") && l.contains("ours.composed.json"))
+        .unwrap_or_else(|| panic!("no row names the copy: {t}"));
+    assert!(row.contains("(GB-184)"), "{row}");
+    let detail = row.trim().trim_start_matches("\"detail\": \"").trim_end_matches(['"', ',']);
+    let hits = goat_errors::interpret(detail).hits;
+    assert!(hits.first().is_some_and(|h| h.code == "GB-184"), "explain does not read it as GB-184: {detail}");
+}
