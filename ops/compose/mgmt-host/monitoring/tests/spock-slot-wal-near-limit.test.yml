@@ -1,0 +1,63 @@
+# promtool unit test for SpockSlotWALNearLimit (rules/spock.yml).
+#
+# Run by .github/workflows/goat-obs-checks.yml; locally with
+#   promtool test rules ops/compose/mgmt-host/monitoring/tests/spock-slot-wal-near-limit.test.yml
+#
+# The two series are the ones the stack's postgres-exporter emits from
+# monitoring/postgres-exporter-queries.yml: the `pg_replication_slot` block's
+# retained_wal_bytes, and the `spock_config` block's
+# max_slot_wal_keep_size_bytes (exported as
+# spock_config_max_slot_wal_keep_size_bytes), the live cap read from
+# pg_settings. The cap here is the Spock image's 1 GB; the alert compares each
+# slot's retained WAL with it.
+rule_files:
+  - ../rules/spock.yml
+
+evaluation_interval: 1m
+
+tests:
+  # One slot holds 0.5 GB of WAL for ten minutes, then 0.9 GB; another holds
+  # 0.1 GB throughout. The cap is 1 GB (1073741824 bytes).
+  - interval: 1m
+    input_series:
+      - series: 'pg_replication_slot_retained_wal_bytes{job="postgres",instance="postgres-a",site="zagros-a",slot_name="sub_zagros_b"}'
+        values: '536870912x10 966367641x20'
+      - series: 'pg_replication_slot_retained_wal_bytes{job="postgres",instance="postgres-a",site="zagros-a",slot_name="sub_zagros_c"}'
+        values: '107374182x30'
+      - series: 'spock_config_max_slot_wal_keep_size_bytes{job="postgres",instance="postgres-a",site="zagros-a"}'
+        values: '1073741824x30'
+    alert_rule_test:
+      # At 50% of the cap: silent.
+      - eval_time: 9m
+        alertname: SpockSlotWALNearLimit
+        exp_alerts: []
+      # Above 80% for under the rule's 5 minutes: still silent.
+      - eval_time: 13m
+        alertname: SpockSlotWALNearLimit
+        exp_alerts: []
+      # Above 80% for more than 5 minutes: fires for that slot only.
+      - eval_time: 18m
+        alertname: SpockSlotWALNearLimit
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: spock
+              job: postgres
+              instance: postgres-a
+              site: zagros-a
+              slot_name: sub_zagros_b
+            exp_annotations:
+              summary: "Spock slot sub_zagros_b at zagros-a > 80% of max_slot_wal_keep_size"
+
+  # An unlimited cap (setting -1) is exported as the sentinel 2^63-1: no slot
+  # comes near it, so the alert never fires.
+  - interval: 1m
+    input_series:
+      - series: 'pg_replication_slot_retained_wal_bytes{job="postgres",instance="postgres-a",site="zagros-a",slot_name="sub_zagros_b"}'
+        values: '966367641x20'
+      - series: 'spock_config_max_slot_wal_keep_size_bytes{job="postgres",instance="postgres-a",site="zagros-a"}'
+        values: '9223372036854775807x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SpockSlotWALNearLimit
+        exp_alerts: []
