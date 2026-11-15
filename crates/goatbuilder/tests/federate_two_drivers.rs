@@ -204,7 +204,7 @@ fn one_driver_is_the_default_and_hands_off_nothing() {
     );
 }
 
-/// The edge driver's mode is offered; after phase 1 it is refused until built.
+/// The edge driver's mode is offered; after phase 3 it is refused until built.
 #[test]
 fn side_edge_is_offered_and_refused_after_phase_1() {
     let w = world();
@@ -218,8 +218,8 @@ fn side_edge_is_offered_and_refused_after_phase_1() {
         String::from_utf8_lossy(&help.stdout)
     );
     two_drivers(&w);
-    // Phase 1's edge run is built; phase 2's is not.
-    let (out, _) = w.run(&["hello-ally", "--side", "edge", "--from", "2", "--to", "2"]);
+    // Phases 1, 2 and 3's edge runs are built; phase 11's is not.
+    let (out, _) = w.run(&["hello-ally", "--side", "edge", "--from", "11", "--to", "11"]);
     assert!(!out.status.success(), "{}", says(&out));
     assert!(says(&out).contains("not built"), "{}", says(&out));
     assert!(says(&out).contains("GB-267"), "{}", says(&out));
@@ -464,6 +464,7 @@ fn side_edge_alone_on_a_peering_run_is_the_edge_drivers_run() {
 fn every_command_a_hand_off_names_parses_and_refuses_as_not_built() {
     for phase in ["1", "2"] {
         let w = world();
+        plays_logging_their_arguments(&w, &public_b64("xaa"));
         two_drivers(&w);
         let (out, v) = w.run(&["hello-ally", "--from", phase, "--to", phase]);
         assert!(out.status.success(), "{}", says(&out));
@@ -506,16 +507,16 @@ fn every_command_a_hand_off_names_parses_and_refuses_as_not_built() {
                     v["handoff"]["phase"], h["phase"],
                     "phase {phase} then: {all}"
                 );
-            } else if member == "command" && phase == "1" {
-                // Phase 1's edge run is built: it ends with the way back.
+            } else if member == "command" {
+                // Phase 1's and phase 2's edge runs are built: each ends with the way back.
                 assert!(out.status.success(), "phase {phase} {member}: {all}");
                 assert_eq!(
                     v["handoff"]["run_on"], "controller",
                     "phase {phase} {member}: {all}"
                 );
-            } else if member == "import" && phase == "1" {
-                // Phase 1's import is built: a result file that is not there
-                // is refused as an edge result that cannot be imported.
+            } else if member == "import" {
+                // Phase 1's and phase 2's imports are built: a result file that
+                // is not there is refused as an edge result that cannot be imported.
                 assert!(!out.status.success(), "phase {phase} {member}: {all}");
                 assert!(all.contains("GB-277"), "phase {phase} {member}: {all}");
             } else {
@@ -964,8 +965,8 @@ fn the_edge_driver_refuses_a_checkout_or_carried_file_not_the_controllers() {
     assert!(edge_work.join("handoff/1/edge.json").exists());
 }
 
-/// The edge driver's run is built for phase 1 only, one phase at a time, and
-/// only on a peering declared with two drivers.
+/// The edge driver's run is built for phases 1 to 3 only, one phase at a
+/// time, and only on a peering declared with two drivers.
 #[test]
 fn the_edge_driver_runs_phase_1_alone_and_only_for_two_drivers() {
     let w = world();
@@ -977,9 +978,9 @@ fn the_edge_driver_runs_phase_1_alone_and_only_for_two_drivers() {
         "--side",
         "edge",
         "--from",
-        "2",
+        "11",
         "--to",
-        "2",
+        "11",
         "--expect-commit",
         &commit,
         "--work",
@@ -1362,4 +1363,161 @@ fn a_two_driver_phase_3_measured_here_is_refused() {
     assert!(v["handoff"].is_null(), "{all}");
     assert!(!w.log().contains("goat init"), "{}", w.log());
     assert!(!w.work.join("state.json").exists(), "a journal was written");
+}
+
+/// The plays' stand-in, before the checkout is committed: it logs every
+/// play with its arguments, and phase 2's edge run (peering-prepare.yml with
+/// `peering_prepare_result=<file>`) writes the edge result there, as the
+/// play's own last task does: the federation interface and its public key.
+fn plays_logging_their_arguments(w: &World, public_key: &str) {
+    let log = w.root.path().join("log");
+    federate_world::exe(
+        &w.repo.join("ops/scripts/ansible-preflight.sh"),
+        &format!(
+            "#!/bin/sh\nfor a; do last=$a; done\necho \"play $last args: $*\" >> '{log}'\nfor a; do case $a in peering_prepare_result=*) f=${{a#peering_prepare_result=}}; mkdir -p \"$(dirname \"$f\")\"; printf '%s\\n' '{{\"schema\": \"goatbuilder.phase2-edge/v1\", \"peering\": \"hello-ally\", \"side\": \"edge\", \"interface\": \"wg-fed1\", \"public_key\": \"{public_key}\"}}' > \"$f\";; esac; done\nexit 0\n",
+            log = log.display()
+        ),
+    );
+}
+
+fn edge_run_phase(
+    w: &World,
+    phase: &str,
+    commit: &str,
+    edge_work: &std::path::Path,
+) -> (std::process::Output, serde_json::Value) {
+    w.run(&[
+        "hello-ally",
+        "--side",
+        "edge",
+        "--from",
+        phase,
+        "--to",
+        phase,
+        "--expect-commit",
+        commit,
+        "--work",
+        edge_work.to_str().unwrap(),
+    ])
+}
+
+/// Gate row B10, phase 2: the edge driver's run makes the federation
+/// interface on the edge alone (peering-prepare.yml with
+/// `peering_prepare_half=edge`), writes its public key to the result the way
+/// back names, and prints the confirm code; the controller imports it, and
+/// `--from 2` runs phase 2's core half alone (`peering_prepare_half=core`,
+/// the SPIRE bundle export on the SPIRE server host), then stops at phase 3's
+/// hand-off.
+#[test]
+fn the_edge_driver_runs_phase_2_and_the_controller_imports_it() {
+    let w = world();
+    plays_logging_their_arguments(&w, &public_b64("xaa"));
+    let commit = two_drivers(&w);
+    let (out, v) = w.run(&["hello-ally", "--from", "2", "--to", "2"]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(v["handoff"]["phase"], 2, "{}", says(&out));
+    w.clear_log();
+
+    let edge_work = w.root.path().join("edge-work");
+    let (out, v) = edge_run_phase(&w, "2", &commit, &edge_work);
+    assert!(out.status.success(), "{}", says(&out));
+    let written = edge_work.join("handoff/2/edge.json");
+    let log = w.log();
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    assert_eq!(plays.len(), 1, "the edge driver ran one play: {log}");
+    assert!(
+        plays[0].starts_with("play peering-prepare.yml")
+            && plays[0].contains("peering_prepare_half=edge")
+            && plays[0].contains(&format!("peering_prepare_result={}", written.display())),
+        "{log}"
+    );
+    let bytes = std::fs::read(&written).expect("the edge driver wrote its result");
+    let code = confirm_code(&bytes);
+    let h = &v["handoff"];
+    assert_eq!(h["phase"], 2, "{}", says(&out));
+    assert_eq!(h["run_on"], "controller");
+    assert_eq!(h["result"], "handoff/2/edge.json");
+    assert_eq!(h["confirm_code"], code.as_str());
+
+    let carried = w.root.path().join("carried.json");
+    std::fs::copy(&written, &carried).unwrap();
+    let (out, v) = w.run(&[
+        "import",
+        "hello-ally",
+        "2",
+        carried.to_str().unwrap(),
+        "--sha256",
+        &code,
+    ]);
+    assert!(out.status.success(), "the import: {}", says(&out));
+    assert_eq!(v["exit"], 0, "{}", says(&out));
+    assert_eq!(
+        std::fs::read(w.work.join("handoff/2/edge.json")).unwrap(),
+        bytes
+    );
+    w.clear_log();
+    let (out, v) = w.run(&["hello-ally", "--from", "2"]);
+    assert!(out.status.success(), "then: {}", says(&out));
+    let log = w.log();
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    assert_eq!(plays.len(), 1, "the controller ran one play for phase 2: {log}");
+    assert!(
+        plays[0].starts_with("play peering-prepare.yml")
+            && plays[0].contains("peering_prepare_half=core")
+            && !plays[0].contains("peering_prepare_result"),
+        "{log}"
+    );
+    assert_eq!(w.state()["phases"]["2"]["outcome"], "passed", "{}", w.state());
+    assert_eq!(
+        v["handoff"]["phase"], 3,
+        "then goes on to phase 3's hand-off: {}",
+        says(&out)
+    );
+}
+
+/// What phase 2's import refuses, each with GB-277 and nothing recorded:
+/// another peering's result, a result that is not the edge's, a public key
+/// that is not one, and phase 1's result offered as phase 2's.
+#[test]
+fn a_phase_2_edge_result_that_does_not_hold_is_not_imported() {
+    let w = world();
+    two_drivers(&w);
+    let (out, _) = w.run(&["hello-ally", "--from", "2", "--to", "2"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let key = public_b64("xaa");
+    let doc = |peering: &str, side: &str, public_key: &str| {
+        serde_json::json!({"schema": "goatbuilder.phase2-edge/v1", "peering": peering, "side": side,
+            "interface": "wg-fed1", "public_key": public_key})
+        .to_string()
+    };
+    for (what, text) in [
+        ("another peering's", doc("xac", "edge", &key)),
+        ("the core side's", doc("hello-ally", "core", &key)),
+        ("a key that is not one", doc("hello-ally", "edge", "not-a-key")),
+        ("phase 1's result", edge_result("hello-ally", "edge", true)),
+    ] {
+        let carried = w.root.path().join("carried.json");
+        std::fs::write(&carried, &text).unwrap();
+        let code = confirm_code(text.as_bytes());
+        let (out, _) = w.run(&[
+            "import",
+            "hello-ally",
+            "2",
+            carried.to_str().unwrap(),
+            "--sha256",
+            &code,
+        ]);
+        assert!(!out.status.success(), "{what}: {}", says(&out));
+        assert!(says(&out).contains("GB-277"), "{what}: {}", says(&out));
+        assert!(!w.work.join("handoff/2/edge.json").exists(), "{what}: placed");
+    }
+    // A result with no federation interface (an IPsec edge) is imported.
+    let text = serde_json::json!({"schema": "goatbuilder.phase2-edge/v1", "peering": "hello-ally",
+        "side": "edge", "interface": null, "public_key": null})
+    .to_string();
+    let carried = w.root.path().join("carried.json");
+    std::fs::write(&carried, &text).unwrap();
+    let code = confirm_code(text.as_bytes());
+    let (out, _) = w.run(&["import", "hello-ally", "2", carried.to_str().unwrap(), "--sha256", &code]);
+    assert!(out.status.success(), "an edge with no interface: {}", says(&out));
 }

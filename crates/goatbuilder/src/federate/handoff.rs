@@ -855,6 +855,49 @@ pub fn shell_line(argv: &[String]) -> String {
 mod tests {
     use super::*;
 
+    /// Phase 2's halves are its one play with the half named: the edge
+    /// driver's with the result it writes, the controller's alone. A phase 2
+    /// that is not one peering-prepare.yml run (a forwarder's spliced steps,
+    /// which reach the forwarder host) has no halves: None, refused by the
+    /// caller as not built.
+    #[test]
+    fn phase_2_halves_name_the_half_on_its_one_play() {
+        let cmd = "cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' peering-prepare.yml";
+        assert_eq!(
+            phase_2_half(cmd, "edge", Some(Path::new("/e/handoff/2/edge.json"))).as_deref(),
+            Some("cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' -e peering_prepare_half=edge -e peering_prepare_result='/e/handoff/2/edge.json' peering-prepare.yml")
+        );
+        assert_eq!(
+            phase_2_half(cmd, "core", None).as_deref(),
+            Some("cd '/r/ops/ansible' && x -i i --limit 'xab_edge' -e fed_work='/w' -e peering_prepare_half=core peering-prepare.yml")
+        );
+        let spliced = format!("({cmd}) && (x peering-carrier-keys.yml) && (x peering-forwarder.yml) && ({cmd})");
+        assert_eq!(phase_2_half(&spliced, "edge", None), None);
+        assert_eq!(phase_2_half("x peering-wg.yml", "core", None), None);
+    }
+
+    /// Phase 2's edge result: the edge side's interface and public key for
+    /// this peering, or no interface at all.
+    #[test]
+    fn a_phase_2_edge_result_is_this_peerings_interface_and_key() {
+        let key = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=";
+        let ok = serde_json::json!({"schema": PHASE_2_SCHEMA, "peering": "xab", "side": "edge", "interface": "wg-fed0", "public_key": key});
+        assert_eq!(phase_2_edge_result(&ok, "xab"), Ok(()));
+        let none = serde_json::json!({"schema": PHASE_2_SCHEMA, "peering": "xab", "side": "edge", "interface": null, "public_key": null});
+        assert_eq!(phase_2_edge_result(&none, "xab"), Ok(()));
+        for bad in [
+            serde_json::json!({"schema": "goat-federation-preflight/v1", "peering": "xab", "side": "edge"}),
+            serde_json::json!({"schema": PHASE_2_SCHEMA, "peering": "xac", "side": "edge", "interface": "wg-fed0", "public_key": key}),
+            serde_json::json!({"schema": PHASE_2_SCHEMA, "peering": "xab", "side": "core", "interface": "wg-fed0", "public_key": key}),
+            serde_json::json!({"schema": PHASE_2_SCHEMA, "peering": "xab", "side": "edge", "interface": "../x", "public_key": key}),
+            serde_json::json!({"schema": PHASE_2_SCHEMA, "peering": "xab", "side": "edge", "interface": "wg-fed0", "public_key": "short"}),
+            serde_json::json!({"schema": PHASE_2_SCHEMA, "peering": "xab", "side": "edge", "interface": "wg-fed0", "public_key": null}),
+            serde_json::json!({"schema": PHASE_2_SCHEMA, "peering": "xab", "side": "edge", "interface": null, "public_key": key}),
+        ] {
+            assert!(phase_2_edge_result(&bad, "xab").is_err(), "{bad}");
+        }
+    }
+
     #[test]
     fn each_phase_has_the_side_the_contract_gives_it() {
         let sides: Vec<(u32, Side)> = (1..=14).map(|n| (n, side_of(n))).collect();
