@@ -84,20 +84,40 @@ fn rotating_the_carrier_of_a_peering_with_no_forwarder_is_refused_before_anythin
 
 /// A hand-run deployment declares its forwarder in the edge group's own
 /// switch, `peering_wg_via_forwarder: true` (what makes goat-peering-wg build
-/// the carrier), with the forwarder's values in group_vars, and nothing in
-/// goatbuilder.yaml. Its carrier rotation is not refused for "no forwarder":
-/// it starts, from phase 2, with the rotation's id kept.
+/// the carrier), with the forwarder's entry, and the edge's carrier public key
+/// in it, in hand-written group_vars. A rotation would make the edge's new key
+/// in phase 2 and could not change the forwarder's entry, so the carrier would
+/// stay down. It stops before anything runs (GB-312), naming the value the
+/// forwarder holds, the play that applies it, and the way to rotate: declare
+/// the forwarder in goatbuilder.yaml. No id is kept and nothing is journaled.
 #[test]
-fn a_forwarder_declared_in_the_edge_groups_vars_is_a_carrier_to_rotate() {
+fn a_hand_declared_forwarder_stops_the_carrier_rotation_before_anything_runs() {
     let w = world();
     federate_world::write(
         &w.repo.join("ops/ansible/group_vars/hello-ally_edge/forwarder.yml"),
         "peering_wg_via_forwarder: true\npeering_wg_forwarder_endpoint: 192.0.2.20:51900\n",
     );
     let (out, _) = w.run(&["rotate", "hello-ally", "carrier"]);
+    assert!(!out.status.success(), "{}", says(&out));
     let t = text(&out);
+    assert!(t.contains("GB-312"), "{t}");
     assert!(!t.contains("no forwarder"), "{t}");
-    assert!(!w.log().is_empty(), "nothing ran: {t}");
+    for name in [
+        "peering_forwarder_peerings[name=hello-ally].edge_carrier_public_key",
+        "peering-forwarder.yml",
+        "forwarder:",
+        "goatbuilder federate allocate",
+    ] {
+        assert!(t.contains(name), "{name}: {t}");
+    }
+    // In that order: the value, then the play.
+    assert!(
+        t.find("edge_carrier_public_key").unwrap() < t.find("peering-forwarder.yml").unwrap(),
+        "{t}"
+    );
+    assert!(w.log().is_empty(), "something ran: {}", w.log());
+    assert!(!w.work.join(".rotation-carrier").exists(), "a rotation id was kept: {t}");
+    assert!(!w.work.join("state.json").exists(), "a run was journaled");
 }
 
 /// The same peering with its forwarder declared in goatbuilder.yaml instead.
