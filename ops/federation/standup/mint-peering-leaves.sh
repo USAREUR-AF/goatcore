@@ -33,9 +33,20 @@
 #                          [--ca-key-age <file.age> --age-identity <keys.txt>]
 #                          [--core-cn <name>] [--core-san <san>[,<san>...]]
 #                          [--link-ip <ip>] [--rotate] [--min-valid-seconds <n>]
+#                          [--request <leaf>=<request.csr> ...] [--key-record <file>]
+#
+# EDGE-MADE KEYS (two drivers, gate row B10). With --request peering-outward=<file>
+# (and peering-inward), that leaf is signed from the certificate request the edge
+# made: its key stays on the edge, and no key file is written here. The request is
+# refused (GB-313) unless its subject is exactly CN=<the derived name>, it has no
+# extension or attribute, its key is EC P-256 and new, and it is signed with
+# SHA-256 or stronger. --key-record (FED_LEAF_KEY_RECORD) names the record of every
+# edge key signed for the peering, kept outside <out-dir>; it is required with
+# --request.
 #
 # Environment: FED_CA_CERT, FED_CA_KEY, FED_CA_KEY_FROM_AGE, FED_CA_KEY_AGE,
-#              FED_AGE_IDENTITY, FED_CA_KEY_TMP, FED_CORE_CN, FED_CORE_SAN, FED_LINK_IP
+#              FED_AGE_IDENTITY, FED_CA_KEY_TMP, FED_CORE_CN, FED_CORE_SAN, FED_LINK_IP,
+#              FED_LEAF_KEY_RECORD
 #
 # THE CA KEY. An explicit key file (--ca-key, FED_CA_KEY) always wins. Opening
 # the deployment's age-encrypted key is opt-in, off by default: only with
@@ -55,6 +66,7 @@ FROM_AGE="${FED_CA_KEY_FROM_AGE:-0}"
 CORE_CN="${FED_CORE_CN:-goat-zenoh}"; CORE_SAN="${FED_CORE_SAN:-}"; LINK_IP="${FED_LINK_IP:-}"
 DAYS="${FED_LEAF_DAYS:-90}"
 ROTATE=0; MIN_VALID_SECONDS="${FED_LEAF_MIN_VALID_SECONDS:-86400}"
+KEY_RECORD="${FED_LEAF_KEY_RECORD:-}"; REQUESTS=()
 HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/peering_leaf_material.py"
 
 while [ $# -gt 0 ]; do
@@ -70,7 +82,14 @@ while [ $# -gt 0 ]; do
     --core-cn)  CORE_CN="$2"; shift 2 ;;
     --core-san) CORE_SAN="$2"; shift 2 ;;
     --link-ip)  LINK_IP="$2"; shift 2 ;;
-    -h|--help)  sed -n '2,44p' "$0"; exit 0 ;;
+    --request)
+      case "$2" in
+        peering-outward=?*|peering-inward=?*) REQUESTS+=(--request "${2%%=*}" "${2#*=}") ;;
+        *) echo "--request takes peering-outward=<file> or peering-inward=<file>, not '$2'" >&2; exit 2 ;;
+      esac
+      shift 2 ;;
+    --key-record) KEY_RECORD="$2"; shift 2 ;;
+    -h|--help)  sed -n '2,55p' "$0"; exit 0 ;;
     -*)         echo "unknown flag $1" >&2; exit 2 ;;
     *)          if [ -z "$AGREEMENT" ]; then AGREEMENT="$1"; else OUT="$1"; fi; shift ;;
   esac
@@ -218,7 +237,8 @@ ARGS=(--out "$OUT" --ca-cert "$CA_CERT" --ca-fingerprint "$CA_FINGERPRINT" --day
       --min-valid-seconds "$MIN_VALID_SECONDS")
 [ -z "$CA_KEY" ] || ARGS+=(--ca-key "$CA_KEY")
 [ "$ROTATE" = 0 ] || ARGS+=(--rotate)
-python3 "$HELPER" "${ARGS[@]}" "${LEAVES[@]}" || exit 1
+[ -z "$KEY_RECORD" ] || ARGS+=(--key-record "$KEY_RECORD")
+python3 "$HELPER" "${ARGS[@]}" "${LEAVES[@]}" ${REQUESTS[@]+"${REQUESTS[@]}"} || exit 1
 
 cat <<DONE
 

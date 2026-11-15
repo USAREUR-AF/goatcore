@@ -242,6 +242,36 @@ class LeafRequests(unittest.TestCase):
         self.assertIn("fingerprint differs from the agreement", r.stdout + r.stderr)
         self.assertFalse((self.out / "peering-outward.pem").exists())
 
+    def test_phase_8_signs_the_edge_requests_and_mints_the_controllers_own_leaves(self):
+        """mint-peering-leaves.sh with --request for both edge leaves: the two edge
+        certificates come from the requests, with no key here; the core and the
+        republisher are minted here as before. Without --key-record, refused."""
+        o, i = self.good()
+        agreement = self.d / "agreement.json"
+        agreement.write_text(json.dumps({
+            "parties": [{"sovereign_id": "xaa", "ca_fingerprint": self.fp},
+                        {"sovereign_id": "xab", "ca_fingerprint": "sha256:" + "0" * 64}],
+            "transport": {"link_subnet": "169.254.77.0/31"},
+        }))
+        script = HERE / "mint-peering-leaves.sh"
+        base = ["bash", str(script), str(agreement), str(self.out), "--as", "xaa",
+                "--ca-cert", str(self.ca), "--ca-key", str(self.ca_key), "--core-san", "192.0.2.10",
+                "--request", f"peering-outward={o}", "--request", f"peering-inward={i}"]
+        env = {k: v for k, v in os.environ.items() if not k.startswith("FED_")}
+        r = subprocess.run(base, capture_output=True, text=True, env=env)
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("--key-record", r.stdout + r.stderr)
+        self.assertFalse((self.out / "peering-outward.pem").exists())
+        r = subprocess.run(base + ["--key-record", str(self.record)], capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        for leaf in ("peering-outward", "peering-inward"):
+            self.assertTrue((self.out / f"{leaf}.pem").is_file(), leaf)
+            self.assertFalse((self.out / f"{leaf}-key.pem").exists(), f"{leaf}: a key on the controller")
+        for leaf in ("core", "republisher"):
+            self.assertTrue((self.out / f"{leaf}.pem").is_file(), leaf)
+            self.assertTrue((self.out / f"{leaf}-key.pem").is_file(), leaf)
+        self.assertEqual(self.pub(self.out / "peering-outward.pem", "cert"), self.pub(o, "csr"))
+
 
 if __name__ == "__main__":
     unittest.main()

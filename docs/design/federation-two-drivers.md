@@ -395,7 +395,21 @@ one is not designed.
   the *both* marking of phase 3 depends on that split; the SPIRE tasks that today delegate from the edge
   play to the SPIRE server host, run from the controller.
 - Leaf issuance from a signing request: the edge's keys made on the edge driver, signed in
-  phase 8.
+  phase 8. The signing is built, not yet wired: `mint-peering-leaves.sh --request
+  peering-outward=<file> --request peering-inward=<file> --key-record <file>` signs each
+  edge leaf from its request with our CA (the CA whose fingerprint the agreement names for
+  us), under the names phase 8 derives from the agreement and its own extensions, and writes
+  no key file for it. It refuses (GB-313), before signing either edge leaf, a request whose
+  subject is not exactly one attribute, CN = the derived name; one with any extension or
+  attribute (refused, never stripped); a key that is not EC P-256; a signature weaker than
+  ECDSA with SHA-256, or a self-signature that does not verify; and a reused key: the other
+  request's, our CA's, another leaf's in the output folder or a previous set there, or one
+  the key record lists. The key record holds each signed key's fingerprint, outside the
+  output folder, so the check outlives the folder being cleaned
+  (`ops/federation/standup/peering_leaf_material.py`, tests in
+  `ops/federation/standup/test_peering_leaf_requests.py` with real OpenSSL). Not built: the
+  edge making its keys and requests in phase 2, goatbuilder passing the imported requests to
+  phase 8, and phase 12 installing certificates beside keys made on the edge.
 - The carrier for an edge result: a file the edge driver writes and the controller imports,
   with its digest, and the journal entry recording it.
 - The import step on the controller: it checks the edge result's digest and records an

@@ -990,6 +990,12 @@ gb-278-what = On a two-driver peering (drivers: two), the edge driver runs a pha
 gb-278-cause-1 = the edge driver's checkout was not updated to the controller's commit, or has local changes
 gb-278-cause-2 = the command was typed without the hand-off's --expect-commit
 gb-278-cause-3 = a carried file was not copied from the controller's <work>, or was changed on the way
+gb-313-title = phase 8 refused the edge's certificate request for an edge leaf
+gb-313-what = On a two-driver peering the edge makes its two leaf keys and sends only their certificate requests, which phase 8 signs with our CA (mint-peering-leaves.sh --request, peering_leaf_material.py). A request is signed only when its subject is exactly one attribute, CN = the name phase 8 derives for that leaf, it carries no extension or attribute, its key is EC P-256, it is signed with ECDSA and SHA-256 or stronger and its self-signature verifies, and its key is new: not the other request's, not our CA's, not another leaf's in the output folder or a previous set there, and not one the key record lists as signed before. The certificate's names come from the agreement, never from the request. One request failed, so neither edge leaf was signed and nothing was written.
+gb-313-cause-1 = the request was made with another name, or with extra subject attributes, extensions or attributes
+gb-313-cause-2 = the edge's key is not P-256, or the request is signed with SHA-1 or another weak algorithm
+gb-313-cause-3 = the edge reused a key: the same key for both leaves, our CA's key, a controller leaf's key, or a key signed for this peering before (the key record outlives the output folder)
+gb-313-cause-4 = the request file was changed on the way, or holds anything besides one request
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened
