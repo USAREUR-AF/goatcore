@@ -20,8 +20,9 @@ WHAT IT REFUSES
      bootstrap identity;
   2. a registered consumer role that does not exist here or does not include
      ops/ansible/tasks/require-netbird-service-identity.yml for that identity;
-     and an external consumer (a service whose role lives in another
-     repository) that does have a role here, since then step 2 must see it;
+     an external consumer (a service whose role lives in another repository)
+     whose role is present, as in an assembled tree, and lacks that include;
+     and a role listed under both consumers and external_consumers;
   3. an unregistered consumer: a role whose templates render a NetBird token
      variable (a name segment NB or NETBIRD followed by _TOKEN, e.g.
      ENROLL_WATCH_NB_TOKEN, NOVA_NB_API_TOKEN) but that no identity lists;
@@ -53,6 +54,17 @@ INCLUDE = "require-netbird-service-identity.yml"
 
 def site_upper(site):
     return site.upper().replace("-", "_")
+
+
+def _missing_includes(rdir, keys, kind):
+    tasks = "\n".join(p.read_text() for p in sorted((rdir / "tasks").rglob("*.yml")))
+    out = []
+    for key in keys:
+        pat = re.compile(re.escape(INCLUDE) + r"[\"']?\s*\n(?:\s+.*\n)*?\s+nsi_identity:\s*" + re.escape(key) + r"\b")
+        if not pat.search(tasks):
+            out.append(f"ops/ansible/roles/{rdir.name}/tasks: {kind} of '{key}' does not include "
+                       f"ops/ansible/tasks/{INCLUDE} with nsi_identity: {key}")
+    return out
 
 
 def check(root):
@@ -89,22 +101,24 @@ def check(root):
             consumer_of.setdefault(role, []).append(key)
         for role in ident.get("external_consumers") or []:
             external_of.setdefault(role, []).append(key)
-            if (roles_dir / role).is_dir():
-                problems.append(f"{reg_path}: external consumer {role} of '{key}' has a role in this repository; "
-                                f"list it under consumers so its require task is checked")
+            if role in (ident.get("consumers") or []):
+                problems.append(f"{reg_path}: role {role} of '{key}' is listed under both consumers and "
+                                f"external_consumers; list it once")
 
-    # 2 — every registered consumer includes the require task for its identity
+    # 2 — every registered consumer includes the require task for its identity. An
+    # external consumer's role lives in another repository; in an assembled tree (an
+    # overlay over this one and that repository) it is present, and is checked the same way.
     for role, keys in sorted(consumer_of.items()):
         rdir = roles_dir / role
         if not rdir.is_dir():
             problems.append(f"{reg_path}: consumer role {role} does not exist")
             continue
-        tasks = "\n".join(p.read_text() for p in sorted((rdir / "tasks").rglob("*.yml")))
-        for key in keys:
-            pat = re.compile(re.escape(INCLUDE) + r"[\"']?\s*\n(?:\s+.*\n)*?\s+nsi_identity:\s*" + re.escape(key) + r"\b")
-            if not pat.search(tasks):
-                problems.append(f"ops/ansible/roles/{role}/tasks: consumer of '{key}' does not include "
-                                f"ops/ansible/tasks/{INCLUDE} with nsi_identity: {key}")
+        problems += _missing_includes(rdir, keys, "consumer")
+    for role, keys in sorted(external_of.items()):
+        rdir = roles_dir / role
+        unchecked = [k for k in keys if k not in consumer_of.get(role, [])]
+        if rdir.is_dir() and unchecked:
+            problems += _missing_includes(rdir, unchecked, "external consumer")
 
     # 3 — no unregistered consumer
     for rdir in sorted(p for p in roles_dir.iterdir() if (p / "templates").is_dir()):

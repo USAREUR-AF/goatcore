@@ -39,7 +39,7 @@ Each identity declares:
 | `required_when` | `always`, or `{var, role}`: the goatnet's `group_vars` value, else that role's default |
 | `onepassword` | item and field in the team vault (`<goatnet>-portal-nb-svc` / `token`) |
 | `consumers` | roles in this repository that read the token; each includes the require task |
-| `external_consumers` | services that read the token but whose roles live in another repository (goatstuff); the check refuses one that has a role here |
+| `external_consumers` | services that read the token but whose roles live in another repository (goatstuff); where the role is present, as in an assembled tree, the check refuses it unless it includes the require task, and refuses a role listed under both `consumers` and `external_consumers` |
 | `bootstrap` | exactly one identity (`netbird-infra`) is minted by hand; it mints the rest |
 
 Six identities are declared: `netbird-infra`, `portal-mint`,
@@ -84,7 +84,7 @@ attribution. It does not reduce privilege.
 |---|---|---|
 | Standup phase 12 (`goat-standup.sh`) | `--mint`, then `--live` as a GATE | a goatnet leaving standup without an identity its config needs |
 | Every deploy of a consumer role | `require-netbird-service-identity.yml`: token empty, or read from a variable other than the registry's name for this goatnet | a service deploying without its capability; `group_vars` reading another goatnet's token |
-| CI (`ops-ci-guards`) | malformed registry; a consumer role without the include; a role rendering a `..._NB_..._TOKEN` variable that no identity lists; a `group_vars` name that disagrees with the registry | a new consumer added without a registered identity; name drift |
+| CI (`ops-ci-guards`) | malformed registry; a consumer role without the include, or an external consumer's role without it where the tree holds that role (an assembled tree; built, tested by `--self-test-assembled`, which `--self-test` also runs); a role listed under both `consumers` and `external_consumers`; a role rendering a `..._NB_..._TOKEN` variable that no identity lists; a `group_vars` name that disagrees with the registry | a new consumer added without a registered identity; name drift |
 
 The standup ordering changed to make phase 12 possible: the browser step that
 creates the bootstrap identity is phase 11, right after the dashboard, and mesh
