@@ -406,6 +406,32 @@ fn a_joiner_passes_no_bootstrap_owner_and_needs_no_owner_email() {
     );
 }
 
+/// Phase 15 runs the acceptance rows against the site's derived end state,
+/// as standup's acceptance gate does: a row whose services the site declares
+/// absent reads N/A, not FAIL, so an unattended run is not stopped by a row
+/// that does not apply (ADR 1206).
+#[test]
+fn phase_15_runs_the_acceptance_rows_against_the_sites_end_state() {
+    let s = site();
+    let (out, v) = join_node(&s, None);
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(out.status.success(), "{}\nargv:\n{log}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&15), "{}", says(&out));
+    let run = log
+        .lines()
+        .find(|l| l.starts_with("acceptance "))
+        .unwrap_or_else(|| panic!("phase 15 ran the acceptance rows:\n{log}"));
+    let words: Vec<&str> = run.split(' ').collect();
+    let at = words
+        .iter()
+        .position(|w| *w == "--endstate")
+        .unwrap_or_else(|| panic!("--endstate: {run}"));
+    let model = std::fs::read_to_string(words[at + 1]).expect("the end-state model was written");
+    let model: serde_json::Value = serde_json::from_str(&model).expect("the model is JSON");
+    assert!(model["services"].is_object(), "{model}");
+    assert!(words.contains(&"--all-eligible"), "{run}");
+}
+
 #[test]
 fn from_phase_1_a_node_joins_with_no_operator_step_and_no_secret_in_any_argv() {
     let s = site();

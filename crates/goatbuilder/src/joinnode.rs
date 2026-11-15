@@ -1374,6 +1374,19 @@ mod tests {
         assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e 'postgres_superuser_password="), "{}", core[0].cmd);
     }
 
+    /// Phase 15 is standup's acceptance line: the end-state model into the
+    /// state directory, the values, then the rows with `--endstate`.
+    #[test]
+    fn phase_15_derives_the_end_state_and_passes_it_to_the_rows() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let last = ph.last().unwrap();
+        assert_eq!(last.n, 15);
+        let model = format!("{}/endstate-zagros-b.json", crate::settings::state_dir_abs(t.path()));
+        assert!(last.cmd.contains(&format!("endstate.py' model zagros-b > '{model}' && ")), "{}", last.cmd);
+        assert!(last.cmd.contains(&format!("--endstate '{model}' --all-eligible --by-layer")), "{}", last.cmd);
+    }
+
     /// Pass 1 runs site-bootstrap's `stack` plays only: the `after-ory` plays
     /// end on the management service, which waits for Hydra, and Ory is the
     /// next step. Pass 3, after Ory, runs the whole file, as standup's
