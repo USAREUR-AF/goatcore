@@ -138,6 +138,33 @@ fn a_forwarder_declared_in_goatbuilder_yaml_is_a_carrier_to_rotate() {
     assert!(!t.contains("no forwarder"), "{t}");
 }
 
+/// A forwarder declared in goatbuilder.yaml, with a leftover hand switch
+/// (`peering_wg_via_forwarder: true`) still in the edge group's vars: the
+/// declaration wins, so goatbuilder applies the forwarder and the rotation is
+/// neither stopped for a hand-declared forwarder (GB-312) nor refused for
+/// having none.
+#[test]
+fn a_forwarder_in_goatbuilder_yaml_wins_over_a_leftover_hand_switch() {
+    let w = world();
+    let cfg = w.repo.join("ops/goatbuilder/goatbuilder.yaml");
+    let text_before = std::fs::read_to_string(&cfg).unwrap();
+    let declared = text_before.replacen(
+        "    edge_class: edge\n",
+        "    edge_class: edge\n    forwarder:\n      endpoint: 192.0.2.20:51900\n",
+        1,
+    );
+    assert_ne!(declared, text_before, "the fixture's peering entry moved");
+    federate_world::write(&cfg, &declared);
+    federate_world::write(
+        &w.repo.join("ops/ansible/group_vars/hello-ally_edge/forwarder.yml"),
+        "peering_wg_via_forwarder: true\n",
+    );
+    let (out, _) = w.run(&["rotate", "hello-ally", "carrier"]);
+    let t = text(&out);
+    assert!(!t.contains("GB-312"), "{t}");
+    assert!(!t.contains("no forwarder"), "{t}");
+}
+
 /// The switch set false in the edge group's vars is no forwarder: still refused.
 #[test]
 fn an_edge_group_that_switches_the_forwarder_off_is_still_refused() {
