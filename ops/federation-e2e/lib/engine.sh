@@ -470,6 +470,14 @@ solo_edge_args() { # $1 sovereign: docker run arguments of its edge host
 core_ca() { # $1 sovereign: the trust roots its core router loads
   if [ "$FE2E_CORE" = role ]; then echo "/etc/$1-zenoh/tls/ca-root-cert.pem"; else echo /etc/goat-core/ca.pem; fi
 }
+# The core router's configuration file as the router container sees it, which preflight's core
+# receive stores check reads with `docker exec <router> cat` (FED_CORE_CONFIG_PATH). The role's
+# container mounts it at /etc/zenoh/config.json5, preflight's default; the hand-run router reads
+# /etc/goat-core/config.json5, so without this the check read SKIP with GB-137 on every
+# hand-core scenario. $1 sovereign (unused: the path is the same for each).
+core_config() {
+  if [ "$FE2E_CORE" = role ]; then echo /etc/zenoh/config.json5; else echo /etc/goat-core/config.json5; fi
+}
 
 # The deployment's declarations for its core router, in its own repository: one inventory
 # group naming the core host, and the role's values. The image is the digest-pinned one
@@ -620,6 +628,7 @@ drive() { # $1 sovereign, $2 them, $3 avenue, $4 from, $5 to
     -e "FED_CA_CERT=/etc/fed-e2e/ca.pem" -e "FED_CA_KEY=/etc/fed-e2e/ca-key.pem"
     -e "FED_CORE_CN=core-$s" -e "FED_CORE_SAN=$(core_ip "$s")"
     -e "FED_ROUTER_DOCKER_HOST=ssh://goat@$(core_ip "$s")"
+    -e "FED_CORE_CONFIG_PATH=$(core_config "$s")"
     -e GOAT_AWS_MODE=none -e GOAT_BIN=/usr/local/bin/goat -e HOME=/root -e GOAT_ANSIBLE_TRUNK_REMOTE=origin
     # The directory on the boundary network (start_directory), trusted through its TLS
     # front's local CA.
@@ -819,7 +828,7 @@ accept_as() { # $1 sovereign, $2 them, $3 avenue
 export_helpers() {
   export -f drive host_exec other party_pos octet core_ip edge_ip boundary_ip die partners pidx iface wgport \
     spire_out rp_metrics probe_port ctx_of pair_subnet nodir percp partner_list accept_as probe_zid td round_trip round_trip_eventually \
-    core_deploy core_ca drv_host ops_ip link_state
+    core_deploy core_ca core_config drv_host ops_ip link_state
   for _p in $PARTIES; do export "P_$_p"; done
   export NODIR PERCP WORK GB REPO HERE SRC RECORD DIRECTORY_IP FE2E_DRIVER
 }
