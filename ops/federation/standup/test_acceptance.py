@@ -867,6 +867,61 @@ class AcceptanceRun(unittest.TestCase):
         self.assertIn("since xab's run started", row["reason"], out_a)
         self.assertNotEqual(rc_a, 0, out_a)
 
+    def edge_lines(self, side, *lines):
+        with open(self.fabric.trace_paths[side], "a") as f:
+            for line in lines:
+                f.write(line + "\n")
+
+    def test_own_surfaces_a_garbled_timestamp_never_hides_a_later_authorization(self):
+        # The edge records nothing itself for xab's forged session this run; its log holds,
+        # stamped after xab's start: a valid unmatched line, a line with an ISO-shaped but
+        # impossible stamp, then an authorization. The authorization must not be lost.
+        import time
+        self.fabric.faults.silent_probes.add("forged")
+        z = self.fabric.zids["forged"]
+        later = fakefabric.stamp(time.time() + 60)
+        self.edge_lines("xaa",
+                        "%s INFO access_control: ACL: peer %s did not match any configured ACL subject" % (later, z),
+                        "2026-13-45T99:99:99Z INFO access_control: %s on Interface(eth0) garbled" % z,
+                        "%s INFO access_control: %s on forged is authorized to Put (ingress) on from/xab/x" % (later, z))
+        ev, (rc_a, out_a), _ = self.both_derived(own=True)
+        row = self.rows_of(ev["xaa"])["refusal/forged-name"]
+        self.assertEqual(row["verdict"], "FAIL", out_a)
+
+    def test_own_surfaces_an_unreadable_edge_log_blocks_the_row(self):
+        # A copy of the runner whose log filter cannot open the log (the seam): the
+        # row is BLOCKED, never PASS.
+        d = os.path.join(self.tmp, "runner")
+        shutil.copytree(HERE, d, ignore=shutil.ignore_patterns("__pycache__", "test_*"))
+        src = open(os.path.join(d, "acceptance.sh")).read()
+        cut = 'python3 - "$TRACE" "$1" "$PEER_STARTED" "$RUN_START_SLACK" <<\'PY\''
+        self.assertIn(cut, src)
+        open(os.path.join(d, "acceptance.sh"), "w").write(
+            src.replace(cut, 'python3 - /nonexistent "$1" "$PEER_STARTED" "$RUN_START_SLACK" <<\'PY\'', 1))
+        ev, (rc_a, out_a), _ = self.both_derived(own=True, script=os.path.join(d, "acceptance.sh"),
+                                                 second={"script": None})
+        rows = self.rows_of(ev["xaa"])
+        for name in ("refusal/forged-name", "refusal/impersonation"):
+            self.assertEqual(rows[name]["verdict"], "BLOCKED", (name, out_a))
+            self.assertIn("could not be read", rows[name]["reason"])
+
+    def test_own_surfaces_an_edge_clock_20s_behind_the_partners_still_passes(self):
+        # xaa's edge stamps its lines 20 s behind real time, so xab's (honest) connect
+        # lines read as before xab's start: within the run-start slack, they count.
+        self.fabric.faults.trace_clock_offset["xaa"] = -20
+        ev, (rc_a, out_a), _ = self.both_derived(own=True)
+        rows = self.rows_of(ev["xaa"])
+        for name in ("refusal/forged-name", "refusal/impersonation"):
+            self.assertEqual(rows[name]["verdict"], "PASS", (name, out_a))
+
+    def test_own_surfaces_an_edge_clock_far_behind_blocks_the_rows(self):
+        # Two minutes behind is past the slack: the lines cannot be tied to this run.
+        self.fabric.faults.trace_clock_offset["xaa"] = -120
+        ev, (rc_a, out_a), _ = self.both_derived(own=True)
+        rows = self.rows_of(ev["xaa"])
+        for name in ("refusal/forged-name", "refusal/impersonation"):
+            self.assertEqual(rows[name]["verdict"], "BLOCKED", (name, out_a))
+
     def test_own_surfaces_a_probe_session_that_does_not_answer_is_not_staged(self):
         # xab's forged session does not answer its PUT: its id is not staged, and xaa's
         # row is BLOCKED naming xab's launcher, even with an earlier run's line in its log.

@@ -86,6 +86,7 @@ class Faults:
         #                                    side's CA issued (a shared or swapped root)
         self.own_zid = {}                  # side -> {kind: zid} its own launcher reports instead
         self.own_dead = {}                 # side -> kinds whose own probe session's REST does not answer
+        self.trace_clock_offset = {}       # side -> seconds its edge's clock is off (negative: behind)
 
 
 class Core:
@@ -284,7 +285,8 @@ class Fabric:
         if not self.faults.trace_silent:
             with open(self.trace_paths[edge], "a") as f:
                 for line in lines:
-                    f.write("%s INFO zenoh::net::routing::interceptor::access_control: %s\n" % (stamp(), line))
+                    f.write("%s INFO zenoh::net::routing::interceptor::access_control: %s\n"
+                            % (stamp(time.time() + self.faults.trace_clock_offset.get(edge, 0)), line))
 
     # --- serving ---------------------------------------------------------------
     def _handler(self, on_get, on_put, side=None):
