@@ -244,11 +244,12 @@ pub(super) fn carrier(phases: &mut [Phase], c: &Pending, partner: &str) {
 /// Phase 2 passes the peering key rotation's id to every play it runs, before
 /// each play's `-e fed_work=`. Only goat-peering-wg reads it; an edge whose
 /// transport is not WireGuard has no such key and ignores it.
-pub(super) fn transport(phases: &mut [Phase], t: &Pending) {
+pub(super) fn transport(phases: &mut [Phase], t: &Pending) -> Result<()> {
     phase_2_vars(
         phases,
         &format!(" -e peering_wg_transport_rotation='{}'", t.id),
     );
+    Ok(())
 }
 
 // `rotate <partner> transport` is refused until the partner can receive our
@@ -294,6 +295,12 @@ pub fn carrier_run<'a>(o: &Options<'a>, work: &Path) -> Result<(Options<'a>, Sur
 /// The file that keeps an IPsec rotation's record until phase 11 passes.
 pub const IPSEC_FILE: &str = ".rotation-ipsec";
 
+/// The IPsec rotations of this peering, as this side ran them: each one's id,
+/// kind, read-back, and when its phase 11 switched, its phase 14 passed after
+/// the switch, and its retire step ran. The retire step is allowed only for a
+/// rotation whose phase 14 passed here.
+pub const IPSEC_LEDGER: &str = "ipsec-rotations.json";
+
 /// An IPsec credential rotation (K6) for phase 11: its id, its kind (`leaf` or
 /// `ca`), the partner's read-back of our new CA for `ca`, whether this run is
 /// the retire step, and the record that keeps it (none for a retire).
@@ -338,7 +345,9 @@ pub fn ipsec_rotation(
     key: &str,
     readback: Option<&str>,
     retire: Option<&str>,
+    phase_11_in_run: bool,
 ) -> Result<Ipsec> {
+    let _ = phase_11_in_run;
     let kind = if key == "ipsec-ca" { "ca" } else { "leaf" };
     match agreed_transport(work).as_deref() {
         Some("ipsec-fips") => {}
@@ -430,7 +439,7 @@ pub fn ipsec_rotation(
 
 /// Phase 11 passes the IPsec rotation to its play, before its `-e fed_work=`.
 /// Only goat-peering-edge reads these values.
-pub(super) fn ipsec(phases: &mut [Phase], i: &Ipsec) {
+pub(super) fn ipsec(phases: &mut [Phase], i: &Ipsec) -> Result<()> {
     let mut vars = format!(
         " -e peering_edge_rotation='{}' -e peering_edge_rotation_kind='{}'",
         i.id, i.kind
@@ -446,6 +455,7 @@ pub(super) fn ipsec(phases: &mut [Phase], i: &Ipsec) {
             .cmd
             .replace(" -e fed_work='", &format!("{vars} -e fed_work='"));
     }
+    Ok(())
 }
 
 /// The run that rotates the IPsec leaf: phases 11 to 14, nothing skipped,
@@ -505,7 +515,7 @@ pub fn rotate(
     match key {
         "ipsec-leaf" | "ipsec-ca" => {
             let work = super::work_dir(o);
-            let i = ipsec_rotation(Path::new(&work), o.with, key, readback, retire)?;
+            let i = ipsec_rotation(Path::new(&work), o.with, key, readback, retire, o.from <= 11)?;
             let mut again = format!("goatbuilder federate {VERB} {} {key}", o.with);
             if let Some(r) = &i.readback {
                 again.push_str(&format!(" --partner-holds-ipsec-ca {r}"));
@@ -574,7 +584,8 @@ pub fn refused(partner: &str, key: &str) -> Result<()> {
 /// After phase `n` of a run passed. Once a rotate run's phase 8 has minted the
 /// new leaves, the run carries on as the plain one: no `rotate` command is
 /// offered again (it would mint another set), and the default resume is.
-pub(super) fn after_phase(s: &mut Surface, n: u32) {
+pub(super) fn after_phase(s: &mut Surface, n: u32, work: &Path) {
+    let _ = work;
     if s.rotate_leaves && n == 8 {
         s.rotate_leaves = false;
         s.again = None;
@@ -686,16 +697,16 @@ mod tests {
     #[test]
     fn an_ipsec_rotation_is_recorded_once_and_resumed_by_its_kind_and_read_back() {
         let d = ipsec_work("ipsec-fips");
-        let a = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(FP), None).unwrap();
+        let a = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(FP), None, true).unwrap();
         assert!(a.id.starts_with("ipsec-") && a.kind == "ca" && a.readback.as_deref() == Some(FP));
         let rec = std::fs::read_to_string(d.path().join(IPSEC_FILE)).unwrap();
         assert!(rec.contains(&a.id) && rec.contains(FP), "{rec}");
-        let b = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(FP), None).unwrap();
+        let b = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(FP), None, true).unwrap();
         assert_eq!(a.id, b.id, "a resume passes the same id");
-        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None).unwrap_err();
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap_err();
         assert_eq!(code(&e), "GB-298");
         let other = format!("sha256:{}", "f".repeat(64));
-        let e = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(&other), None).unwrap_err();
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(&other), None, true).unwrap_err();
         assert_eq!(code(&e), "GB-298");
         assert!(e.to_string().contains(&a.id), "{e}");
     }
@@ -705,12 +716,12 @@ mod tests {
     fn an_ipsec_ca_rotation_needs_a_well_formed_read_back() {
         let d = ipsec_work("ipsec-fips");
         for bad in [None, Some("abc"), Some("sha256:XYZ"), Some(&FP[..70])] {
-            let e = ipsec_rotation(d.path(), "xab", "ipsec-ca", bad, None).unwrap_err();
+            let e = ipsec_rotation(d.path(), "xab", "ipsec-ca", bad, None, true).unwrap_err();
             assert_eq!(code(&e), "GB-303", "{bad:?}");
         }
         assert!(!d.path().join(IPSEC_FILE).exists());
         assert!(
-            ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(&FP[7..]), None).is_ok(),
+            ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(&FP[7..]), None, true).is_ok(),
             "bare hex is accepted"
         );
     }
@@ -720,26 +731,153 @@ mod tests {
     fn an_ipsec_rotation_of_another_transport_is_refused() {
         for kind in ["wireguard", "quic"] {
             let d = ipsec_work(kind);
-            let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None).unwrap_err();
+            let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap_err();
             assert_eq!(code(&e), "GB-189");
             assert!(e.to_string().contains(kind), "{e}");
         }
         let d = tempfile::tempdir().unwrap();
         assert_eq!(
-            code(&ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None).unwrap_err()),
+            code(&ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap_err()),
             "GB-189"
         );
     }
 
-    /// The retire step names its rotation, writes no record, and refuses a malformed id.
+    /// A rotation that switched at phase 11 and passed phase 14 afterwards,
+    /// in `d`'s ledger.
+    fn accepted(d: &Path, key: &str, readback: Option<&str>) -> String {
+        let i = ipsec_rotation(d, "xab", key, readback, None, true).unwrap();
+        let (_, mut s) = ipsec_run(&opts(11), i.clone(), "again".into());
+        after_phase(&mut s, 11, d);
+        after_phase(&mut s, 14, d);
+        i.id
+    }
+
+    /// The retire step names its rotation, writes no record, refuses a
+    /// malformed id, and takes its kind from the ledger.
     #[test]
     fn the_retire_step_names_its_rotation_and_writes_no_record() {
         let d = ipsec_work("ipsec-fips");
-        let r = ipsec_rotation(d.path(), "xab", "ipsec-ca", None, Some("ipsec-1")).unwrap();
-        assert!(r.retire && r.id == "ipsec-1" && r.file.is_none());
+        let id = accepted(d.path(), "ipsec-ca", Some(FP));
+        let r = ipsec_rotation(d.path(), "xab", "ipsec-ca", None, Some(&id), true).unwrap();
+        assert!(r.retire && r.id == id && r.file.is_none() && r.kind == "ca");
         assert!(!d.path().join(IPSEC_FILE).exists());
-        let e = ipsec_rotation(d.path(), "xab", "ipsec-ca", None, Some("x; rm -rf /")).unwrap_err();
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-ca", None, Some("x; rm -rf /"), true).unwrap_err();
         assert_eq!(code(&e), "GB-189");
+        // The kind is the retired rotation's, not the key's.
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some(&id), true).unwrap_err();
+        assert_eq!(code(&e), "GB-298", "{e}");
+    }
+
+    /// Item 4: no retire while a rotation is under way; only for an id whose
+    /// phase 14 passed here; never with a read-back.
+    #[test]
+    fn retire_needs_a_rotation_this_side_saw_pass_phase_14() {
+        let d = ipsec_work("ipsec-fips");
+        // Nothing in the ledger: refused.
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some("ipsec-1"), true).unwrap_err();
+        assert_eq!(code(&e), "GB-309", "{e}");
+        // Under way (the record is there): refused.
+        let i = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap();
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some(&i.id), true).unwrap_err();
+        assert_eq!(code(&e), "GB-298", "{e}");
+        // Switched at phase 11, phase 14 not passed yet: refused.
+        let (_, mut s) = ipsec_run(&opts(11), i.clone(), "again".into());
+        after_phase(&mut s, 11, d.path());
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some(&i.id), true).unwrap_err();
+        assert_eq!(code(&e), "GB-309", "{e}");
+        // Phase 14 passed: allowed.
+        after_phase(&mut s, 14, d.path());
+        assert!(ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some(&i.id), true).is_ok());
+        // Never together with a read-back.
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(FP), Some(&i.id), true).unwrap_err();
+        assert_eq!(code(&e), "GB-189", "{e}");
+        // Once retired, a second retire of the same id is refused.
+        let r = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some(&i.id), true).unwrap();
+        let (_, mut s) = ipsec_run(&opts(11), r, "again".into());
+        after_phase(&mut s, 11, d.path());
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some(&i.id), true).unwrap_err();
+        assert_eq!(code(&e), "GB-309", "{e}");
+    }
+
+    /// Item 5: a new rotation is refused while an earlier one switched and was
+    /// not retired, naming the retire command.
+    #[test]
+    fn a_new_rotation_waits_for_the_last_one_to_be_retired() {
+        let d = ipsec_work("ipsec-fips");
+        let id = accepted(d.path(), "ipsec-leaf", None);
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap_err();
+        assert_eq!(code(&e), "GB-298", "{e}");
+        assert!(e.to_string().contains(&format!("--retire {id}")), "{e}");
+        assert!(!d.path().join(IPSEC_FILE).exists(), "nothing recorded");
+    }
+
+    /// Item 5: the read-back is compared as a fingerprint: `sha256:` or not,
+    /// upper or lower case.
+    #[test]
+    fn the_read_back_is_compared_as_a_fingerprint() {
+        let d = ipsec_work("ipsec-fips");
+        let a = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(FP), None, true).unwrap();
+        let upper = FP[7..].to_uppercase();
+        let b = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(&upper), None, true).unwrap();
+        assert_eq!(a.id, b.id, "the same read-back, written another way, resumes");
+        assert_eq!(b.readback.as_deref(), Some(FP), "passed on in one form");
+    }
+
+    /// Item 5: an empty or corrupt record is refused with its own message.
+    #[test]
+    fn an_empty_or_corrupt_record_is_named() {
+        for body in ["", "{not json", "{\"kind\":\"leaf\"}"] {
+            let d = ipsec_work("ipsec-fips");
+            std::fs::write(d.path().join(IPSEC_FILE), body).unwrap();
+            let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap_err();
+            assert_eq!(code(&e), "GB-298", "{body:?}");
+            let m = e.to_string();
+            assert!(m.contains(IPSEC_FILE) && m.contains("not a rotation record"), "{body:?}: {m}");
+        }
+    }
+
+    /// Item 6: a run that leaves phase 11 out writes no record.
+    #[test]
+    fn a_run_without_phase_11_records_nothing() {
+        let d = ipsec_work("ipsec-fips");
+        let i = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, false).unwrap();
+        assert!(i.file.is_none());
+        assert!(!d.path().join(IPSEC_FILE).exists());
+        assert!(!d.path().join(IPSEC_LEDGER).exists());
+    }
+
+    /// Item 7: a phase with nowhere to put the values is refused, never passed over.
+    #[test]
+    fn an_injection_that_finds_no_place_is_refused() {
+        let d = ipsec_work("ipsec-fips");
+        let i = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap();
+        let mut ph = vec![phase(11, "play peering-edge.yml")];
+        assert!(ipsec(&mut ph, &i).is_err());
+        let mut ph = vec![phase(12, "play -e fed_work='/w'")];
+        assert!(ipsec(&mut ph, &i).is_err(), "no phase 11 at all");
+        let t = Pending { id: "transport-1".into(), file: "/w/.rotation-transport".into() };
+        let mut ps = vec![phase(2, "play peering-prepare.yml")];
+        assert!(transport(&mut ps, &t).is_err());
+    }
+
+    /// Item 8: the read-back is an attestation, and the help says so; the
+    /// ledger records it.
+    #[test]
+    fn the_read_back_is_called_an_attestation_and_recorded() {
+        use clap::{Args, CommandFactory};
+        #[derive(clap::Parser)]
+        struct T {
+            #[command(flatten)]
+            r: RotateArgs,
+        }
+        let _ = <RotateArgs as Args>::augment_args;
+        let help = T::command().render_long_help().to_string();
+        assert!(!help.contains("only once the partner trusts it"), "{help}");
+        assert!(help.contains("attestation"), "{help}");
+        let d = ipsec_work("ipsec-fips");
+        accepted(d.path(), "ipsec-ca", Some(FP));
+        let l = std::fs::read_to_string(d.path().join(IPSEC_LEDGER)).unwrap();
+        assert!(l.contains(FP), "{l}");
     }
 
     /// Phase 11 alone gets the values, before its `-e fed_work=`; after phase 11
@@ -747,22 +885,22 @@ mod tests {
     #[test]
     fn phase_11_gets_the_rotation_and_its_record_goes_once_phase_11_passed() {
         let d = ipsec_work("ipsec-fips");
-        let i = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(FP), None).unwrap();
+        let i = ipsec_rotation(d.path(), "xab", "ipsec-ca", Some(FP), None, true).unwrap();
         let mut ph = vec![
             phase(11, "play -e fed_work='/w'"),
             phase(12, "play -e fed_work='/w'"),
         ];
-        ipsec(&mut ph, &i);
+        ipsec(&mut ph, &i).unwrap();
         assert!(ph[0].cmd.contains(&format!("-e peering_edge_rotation='{}' -e peering_edge_rotation_kind='ca' -e peering_edge_rotation_ca_readback='{FP}' -e fed_work='/w'", i.id)), "{}", ph[0].cmd);
         assert_eq!(ph[1].cmd, "play -e fed_work='/w'");
         let (o, mut s) = ipsec_run(&opts(1), i, "again".into());
         assert_eq!((o.from, o.to), (11, 14));
-        after_phase(&mut s, 11);
+        after_phase(&mut s, 11, d.path());
         assert!(s.rotate_ipsec.is_none() && s.again.is_none());
         assert!(!d.path().join(IPSEC_FILE).exists());
         let (o, s) = ipsec_run(
             &opts(12),
-            ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None).unwrap(),
+            ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap(),
             "again".into(),
         );
         assert!(
@@ -847,9 +985,9 @@ mod tests {
             Some("goatbuilder federate rotate xab carrier")
         );
         assert_eq!(s.rotate_carrier.as_ref(), Some(&a));
-        after_phase(&mut s, 1);
+        after_phase(&mut s, 1, Path::new("/nonexistent/w"));
         assert!(d.path().join(CARRIER_FILE).exists(), "phase 1 leaves it");
-        after_phase(&mut s, 2);
+        after_phase(&mut s, 2, Path::new("/nonexistent/w"));
         assert!(s.rotate_carrier.is_none());
         assert!(
             s.again.is_none(),
@@ -896,7 +1034,7 @@ mod tests {
             id: "transport-1".into(),
             file: "/w/.rotation-transport".into(),
         };
-        transport(&mut ps, &t);
+        transport(&mut ps, &t).unwrap();
         let want = " -e peering_wg_transport_rotation='transport-1' -e fed_work='/w'";
         assert_eq!(ps[0].cmd.matches(want).count(), 2, "{}", ps[0].cmd);
         assert_eq!(ps[1].cmd, "goat-federation init");
@@ -929,7 +1067,7 @@ mod tests {
             want,
             "and its record"
         );
-        after_phase(&mut s, 2);
+        after_phase(&mut s, 2, Path::new("/nonexistent/w"));
         assert!(s.rotate_transport.is_none());
         assert!(
             !d.path().join(TRANSPORT_FILE).exists(),

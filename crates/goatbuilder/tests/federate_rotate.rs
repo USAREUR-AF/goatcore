@@ -209,10 +209,16 @@ fn a_rotation_under_way_resumes_with_its_id_and_another_kind_is_refused() {
     assert!(edge_play(&plays).contains("peering_edge_rotation=ipsec-kept-1"), "{}", text(&out));
 }
 
-/// `--retire <id>` passes the retire step for that rotation and needs no read-back.
+/// `--retire <id>` passes the retire step for a rotation this side saw switch
+/// and pass phase 14 (its ledger), and needs no read-back.
 #[test]
 fn retiring_passes_the_rotation_id_and_the_retire_step() {
     let (w, plays) = ipsec_world("ipsec-fips");
+    std::fs::write(
+        w.work.join("ipsec-rotations.json"),
+        "{\"rotations\":[{\"id\":\"ipsec-20261114T200000Z\",\"kind\":\"ca\",\"started\":\"2026-11-14T20:00:00Z\",\"switched\":\"2026-11-14T20:05:00Z\",\"accepted\":\"2026-11-14T20:20:00Z\"}]}\n",
+    )
+    .unwrap();
     let (out, _) = w.run(&["rotate", "hello-ally", "ipsec-ca", "--retire", "ipsec-20261114T200000Z"]);
     let edge = edge_play(&plays);
     assert!(
@@ -220,4 +226,23 @@ fn retiring_passes_the_rotation_id_and_the_retire_step() {
         "{edge}\n{}",
         text(&out)
     );
+}
+
+/// A retire of an id this side never saw pass phase 14 is refused before anything runs.
+#[test]
+fn retiring_an_unknown_rotation_is_refused_before_anything_runs() {
+    let (w, plays) = ipsec_world("ipsec-fips");
+    let (out, _) = w.run(&["rotate", "hello-ally", "ipsec-leaf", "--retire", "ipsec-typo"]);
+    assert!(!out.status.success(), "{}", says(&out));
+    assert!(text(&out).contains("GB-309"), "{}", text(&out));
+    assert!(!plays.exists(), "a play ran");
+}
+
+/// A run that leaves phase 11 out rotates nothing and records nothing.
+#[test]
+fn a_rotation_from_after_phase_11_records_nothing() {
+    let (w, _plays) = ipsec_world("ipsec-fips");
+    let _ = w.run(&["rotate", "hello-ally", "ipsec-leaf", "--from", "13"]);
+    assert!(!w.work.join(".rotation-ipsec").exists());
+    assert!(!w.work.join("ipsec-rotations.json").exists());
 }
