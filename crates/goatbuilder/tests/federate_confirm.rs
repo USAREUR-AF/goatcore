@@ -5,7 +5,7 @@
 
 mod federate_world;
 
-use federate_world::{phases_run, public_b64, rows, says, sha256_hex, world};
+use federate_world::{phases_run, public_b64, resigned_with_transport, rows, says, sha256_hex, world};
 
 fn their_key() -> String {
     public_b64("xab")
@@ -165,5 +165,72 @@ fn one_value_without_the_other_stops_at_phase_5_and_names_the_missing_flag() {
 fn confirmation_flags_do_not_belong_to_deploy_or_test() {
     let w = world();
     let (out, _) = w.run(&["test", "hello-ally", "--confirm"]);
+    assert!(says(&out).contains("GB-189"), "{}", says(&out));
+}
+
+/// ADR 1229: the partner rotated its WireGuard key and published a new
+/// package under the key already bound. The directory step leaves it at
+/// `theirs.incoming.json`; phase 5 stops and names its digest, and places it
+/// only with `--accept-partner-package <that digest>`, keeping the old one
+/// aside. Compose is then planned again with the new package.
+#[test]
+fn a_partners_new_package_is_placed_at_phase_5_only_with_its_digest() {
+    let w = world();
+    let fp = sha256_hex(b"fake-ca-der");
+    let key = their_key();
+    let (out, _) = w.run(&["hello-ally", "--partner-key", &key, "--partner-ca-fingerprint", &fp]);
+    assert!(out.status.success(), "{}", says(&out));
+    let theirs = w.work.join("theirs.canonical.json");
+    let old = std::fs::read(&theirs).unwrap();
+    let new = resigned_with_transport("xab", &fp, Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="));
+    std::fs::write(w.work.join("theirs.incoming.json"), &new).unwrap();
+    let digest = sha256_hex(&new);
+    let keys = ["hello-ally", "--from", "5", "--to", "6", "--partner-key", &key, "--partner-ca-fingerprint", &fp];
+
+    let (out, v) = w.run(&keys);
+    assert!(out.status.success(), "a stop, not a failure: {}", says(&out));
+    assert_eq!(phases_run(&v), [5], "{}", says(&out));
+    assert!(says(&out).contains(&digest) && says(&out).contains("--accept-partner-package"), "{}", says(&out));
+    assert_eq!(std::fs::read(&theirs).unwrap(), old, "placed without a confirmation");
+    assert!(w.state()["phases"]["5"]["detail"].as_str().unwrap().starts_with("GB-192"));
+
+    let mut with = keys.to_vec();
+    with.extend(["--accept-partner-package", "sha256:00"]);
+    let (out, _) = w.run(&with);
+    assert!(says(&out).contains("GB-191"), "{}", says(&out));
+    assert_eq!(std::fs::read(&theirs).unwrap(), old);
+
+    w.clear_log();
+    let mut with = keys.to_vec();
+    with.extend(["--accept-partner-package", &digest]);
+    let (out, v) = w.run(&with);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(phases_run(&v), [5, 6], "{}", says(&out));
+    assert_eq!(std::fs::read(&theirs).unwrap(), new);
+    assert!(!w.work.join("theirs.incoming.json").exists());
+    let kept: Vec<_> = std::fs::read_dir(&w.work)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with("theirs.canonical.json.previous-"))
+        .collect();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(std::fs::read(w.work.join(&kept[0])).unwrap(), old);
+    let st = w.state();
+    let c = st["confirmations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "partner-package")
+        .expect("journaled");
+    assert_eq!((c["how"].as_str(), c["bound_to"].as_str()), (Some("flag"), Some(digest.as_str())));
+    assert!(w.log().contains("federate compose"), "compose ran again on the new package: {}", w.log());
+}
+
+#[test]
+fn accept_partner_package_belongs_to_phase_5() {
+    let w = world();
+    let (out, _) = w.run(&["hello-ally", "--from", "6", "--accept-partner-package", "sha256:00"]);
+    assert!(says(&out).contains("GB-189"), "{}", says(&out));
+    let (out, _) = w.run(&["deploy", "hello-ally", "--accept-partner-package", "sha256:00"]);
     assert!(says(&out).contains("GB-189"), "{}", says(&out));
 }

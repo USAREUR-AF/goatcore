@@ -507,6 +507,12 @@ pub enum Cmd {
         /// the package for this peering (its digest, as the stop shows it).
         #[arg(long, value_name = "SHA256")]
         place_pointer_package: Option<String>,
+        /// Phase 5: use the partner's new package, signed by the key already
+        /// bound (after it rotated its WireGuard key, for example), after
+        /// comparing its digest on the call (as the stop shows it). --yes
+        /// never confirms it.
+        #[arg(long, value_name = "SHA256")]
+        accept_partner_package: Option<String>,
         /// Phase 10: approve exactly this admission digest, after reading
         /// what our core will admit. --yes never approves it.
         #[arg(long, value_name = "SHA256")]
@@ -1674,7 +1680,7 @@ fn main() {
                 federate::plan::run(&repo, stage, cli.mock.as_deref())
             }
         }
-        Cmd::Federate { verb: None, site, measure, edge_run, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume, bilateral } => {
+        Cmd::Federate { verb: None, site, measure, edge_run, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, accept_partner_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume, bilateral } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
             // `--side edge` alone on a peering run is the edge driver's run of
@@ -1710,8 +1716,8 @@ fn main() {
                 Err(goat_errors::coded("GB-189", format!("`goatbuilder federate {with}` needs the partner: goatbuilder federate {with} <partner>")).into())
             } else if partner.is_some() && !matches!(with, "deploy" | "test" | "allocate") {
                 Err(goat_errors::coded("GB-189", format!("unexpected argument '{}': only a stage word (status, deploy, test) takes a partner after it, and `allocate` the one peering to allocate", partner.as_deref().unwrap_or_default())).into())
-            } else if (partner_key.is_some() || partner_ca_fingerprint.is_some() || agreement_digest.is_some() || place_pointer_package.is_some()) && matches!(with, "deploy" | "test") {
-                Err(goat_errors::coded("GB-189", format!("--partner-key, --partner-ca-fingerprint, --agreement-digest and --place-pointer-package belong to phases 5 and 6 of `goatbuilder federate <partner>`, not to {with}")).into())
+            } else if (partner_key.is_some() || partner_ca_fingerprint.is_some() || agreement_digest.is_some() || place_pointer_package.is_some() || accept_partner_package.is_some()) && matches!(with, "deploy" | "test") {
+                Err(goat_errors::coded("GB-189", format!("--partner-key, --partner-ca-fingerprint, --agreement-digest, --place-pointer-package and --accept-partner-package belong to phases 5 and 6 of `goatbuilder federate <partner>`, not to {with}")).into())
             } else if bilateral.is_some() && with != "test" {
                 Err(goat_errors::coded("GB-189", "--bilateral belongs to `goatbuilder federate test <partner>`: it runs phase 14 on a session both sides derive").into())
             } else if (*confirm || approve_admission.is_some() || *review_in_pr) && with == "test" {
@@ -1720,8 +1726,8 @@ fn main() {
                 Err(goat_errors::coded("GB-189", "--approve-admission, --review-in-pr and --confirm are for phase 10, and deploy --from 11 starts after it").into())
             } else if (approve_admission.is_some() || *review_in_pr) && with != "deploy" {
                 Err(goat_errors::coded("GB-189", "--approve-admission and --review-in-pr belong to `goatbuilder federate deploy <partner>`: phase 10 is admitted by the command only from an approved plan").into())
-            } else if ((partner_key.is_some() || partner_ca_fingerprint.is_some() || place_pointer_package.is_some()) && !(*from <= 5 && 5 <= *to)) || (agreement_digest.is_some() && !(*from <= 6 && 6 <= *to)) {
-                Err(goat_errors::coded("GB-189", "--partner-key and --partner-ca-fingerprint are for phase 5 and --agreement-digest for phase 6; this run's --from/--to leave that phase out").into())
+            } else if ((partner_key.is_some() || partner_ca_fingerprint.is_some() || place_pointer_package.is_some() || accept_partner_package.is_some()) && !(*from <= 5 && 5 <= *to)) || (agreement_digest.is_some() && !(*from <= 6 && 6 <= *to)) {
+                Err(goat_errors::coded("GB-189", "--partner-key, --partner-ca-fingerprint, --place-pointer-package and --accept-partner-package are for phase 5 and --agreement-digest for phase 6; this run's --from/--to leave that phase out").into())
             } else if (plan.is_some() || approve_plan.is_some()) && with != "deploy" {
                 Err(goat_errors::coded("GB-189", "--plan and --approve-plan belong to `goatbuilder federate deploy <partner>`").into())
             } else if matches!(with, "deploy" | "test") && (*to != 99 || *resume || *no_resume) {
@@ -1745,7 +1751,7 @@ fn main() {
                     // `allocate <peering>`: that peering alone, beside hand-written ones.
                     "allocate" if partner.is_some() => federate::peering_files::run_scoped(&repo, &federate::Options { with, ..o }, partner.as_deref()),
                     _ => {
-                        let values = federate::Values { ask: federate::prompt::ask_by_default(*confirm, *no_confirm), partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone(), partner_package: None };
+                        let values = federate::Values { ask: federate::prompt::ask_by_default(*confirm, *no_confirm), partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone(), partner_package: accept_partner_package.clone() };
                         let admission = federate::Admission { approve: approve_admission.clone(), review_in_pr: *review_in_pr };
                         let ask = values.ask;
                         // With a person at the terminal, phase 10 hands over to

@@ -983,6 +983,27 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                     }
                 }
             }
+            // Confirmation 1, when asked for: a new package from the
+            // partner under the key already bound is placed only once a
+            // person confirms its digest (ADR 1229).
+            if let (5, Some(r), true) = (ph.n, run.as_mut(), s.values.active()) {
+                if let Some(step) = confirm::incoming(&r.paths, s, &mut r.state, &r.id.clone()) {
+                    checks.extend(step.rows);
+                    match step.verdict {
+                        confirm::Verdict::Continue => {}
+                        confirm::Verdict::Stop(d) => {
+                            r.end(ph, state::Outcome::Stopped, &d);
+                            stopped = true;
+                            break;
+                        }
+                        confirm::Verdict::Fail(d) => {
+                            r.end(ph, state::Outcome::Failed, &d);
+                            exit = EXIT_REFUSED;
+                            break;
+                        }
+                    }
+                }
+            }
             // Confirmation 1, when asked for: the command binds the keys
             // and carries on instead of stopping.
             if let (5, Some(r), true) = (ph.n, run.as_mut(), s.values.active()) {

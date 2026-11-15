@@ -3003,11 +3003,12 @@ entries:
   - code: GB-191
     tool: goatbuilder
     title: a value for confirmation 1 does not match
-    what: "At phase 5 or 6 a value given by flag or typed is not the one the files hold: their CA fingerprint is not their package's, their CA certificate does not carry that fingerprint, their verifying key is not 32 bytes of base64 or does not verify their half, a sovereign id is not a plain id or is not the declared counterparty, or the agreement digest differs. The run stopped; at phase 5 no keyring was written, and at phase 6 the composed agreement is left for inspection."
+    what: "At phase 5 or 6 a value given by flag or typed is not the one the files hold: their CA fingerprint is not their package's, their CA certificate does not carry that fingerprint, their verifying key is not 32 bytes of base64 or does not verify their half, a sovereign id is not a plain id or is not the declared counterparty, the agreement digest differs, or a package offered as the partner's new one is not signed by the key bound for them or is not the one --accept-partner-package names (ADR 1229; a package not signed by that key is set aside as `theirs.incoming.json.refused-<UTC time>`). The run stopped; at phase 5 no keyring was written and no package was placed, and at phase 6 the composed agreement is left for inspection."
     causes:
       - a value was misheard or mistyped on the call
       - the partner published a new package or CA after reading theirs aloud
       - the two sides composed different agreements (their halves differ)
+      - "a package that is not the partner's current one, signed by another key or replayed, was offered as their new package"
     fixes:
       - "read the values back group by group with the partner, then run the same command again"
       - "goat federate diff <ours> <theirs>   (names the field where two agreements differ)"
@@ -3019,12 +3020,14 @@ entries:
   - code: GB-192
     tool: goatbuilder
     title: confirmation 1 is waiting
-    what: "Phase 5 or 6 was asked to confirm (by --confirm or a value) and something is not there yet: their half or CA certificate has not arrived, a value read aloud was not given and there is no terminal to ask at, or the person did not type yes. The run stopped there, as a by-hand stop does (exit 0); a stop at phase 5 writes no keyring."
+    what: "Phase 5 or 6 was asked to confirm (by --confirm or a value) and something is not there yet: their half or CA certificate has not arrived, a value read aloud was not given and there is no terminal to ask at, the partner has a new package under the key already bound whose digest no one has confirmed (ADR 1229), or the person did not type yes. The run stopped there, as a by-hand stop does (exit 0); a stop at phase 5 writes no keyring."
     causes:
       - the partner has not published yet
       - one of --partner-key, --partner-ca-fingerprint, --agreement-digest is missing
+      - the partner published a new package (after rotating its WireGuard key, for example) and --accept-partner-package is missing
     fixes:
       - "run the same command again with the values read aloud, or with --confirm at a terminal"
+      - "goatbuilder federate <partner> --from 5 --partner-key <key> --partner-ca-fingerprint <fp> --accept-partner-package <digest>   (the digest compared on the call)"
     read: docs/design/goatbuilder.md
     matches:
       - "^GB-192: "

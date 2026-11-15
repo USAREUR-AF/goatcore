@@ -1494,3 +1494,80 @@ def test_a_hand_over_never_takes_another_peerings_pointer(server, tmp_path):
     assert rc == 0, out
     assert Server.entries == before, "the first peering's pointer and the old key are kept"
     assert "GB-285" in out and "another peering's package" in out, out
+
+
+@needs_ed25519
+def test_a_new_package_under_the_bound_key_is_saved_as_incoming_and_not_placed(server, tmp_path):
+    """ADR 1229: a package from the partner that verifies under the key bound for them and
+    differs from the one on disk (they rotated their WireGuard key) is saved at
+    <work>/theirs.incoming.json for phase 5 to ask about; the file on disk is not replaced."""
+    work = tmp_path / "w"
+    work.mkdir()
+    first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31").read_bytes()
+    publish = tmp_path / "xaa-ours.json"
+    publish.write_bytes(first)
+    run("--url", server, "--ours", publish, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    theirs = work / "theirs.canonical.json"
+    theirs.write_bytes(first)
+    args = ("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+            "--keyring", keyring_for(tmp_path, "xaa"), "--work", work, "--per-counterparty")
+    # The same package as on disk: nothing is offered.
+    rc, out = run(*args)
+    assert rc == 0, out
+    assert not (work / "theirs.incoming.json").exists(), out
+    # They publish a new package: another transport offer, signed by the same key.
+    new = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31").read_bytes()
+    publish.write_bytes(new)
+    run("--url", server, "--ours", publish, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    rc, out = run(*args)
+    assert rc == 0, out
+    assert theirs.read_bytes() == first, "the file on disk is not replaced by the directory"
+    assert (work / "theirs.incoming.json").read_bytes() == new
+    assert d.sha256_of(new) in out and "--accept-partner-package" in out, out
+    assert "transport_offer.endpoint" in out, out
+    # Offered again once it is the package on disk: the saved copy goes.
+    theirs.write_bytes(new)
+    rc, out = run(*args)
+    assert rc == 0 and not (work / "theirs.incoming.json").exists(), out
+
+
+@needs_ed25519
+def test_before_their_key_is_recorded_a_different_package_is_not_offered_as_new(server, tmp_path):
+    work = tmp_path / "w"
+    work.mkdir()
+    first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31").read_bytes()
+    publish = tmp_path / "xaa-ours.json"
+    publish.write_bytes(peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31").read_bytes())
+    run("--url", server, "--ours", publish, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    theirs = work / "theirs.canonical.json"
+    theirs.write_bytes(first)
+    empty = tmp_path / "empty-keys.txt"
+    empty.write_text("")
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                  "--keyring", empty, "--work", work, "--per-counterparty")
+    assert rc == 0, out
+    assert theirs.read_bytes() == first and not (work / "theirs.incoming.json").exists(), out
+
+
+@needs_ed25519
+def test_a_partner_with_only_a_pointer_also_delivers_a_new_package_for_confirmation(server, tmp_path, monkeypatch):
+    """A partner that hosts no package for us (one peering, or a prior release) is read through
+    its pointer, whose package is held. With their package already on disk and their key
+    recorded, a new one through the pointer is offered at theirs.incoming.json all the same."""
+    monkeypatch.delenv("FED_DIRECTORY_PLACE_POINTER_PACKAGE", raising=False)
+    work = tmp_path / "w"
+    work.mkdir()
+    first = peering_package(tmp_path, "xab", "xaa", "198.51.100.20:51821", "169.254.20.0/31").read_bytes()
+    new = peering_package(tmp_path, "xab", "xaa", "198.51.100.20:51831", "169.254.20.0/31").read_bytes()
+    published = tmp_path / "xab-published.json"
+    published.write_bytes(new)
+    Server.files["/packages/xab.json"] = new
+    run("--url", server, "--ours", published, "--package-url", f"{server}/packages/xab.json", "--key", KEY["xab"])
+    theirs = work / "theirs.canonical.json"
+    theirs.write_bytes(first)
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", theirs,
+                  "--keyring", keyring_for(tmp_path, "xab"), "--work", work, "--per-counterparty")
+    assert rc == 0, out
+    assert theirs.read_bytes() == first
+    assert (work / "theirs.incoming.json").read_bytes() == new, out
+    assert d.sha256_of(new) in out, out

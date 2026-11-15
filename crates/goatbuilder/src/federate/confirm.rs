@@ -484,6 +484,7 @@ pub fn exchange(
             ("partner_key_how".to_string(), key_how.to_string()),
             ("partner_ca_fingerprint".to_string(), their_fp),
             ("partner_ca_fingerprint_how".to_string(), fp_how.to_string()),
+            ("partner_package".to_string(), sha256(&theirs_bytes)),
         ]),
     );
     rows.push(ok("confirm", format!("keys confirmed ({how}): {them}'s verifying key verifies their half, and their CA fingerprint is the one read aloud; both keys written to {}", paths.keyring.display())));
@@ -618,10 +619,230 @@ pub fn pointer(
 /// package from the partner that phase 5 has not placed yet (ADR 1229).
 pub const INCOMING: &str = "theirs.incoming.json";
 
+/// The key the keyring binds for `id`, as written by `write_keyring`.
+fn keyring_key(path: &Path, id: &str) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines().find_map(|l| {
+        squeeze(l)
+            .strip_prefix(&format!("{id}="))
+            .map(String::from)
+            .filter(|k| !k.is_empty())
+    })
+}
+
+/// The members that differ between two packages, as dotted paths
+/// (`transport_offer.public_key`), the signature left out.
+fn changed_members(a: &serde_json::Value, b: &serde_json::Value, at: &str, out: &mut Vec<String>) {
+    match (a, b) {
+        (serde_json::Value::Object(x), serde_json::Value::Object(y)) => {
+            let keys: std::collections::BTreeSet<&String> = x.keys().chain(y.keys()).collect();
+            for k in keys {
+                if at.is_empty() && k == "signature" {
+                    continue;
+                }
+                let p = if at.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{at}.{k}")
+                };
+                match (x.get(k), y.get(k)) {
+                    (Some(u), Some(v)) => changed_members(u, v, &p, out),
+                    _ => out.push(p),
+                }
+            }
+        }
+        _ if a != b => out.push(if at.is_empty() {
+            "(the whole package)".into()
+        } else {
+            at.into()
+        }),
+        _ => {}
+    }
+}
+
+/// `path` renamed to `<path>.<tag>-<UTC time>`, keeping any earlier copy.
+fn set_aside(path: &Path, tag: &str) -> std::io::Result<std::path::PathBuf> {
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let name = path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let mut aside = path.with_file_name(format!("{name}.{tag}-{stamp}"));
+    let mut n = 1;
+    while aside.exists() {
+        n += 1;
+        aside = path.with_file_name(format!("{name}.{tag}-{stamp}-{n}"));
+    }
+    std::fs::rename(path, &aside)?;
+    Ok(aside)
+}
+
+/// Write `body` to `path` (0600) through a file beside it, so a reader sees
+/// the old package or the new one, never part of one.
+fn place(path: &Path, body: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("placing");
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    std::io::Write::write_all(&mut o.open(&tmp)?, body)?;
+    std::fs::rename(tmp, path)
+}
+
 /// Phase 5, before the keys: a new package from the partner under the key
-/// already bound (ADR 1229). `None` when there is none.
-pub fn incoming(_paths: &Paths, _s: &mut Surface, _st: &mut State, _run: &str) -> Option<Step> {
-    None
+/// already bound (ADR 1229). It is new when the directory step, or a person
+/// on the hand path, left a package at `<work>/theirs.incoming.json` that
+/// differs from the one on disk, or when the package on disk is not the one
+/// the last keys confirmation was given for and no confirmation names it (a
+/// copy over the placed file by hand). A signature says who signed a
+/// package, not which of two is current, so it is placed only once a person
+/// confirms its digest, read on the call as the keys are: `yes` at a
+/// terminal, or `--accept-partner-package <digest>`. The old package is kept
+/// at `<work>/theirs.canonical.json.previous-<UTC time>`, and the
+/// confirmation is journaled bound to the digest, so a later package (an
+/// older one replayed included) is a new question. `None` when there is
+/// none, or before their key is bound (the first exchange places theirs).
+pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Option<Step> {
+    let held = paths.work.join(INCOMING);
+    let placed = std::fs::read(&paths.counterparty).ok()?;
+    let placed_v: serde_json::Value = serde_json::from_slice(&placed).ok()?;
+    let them = field(&placed_v, &["sovereign_id"]).filter(|id| plain_id(id))?;
+    let their_key = keyring_key(&paths.keyring, &them)?;
+    let (body, by_hand) = match std::fs::read(&held) {
+        Ok(b) if b == placed => {
+            let _ = std::fs::remove_file(&held);
+            return None;
+        }
+        Ok(b) => (b, false),
+        Err(_) => {
+            // The hand path's other door: a file copied over the placed one.
+            let bound_for = st
+                .confirmations
+                .iter()
+                .find(|c| c.kind == "keys" && c.phase == 5)
+                .and_then(|c| c.values.get("partner_package"))?;
+            let now = sha256(&placed);
+            if *bound_for == now || st.confirmed("partner-package", 5, &now).is_some() {
+                return None;
+            }
+            (placed.clone(), true)
+        }
+    };
+    let digest = sha256(&body);
+    let new_v: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+    let signed = matches!(signed_by(&body, &their_key), Ok(true));
+    if !signed || field(&new_v, &["sovereign_id"]).as_deref() != Some(them.as_str()) {
+        let what = if by_hand {
+            format!("{} is not the package their last confirmation was for, and it is not {them}'s package signed by the key bound for them", paths.counterparty.display())
+        } else {
+            match set_aside(&held, "refused") {
+                Ok(p) => format!("the package offered as {them}'s new one is not signed by the key bound for them; it was set aside at {}", p.display()),
+                Err(e) => format!("the package offered as {them}'s new one is not signed by the key bound for them, and it could not be set aside ({e}); remove {}", held.display()),
+            }
+        };
+        return Some(fail(
+            "GB-191",
+            format!("{what}; nothing was placed"),
+            "do not use it; tell the partner, and ask them to publish their current package again",
+        ));
+    }
+    let mut changed = Vec::new();
+    let old_v = if by_hand {
+        serde_json::Value::Null
+    } else {
+        placed_v
+    };
+    if !by_hand {
+        changed_members(&old_v, &new_v, "", &mut changed);
+    }
+    let changed_text = if by_hand {
+        "not known: the package it replaced was copied over by hand".to_string()
+    } else {
+        changed.join(", ")
+    };
+    let interactive = s.values.ask && s.asker().interactive();
+    let text = format!(
+        "\nPhase 5: {them} has a new package\n  It is signed by the key you bound for {them}, and it differs from the one\n  on disk. A signature does not say which of two packages is current, so\n  compare this digest with {them} on the call before it is used.\n    changed:  {changed_text}\n    digest:   {}\n    saved at: {}\n",
+        groups(&digest),
+        if by_hand { paths.counterparty.display() } else { held.display() }
+    );
+    let how = match s.values.partner_package.clone() {
+        Some(d) if prompt::same_value(&d, &digest) => "flag",
+        Some(d) => return Some(fail(
+            "GB-191",
+            format!(
+                "--accept-partner-package {d} is not the digest of {them}'s new package ({digest})"
+            ),
+            "read the digest again with the partner; a different package arrived",
+        )),
+        None if interactive => {
+            s.asker().say(&text);
+            if !prompt::is_yes(&s.asker().ask(&format!("Did {them} read this digest on the call? Type yes to use the new package, or press Enter to stop:"))) {
+                return Some(stop(
+                    format!("{them}'s new package was not confirmed; nothing was placed"),
+                    "run the same command again once the digest is compared on the call",
+                ));
+            }
+            "terminal"
+        }
+        None => {
+            let mut step = stop(
+                format!("{them} has a new package signed by the key bound for them: compare its digest on the call, then pass --accept-partner-package {digest}"),
+                "run the same command again with the flag",
+            );
+            step.rows.insert(0, ok("partner-package", text));
+            return Some(step);
+        }
+    };
+    let mut rows = Vec::new();
+    if !by_hand {
+        match set_aside(&paths.counterparty, "previous") {
+            Ok(p) => rows.push(ok("partner-package", format!("the package it replaces is kept at {}", p.display()))),
+            Err(e) => {
+                return Some(fail(
+                    "GB-184",
+                    format!("cannot write the working folder: {} could not be moved aside ({e}); nothing was placed", paths.counterparty.display()),
+                    "check the working folder is writable, then run phase 5 again",
+                ))
+            }
+        }
+        if let Err(e) = place(&paths.counterparty, &body) {
+            return Some(fail(
+                "GB-184",
+                format!("cannot write the working folder: {them}'s new package could not be placed at {} ({e}); the old one is kept aside", paths.counterparty.display()),
+                "check the working folder is writable, then run phase 5 again",
+            ));
+        }
+        let _ = std::fs::remove_file(&held);
+    }
+    st.confirm(
+        run,
+        5,
+        "partner-package",
+        how,
+        &digest,
+        BTreeMap::from([
+            ("partner".to_string(), them.clone()),
+            ("digest".to_string(), digest.clone()),
+            (
+                "previous".to_string(),
+                if by_hand {
+                    String::new()
+                } else {
+                    sha256(&placed)
+                },
+            ),
+            ("changed".to_string(), changed_text),
+        ]),
+    );
+    rows.push(ok(
+        "confirm",
+        format!("{them}'s new package {digest} was confirmed ({how}) and placed; the phases after 5 use it"),
+    ));
+    Some(Step {
+        rows,
+        verdict: Verdict::Continue,
+    })
 }
 
 /// After compose (phase 6): the agreement digest, compared with the partner.
@@ -731,7 +952,9 @@ mod tests {
                     }
                 }
             }
-            if let (Some(key), "transport_offer", JVal::Obj(t)) = (transport_key, k.as_str(), &mut *v) {
+            if let (Some(key), "transport_offer", JVal::Obj(t)) =
+                (transport_key, k.as_str(), &mut *v)
+            {
                 for (tk, tv) in t.iter_mut() {
                     if tk == "public_key" {
                         *tv = JVal::Str(key.into());
@@ -1067,7 +1290,10 @@ mod tests {
             },
             &[],
         );
-        assert_eq!(code(&exchange(&w.paths, &mut s, &mut st, "r1", &|| true)), "continue");
+        assert_eq!(
+            code(&exchange(&w.paths, &mut s, &mut st, "r1", &|| true)),
+            "continue"
+        );
         (w, st)
     }
 
@@ -1075,7 +1301,12 @@ mod tests {
         std::fs::read_dir(&w.paths.work)
             .unwrap()
             .map(|e| e.unwrap().path())
-            .filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("theirs.canonical.json.previous-"))
+            .filter(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("theirs.canonical.json.previous-")
+            })
             .collect()
     }
 
@@ -1096,31 +1327,68 @@ mod tests {
         std::fs::write(&incoming, &new).unwrap();
         let digest = sha256(&new);
         // No flag and no terminal: the stop names the digest and what changed; nothing placed.
-        let mut s = surface(Values { partner_key: Some(w.their_key.clone()), ..Default::default() }, &[]);
+        let mut s = surface(
+            Values {
+                partner_key: Some(w.their_key.clone()),
+                ..Default::default()
+            },
+            &[],
+        );
         let step = incoming_step(&w, &mut s, &mut st);
         assert_eq!(code(&step), "GB-192");
-        let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
-        assert!(text.contains(&digest) && text.contains("transport_offer.public_key"), "{text}");
+        let text: String = step
+            .rows
+            .iter()
+            .map(|r| r.detail.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains(&digest) && text.contains("transport_offer.public_key"),
+            "{text}"
+        );
         assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), old);
         // Another digest fails; a "y" is not a yes.
-        let mut s = surface(Values { partner_package: Some("sha256:00".into()), ..Default::default() }, &[]);
+        let mut s = surface(
+            Values {
+                partner_package: Some("sha256:00".into()),
+                ..Default::default()
+            },
+            &[],
+        );
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "GB-191");
-        let mut s = surface(Values { ask: true, ..Default::default() }, &["y"]);
+        let mut s = surface(
+            Values {
+                ask: true,
+                ..Default::default()
+            },
+            &["y"],
+        );
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "GB-192");
         assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), old);
         assert!(st.confirmed("partner-package", 5, &digest).is_none());
         // At a terminal, the typed word: placed, the old one kept aside, journaled.
-        let mut s = surface(Values { ask: true, ..Default::default() }, &["yes"]);
+        let mut s = surface(
+            Values {
+                ask: true,
+                ..Default::default()
+            },
+            &["yes"],
+        );
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
         assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new);
         assert!(!incoming.exists());
         let kept = previous_copies(&w);
         assert_eq!(kept.len(), 1, "{kept:?}");
         assert_eq!(std::fs::read(&kept[0]).unwrap(), old);
-        let c = st.confirmed("partner-package", 5, &digest).expect("journaled");
+        let c = st
+            .confirmed("partner-package", 5, &digest)
+            .expect("journaled");
         assert_eq!(c.how, "terminal");
         assert_eq!(c.values["previous"], sha256(&old));
-        assert!(incoming_step_opt(&w, &mut s, &mut st).is_none(), "placed: nothing to ask");
+        assert!(
+            incoming_step_opt(&w, &mut s, &mut st).is_none(),
+            "placed: nothing to ask"
+        );
     }
 
     #[test]
@@ -1128,10 +1396,21 @@ mod tests {
         let (w, mut st) = bound();
         let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
         std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
-        let mut s = surface(Values { partner_package: Some(sha256(&new)), ..Default::default() }, &[]);
+        let mut s = surface(
+            Values {
+                partner_package: Some(sha256(&new)),
+                ..Default::default()
+            },
+            &[],
+        );
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
         assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new);
-        assert_eq!(st.confirmed("partner-package", 5, &sha256(&new)).unwrap().how, "flag");
+        assert_eq!(
+            st.confirmed("partner-package", 5, &sha256(&new))
+                .unwrap()
+                .how,
+            "flag"
+        );
     }
 
     #[test]
@@ -1142,10 +1421,19 @@ mod tests {
         let forged = package("xab", &w.their_fp, Some(ROTATED), "xaa");
         let incoming = w.paths.work.join(INCOMING);
         std::fs::write(&incoming, &forged).unwrap();
-        let mut s = surface(Values { partner_package: Some(sha256(&forged)), ..Default::default() }, &[]);
+        let mut s = surface(
+            Values {
+                partner_package: Some(sha256(&forged)),
+                ..Default::default()
+            },
+            &[],
+        );
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "GB-191");
         assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), old);
-        assert!(!incoming.exists(), "set aside, so the next run does not ask again");
+        assert!(
+            !incoming.exists(),
+            "set aside, so the next run does not ask again"
+        );
         assert!(previous_copies(&w).is_empty());
     }
 
@@ -1165,11 +1453,23 @@ mod tests {
         let old = std::fs::read(&w.paths.counterparty).unwrap();
         let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
         std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
-        let mut s = surface(Values { partner_package: Some(sha256(&new)), ..Default::default() }, &[]);
+        let mut s = surface(
+            Values {
+                partner_package: Some(sha256(&new)),
+                ..Default::default()
+            },
+            &[],
+        );
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
         // The older package, still signed by the same key, offered again.
         std::fs::write(w.paths.work.join(INCOMING), &old).unwrap();
-        let mut s = surface(Values { partner_key: Some(w.their_key.clone()), ..Default::default() }, &[]);
+        let mut s = surface(
+            Values {
+                partner_key: Some(w.their_key.clone()),
+                ..Default::default()
+            },
+            &[],
+        );
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "GB-192");
         assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), new);
     }
@@ -1179,11 +1479,23 @@ mod tests {
         let (w, mut st) = bound();
         let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
         std::fs::write(&w.paths.counterparty, &new).unwrap();
-        let mut s = surface(Values { partner_key: Some(w.their_key.clone()), ..Default::default() }, &[]);
+        let mut s = surface(
+            Values {
+                partner_key: Some(w.their_key.clone()),
+                ..Default::default()
+            },
+            &[],
+        );
         let step = incoming_step(&w, &mut s, &mut st);
         assert_eq!(code(&step), "GB-192");
         assert!(step.rows.iter().any(|r| r.detail.contains(&sha256(&new))));
-        let mut s = surface(Values { partner_package: Some(sha256(&new)), ..Default::default() }, &[]);
+        let mut s = surface(
+            Values {
+                partner_package: Some(sha256(&new)),
+                ..Default::default()
+            },
+            &[],
+        );
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
         assert!(st.confirmed("partner-package", 5, &sha256(&new)).is_some());
         assert!(incoming_step_opt(&w, &mut s, &mut st).is_none());
@@ -1193,8 +1505,18 @@ mod tests {
     fn before_their_key_is_bound_nothing_is_a_new_package() {
         let w = world();
         let mut st = State::new("xab");
-        std::fs::write(w.paths.work.join(INCOMING), package("xab", &w.their_fp, Some(ROTATED), "xab")).unwrap();
-        let mut s = surface(Values { ask: true, ..Default::default() }, &["yes"]);
+        std::fs::write(
+            w.paths.work.join(INCOMING),
+            package("xab", &w.their_fp, Some(ROTATED), "xab"),
+        )
+        .unwrap();
+        let mut s = surface(
+            Values {
+                ask: true,
+                ..Default::default()
+            },
+            &["yes"],
+        );
         assert!(incoming_step_opt(&w, &mut s, &mut st).is_none());
     }
 
