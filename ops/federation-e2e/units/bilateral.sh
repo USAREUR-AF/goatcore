@@ -31,7 +31,7 @@ ba_own_launcher() {
   cp "$WORK/$s/keys/forged.pem" "$pl/forged-cert.pem"; cp "$WORK/$s/keys/forged-key.pem" "$pl/forged-key.pem"
   cp "$WORK/$s/keys/impersonate-$them.pem" "$pl/impersonate-cert.pem"
   cp "$WORK/$s/keys/impersonate-$them-key.pem" "$pl/impersonate-key.pem"
-  cp "$WORK/$them/keys/ca.pem" "$pl/far-ca.pem"; chmod 0644 "$pl"/*
+  cp "$WORK/$them/keys/ca.pem" "$pl/far-ca.pem"; chmod 0644 "$pl"/*-cert.pem "$pl/far-ca.pem"; chmod 0600 "$pl"/*-key.pem
   docker cp -q "$h:/var/lib/goat-federation/$them/agreement.json" "$pl/agreement.json"
   # The partner's edge's link address: the probe dials it across the link.
   far="$(python3 -c 'import json,sys,ipaddress as i; ag=json.load(open(sys.argv[1])); h=list(i.ip_network(ag["transport"]["link_subnet"])); ps=[p["sovereign_id"] for p in ag["parties"]]; print(h[ps.index(sys.argv[2])])' "$pl/agreement.json" "$them")"
