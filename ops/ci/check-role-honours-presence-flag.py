@@ -38,6 +38,7 @@ except ImportError:
     sys.exit("X-PY-001: check-role-honours-presence-flag.py needs PyYAML (pip install pyyaml)")
 
 REPO = Path(__file__).resolve().parents[2]
+ALLOWLIST = "ops/ci/presence-flag-allowlist.txt"
 SHAPE = ("- ansible.builtin.import_tasks: deploy.yml\n"
          "  when: {var} | default({default}) | bool")
 
@@ -189,6 +190,28 @@ def self_test():
         with contextlib.redirect_stdout(buf):
             rc = check(r)
         assert rc == 1 and "orphan: no role, play" in buf.getvalue(), buf.getvalue()
+        # The shrink-only allowlist: a listed row that fails is reported as known, with the
+        # reason; a listed row that no longer fails, or is gone, is a stale line and refused.
+        (r / ALLOWLIST).parent.mkdir(parents=True, exist_ok=True)
+        (r / ALLOWLIST).write_text("# deploying code not found; owner unknown\norphan\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check(r)
+        out = buf.getvalue()
+        assert rc == 0 and "KNOWN orphan: deploying code not found; owner unknown" in out, out
+        (r / "ops/ansible/roles/orphan/tasks").mkdir(parents=True)
+        (r / "ops/ansible/roles/orphan/tasks/main.yml").write_text(
+            "- ansible.builtin.import_tasks: deploy.yml\n  when: orphan_enabled | default(true) | bool\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check(r)
+        out = buf.getvalue()
+        assert rc == 1 and "orphan: listed in" in out and "stale" in out, out
+        (r / ALLOWLIST).write_text("# gone\nnot-in-the-catalog\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check(r)
+        assert rc == 1 and "not-in-the-catalog: listed in" in buf.getvalue(), buf.getvalue()
     print("self-test ok: an unread flag is refused; when:, assert that: and an import guard pass; "
           "a row deployed from a sibling repository is skipped only while its code is absent")
     return 0
