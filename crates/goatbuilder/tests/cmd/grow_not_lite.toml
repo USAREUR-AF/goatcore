@@ -1,0 +1,9 @@
+# grow refuses a file that is not a goatlite (GB-304).
+bin.name = "goatbuilder"
+args = ["grow", "-C", "tests/fixtures/grow/not-lite", "--dry-run"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: grow takes a goatlite config: this one does not declare preset: lite
+  (GB-304 — goatbuilder explain GB-304)
+"""

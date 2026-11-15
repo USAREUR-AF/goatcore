@@ -476,7 +476,7 @@ entries:
   - code: GB-008
     tool: goatbuilder
     title: a mutation needs --yes when there is no terminal
-    what: deploy, release, rollback, fastlane, standup, teardown, join-node, federate and apply change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10).
+    what: deploy, release, rollback, fastlane, standup, teardown, join-node, federate, apply and grow change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10). grow asks only when stdin and stderr are both a terminal, so with stderr sent to a file it needs --yes too.
     causes:
       - run from a script, CI or a pipe
     fixes:
@@ -3602,6 +3602,52 @@ entries:
     exit: 1
     matches:
       - "^GB-297: "
+
+  - code: GB-304
+    tool: goatbuilder
+    title: grow was given a file that is not a goatlite
+    what: "goatbuilder grow hands a goatlite over to the full preset, so it reads goatlite.yaml at the checkout root and needs it to declare preset: lite with a lite: block (ADR 1213). This file declares another preset, or has no lite: block, so there is nothing to grow. A checkout already on the full preset needs no grow. grow changes files in the checkout only, never a host: a finished grow is undone with git before it is committed (restore goatlite.yaml and the files whose generated header it took off, and delete ops/goatbuilder/goatbuilder.yaml), and goatbuilder grow --dry-run shows every write first."
+    causes:
+      - "goatlite.yaml declares preset: full, or no preset"
+      - "the lite: block is missing or is not a mapping"
+    fixes:
+      - "goatbuilder validate goatlite.yaml   (it says what the file declares)"
+      - "a full configuration is ops/goatbuilder/goatbuilder.yaml: goatbuilder validate"
+    read: docs/design/goatlite-growth.md
+    exit: 2
+    matches:
+      - "^grow takes a goatlite config: "
+
+  - code: GB-305
+    tool: goatbuilder
+    title: grow would replace a configuration that already exists
+    what: "goatbuilder grow writes the full configuration to ops/goatbuilder/goatbuilder.yaml. That file already exists and holds another configuration (not the one this goatlite grows into, which a run that stopped part way would have left), so grow refused before changing anything: it never replaces a configuration someone wrote. When the file carries grow's own header, the message says it is grow's file from an earlier run, since edited (or goatlite.yaml changed). grow changes files in the checkout only, never a host: a finished grow is undone with git before it is committed (restore goatlite.yaml and the files whose generated header it took off, and delete ops/goatbuilder/goatbuilder.yaml), and goatbuilder grow --dry-run shows every write first."
+    causes:
+      - "the checkout already declares a full configuration of its own"
+      - "the file was edited after an earlier grow wrote it, and goatlite.yaml is still there"
+    fixes:
+      - "move ops/goatbuilder/goatbuilder.yaml aside, then goatbuilder grow --dry-run"
+      - "or merge what it declares into goatlite.yaml, then grow again"
+      - "grow's own file from an earlier run, edited: merge the edits into goatlite.yaml and delete ops/goatbuilder/goatbuilder.yaml, or delete it to grow afresh"
+    read: docs/design/goatlite-growth.md
+    exit: 1
+    matches:
+      - "^ops/goatbuilder/goatbuilder.yaml already exists and holds another configuration"
+      - "^ops/goatbuilder/goatbuilder.yaml is grow's own file from an earlier run"
+
+  - code: GB-306
+    tool: goatbuilder
+    title: the full configuration grown from a goatlite is incomplete
+    what: "goatbuilder grow rewrote goatlite.yaml as a full configuration, and the result fails the schema or a cross-field rule, so it was not written. Most often the goatlite is the four-fact file of the tutorial: the lite preset took repo and components from the checkout, and a full configuration declares its own. The message lists each problem and names the fields to add. grow changes files in the checkout only, never a host: a finished grow is undone with git before it is committed (restore goatlite.yaml and the files whose generated header it took off, and delete ops/goatbuilder/goatbuilder.yaml), and goatbuilder grow --dry-run shows every write first."
+    causes:
+      - "goatlite.yaml declares no repo or components, and the checkout has no configuration to take them from"
+      - "a value in goatlite.yaml is valid for the lite preset but not in the full shape (the message names it)"
+    fixes:
+      - "add repo: and components: to goatlite.yaml (the fixture ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite shows both), then goatbuilder grow --dry-run"
+    read: docs/design/goatlite-growth.md
+    exit: 1
+    matches:
+      - "^the full configuration grown from this goatlite is incomplete"
 
   - code: GB-307
     tool: goatbuilder
