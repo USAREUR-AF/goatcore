@@ -30,6 +30,11 @@ class Places(unittest.TestCase):
         self.assertEqual(got, [("standup.rs", "let status = child.wait()?;")])
         self.assertEqual(gate.key(got[0]), "standup.rs :: let status = child.wait()?;")
 
+    def test_an_into_of_a_foreign_error_is_a_place_too(self):
+        got = gate.places([message("goatbuilder/src/docs.rs", "return Err(e.into());",
+                                   msg="the trait bound `E: std::convert::From<std::io::Error>` is not satisfied")], "goatbuilder/src/")
+        self.assertEqual(got, [("docs.rs", "return Err(e.into());")])
+
     def test_other_type_errors_of_the_copy_are_not_places(self):
         lines = [message("goatbuilder/src/standup.rs", "Err(anyhow!(\"x\"))", msg="mismatched types"),
                  json.dumps({"reason": "compiler-artifact"}), "not json"]
@@ -67,7 +72,10 @@ class Transform(unittest.TestCase):
             src = Path(d)
             (src / "main.rs").write_text("//! the crate\nmod alpha;\nfn main() {}\n")
             (src / "alpha.rs").write_text("use anyhow::Result;\npub fn f() -> anyhow::Result<()> { Ok(()) }\n")
+            (src / "beta.rs").write_text("use anyhow::{anyhow, Context, Result};\nuse anyhow::{Context};\n")
             gate.transform(src)
+            beta = (src / "beta.rs").read_text()
+            self.assertEqual(beta, "use anyhow::{anyhow, Context}; use crate::scanerr::Result;\nuse anyhow::{Context};\n")
             self.assertIn("mod scanerr;\nmod alpha;", (src / "main.rs").read_text())
             alpha = (src / "alpha.rs").read_text()
             self.assertNotIn("anyhow::Result", alpha)

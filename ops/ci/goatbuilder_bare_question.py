@@ -12,8 +12,9 @@ This finds those places with the compiler, so a `?` whose expression spans
 several lines is found too. In a copy of the tree, goatbuilder's `anyhow::Result`
 is replaced by an error type that converts only from `anyhow::Error` and
 `goat_errors::Coded`. `cargo check` of that copy then fails at every `?` that
-passes up any other error, with "`?` couldn't convert the error". The copy has
-many other type errors; only those are read. A canary (a bare `?` the copy
+passes up any other error, with "`?` couldn't convert the error", and at every
+`.into()` of such an error into the function's error, as an unsatisfied `From`
+bound. The copy has many other type errors; only those are read. A canary (a bare `?` the copy
 adds) proves the compiler reached them. The tree itself is never changed.
 
 Each place is keyed by its file and the trimmed text of its line, so an edit
@@ -62,7 +63,21 @@ fn canary() -> Result<()> {{
 }}
 """
 
-USE_RESULT = re.compile(r"use anyhow::\{?Result\}?;")
+USE_LIST = re.compile(r"use anyhow::\{([^}]*)\};")
+# A `?` that cannot convert the error, and an `.into()` (or `From::from`) of a
+# foreign error into the function's error, which the compiler names as an
+# unsatisfied `From` bound on the scan's type.
+PASSES_UP = re.compile(r"`\?` couldn't convert the error|the trait bound `E: (std::convert::)?From<")
+
+
+def use_without_result(m):
+    """`use anyhow::{Context, Result};` as `use anyhow::{Context}; use crate::scanerr::Result;`, on one line."""
+    items = [i.strip() for i in m.group(1).split(",") if i.strip()]
+    if "Result" not in items:
+        return m.group(0)
+    rest = [i for i in items if i != "Result"]
+    head = f"use anyhow::{{{', '.join(rest)}}}; " if rest else ""
+    return f"{head}use crate::{SCAN_MODULE}::Result;"
 
 
 def transform(src: Path) -> None:
@@ -78,7 +93,7 @@ def transform(src: Path) -> None:
         if p.name == f"{SCAN_MODULE}.rs":
             continue
         t = p.read_text()
-        n = USE_RESULT.sub(f"use crate::{SCAN_MODULE}::Result;", t).replace("anyhow::Result", f"crate::{SCAN_MODULE}::Result")
+        n = USE_LIST.sub(use_without_result, t).replace("anyhow::Result", f"crate::{SCAN_MODULE}::Result")
         if n != t:
             p.write_text(n)
 
@@ -94,7 +109,7 @@ def places(messages, crate_src_prefix):
         if m.get("reason") != "compiler-message":
             continue
         d = m.get("message") or {}
-        if d.get("level") != "error" or "couldn't convert the error" not in d.get("message", ""):
+        if d.get("level") != "error" or not PASSES_UP.search(d.get("message", "")):
             continue
         spans = [s for s in d.get("spans", []) if s.get("is_primary")]
         if not spans:
