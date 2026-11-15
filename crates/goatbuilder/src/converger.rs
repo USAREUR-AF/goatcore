@@ -48,19 +48,85 @@ pub fn pull_agent_places(env: &crate::config::Environment) -> Vec<String> {
     places
 }
 
-/// Refuses (PULL_NOT_BUILT) when the repository's `goatbuilder.yaml` declares
-/// `converger: pull-agent` anywhere in the environment `env`. A checkout with no
-/// readable config, or no such environment, is not refused here.
-pub fn refuse_pull_agent(repo: &Path, env: &str) -> Result<()> {
-    let path = repo.join("ops/goatbuilder/goatbuilder.yaml");
-    let Ok(cfg) = crate::config::load(&path) else { return Ok(()) };
-    let wanted = env.replace('_', "-");
-    let Some(e) = cfg.environments.iter().find(|e| e.name == env || e.name.replace('_', "-") == wanted) else { return Ok(()) };
-    let places = pull_agent_places(e);
-    if places.is_empty() {
-        return Ok(());
+/// How the real-host verbs reach an environment's machines: `deploy`, `release`,
+/// `rollback` and `doctor` take their converger from [`for_environment`] (or
+/// [`for_config`]) and never decide push or pull themselves, so the pull
+/// converger, when it is built, is a new implementation here and not a change to
+/// the verbs (docs/design/goatbuilder-pull-converger-options.md, option A).
+/// `push-ansible` is the one implementation; `pull-agent` refuses (GB-307). The
+/// [`Converger`] trait below is the conformance suite's interface, which the
+/// scripted fixture implements; this one is what the real-host verbs call.
+pub trait HostConverger {
+    /// Ok when a verb may converge this environment's machines; else the refusal.
+    fn admit(&self) -> Result<()>;
+    /// `deploy` on real hosts.
+    fn deploy(&self, repo: &Path, o: &crate::push::Options) -> Result<crate::Report>;
+}
+
+/// The push converger: Ansible plays run from the operator's machine.
+pub struct PushAnsible;
+
+impl HostConverger for PushAnsible {
+    fn admit(&self) -> Result<()> {
+        Ok(())
     }
-    Err(goat_errors::coded(PULL_NOT_BUILT, pull_agent_refusal(&e.name, &places)).into())
+    fn deploy(&self, repo: &Path, o: &crate::push::Options) -> Result<crate::Report> {
+        crate::push::deploy_by_push(repo, o)
+    }
+}
+
+/// The pull converger, which is not built: an environment declaring it anywhere
+/// is refused (PULL_NOT_BUILT), and the push converger never stands in for it.
+pub struct PullAgent {
+    env: String,
+    places: Vec<String>,
+}
+
+impl HostConverger for PullAgent {
+    fn admit(&self) -> Result<()> {
+        Err(goat_errors::coded(PULL_NOT_BUILT, pull_agent_refusal(&self.env, &self.places)).into())
+    }
+    fn deploy(&self, repo: &Path, o: &crate::push::Options) -> Result<crate::Report> {
+        // A verify-only deploy reads each host's ledger and converges nothing, so
+        // it is not refused (as before the trait).
+        if o.verify_only {
+            return crate::push::deploy_by_push(repo, o);
+        }
+        self.admit()?;
+        unreachable!("admit refuses the pull converger")
+    }
+}
+
+/// The converger an environment declares, as `doctor` reads it from a parsed
+/// config: the pull converger when any machine resolves to `pull-agent`.
+pub fn for_config(env: &crate::config::Environment) -> Box<dyn HostConverger> {
+    let places = pull_agent_places(env);
+    if places.is_empty() {
+        Box::new(PushAnsible)
+    } else {
+        Box::new(PullAgent { env: env.name.clone(), places })
+    }
+}
+
+/// The converger the repository's `goatbuilder.yaml` declares for `env`. A
+/// checkout with no readable config, or no such environment, is pushed to as it
+/// always was.
+pub fn for_environment(repo: &Path, env: &str) -> Box<dyn HostConverger> {
+    let path = repo.join("ops/goatbuilder/goatbuilder.yaml");
+    let Ok(cfg) = crate::config::load(&path) else { return Box::new(PushAnsible) };
+    let wanted = env.replace('_', "-");
+    match cfg.environments.iter().find(|e| e.name == env || e.name.replace('_', "-") == wanted) {
+        Some(e) => for_config(e),
+        None => Box::new(PushAnsible),
+    }
+}
+
+/// Refuses (PULL_NOT_BUILT) when the repository's `goatbuilder.yaml` declares
+/// `converger: pull-agent` anywhere in the environment `env`: the converger's
+/// [`HostConverger::admit`]. A checkout with no readable config, or no such
+/// environment, is not refused here.
+pub fn refuse_pull_agent(repo: &Path, env: &str) -> Result<()> {
+    for_environment(repo, env).admit()
 }
 
 /// The refusal's words, shared by `doctor` and the real-host verbs.
@@ -483,12 +549,9 @@ mod tests {
     #[test]
     fn the_host_converger_follows_the_declaration_and_pull_refuses() {
         let push = repo_with("push-ansible");
-        let c = for_environment(push.path(), "dev");
-        assert_eq!(c.kind(), "push-ansible");
-        assert!(c.admit().is_ok());
+        assert!(for_environment(push.path(), "dev").admit().is_ok());
         let pull = repo_with("pull-agent");
         let c = for_environment(pull.path(), "dev");
-        assert_eq!(c.kind(), "pull-agent");
         let e = c.admit().unwrap_err();
         let coded = e.downcast_ref::<goat_errors::Coded>().expect("a coded refusal");
         assert_eq!(coded.code, PULL_NOT_BUILT);
@@ -499,14 +562,12 @@ mod tests {
             let e = c.deploy(pull.path(), &o).unwrap_err();
             assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some(PULL_NOT_BUILT), "{e:#}");
         }
-        assert_eq!(for_environment(pull.path(), "other").kind(), "push-ansible");
+        assert!(for_environment(pull.path(), "other").admit().is_ok());
         let none = tempfile::tempdir().unwrap();
-        assert_eq!(for_environment(none.path(), "dev").kind(), "push-ansible");
+        assert!(for_environment(none.path(), "dev").admit().is_ok());
         // The same choice from a parsed environment, as doctor makes it.
         let env = env_of(serde_json::json!({"name": "dev", "converger": "push-ansible", "sites": [{"name": "bravo", "classes": {"core": {}, "pod": {"converger": "pull-agent"}}}]}));
-        let c = for_config(&env);
-        assert_eq!(c.kind(), "pull-agent");
-        let e = c.admit().unwrap_err();
+        let e = for_config(&env).admit().unwrap_err();
         assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.message.clone()), Some(pull_agent_refusal("dev", &["site bravo class pod".to_string()])));
     }
 

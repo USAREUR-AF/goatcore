@@ -461,7 +461,7 @@ fn image_repo(r: &str) -> String {
 /// group-based relay ledgers, rolled per-goatnet by their own inventory) are not
 /// goatnets here; the set is sorted and deduplicated.
 /// With no `--site`, every goatnet the rollback would flip, each refused when
-/// it declares the pull converger (`converger::refuse_pull_agent`).
+/// it declares the pull converger (`converger::refuse_pull_agent`, the converger's admit).
 fn refuse_pull_agent_goatnets(repo: &Path, site: Option<&str>, hosts: &[HostMap]) -> Result<()> {
     if site.is_none() {
         for net in goatnets_of(hosts) {

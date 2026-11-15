@@ -494,13 +494,14 @@ fn reach_check(repo: &Path, env: &config::Environment) -> Check {
 /// anywhere (crate::converger::PULL_NOT_BUILT): the pull converger is not
 /// built, and every real-host verb would push to it. None when nothing does.
 fn pull_agent_check(env: &config::Environment) -> Option<Check> {
-    let places = crate::converger::pull_agent_places(env);
-    if places.is_empty() {
-        return None;
-    }
+    let e = crate::converger::for_config(env).admit().err()?;
+    let (code, why) = match e.downcast_ref::<goat_errors::Coded>() {
+        Some(c) => (c.code.clone(), c.message.clone()),
+        None => (crate::converger::PULL_NOT_BUILT.to_string(), format!("{e:#}")),
+    };
     Some(refused(
         &format!("env:{}:converger", env.name),
-        format!("{} {}", crate::converger::PULL_NOT_BUILT, crate::converger::pull_agent_refusal(&env.name, &places)),
+        format!("{code} {why}"),
         "declare converger: push-ansible for these machines in ops/goatbuilder/goatbuilder.yaml until the pull converger is built (docs/design/goatbuilder-pull-converger-options.md)",
     ))
 }

@@ -481,15 +481,19 @@ fn split_expected(inv: &serde_json::Value, group: &str, write_role: &str) -> (Ve
     })
 }
 
-/// `deploy` on real hosts. Exit 0 when every host's ledger names the declared
-/// digest with `action: deploy`; 3 otherwise; 1 when refused before any host.
+/// `deploy` on real hosts, through the converger the environment declares
+/// (`converger::for_environment`). Exit 0 when every host's ledger names the
+/// declared digest with `action: deploy`; 3 otherwise; 1 when refused before any
+/// host. An environment declared to pull is refused before any step: the pull
+/// converger is not built, and pushing would change what the declaration means
+/// once it is.
 pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
-    // This converger is push. An environment declared to pull is refused before
-    // any step: the pull converger is not built, and pushing would change what
-    // the declaration means once it is.
-    if !o.verify_only {
-        crate::converger::refuse_pull_agent(repo, o.goatnet)?;
-    }
+    crate::converger::for_environment(repo, o.goatnet).deploy(repo, o)
+}
+
+/// The push converger's `deploy` (`converger::PushAnsible`); a verb reaches it
+/// only through `converger::HostConverger::deploy`.
+pub(crate) fn deploy_by_push(repo: &Path, o: &Options) -> Result<Report> {
     let mut checks = Vec::new();
     let name = o.goatnet.replace('_', "-");
     // The runner frames and records each step's commands under it

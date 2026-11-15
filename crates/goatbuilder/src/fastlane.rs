@@ -369,7 +369,7 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
         step(checks, "deploying to every goatnet the component belongs on");
         let mut failed = Vec::new();
         for g in &goatnets {
-            match push::deploy(repo, &push::Options { component: o.component, goatnet: g, only_group: None, dry_run: false, verify_only: false, ack: o.ack }) {
+            match crate::converger::for_environment(repo, g).deploy(repo, &push::Options { component: o.component, goatnet: g, only_group: None, dry_run: false, verify_only: false, ack: o.ack }) {
                 Ok(r) => {
                     let ok = r.ok;
                     checks.extend(r.checks);

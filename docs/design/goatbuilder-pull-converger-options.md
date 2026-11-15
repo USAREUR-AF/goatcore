@@ -48,7 +48,12 @@ passed `doctor` without a reach check and was then deployed by push. **Built sin
 `deploy`, `release`'s deploy rungs, `fastlane`'s deploy and `rollback` refuse such an environment
 with GB-307, naming that the pull converger is not built (`crates/goatbuilder/src/converger.rs`,
 `refuse_pull_agent`). That is the refusal option A asks for below; it holds under either option
-until a pull converger exists.
+until a pull converger exists. **Built since, too:** those verbs reach real hosts through a trait,
+`HostConverger` in `crates/goatbuilder/src/converger.rs`. They take the converger the environment
+declares from `converger::for_environment` (or `for_config`, for `doctor`). `push-ansible` is the one
+implementation, and the push code is its `deploy` (`push::deploy_by_push`). `pull-agent` gets the pull
+converger, whose `admit` and `deploy` are the GB-307 refusal with the same words; a `--verify-only`
+deploy, which converges nothing, is not refused, as before.
 
 **There is no pull converger.** Nothing in this repository is an on-host agent that fetches a
 declaration and applies it, and nothing publishes the signed per-environment index that agent
@@ -102,7 +107,7 @@ class to pull by changing `converger:` on that class, with no change to the verb
   later become "it works" without breaking anything a 1.0 file did.
 - `deploy`, `release`, `rollback` and `status` on real hosts must reach machines only through the
   converger interface, so that the later converger is an implementation and not a change to the
-  verbs. Today the push converger is called directly and is not behind the trait.
+  verbs. Built: the real-host verbs take `HostConverger` from the environment's declaration (above).
 - The JSON documents of these verbs must already carry the states pull produces, *pending* and
   *unknown* per machine, as fields that 1.0 defines. Within one document version, a field is
   added and never retyped, so a field pull would need cannot first appear after 1.0 with a

@@ -1519,7 +1519,7 @@ fn main() {
                     if !cli.yes && !*dry_run && !*verify_only && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                         Err(goat_errors::coded("GB-008", "deploy is a mutation: pass --yes without a terminal (C10)").into())
                     } else {
-                        push::deploy(&repo, &push::Options { component: c, goatnet: env, only_group: group.as_deref(), dry_run: *dry_run, verify_only: *verify_only, ack })
+                        converger::for_environment(&repo, env).deploy(&repo, &push::Options { component: c, goatnet: env, only_group: group.as_deref(), dry_run: *dry_run, verify_only: *verify_only, ack })
                     }
                 }
             },
