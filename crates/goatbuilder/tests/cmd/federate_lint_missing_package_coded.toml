@@ -1,10 +1,11 @@
 # A federation verb's file error, raised by the shared library with no code,
-# carries GB-254 at goatbuilder's boundary, and still exits 1, as in goat (gate row C5).
+# carries GB-338 at goatbuilder's boundary (its message names the file), and
+# still exits 1, as in goat (gate row C5).
 bin.name = "goatbuilder"
 args = ["federate", "lint", "/nonexistent/package.json"]
 status.code = 1
 stdout = ""
 stderr = """
 goatbuilder: /nonexistent/package.json: No such file or directory (os error 2)
-  (GB-254 — goatbuilder explain GB-254)
+  (GB-338 — goatbuilder explain GB-338)
 """

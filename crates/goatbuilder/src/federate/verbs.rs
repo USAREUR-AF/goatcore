@@ -230,25 +230,17 @@ pub fn exit_of(cmd: FederateCmd, site: &SiteArgs, measure: &MeasureArgs, repo: O
     }
 }
 
-/// The code of a fault the shared library raised without one: GB-254 for an
-/// operating-system file error whose message names the file, else GB-338
-/// ("a federation verb faulted"; the message names what). The library has no
-/// codes of its own, and `goat federate` maps its faults for itself.
-pub fn floor_code(e: &anyhow::Error) -> &'static str {
-    let text = format!("{e:#}");
-    let os = e.chain().any(|c| c.downcast_ref::<std::io::Error>().is_some()) || text.contains("(os error ");
-    let names_a_file = text.split_whitespace().any(|w| w.contains('/'));
-    if os && names_a_file {
-        "GB-254"
-    } else {
-        "GB-338"
-    }
-}
+/// The code of a fault the shared library raised without one: a federation
+/// verb faulted, the message naming what (a file, a flag, a party). It exits
+/// 1, as the fault did before and as it does in goat. The library has no codes
+/// of its own, and `goat federate` maps its faults for itself.
+pub const LIBRARY_FAULT: &str = "GB-338";
 
 /// Print a verb's fault as goatbuilder's refusal line and return its exit
 /// code: a coded refusal (GB-100) exits with its catalog code. A fault the
-/// library raised with no code prints [`floor_code`]'s code the same way and
-/// exits 1, as it does in goat, so the two binaries still exit alike.
+/// library raised with no code prints [`LIBRARY_FAULT`] the same way and
+/// exits 1, its catalog exit, as it does in goat, so the two binaries still
+/// exit alike.
 pub fn fault_exit(e: &anyhow::Error) -> i32 {
     eprintln!("goatbuilder: {e:#}");
     if e.downcast_ref::<clap::Error>().is_some() {
@@ -262,8 +254,7 @@ pub fn fault_exit(e: &anyhow::Error) -> i32 {
                 .unwrap_or(2)
         }
         None => {
-            let code = floor_code(e);
-            eprintln!("  ({code} — goatbuilder explain {code})");
+            eprintln!("  ({LIBRARY_FAULT} — goatbuilder explain {LIBRARY_FAULT})");
             1
         }
     }
@@ -304,22 +295,20 @@ pub fn run_argv_to(argv: &[String], out: &mut dyn Write) -> Result<i32> {
 #[cfg(test)]
 mod tests {
 
-    /// Gate row C5: a fault the shared library raises with no code takes one at
-    /// goatbuilder's boundary: GB-254 for an operating-system file error that
-    /// names its path, else GB-338. A coded fault keeps its own.
+    /// Gate row C5: every fault the shared library raises with no code, a file
+    /// error included (its message names the file), takes GB-338 at
+    /// goatbuilder's boundary, and the code's catalog exit is the exit, 1.
     #[test]
-    fn an_uncoded_library_fault_takes_gb_254_or_gb_338() {
-        let file = anyhow::anyhow!("/nonexistent/package.json: No such file or directory (os error 2)");
-        assert_eq!(floor_code(&file), "GB-254");
-        let io = anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::NotFound, "no such file"))
-            .context("/var/lib/goat-federation/zagros/agreement.json");
-        assert_eq!(floor_code(&io), "GB-254");
-        // A report that could not be written names no file: not GB-254.
-        let pipe = anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "Broken pipe (os error 32)"));
-        assert_eq!(floor_code(&pipe), "GB-338");
-        assert_eq!(floor_code(&anyhow::anyhow!("--now `x` is not a YYYY-MM-DD date")), "GB-338");
-        let e = goat_errors::explain("GB-338").expect("GB-338 is in the catalog");
+    fn an_uncoded_library_fault_takes_gb_338_and_exits_1() {
+        let e = goat_errors::explain(LIBRARY_FAULT).expect("GB-338 is in the catalog");
         assert_eq!(e.exit, Some(1));
+        for fault in [
+            anyhow::anyhow!("/nonexistent/package.json: No such file or directory (os error 2)"),
+            anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "Broken pipe (os error 32)")),
+            anyhow::anyhow!("--now `x` is not a YYYY-MM-DD date"),
+        ] {
+            assert_eq!(fault_exit(&fault), 1, "{fault:#}");
+        }
     }
     use super::*;
     use anyhow::anyhow;
