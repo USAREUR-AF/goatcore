@@ -61,13 +61,16 @@ groups:
       # (monitoring/postgres-exporter-queries.yml). Until this rule named
       # that series it divided by one no exporter emits, scalar() of
       # nothing is NaN, and the alert never fired. An unlimited cap is the
-      # sentinel 2^63-1, so the ratio stays near 0. scalar() needs exactly
-      # one cap series: this Prometheus scrapes one postgres-exporter.
-      # tests/spock-slot-wal-near-limit.test.yml holds it.
+      # sentinel 2^63-1, so the ratio stays near 0. Each slot is divided by
+      # the cap of its own Postgres, matched on `instance`, so a Prometheus
+      # that scrapes more than one cap series (a pair's postgres-a and
+      # postgres-b, or a hub federating several sites) compares each slot
+      # with the right one; scalar() of two series is NaN and would silence
+      # the alert again. tests/spock-slot-wal-near-limit.test.yml holds it.
       - alert: SpockSlotWALNearLimit
         expr: |
           pg_replication_slot_retained_wal_bytes
-            / scalar(spock_config_max_slot_wal_keep_size_bytes) > 0.8
+            / on(instance) group_left() spock_config_max_slot_wal_keep_size_bytes > 0.8
         for: 5m
         labels:
           severity: critical

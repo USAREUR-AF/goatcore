@@ -45,7 +45,7 @@ Three classes — keep them disjoint, name them so operators know what changed:
 |---|---|---|---|
 | `SpockSubscriptionLag` | warning | `spock_subscription_lag_seconds > 60` for 2m | shipped |
 | `SpockSlotInvalidated` | critical | `pg_replication_slot_wal_status_lost == 1` for 1m | shipped |
-| `SpockSlotWALNearLimit` | critical | `pg_replication_slot_retained_wal_bytes` > 80% of `spock_config_max_slot_wal_keep_size_bytes` (the live cap) for 5m (was divided by `spock_max_slot_wal_keep_size_bytes`, a series the exporter never emitted, so it never fired) | shipped, fixed; measured by its promtool unit test (`monitoring/tests/spock-slot-wal-near-limit.test.yml`) |
+| `SpockSlotWALNearLimit` | critical | `pg_replication_slot_retained_wal_bytes` > 80% of its own Postgres's `spock_config_max_slot_wal_keep_size_bytes` (the live cap, matched on `instance`) for 5m (was divided by `spock_max_slot_wal_keep_size_bytes`, a series the exporter never emitted, so it never fired) | shipped, fixed; measured by its promtool unit test (`monitoring/tests/spock-slot-wal-near-limit.test.yml`) |
 | `SpockConflictLogged` | warning | `increase(spock_resolutions_total[5m]) > 0` (was `spock_conflict_log_total`, a metric that never existed: F-574) | shipped, fixed by ADR 1193 |
 | `SpockApplyExceptionLogged` | warning | `increase(spock_exceptions_total[5m]) > 0` | ADR 1193 |
 | **`SpockSubscriptionNotReplicating`** | **critical** | `spock_subscription_replicating == 0` for 2m | **52A new** |
