@@ -7,7 +7,7 @@
 | Companions | [`peering-forwarder.md`](peering-forwarder.md), [`goatbuilder.md`](goatbuilder.md) §"Founders, joiners, host-site nodes and sovereign peering", `roles/goat-peering-wg`, `roles/goat-peering-edge` |
 | Audience | Operators of a peering, and whoever accredits the edge and core hosts |
 
-Status: WIP — gate: the port-scan scenario (§8) passes with the baseline on, and with one tightening override, from the partner side and the mesh side on two environments, and the three-party case still passes with it on.
+Not measured: the port-scan scenario (§8) with the baseline on, and with one tightening override, from the partner side and the mesh side on two environments, and the three-party case with it on. The federation test environment's scenarios `node-firewall-profile` and `node-firewall-three-party` (unit `ops/federation-e2e/units/nodesec.sh`) are built, and no run of them is recorded.
 
 ## 1. What it is
 
