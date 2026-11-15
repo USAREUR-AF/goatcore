@@ -344,17 +344,29 @@ mod tests {
     }
 
     #[test]
-    fn the_pacing_interval_is_one_over_hz_and_a_tenth() {
-        assert_eq!(pacing_interval(100), std::time::Duration::from_millis(11));
+    fn the_pacing_interval_is_one_over_hz_plus_a_tenth_or_three_milliseconds() {
+        // The allowance for jitter on the way is a tenth of 1/hz, but never less than
+        // 3 ms: a measured burst at 100 Hz crossed with one gap of exactly 1/hz after
+        // a sample about 2 ms late (ADR 1244), so a tenth alone is too thin there.
+        let ms = std::time::Duration::from_millis;
+        assert_eq!(pacing_interval(100), ms(13), "3 ms wins at 100 Hz");
+        assert_eq!(pacing_interval(1000), ms(4), "3 ms wins at 1000 Hz");
+        assert_eq!(pacing_interval(10), ms(110), "the tenth wins at 10 Hz");
         assert_eq!(
             pacing_interval(3),
-            std::time::Duration::from_nanos(366_666_667)
+            std::time::Duration::from_nanos(366_666_667),
+            "the tenth wins at 3 Hz"
         );
         assert_eq!(pacing_interval(0), std::time::Duration::ZERO);
-        for hz in [1_u64, 7, 50, 100, 1000] {
+        for hz in [1_u64, 7, 33, 34, 50, 100, 1000, 10_000] {
+            let base = std::time::Duration::from_secs(1) / hz as u32;
             assert!(
-                pacing_interval(hz) >= std::time::Duration::from_secs(1) / hz as u32,
-                "never closer than the receiver's own interval at {hz} Hz"
+                pacing_interval(hz) >= base + ms(3),
+                "at least 1/hz + 3 ms at {hz} Hz"
+            );
+            assert!(
+                pacing_interval(hz) >= base + base / 10,
+                "at least 1.1/hz at {hz} Hz"
             );
         }
     }
