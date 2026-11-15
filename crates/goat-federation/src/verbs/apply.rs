@@ -192,3 +192,60 @@ fn finish_apply(
         print_outcomes(out, &outcomes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vectors() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors")
+    }
+
+    fn vectors_now() -> String {
+        std::fs::read_to_string(vectors().join("now.txt"))
+            .expect("now.txt")
+            .trim()
+            .to_string()
+    }
+
+    fn args(now: &str) -> ApplyArgs {
+        ApplyArgs {
+            agreement: vectors().join("compose-full/agreement.canonical.json"),
+            as_party: Some("xaa".into()),
+            out: None,
+            edge_group: Some("g".into()),
+            partner_audience: Vec::new(),
+            confirm: false,
+            json: false,
+            now: Some(now.into()),
+        }
+    }
+
+    fn no_site() -> anyhow::Result<Site> {
+        anyhow::bail!("no site in this test")
+    }
+
+    fn run(a: &ApplyArgs) -> (i32, String) {
+        let mut out = Vec::new();
+        let code = run_apply(&no_site, a, &mut out).expect("apply ran");
+        (code, String::from_utf8(out).expect("utf-8"))
+    }
+
+    /// apply renders from the vector agreement on the vectors' own date,
+    /// whatever the wall clock says.
+    #[test]
+    fn the_vector_agreement_renders_on_the_vectors_date() {
+        let (code, out) = run(&args(&vectors_now()));
+        assert_eq!(code, EXIT_OK, "{out}");
+        assert!(out.contains("federation-xab.yml"), "{out}");
+    }
+
+    /// The day after the term ends, apply renders nothing.
+    #[test]
+    fn nothing_renders_after_the_term_on_the_date_given() {
+        let (code, out) = run(&args("2026-11-21"));
+        assert_eq!(code, EXIT_FED_NOT_CONFORMANT, "{out}");
+        assert!(out.contains("expired on 2026-11-20"), "{out}");
+        assert!(!out.contains("--- "), "{out}");
+    }
+}

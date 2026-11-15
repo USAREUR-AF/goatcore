@@ -46,10 +46,13 @@ runs() {   # one verb invocation per line, the words after `federate`
   echo "diff compose-full/agreement.canonical.json compose-full/agreement.canonical.json"
   echo "diff compose-full/agreement.canonical.json compose-no-flows/agreement.canonical.json --json"
   echo "diff compose-full/agreement.canonical.json compose-full/agreement.pretty.json"
-  echo "verify compose-full/agreement.canonical.json --as xaa"
-  echo "verify compose-full/agreement.canonical.json --json"
-  echo "apply compose-full/agreement.canonical.json --as xaa --edge-group g"
-  echo "apply compose-full/agreement.canonical.json --as xab --json"
+  # verify and apply judge the agreement's term on the evaluation date too, so
+  # they take the vectors' date: on the wall clock the gate would compare two
+  # identical refusals once the vectors' term has passed.
+  echo "verify compose-full/agreement.canonical.json --as xaa $NOW"
+  echo "verify compose-full/agreement.canonical.json --json $NOW"
+  echo "apply compose-full/agreement.canonical.json --as xaa --edge-group g $NOW"
+  echo "apply compose-full/agreement.canonical.json --as xab --json $NOW"
   echo "init"
   echo "init --json"
 }
@@ -62,6 +65,16 @@ while IFS= read -r line; do
   (cd "$V" && "$GOAT" federate $line >"$T/a.out" 2>"$T/a.err"); ra=$?
   # shellcheck disable=SC2086
   (cd "$V" && "$GB" federate $line >"$T/b.out" 2>"$T/b.err"); rb=$?
+  # The vector agreement is one both parties can deliver: these lines attest and
+  # render, so a refusal on both sides is a failure, not parity.
+  case "$line" in
+    "verify compose-full/agreement.canonical.json --as "*|"apply compose-full/agreement.canonical.json --as "*)
+      if [ "$ra" != 0 ] || [ "$rb" != 0 ]; then
+        fail=1; echo "PARITY FAIL: federate $line — goat exit $ra, goatbuilder exit $rb; the vector agreement must attest and render (exit 0)"
+        sed 's/^/    /' "$T/a.out" | cut -c1-200 | head -20
+        continue
+      fi ;;
+  esac
   if [ "$ra" != "$rb" ]; then
     fail=1; echo "PARITY FAIL: federate $line — goat exit $ra, goatbuilder exit $rb"
   elif ! cmp -s "$T/a.out" "$T/b.out"; then

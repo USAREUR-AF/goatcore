@@ -176,3 +176,67 @@ pub(crate) fn resolve_party(
         toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(d.sovereign_id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vectors() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors")
+    }
+
+    /// The vectors' evaluation date, the one every vector reader is given.
+    fn vectors_now() -> String {
+        std::fs::read_to_string(vectors().join("now.txt"))
+            .expect("now.txt")
+            .trim()
+            .to_string()
+    }
+
+    fn args(now: &str) -> VerifyArgs {
+        VerifyArgs {
+            agreement: vectors().join("compose-full/agreement.canonical.json"),
+            as_party: Some("xaa".into()),
+            signing_key: None,
+            json: false,
+            now: Some(now.into()),
+        }
+    }
+
+    fn no_site() -> anyhow::Result<Site> {
+        anyhow::bail!("no site in this test")
+    }
+
+    fn run(a: &VerifyArgs) -> (i32, String) {
+        let mut out = Vec::new();
+        let code = run_verify(&no_site, a, &mut out).expect("verify ran");
+        (code, String::from_utf8(out).expect("utf-8"))
+    }
+
+    /// The vector agreement attests on the vectors' own date, whatever the
+    /// wall clock says, so a test over it never expires.
+    #[test]
+    fn the_vector_agreement_attests_on_the_vectors_date() {
+        let (code, out) = run(&args(&vectors_now()));
+        assert_eq!(code, EXIT_OK, "{out}");
+        assert!(out.contains("runs through 2026-11-20"), "{out}");
+    }
+
+    /// The term is judged on the date given: the day after it ends, verify
+    /// withholds the attestation.
+    #[test]
+    fn the_term_is_judged_on_the_date_given() {
+        let (code, out) = run(&args("2026-11-21"));
+        assert_eq!(code, EXIT_FED_NOT_CONFORMANT, "{out}");
+        assert!(out.contains("expired on 2026-11-20; today is 2026-11-21"), "{out}");
+    }
+
+    #[test]
+    fn a_date_that_is_not_yyyy_mm_dd_is_refused() {
+        let mut out = Vec::new();
+        let err = run_verify(&no_site, &args("21/11/2026"), &mut out)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("--now `21/11/2026` is not a YYYY-MM-DD date"), "{err}");
+    }
+}
