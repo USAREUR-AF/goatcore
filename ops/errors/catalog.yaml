@@ -3622,6 +3622,20 @@ entries:
     matches:
       - "\\(GB-278\\)"
 
+  - code: GB-312
+    tool: goatbuilder
+    title: a carrier rotation was asked for on a peering whose forwarder is declared by hand
+    what: "`goatbuilder federate rotate <partner> carrier` makes the edge's new carrier key in phase 2, on the edge. The forwarder must then hold that key: its entry for the peering, peering_forwarder_peerings[name=<partner>].edge_carrier_public_key, applied by peering-forwarder.yml. This peering's forwarder is declared by hand (peering_wg_via_forwarder: true in its edge group's group_vars; goatbuilder.yaml does not declare it), so that entry is in the operator's own group_vars, which the rotation cannot change, and its new value cannot be known before the rotation runs. The rotation would leave the carrier down, so it stopped before anything ran: no key was set aside and no rotation id was kept."
+    causes:
+      - "the deployment declares its peering forwarder in hand-written group_vars rather than with forwarder: on the peering in goatbuilder.yaml"
+    fixes:
+      - "declare the forwarder on the peering in ops/goatbuilder/goatbuilder.yaml (forwarder: with its endpoint), then: goatbuilder federate allocate   (review and commit what it writes)"
+      - "goatbuilder federate rotate <partner> carrier   (phase 2 then runs peering-forwarder.yml with the edge's new key)"
+    read: docs/design/federation-key-rotation.md
+    matches:
+      - "\\(GB-312\\)"
+    exit: 2
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable

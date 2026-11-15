@@ -991,6 +991,9 @@ gb-278-what = On a two-driver peering (drivers: two), the edge driver runs a pha
 gb-278-cause-1 = the edge driver's checkout was not updated to the controller's commit, or has local changes
 gb-278-cause-2 = the command was typed without the hand-off's --expect-commit
 gb-278-cause-3 = a carried file was not copied from the controller's <work>, or was changed on the way
+gb-312-title = a carrier rotation was asked for on a peering whose forwarder is declared by hand
+gb-312-what = `goatbuilder federate rotate <partner> carrier` makes the edge's new carrier key in phase 2, on the edge. The forwarder must then hold that key: its entry for the peering, peering_forwarder_peerings[name=<partner>].edge_carrier_public_key, applied by peering-forwarder.yml. This peering's forwarder is declared by hand (peering_wg_via_forwarder: true in its edge group's group_vars; goatbuilder.yaml does not declare it), so that entry is in the operator's own group_vars, which the rotation cannot change, and its new value cannot be known before the rotation runs. The rotation would leave the carrier down, so it stopped before anything ran: no key was set aside and no rotation id was kept.
+gb-312-cause-1 = the deployment declares its peering forwarder in hand-written group_vars rather than with forwarder: on the peering in goatbuilder.yaml
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened

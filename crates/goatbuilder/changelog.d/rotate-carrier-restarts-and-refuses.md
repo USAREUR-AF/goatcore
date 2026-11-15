@@ -11,7 +11,11 @@ Three fixes to `goatbuilder federate rotate <partner> carrier`:
   now refused before anything runs (GB-189). Before, the run passed and changed
   no key. A forwarder counts as declared in goatbuilder.yaml or, for a
   hand-run deployment, by `peering_wg_via_forwarder: true` in the edge group's
-  group_vars.
+  group_vars. A forwarder declared that way by hand cannot take the edge's new
+  key from the rotation, so rotating its carrier now stops before anything runs
+  (GB-312), naming the forwarder's value and play; declare the forwarder in
+  goatbuilder.yaml and run `goatbuilder federate allocate` to rotate it. A
+  forwarder declared in goatbuilder.yaml takes the new key in the same phase 2.
 - The rotation re-runs phase 3. After phase 11 the federation interface
   carries the agreed MTU, which is the lower of both offers. When the partner
   offered less than we did, phase 3 refused our own offer as larger than the

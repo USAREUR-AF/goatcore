@@ -325,12 +325,18 @@ pub fn rotate(repo: &Path, o: &Options, key: &str) -> Result<crate::Report> {
 /// is left to the run's own refusal (GB-149).
 fn no_carrier_refused(repo: &Path, o: &Options) -> Result<()> {
     let cfg = super::config::load(&super::config_path(repo, o))?;
-    match super::declaration::peering(&cfg, o.with, o.env)? {
-        Some(p)
-            if p.forwarder.is_none()
-                && !super::peering_files::via_forwarder(repo, &super::run_edge_group(o)) =>
-        {
-            Err(goat_errors::coded(
+    let Some(p) = super::declaration::peering(&cfg, o.with, o.env)? else {
+        return Ok(());
+    };
+    if p.forwarder.is_some() {
+        // goatbuilder applies this forwarder: phase 2 runs its play with the
+        // rotation's id after copying the edge's new carrier key
+        // (forwarder::splice), so the forwarder takes the new key itself.
+        return Ok(());
+    }
+    let edge_group = super::run_edge_group(o);
+    if !super::peering_files::via_forwarder(repo, &edge_group) {
+        return Err(goat_errors::coded(
             "GB-189",
             format!(
                 "`rotate {w} carrier`: peering {w} on {env} declares no forwarder, neither in goatbuilder.yaml nor as `peering_wg_via_forwarder: true` in its edge group's group_vars, so its edge has no carrier to rotate (the carrier is the link to a peering forwarder, docs/design/peering-forwarder.md). Nothing ran. Rotate its peering key with `rotate {w} transport` once that is built, or its leaves with `rotate {w} leaves`",
@@ -338,10 +344,21 @@ fn no_carrier_refused(repo: &Path, o: &Options) -> Result<()> {
                 env = p.environment
             ),
         )
-        .into())
-        }
-        _ => Ok(()),
+        .into());
     }
+    // A forwarder declared by hand: its entry, with the edge's carrier public
+    // key, is in the operator's own group_vars, which a rotation cannot
+    // change, and the edge's new key only exists once phase 2 has made it on
+    // the edge. Rotating would leave the carrier down, so nothing runs.
+    Err(goat_errors::coded(
+        "GB-312",
+        format!(
+            "`rotate {w} carrier`: peering {w} on {env} is relayed by a forwarder declared by hand (`peering_wg_via_forwarder: true` in {edge_group}'s group_vars; goatbuilder.yaml does not declare it). Nothing ran (GB-312). The forwarder holds the edge's carrier public key in peering_forwarder_peerings[name={w}].edge_carrier_public_key, in its hand-written group_vars, which this rotation cannot change; the new value would be the edge's new carrier public key, which phase 2 makes on the edge, so it cannot be known before the rotation runs; and peering-forwarder.yml is the play that applies it. A rotation would leave the carrier down. To rotate this carrier, declare the forwarder on the peering in goatbuilder.yaml (`forwarder:` with its endpoint), run `goatbuilder federate allocate`, review and commit what it writes, and run `goatbuilder federate rotate {w} carrier` again: phase 2 then gives the forwarder the edge's new key itself",
+            w = o.with,
+            env = p.environment
+        ),
+    )
+    .into())
 }
 
 /// The refusal for a key this build does not rotate, before anything runs.
