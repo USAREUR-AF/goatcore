@@ -906,13 +906,35 @@ impl Check {
     pub fn skipped(&self) -> bool {
         self.ok && self.detail.starts_with("not checked")
     }
+
+    /// A machine row's state, as the converger observed it: `converged`,
+    /// `pending` (not yet confirmed) or `unknown` (its record could not be read).
+    /// `-o json` carries it as `"state"`, so a program need not parse the words;
+    /// these are the states a pull converger reports too (the pull-converger
+    /// options paper, option A). None for a row that is not a machine's state.
+    pub fn machine_state(&self) -> Option<&'static str> {
+        if !self.name.contains('/') || self.name.ends_with("/publish") {
+            return None;
+        }
+        let d = self.detail.as_str();
+        if d.starts_with("converged on") || d.starts_with("same: ") {
+            Some("converged")
+        } else if d.starts_with("unknown") || (d.starts_with("NOT converged") && d.contains("no ledger row came back")) {
+            Some("unknown")
+        } else if d.starts_with("pending") || d.starts_with("DRIFT") || d.starts_with("NOT converged") {
+            Some("pending")
+        } else {
+            None
+        }
+    }
 }
 
 impl Serialize for Check {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let skipped = self.skipped();
-        let mut st = s.serialize_struct("Check", 3 + usize::from(self.fix.is_some()) + usize::from(skipped))?;
+        let state = self.machine_state();
+        let mut st = s.serialize_struct("Check", 3 + usize::from(self.fix.is_some()) + usize::from(skipped) + usize::from(state.is_some()))?;
         st.serialize_field("name", &self.name)?;
         st.serialize_field("ok", &self.ok)?;
         st.serialize_field("detail", &self.detail)?;
@@ -921,6 +943,9 @@ impl Serialize for Check {
         }
         if skipped {
             st.serialize_field("skipped", &true)?;
+        }
+        if let Some(state) = state {
+            st.serialize_field("state", state)?;
         }
         st.end()
     }
@@ -2020,3 +2045,41 @@ mod deprecation_tests {
     }
 }
 
+
+#[cfg(test)]
+mod machine_state_tests {
+    use super::Check;
+
+    fn row(name: &str, ok: bool, detail: &str) -> Check {
+        Check { name: name.into(), ok, detail: detail.into(), fix: None }
+    }
+
+    /// The real-host deploy's words map to the same three states as the
+    /// fixture's: a host whose ledger came back with no row cannot be read
+    /// (unknown), one whose ledger names another digest is pending; rows that are
+    /// not a machine's state (a group's ledger read, a dry run, a skip, the
+    /// publish line, doctor's rows) carry none.
+    #[test]
+    fn real_host_words_map_to_the_three_states() {
+        let cases = [
+            ("dev/dev-core-a", "converged on sha256:0b2a6c1d — ledger row deploy", Some("converged")),
+            ("dev/dev-core-a", "NOT converged — ledger tail: v1.3.2", Some("pending")),
+            ("dev/dev-core-a", "NOT converged — image on sha256:0b2a, but served 500", Some("pending")),
+            ("dev/dev-core-a", "NOT converged — no ledger row came back from this host", Some("unknown")),
+            ("dev/dev-edge-a", "unknown — unreachable; its ledger was not read", Some("unknown")),
+            ("dev/core-a/portal", "same: v1.4.0", Some("converged")),
+            ("dev/core-a/portal", "DRIFT: running v1.3.2 — main declares v1.4.0", Some("pending")),
+            ("dev/core/ledger", "ledger read FAILED (exit 2)", None),
+            ("dev/core/verify", "DRY: would read the ledger", None),
+            ("dev/dev-core-b", "skipped — single-homed on router_role=B", None),
+            ("dev/portal/publish", "pending publication", None),
+            ("env:dev:converger", "GB-307 environment dev declares converger: pull-agent", None),
+        ];
+        for (name, detail, want) in cases {
+            assert_eq!(row(name, want == Some("converged"), detail).machine_state(), want, "{name}: {detail}");
+        }
+        let v = serde_json::to_value(row("dev/dev-core-a", false, "NOT converged — ledger tail: v1.3.2")).unwrap();
+        assert_eq!(v["state"], "pending");
+        assert!(serde_json::to_value(row("dev/core/ledger", false, "ledger read FAILED (exit 2)")).unwrap().get("state").is_none());
+    }
+}

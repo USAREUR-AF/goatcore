@@ -62,6 +62,16 @@ command's `-o json` parses and carries a versioned `goatbuilder.*/vN` schema.
   runs them. "All N checks passed" is only true when N is every check there was.
   In `-o json` it carries `"skipped": true`, with `ok` still true because it did
   not fail, so a program reads the state rather than the words.
+- A machine's state is a field. A row that reports one machine's convergence
+  (`<env>/<machine>/<component>` on the fixture, `<env>/<host>` on real hosts)
+  carries `"state"` in `-o json` and `-o yaml`: `converged`, `pending` (the
+  converger has not confirmed it) or `unknown` (its record could not be read).
+  `ok` is true only for `converged`. These are the states a pull converger
+  reports too, so they are defined before 1.0 (the pull-converger options paper,
+  option A). Built: `Check::machine_state` in `crates/goatbuilder/src/main.rs`,
+  tested in `verbs.rs` (every machine row of `deploy` and `status`) and for the
+  real-host words. The A4 kept documents are recorded from a release, so the
+  field is kept from the first release that produces it.
 - A mark means something happened. `✓` is a thing done, `✗` a thing that
   failed, `!` a thing not set. A row that says what a *real* run would do has
   not happened, so it takes a bullet and no colour. A plan owes nothing, so a
