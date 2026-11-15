@@ -156,7 +156,13 @@ pub fn grow_with(
                     format!("cannot run python3 {RENDERER} --check: {e}"),
                 )
             })?;
-        if !matches!(out.status.code(), Some(0 | 1)) {
+        // --check exits 1 for "would change", and the renderer also exits 1 when
+        // it refuses to read the goatlite at all. Only its report's own heading
+        // says it answered; without it, the run says what the renderer said.
+        let answered = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|l| l.starts_with("goatlite-render: ") && l.ends_with("would hand over:"));
+        if !matches!(out.status.code(), Some(0 | 1)) || !answered {
             return Err(goat_errors::coded(
                 RENDERER_FAILED_CODE,
                 format!(

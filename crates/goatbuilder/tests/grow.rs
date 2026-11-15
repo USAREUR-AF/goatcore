@@ -32,7 +32,11 @@ fn grow_dry_run_on_the_lite_fixture_shows_a_valid_full_config_and_writes_nothing
     std::fs::write(t.path().join("goatlite.yaml"), lite_fixture()).unwrap();
     // The dry run asks the checkout's own renderer which files the hand-over
     // takes (`--hand-over --check`, which writes nothing); nothing is rendered
-    // here, so it names none.
+    // here, so it names none. The renderer reads the goatlite's facts first, and
+    // those need the administrator's public key file to exist.
+    let home = test_home::path();
+    std::fs::create_dir_all(home.join(".ssh")).unwrap();
+    std::fs::write(home.join(".ssh/id_ed25519.pub"), "ssh-ed25519 placeholder-for-the-grow-test\n").unwrap();
     let renderer = t.path().join("ops/scripts/goatlite-render.py");
     std::fs::create_dir_all(renderer.parent().unwrap()).unwrap();
     std::fs::copy(
@@ -114,7 +118,7 @@ fn checkout_with_stand_in_renderer() -> tempfile::TempDir {
         "import pathlib, sys\n\
          root = pathlib.Path(__file__).resolve().parents[2]\n\
          with open(root / 'renderer-ran', 'a') as f: f.write(' '.join(sys.argv[1:]) + '\\n')\n\
-         print('goatlite-render: pasture -- nothing to hand over')\n",
+         print('goatlite-render: pasture -- would hand over:')\n",
     )
     .unwrap();
     t
