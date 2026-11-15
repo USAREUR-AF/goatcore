@@ -25,7 +25,13 @@ head=$2
 # does not hold it.
 pattern='claude\.ai|Claude''-Session:|anthropic\.com'
 
-if git log --format='%B' "${base}...${head}" | grep -nEi "$pattern"; then
+# Two dots: the commits <head> holds and <base> does not. A pull request's
+# base is main's tip (pull_request_target's base.sha), so this is the pull
+# request's own commits, exactly as from the merge base. The symmetric range
+# (three dots) also took the commits main gained since the pull request was
+# cut, and refused a pull request for a message it never wrote; on a push it
+# took the commits a force push dropped.
+if git log --format='%B' "${base}..${head}" | grep -nEi "$pattern"; then
   exit 1
 fi
 echo "ok: no agent-tooling references in commit messages"
