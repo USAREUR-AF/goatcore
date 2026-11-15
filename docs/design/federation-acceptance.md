@@ -142,6 +142,26 @@ so it is evidence for that session. A forged-name or impersonation probe whose s
 nowhere is BLOCKED. (Reading only lines after a count taken at the start was tried and dropped:
 it hid the connect-time line, and the federation test environment showed both rows BLOCKED.)
 
+**Built, not measured: the trace bound by id across two drivers.** When the machine that reaches
+our core cannot reach our edge (`docs/design/federation-two-drivers.md`, phase 14), the rows
+above come in two parts. `FED_ACCEPTANCE_TRACE=deferred` fires every probe, reads our core as
+usual, reads no edge log, records each of the five trace rows as an optional SKIP with the
+observation `pending: edge-trace`, and writes `<work>/acceptance/ids.json`
+(`goatbuilder.acceptance-ids/v1`): the run id, which every probe's key carries, the zenoh ids of
+the probe sessions it fired, and the window it fired them in. It exits 0 when every other check
+passed. On the edge, `ops/federation/standup/edge_trace_filter.py --ids <ids> --window
+<start>/<end>` keeps only the log lines that carry one of those ids and are stamped within the
+window widened by 5 minutes on each side (`goatbuilder.phase14-edge/v1`); a line with no
+timestamp it can read is dropped. `FED_EDGE_TRACE_FILE=<that file>` then fires nothing and reads
+no surface: it refuses a file whose ids or window differ from `ids.json`, or that holds a line
+the filter would not have kept (exit 2), keeps every row the deferred run decided, and decides
+the pending rows by the same rules as above, from that run's reads of our core and the returned
+lines. A forged-name or impersonation probe whose connect-time line is older than the widened
+window is BLOCKED in this mode, so its session has to start within the run, as a run-owned probe
+does (§2.4). A derived session (§6.3) is refused in both modes, because its result is signed
+before the edge's lines return. Tests: `ops/federation/standup/test_acceptance_trace_by_id.py`,
+against the one-process fabric and a stand-in edge log.
+
 These rows run on our edge for the inbound direction. The outbound direction is refused, or
 not, by the partner's edge, so it is the partner's inbound row in their own bundle.
 

@@ -134,6 +134,42 @@ for side in OURS THEIRS; do
     exit 2
   fi
 done
+# PHASE 14 ACROSS TWO DRIVERS (docs/design/federation-two-drivers.md). When the
+# machine that reaches our core cannot reach our edge, the run comes in two parts,
+# bound by the ids the probes carry rather than by time:
+#   FED_ACCEPTANCE_TRACE=deferred  fires every probe and reads no edge log. It writes
+#       <work>/acceptance/ids.json (goatbuilder.acceptance-ids/v1: the run id, which
+#       every probe's key carries, the probe sessions' zenoh ids, and the window they
+#       were fired in), records each row that needs our edge's ACL trace as pending,
+#       and exits 0 when every other check passed.
+#   FED_EDGE_TRACE_FILE=<file>     the edge driver's answer: edge_trace_filter.py's
+#       output over our edge's log, only the lines that carry one of those ids. This
+#       run fires nothing and reads no surface: it decides the pending rows from what
+#       the deferred run read of our core and those lines, keeps every other row as
+#       recorded, and refuses a file whose ids or window differ from ids.json.
+# <work> is the agreement's directory. Neither set, the run reads the trace inline.
+TRACE_MODE=""
+case "${FED_ACCEPTANCE_TRACE:-}" in
+  "") ;;
+  deferred) TRACE_MODE=deferred ;;
+  *) echo "acceptance: FED_ACCEPTANCE_TRACE is '${FED_ACCEPTANCE_TRACE}'; its one value is deferred" >&2; exit 2 ;;
+esac
+if [ -n "${FED_EDGE_TRACE_FILE:-}" ]; then
+  if [ -n "$TRACE_MODE" ]; then
+    echo "acceptance: FED_ACCEPTANCE_TRACE=deferred fires the probes and FED_EDGE_TRACE_FILE decides them afterwards; set one" >&2
+    exit 2
+  fi
+  TRACE_MODE="file"
+fi
+if [ -n "$TRACE_MODE" ] && [ -n "${FED_ACCEPTANCE_ATTEMPT:-}" ]; then
+  echo "acceptance: phase 14 split across two drivers is not built for a derived session (FED_ACCEPTANCE_ATTEMPT): its result is signed and published before the edge's lines return" >&2
+  exit 2
+fi
+if [ -n "$TRACE_MODE" ] && [ "$BEFORE" = 1 ]; then
+  echo "acceptance --before: it fires no probe, so FED_ACCEPTANCE_TRACE and FED_EDGE_TRACE_FILE do not apply" >&2
+  exit 2
+fi
+IDS_FILE="$(cd "$(dirname "$AGREEMENT")" && pwd)/acceptance/ids.json"
 
 settle() { sleep "${FED_ACCEPTANCE_WAIT:-$1}"; }
 now()    { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -156,6 +192,17 @@ ADM_R="$EVID/.adm-router-$RUN_ID"; ADM_S="$EVID/.adm-subs-$RUN_ID"
 trap 'rm -f "$CHECKS" "$OBSF" "$REST_ERR" "$TRACE" "$ADM_R" "$ADM_S"' EXIT
 T0="$RUN_STARTED"
 pass=0; fail=0; skip=0; blocked=0; RECORD_FAILED=""
+# The edge's file answers this run's ids.json, or nothing is decided from it.
+if [ "$TRACE_MODE" = file ]; then
+  if [ ! -f "$IDS_FILE" ]; then
+    echo "acceptance: the edge's trace file $FED_EDGE_TRACE_FILE is decided against the ids a deferred run fired, and there is no $IDS_FILE (run with FED_ACCEPTANCE_TRACE=deferred first)" >&2
+    exit 2
+  fi
+  if ! python3 "$HERE/edge_trace_filter.py" --verify "$FED_EDGE_TRACE_FILE" --against "$IDS_FILE" > "$TRACE" 2> "$REST_ERR"; then
+    echo "acceptance: the edge's trace file $FED_EDGE_TRACE_FILE is refused: $(sed 's/^edge trace filter: //' "$REST_ERR")" >&2
+    exit 2
+  fi
+fi
 
 # begin: the start time of the checks that follow. obs KEY VALUE: one raw observation
 # for the next check recorded.
@@ -254,7 +301,8 @@ echo
 # hosts over ssh (EDGE_LOG_VIA, SPIRE_VIA); a value set by hand runs where it always
 # has. What cannot be derived stays unset, and its row says what to set.
 EDGE_LOG_VIA=""; SPIRE_VIA=""
-if surfaces=$(python3 "$HERE/acceptance_surfaces.py" --peering "$THEM"); then eval "$surfaces"; fi
+# Deciding from the edge's file reads no surface, so none is derived.
+if [ "$TRACE_MODE" != file ] && surfaces=$(python3 "$HERE/acceptance_surfaces.py" --peering "$THEM"); then eval "$surfaces"; fi
 : "${FED_OURS_REST:=http://127.0.0.1:8000}"     # our fabric's REST surface
 
 # With FED_SSH_KNOWN_HOSTS (a known_hosts file holding the cores' host keys) every ssh
@@ -585,8 +633,10 @@ finish() { # DIR
     "existing=$(set_or_not "${FED_EXISTING_WORKS:-}")" "existing_rest=$(set_or_not "${FED_EXISTING_REST:-}")" \
     "session=$(set_or_not "${FED_ACCEPTANCE_SESSION:-}")" \
     "ssh_host_keys_verified=$(set_or_not "${FED_SSH_KNOWN_HOSTS:-}")" "probe_launcher=$(set_or_not "${FED_PROBE_LAUNCHER:-}")" \
+    ${TRACE_MODE:+"edge_trace_$TRACE_MODE=1"} \
     ${FED_ACCEPTANCE_SESSION:+--session "$FED_ACCEPTANCE_SESSION"} \
     --software "$HERE/acceptance.sh" "$HERE/acceptance_evidence.py" "$HERE/acceptance_session.py" "$HERE/../roundtrip/fedcheck.sh" \
+    ${TRACE_MODE:+"$HERE/edge_trace_filter.py"} \
     --config-dir "$(dirname "$AGREEMENT")/applied"
   rc=$?
   [ "$rc" -eq 2 ] && echo "  ACCEPTANCE FAILED — the evidence bundle could not be written to $1."
@@ -595,6 +645,13 @@ finish() { # DIR
   if [ -n "$RECORD_FAILED" ]; then
     echo "  ACCEPTANCE FAILED — the evidence for$RECORD_FAILED could not be recorded; the bundle is incomplete."
     exit 2
+  fi
+  # A deferred run hands the edge driver its ids, once its bundle is written.
+  if [ "$TRACE_MODE" = deferred ] && [ "$rc" -ne 2 ]; then
+    python3 "$HERE/edge_trace_filter.py" --write-ids "$IDS_FILE" --ids "$RUN_ID${TRACE_IDS:+,$TRACE_IDS}" \
+      --window "$RUN_STARTED/$(now)" \
+      || { echo "  ACCEPTANCE FAILED — the ids this run fired could not be written to $IDS_FILE."; exit 2; }
+    echo "  ids for the edge's trace: $IDS_FILE"
   fi
   [ -n "$DERIVED" ] && [ "$rc" -ne 2 ] && bilateral_round "$1" "$rc"
   exit "$rc"
@@ -866,7 +923,7 @@ probes_cleanup_on_signal() { # EXIT-STATUS
   [ -n "$PROBES_STARTED" ] && [ -f "$PROBES_FILE" ] && probes_stop "$PROBES_FILE" >/dev/null
   exit "$1"
 }
-if [ -n "${FED_PROBE_LAUNCHER:-}" ]; then
+if [ -n "${FED_PROBE_LAUNCHER:-}" ] && [ "$TRACE_MODE" != file ]; then
   mkdir -p "$PROBES_DIR"
   # An earlier run's manifest with resources not confirmed gone: clean them first.
   earlier=""; left=""; unsure=""
@@ -938,16 +995,19 @@ probes_finish() {
   trap - INT TERM
 }
 
-begin
-if [ "$HAVE_OUT" = 0 ] && [ "$HAVE_IN" = 0 ]; then
-  no lanes both precondition "the agreement has no flow in either direction" "There is no lane to prove; the agreement carries nothing."
+# Deciding from the edge's file, these rows are the deferred run's (replay_pending).
+if [ "$TRACE_MODE" != file ]; then
+  begin
+  if [ "$HAVE_OUT" = 0 ] && [ "$HAVE_IN" = 0 ]; then
+    no lanes both precondition "the agreement has no flow in either direction" "There is no lane to prove; the agreement carries nothing."
+  fi
+  for set in $(list "$OUR_WILD"); do
+    blk "delivery/outbound/$set" outbound positive "$set/** names no single key to publish" "Its lane cannot be proven by a sample; prove it by hand."
+  done
+  for set in $(list "$THEIR_WILD"); do
+    blk "delivery/inbound/$set" inbound positive "$set/** names no single key to publish" "Its lane cannot be proven by a sample; prove it by hand."
+  done
 fi
-for set in $(list "$OUR_WILD"); do
-  blk "delivery/outbound/$set" outbound positive "$set/** names no single key to publish" "Its lane cannot be proven by a sample; prove it by hand."
-done
-for set in $(list "$THEIR_WILD"); do
-  blk "delivery/inbound/$set" inbound positive "$set/** names no single key to publish" "Its lane cannot be proven by a sample; prove it by hand."
-done
 
 # ---- Helpers the persistence and refusal checks share, in both the drill path and a
 #      bilateral session. Defined here, called below.
@@ -1005,6 +1065,134 @@ done
     return 0
   }
 
+# ---- THE REFUSAL DECISIONS, from OUR edge's trace. Each reads $TRACE, and the read
+#      of our core that followed its probes (GOT, GOT_RC, GOT_ERR, or landed and
+#      unread for the impersonation). Inline, edge_refusals fires, reads the trace and
+#      decides at once. Across two drivers the two come apart (TRACE_MODE): deferred,
+#      each row is recorded pending with what it read of our core; from the edge's
+#      file, each pending row is decided from those reads and the lines the edge
+#      returned for this run's ids (replay_pending), and nothing is fired again.
+# One read of the log per question, kept for the lines each check quotes. The whole
+# log is read: the control and the denials are found by keys that carry this run's
+# id, so no earlier run's line can match them; and the edge names a peer that matches
+# no subject once, when its session connects, which may be before this run began.
+# That line is tied to the probe's own session id.
+trace()   { [ -n "$TRACE_MODE" ] && return 0
+            if [ -n "$EDGE_LOG_VIA" ]; then side_ssh "$EDGE_LOG_VIA" "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1
+            else ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; fi; }
+lines()   { grep -F "$1" "$TRACE" | grep -E 'is (un)?authorized to ' | tail -3; }
+# verdict [SESSION-FILTER] KEY-FILTER: the last decision, of one session when given.
+verdict() {
+  if [ $# -eq 2 ]; then grep -F "$2" "$TRACE" | grep -F "$1" | grep -oE 'is (un)?authorized' | tail -1
+  else lines "$1" | grep -oE 'is (un)?authorized' | tail -1; fi
+}
+# session_of KEY-FILTER: the zenoh id zenoh 1.9 prints first on a decision line,
+# `<zid> on Interface(..)+CertCommonName(..)+..+<zid> is authorized to ...`.
+session_of() { lines "$1" | grep -E 'is authorized to ' | tail -1 \
+               | sed -nE 's/^(.*[^0-9a-f])?([0-9a-f]{4,32}) on .* is authorized to .*/\2/p'; }
+# TRACE_IDS: the probe sessions' ids a deferred run fired, beside the run id itself.
+TRACE_IDS=""
+trace_id() { case ",$TRACE_IDS," in *",$1,"*) ;; *) TRACE_IDS="${TRACE_IDS:+$TRACE_IDS,}$1" ;; esac; }
+# pend NAME MESSAGE: a row that needs our edge's trace, deferred. It is optional while
+# pending, so the controller's half passes on the rows it decided itself; the run
+# that reads the edge's file decides it, required, and replaces it.
+pend() {
+  printf '  pending  %s\n' "$2"
+  obs pending edge-trace
+  record "$1" inbound negative SKIP "pending: $2 is decided from our edge's trace lines that carry this run's ids (FED_EDGE_TRACE_FILE)" --optional
+}
+# decide_control: the agreed identity's write in its lane (IN), read back on our core.
+decide_control() {
+  if [ "$TRACE_MODE" = deferred ]; then
+    obs key "$IN"; obs received "$GOT"; obs received_rc "$GOT_RC"; obs received_err "$GOT_ERR"
+    obs probe_zid "${FED_PROBE_THEIRS_ZID:-}"
+    [ -n "${FED_PROBE_THEIRS_ZID:-}" ] && trace_id "$FED_PROBE_THEIRS_ZID"
+    pend refusal/control-allowed "the agreed identity's write in its lane"
+    return 0
+  fi
+  v_in=$(verdict "Put (ingress) on $IN")
+  # The session the edge names on the allow line. The denials below count only
+  # when the edge records them for this same session: an allow from one session
+  # beside a deny from another proves nothing about either.
+  CZID=$(session_of "Put (ingress) on $IN")
+  obs key "$IN"; obs trace "$(lines "Put (ingress) on $IN")"; obs received "$GOT"; obs session "$CZID"
+  if [ "$v_in" = "is authorized" ] && [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "probe-$S" ] \
+     && [ -n "${FED_PROBE_THEIRS_ZID:-}" ] && [ -n "$CZID" ] && [ "$CZID" != "$FED_PROBE_THEIRS_ZID" ]; then
+    no refusal/control-allowed inbound negative "the allow on our edge came from another session" \
+      "the trace names session '${CZID:-<none>}', the probe is '$FED_PROBE_THEIRS_ZID'. The denials below would prove nothing."
+    CONTROL=0
+  elif [ "$v_in" = "is authorized" ] && [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "probe-$S" ]; then
+    ok refusal/control-allowed inbound negative "the agreed identity's write in its lane: ALLOWED in our edge's trace for session ${CZID:-<unnamed>}, and it reads back on our core"
+    CONTROL=1
+  else
+    no refusal/control-allowed inbound negative "the control did not land" "trace verdict '${v_in:-<none>}', our core read '${GOT:-<nothing>}'. The denials below would prove nothing."
+    CONTROL=0
+  fi
+}
+# deny NAME KEY MESSAGE: a denial counts only beside a control that landed, and
+# only when the edge recorded it for the control's own session.
+deny() {
+  local v vs
+  if [ "$TRACE_MODE" = deferred ]; then obs key "$2"; pend "$1" "$3"; return 0; fi
+  v=$(verdict "Put (ingress) on $2"); vs=$(verdict "$CZID on " "Put (ingress) on $2")
+  obs key "$2"; obs trace "$(lines "Put (ingress) on $2")"; obs session "$CZID"
+  if [ "$CONTROL" != 1 ]; then skp "$1" inbound negative "$3: not asserted" "the allowed control on the same session did not land"
+  elif [ -z "$CZID" ]; then
+    blk "$1" inbound negative "$3: not tied to the control's session" "the edge's allow line names no session id, so a denial cannot be correlated with it"
+  elif [ "$vs" = "is unauthorized" ]; then ok "$1" inbound negative "$3: DENIED in our edge's trace for the control's session $CZID"
+  elif [ "$v" = "is unauthorized" ]; then
+    no "$1" inbound negative "the denial of $2 was recorded for another session, not the control's ($CZID)" "trace verdict for $CZID: '${vs:-<none>}'"
+  else no "$1" inbound negative "no denial recorded for $2" "trace verdict '${v:-<none>}'"; fi
+}
+DENY_OUT="the same identity's write to ops/**"; DENY_SPOOF="the same identity writing under OUR wire name"
+# decide_forged: the forged-name probe's session (FED_PROBE_FORGED_ZID) on FORGED.
+decide_forged() {
+  if [ "$TRACE_MODE" = deferred ]; then
+    obs zid "$FED_PROBE_FORGED_ZID"; obs key "$FORGED"; obs received "$GOT"; obs received_rc "$GOT_RC"; obs received_err "$GOT_ERR"
+    trace_id "$FED_PROBE_FORGED_ZID"
+    pend refusal/forged-name "a name their CA minted and nobody agreed"
+    return 0
+  fi
+  unmatched=$(grep -F "$FED_PROBE_FORGED_ZID" "$TRACE" | grep -c 'did not match any configured ACL subject' || true)
+  allows=$(grep -F "$FED_PROBE_FORGED_ZID" "$TRACE" | grep -c 'is authorized to ' || true)
+  obs zid "$FED_PROBE_FORGED_ZID"; obs unmatched "$unmatched"; obs authorizations "$allows"; obs received "$GOT"
+  obs trace "$(grep -F "$FED_PROBE_FORGED_ZID" "$TRACE" | tail -3)"
+  if [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ]; then
+    ok refusal/forged-name inbound negative "a name their CA minted and nobody agreed: our edge matched it to no subject, ZERO authorizations, nothing landed"
+  elif [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -ne 0 ]; then
+    blk refusal/forged-name inbound negative "the forged name: our core's REST surface did not answer" "$GOT_ERR"
+  elif [ "${allows:-0}" -eq 0 ] && [ "${unmatched:-0}" -eq 0 ]; then
+    blk refusal/forged-name inbound negative "the forged name: our edge's log names that session nowhere" \
+      "Its decision lines are the evidence; without them the refusal is not proven."
+  else
+    no refusal/forged-name inbound negative "the forged name was not refused" "matched no subject $unmatched time(s), authorized $allows, our core read '${GOT:-<nothing>}'"
+  fi
+}
+# decide_impersonation: the session bearing our core's name (FED_PROBE_IMPERSONATE_ZID);
+# landed is what our core read on its three keys, unread the keys it could not read.
+decide_impersonation() {
+  if [ "$TRACE_MODE" = deferred ]; then
+    obs zid "$FED_PROBE_IMPERSONATE_ZID"; obs received "$landed"; obs unread "$unread"
+    trace_id "$FED_PROBE_IMPERSONATE_ZID"
+    pend refusal/impersonation "their certificate bearing our core's name"
+    return 0
+  fi
+  unmatched=$(grep -F "$FED_PROBE_IMPERSONATE_ZID" "$TRACE" | grep -c 'did not match any configured ACL subject' || true)
+  allows=$(grep -F "$FED_PROBE_IMPERSONATE_ZID" "$TRACE" | grep -c 'is authorized to ' || true)
+  obs zid "$FED_PROBE_IMPERSONATE_ZID"; obs unmatched "$unmatched"; obs authorizations "$allows"; obs received "$landed"
+  obs trace "$(grep -F "$FED_PROBE_IMPERSONATE_ZID" "$TRACE" | tail -3)"
+  if [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -z "$unread" ]; then
+    ok refusal/impersonation inbound negative "their certificate bearing our core's name: our edge matched it to no subject, ZERO authorizations on any key, nothing landed"
+  elif [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -n "$unread" ]; then
+    blk refusal/impersonation inbound negative "the impersonation: our core's REST surface did not answer for$unread"
+  elif [ "${allows:-0}" -eq 0 ] && [ "${unmatched:-0}" -eq 0 ] && [ -z "$landed" ]; then
+    blk refusal/impersonation inbound negative "the impersonation: our edge's log names that session nowhere" \
+      "Its decision lines are the evidence; without them the refusal is not proven."
+  else
+    no refusal/impersonation inbound negative "their certificate bearing our core's name was authorized on our edge" "matched no subject $unmatched time(s), authorized $allows time(s), our core read '$landed'"
+  fi
+}
+
 # edge_refusals: the refusal rows read from OUR edge's own record (below, tier 3).
 edge_refusals() {
     # THE ROUTER'S OWN RECORD. The checks above read silence, and silence is what
@@ -1020,28 +1208,12 @@ edge_refusals() {
         na "$n" inbound negative "$NO_IN: no allowed control exists on our edge"
       done
     fi
-    if [ -z "${FED_EDGE_LOG_OURS:-}" ] || [ -z "${FED_PROBE_THEIRS_REST:-}" ]; then
+    # A deferred run reads no edge log: the edge driver returns its lines later.
+    if [ -z "${FED_PROBE_THEIRS_REST:-}" ] || { [ -z "${FED_EDGE_LOG_OURS:-}" ] && [ "$TRACE_MODE" != deferred ]; }; then
       blk refusal/acl-trace inbound negative "the ACL trace was not read" \
           "Set FED_EDGE_LOG_OURS and FED_PROBE_THEIRS_REST. Without them the refusals
         above rest on silence."
     else
-      # One read of the log per question, kept for the lines each check quotes. The
-      # whole log is read: the control and the denials are found by keys that carry
-      # this run's id, so no earlier run's line can match them; and the edge names a
-      # peer that matches no subject once, when its session connects, which may be
-      # before this run began. That line is tied to the probe's own session id.
-      trace()   { if [ -n "$EDGE_LOG_VIA" ]; then side_ssh "$EDGE_LOG_VIA" "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1
-                  else ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; fi; }
-      lines()   { grep -F "$1" "$TRACE" | grep -E 'is (un)?authorized to ' | tail -3; }
-      # verdict [SESSION-FILTER] KEY-FILTER: the last decision, of one session when given.
-      verdict() {
-        if [ $# -eq 2 ]; then grep -F "$2" "$TRACE" | grep -F "$1" | grep -oE 'is (un)?authorized' | tail -1
-        else lines "$1" | grep -oE 'is (un)?authorized' | tail -1; fi
-      }
-      # session_of KEY-FILTER: the zenoh id zenoh 1.9 prints first on a decision line,
-      # `<zid> on Interface(..)+CertCommonName(..)+..+<zid> is authorized to ...`.
-      session_of() { lines "$1" | grep -E 'is authorized to ' | tail -1 \
-                     | sed -nE 's/^(.*[^0-9a-f])?([0-9a-f]{4,32}) on .* is authorized to .*/\2/p'; }
       probe()   { curl -s -m 8 -X PUT -d "$3" "$1/$2" -o /dev/null; }
       begin
       IN="$THEIR_WIRE/acceptance-probe/$S"; OUT="ops/fabric/acceptance-probe-$S"; SPOOF="$OUR_WIRE/acceptance-spoof/$S"
@@ -1051,41 +1223,10 @@ edge_refusals() {
         probe "$FED_PROBE_THEIRS_REST" "$SPOOF" "nope-$S"
         settle 6
         trace
-        v_in=$(verdict "Put (ingress) on $IN")
-        # The session the edge names on the allow line. The denials below count only
-        # when the edge records them for this same session: an allow from one session
-        # beside a deny from another proves nothing about either.
-        CZID=$(session_of "Put (ingress) on $IN")
         get_side ours "$IN"
-        obs key "$IN"; obs trace "$(lines "Put (ingress) on $IN")"; obs received "$GOT"; obs session "$CZID"
-        if [ "$v_in" = "is authorized" ] && [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "probe-$S" ] \
-           && [ -n "${FED_PROBE_THEIRS_ZID:-}" ] && [ -n "$CZID" ] && [ "$CZID" != "$FED_PROBE_THEIRS_ZID" ]; then
-          no refusal/control-allowed inbound negative "the allow on our edge came from another session" \
-            "the trace names session '${CZID:-<none>}', the probe is '$FED_PROBE_THEIRS_ZID'. The denials below would prove nothing."
-          CONTROL=0
-        elif [ "$v_in" = "is authorized" ] && [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "probe-$S" ]; then
-          ok refusal/control-allowed inbound negative "the agreed identity's write in its lane: ALLOWED in our edge's trace for session ${CZID:-<unnamed>}, and it reads back on our core"
-          CONTROL=1
-        else
-          no refusal/control-allowed inbound negative "the control did not land" "trace verdict '${v_in:-<none>}', our core read '${GOT:-<nothing>}'. The denials below would prove nothing."
-          CONTROL=0
-      fi
-      # deny NAME KEY MESSAGE: a denial counts only beside a control that landed, and
-      # only when the edge recorded it for the control's own session.
-      deny() {
-        local v vs
-        v=$(verdict "Put (ingress) on $2"); vs=$(verdict "$CZID on " "Put (ingress) on $2")
-        obs key "$2"; obs trace "$(lines "Put (ingress) on $2")"; obs session "$CZID"
-        if [ "$CONTROL" != 1 ]; then skp "$1" inbound negative "$3: not asserted" "the allowed control on the same session did not land"
-        elif [ -z "$CZID" ]; then
-          blk "$1" inbound negative "$3: not tied to the control's session" "the edge's allow line names no session id, so a denial cannot be correlated with it"
-        elif [ "$vs" = "is unauthorized" ]; then ok "$1" inbound negative "$3: DENIED in our edge's trace for the control's session $CZID"
-        elif [ "$v" = "is unauthorized" ]; then
-          no "$1" inbound negative "the denial of $2 was recorded for another session, not the control's ($CZID)" "trace verdict for $CZID: '${vs:-<none>}'"
-        else no "$1" inbound negative "no denial recorded for $2" "trace verdict '${v:-<none>}'"; fi
-      }
-      deny refusal/out-of-lane-denied "$OUT" "the same identity's write to ops/**"
-      deny refusal/spoof-denied "$SPOOF" "the same identity writing under OUR wire name"
+        decide_control
+        deny refusal/out-of-lane-denied "$OUT" "$DENY_OUT"
+        deny refusal/spoof-denied "$SPOOF" "$DENY_SPOOF"
       fi
 
       # A name their CA can mint and the agreement never named: admitted to the
@@ -1096,21 +1237,8 @@ edge_refusals() {
         probe "$FED_PROBE_FORGED_REST" "$FORGED" "nope-$S"
         settle 6
         trace
-        unmatched=$(grep -F "$FED_PROBE_FORGED_ZID" "$TRACE" | grep -c 'did not match any configured ACL subject' || true)
-        allows=$(grep -F "$FED_PROBE_FORGED_ZID" "$TRACE" | grep -c 'is authorized to ' || true)
         get_side ours "$FORGED"
-        obs zid "$FED_PROBE_FORGED_ZID"; obs unmatched "$unmatched"; obs authorizations "$allows"; obs received "$GOT"
-        obs trace "$(grep -F "$FED_PROBE_FORGED_ZID" "$TRACE" | tail -3)"
-        if [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ]; then
-          ok refusal/forged-name inbound negative "a name their CA minted and nobody agreed: our edge matched it to no subject, ZERO authorizations, nothing landed"
-        elif [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -ne 0 ]; then
-          blk refusal/forged-name inbound negative "the forged name: our core's REST surface did not answer" "$GOT_ERR"
-        elif [ "${allows:-0}" -eq 0 ] && [ "${unmatched:-0}" -eq 0 ]; then
-          blk refusal/forged-name inbound negative "the forged name: our edge's log names that session nowhere" \
-            "Its decision lines are the evidence; without them the refusal is not proven."
-        else
-          no refusal/forged-name inbound negative "the forged name was not refused" "matched no subject $unmatched time(s), authorized $allows, our core read '${GOT:-<nothing>}'"
-        fi
+        decide_forged
       else
         skp refusal/forged-name inbound negative "the forged-name refusal was not exercised" "Set FED_PROBE_FORGED_REST and FED_PROBE_FORGED_ZID."
       fi
@@ -1126,29 +1254,70 @@ edge_refusals() {
         probe "$FED_PROBE_IMPERSONATE_REST" "$I_IN" "nope-$S"
         settle 6
         trace
-        unmatched=$(grep -F "$FED_PROBE_IMPERSONATE_ZID" "$TRACE" | grep -c 'did not match any configured ACL subject' || true)
-        allows=$(grep -F "$FED_PROBE_IMPERSONATE_ZID" "$TRACE" | grep -c 'is authorized to ' || true)
         landed=""; unread=""
         for k in "$I_OWN" "$I_OUT" "$I_IN"; do
           get_side ours "$k"; landed="$landed$GOT"; [ "$GOT_RC" -eq 0 ] || unread="$unread $k"
         done
-        obs zid "$FED_PROBE_IMPERSONATE_ZID"; obs unmatched "$unmatched"; obs authorizations "$allows"; obs received "$landed"
-        obs trace "$(grep -F "$FED_PROBE_IMPERSONATE_ZID" "$TRACE" | tail -3)"
-        if [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -z "$unread" ]; then
-          ok refusal/impersonation inbound negative "their certificate bearing our core's name: our edge matched it to no subject, ZERO authorizations on any key, nothing landed"
-        elif [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -n "$unread" ]; then
-          blk refusal/impersonation inbound negative "the impersonation: our core's REST surface did not answer for$unread"
-        elif [ "${allows:-0}" -eq 0 ] && [ "${unmatched:-0}" -eq 0 ] && [ -z "$landed" ]; then
-          blk refusal/impersonation inbound negative "the impersonation: our edge's log names that session nowhere" \
-            "Its decision lines are the evidence; without them the refusal is not proven."
-        else
-          no refusal/impersonation inbound negative "their certificate bearing our core's name was authorized on our edge" "matched no subject $unmatched time(s), authorized $allows time(s), our core read '$landed'"
-        fi
+        decide_impersonation
       else
         skp refusal/impersonation inbound negative "the F-424 impersonation was not exercised" "Set FED_PROBE_IMPERSONATE_REST and FED_PROBE_IMPERSONATE_ZID."
       fi
     fi
 }
+
+# replay_pending: with the edge's file (FED_EDGE_TRACE_FILE), the deferred run's
+# rows are this run's: each one it decided is kept as recorded, and each pending one
+# is decided here from what that run read of our core and the edge's lines for its
+# ids, in the order edge_refusals decides them. Nothing is fired or read again.
+replay_pending() {
+  local id prior="" pending
+  for id in $(python3 -c 'import json, sys; print("\n".join(json.load(open(sys.argv[1]))["ids"]))' "$IDS_FILE"); do
+    if [ -f "$EVID/history/$id.json" ]; then prior="$EVID/history/$id.json"; break; fi
+  done
+  pending=""
+  [ -n "$prior" ] && pending=$(python3 - "$prior" "$CHECKS" <<'PY'
+import json, sys
+b = json.load(open(sys.argv[1]))
+names = []
+with open(sys.argv[2], "a") as out:
+    for c in b.get("checks", []):
+        if c.get("observations", {}).get("pending") == "edge-trace":
+            names.append(c["name"])
+        else:
+            out.write(json.dumps(c, sort_keys=False) + "\n")
+print(" ".join(names))
+PY
+)
+  if [ -z "$prior" ] || [ -z "$pending" ]; then
+    echo "acceptance: the edge's trace file answers $IDS_FILE, but no deferred run with pending rows is recorded under $EVID/history for its ids" >&2
+    exit 2
+  fi
+  echo "  deciding the rows run $(basename "$prior" .json) left pending, from the edge's lines for its ids"
+  was() { python3 "$EVIDENCE" lookup --bundle "$prior" --name "$1" --obs "$2" 2>/dev/null; }
+  has() { case " $pending " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+  # S is the deferred run's id: the keys its probes wrote carry it.
+  S=$(basename "$prior" .json)
+  CONTROL=0; CZID=""
+  if has refusal/control-allowed; then
+    begin; IN=$(was refusal/control-allowed key); GOT=$(was refusal/control-allowed received)
+    GOT_RC=$(was refusal/control-allowed received_rc); GOT_RC=${GOT_RC:-4}; GOT_ERR=$(was refusal/control-allowed received_err)
+    FED_PROBE_THEIRS_ZID=$(was refusal/control-allowed probe_zid)
+    decide_control
+  fi
+  has refusal/out-of-lane-denied && deny refusal/out-of-lane-denied "$(was refusal/out-of-lane-denied key)" "$DENY_OUT"
+  has refusal/spoof-denied && deny refusal/spoof-denied "$(was refusal/spoof-denied key)" "$DENY_SPOOF"
+  if has refusal/forged-name; then
+    begin; FED_PROBE_FORGED_ZID=$(was refusal/forged-name zid); GOT=$(was refusal/forged-name received)
+    GOT_RC=$(was refusal/forged-name received_rc); GOT_RC=${GOT_RC:-4}; GOT_ERR=$(was refusal/forged-name received_err)
+    decide_forged
+  fi
+  if has refusal/impersonation; then
+    begin; FED_PROBE_IMPERSONATE_ZID=$(was refusal/impersonation zid)
+    landed=$(was refusal/impersonation received); unread=$(was refusal/impersonation unread)
+    decide_impersonation
+  fi
+}
+[ "$TRACE_MODE" = file ] && { replay_pending; finish "$EVID"; }
 
 if [ -z "$FED_THEIRS_REST" ]; then
   why="no counterparty surface (FED_THEIRS_REST)"
