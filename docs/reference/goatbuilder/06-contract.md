@@ -130,10 +130,12 @@ parsing prose:
 ```
 
 A run that uses a deprecated command, flag or value still works. It prints a
-warning on stderr naming what replaces it, and its document (a report, or the
-`goatbuilder.error/v1` document of a refused run) gains a `deprecations` list
-with one entry per item: the `command`, the `flag` and `value` when the entry
-names one, the `replacement`, the release that first warned (`deprecated_in`)
-and the stderr `warning` line itself. A run that used none has no
-`deprecations` field. The items are listed in
-`ops/goatbuilder/compat/deprecations.yaml` (ADR 1228).
+warning on stderr naming what replaces it. A report's document
+(`goatbuilder.output/v1`, as above) and a refused run's error document
+(`goatbuilder.error/v1`) gain a `deprecations` list with one entry per item:
+the `command`, the `flag` and `value` when the entry names one, the
+`replacement`, the release that first warned (`deprecated_in`) and the stderr
+`warning` line itself. A run that used none has no `deprecations` field. The
+documents a verb prints in a shape of its own do not carry the field:
+`survey` (`goatbuilder.survey/v1`), `show --json` (the run record), `federate status` (`goatbuilder.federate.status/v1`), `explain` (its code list, a catalog entry and an interpretation) and `promote`'s `status --json`, `review --json` and `readiness`. Adding it to one of them later is an added field. The items are listed
+in `ops/goatbuilder/compat/deprecations.yaml` (ADR 1228).

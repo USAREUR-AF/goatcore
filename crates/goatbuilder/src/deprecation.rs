@@ -5,8 +5,11 @@
 //! release that first warns. Until the major release that removes it, it keeps
 //! working: a run that uses it is told so on stderr, with the replacement
 //! (`main.rs` calls [`in_use`]). The same entries, each with its warning
-//! line, are the `deprecations` field of the run's `-o json` and `-o yaml`
-//! document ([`record`], read by `Report::new`), absent when the run used none.
+//! line, are the `deprecations` field of a report's `-o json` and `-o yaml`
+//! document and of a refused run's error document ([`record`], read by
+//! `Report::new` and main's error document), absent when the run used none.
+//! A document a verb prints in a shape of its own (survey, show --json,
+//! federate status, explain, promote's own documents) does not carry it.
 //! The compatibility check (ops/ci/check-goatbuilder-compat.sh, row A3) lets a
 //! command or flag of the last release be missing only when this list names it.
 
