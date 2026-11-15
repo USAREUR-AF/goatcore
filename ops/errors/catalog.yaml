@@ -2952,7 +2952,7 @@ entries:
       - --to, --resume or a --from other than 10 or 11 was given to a stage
       - --plan or --approve-plan was given outside `deploy`
       - --bilateral was given outside `test`
-      - "`rotate <partner> <key>` named a key whose rotation is designed and not built in this goatbuilder (`transport` or `signing`; this goatbuilder rotates the leaves and the carrier keys), or a key it does not know; the message says what is missing (for `transport`, that the partner cannot yet receive our new package)"
+      - "`rotate <partner> <key>` named a key whose rotation is designed and not built in this goatbuilder (`signing`; this goatbuilder rotates the leaves, the carrier keys and the transport key), or a key it does not know; the message says what is missing"
     fixes:
       - "goatbuilder federate deploy <partner> --approve-plan <hash>   (or --from 11 after the admission)"
       - "goatbuilder federate test <partner>"

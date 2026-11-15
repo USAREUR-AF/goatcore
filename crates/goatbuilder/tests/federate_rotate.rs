@@ -36,17 +36,11 @@ fn rotating_the_leaves_starts_at_phase_8_and_asks_the_helper_to_rotate() {
 }
 
 /// A key this build does not rotate is refused before anything runs, and the
-/// refusal says why. `transport` names that the partner cannot yet receive
-/// our new package, so wiring it before that is built fails this test.
+/// refusal says why.
 #[test]
 fn a_key_this_build_does_not_rotate_is_refused_before_anything_runs() {
     let w = world();
     for (key, code, why) in [
-        (
-            "transport",
-            "GB-189",
-            "the partner cannot yet receive our new package",
-        ),
         ("signing", "GB-189", "previous seed"),
         ("ca", "GB-282", "§5.1"),
         ("everything", "GB-189", "takes one of"),
@@ -90,6 +84,39 @@ fn rotating_the_carrier_starts_at_phase_2_and_passes_the_rotation_id_to_its_play
     assert!(!w.log().contains("preflight "), "phase 1 ran: {}", w.log());
     assert!(
         !w.work.join(".rotation-carrier").exists(),
+        "the id is kept after phase 2 passed: {t}"
+    );
+}
+
+/// `rotate <partner> transport` runs from phase 2 with the rotation's id on
+/// phase 2's plays, and writes the record phase 3 measures into our new
+/// package (ADR 1229 lets the partner's phase 5 take it). Nothing before
+/// phase 2 runs, and once phase 2 has passed the id is no longer kept.
+#[test]
+fn rotating_the_transport_key_starts_at_phase_2_and_records_the_rotation_for_phase_3() {
+    let w = world();
+    let plays = w.root.path().join("plays.log");
+    exe(
+        &w.repo.join("ops/scripts/ansible-preflight.sh"),
+        &format!(
+            "#!/bin/sh\necho \"play $*\" >> '{}'\nexit 0\n",
+            plays.display()
+        ),
+    );
+    let (out, _) = w.run(&["rotate", "hello-ally", "transport"]);
+    let t = text(&out);
+    assert!(!t.contains("GB-189"), "transport was refused: {t}");
+    let played = std::fs::read_to_string(&plays).unwrap_or_default();
+    let first = played.lines().next().unwrap_or_default();
+    assert!(
+        first.contains("peering_wg_transport_rotation=transport-"),
+        "phase 2's first play has no rotation id: {played}\n{t}"
+    );
+    assert!(!w.log().contains("preflight "), "phase 1 ran: {}", w.log());
+    let record = std::fs::read_to_string(w.work.join("rotation.json")).unwrap_or_default();
+    assert!(record.contains("\"key\":\"transport\""), "no record for phase 3: {record}\n{t}");
+    assert!(
+        !w.work.join(".rotation-transport").exists(),
         "the id is kept after phase 2 passed: {t}"
     );
 }

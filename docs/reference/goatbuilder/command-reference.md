@@ -519,7 +519,7 @@ Replace one key of a running peering and run the command again from the first ph
 | Argument | Description |
 |---|---|
 | `<PARTNER>` | The partner whose peering's key is replaced (the peering name, as declared) |
-| `<KEY>` | The key: leaves, carrier, transport, signing or ca. This build rotates leaves and carrier |
+| `<KEY>` | The key: leaves, carrier, transport, signing or ca. This build rotates leaves, carrier and transport |
 
 **Options**
 

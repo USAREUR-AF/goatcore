@@ -26,7 +26,7 @@
 //! (forwarder.rs), so nothing the partner holds changes, and no `rotation.json`
 //! is written. The run is phases 2 to 14.
 //!
-//! Built: `transport`, the peering's WireGuard key (K4), as a library. Before
+//! Built: `transport`, the peering's WireGuard key (K4). Before
 //! anything runs, the rotation's id is kept in `<work>/.rotation-transport`
 //! and written as the nonce of `<work>/rotation.json`, once (§7 item 1c).
 //! Phase 2 passes the id to goat-peering-wg, which moves the key aside, once,
@@ -34,13 +34,12 @@
 //! `tasks/transport-key.yml` and `tasks/transport-live.yml`). Phase 3 hashes
 //! `rotation.json`, so it measures the new key into a new package, and phase
 //! 5 offers that package to the partner. The run is phases 2 to 14. The
-//! partner receiving it is designed, not built (§3 K4, ADR 1229), so the
-//! command refuses `transport` (below) and only the library runs it.
+//! partner's phase 5 takes it once both sides compare its digest on the call
+//! (`--accept-partner-package`, ADR 1229); until their phase 11 runs, the
+//! tunnel is down (§3 K4).
 //!
-//! Refused: `transport` and `signing` with GB-189, each naming what is not
-//! built yet; `transport` also while the partner cannot receive our new
-//! package (§5, ADR 1229), because the tunnel would stay down after our new
-//! key. `ca` with GB-282: our CA's rotation needs an ADR superseding the
+//! Refused: `signing` with GB-189, naming what is not built yet. `ca` with
+//! GB-282: our CA's rotation needs an ADR superseding the
 //! package specification's single CA fingerprint (§4; package-spec §5.1).
 
 use std::path::Path;
@@ -59,7 +58,7 @@ use super::{Options, Phase};
 pub struct RotateArgs {
     /// The partner whose peering's key is replaced (the peering name, as declared).
     pub partner: String,
-    /// The key: leaves, carrier, transport, signing or ca. This build rotates leaves and carrier.
+    /// The key: leaves, carrier, transport, signing or ca. This build rotates leaves, carrier and transport.
     pub key: String,
     /// The environment the peering is declared on.
     #[arg(long)]
@@ -110,18 +109,13 @@ pub enum Gate {
 }
 
 /// The keys `rotate` names, and whether this build rotates each. A key moves
-/// to `Built` only together with what makes its rotation safe end to end: a
-/// test below holds `transport` refused while the partner cannot receive our
-/// new package.
+/// to `Built` only together with what makes its rotation safe end to end:
+/// `transport` moved once the partner's phase 5 could take our new package
+/// (ADR 1229, `confirm::incoming`).
 pub const KEYS: &[(&str, Gate)] = &[
     ("leaves", Gate::Built),
     ("carrier", Gate::Built),
-    (
-        "transport",
-        Gate::NotBuilt(
-            "the partner cannot yet receive our new package: under our unchanged signing key their phase 5 keeps the package on disk (§5, ADR 1229), so after our new WireGuard key the tunnel would stay down",
-        ),
-    ),
+    ("transport", Gate::Built),
     (
         "signing",
         Gate::NotBuilt(
@@ -229,14 +223,19 @@ pub(super) fn transport(phases: &mut [Phase], t: &Pending) {
     );
 }
 
-// `rotate <partner> transport` is refused until the partner can receive our
-// new package (KEYS); this run is reached from the tests only.
-#[cfg_attr(not(test), allow(dead_code))]
-/// The run that rotates the peering key: phases 2 to 14, nothing skipped. A
-/// start after phase 2 is kept and rotates nothing, and writes no record.
+/// The run that rotates the peering key: phases 2 to 14, nothing skipped,
+/// recorded as a `rotate` run. A start after phase 2 is kept and rotates
+/// nothing, and writes no record. Until phase 2 passes, the command that
+/// carries on is `rotate <partner> transport` again, which reads the same id.
+/// The tunnel is down from phase 2 until the partner's phase 11 runs with
+/// our new package (§3 K4): the partner runs `goatbuilder federate <us>
+/// --from 5 --accept-partner-package <digest>`, the digest compared on the
+/// call (ADR 1229).
 pub fn transport_run<'a>(o: &Options<'a>, work: &Path) -> Result<(Options<'a>, Surface)> {
     let from = o.from.max(2);
     let s = Surface {
+        stage: "rotate",
+        again: (from <= 2).then(|| format!("goatbuilder federate {VERB} {} transport", o.with)),
         rotate_transport: if from <= 2 {
             Some(transport_rotation(work)?)
         } else {
@@ -305,6 +304,11 @@ pub fn rotate(repo: &Path, o: &Options, key: &str) -> Result<crate::Report> {
             let (o, mut s) = carrier_run(o, Path::new(&work))?;
             super::federate_with(repo, &o, &mut s)
         }
+        "transport" => {
+            let work = super::work_dir(o);
+            let (o, mut s) = transport_run(o, Path::new(&work))?;
+            super::federate_with(repo, &o, &mut s)
+        }
         // A key marked Built without its run here is a mistake in this file.
         k => Err(anyhow::anyhow!(
             "`rotate {} {k}` is marked built but has no run",
@@ -364,7 +368,7 @@ pub(super) fn after_phase(s: &mut Surface, n: u32) {
     // done, and a later run passes no id. `rotation.json` stays: phase 3
     // hashes it from now on (§7 item 1c).
     if n == 2 {
-        if s.rotate_carrier.is_some() {
+        if s.rotate_carrier.is_some() || s.rotate_transport.is_some() {
             s.again = None;
         }
         for p in [s.rotate_carrier.take(), s.rotate_transport.take()]
@@ -386,20 +390,11 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// Wiring `transport` before the partner can receive our new package
-    /// would leave the tunnel down: it stays refused, and says why, until §5
-    /// (ADR 1229) is built. Moving it to Built means changing this test.
+    /// `transport` is rotated now that the partner's phase 5 takes our new
+    /// package (ADR 1229, `confirm::incoming`).
     #[test]
-    fn transport_is_refused_while_the_partner_cannot_receive_our_new_package() {
-        let e = refused("xab", "transport").unwrap_err();
-        assert_eq!(code(&e), "GB-189");
-        let m = e.to_string();
-        assert!(
-            m.contains("the partner cannot yet receive our new package"),
-            "{m}"
-        );
-        assert!(m.contains("ADR 1229"), "{m}");
-        assert!(m.contains("the tunnel would stay down"), "{m}");
+    fn transport_is_rotated_now_that_the_partner_can_receive_our_new_package() {
+        assert!(refused("xab", "transport").is_ok());
     }
 
     /// `signing` stays refused until its stage and the partner's re-binding
@@ -428,16 +423,17 @@ mod tests {
     }
 
     #[test]
-    fn only_the_leaves_and_carrier_are_built_and_nothing_runs_for_a_refused_key() {
+    fn only_the_leaves_carrier_and_transport_are_built_and_nothing_runs_for_a_refused_key() {
         assert_eq!(
             KEYS.iter()
                 .filter(|(_, g)| *g == Gate::Built)
                 .map(|(k, _)| *k)
                 .collect::<Vec<_>>(),
-            ["leaves", "carrier"]
+            ["leaves", "carrier", "transport"]
         );
         assert!(refused("xab", "leaves").is_ok());
         assert!(refused("xab", "carrier").is_ok());
+        assert!(refused("xab", "transport").is_ok());
     }
 
     fn opts(from: u32) -> Options<'static> {
@@ -625,18 +621,16 @@ mod tests {
     }
 
     #[test]
-    fn only_the_leaves_and_carrier_rotate_and_every_other_key_says_it_is_not_built() {
+    fn only_the_leaves_carrier_and_transport_rotate_and_every_other_key_says_it_is_not_built() {
         let o = opts(1);
-        for k in ["transport", "signing"] {
-            let e = rotate(Path::new("/nonexistent"), &o, k).unwrap_err();
-            assert_eq!(code(&e), "GB-189");
-            assert!(e.to_string().contains("designed, not built"), "{k}: {e}");
-            assert!(
-                e.to_string()
-                    .contains("This goatbuilder rotates leaves, carrier"),
-                "{k}: {e}"
-            );
-        }
+        let e = rotate(Path::new("/nonexistent"), &o, "signing").unwrap_err();
+        assert_eq!(code(&e), "GB-189");
+        assert!(e.to_string().contains("designed, not built"), "{e}");
+        assert!(
+            e.to_string()
+                .contains("This goatbuilder rotates leaves, carrier, transport"),
+            "{e}"
+        );
         assert_eq!(
             code(&rotate(Path::new("/nonexistent"), &o, "ca").unwrap_err()),
             "GB-282"
