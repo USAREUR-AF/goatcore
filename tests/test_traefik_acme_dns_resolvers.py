@@ -18,7 +18,7 @@ def flags(**variables):
     text = TEMPLATE.read_text()
     start = text.index("      - --certificatesresolvers.le.acme.dnschallenge.resolvers=")
     end = text.index("    environment:", start)
-    env = Environment(trim_blocks=True)
+    env = Environment(trim_blocks=True, autoescape=True)
     env.filters["bool"] = lambda v: str(v).lower() in ("1", "true", "yes", "on")
     rendered = env.from_string(text[start:end]).render(**variables)
     return [line.strip()[2:] for line in rendered.splitlines() if line.strip().startswith("- --")]
