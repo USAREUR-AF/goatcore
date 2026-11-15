@@ -12,6 +12,7 @@ entry's key) and the static hosts the packages are served from, so the step runs
 without a network.
 """
 import base64
+from datetime import datetime, timedelta, timezone
 import contextlib
 import hashlib
 import http.server
@@ -1634,3 +1635,34 @@ def test_a_package_without_a_readable_issued_date_is_not_offered_when_the_held_d
         assert (work / "theirs.incoming.json").exists() is offered, (held_issued, offered_issued, out)
         if not offered:
             assert "no readable issued date" in out, out
+
+
+def _xab_package(issued, seed_path=None):
+    """The partner xab's package with its `issued` set, signed by xab's test key."""
+    seed = bytes.fromhex((seed_path or KEY["xab"]).read_text().strip())
+    v = json.loads(XAB.read_bytes())
+    v.pop("signature", None)
+    v["issued"] = issued
+    v["signature"] = base64.b64encode(d.sign(seed, d.canonical(v))).decode()
+    return d.canonical(v)
+
+
+@needs_ed25519
+def test_a_package_issued_far_in_the_future_is_not_offered(tmp_path):
+    """The same rule as phase 5 (confirm.rs ISSUED_AHEAD_DAYS): a package issued more than
+    seven days after today's UTC date is not saved for phase 5, so it is not offered again on
+    every run; one within the seven days is."""
+    on_disk = _xab_package("2026-09-01")
+    theirs = tmp_path / "theirs.json"
+    theirs.write_bytes(on_disk)
+    a = type("A", (), {"work": str(tmp_path), "theirs": str(theirs), "per_counterparty": True, "their_id": "xab"})()
+    far = _xab_package("2099-01-01")
+    warnings = []
+    d.offer_new_package(a, "xab", PUB["xab"], far, json.loads(far), json.loads(on_disk), warnings)
+    assert not (tmp_path / d.INCOMING).exists(), warnings
+    assert any("2099-01-01" in w and "7 days" in w for w in warnings), warnings
+    soon = (datetime.now(timezone.utc).date() + timedelta(days=3)).isoformat()
+    near = _xab_package(soon)
+    warnings = []
+    d.offer_new_package(a, "xab", PUB["xab"], near, json.loads(near), json.loads(on_disk), warnings)
+    assert (tmp_path / d.INCOMING).read_bytes() == near, warnings
