@@ -2349,6 +2349,31 @@ mod tests {
         );
     }
 
+    /// A recheck given --edge-group or --as other than the saved plan's is a
+    /// command line wrong for that plan: a usage error (the contract's exit 2),
+    /// GB-325, not GB-200 (a plan input that changed, exit 1).
+    #[test]
+    fn a_recheck_with_flags_other_than_the_saved_plans_is_a_usage_error() {
+        let w = work_with_agreement();
+        let ws = w.path().display().to_string();
+        let fx = fixture();
+        let o = PlanOptions {
+            with: "hello-ally",
+            env: None,
+            r#as: Some("xaa"),
+            edge_group: None,
+            work: Some(&ws),
+            mock: Some(&fx),
+            live: false,
+        };
+        write(&build(&repo(), &o).unwrap()).unwrap();
+        let again = PlanOptions { mock: None, live: true, edge_group: Some("another_edge"), ..o };
+        let e = recheck(&repo(), &again).unwrap_err();
+        let code = e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone());
+        assert_eq!(code.as_deref(), Some("GB-325"), "{e:#}");
+        assert_eq!(goat_errors::explain("GB-325").and_then(|x| x.exit), Some(2));
+    }
+
     /// A change may go ahead only with nothing changed and every live check
     /// PASS or NOT APPLICABLE; a SKIP, a FAIL or no answer stops it.
     #[test]
