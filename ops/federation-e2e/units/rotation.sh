@@ -28,6 +28,16 @@ eval "$(declare -f unit_main | sed '1s/^unit_main /rot_peering_up /')"
 
 ROT_KEYS="leaves carrier transport signing"
 
+# drive's environment for `goatbuilder federate rotate <partner> <key>` (ROT_KEY): the rotation
+# re-runs phases (8 for the leaves, 3 after a carrier or transport key), which read the same
+# values as the command does (FED_CA_CERT/KEY, FED_WORK, GOAT_CONTEXT, the signing key, the
+# directory). drive() is copied with only its goatbuilder command swapped.
+eval "$(declare -f drive | sed '1s/^drive /drive_rotate /; s/goatbuilder -C \/opt\/goat --yes federate "\$them" --as "\$s" --from "\$from" --to "\$to"$/goatbuilder -C \/opt\/goat --yes federate rotate "$them" "$ROT_KEY" --as "$s"/')"
+# shellcheck disable=SC2016 # the literal text of the swapped line, not an expansion
+declare -f drive_rotate | grep -q 'federate rotate "\$them" "\$ROT_KEY"' \
+  || die "rotation.sh: drive() no longer has the command line drive_rotate swaps; update the sed above"
+export -f drive_rotate
+
 # Every stop goes through here: the flows are stopped first, so none keeps releasing.
 rot_die() {
   local l; for l in a2b b2a; do [ -e "$RECORD/flow-$l.pid" ] && touch "$RECORD/flow-$l.stop"; done
@@ -75,7 +85,7 @@ rot_one() { # $1 key, $2 side
   rot_all_material "$s" "$RECORD/rot-$k-$s-before.txt"
   rot_all_material "$them" "$RECORD/rot-$k-$them-before.txt"
   out="$RECORD/rot-$k-$s-rotate.out"
-  rc=0; docker exec "$h" goatbuilder -C /opt/goat --yes federate rotate "$them" "$k" --as "$s" > "$out" 2>&1 || rc=$?
+  rc=0; ROT_KEY="$k" drive_rotate "$s" "$them" goatbuilder 0 0 > "$out" 2>&1 || rc=$?
   why="$(grep -m1 -oE '(GB-189|GB-282)[^|]*' "$out" || true)"
   if [ "$rc" != 0 ] && [ -n "$why" ]; then
     # Refused, by this build's own word: every check of this key waits for a build that rotates it.
