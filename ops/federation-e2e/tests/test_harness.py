@@ -458,18 +458,45 @@ def samples_checks():
 
         long_sent = [(100 + i, i + 1, "200") for i in range(80)]
         two_gaps = [(t + 0.2, n) for t, n, _ in long_sent if not (11 <= n <= 30 or 51 <= n <= 70)]
-        rc, last, out = run_window(long_sent, two_gaps, 100, 180, "--gap")
+        rots = ("--rotation", "105", "135", "--rotation", "145", "175")
+        rc, last, out = run_window(long_sent, two_gaps, 100, 180, "--gap", *rots)
         check(rc == 0 and "20 number(s) lost in a gap of 21.0 s" in last and last.count("lost in a gap") == 2,
               f"samples --gap: two rotations' gaps of lost numbers are not a PASS naming each: {rc} {last}")
-        rep = json.loads(out.strip().splitlines()[0])
+        rep = json.loads((out.strip().splitlines() or ["{}"])[0])
         check([(g["first"], g["last"], g["lost"]) for g in rep.get("gaps", [])] == [(11, 30, 20), (51, 70, 20)] and rep.get("lost_outside") == [],
               f"samples --gap: the report does not list each gap: {rep}")
         stray = [a for a in two_gaps if a[1] != 76]
-        rc, last, out = run_window(long_sent, stray, 100, 180, "--gap")
-        check(rc == 1 and "1 number(s) lost outside a rotation's gap" in last and json.loads(out.strip().splitlines()[0]).get("lost_outside") == [76],
+        rc, last, out = run_window(long_sent, stray, 100, 180, "--gap", *rots)
+        check(rc == 1 and "1 number(s) lost outside a rotation's gap" in last and json.loads((out.strip().splitlines() or ["{}"])[0]).get("lost_outside") == [76],
               f"samples --gap: a loss outside the gaps is not a FAIL naming it: {rc} {last}")
         rc, last = run([(t + 50, n, c) for t, n, c in sent], [])
         check(rc == 1 and "no sample was released inside the window" in last, f"samples: an empty window is not a FAIL: {rc} {last}")
+
+        # A gap counts only when the flow recovers after it, it lies inside a rotation's
+        # window (one gap per rotated side) and it is no longer than GAP_MAX_S. 120
+        # samples at one a second; one rotation window, 140 to 170.
+        many = [(100 + i, i + 1, "200") for i in range(120)]
+        def keep(drop):
+            return [(t + 0.2, n) for t, n, _ in many if not drop(n)]
+        one_rot = ("--rotation", "140", "170")
+        rc, last, out = run_window(many, keep(lambda n: 46 <= n <= 65), 100, 220, "--gap", *one_rot)
+        check(rc == 0 and "20 number(s) lost in a gap of 21.0 s" in last,
+              f"samples --gap: a 20 s gap inside the rotation's window, recovered, is not a PASS: {rc} {last}")
+        rc, last, out = run_window(many, keep(lambda n: n >= 51), 100, 220, "--gap", *one_rot)
+        check(rc == 1 and "not followed by an on-time number" in last,
+              f"samples --gap: a flow that never recovers is not a FAIL: {rc} {last}")
+        rc, last, out = run_window(many, keep(lambda n: 11 <= n <= 110), 100, 220, "--gap", "--rotation", "100", "220")
+        check(rc == 1 and "longer than" in last,
+              f"samples --gap: a 100 s outage is not a FAIL: {rc} {last}")
+        rc, last, out = run_window(many, keep(lambda n: 46 <= n <= 51 or 61 <= n <= 66), 100, 220, "--gap", *one_rot)
+        check(rc == 1 and "more lossy runs than rotated sides" in last,
+              f"samples --gap: two 6 s losses in one rotation (flapping) are not a FAIL: {rc} {last}")
+        rc, last, out = run_window(many, [], 100, 220, "--gap", *one_rot)
+        check(rc == 1 and "lost outside a rotation's gap" in last,
+              f"samples --gap: a flow where nothing arrives is not a FAIL: {rc} {last}")
+        rc, last, out = run_window(many, keep(lambda n: 16 <= n <= 35), 100, 220, "--gap", *one_rot)
+        check(rc == 1 and "outside every rotation's window" in last,
+              f"samples --gap: a gap outside the rotation's window is not a FAIL: {rc} {last}")
     # Each rotation records the rotating side's material before and after, and the
     # partner's. A side's own snapshot keeps its name across both sides' rotations:
     # the second rotation once overwrote the first side's before-file with the key it
@@ -497,6 +524,10 @@ def samples_checks():
     on = body1.find('-- drive "$them" "$s" "$AVENUE" 11 13', step if step >= 0 else 0)
     check(step >= 0 and back > step and step < on < back,
           "rotation: the partner's step does not go on from phase 11 (drive $them $s $AVENUE 11 13) before the tunnel check")
+    # The samples check is given each rotated side's window: from the side's rotation to
+    # the end of its partner's step, recorded around rot_one.
+    check(re.search(r"side-start\\t\$s", unit) and re.search(r"side-end\\t\$s", unit) and "--rotation" in unit,
+          "rotation: each side's rotation window is not recorded and passed to samples.py (--rotation)")
     cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
     ids = {c["id"] for sc in cat["scenarios"] if sc["id"] == "key-rotation" for c in sc.get("checks", [])}
     script = ('eval "$(sed -n \'/^rot_checks()/,/^}/p\' units/rotation.sh)"; '
