@@ -18,7 +18,7 @@ it once, on the `Fix:` line, and `-o json` keeps it in the row's `fix`
 field. This applies to `standup`, `join-node`, `deploy` and `federate`.
 When phase 14 ends INCOMPLETE (X-ACCEPT-001), the fix now names
 `goatbuilder federate <peering> --from 14` and no longer names the scripts
-avenue's `ops/scripts/peering-standup.sh`.
+avenue's `ops/scripts/peering-standup.sh` (#911).
 
 #### Added: `goatbuilder federate rotate <partner> ipsec-leaf` and `ipsec-ca` rotate an ipsec-fips peering's leaf
 
