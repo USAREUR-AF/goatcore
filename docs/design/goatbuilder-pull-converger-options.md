@@ -43,8 +43,12 @@ hosts calls the push converger directly (`crates/goatbuilder/src/main.rs`, the `
 `push::deploy`). The push converger reads the pins and the inventory, not `goatbuilder.yaml`'s
 `converger:` (`crates/goatbuilder/src/push.rs`); it is not behind the trait. `doctor` does read the
 field: for a `pull-agent` environment it skips the reachability check and reports "no transport:
-the agent reaches out" (`crates/goatbuilder/src/doctor.rs`). So today a `pull-agent` environment
-passes `doctor` without a reach check and is then deployed by push.
+the agent reaches out" (`crates/goatbuilder/src/doctor.rs`). So a `pull-agent` environment
+passed `doctor` without a reach check and was then deployed by push. **Built since:** `doctor`,
+`deploy`, `release`'s deploy rungs, `fastlane`'s deploy and `rollback` refuse such an environment
+with GB-307, naming that the pull converger is not built (`crates/goatbuilder/src/converger.rs`,
+`refuse_pull_agent`). That is the refusal option A asks for below; it holds under either option
+until a pull converger exists.
 
 **There is no pull converger.** Nothing in this repository is an on-host agent that fetches a
 declaration and applies it, and nothing publishes the signed per-environment index that agent

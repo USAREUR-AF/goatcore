@@ -148,6 +148,15 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     if !repo.join("ops/ansible/roles").join(&ledger).is_dir() {
         return Err(refuse(format!("no ansible role at ops/ansible/roles/{ledger} — fastlane deploys through the component's role, and rollback.sh reads the same path")));
     }
+    // The deploy at the end is a push: a goatnet declared to pull is refused now,
+    // before the pin lands (the pull converger is not built).
+    if o.deploy {
+        if let Some(nets) = comp.get("goatnets").and_then(|g| g.as_object()) {
+            for g in nets.keys() {
+                crate::converger::refuse_pull_agent(repo, g)?;
+            }
+        }
+    }
     let declared_play = comp.get("deploy_playbook").and_then(|x| x.as_str()).unwrap_or("");
     let play = match push::find_play(&repo.join("ops/ansible"), declared_play, &ledger, o.component) {
         push::Play::Found(p) => p,

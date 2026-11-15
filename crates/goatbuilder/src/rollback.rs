@@ -459,6 +459,17 @@ fn image_repo(r: &str) -> String {
 /// ledger, and the same field `--site` narrows on. Hosts with no `site:` (the
 /// group-based relay ledgers, rolled per-goatnet by their own inventory) are not
 /// goatnets here; the set is sorted and deduplicated.
+/// With no `--site`, every goatnet the rollback would flip, each refused when
+/// it declares the pull converger (`converger::refuse_pull_agent`).
+fn refuse_pull_agent_goatnets(repo: &Path, site: Option<&str>, hosts: &[HostMap]) -> Result<()> {
+    if site.is_none() {
+        for net in goatnets_of(hosts) {
+            crate::converger::refuse_pull_agent(repo, &net)?;
+        }
+    }
+    Ok(())
+}
+
 fn goatnets_of(hosts: &[HostMap]) -> Vec<String> {
     let mut v: Vec<String> = hosts.iter().map(|h| h.site.clone()).filter(|s| !s.is_empty()).collect();
     v.sort();
@@ -499,8 +510,14 @@ pub(crate) fn decide(repo: &Path, component: &str, n: u32, site: Option<&str>) -
     if !(1..=7).contains(&n) {
         return Err(anyhow::Error::from(goat_errors::coded("GB-246", format!("N must be 1..7 (got: {n})"))));
     }
+    // A rollback is a push: a goatnet declared to pull is refused before any
+    // ledger is read (the pull converger is not built).
+    if let Some(s) = site {
+        crate::converger::refuse_pull_agent(repo, s)?;
+    }
     let (hosts, history) = load_reached(repo, component, site)?;
     require_site_when_multi_goatnet(component, site, &hosts)?;
+    refuse_pull_agent_goatnets(repo, site, &hosts)?;
     let m = artifact_meta(&hosts, component);
     let (target, src, _) = pick_target(&hosts, &history, component, n)?;
     Ok(serde_json::json!({
@@ -513,6 +530,11 @@ pub(crate) fn decide(repo: &Path, component: &str, n: u32, site: Option<&str>) -
 pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&str>) -> Result<Report> {
     if !(1..=7).contains(&n) {
         return Err(anyhow::Error::from(goat_errors::coded("GB-246", format!("N must be 1..7 (got: {n})"))));
+    }
+    // A rollback is a push: a goatnet declared to pull is refused before any
+    // ledger is read (the pull converger is not built).
+    if let Some(s) = site {
+        crate::converger::refuse_pull_agent(repo, s)?;
     }
     // Fresh source (C3): the guards below read this checkout's deploy-history.yml
     // (the hosts map, do_not_roll_to), so a checkout behind the trunk is refused
@@ -528,6 +550,7 @@ pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&s
     }
     let (hosts, history) = load_reached(repo, component, site)?;
     require_site_when_multi_goatnet(component, site, &hosts)?;
+    refuse_pull_agent_goatnets(repo, site, &hosts)?;
     let m = artifact_meta(&hosts, component);
     let mut checks: Vec<Check> = fresh.map(|f| f.check).into_iter().collect();
     let refuse = |checks: Vec<Check>, exit: i32| {

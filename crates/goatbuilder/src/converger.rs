@@ -21,15 +21,54 @@ pub const PULL_NOT_BUILT: &str = "GB-307";
 /// resolves (a class's value, else its site's, else the environment's): the
 /// environment itself, `site <s>`, or `site <s> class <c>`. Empty when every
 /// machine of the environment resolves to the push converger.
-pub fn pull_agent_places(_env: &crate::config::Environment) -> Vec<String> {
-    Vec::new()
+pub fn pull_agent_places(env: &crate::config::Environment) -> Vec<String> {
+    const PULL: &str = "pull-agent";
+    let mut places = Vec::new();
+    let mut whole_sites = 0;
+    for site in &env.sites {
+        let at_site = site.converger.as_deref().unwrap_or(&env.converger);
+        let pulled: Vec<&str> = site
+            .classes
+            .iter()
+            .filter(|(_, c)| c.converger.as_deref().unwrap_or(at_site) == PULL)
+            .map(|(k, _)| k.as_str())
+            .collect();
+        let whole = if site.classes.is_empty() { at_site == PULL } else { pulled.len() == site.classes.len() };
+        if whole {
+            whole_sites += 1;
+            places.push(format!("site {}", site.name));
+        } else {
+            places.extend(pulled.into_iter().map(|c| format!("site {} class {c}", site.name)));
+        }
+    }
+    // The environment's own value, reaching every machine: name it once.
+    if env.converger == PULL && whole_sites == env.sites.len() {
+        return vec![format!("environment {}", env.name)];
+    }
+    places
 }
 
 /// Refuses (PULL_NOT_BUILT) when the repository's `goatbuilder.yaml` declares
 /// `converger: pull-agent` anywhere in the environment `env`. A checkout with no
 /// readable config, or no such environment, is not refused here.
-pub fn refuse_pull_agent(_repo: &Path, _env: &str) -> Result<()> {
-    Ok(())
+pub fn refuse_pull_agent(repo: &Path, env: &str) -> Result<()> {
+    let path = repo.join("ops/goatbuilder/goatbuilder.yaml");
+    let Ok(cfg) = crate::config::load(&path) else { return Ok(()) };
+    let wanted = env.replace('_', "-");
+    let Some(e) = cfg.environments.iter().find(|e| e.name == env || e.name.replace('_', "-") == wanted) else { return Ok(()) };
+    let places = pull_agent_places(e);
+    if places.is_empty() {
+        return Ok(());
+    }
+    Err(goat_errors::coded(PULL_NOT_BUILT, pull_agent_refusal(&e.name, &places)).into())
+}
+
+/// The refusal's words, shared by `doctor` and the real-host verbs.
+pub fn pull_agent_refusal(env: &str, places: &[String]) -> String {
+    format!(
+        "environment {env} declares converger: pull-agent ({}); the pull converger is not built, and goatbuilder will not push to machines declared to pull",
+        places.join(", ")
+    )
 }
 
 /// What one observation of one machine says (C7): done only when its record

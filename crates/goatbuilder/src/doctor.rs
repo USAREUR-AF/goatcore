@@ -235,7 +235,7 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
             .filter(|e| only_env.map(|o| o == e.name).unwrap_or(true))
         {
             let mut detail = match (env.converger.as_str(), env.transport.as_deref()) {
-                ("pull-agent", _) => "pull-agent: no transport: the agent reaches out".to_string(),
+                ("pull-agent", _) => "pull-agent: no transport, and no pull converger to use".to_string(),
                 (_, Some("ssm")) => "push over the mesh when this machine is on the environment's profile; otherwise its SSM door (bootstrap/break-glass grade: ~20-minute idle timeout: not for a long play)".to_string(),
                 (_, Some("direct")) | (_, None) => "push over the mesh (direct, SSH with the inventory)".to_string(),
                 (_, Some(other)) => format!("transport '{other}' is not one this binary knows"),
@@ -267,6 +267,7 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
                 detail.push_str(&s);
             }
             checks.push(ok(&format!("env:{}", env.name), detail));
+            checks.extend(pull_agent_check(env));
             if env.converger != "pull-agent" {
                 checks.push(reach_check(repo, env));
             }
@@ -492,8 +493,16 @@ fn reach_check(repo: &Path, env: &config::Environment) -> Check {
 /// The row that refuses an environment declaring `converger: pull-agent`
 /// anywhere (crate::converger::PULL_NOT_BUILT): the pull converger is not
 /// built, and every real-host verb would push to it. None when nothing does.
-fn pull_agent_check(_env: &config::Environment) -> Option<Check> {
-    None
+fn pull_agent_check(env: &config::Environment) -> Option<Check> {
+    let places = crate::converger::pull_agent_places(env);
+    if places.is_empty() {
+        return None;
+    }
+    Some(refused(
+        &format!("env:{}:converger", env.name),
+        format!("{} {}", crate::converger::PULL_NOT_BUILT, crate::converger::pull_agent_refusal(&env.name, &places)),
+        "declare converger: push-ansible for these machines in ops/goatbuilder/goatbuilder.yaml until the pull converger is built (docs/design/goatbuilder-pull-converger-options.md)",
+    ))
 }
 
 /// The same list, each name once, in reading order.
