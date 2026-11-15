@@ -38,6 +38,43 @@ class TextLogs(unittest.TestCase):
         log = "teardown of goat-zenoh FAILED — exit 1\ncause: uncatalogued\nnext line\n"
         self.assertEqual(len(findings(log)), 1)
 
+    def test_a_probe_the_run_went_past_is_not_an_error(self):
+        log = ("  $ ssh host 'podman ps'\n"
+               "  FAILED: exit 1 in 0.1s; log ~/.goat/state/runs/r/logs/009-3.log\n"
+               "  $ ssh host 'docker ps'\n"
+               "  ok in 0.1s\n")
+        self.assertEqual(findings(log), [])
+
+    def test_a_probe_at_the_end_of_a_phase_is_not_an_error(self):
+        log = ("  $ ssh host 'stat -c %u -- /var/log/state.json'\n"
+               "  FAILED: exit 1 in 0.1s; log ~/.goat/state/runs/r/logs/020-3.log\n"
+               "init — our half, read from the running system\n"
+               "[✓] declaration — read\n")
+        self.assertEqual(findings(log), [])
+
+    def test_a_phase_that_stopped_the_run_without_a_code_is_an_error(self):
+        log = ("  $ ansible-playbook site.yml\n"
+               "  FAILED: exit 2 in 12s; log ~/.goat/state/runs/r/logs/004-4.log\n"
+               "[✗] failed — !! Phase 4 (\"lint\") FAILED — exit 2. No later phase has run\n"
+               "run record: ~/.goat/state/runs/r/run.json\n")
+        got = findings(log)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0][1], 3)
+
+    def test_a_wrapped_coloured_failed_row_is_read_as_one(self):
+        row = ("  \x1b[31m✗\x1b[0m failed  !! Phase 14 (\"acceptance\")\n"
+               "      FAILED: exit 3. No later phase has run; the peering is left partway\n"
+               "      through phase 14. exit codes are specific: 20 composition\n"
+               "      refused, 21 lint refused.\n")
+        got = findings(row)
+        self.assertEqual([n for _, n, _ in got], [1])
+        self.assertEqual(findings(row + "  ✗ interpreted  GB-251: a required acceptance check was blocked\n"), [])
+
+    def test_a_wave_that_failed_with_its_code_passes(self):
+        log = ("!! Phase 12 FAILED: portal. Steps in that wave that passed stay done\n"
+               "interpreted: GB-221: the play could not reach the host\n")
+        self.assertEqual(findings(log), [])
+
     def test_a_clap_usage_error_is_held_too(self):
         self.assertEqual(len(findings("error: unexpected argument '--frob' found\n")), 1)
         self.assertEqual(findings("error: unexpected argument '--frob' found (GB-242)\n"), [])

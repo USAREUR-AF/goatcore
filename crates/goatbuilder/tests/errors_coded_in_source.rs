@@ -141,6 +141,12 @@ fn non_test_lines(text: &str) -> Vec<&str> {
     keep
 }
 
+/// A message on one line: a string continued with `\` at the end of a line,
+/// and every run of whitespace, read as one space.
+fn one_line(s: &str) -> String {
+    s.replace("\\\n", " ").split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Whether the error catalog's interpretation codes `message`: a code it
 /// quotes, or a `matches:` pattern it meets.
 fn catalog_codes(message: &str) -> bool {
@@ -206,7 +212,7 @@ fn uncoded_in(file: &str, text: &str) -> Vec<Site> {
             if code.is_match(&whole) || whole.contains("coded(") {
                 continue;
             }
-            let message = match first_literal(&expr) {
+            let message = match first_literal(&expr).map(|l| one_line(&l)) {
                 Some(l) if catalog_codes(&l) => continue,
                 Some(l) => l,
                 None => {
