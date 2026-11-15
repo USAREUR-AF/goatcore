@@ -157,6 +157,13 @@ impl Policy {
         self.seen_keys.len()
     }
 
+    /// Called once per sample dropped because the paced queue is full. `Some(n)`
+    /// when this one should be logged as a warning, `n` being the drops held
+    /// back since the last warning; `None` when it is only counted.
+    pub fn queue_full_warning(&mut self, _now_ms: u64) -> Option<u64> {
+        None
+    }
+
     /// Called once per cardinality-shed refusal. `Some(n)` when this one should
     /// be logged as a warning, `n` being the refusals held back since the last
     /// warning; `None` when it falls inside the interval and is only counted.
@@ -326,25 +333,42 @@ mod tests {
         ));
     }
 
+    /// ADR 1244: the publisher paces the lane to 1/hz, so the policy no longer
+    /// sheds a burst by the second. Shedding a burst here would lose data a
+    /// spaced send delivers.
     #[test]
-    fn the_rate_ceiling_sheds_and_the_next_second_recovers() {
+    fn a_burst_inside_one_second_is_left_to_the_publishers_pacing() {
         let mut p = policy(&["release/weather/**"], Envelope { hz: 2, ..roomy() });
-        assert!(matches!(
-            p.decide("release/weather/f", 1, 0, today()),
-            Decision::Publish(_)
-        ));
-        assert!(matches!(
-            p.decide("release/weather/f", 1, 10, today()),
-            Decision::Publish(_)
-        ));
+        for t in [0, 10, 20, 30] {
+            assert!(
+                matches!(
+                    p.decide("release/weather/f", 1, t, today()),
+                    Decision::Publish(_)
+                ),
+                "sample at {t} ms"
+            );
+        }
+    }
+
+    #[test]
+    fn a_receiver_that_accepts_no_publications_gets_none() {
+        let mut p = policy(&["release/weather/**"], Envelope { hz: 0, ..roomy() });
         assert_eq!(
-            p.decide("release/weather/f", 1, 20, today()),
-            Decision::Refuse(Refusal::RateShed { limit: 2 })
+            p.decide("release/weather/f", 1, 0, today()),
+            Decision::Refuse(Refusal::RateShed { limit: 0 })
         );
-        assert!(matches!(
-            p.decide("release/weather/f", 1, 1_000, today()),
-            Decision::Publish(_)
-        ));
+    }
+
+    /// A sample dropped because the paced queue is full is counted every time
+    /// and warned about at most once a minute, with the drops held back since.
+    #[test]
+    fn a_full_paced_queue_warns_at_most_once_a_minute() {
+        let mut p = policy(&["release/weather/**"], roomy());
+        assert_eq!(p.queue_full_warning(0), Some(0));
+        assert_eq!(p.queue_full_warning(1_000), None);
+        assert_eq!(p.queue_full_warning(30_000), None);
+        assert_eq!(p.queue_full_warning(60_000), Some(2));
+        assert_eq!(p.queue_full_warning(60_001), None);
     }
 
     #[test]
