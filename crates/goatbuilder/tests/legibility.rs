@@ -1105,7 +1105,14 @@ fn f5_a_failed_standup_phase_carries_its_known_error_s_code_and_fix() {
     let d = &interpreted[0];
     let e = goat_errors::explain("X-SSH-001").unwrap();
     assert!(d.starts_with(&format!("X-SSH-001: {}", e.title)), "{d}");
-    assert!(d.contains(&e.fixes[0]), "the fix: {d}");
+    // The fix is the row's own field, printed once on its own line.
+    let fix = v["checks"]
+        .as_array()
+        .and_then(|a| a.iter().find(|c| c["name"] == "interpreted"))
+        .and_then(|c| c["fix"].as_str())
+        .unwrap_or_default();
+    assert!(fix.contains(&e.fixes[0]), "the fix: {fix}");
+    assert!(!d.contains(&e.fixes[0]), "the fix only once: {d}");
     assert!(d.contains("goatbuilder explain X-SSH-001"), "{d}");
     // The log of the phase's output, which holds the error.
     let log = d
@@ -1141,12 +1148,17 @@ fn the_ssh_refusal_is_interpreted(verb: &str, out: &Output, key: &str) -> String
     assert!(!out.status.success(), "a step fails: {}", text(out));
     let v: serde_json::Value =
         serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(out)));
-    let interpreted: Vec<String> = v["checks"]
+    let interpreted: Vec<(String, String)> = v["checks"]
         .as_array()
         .unwrap()
         .iter()
         .filter(|c| c["name"] == "interpreted")
-        .map(|c| c["detail"].as_str().unwrap_or("").to_string())
+        .map(|c| {
+            (
+                c["detail"].as_str().unwrap_or("").to_string(),
+                c["fix"].as_str().unwrap_or("").to_string(),
+            )
+        })
         .collect();
     assert_eq!(
         interpreted.len(),
@@ -1154,10 +1166,12 @@ fn the_ssh_refusal_is_interpreted(verb: &str, out: &Output, key: &str) -> String
         "{key} failed with a known error and carries no interpreted row: {}",
         text(out)
     );
-    let d = &interpreted[0];
+    let (d, fix) = &interpreted[0];
     let e = goat_errors::explain("X-SSH-001").unwrap();
     assert!(d.starts_with(&format!("X-SSH-001: {}", e.title)), "{d}");
-    assert!(d.contains(&e.fixes[0]), "the fix: {d}");
+    // The fix is the row's own field, printed once on its own line.
+    assert!(fix.contains(&e.fixes[0]), "the fix: {fix}");
+    assert!(!d.contains(&e.fixes[0]), "the fix only once: {d}");
     assert!(d.contains("goatbuilder explain X-SSH-001"), "{d}");
     let log = d
         .split(". Its output: ")

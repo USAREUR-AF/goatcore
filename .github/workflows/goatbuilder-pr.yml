@@ -83,6 +83,11 @@ on:
       - 'ops/scripts/test_standup_mesh_record.py'
       - 'ops/scripts/node-seed.py'
       - 'ops/scripts/test_node_seed.py'
+      - 'ops/scripts/external-service-finish.py'
+      - 'ops/scripts/test_external_service_finish.py'
+      - 'ops/scripts/lifecycle-sweep.py'
+      - 'ops/scripts/test_lifecycle_sweep.py'
+      - 'ops/warrant/membership.py'
       - 'ops/scripts/mint-site-certs.sh'
       - 'ops/goatnets/cross-env-apply.sh'
       - 'ops/scripts/goatlite-render.py'
@@ -374,6 +379,10 @@ jobs:
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 ops/scripts/test_standup_required_inputs.py
+      - name: The standup pre-pull lists a member's image pins and pulls them N at once, on a fixture checkout of its own
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: python3 -W error::ResourceWarning ops/scripts/test_standup_image_pull.py
       - name: Each phase runs through the shared runner; a goatlite's phase 1 creates its own secrets store (LP-007)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
@@ -398,6 +407,14 @@ jobs:
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 ops/scripts/test_node_seed.py
+      - name: external-service-finish writes a governed scope's membership entry and names the group from the taxonomy's site_prefix
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: python3 -W error::ResourceWarning ops/scripts/test_external_service_finish.py
+      - name: The lifecycle sweep holds, revokes and restores by its lanes, and on a governed scope emits a membership entry instead of writing live
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: python3 -W error::ResourceWarning ops/scripts/test_lifecycle_sweep.py
       - name: Phase 12's dependency graph is valid, and both avenues run it in waves
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}

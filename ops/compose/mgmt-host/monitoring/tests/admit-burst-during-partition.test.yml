@@ -1,0 +1,61 @@
+# promtool unit test for AdmitBurstDuringPartition (rules/admit-ioc.yml).
+#
+# Locally:
+#   promtool test rules ops/compose/mgmt-host/monitoring/tests/admit-burst-during-partition.test.yml
+#
+# admit-audit's series carry their own `site`; the Spock series this host's
+# postgres-exporter emits do not (site is an external label only on the mgmt
+# host). The partition condition is this host's own Spock, so it is joined
+# without matching on site.
+rule_files:
+  - ../rules/admit-ioc.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Six admits in five minutes while a subscription is not replicating: fires.
+  - interval: 1m
+    input_series:
+      - series: 'admit_audit_admits_total{job="admit-audit",instance="admit-audit-local",site="zagros-b",account_id="acct-1",source_user="u-1"}'
+        values: '0 0 2 4 6 8 10 12'
+      - series: 'spock_subscription_lag_replicating{job="postgres",instance="postgres-a",subscription_name="sub_a_b"}'
+        values: '0x8'
+      - series: 'spock_subscription_lag_replicating{job="postgres",instance="postgres-a",subscription_name="sub_a_c"}'
+        values: '1x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: AdmitBurstDuringPartition
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: admit-audit
+              ioc: partition_burst
+              site: zagros-b
+            exp_annotations:
+              summary: "Admit burst during partition at zagros-b — coincident-infiltration signature"
+              description: "More than 5 peer admits in 5m while this site's Spock subscription is NOT replicating (partition active). This is the direct signature described in docs/design/mgmt-plane-threat-mitigations.md §2.1. Investigate immediately: who is the source_user of the most recent admit-audit JSON events, and was the admission authorized during the partition window? Consider Primary Ops revoke-and-review per C4 (deferred in MVP)."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/ops/admit-audit/README.md"
+
+  # The same burst while every subscription replicates: does not fire.
+  - interval: 1m
+    input_series:
+      - series: 'admit_audit_admits_total{job="admit-audit",instance="admit-audit-local",site="zagros-b",account_id="acct-1",source_user="u-1"}'
+        values: '0 0 2 4 6 8 10 12'
+      - series: 'spock_subscription_lag_replicating{job="postgres",instance="postgres-a",subscription_name="sub_a_b"}'
+        values: '1x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: AdmitBurstDuringPartition
+        exp_alerts: []
+
+  # A partition with only four admits in five minutes: does not fire.
+  - interval: 1m
+    input_series:
+      - series: 'admit_audit_admits_total{job="admit-audit",instance="admit-audit-local",site="zagros-b",account_id="acct-1",source_user="u-1"}'
+        values: '0 0 1 2 3 4 4 4'
+      - series: 'spock_subscription_lag_replicating{job="postgres",instance="postgres-a",subscription_name="sub_a_b"}'
+        values: '0x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: AdmitBurstDuringPartition
+        exp_alerts: []

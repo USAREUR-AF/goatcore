@@ -26,8 +26,10 @@
 #
 # `consumers` are roles in this repository. `external_consumers` are services
 # whose roles live in another repository (goatstuff); they are listed so the
-# identity's readers are all in one place, and the check refuses one that
-# turns out to have a role here.
+# identity's readers are all in one place. Where such a role is present, as in
+# an assembled tree (an overlay over this repository and goatstuff), the check
+# refuses it unless it includes the require task, as for a consumer; a role
+# listed as both kinds of consumer is refused.
 #
 # Placeholders: {goatnet} is the group's site_id (zagros-dev); {SITE} is the same
 # uppercased with '-' -> '_' (ZAGROS_DEV).
@@ -75,7 +77,8 @@ identities:
       - onboard-runner
       - mesh-health
     # Deployed from goatstuff, which holds their roles; this repository has no
-    # role for them, so the check here cannot see their require-task include.
+    # role for them, so the check sees their require-task include only in an
+    # assembled tree.
     external_consumers:
       - netvis
       - microscope

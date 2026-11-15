@@ -2161,11 +2161,21 @@ class GovernedScopeTest(unittest.TestCase):
         self.assertIn("- peer: peer-bob-zagros-dev-2026-09-01", text)
         self.assertIn("exact: [ZAGROS-DEV-PROBATION-DEVELOPER]", text)
 
-        # The emitted entry drops into the scope's holds.yaml and validates.
+        # The emitted entry drops into the scope's holds.yaml and validates,
+        # against the test's own taxonomy, so the case does not depend on which
+        # goatnets the repository's ops/ansible/netbird_acl_taxonomy.yml lists.
         sys.path.insert(0, str(HERE.parent / "warrant"))
         import membership as mem
+        taxonomy = self.d / "netbird_acl_taxonomy.yml"
+        taxonomy.write_text(
+            "netbird_acl_taxonomy:\n"
+            "  zagros-dev:\n"
+            "    site_prefix: ZAGROS-DEV\n"
+            "    groups:\n"
+            "    - suffix: DEVELOPER\n"
+            "    - suffix: PROBATION-DEVELOPER\n")
         (self.sdir / "holds.yaml").write_text("version: 1\nentries:\n" + text)
-        self.assertEqual(mem.check_scope(self.sdir), [])
+        self.assertEqual(mem.check_scope(self.sdir, scopes=mem.taxonomy_scopes(taxonomy)), [])
         self.assertEqual(len(mem.load_scope(self.sdir)["entries"]), 1)
 
     def test_hold_for_a_declared_peer_replaces_its_entry(self):

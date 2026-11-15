@@ -47,6 +47,7 @@ cp "$REPO/ops/scripts/lib/source_of_record.py" "$S/core/ops/scripts/lib/"
 echo "- debug: msg=core" > "$S/core/ops/ansible/roles/x/tasks/main.yml"
 echo "core: example" > "$S/core/ops/ansible/group_vars_all.yml"
 mkdir -p "$S/core/crates"; echo "# goatcore workspace" > "$S/core/crates/Cargo.toml"
+mkdir -p "$S/core/ops/ci"; echo "goatcore-only-entry" > "$S/core/ops/ci/manifest-allowlist.txt"
 git "${G[@]}" -C "$S/core" init -q
 git -C "$S/core" add -A
 git "${G[@]}" -C "$S/core" commit -q -m "chore: export from the source tree at 0123456789ab"
@@ -137,6 +138,7 @@ echo "- debug: msg=stuff" > "$S/stuff/ops/ansible/roles/y/tasks/main.yml"
 echo "z: stuff" > "$S/stuff/ops/ansible/roles/z/defaults/main.yml"
 echo "goatstuff" > "$S/stuff/README.md"
 mkdir -p "$S/stuff/crates"; echo "# goatstuff workspace" > "$S/stuff/crates/Cargo.toml"
+mkdir -p "$S/stuff/ops/ci"; echo "goatstuff-only-entry" > "$S/stuff/ops/ci/manifest-allowlist.txt"
 git "${G[@]}" -C "$S/stuff" init -q
 git -C "$S/stuff" add -A
 git "${G[@]}" -C "$S/stuff" commit -q -m "goatstuff"
@@ -157,6 +159,7 @@ assemble_stuff() {   # <goatstuff commit> -> $S/t: goatcore, then goatstuff's op
   git clone -q "$S/stuff" "$S/st"
   git -C "$S/st" -c advice.detachedHead=false checkout -q "$1"
   (cd "$S/st" && git ls-files ops) | while IFS= read -r f; do
+    case "$f" in ops/ci/manifest-allowlist.txt|ops/ci/manifest-version-exceptions.txt) continue ;; esac  # each repository's own: goatcore's stays
     mkdir -p "$S/t/$(dirname "$f")"; cp -p "$S/st/$f" "$S/t/$f"
   done
   (cd "$S/ov" && git ls-files) | while IFS= read -r f; do
@@ -176,6 +179,13 @@ expect "goatstuff layered, pinned run" 0 "$CORE" env GOAT_FRESH_SOURCE_TRUNK="$C
 
 echo "- debug: msg=hand" > "$S/t/ops/ansible/roles/y/tasks/main.yml"
 expect "goatstuff file edited in the tree" 1 "differ from goatstuff" fs
+
+# a file each repository carries for itself (its CI manifest allowlist): the tree keeps goatcore's,
+# so goatstuff's different copy is not looked for; an edit to goatcore's copy is still refused
+assemble_stuff "$STUFF"
+expect "goatstuff's own CI manifest differs, goatcore's stays" 0 "$CORE" fs
+echo "hand-entry" >> "$S/t/ops/ci/manifest-allowlist.txt"
+expect "goatcore's CI manifest edited in the tree" 1 "GB-064 REFUSE" fs
 
 assemble_stuff "$STUFF2"
 expect "another goatstuff commit layered than the marker names" 1 "differ from goatstuff" fs

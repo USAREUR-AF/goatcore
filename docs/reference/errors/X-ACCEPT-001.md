@@ -18,7 +18,7 @@ One line per step or alternative:
 
 ```text
 read the BLOCKED and skipped lines above the acceptance-counts line, or the why field of result.json; set what each names, then run phase 14 again
-ops/scripts/peering-standup.sh <peering> --from 14
+goatbuilder federate <peering> --from 14
 ```
 
 ## Read more
