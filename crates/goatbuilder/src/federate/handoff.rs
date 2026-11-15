@@ -352,15 +352,27 @@ pub fn core_half_built(n: u32) -> bool {
 /// `peering_prepare_half=edge`). No private key leaves the edge.
 pub const PHASE_2_SCHEMA: &str = "goatbuilder.phase2-edge/v1";
 
+/// Why phase 2's command has no halves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoHalves {
+    /// A forwarder's steps are spliced around the play: they reach the
+    /// forwarder host, whose hand-off is not designed.
+    Spliced,
+    /// The command is not the one `peering-prepare.yml` run its halves are
+    /// made from.
+    NotThePlay,
+}
+
 /// Phase 2's command for one half: its one `peering-prepare.yml` run with
 /// `peering_prepare_half` named, and for the edge half the peering and the
-/// result file the play writes on the driver. None when phase 2 is not that
-/// one run (a forwarder's steps spliced around it reach the forwarder host,
-/// whose hand-off is not designed).
-pub fn phase_2_half(cmd: &str, with: &str, half: &str, result: Option<&Path>) -> Option<String> {
+/// result file the play writes on the driver; or why it has no halves.
+pub fn phase_2_half(cmd: &str, with: &str, half: &str, result: Option<&Path>) -> Result<String, NoHalves> {
     const PLAY: &str = " peering-prepare.yml";
-    if cmd.contains(") && (") || !cmd.ends_with(PLAY) {
-        return None;
+    if cmd.contains(") && (") {
+        return Err(NoHalves::Spliced);
+    }
+    if !cmd.ends_with(PLAY) {
+        return Err(NoHalves::NotThePlay);
     }
     let sq = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
     let mut vars = format!(" -e peering_prepare_half={half}");
@@ -371,15 +383,22 @@ pub fn phase_2_half(cmd: &str, with: &str, half: &str, result: Option<&Path>) ->
             sq(&r.display().to_string())
         ));
     }
-    Some(format!("{}{vars}{PLAY}", &cmd[..cmd.len() - PLAY.len()]))
+    Ok(format!("{}{vars}{PLAY}", &cmd[..cmd.len() - PLAY.len()]))
 }
 
-/// The refusal of a two-driver phase 2 that is not one play.
-pub fn phase_2_spliced() -> Check {
+/// The refusal of a two-driver phase 2 that has no halves, naming why.
+pub fn phase_2_no_halves(why: NoHalves, cmd: &str) -> Check {
+    let detail = match why {
+        NoHalves::Spliced => format!("{NOT_BUILT}: phase 2 of this peering also runs its forwarder's steps (forwarder: on its peerings: entry), which reach the forwarder host, and a two-driver phase 2 with a forwarder is not built (docs/design/federation-two-drivers.md). Nothing of phase 2 ran"),
+        NoHalves::NotThePlay => format!(
+            "{NOT_BUILT}: phase 2's command is not the shape its two halves are made from, one `peering-prepare.yml` run (it ends `{}`), so it cannot be split between the edge driver and the controller (docs/design/federation-two-drivers.md). Nothing of phase 2 ran",
+            cmd.split_whitespace().last().unwrap_or("")
+        ),
+    };
     Check {
         name: "handoff".into(),
         ok: false,
-        detail: format!("{NOT_BUILT}: phase 2 of this peering also runs its forwarder's steps (forwarder: on its peerings: entry), which reach the forwarder host, and a two-driver phase 2 with a forwarder is not built (docs/design/federation-two-drivers.md). Nothing of phase 2 ran"),
+        detail,
         fix: Some(ONE_DRIVER.into()),
     }
 }

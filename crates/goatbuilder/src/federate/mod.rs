@@ -907,12 +907,12 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                     // Phase 2's core half: its play with the core half named,
                     // the SPIRE bundle export, which never reaches the edge.
                     Ok(_) if ph.n == 2 => match handoff::phase_2_half(&ph.cmd, o.with, "core", None) {
-                        Some(c) => {
+                        Ok(c) => {
                             checks.push(row("handoff", format!("phase 2's edge half, imported at {bound}: its core half (the SPIRE bundle export) runs here")));
                             core_cmd = Some(c);
                         }
-                        None => {
-                            let refusal = handoff::phase_2_spliced();
+                        Err(why) => {
+                            let refusal = handoff::phase_2_no_halves(why, &ph.cmd);
                             let d = refusal.detail.clone();
                             checks.push(refusal);
                             if let Some(r) = run.as_mut() {
@@ -968,9 +968,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                     half = Some((env, words));
                 }
                 _ if ph.n == 2 => match handoff::phase_2_half(&ph.cmd, o.with, "edge", Some(&e.result)) {
-                    Some(c) => edge_cmd = Some(c),
-                    None => {
-                        let refusal = handoff::phase_2_spliced();
+                    Ok(c) => edge_cmd = Some(c),
+                    Err(why) => {
+                        let refusal = handoff::phase_2_no_halves(why, &ph.cmd);
                         let d = refusal.detail.clone();
                         checks.push(refusal);
                         if let Some(r) = run.as_mut() {
