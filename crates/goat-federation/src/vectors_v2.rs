@@ -230,10 +230,20 @@ fn lint_warns_only_for_a_version_this_build_does_not_compose() {
 fn the_spec_member_is_inside_the_signed_bytes_in_both_versions() {
     for (tree, dir, spec) in [
         ("vectors", "compose-full", "federation-package/v1"),
-        ("vectors-v2", "compose-next-one-side", "federation-package/v2"),
+        (
+            "vectors-v2",
+            "compose-next-one-side",
+            "federation-package/v2",
+        ),
     ] {
-        let p = parse_package(&bytes(&root(tree).join(dir).join("package-xaa.canonical.json"))).unwrap();
-        assert!(p.signing_input().contains(&format!("\"spec\":\"{spec}\"")), "{tree}/{dir}");
+        let p = parse_package(&bytes(
+            &root(tree).join(dir).join("package-xaa.canonical.json"),
+        ))
+        .unwrap();
+        assert!(
+            p.signing_input().contains(&format!("\"spec\":\"{spec}\"")),
+            "{tree}/{dir}"
+        );
     }
 }
 
@@ -245,7 +255,11 @@ fn the_spec_member_is_inside_the_signed_bytes_in_both_versions() {
 #[test]
 fn a_package_relabelled_to_the_other_version_fails_verification() {
     let (now, keys) = (pinned_now(), testkeys());
-    for name in ["refuse-downgrade-next-kept", "refuse-downgrade-next-dropped", "refuse-relabel-v1-as-v2"] {
+    for name in [
+        "refuse-downgrade-next-kept",
+        "refuse-downgrade-next-dropped",
+        "refuse-relabel-v1-as-v2",
+    ] {
         let (a, b) = pair(&root("vectors-v2").join(name));
         let (pa, pb) = (parse_package(&a).unwrap(), parse_package(&b).unwrap());
         for (p, q) in [(&pa, &pb), (&pb, &pa)] {
@@ -253,7 +267,10 @@ fn a_package_relabelled_to_the_other_version_fails_verification() {
                 match composed {
                     Composed::Refused(f) => {
                         assert_eq!(f.rule, "C_SIGNATURE", "{name}: {f}");
-                        assert!(f.path.contains("xaa"), "{name}: the relabelled package is xaa's: {f}");
+                        assert!(
+                            f.path.contains("xaa"),
+                            "{name}: the relabelled package is xaa's: {f}"
+                        );
                     }
                     Composed::Agreement { .. } => panic!("{name}: a relabelled package composed"),
                 }
