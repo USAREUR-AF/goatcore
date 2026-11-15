@@ -1111,16 +1111,22 @@ mod tests {
     fn an_injection_that_finds_no_place_is_refused() {
         let d = ipsec_work("ipsec-fips");
         let i = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap();
+        // A rotation's values that reach no play are refused: GB-328, with
+        // the federate verb's refused exit (1).
         let mut ph = vec![phase(11, "play peering-edge.yml")];
-        assert!(ipsec(&mut ph, &i).is_err());
+        assert_eq!(code(&ipsec(&mut ph, &i).unwrap_err()), "GB-328");
         let mut ph = vec![phase(12, "play -e fed_work='/w'")];
-        assert!(ipsec(&mut ph, &i).is_err(), "no phase 11 at all");
+        assert_eq!(
+            code(&ipsec(&mut ph, &i).unwrap_err()),
+            "GB-328",
+            "no phase 11 at all"
+        );
         let t = Pending {
             id: "transport-1".into(),
             file: "/w/.rotation-transport".into(),
         };
         let mut ps = vec![phase(2, "play peering-prepare.yml")];
-        assert!(transport(&mut ps, &t).is_err());
+        assert_eq!(code(&transport(&mut ps, &t).unwrap_err()), "GB-328");
     }
 
     /// Item 8: the read-back is an attestation, and the help says so; the
