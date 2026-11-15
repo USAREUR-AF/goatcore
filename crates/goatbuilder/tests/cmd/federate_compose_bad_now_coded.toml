@@ -1,0 +1,10 @@
+# Any other fault the shared library raises with no code carries GB-338 at
+# goatbuilder's boundary, and still exits 1 (gate row C5).
+bin.name = "goatbuilder"
+args = ["federate", "compose", "--now", "notadate", "first.json", "second.json"]
+status.code = 1
+stdout = ""
+stderr = """
+goatbuilder: --now `notadate` is not a YYYY-MM-DD date
+  (GB-338 — goatbuilder explain GB-338)
+"""

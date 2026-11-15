@@ -232,8 +232,17 @@ pub fn exit_of(cmd: FederateCmd, site: &SiteArgs, measure: &MeasureArgs, repo: O
     }
 }
 
+/// The code of a fault the shared library raised without one: a federation
+/// verb faulted, the message naming what (a file, a flag, a party). It exits
+/// 1, as the fault did before and as it does in goat. The library has no codes
+/// of its own, and `goat federate` maps its faults for itself.
+pub const LIBRARY_FAULT: &str = "GB-338";
+
 /// Print a verb's fault as goatbuilder's refusal line and return its exit
-/// code: a coded refusal (GB-100) exits with its catalog code, anything else 1.
+/// code: a coded refusal (GB-100) exits with its catalog code. A fault the
+/// library raised with no code prints [`LIBRARY_FAULT`] the same way and
+/// exits 1, its catalog exit, as it does in goat, so the two binaries still
+/// exit alike.
 pub fn fault_exit(e: &anyhow::Error) -> i32 {
     eprintln!("goatbuilder: {e:#}");
     if e.downcast_ref::<clap::Error>().is_some() {
@@ -246,7 +255,10 @@ pub fn fault_exit(e: &anyhow::Error) -> i32 {
                 .and_then(|x| x.exit)
                 .unwrap_or(2)
         }
-        None => 1,
+        None => {
+            eprintln!("  ({LIBRARY_FAULT} — goatbuilder explain {LIBRARY_FAULT})");
+            1
+        }
     }
 }
 
@@ -284,6 +296,22 @@ pub fn run_argv_to(argv: &[String], out: &mut dyn Write) -> Result<i32> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Gate row C5: every fault the shared library raises with no code, a file
+    /// error included (its message names the file), takes GB-338 at
+    /// goatbuilder's boundary, and the code's catalog exit is the exit, 1.
+    #[test]
+    fn an_uncoded_library_fault_takes_gb_338_and_exits_1() {
+        let e = goat_errors::explain(LIBRARY_FAULT).expect("GB-338 is in the catalog");
+        assert_eq!(e.exit, Some(1));
+        for fault in [
+            anyhow::anyhow!("/nonexistent/package.json: No such file or directory (os error 2)"),
+            anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "Broken pipe (os error 32)")),
+            anyhow::anyhow!("--now `x` is not a YYYY-MM-DD date"),
+        ] {
+            assert_eq!(fault_exit(&fault), 1, "{fault:#}");
+        }
+    }
     use super::*;
     use anyhow::anyhow;
 

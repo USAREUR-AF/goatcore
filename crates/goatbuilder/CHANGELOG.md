@@ -62,6 +62,15 @@ usage: the command line was wrong). Each change is from the last release:
 `federate allocate <peering>` naming an undeclared peering is not coded yet and
 still exits 2. Every other exit is unchanged.
 
+#### Fixed: a federation verb's fault prints a catalog code
+
+The federation verbs (`goatbuilder federate init|lint|compose|diff|verify|apply`,
+on their own or inside a peering run) printed a fault their library raised as
+`goatbuilder: <text>` with no code. It now prints the new code GB-338, a
+federation verb faulted, under the same message, which names what failed (a
+file, a flag, a party). It still exits 1, as before and as `goat federate`
+does.
+
 <!-- END generated: changelog unreleased -->
 
 ## 0.7.2 — 2026-11-15
