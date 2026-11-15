@@ -564,6 +564,57 @@ def drive_rotate_checks():
     check(rc == 3 and "no longer has the command line" in out, f"drive_rotate: a drive() with no line to swap is not refused: {rc} {out}")
 
 
+def gbrelease_checks():
+    """--goatbuilder-version: the released asset, checked against its .sha256, on the release's own ref."""
+    sha = "a" * 40
+    with tempfile.TemporaryDirectory() as d:
+        home = os.path.join(d, "fe2e")
+        asset = os.path.join(d, "served-goatbuilder")
+        write_text(asset, "the published goatbuilder\n")
+        good = subprocess.run(["sha256sum", asset], capture_output=True, text=True).stdout.split()[0]
+        called = os.path.join(d, "release-tool-called")
+        # release_tool and release_tag are env's own, cut out of it; curl serves the asset and a sum.
+        prelude = ('set -u; FE2E_HOME="$1"; lock() { :; }; unlock() { :; }; '
+                   'eval "$(sed -n \'/^release_tag()/p; /^release_tool()/,/^}/p\' env)"; '
+                   'curl() { local o=""; while [ $# -gt 1 ]; do [ "$1" = -o ] && o="$2"; shift; done; '
+                   'if [ -n "$o" ]; then cp "$ASSET" "$o"; else echo "$SUM  goatbuilder-linux-amd64"; fi; }; '
+                   'crate_version() { echo "$CRATE_V"; }; '
+                   '. lib/gbrelease.sh; ')
+
+        def run(body, gb_version, crate_v="0.7.1", served_sum=good, spy=False):
+            e = {**os.environ, "ASSET": asset, "SUM": served_sum, "CRATE_V": crate_v, "GB_VERSION": gb_version}
+            pre = prelude
+            if spy:  # records that the release was fetched at all
+                pre += f'eval "real_$(declare -f release_tool)"; release_tool() {{ : > {called}; real_release_tool "$@"; }}; '
+            p = subprocess.run(["bash", "-c", pre + body, "_", home], cwd=ROOT, capture_output=True, text=True, env=e)
+            return p.returncode, p.stdout.strip(), p.stderr.strip()
+
+        rc, out, err = run(f'gb_under_test {sha}; gb_tools "$(gb_under_test {sha})" | wc -l', "")
+        check(rc == 0 and out.splitlines() == [f"{home}/bin/{sha}/goatbuilder", "0"],
+              f"gbrelease: without --goatbuilder-version a unit does not run the ref's own build, or tools.txt changes: {rc} {out} {err}")
+
+        rc, out, err = run(f'p="$(gb_under_test {sha})" && echo "$p" && gb_tools "$p"', "0.7.1")
+        rel = os.path.join(home, "release", "goatbuilder-0.7.1", "goatbuilder")
+        check(rc == 0 and out.splitlines() == [rel, "GOATBUILDER_RELEASE=0.7.1", f"GOATBUILDER_SHA256={good}"],
+              f"gbrelease: the release asset is not the goatbuilder under test, or tools.txt does not name it: {rc} {out} {err}")
+
+        rc, out, err = run(f'gb_under_test {sha}', "0.7.2", crate_v="0.7.2", served_sum="0" * 64)
+        check(rc != 0 and "not published as a release asset" in err and not os.path.exists(os.path.join(home, "release", "goatbuilder-0.7.2", "goatbuilder")),
+              f"gbrelease: an asset that does not match its .sha256 was used: {rc} {out} {err}")
+
+        rc, out, err = run(f'gb_under_test {sha}', "0.7.1", crate_v="0.7.0", spy=True)
+        check(rc != 0 and "is goatbuilder 0.7.0, not 0.7.1" in err and not os.path.exists(called),
+              f"gbrelease: a ref that is not the release was run with the released goatbuilder: {rc} {out} {err}")
+
+    def fp(gb_version):
+        p = subprocess.run(["bash", "-c", 'eval "$(sed -n \'/^fingerprint()/,/^}/p\' env)"; fingerprint . all'],
+                           cwd=ROOT, capture_output=True, text=True, env={**os.environ, "GB_VERSION": gb_version})
+        return p.stdout.strip()
+    built, r1, r2 = fp(""), fp("0.7.1"), fp("0.7.2")
+    check(len(built) == 12 and len({built, r1, r2}) == 3,
+          f"gbrelease: the fingerprint does not tell a released goatbuilder from a build, or one release from another: {built} {r1} {r2}")
+
+
 catalog_checks()
 backout_edge_check()
 srctree_checks()
@@ -574,6 +625,7 @@ hostfw_checks()
 handoff_checks()
 samples_checks()
 drive_rotate_checks()
+gbrelease_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")
