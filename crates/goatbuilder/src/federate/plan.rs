@@ -2028,9 +2028,10 @@ pub enum Stage {
     #[command(name = super::backout::VERB)]
     Backout(super::backout::BackoutArgs),
     /// Replace one key of a running peering and run the command again from
-    /// the first phase it changes: `rotate <partner> leaves` (phases 8 to 14)
-    /// or `rotate <partner> carrier` (phases 2 to 14). The other keys are
-    /// refused, each saying why (docs/design/federation-key-rotation.md).
+    /// the first phase it changes: `rotate <partner> leaves` (phases 8 to 14),
+    /// `rotate <partner> carrier` (phases 2 to 14), or on an ipsec-fips peering
+    /// `rotate <partner> ipsec-leaf|ipsec-ca` (phases 11 to 14). The other keys
+    /// are refused, each saying why (docs/design/federation-key-rotation.md).
     #[command(name = super::rotation::VERB)]
     Rotate(super::rotation::RotateArgs),
     /// A two-driver peering's import of an edge result, as a hand-off object

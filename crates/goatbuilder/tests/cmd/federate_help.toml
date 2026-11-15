@@ -38,9 +38,9 @@ Commands:
            edge router, republisher, forwarder mapping and core admission, and leave every other
            peering and the core as they were
   rotate   Replace one key of a running peering and run the command again from the first phase it
-           changes: `rotate <partner> leaves` (phases 8 to 14) or `rotate <partner> carrier` (phases
-           2 to 14). The other keys are refused, each saying why
-           (docs/design/federation-key-rotation.md)
+           changes: `rotate <partner> leaves` (phases 8 to 14), `rotate <partner> carrier` (phases 2
+           to 14), or on an ipsec-fips peering `rotate <partner> ipsec-leaf|ipsec-ca` (phases 11 to
+           14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
   import   A two-driver peering's import of an edge result, as a hand-off object names it: checked
            against the edge driver's confirm code, placed under the working directory and journaled.
            Built for phases 1 and 3; another phase's import refuses with GB-267

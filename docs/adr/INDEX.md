@@ -465,7 +465,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1238 | [The learning program: ten rungs, then fourteen stages beyond](1238-the-learning-program-is-a-ten-rung-ladder-and-a-lane-beyond-it-in-use-while-proposed.md) | Proposed — in use now. It is a best guess, open for comment | — |
 | 1239 | [A moon pod is a learning tool and not a sovereignty guarantee](1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md) | Proposed | Amends 0223, 0856, 1025, 1157, 1164 |
 | 1240 | [A platform-admin grant not made at the hub arrives without the group, and is recorded and alerted](1240-a-platform-admin-grant-not-made-at-the-hub-arrives-without-the-group-and-is-recorded.md) | Proposed | Amends 1205 |
-| 1242 | [A party's next CA is announced in package v2, so its CA rotates without a gap](1242-a-partys-next-ca-is-announced-in-package-v2-so-its-ca-rotates-without-a-gap.md) | Proposed | — |
+| 1242 | [A party's next CA is announced in package v2, so its CA rotates without a gap](1242-a-partys-next-ca-is-announced-in-package-v2-so-its-ca-rotates-without-a-gap.md) | Accepted | — |
 
 <!-- END generated: adr-index -->
 

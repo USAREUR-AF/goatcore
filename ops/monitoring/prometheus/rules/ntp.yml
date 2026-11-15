@@ -24,7 +24,7 @@ groups:
           severity: warning
           component: chrony
         annotations:
-          summary: "chrony at {{ $labels.site }}:{{ $labels.instance }} offset >500ms for 2m"
+          summary: "chrony at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} offset >500ms for 2m"
           description: "Last offset exceeds 500ms for 2 minutes. LWW conflict resolution across sites is no longer safe at this skew. Investigate local NTS source health (chronyc sources -v) and network path to NTS servers."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"
 
@@ -43,7 +43,7 @@ groups:
           severity: warning
           component: chrony
         annotations:
-          summary: "chrony source {{ $labels.source_name }} unreachable at {{ $labels.site }} for 5m"
+          summary: "chrony source {{ $labels.source_name }} unreachable at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} for 5m"
           description: "NTS source {{ $labels.source_name }} ({{ $labels.source_address }}) has been unreachable for >5 minutes. Either NTS key-exchange is failing or UDP reachability to the source is blocked."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"
 
@@ -56,7 +56,7 @@ groups:
           severity: critical
           component: chrony
         annotations:
-          summary: "chrony daemon appears down at {{ $labels.site }}:{{ $labels.instance }} for 2m"
+          summary: "chrony daemon appears down at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} for 2m"
           description: "Either chrony_exporter is unscrape-able, or chronyd itself isn't producing tracking data. LWW correctness is at risk — drift will start accumulating immediately."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"
 
@@ -68,7 +68,7 @@ groups:
           severity: critical
           component: chrony
         annotations:
-          summary: "chrony at {{ $labels.site }}:{{ $labels.instance }} has NO reachable source for 5m"
+          summary: "chrony at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} has NO reachable source for 5m"
           description: "Zero NTS sources reachable for >5 minutes. Host clock is free-running. Restore at least one NTS source."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"
 
@@ -79,6 +79,6 @@ groups:
           severity: warning
           component: chrony
         annotations:
-          summary: "chrony at {{ $labels.site }}:{{ $labels.instance }} drifting >50 ppm for 10m"
+          summary: "chrony at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} drifting >50 ppm for 10m"
           description: "Hardware clock drift rate exceeds 50 ppm for 10m. Investigate hypervisor clock-steering (cloud VM) or hardware oscillator (Orin) before shipping."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/ntp-runbook.md"

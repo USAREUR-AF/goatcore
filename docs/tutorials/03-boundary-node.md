@@ -235,16 +235,25 @@ ops/scripts/with-secrets \
 The run asks you at **phase 5**, after the directory step has uploaded your
 package and CA and fetched theirs. If their entry is not there yet, run the
 command again once they have run theirs; it resumes where it stopped. Read your
-verifying key and CA fingerprint to each other on one call, then type their key
-and fingerprint, and the agreement digest, when the run asks.
+verifying key and CA fingerprint to each other on one call. The run shows their
+CA fingerprint as the directory served it and asks whether they read the same
+one: type `yes`. Then type their verifying key as they read it, 44 characters.
+
+At **phase 6** the run shows the agreement digest. Read it to them and listen to
+theirs, and type `yes` when the two are the same. If they have not reached
+phase 6 yet, they have no digest to read: press Enter to stop, and run the
+command again once they have. A run again does not ask for what you have
+already confirmed.
 
 At **phase 10** the run makes the plan, shows it and asks you to approve its
 hash. Then it shows what your core will admit: the access fragment, the
 certificates, every file it places and where, and how the core restarts. Only
-you may change your own core, so it asks again before anything there changes.
-On a core deployed by the goat-zenoh role, admission takes the role's own
+you may change your own core, so it asks again before anything there changes:
+type `yes` to approve it, or `pr` to write it to a file for a pull request
+instead, as `--review-in-pr` does below. On a core deployed by the goat-zenoh role, admission takes the role's own
 inventory group, `site_id`, play and org fragment from the role's declarations,
-and needs no restart command. Then the run carries on through acceptance.
+and needs no restart command. Then the run carries on through acceptance, which
+passes only as "Done means proven, not deployed" below describes.
 
 Without a terminal, run the stages yourself:
 
@@ -291,9 +300,29 @@ The refusal rows need probe sessions that hold the partner's identity, and
 `spire/svid-chains` needs the partner's SPIRE server. Neither is on your side,
 so those rows stay open and the verdict is INCOMPLETE (exit 3). Moving each row
 to the side that owns its surface is designed, not built
-([federation-acceptance.md](../design/federation-acceptance.md) §6.4). When you
-run both sides yourself, as in tutorial 4, each side can be given the other's,
-and phase 14 can pass.
+([federation-acceptance.md](../design/federation-acceptance.md) §6.4).
+
+When you run both sides yourself, each side can be given the other's surfaces,
+and phase 14 can pass. The command derives only your own side. Give it the
+partner's in the environment of the run, at each side:
+
+- `FED_THEIRS_REST`: the partner core's REST surface;
+- `FED_SSH_THEIRS`: ssh to the partner's core host, when that surface is bound
+  to the core's loopback;
+- `FED_SPIRE_THEIRS`: the command that runs the partner's `spire-server`;
+- `FED_PROBE_LAUNCHER`: a launcher that starts, stops and checks the run's
+  probe sessions, which hold the partner's identities. Its contract is
+  [federation-acceptance.md](../design/federation-acceptance.md#24-run-owned-time-limited-probes)
+  §2.4.
+
+No probe launcher ships for a deployment. The one in the federation test
+environment (`ops/federation-e2e/lib/probe-launcher.sh`) drives that
+environment's lab hosts only. A one-party phase 14 PASS on your hardware needs a
+launcher written to that contract. Tutorial 4's runs pass because their harness
+supplies these surfaces and the probe sessions. Without
+them, the rows that need them are BLOCKED and phase 14 ends INCOMPLETE (exit 3),
+as it does with a partner that runs its own side. Once §6.4 is built, each side
+proves its own rows and none of this is needed.
 
 The access decision itself is a reviewable record: one file per partner under
 `ops/federation/partners/` in your goatnet's own repository, changed by pull

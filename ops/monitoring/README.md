@@ -27,6 +27,8 @@ Scrapes the signal-server `/metrics` endpoint, Postgres (via
 each mgmt-host. Alert rules implement the §7.3 criteria from
 `docs/design/ha-multi-site.md`.
 
+The sandbox's Prometheus sets `site` as an external label (`prometheus/prometheus.yml`), and a rule template's `$labels` does not hold external labels. So each alert summary names the site from the series' own `site` label when it has one, else from `$externalLabels.site`, as the mgmt-host rules do. `prometheus/tests/alert-summaries-name-the-site.test.yml` renders one Spock and one signal-server summary both ways (`promtool test rules`, run by hand; no CI job loads these rules).
+
 ## Layout
 
 ```
