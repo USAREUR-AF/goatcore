@@ -238,7 +238,6 @@ fn join_node_with(s: &Site, from: Option<&str>, extra: &[&str]) -> (Output, serd
         .env("PATH", path)
         .env("HOME", &s.root)
         .env("GOAT_SECRET_STORE", "env")
-        .env("OWNER_EMAIL", "owner@example.org")
         .env("GAMMA_NB_SETUP_KEY", SETUP_KEY)
         .env("GAMMA_NODE_PASS", &s.node_pass)
         .env("GAMMA_PG_PASS", PG_PASS)
@@ -385,6 +384,28 @@ fn a_third_site_that_declares_federation_off_joins_from_phase_1_to_15() {
 /// checks the node answers; the run goes on to 15 in one go,
 /// enrolling the node from a key minted where it is used and recording its
 /// mesh address itself, and no secret is in any argument list.
+/// A joiner's account arrives from the founder (seed-from-peer, then Spock),
+/// and site-bootstrap mints an account only on a founder, so phase 13 names no
+/// bootstrap owner. An unattended run with no OWNER_EMAIL in its environment
+/// (the helper sets none) goes through every bootstrap pass.
+#[test]
+fn a_joiner_passes_no_bootstrap_owner_and_needs_no_owner_email() {
+    let s = site();
+    let (out, v) = join_node(&s, None);
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(out.status.success(), "{}\nargv:\n{log}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&15), "{}", says(&out));
+    let bootstraps: Vec<&str> = log
+        .lines()
+        .filter(|l| l.starts_with("play ") && l.contains("bootstrap"))
+        .collect();
+    assert!(!bootstraps.is_empty(), "phase 13 ran the bootstrap passes:\n{log}");
+    assert!(
+        !log.contains("bootstrap_owner_email") && !log.contains("OWNER_EMAIL"),
+        "a joiner passes no bootstrap owner:\n{log}"
+    );
+}
+
 #[test]
 fn from_phase_1_a_node_joins_with_no_operator_step_and_no_secret_in_any_argv() {
     let s = site();

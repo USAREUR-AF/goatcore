@@ -459,7 +459,6 @@ fn goatbuilder(s: &Site, args: &[&str]) -> (Output, serde_json::Value) {
         .env("PATH", path)
         .env("HOME", &s.root)
         .env("GOAT_SECRET_STORE", "env")
-        .env("OWNER_EMAIL", "owner@example.org")
         .env("DELTA_PG_PASS", "pg-stand-in")
         // The founder's management API token, which the mesh DNS step reads.
         .env("ALPHA_NB_API_TOKEN", "api-token-stand-in")

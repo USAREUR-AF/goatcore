@@ -1354,6 +1354,8 @@ mod tests {
             assert!(core[i].cmd.contains("-l node-x site-bootstrap-for.yml -e bootstrap_site=zagros-b "), "{}", core[i].cmd);
             assert!(!core[i].cmd.contains("-e site_id="), "{}", core[i].cmd);
             assert!(core[i].cmd.contains("_PG_PASS\")"), "secrets still reach the play: {}", core[i].cmd);
+            // A joiner mints no account: no bootstrap owner, so no OWNER_EMAIL to set.
+            assert!(!core[i].cmd.contains("bootstrap_owner_email") && !core[i].cmd.contains("OWNER_EMAIL"), "{}", core[i].cmd);
         }
         assert!(core[0].cmd.contains("-e participates_in_spock=false"), "{}", core[0].cmd);
         assert!(core[3].cmd.contains("-e ory_spock_wire_subscriptions=false"), "{}", core[3].cmd);
@@ -1365,7 +1367,7 @@ mod tests {
         std::fs::write(t.path().join("ops/ansible/zagros-b-bootstrap.yml"), "---\n").unwrap();
         let ph = plan(t.path(), &o).unwrap();
         let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
-        assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e bootstrap_owner_email"), "{}", core[0].cmd);
+        assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e 'postgres_superuser_password="), "{}", core[0].cmd);
     }
 
     /// Pass 1 runs site-bootstrap's `stack` plays only: the `after-ory` plays
