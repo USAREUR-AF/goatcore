@@ -208,6 +208,15 @@ substrate built but Ory subscriptions never created. →
 `fed-inter-site-netbird-subscriptions-replicating`,
 `fed-ory-narrow-subscriptions-replicating`, `fed-ory-identities-replicated-to-joiner`.
 
+**Done when (the founder, after a joiner):** the founder's own subscriptions
+from each joiner are replicating, `netbird_mgmt` and, with `ory_spock_enabled`,
+kratos and hydra. They live on the founder, so the joiner's assay cannot see
+them; `goatbuilder assay <founder-site>` reads them once another participating
+site is a child of `[mgmt_hosts:children]`. Before that, on a founder alone, the
+rows are N/A. →
+`fed-founder-netbird-subscriptions-replicating`,
+`fed-founder-ory-narrow-subscriptions-replicating`.
+
 ---
 
 ## Phases 7–8 — reaching the internet

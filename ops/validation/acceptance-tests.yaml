@@ -282,6 +282,42 @@ tests:
       A joiner whose kratos subscription is 'replicating' over an empty
       ory_narrow publication has 0 identities and would authenticate no one who
       exists only on the founder — invisible until a real login is attempted.
+  - id: fed-founder-netbird-subscriptions-replicating
+    aspect: federation/inter-site-spock
+    probe: cmd-assert
+    applies_when: spock_founder_peers
+    params:
+      host: "{{ orin_a }}"
+      # The founder's half of tutorial 2's checkpoint 3: the subscriptions the
+      # founder-side mirror created, pulling FROM each joiner. Read on the
+      # founder, where they live; the joiner's rows above read only its own
+      # inbound leg. Same all-or-'no-subscriptions' shape.
+      cmd: "docker exec postgres-a psql -U postgres -d netbird -tAc \"SELECT CASE WHEN count(*)=0 THEN 'no-subscriptions' WHEN count(*)=count(*) FILTER (WHERE status='replicating') THEN 'all-replicating' ELSE 'some-not-replicating' END FROM spock.sub_show_status()\""
+      expect: "all-replicating"
+    requires: [postgres-spock, spock-mesh-peering]
+    severity: gate
+    caught_would_have: >-
+      A founder whose mirror never subscribed to the joiner, or whose
+      subscription stalled, takes none of the joiner's writes while the
+      joiner's own rows all pass: replication one way only, which the
+      joiner's assay cannot see.
+  - id: fed-founder-ory-narrow-subscriptions-replicating
+    aspect: federation/ory-narrow
+    probe: cmd-assert
+    applies_when: spock_founder_ory_dbs
+    params:
+      host: "{{ orin_a }}"
+      # The founder's kratos and hydra subscriptions from each joiner, per Ory
+      # DB, as the joiner's row reads its own.
+      cmd_template: "docker exec postgres-a psql -U postgres -d {item} -tAc \"SELECT CASE WHEN count(*)=0 THEN 'no-subscriptions' WHEN count(*)=count(*) FILTER (WHERE status='replicating') THEN 'all-replicating' ELSE 'some-not-replicating' END FROM spock.sub_show_status()\""
+      for_each: spock_founder_ory_dbs
+      expect: "all-replicating"
+    requires: [postgres-spock, ory-narrow-repset]
+    severity: gate
+    caught_would_have: >-
+      An identity created or changed at the joiner never reaching the
+      founder, so the two sites' login planes diverge in that direction
+      while every row on the joiner passes.
   - id: fed-inter-site-postgres-dsn-reachable
     aspect: federation/inter-site-spock
     probe: cmd-assert

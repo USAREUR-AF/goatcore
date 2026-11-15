@@ -455,6 +455,22 @@ def generate(env, gv_dir=None, inv_path=None, pins_path=None):
         # empty DB, so a present marker means the seed never ran.
         values["spock_seed_marker"] = "/opt/mgmt-host/management-a/marker/migrations.allow"
 
+    # The founder's half (tutorial 2, checkpoint 3): once a joiner exists, the
+    # founder subscribes to it, and the founder's own subscriptions are read
+    # there. A peer is another group under [mgmt_hosts:children] whose
+    # group_vars participate in Spock, the sites spock-mesh-peering's walk
+    # wires. A founder with no such site (tutorial 1) emits nothing, so the
+    # rows stay N/A rather than failing on a subscription that cannot exist.
+    if _bool(values.get("participates_in_spock")) and not joiner:
+        fpeers = [g[: -len("_hosts")] for g in _inventory_children(inv_path, "mgmt_hosts")
+                  if g != group and g.endswith("_hosts")
+                  and _bool(_extract(_read_or_empty(gv_dir.parent / g / "vars.yml"),
+                                     "participates_in_spock"))]
+        if fpeers:
+            values["spock_founder_peers"] = fpeers
+            if _bool(_extract(text, "ory_spock_enabled")):
+                values["spock_founder_ory_dbs"] = ["kratos", "hydra"]
+
     # The identity row reads the NetBird management config the mgmt-host play
     # writes ({{ compose_dir }}/management-a/management.json).
     compose_dir = _extract(text, "compose_dir") or "/opt/mgmt-host"
@@ -546,6 +562,26 @@ def _obs_relay_tls_targets(text, gv_dir, group):
                 seen.add(v)
                 out.append(v)
     return out
+
+
+def _inventory_children(inv_path, group):
+    """The group names listed under `[group:children]`."""
+    if not Path(inv_path).is_file():
+        return []
+    out, inside = [], False
+    for line in Path(inv_path).read_text().splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            inside = (s == f"[{group}:children]")
+            continue
+        if inside and s and not s.startswith("#"):
+            out.append(s.split()[0])
+    return out
+
+
+def _read_or_empty(path):
+    p = Path(path)
+    return p.read_text() if p.is_file() else ""
 
 
 def _inventory_host_names(inv_path, group):
@@ -974,6 +1010,39 @@ def self_test():
         problems.append("founder: must not emit joiner-only values")
     if vf.get("acl_scope") != "orig":
         problems.append(f"founder: acl_scope should be its own site id (got {vf.get('acl_scope')})")
+
+    # A founder reads its own subscriptions from each joiner only once a
+    # joiner exists: another participating site's group under
+    # [mgmt_hosts:children], as spock-mesh-peering's walk finds it. Tutorial
+    # 1's founder (participates, no other site) gets none of these values.
+    if "spock_founder_peers" in vf or "spock_founder_ory_dbs" in vf:
+        problems.append("founder alone: must not emit spock_founder_peers/spock_founder_ory_dbs")
+    inv3m = d3 / "inv-mgmt.ini"
+    inv3m.write_text("[orig_hosts]\nmgmt-orig-01 ansible_host=100.127.0.58 router_role=A\n"
+                     "[join_hosts]\nmgmt-join-01 ansible_host=100.127.0.59 router_role=A\n"
+                     "[mgmt_hosts:children]\norig_hosts\njoin_hosts\n")
+    vfp = generate("orig", gv_dir=d3 / "orig_hosts", inv_path=inv3m)
+    if vfp.get("spock_founder_peers") != ["join"]:
+        problems.append(f"founder with a joiner: spock_founder_peers (got {vfp.get('spock_founder_peers')})")
+    if "spock_founder_ory_dbs" in vfp:
+        problems.append("founder without ory_spock_enabled: must not emit spock_founder_ory_dbs")
+    if vfp.get("spock_joiner") is not False:
+        problems.append("founder with a joiner: spock_joiner should stay false")
+    (d3 / "orig_hosts" / "vars.yml").write_text(
+        (d3 / "orig_hosts" / "vars.yml").read_text() + "ory_spock_enabled: true\n")
+    vfp = generate("orig", gv_dir=d3 / "orig_hosts", inv_path=inv3m)
+    if vfp.get("spock_founder_ory_dbs") != ["kratos", "hydra"]:
+        problems.append(f"founder with a joiner: spock_founder_ory_dbs (got {vfp.get('spock_founder_ory_dbs')})")
+    # A site in the group that does not participate is not a peer.
+    (d3 / "join_hosts" / "vars.yml").write_text(
+        (d3 / "join_hosts" / "vars.yml").read_text().replace(
+            "participates_in_spock: true", "participates_in_spock: false"))
+    vfp = generate("orig", gv_dir=d3 / "orig_hosts", inv_path=inv3m)
+    if "spock_founder_peers" in vfp:
+        problems.append("founder: a site that does not participate in Spock is not a peer")
+    (d3 / "join_hosts" / "vars.yml").write_text(
+        (d3 / "join_hosts" / "vars.yml").read_text().replace(
+            "participates_in_spock: false", "participates_in_spock: true"))
 
     # The Postgres encoding rows expect the goatnet's encoding: UTF8 when
     # nothing is declared; the founder's declaration on the founder AND on
