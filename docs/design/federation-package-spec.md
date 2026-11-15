@@ -7,7 +7,7 @@
 | Conformance vectors | [`../../ops/federation/vectors/`](../../ops/federation/vectors/) — **normative** |
 | Reference implementation | [`../../ops/federation/reference/`](../../ops/federation/reference/) |
 | Transport design | `cross-sovereign-peering-transport.md` |
-| Our tool | `goat federate init\|lint\|compose\|diff\|verify\|apply` today; moving to `goatbuilder federate` on the `goat-federation` library, **designed** ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed) |
+| Our tool | `goat federate init\|lint\|compose\|diff\|verify\|apply` today; moving to `goatbuilder federate` on the `goat-federation` library, **designed** ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Accepted) |
 
 The contract between two organisations setting up a data link. This document is the
 authority; our tool is one implementation of it. **A partner must be able to implement
