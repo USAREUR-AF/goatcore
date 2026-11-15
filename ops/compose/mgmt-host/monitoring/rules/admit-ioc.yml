@@ -92,11 +92,15 @@ groups:
       # subscription is detached. We take min() over subscriptions so
       # any detached subscription (not requiring all) triggers the
       # partition condition.
+      #
+      # The join is on nothing: admit-audit's series carry their own `site`,
+      # and this host's Spock series do not (site is an external label only on
+      # the mgmt host), and the Spock series are this host's own.
       - alert: AdmitBurstDuringPartition
         expr: |
           sum by (site) (increase(admit_audit_admits_total[5m])) > 5
-          and on (site)
-          min by (site) (spock_subscription_lag_replicating) == 0
+          and on ()
+          (min(spock_subscription_lag_replicating) == 0)
         for: 0m
         labels:
           severity: critical
