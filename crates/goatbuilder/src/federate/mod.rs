@@ -1195,7 +1195,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 }
             }
             r.end(ph, state::Outcome::Passed, "");
-            rotation::after_phase(s, ph.n, Path::new(&work));
+            for w in rotation::after_phase(s, ph.n, Path::new(&work)) {
+                checks.push(row("warning", w));
+            }
         }
     }
     if let Some(r) = run.as_mut() {

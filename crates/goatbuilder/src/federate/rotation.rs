@@ -765,7 +765,7 @@ pub fn refused(partner: &str, key: &str) -> Result<()> {
 /// After phase `n` of a run passed. Once a rotate run's phase 8 has minted the
 /// new leaves, the run carries on as the plain one: no `rotate` command is
 /// offered again (it would mint another set), and the default resume is.
-pub(super) fn after_phase(s: &mut Surface, n: u32, work: &Path) {
+pub(super) fn after_phase(s: &mut Surface, n: u32, work: &Path) -> Vec<String> {
     // Phase 14 passed: every IPsec rotation that switched and has not been
     // accepted since is accepted now, which is what allows its retire step.
     if n == 14 {
@@ -804,6 +804,7 @@ pub(super) fn after_phase(s: &mut Surface, n: u32, work: &Path) {
             let _ = std::fs::remove_file(&p.file);
         }
     }
+    Vec::new()
 }
 
 #[cfg(test)]
@@ -1001,6 +1002,44 @@ mod tests {
         assert_eq!(code(&e), "GB-298", "{e}");
         assert!(e.to_string().contains(&format!("--retire {id}")), "{e}");
         assert!(!d.path().join(IPSEC_FILE).exists(), "nothing recorded");
+    }
+
+    /// The ledger's "accepted" is this side's phase 14: every message and the
+    /// help say "phase 14 passed here after the switch"; "both sides" is advice.
+    #[test]
+    fn the_retire_wording_says_whose_phase_14_it_saw() {
+        const HERE: &str = "phase 14 passed here after the switch";
+        let d = ipsec_work("ipsec-fips");
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, Some("ipsec-1"), true).unwrap_err();
+        assert!(e.to_string().contains(HERE), "{e}");
+        accepted(d.path(), "ipsec-leaf", None);
+        let e = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap_err();
+        assert!(e.to_string().contains(HERE), "{e}");
+        use clap::CommandFactory;
+        #[derive(clap::Parser)]
+        struct T {
+            #[command(flatten)]
+            r: RotateArgs,
+        }
+        let help = T::command().render_long_help().to_string();
+        assert!(help.contains(HERE), "{help}");
+    }
+
+    /// A ledger mark that cannot be written is a warning row, so a second
+    /// rotation cannot stack on one the ledger never saw switch.
+    #[test]
+    fn a_ledger_that_cannot_be_written_is_a_warning() {
+        let d = ipsec_work("ipsec-fips");
+        let i = ipsec_rotation(d.path(), "xab", "ipsec-leaf", None, None, true).unwrap();
+        let (_, mut s) = ipsec_run(&opts(11), i, "again".into());
+        std::fs::remove_file(d.path().join(IPSEC_LEDGER)).unwrap();
+        std::fs::create_dir(d.path().join(IPSEC_LEDGER)).unwrap();
+        let w = after_phase(&mut s, 11, d.path());
+        assert!(
+            w.iter().any(|m| m.contains(IPSEC_LEDGER) && m.contains("switched")),
+            "{w:?}"
+        );
+        assert!(after_phase(&mut s, 3, d.path()).is_empty());
     }
 
     /// Item 5: the read-back is compared as a fingerprint: `sha256:` or not,
