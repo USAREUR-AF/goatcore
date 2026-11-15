@@ -690,6 +690,23 @@ fn agreed_offer(out: Option<&std::path::Path>, applied: i64) -> Result<i64, Stri
         let text = std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?;
         crate::json::parse_document(&text).map_err(|e| format!("{}: {e:?}", p.display()))
     };
+    // Compose runs after phase 3, so the agreement is newer than the package
+    // it was composed from. A package written after it was published by a
+    // later phase 3 no agreement has been composed from, whose offer nothing
+    // checked (an interface that could not be read, a SKIP): it is not the
+    // offer the interface carries.
+    let modified = |name: &str| {
+        std::fs::metadata(work.join(name))
+            .and_then(|m| m.modified())
+            .map_err(|e| format!("{}: {e}", work.join(name).display()))
+    };
+    if modified("ours.canonical.json")? > modified("agreement.json")? {
+        return Err(format!(
+            "{} is newer than {}: a later phase 3 wrote our package, and no agreement has been composed from it",
+            work.join("ours.canonical.json").display(),
+            work.join("agreement.json").display()
+        ));
+    }
     let agreement = read("agreement.json")?;
     match agreement.get("transport").and_then(|t| t.get("mtu")).and_then(JVal::as_int) {
         Some(m) if m == applied => {}

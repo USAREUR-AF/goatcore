@@ -140,9 +140,11 @@ pub fn is_read_only_probe(bin: &str, args: &[&str]) -> bool {
     }
 }
 
-/// The one `stat` format the state file's check asks for: owner, group and
-/// file type, read without following a link.
-const STATE_STAT_FORMAT: &str = "%U:%G:%F";
+/// The one `stat` format the state file's check asks for: owner uid, group
+/// gid and the raw mode in hex, read without following a link. Numbers, not
+/// `%U:%G:%F`: `%F` is localised, so an edge in another language would read
+/// as refused.
+const STATE_STAT_FORMAT: &str = "%u:%g:%f";
 
 /// goat-peering-wg's state file for one federation interface
 /// (`/var/log/goat-peering-wg-<if>-state.json`): the agreed transport the role
@@ -898,7 +900,7 @@ pub fn interface_mtu_on(probe: &dyn Probe, interface: &str) -> Option<i64> {
 /// The MTU an applied agreement put on `interface`: `transport.mtu` of the
 /// goat-peering-wg role's state file (`/var/log/goat-peering-wg-<if>-state.json`,
 /// written at phase 11 from the agreement), when the file is there, is a
-/// regular file owned root:root (not a link: /var/log is group-writable on
+/// regular file owned by uid 0 and gid 0 (not a link: /var/log is group-writable on
 /// some distributions), names this interface, and records a decision the role
 /// applies (`proceed-no-claim`, `proceed-waived`). The role writes the file
 /// before its FIPS gate, so a refused run leaves one that applied nothing.
@@ -915,7 +917,11 @@ pub fn applied_mtu_on(probe: &dyn Probe, interface: &str) -> Option<i64> {
     let kind = probe
         .run("stat", &["-c", STATE_STAT_FORMAT, "--", &path])
         .ok()?;
-    if kind.trim() != "root:root:regular file" {
+    // uid 0, gid 0, and a regular file (S_IFREG in the mode's type bits).
+    let mut parts = kind.trim().splitn(3, ':');
+    let (uid, gid, mode) = (parts.next()?, parts.next()?, parts.next()?);
+    let mode = u32::from_str_radix(mode, 16).ok()?;
+    if uid != "0" || gid != "0" || mode & 0o170000 != 0o100000 {
         return None;
     }
     let text = probe.read_file(&path).ok()?;
