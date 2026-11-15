@@ -189,6 +189,8 @@ Status: built (`crates/goatbuilder/src/federate/forwarder.rs`, `ops/ansible/peer
 
 A peering says a forwarder relays it with `forwarder:` in its goatbuilder.yaml `peerings:` entry. A peering without it is unchanged.
 
+The federation test environment's scenario `forwarder-by-goatbuilder` (`ops/federation-e2e/units/forwarder-gb.sh`) brings one relayed peering up this way, with no play run by hand: built, not run ([federation-e2e-environment.md](federation-e2e-environment.md), "The forwarder applied by the command").
+
 ```yaml
 peerings:
   - with: xab
@@ -226,7 +228,7 @@ Phase 2 of `goatbuilder federate <with>` for a relayed peering is the three runs
 
 Only public keys move, and no private key leaves the host that made it. The keys land in the peering's certificate directory, which phase 8 creates 0700 for its private leaf keys; the keys play creates or keeps that directory 0700 and never widens it (`ops/ci/test-peering-carrier-keys.sh`). The forwarder role is unchanged and `check-peering-forwarder-holds-nothing.py` still passes: the lookups are in the deployment's group_vars, not in the role. The forwarder play applies every peering the forwarder relays, so the keys play copies the carrier key of every relayed edge (`--limit peering_edges:<forwarder group>`), not only this peering's. `peering_forwarder_peerings` is rendered as `goatbuilder_forwarder_peerings` with every entry whose edge has no carrier key yet left out, so a peering whose phase 2 has not run never blocks another's run, and joins the list on its own run. Refusals: two peerings on one forwarder sharing a value (GB-160; allocation keeps one forwarder's values apart across environments, so this is the backstop for a hand-edited record); a partner id the forwarder role cannot name (GB-161); one forwarder group with two endpoints (GB-162); a relayed peering the allocation record does not hold yet, so its rendered files do not exist (GB-163); two peerings on one forwarder declaring different machine values (GB-339). A hand-written forwarder group file that already sets `peering_forwarder_peerings`, or a machine value the declaration renders, is refused by `allocate` (GB-125): the variable has one owner.
 
-Not built yet: phase 3 writing the forwarder's `<endpoint>:<public port>`, `listener = true` and `measured_mtu = 1300` into the goat context's `federation.toml` `[transport]`. Until then those values are set by hand, read from `goatbuilder federate allocate`'s output.
+With `federation_toml: rendered` on the peering, `goatbuilder federate allocate` writes the peering's own `ops/federation/<environment>/peerings/<with>/federation.toml` with `endpoint = "<endpoint>:<public port>"` and `listener = true` in `[transport]`, and phase 3 reads it with `init --declaration`: built (`crates/goatbuilder/src/federate/federation_toml.rs`, test `a_peerings_federation_toml_comes_from_the_environments_and_the_allocation`; `federate/preflight.rs`, `peering_declaration`). `measured_mtu` is copied from the environment's own `federation.toml`, so a relayed peering's 1300 is set there, for every peering of that environment. Without `federation_toml: rendered`, the three values are set by hand in the goat context's `federation.toml`, read from `goatbuilder federate allocate`'s output.
 
 ## 8. Alternatives not taken
 

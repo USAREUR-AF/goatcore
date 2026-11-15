@@ -1,0 +1,5 @@
+# Workflows whose GitHub Actions cache export does not yet set ignore-error=true
+# (rule R5, ops/ci/check-workflow-discipline.py; docs/design/ci-discipline.md).
+# One file name per line, then # and the reason. The list only shrinks: a listed
+# file that complies, or that no longer exists, fails the check.
+ory-consent-image.yml  # changed by a separate pull request
