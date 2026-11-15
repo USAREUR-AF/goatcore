@@ -246,7 +246,9 @@ Each leaf is `CA:FALSE`, clientAuth only and digitalSignature only, with the SAN
 minutes, because nothing on the federation path checks revocation and the lifetime is the only
 control. It is written only into the empty 0700 probe folder, never into a folder of leaves or a
 trust file. Its certificate facts (run, kind, CN, serial, SHA-256, notBefore, notAfter, issuer)
-are appended to our CA's issued-certificates record (`FED_PROBE_ISSUED_RECORD`). The folder on
+are appended to our CA's issued-certificates record (`FED_PROBE_ISSUED_RECORD`). On a deployment that
+file is the record the CA's other issuances go to, or a file kept with it, so that every certificate
+the CA has issued is listed in one place. The folder on
 this host lives only while the launcher's `start` copies the identity to the edge host. It is
 deleted on any exit (a success, a failure, an interrupt or a termination, which ends the start
 first so that the start removes the probe from the edge host), and checked: the wrapper prints

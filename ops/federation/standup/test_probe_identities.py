@@ -104,25 +104,37 @@ class ProbeIdentities(unittest.TestCase):
     def records(self):
         return [json.loads(l) for l in self.record.read_text().splitlines() if l.strip()]
 
-    def test_the_forged_leaf_has_the_derived_name_and_only_the_probe_extensions(self):
-        r = self.mint('--probe-kind', 'forged')
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        cert = self.probe / 'forged-cert.pem'
-        self.assertIn('CN=fed.xaa.xab.acceptance-forged.0a1b2c3d', x509(cert, '-subject', '-nameopt', 'compat'))
-        text = x509(cert, '-text')
-        self.assertIn('CA:FALSE', text)
-        self.assertIn('TLS Web Client Authentication', text)
-        self.assertNotIn('TLS Web Server Authentication', text)
-        eku = text.split('X509v3 Extended Key Usage:')[1].split('\n')[1].strip()
-        self.assertEqual(eku, 'TLS Web Client Authentication', 'clientAuth and nothing else')
-        ku = text.split('X509v3 Key Usage:')[1].split('\n')[1].strip()
-        self.assertEqual(ku, 'Digital Signature')
-        self.assertIn('URI:urn:goat:acceptance-probe:' + RUN, text)
-        subprocess.run(['openssl', 'verify', '-CAfile', str(self.ca), '-purpose', 'sslclient', str(cert)],
-                       capture_output=True, check=True)
-        self.assertNotEqual(subprocess.run(['openssl', 'verify', '-CAfile', str(self.ca), '-purpose', 'sslserver',
-                                            str(cert)], capture_output=True).returncode, 0,
-                            'a probe leaf is never a server certificate')
+    def mint_kind(self, kind, out=None):
+        extra = ['--impersonate-for-run', RUN, '--partner-core-cn', 'router.xab'] if kind == 'impersonate' else []
+        return self.mint('--probe-kind', kind, *extra, out=out)
+
+    def test_every_probe_leaf_has_its_name_and_only_the_probe_extensions(self):
+        names = {'forged': 'CN=fed.xaa.xab.acceptance-forged.0a1b2c3d', 'impersonate': 'CN=router.xab'}
+        for kind in ('forged', 'impersonate'):
+            with self.subTest(kind=kind):
+                out = self.root / ('probe-' + kind)
+                out.mkdir(mode=0o700)
+                out.chmod(0o700)
+                r = self.mint_kind(kind, out=out)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                cert = out / f'{kind}-cert.pem'
+                self.assertIn(names[kind], x509(cert, '-subject', '-nameopt', 'compat'))
+                text = x509(cert, '-text')
+                bc = text.split('X509v3 Basic Constraints:')[1].split('\n')[1].strip()
+                self.assertEqual(bc, 'CA:FALSE')
+                self.assertIn('TLS Web Client Authentication', text)
+                self.assertNotIn('TLS Web Server Authentication', text)
+                eku = text.split('X509v3 Extended Key Usage:')[1].split('\n')[1].strip()
+                self.assertEqual(eku, 'TLS Web Client Authentication', 'clientAuth and nothing else')
+                ku = text.split('X509v3 Key Usage:')[1].split('\n')[1].strip()
+                self.assertEqual(ku, 'Digital Signature')
+                san = text.split('X509v3 Subject Alternative Name:')[1].split('\n')[1].strip()
+                self.assertIn('URI:urn:goat:acceptance-probe:' + RUN, [x.strip() for x in san.split(',')])
+                subprocess.run(['openssl', 'verify', '-CAfile', str(self.ca), '-purpose', 'sslclient', str(cert)],
+                               capture_output=True, check=True)
+                self.assertNotEqual(subprocess.run(['openssl', 'verify', '-CAfile', str(self.ca), '-purpose',
+                                                    'sslserver', str(cert)], capture_output=True).returncode, 0,
+                                    'a probe leaf is never a server certificate')
 
     def test_the_lifetime_is_the_ttl_and_fifteen_minutes_and_starts_a_minute_back(self):
         now = int(time.time())
@@ -202,14 +214,33 @@ class ProbeIdentities(unittest.TestCase):
                             str(self.ca), '--ca-key', str(self.ca_key), '--core-san', 'core.example.test'],
                            env=self.env(), capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(self.mint('--probe-kind', 'forged').returncode, 0)
-        probe_pem = (self.probe / 'forged-cert.pem').read_text().strip().splitlines()[1]
-        for p in leaves.rglob('*'):
+        before = {p: p.read_bytes() for p in leaves.rglob('*') if p.is_file()}
+        ca_before = self.ca.read_bytes()
+        probes = []
+        for kind in ('forged', 'impersonate'):
+            out = self.root / ('probe-' + kind)
+            out.mkdir(mode=0o700)
+            out.chmod(0o700)
+            self.assertEqual(self.mint_kind(kind, out=out).returncode, 0)
+            pem = (out / f'{kind}-cert.pem').read_text()
+            der = subprocess.check_output(['openssl', 'x509', '-in', str(out / f'{kind}-cert.pem'), '-outform', 'DER'])
+            probes.append((kind, ''.join(pem.strip().splitlines()[1:-1]), der))
+        # The folder of leaves and trust files (our-ca.pem, the leaves) and the CA certificate are
+        # byte for byte as they were, and no file there holds a probe leaf, as PEM or DER.
+        self.assertEqual({p: p.read_bytes() for p in leaves.rglob('*') if p.is_file()}, before)
+        self.assertEqual(self.ca.read_bytes(), ca_before)
+        for p in list(leaves.rglob('*')) + [self.ca]:
             if p.is_file():
-                self.assertNotIn(probe_pem, p.read_text(errors='replace'), p)
+                body = p.read_bytes()
+                flat = b''.join(body.split())
+                for kind, b64, der in probes:
+                    self.assertNotIn(b64.encode(), flat, (kind, p))
+                    self.assertNotIn(der, body, (kind, p))
         # and the probe mode refuses to write into a folder of leaves (or any folder not empty)
-        r = self.mint('--probe-kind', 'forged', out=leaves)
-        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        for kind in ('forged', 'impersonate'):
+            r = self.mint_kind(kind, out=leaves)
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertEqual({p: p.read_bytes() for p in leaves.rglob('*') if p.is_file()}, before)
 
     def test_the_probe_folder_must_be_private(self):
         self.probe.chmod(0o755)
@@ -287,6 +318,12 @@ class ProbeIdentities(unittest.TestCase):
                 self.assertIn('router.xab' if kind == 'impersonate' else 'acceptance-forged', subj)
                 self.assert_driver_copy_gone(r.stdout)
         self.assertEqual([x['kind'] for x in self.records()], ['forged', 'impersonate'])
+        # the trust material the wrapper reads (our PKI folder, the partner's CA) is unchanged
+        self.assertEqual((self.root / 'pki' / 'peering-outward.pem').read_text(), 'OUTWARD CERT\n')
+        self.assertEqual((self.root / 'pki' / 'peering-outward-key.pem').read_text(), 'OUTWARD KEY\n')
+        self.assertEqual(sorted(p.name for p in (self.root / 'pki').iterdir()),
+                         ['peering-outward-key.pem', 'peering-outward.pem'])
+        self.assertEqual((self.root / 'far-ca.pem').read_text(), 'FAR CA\n')
 
     def test_a_start_that_fails_still_deletes_the_driver_copy(self):
         r = self.wrap('start', 'forged', RUN, str(int(time.time()) + 60), env={'STUB_START_RC': '1'})

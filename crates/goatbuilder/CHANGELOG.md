@@ -150,7 +150,8 @@ core's name (`FED_PROBE_PARTNER_CORE_CN`, never defaulted) is issued only
 with `--impersonate-for-run` naming the same run. Each probe leaf is a
 client certificate only, marked `urn:goat:acceptance-probe:<run id>`, valid
 for `FED_PROBE_TTL` plus 15 minutes, and recorded in your CA's
-issued-certificates record (`FED_PROBE_ISSUED_RECORD`). It never goes into a
+issued-certificates record (`FED_PROBE_ISSUED_RECORD`: point it at the record
+your CA's other issuances go to, or a file kept with it). It never goes into a
 trust file. On the machine running phase 14, the identity sits in a private
 folder on memory-backed storage only while the start copies it to the edge
 host. The folder is deleted on any exit, and the deletion is checked and

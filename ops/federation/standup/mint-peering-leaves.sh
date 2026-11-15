@@ -61,7 +61,8 @@
 # urn:goat:acceptance-probe:<run id>, valid from a minute back to FED_PROBE_TTL (900)
 # plus 15 minutes. It goes only into <probe-dir>, an empty 0700 folder (never a
 # folder of leaves or a trust file), and its certificate facts into the CA's
-# issued-certificates record (--issued-record). probe-identities.sh calls this.
+# issued-certificates record (--issued-record: on a deployment, the record the CA's
+# other issuances go to, or a file kept with it). probe-identities.sh calls this.
 set -uo pipefail
 
 AGREEMENT=""; OUT=""; AS=""

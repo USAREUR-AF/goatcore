@@ -28,7 +28,8 @@
 #   FED_PROBE_AS               which party we are, when the agreement does not say
 #   FED_PROBE_PKI              our peering PKI folder, holding the outward leaf and its key
 #   FED_PROBE_FAR_CA           the partner's CA certificate, which the probe trusts its edge by
-#   FED_PROBE_ISSUED_RECORD    our CA's issued-certificates record
+#   FED_PROBE_ISSUED_RECORD    our CA's issued-certificates record: on a deployment, the record
+#                              the CA's other issuances go to, or a file kept with it
 #   FED_PROBE_PARTNER_CORE_CN  the partner's core's name (impersonate only; never defaulted)
 #   FED_PROBE_PL               the probe launcher (default probe-launcher.sh beside this)
 #   FED_PROBE_TTL              the probe lifetime acceptance.sh uses (default 900)
