@@ -256,11 +256,42 @@ def release_tag_dates(repo: str) -> dict:
     return out
 
 
-def period_problems(base: dict, new: dict, deps: list, base_release: str, version: str, tags: dict, today) -> list:
+DEPRECATIONS_PATH = "ops/goatbuilder/compat/deprecations.yaml"
+
+
+def _same_item(a: dict, b: dict) -> bool:
+    return all(a.get(k) == b.get(k) for k in ("command", "flag", "value"))
+
+
+def _version_key(t: str):
+    m = _RELEASE.match(t)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def shipped_deprecations(repo: str, tag: str):
+    """The deprecation list release `tag` shipped (its binary compiles it in and
+    warned for each entry), read with `git show <tag>:<path>`; None when the tag,
+    the file or its YAML cannot be read. goatbuilder-pr's tag fetch is a partial
+    fetch, so git fetches that one file's objects here on demand."""
+    r = subprocess.run(["git", "-C", repo, "show", f"{tag}:{DEPRECATIONS_PATH}"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    try:
+        data = yaml.safe_load(r.stdout) or {}
+    except yaml.YAMLError:
+        return None
+    items = data.get("deprecations") if isinstance(data, dict) else None
+    return [d for d in items if isinstance(d, dict)] if isinstance(items, list) else None
+
+
+def period_problems(base: dict, new: dict, deps: list, base_release: str, version: str, tags: dict, today, shipped: dict) -> list:
     """From a 1.0 baseline, each entry that excuses a removal must have served its
-    period (ADR 1228): the build is a later major, the major that first warned had
-    two minor releases after the one that warned, and 90 days have passed since it
-    was tagged. On 0.x an entry excuses a removal at once ("When it starts")."""
+    period (ADR 1228): the build is a later major whose release is not yet tagged;
+    the release the entry names shipped a list that names the item, so a binary of
+    it warned (`shipped`: {tag: that list, or None}); two minor releases (x.y.0,
+    y > 0, of any major) followed it before the build's version; and 90 days have
+    passed since it was tagged. On 0.x an entry excuses a removal at once ("When
+    it starts")."""
     m = _RELEASE.match(base_release)
     if not m or int(m.group(1)) < 1:
         return []
@@ -277,19 +308,36 @@ def period_problems(base: dict, new: dict, deps: list, base_release: str, versio
             out.append(f"{what}: removed in {built}, but a deprecated item is removed only in a major release; "
                        f"keep it, with its warning, until goatbuilder {base_major + 1}.0.0")
             continue
+        if f"goatbuilder/v{version}" in tags:
+            out.append(f"{what}: removed in {version}, but goatbuilder/v{version} is already tagged, so this change would "
+                       f"ship in a later release of {build_major}.x; a deprecated item is removed in the pull request that "
+                       f"sets the version to {build_major}.0.0, before its tag")
+            continue
         dm = _RELEASE.match(since)
         if not dm or since not in tags:
             out.append(f"{what}: deprecations.yaml names no tag {since} on this history, so its period cannot be read; "
                        "name the release that first warned (fetch its tag)")
             continue
+        listed = shipped.get(since)
+        if listed is None:
+            out.append(f"{what}: the list {since} shipped cannot be read ({since}:{DEPRECATIONS_PATH}), so whether it "
+                       "warned cannot be known; fetch that tag's file")
+            continue
+        if not any(_same_item(d, x) for x in listed):
+            out.append(f"{what}: deprecations.yaml says it was deprecated in {since}, but the list {since} shipped did not "
+                       "name it, so no binary of that release warned; name the first release whose shipped list names it")
+            continue
+        vm = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        build_key = tuple(int(x) for x in vm.groups()) if vm else (build_major, 0, 0)
+        since_key = _version_key(since)
         later = sorted(
             (t for t in tags
-             if (tm := _RELEASE.match(t)) and tm.group(1) == dm.group(1) and int(tm.group(2)) > int(dm.group(2)) and tm.group(3) == "0"),
-            key=lambda t: int(_RELEASE.match(t).group(2)),
+             if (k := _version_key(t)) and k[1] > 0 and k[2] == 0 and k > since_key and k < build_key),
+            key=_version_key,
         )
         ends = tags[since] + datetime.timedelta(days=PERIOD_DAYS)
         if len(later) < PERIOD_MINORS:
-            out.append(f"{what}: deprecated in {since}, followed by {len(later)} minor release(s) of {dm.group(1)}.x "
+            out.append(f"{what}: deprecated in {since}, followed by {len(later)} minor release(s) before {version} "
                        f"({', '.join(later) or 'none'}); it is removed only after two minor releases and 90 days "
                        f"(compared against {today.isoformat()} (UTC); the 90 days end on {ends.isoformat()})")
             continue
@@ -302,14 +350,18 @@ def period_problems(base: dict, new: dict, deps: list, base_release: str, versio
 
 def period_rows(repo: str, b, new: dict, deps: list, today=None) -> list:
     """The A1 problems of this build: its version from crates/goatbuilder/Cargo.toml,
-    the release tags' dates from git, today's date in UTC. The tags are read from
-    the checkout, never fetched here: goatbuilder-pr fetches them before the check."""
+    the release tags' dates from git, each named release's shipped list from its
+    tag, today's date in UTC. The tags are read from the checkout, never fetched
+    here: goatbuilder-pr fetches them before the check, as a partial fetch, so
+    `git show` brings in the one file it reads from a tag on demand."""
     today = today or datetime.datetime.now(datetime.timezone.utc).date()
     base = b.surface()
     if not any(_removed(base, new, d) for d in deps):
         return []
     tags = release_tag_dates(repo)
-    return period_problems(base, new, deps, b.release, goatbuilder_version(repo), tags, today)
+    named = {str(d.get("deprecated_in", "")) for d in deps if _removed(base, new, d)}
+    shipped = {t: shipped_deprecations(repo, t) for t in sorted(named) if t in tags}
+    return period_problems(base, new, deps, b.release, goatbuilder_version(repo), tags, today, shipped)
 
 
 # ---------------------------------------------------------------- A4: the documents

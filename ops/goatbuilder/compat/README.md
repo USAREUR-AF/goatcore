@@ -86,11 +86,22 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
   `deprecations.yaml` naming the command (and flag), its replacement and the
   release that first warns. Until the baseline is 1.0 or later, the entry
   excuses the removal at once. From a 1.0 baseline it excuses it only after
-  the deprecation period (ADR 1228, row A1): the build is a later major
-  release, the major that first warned had two minor releases after the one
-  that warned, and 90 days have passed since that release was tagged. The
-  check reads the tags' dates from the checkout and today's date in UTC, and
-  a refusal names the date it compared against and the date the period ends.
+  the deprecation period (ADR 1228, row A1). All of these must hold:
+  - the build is a later major release, and its version is not yet tagged;
+  - the release the entry names shipped a `deprecations.yaml` that names the
+    item, so a binary of that release warned (read with
+    `git show <tag>:ops/goatbuilder/compat/deprecations.yaml`). An entry that
+    names an earlier release than the first that shipped it is refused;
+  - two minor releases (x.y.0 with y > 0, of any major) were tagged after
+    it and before the build's version;
+  - 90 days have passed since it was tagged.
+  The check reads the tags' dates from the checkout and today's date in UTC,
+  and a refusal names the date it compared against and the date the period
+  ends. The build's version is read from `crates/goatbuilder/Cargo.toml`, which
+  main carries at the last release's version until a version pull request
+  changes it. So a removal lands in the pull request that sets the version to
+  X.0.0, or after it on main before the X.0.0 tag; once that tag exists, a
+  removal would ship in a later minor release and is refused.
 - **An error code no longer printed, or whose fault is renamed.** Keep the
   entry in the catalog and mark it `retired: "<tag>: <why>"`, such as
   `retired: "goatbuilder/v0.6.0: standup reads the site from the plan"`

@@ -273,11 +273,16 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: bash ops/ci/check-goatbuilder-tests-leave-home.sh --after "$RUNNER_TEMP/goatbuilder-tests-start"
       # Row A1 reads the date each release was tagged; the checkout is shallow and
-      # has no tags. Tag objects and their commits only, no trees.
-      - name: Fetch the goatbuilder release tags (A1 reads their dates)
+      # has no tags. Tag objects and their commits only, no trees. A1 also reads
+      # the deprecations.yaml a release shipped (git show <tag>:<path>); the
+      # filtered fetch makes origin a promisor, so git fetches that one file's
+      # trees and blob on demand. The second line proves it on the baseline's tag.
+      - name: Fetch the goatbuilder release tags (A1 reads their dates and shipped lists)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
-        run: git fetch --no-tags --depth=1 --filter=tree:0 origin '+refs/tags/goatbuilder/v*:refs/tags/goatbuilder/v*'
+        run: |
+          git fetch --no-tags --depth=1 --filter=tree:0 origin '+refs/tags/goatbuilder/v*:refs/tags/goatbuilder/v*'
+          git show "$(sed -n 's/^release: //p' ops/goatbuilder/compat/baseline.yaml):ops/goatbuilder/compat/deprecations.yaml" > /dev/null
       - name: The promise — commands and documents of the last release still hold (A1, A3, A4)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}

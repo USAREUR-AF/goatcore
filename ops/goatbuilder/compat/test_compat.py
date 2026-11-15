@@ -364,7 +364,7 @@ class A1DeprecationPeriod(unittest.TestCase):
         git("commit", "-q", "-m", "1.2.0")
         git("tag", "-a", "-m", "v1.2.0", "goatbuilder/v1.2.0")
         write("ops/goatbuilder/compat/deprecations.yaml", listed)
-        git("commit", "-q", "-am", "list", when="2027-01-15T12:00:00+00:00")
+        git("commit", "-q", "--allow-empty", "-am", "list", when="2027-01-15T12:00:00+00:00")
         for tag, when in (("v1.3.0", "2027-01-20T12:00:00+00:00"), ("v1.4.0", "2027-02-01T12:00:00+00:00")):
             git("tag", "-a", "-m", tag, f"goatbuilder/{tag}", when=when)
         write("crates/goatbuilder/Cargo.toml", f'[package]\nname = "goatbuilder"\nversion = "{version}"\n')
