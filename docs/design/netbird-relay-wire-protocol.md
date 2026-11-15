@@ -8,6 +8,7 @@
 - Working state: `../project/block-33-progress.md`
 - Implementation crate (Apache 2.0): [`goat-relay-protocol/`](../../goat-relay-protocol/)
 - Conformance soak driver: `ops/wave-33/relay-conformance/`
+- Upstream protocol changes goat watches: [`upstream-netbird-wireguard-watch.md`](upstream-netbird-wireguard-watch.md) (ADR 1248)
 
 ## Why this doc exists
 
