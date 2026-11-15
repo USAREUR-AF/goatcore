@@ -57,6 +57,11 @@ pub struct ComposeArgs {
     /// One JSON object instead of the glyph lines.
     #[arg(long)]
     pub json: bool,
+
+    /// A party the agreement must be between, by `sovereign_id`. Repeat for
+    /// each; every party named must be one of the two packages' parties.
+    #[arg(long = "party", value_name = "SOVEREIGN_ID")]
+    pub parties: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -307,5 +312,124 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("SubjectPublicKeyInfo"), "{err}");
+    }
+
+    use crate::json::{canonical, parse_document, JVal};
+
+    fn vectors() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors")
+    }
+
+    fn text(p: &str) -> String {
+        std::fs::read_to_string(vectors().join(p)).unwrap().trim().to_string()
+    }
+
+    /// `party`'s conformance package, given `sovereign_id` `as_id` and signed
+    /// again with `party`'s committed test seed (worthless keys, public on purpose).
+    fn package_as(party: &str, as_id: &str) -> Vec<u8> {
+        let bytes = std::fs::read(vectors().join(format!("compose-full/package-{party}.canonical.json"))).unwrap();
+        let JVal::Obj(mut top) = parse_document(&bytes).unwrap().without_member("signature") else {
+            panic!()
+        };
+        for (k, v) in top.iter_mut() {
+            if k == "sovereign_id" {
+                *v = JVal::Str(as_id.into());
+            }
+        }
+        let hex = text(&format!("testkeys/{party}.seed.hex"));
+        let seed: [u8; 32] = (0..32)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+            .collect::<Vec<u8>>()
+            .try_into()
+            .unwrap();
+        let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let sig = ed25519_dalek::Signer::sign(&sk, canonical(&JVal::Obj(top.clone())).as_bytes());
+        use base64::Engine;
+        top.push((
+            "signature".into(),
+            JVal::Str(base64::engine::general_purpose::STANDARD.encode(sig.to_bytes())),
+        ));
+        canonical(&JVal::Obj(top)).into_bytes()
+    }
+
+    struct Setup {
+        _d: tempfile::TempDir,
+        ours: PathBuf,
+        theirs: PathBuf,
+        out: PathBuf,
+        keys: Vec<String>,
+    }
+
+    /// Our package (xaa) and a counterparty package that is `theirs_id`'s, with
+    /// a key for each of xaa, xab and a third party xac bound, as in a keyring
+    /// shared by several peerings.
+    fn setup(theirs_id: &str) -> Setup {
+        let d = tempfile::tempdir().unwrap();
+        let ours = d.path().join("ours.json");
+        let theirs = d.path().join("theirs.json");
+        std::fs::write(&ours, package_as("xaa", "xaa")).unwrap();
+        std::fs::write(&theirs, package_as("xab", theirs_id)).unwrap();
+        let xab = text("testkeys/xab.public.b64");
+        let keys = vec![
+            format!("xaa={}", text("testkeys/xaa.public.b64")),
+            format!("xab={xab}"),
+            // The third party's package is signed by the key bound for it.
+            format!("xac={xab}"),
+        ];
+        let out = d.path().join("agreement.json");
+        Setup { _d: d, ours, theirs, out, keys }
+    }
+
+    fn args(s: &Setup, parties: &[&str]) -> ComposeArgs {
+        ComposeArgs {
+            first: s.ours.clone(),
+            second: s.theirs.clone(),
+            keys: s.keys.clone(),
+            keyring: None,
+            now: Some("2026-10-01".into()),
+            out: Some(s.out.clone()),
+            print: false,
+            json: false,
+            parties: parties.iter().map(|p| p.to_string()).collect(),
+        }
+    }
+
+    /// With the parties named, compose composes only between them: a genuine
+    /// package of another party, whose key is bound, is refused (GB-191) and
+    /// no agreement is written. Without them it composes any two whose keys
+    /// it holds, as before.
+    #[test]
+    fn compose_takes_only_the_parties_it_is_given() {
+        let s = setup("xab");
+        let mut out = Vec::new();
+        assert_eq!(run_compose(&args(&s, &["xaa", "xab"]), &mut out).unwrap(), EXIT_OK, "{}", String::from_utf8_lossy(&out));
+        assert!(s.out.exists());
+
+        let s = setup("xac");
+        let mut out = Vec::new();
+        assert_eq!(run_compose(&args(&s, &[]), &mut out).unwrap(), EXIT_OK, "without --party, as before: {}", String::from_utf8_lossy(&out));
+        let s = setup("xac");
+        let mut out = Vec::new();
+        let rc = run_compose(&args(&s, &["xaa", "xab"]), &mut out).unwrap();
+        let said = String::from_utf8_lossy(&out);
+        assert_eq!(rc, EXIT_FED_REFUSED, "{said}");
+        assert!(said.contains("GB-191") && said.contains("xac") && said.contains("xab"), "{said}");
+        assert!(!s.out.exists(), "an agreement was written: {said}");
+        // One party named is enough to pin the counterparty.
+        let s = setup("xac");
+        let mut out = Vec::new();
+        assert_eq!(run_compose(&args(&s, &["xab"]), &mut out).unwrap(), EXIT_FED_REFUSED);
+        assert!(!s.out.exists());
+    }
+
+    /// --party is a sovereign id, at most twice, and two that differ.
+    #[test]
+    fn compose_refuses_a_party_list_it_cannot_hold_to() {
+        let s = setup("xab");
+        for bad in [vec!["xaa", "xab", "xac"], vec!["xab", "xab"], vec!["x y"]] {
+            let mut out = Vec::new();
+            assert!(run_compose(&args(&s, &bad), &mut out).is_err(), "{bad:?}");
+            assert!(!s.out.exists(), "{bad:?}");
+        }
     }
 }

@@ -1372,6 +1372,22 @@ mod tests {
         assert!(!shell_safe("") && !shell_safe("a b") && !shell_safe("a'b") && !shell_safe("$(x)") && !shell_safe("`x`"));
     }
 
+    /// Phase 6 composes only between us and the peering's declared partner:
+    /// compose is given both as --party, and of the keyring only their two
+    /// lines, so a keyring shared by several peerings binds no other party.
+    #[test]
+    fn phase_6_names_the_two_parties_and_passes_only_their_keys() {
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        std::fs::write(work.path().join("keys.txt"), "xaa=QUJD\nvelmara=QUJE\nxac=QUJF\n").unwrap();
+        let o = Options { with: "velmara", env: None, r#as: Some("xaa"), edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        let phases = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
+        let six = &phases.iter().find(|p| p.n == 6).unwrap().cmd;
+        assert!(six.contains("--party 'xaa'") && six.contains("--party 'velmara'"), "{six}");
+        assert!(six.contains("--key 'xaa=QUJD'") && six.contains("--key 'velmara=QUJE'"), "{six}");
+        assert!(!six.contains("xac"), "a third party's key reached compose: {six}");
+    }
+
     /// `rotate <partner> leaves` (docs/design/federation-key-rotation.md §5,
     /// K3): phase 8 replaces every leaf with --rotate, and only phase 8's
     /// command changes; the run is 8 to 14.
