@@ -28,6 +28,11 @@ eval "$(declare -f unit_main | sed '1s/^unit_main /rot_peering_up /')"
 
 ROT_KEYS="leaves carrier transport signing"
 
+# drive with more arguments for the command (DRIVE_EXTRA, split on spaces): the partner's
+# step passes --accept-partner-package with it.
+# shellcheck disable=SC2016 # $DRIVE_EXTRA is written into drive_x's body, expanded when it runs
+eval "$(declare -f drive | sed '1s/^drive /drive_x /; s/\(goatbuilder -C \/opt\/goat --yes federate .*--to "\$to"\)$/\1 $DRIVE_EXTRA/')"
+export -f drive_x
 # drive's environment for `goatbuilder federate rotate <partner> <key>` (ROT_KEY): the rotation
 # re-runs phases (8 for the leaves, 3 after a carrier or transport key), which read the same
 # values as the command does (FED_CA_CERT/KEY, FED_WORK, GOAT_CONTEXT, the signing key, the
@@ -135,7 +140,24 @@ PY
     mark "key-rotation.partner-keyring-$ord" BLOCKED "the partner's step that takes our new verifying key into its keyring waits on the operator's decision in docs/design/federation-key-rotation.md §5"
   fi
   case "$k" in
-    transport|signing) rot_die "the partner's step after a $k rotation waits on the operator's decision in docs/design/federation-key-rotation.md §5" ;;
+    # LAB TRIAL (ADR 1229, local only): the partner's step after a transport rotation, as
+    # §5 and the K4 row give it: the partner's phase 5 takes our new package once its digest
+    # is confirmed (--accept-partner-package, the digest read from our side as on the call),
+    # and its phases to 14 run on it; its phase 11 replaces our peer key, and the tunnel
+    # comes back. The times bound the tunnel gap: our rotation ends, their step starts, the
+    # first handshake after it.
+    transport)
+      local d t0
+      d="$(docker exec "$(drv_host "$s")" sha256sum "/var/lib/goat-federation/$them/ours.canonical.json" | cut -d' ' -f1)"
+      t0="$(date +%s.%N)"; printf '%s\tpartner-step-start\n' "$t0" >> "$RECORD/rot-$k-$s.times"
+      rec "rot-partner-step-$k-$s" -- bash -c "DRIVE_EXTRA='--accept-partner-package $d' drive_x '$them' '$s' '$AVENUE' 5 14"
+      printf '%s\tpartner-step-end\n' "$(date +%s.%N)" >> "$RECORD/rot-$k-$s.times"
+      rec "rot-tunnel-back-$k-$s" -- bash -c \
+        "i=\$(iface '$s' '$them'); for _ in \$(seq 1 30); do t=\$(docker exec $HP-$s-edge wg show \$i latest-handshakes | cut -f2); [ \"\${t:-0}\" -gt '${t0%%.*}' ] 2>/dev/null && break; sleep 2; done
+         docker exec $HP-$s-edge wg show \$i latest-handshakes; printf 'first handshake after the partner step began: %s (step began %s)\\n' \"\${t:-none}\" '${t0%%.*}'
+         [ \"\${t:-0}\" -gt '${t0%%.*}' ] 2>/dev/null"
+      ;;
+    signing) rot_die "the partner's step after a $k rotation waits on the operator's decision in docs/design/federation-key-rotation.md §5" ;;
   esac
   for x in "$s" "$them"; do
     rec "rot-acceptance-$k-$x" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" \
