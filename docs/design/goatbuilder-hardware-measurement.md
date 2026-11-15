@@ -497,7 +497,9 @@ Every site that replicates with it keeps a replication slot for it, and
 Postgres invalidates a slot that holds more WAL than `max_slot_wal_keep_size`.
 After that the phone must be seeded again
 ([post-partition-convergence-runbook.md](../operations/post-partition-convergence-runbook.md),
-"A. Slot rebuild — the destructive path"); `goatbuilder` has no path for the re-seed yet. The cap is
+"A. Slot rebuild — the destructive path"); the procedure and the `goatbuilder`
+path for it, designed and not built, are in
+[phone-node-offline-window.md](phone-node-offline-window.md). The cap is
 1 GB in the image's `postgresql.conf` and 6 GB where the
 `postgres-streaming-replication` role sets it. Read the live value; never
 assume either one.
@@ -519,7 +521,10 @@ slots that read `active = f` while every other site is up are the phone's.
 A slot can be off for about `safe_wal_size` divided by the WAL rate before it
 is invalidated, and the phone's budget is the smallest such time over its
 slots. For example, a 1 GiB cap and a rate of 2 MiB an hour allow about
-21 days. That is arithmetic for the reader, not a measurement. The H8 record
+21 days. That is arithmetic for the reader, not a measurement. Measured on lab
+containers, a slot past the cap reads `unreserved` and is invalidated at the
+next checkpoint, so the budget is the cap over the rate, with no allowance
+([phone-node-offline-window.md](phone-node-offline-window.md)). The H8 record
 keeps the readings, each site's rate, and the budget computed from them.
 
 ### What to keep (H8)

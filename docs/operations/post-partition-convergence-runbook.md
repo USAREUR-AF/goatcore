@@ -214,7 +214,21 @@ After 30 clean minutes: declare convergence in the incident log + close the page
 
 ## A. Slot rebuild — the destructive path
 
-This appendix is invoked when `wal_status = lost`. The subscriber can no longer replay from the slot; it must be rebuilt from a `pg_basebackup`. **This is destructive on the subscriber side** — its data is wiped and replaced from the provider. Confirm with a second operator before proceeding if site impact is non-trivial.
+This appendix is invoked when `wal_status = lost`. The subscriber can no longer replay from the slot; it must be seeded again. **This is destructive on the subscriber side** — its data is wiped and replaced from the provider. Confirm with a second operator before proceeding if site impact is non-trivial.
+
+**First, which kind of subscriber lost its slot.** A Spock member (every site's `postgres-a`, and a phone node) is seeded again through Spock, below under "A Spock member". The `pg_basebackup` rebuild after it copies the provider's whole data directory, and with it the provider's Spock node identity, so it applies only to a streaming standby.
+
+### A Spock member
+
+Measured on lab containers ([phone-node-offline-window.md](../design/phone-node-offline-window.md), "Seeding a phone again", which gives each step's query). `goatbuilder` has no verb for it yet; the design is in the same document.
+
+1. Confirm the subscriber's slot reads `wal_status = lost` on the provider.
+2. Confirm the provider's subscription from the subscriber reads `replicating` and has caught up with the subscriber's own writes. Do not go on until it has: the next steps truncate the subscriber's tables.
+3. Confirm the replicated tables, in total, are well under the subscriber's own cap. The copy is written as WAL on the subscriber, and a copy near its cap invalidates the provider's slot on the subscriber.
+4. On the subscriber, in each replicated database: `spock.sub_drop` the subscription from the provider (this drops the lost slot), create it again as `spock-mesh-peering` does, without the initial copy, and `spock.sub_resync_table(<subscription>, <table>, true)` for each table of its replication sets. Creating the subscription with `synchronize_data := true` is not enough: the copy fails on the rows the subscriber still holds.
+5. Wait until every table reads `r` in `spock.local_sync_status`, then return to step 1 of this runbook.
+
+### A streaming standby
 
 The mechanics are documented in [`goat-ha-dev-validation.md` §1.6](goat-ha-dev-validation.md#16-wal-slot-invalidation--pg_basebackup-rebuild). Summary:
 
