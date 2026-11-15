@@ -292,8 +292,12 @@ no secret: the offline ceremony issues the new leaf, and an operator stages it
 beside the live files as `.next` files. The role checks the staged pair
 (GB-289, GB-290), sets the live pair aside once in `.previous-<id>/`, switches,
 re-authenticates the IKE SA, and puts the old pair back if the SA does not
-come up (GB-302). An `ipsec-ca` rotation also needs the partner's read-back of
-our new CA's fingerprint (GB-303). `peering_edge_remote_ca_next_path` accepts a
+come up (GB-302); a rotation rolled back stays reported as rolled back on
+every later run of its id. An `ipsec-ca` rotation also needs the partner's
+read-back of our new CA's fingerprint (GB-303) before our new CA replaces the
+current one. `peering_edge_rotation_retire` removes the set-aside key only once
+the new leaf is live, and never moves the live pair, the staged pair or our CA
+(GB-309 for an id with nothing to retire, or a rotation not confirmed live). `peering_edge_remote_ca_next_path` accepts a
 partner's new CA beside the current one during their rotation. It is opt-in,
 and without a rotation id nothing changes. `goatbuilder federate rotate` does
 not drive it yet.
