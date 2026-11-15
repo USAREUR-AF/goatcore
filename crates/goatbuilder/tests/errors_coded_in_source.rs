@@ -9,7 +9,7 @@
 //!
 //! It reads every file under `src/` (test modules and `#[cfg(test)]` items
 //! left out) for the places an error is made: `anyhow!(…)`, `bail!(…)`,
-//! `.context(…)` and `.with_context(…)`. A place is coded when its expression
+//! `ensure!(…)`, `.context(…)` and `.with_context(…)`. A place is coded when its expression
 //! names a `GB-nnn` code or calls `coded(`. A message that only meets one of the
 //! catalog's `matches:` patterns is not: main.rs prints a code without the
 //! explanation only for an error raised with `goat_errors::coded`, so a drill
@@ -54,6 +54,8 @@ const OPENERS: &[(&str, &str)] = &[
     ("anyhow::anyhow!(", "anyhow"),
     ("anyhow!(", "anyhow"),
     ("bail!(", "bail"),
+    ("anyhow::ensure!(", "ensure"),
+    ("ensure!(", "ensure"),
     (".with_context(", "context"),
     (".context(", "context"),
 ];
@@ -163,10 +165,11 @@ fn uncoded_in(file: &str, text: &str) -> Vec<Site> {
             .filter_map(|(o, k)| line[at..].find(o).map(|p| (at + p, *o, *k)))
             .min_by_key(|(p, _, _)| *p)
         {
-            // `anyhow!(` also matches inside `anyhow::anyhow!(`: take the longer.
+            // `anyhow!(` also matches inside `anyhow::anyhow!(`, and `ensure!(`
+            // inside `anyhow::ensure!(`: take the longer.
             let start = pos;
             at = pos + opener.len();
-            if opener == "anyhow!(" && line[..start].ends_with("anyhow::") {
+            if (opener == "anyhow!(" || opener == "ensure!(") && line[..start].ends_with("anyhow::") {
                 continue;
             }
             // The expression: from the opener to the line where its parenthesis closes.
@@ -304,7 +307,7 @@ fn every_error_the_source_makes_is_coded_or_listed() {
     );
 }
 
-/// The scanner itself: an uncoded `anyhow!` and `.context` are found, with
+/// The scanner itself: an uncoded `anyhow!`, `ensure!` and `.context` are found, with
 /// their messages; a coded one, and one in a test module, are not; one the
 /// catalog would only match by its words is.
 #[test]
@@ -328,6 +331,12 @@ fn d() -> Result<()> {
     Err(anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
 }
 
+fn e(ok: bool) -> Result<()> {
+    anyhow::ensure!(ok, "phase 1 wrote no results to {}", p.display());
+    ensure!(ok, goat_errors::coded("GB-321", "phase 1 wrote no results"));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     fn c() { let _ = anyhow!("a test's own error"); }
@@ -340,6 +349,7 @@ mod tests {
             "src/x.rs :: context :: the plan file".to_string(),
             "src/x.rs :: anyhow :: an empty plan: {}".to_string(),
             "src/x.rs :: anyhow :: federate is a mutation: pass --yes without a terminal (C10)".to_string(),
+            "src/x.rs :: ensure :: phase 1 wrote no results to {}".to_string(),
         ]
     );
 }
