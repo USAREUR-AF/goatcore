@@ -14,15 +14,19 @@ beside its samples, holding its challenge and the time it started in one
 value. A reader learns the partner's challenge from the stamp and waits for
 the sample carrying it. It ignores a stamp that started more than twice
 `FED_SESSION_WAIT` before its own start, says so, and keeps waiting for this
-run's; a stamp it cannot read is waited for, never taken as missing. With
-only an earlier run's sample there, the delivery rows are BLOCKED, say that
-an earlier run's sample is what is there, and the run ends open (exit 3). A
-partner whose runner stages no stamp is read as before.
+run's; a stamp it cannot read is waited for, never taken as missing. The
+challenge is the one of the stamp whose sample it found, so a rerun whose
+first run's sample never arrived is judged by the rerun's; two runs' stamps
+on two sets end BLOCKED, never FAIL. With only an earlier run's sample
+there, the delivery rows are BLOCKED, say that an earlier run's sample is
+what is there, and the run ends open (exit 3). A partner whose runner
+stages no stamp is read once a whole `FED_SESSION_WAIT` has passed with no
+stamp of its own, since this run's stamp may still be in flight; once a
+partner's stamp has been read, a sample without one is never learned.
 
 Limits: a partner's current run is kept when both sides start phase 14
 within `FED_SESSION_WAIT` of each other and their clocks agree within
-`FED_SESSION_WAIT`. Phase 1 does not check the clocks yet, so keep each
-host's clock synchronized. An earlier run that started less than twice
+`FED_SESSION_WAIT`; phase 1 checks our hosts' clocks. An earlier run that started less than twice
 `FED_SESSION_WAIT` before ours is not told apart, nor is one from a runner
 that stages no stamp; its result is still refused (GB-273), so the verdicts
 can differ until a rerun, but a stale result never passes.

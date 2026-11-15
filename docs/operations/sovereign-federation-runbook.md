@@ -338,7 +338,9 @@ challenge is never echoed. It is told apart by the run stamp each run stages bes
 both sides start within `FED_SESSION_WAIT` of each other and their clocks agree within
 `FED_SESSION_WAIT` ([§6.3](../design/federation-acceptance.md#63-phase-14-on-a-derived-session)
 states the exact bound). Keep each host's clock synchronized (NTP). When only an earlier run's
-sample is there, the delivery row is BLOCKED and says so: run phase 14 again on both sides.
+sample is there, the delivery row is BLOCKED and says so: run phase 14 again on both sides. The
+same holds when two of the partner's runs left stamps on different sets. A partner on a runner
+that stages no stamp is read once a whole `FED_SESSION_WAIT` has passed with no stamp from it.
 
 | Check | Required evidence |
 |---|---|

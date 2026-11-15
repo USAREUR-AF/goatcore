@@ -566,20 +566,36 @@ holding `<us>-<challenge>-<set>@<started>`, the start time in seconds since the 
 challenge and the start time are one value in one write, so a reader never pairs one run's start
 time with another run's challenge, whatever order the keys arrive in and whichever write fails.
 
-A reader learns the partner's challenge from the stamp, then waits for the sample carrying it:
+A reader takes the partner's challenge from the stamp whose sample it found, and only from that
+one (tests `test_derived_a_rerun_within_twice_the_wait_is_judged_by_the_stamp_whose_sample_matched`
+and the `test_derived_two_runs_*` and `test_derived_an_unstamped_*` cases beside it). It reads each
+of the partner's sets in turn:
 
-- A stamp that started before the reader's own start minus twice `FED_SESSION_WAIT` is an earlier
-  run's. Its challenge is never learned, the run prints that the partner's sample is from an
-  earlier run, and it keeps waiting for this run's.
+- A stamp that started before the reader's own start minus twice `FED_SESSION_WAIT` (`2W`) is an
+  earlier run's. Its challenge is never learned, the run prints that the partner's sample is from an
+  earlier run, and it keeps waiting for a stamp started within `2W` of its own.
+- A stamp started within `2W` is read, and the sample carrying its challenge waited for. A later
+  stamp replaces it while the reader waits, so a rerun whose first run's sample never arrived is
+  judged by the rerun's stamp and sample. When an earlier set already fixed the challenge and this
+  set's stamp carries another, the set holds two of the partner's runs: its delivery and persistence
+  rows end BLOCKED ("two of the partner's runs' stamps"), never a FAIL on other bytes.
 - A stamp that cannot be read is not there yet; the reader waits. It is never taken for a partner
   whose runner stages no stamp.
-- No stamp, read cleanly, is a partner whose runner stages none: its sample is read as before. A
-  sample an older runner's earlier run left is then learned, and its result refused (GB-273,
-  §6.1), as before this stamp.
-- When the wait ends without this run's sample, the delivery row is BLOCKED and its reason names
-  what is there: a stamp from the partner's earlier run, this run's stamp beside an earlier run's
-  sample, or this run's stamp with no sample. The run ends open (exit 3), with no FAIL row. A
-  sample of another shape beside this run's stamp is a FAIL (other bytes), as on any lane.
+- No stamp, read cleanly. A sample with no stamp beside it is taken only from a partner whose runner
+  stages none, and the reader concludes that only after a whole `FED_SESSION_WAIT` on one set with no
+  stamp of the partner's on any set; later sets are then read at once. Until then it waits, because
+  this run's stamp may still be in flight: the first run after the partner upgrades, on a session id
+  that its older runner used before, finds that runner's unstamped sample, and learning it would
+  have the partner refuse our result (GB-273). Once the reader has read any stamp of the partner's,
+  it never learns from an unstamped sample; that set ends BLOCKED. The cost: a partner on an older
+  runner is read one `FED_SESSION_WAIT` later than before.
+- The delivery row reads the reason a set is not this run's before it compares bytes, so the stamp
+  decides a set whenever it says the sample is not this run's. When the wait ends without the
+  sample, the row is BLOCKED and its reason names what is there: a stamp from the partner's earlier
+  run, a stamp started within `2W` beside an earlier run's sample, that stamp with no sample, two
+  runs' stamps, or an unstamped sample from a partner that stamps. The run ends open (exit 3), with
+  no FAIL row. A sample of another shape beside a stamp started within `2W` is a FAIL (other bytes),
+  as on any lane.
 
 **The clock tolerance.** Let `W` be `FED_SESSION_WAIT`, `x` how long before us the partner's run
 started, and `D` how far the partner's clock runs behind ours (negative when ahead). A fresh sample
