@@ -2228,6 +2228,34 @@ pub fn backout_with(
 }
 
 #[cfg(test)]
+mod catalog_tests {
+    /// The phase catalog describes the back-out's steps (gate row F4): the
+    /// numbered steps this module's documentation lists (survey, confirm,
+    /// remove, recheck, core, directory, record) are exactly the catalog's
+    /// federate-backout entries, by number and id, and each entry's `runs`
+    /// names only tools the back-out starts.
+    #[test]
+    fn the_phase_catalog_describes_backouts_steps() {
+        let source = include_str!("backout.rs");
+        let step = regex::Regex::new(r"(?m)^//!\s+(\d+)\s+([a-z]+)\s").unwrap();
+        let documented: std::collections::BTreeSet<(String, String)> =
+            step.captures_iter(source).map(|c| (c[1].to_string(), c[2].to_string())).collect();
+        assert_eq!(documented.len(), 7, "the module documentation numbers seven steps: {documented:?}");
+        let entries = goat_errors::phases::phases().of("federate-backout");
+        let keys: std::collections::BTreeSet<(String, String)> =
+            entries.iter().map(|e| (e.phase.to_string(), e.id.clone())).collect();
+        assert_eq!(keys, documented, "the catalog's federate-backout entries are the back-out's numbered steps");
+        for e in &entries {
+            for w in e.runs.split([',', ';', ' ']).filter(|w| w.contains('/')) {
+                let name = w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_' && c != '/');
+                let name = name.rsplit('/').next().unwrap_or(name);
+                assert!(source.contains(name), "back-out step {}: `runs` names {w}, which the back-out does not start", e.phase);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

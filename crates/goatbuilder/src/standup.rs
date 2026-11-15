@@ -2602,6 +2602,54 @@ mod tests {
     /// planned command, or, for a step only a declared node plans, named by this
     /// file).
     #[test]
+    /// The phase catalog describes teardown's steps (gate row F4): teardown
+    /// walks the standup's applied phases in reverse, a phase for each [A]
+    /// step and an observability leg as the phase it starts with (host 2,
+    /// stack 9), as `teardown` selects them. For every site shape, the
+    /// catalog's teardown entries are exactly those phase numbers, and each
+    /// entry's `runs` names only plays teardown starts.
+    fn the_phase_catalog_describes_teardowns_steps() {
+        let mut walked: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for (_, s, obs_only) in catalog_shapes() {
+            let o = Options {
+                env: "dev",
+                site: "zagros",
+                profile: None,
+                from: 1,
+                to: 14,
+                skip_obs: false,
+                obs_only,
+                dry_run: true,
+                parallel: false,
+                check: false,
+            };
+            for e in plan(&repo_root(), &s, &o, "RESUME") {
+                match e {
+                    Event::Phase(p) if p.kind == "A" => {
+                        walked.insert(p.n.to_string());
+                    }
+                    Event::LegStart { leg, .. } => {
+                        walked.insert(if leg == "stack" { "9" } else { "2" }.to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let entries = goat_errors::phases::phases().of("teardown");
+        let keys: std::collections::BTreeSet<String> = entries.iter().map(|e| e.phase.to_string()).collect();
+        assert_eq!(keys, walked, "the catalog's teardown entries are the phases teardown walks");
+        let decls = std::fs::read_to_string(repo_root().join("ops/goatbuilder/teardown.yaml")).unwrap();
+        let code = [include_str!("standup.rs"), decls.as_str()].concat();
+        for e in &entries {
+            for w in e.runs.split([',', ';', ' ']).filter(|w| w.contains('/')) {
+                let name = w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_' && c != '/');
+                let name = name.rsplit('/').next().unwrap_or(name);
+                assert!(code.contains(name), "teardown phase {}: `runs` names {w}, which teardown does not start", e.phase);
+            }
+        }
+    }
+
+    #[test]
     fn the_phase_catalog_describes_standups_plan() {
         let cat = goat_errors::phases::phases();
         let entries = cat.of("standup");

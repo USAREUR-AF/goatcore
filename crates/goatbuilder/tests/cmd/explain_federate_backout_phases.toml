@@ -1,0 +1,14 @@
+# explain lists the back-out's steps from the phase catalog, numbered as federate/backout.rs numbers them.
+bin.name = "goatbuilder"
+args = ["explain", "federate-backout"]
+stdout = """
+federate-backout: 7 phases. goatbuilder explain federate-backout <phase> answers for one, by number or id.
+
+  1  survey     GATE     read every host of this peering: what exists, and the core's candidate
+  2  confirm    CONFIRM  a person types the partner id
+  3  remove     A        remove the tunnel, SPIRE trust, edge router, republisher and forwarder mapping
+  4  recheck    GATE     the slot list against the registry, before the core restarts
+  5  core       A        the reviewed core candidate, the restart, and the partner's store
+  6  directory  T        withdraw our package for this counterparty
+  7  record     T        the partner record leaves the checkout; survey again; the result
+"""

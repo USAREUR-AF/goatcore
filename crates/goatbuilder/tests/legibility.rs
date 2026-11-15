@@ -1490,12 +1490,17 @@ fn deploy_steps_are_the_catalog_s_deploy_entries() {
 /// Verbs held to check (d) only (gate row F4): each runs numbered steps that
 /// the phase catalog describes, and checks (a) to (c), which record a run's
 /// processes against its run record, are not asked of them here. Each verb's
-/// own unit test holds these numbers to the step lines it prints
+/// own unit test holds these numbers to what it runs
 /// (`release::tests::the_phase_catalog_describes_releases_steps`,
-/// `fastlane::catalog_tests::the_phase_catalog_describes_fastlanes_steps`).
-const D_ONLY: [(&str, [&str; 8]); 2] = [
-    ("release", ["1", "2", "3", "4", "5", "6", "7", "8"]),
-    ("fastlane", ["1", "2", "3", "4", "5", "6", "7", "8"]),
+/// `fastlane::catalog_tests::the_phase_catalog_describes_fastlanes_steps`,
+/// `standup::tests::the_phase_catalog_describes_teardowns_steps`,
+/// `federate::backout::catalog_tests::the_phase_catalog_describes_backouts_steps`).
+/// Each row: the catalog verb, its steps, and the command that prints its help.
+const D_ONLY: [(&str, &[&str], &[&str]); 4] = [
+    ("release", &["1", "2", "3", "4", "5", "6", "7", "8"], &["release", "--help"]),
+    ("fastlane", &["1", "2", "3", "4", "5", "6", "7", "8"], &["fastlane", "--help"]),
+    ("teardown", &["2", "5", "6", "7", "8", "9", "10", "12", "14"], &["teardown", "--help"]),
+    ("federate-backout", &["1", "2", "3", "4", "5", "6", "7"], &["federate", "backout", "--help"]),
 ];
 
 /// The step numbers check (d) holds each (d)-only verb to are its catalog
@@ -1504,7 +1509,7 @@ const D_ONLY: [(&str, [&str; 8]); 2] = [
 fn d_only_steps_are_the_catalog_s_entries() {
     let text = std::fs::read_to_string(repo().join(PHASE_CATALOG)).unwrap();
     let doc: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
-    for (verb, steps) in D_ONLY {
+    for (verb, steps, _) in D_ONLY {
         let catalog: BTreeSet<String> = doc["phases"]
             .as_sequence()
             .into_iter()
@@ -1517,22 +1522,22 @@ fn d_only_steps_are_the_catalog_s_entries() {
     }
 }
 
-/// Check (d) for release and fastlane: every step has a complete catalog
+/// Check (d) for the (d)-only verbs: every step has a complete catalog
 /// entry whose `read` exists, and every document path the tool prints about
 /// them (`explain <verb>`, `explain <verb> <step>` for each, and `--help`)
 /// exists.
 #[test]
-fn c11_d_only_release_and_fastlane() {
+fn c11_d_only_verbs() {
     let h = hollow();
-    for (verb, steps) in D_ONLY {
+    for (verb, steps, help_args) in D_ONLY {
         let mut printed = String::new();
         let list = ok(&format!("explain {verb}"), h.command(&["explain", verb]).output().unwrap());
         printed.push_str(&text(&list));
         for s in steps {
-            let one = ok(&format!("explain {verb} {s}"), h.command(&["explain", verb, s]).output().unwrap());
+            let one = ok(&format!("explain {verb} {s}"), h.command(&["explain", verb, *s]).output().unwrap());
             printed.push_str(&text(&one));
         }
-        let help = ok(&format!("{verb} --help"), h.command(&[verb, "--help"]).output().unwrap());
+        let help = ok(&format!("{verb} --help"), h.command(help_args).output().unwrap());
         printed.push_str(&text(&help));
         let steps: BTreeSet<String> = steps.iter().map(|s| s.to_string()).collect();
         judge(verb, vec![('d', check_d(verb, &steps, &printed))]);
