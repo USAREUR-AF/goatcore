@@ -116,9 +116,13 @@ goatlite.
 Five checks inside `goatbuilder federate` that compare a step's result with its
 exit now carry GB-321.
 
-Exit codes: an error that now carries GB-025 (the config does not match the
-typed model, or does not convert to JSON) or GB-020 exits 1, as those codes do
-everywhere else; it exited 2 before. Every other exit is unchanged.
+Exit codes, by the contract's meanings (1 refused: a precondition failed; 2
+usage: the command line was wrong). Each of these errors exited 2 with no code.
+One that now carries GB-020, GB-025 (the config does not match the typed model,
+or does not convert to JSON), GB-258, GB-320 (a program could not be started),
+GB-321 (the five federate checks) or GB-322 (an internal error) exits 1, since
+none is a usage error. The others (GB-005, GB-008, GB-024, GB-052, GB-254,
+GB-257, GB-259, GB-326, GB-327) still exit 2. Every other exit is unchanged.
 
 #### Fixed: acceptance on a derived session ignores a partner sample left by an earlier run
 
