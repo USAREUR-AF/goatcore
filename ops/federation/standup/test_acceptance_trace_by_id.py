@@ -253,12 +253,15 @@ class TraceById(unittest.TestCase):
     # --- the controller's half ------------------------------------------------
     def test_deferred_fires_every_probe_reads_no_edge_log_and_leaves_the_trace_rows_pending(self):
         rc, out = self.deferred()
-        self.assertEqual(rc, 0, out)
+        # A pending row is not a pass: the controller's half alone is INCOMPLETE.
+        self.assertEqual(rc, 3, out)
+        self.assertEqual(self.bundle()["verdict"], "INCOMPLETE", out)
+        self.assertEqual(self.bundle()["counts"]["PENDING"], len(TRACE_ROWS), out)
         self.assertFalse(os.path.exists(self.read_marker), "the edge log was read: " + out)
         checks = self.checks()
         for name in TRACE_ROWS:
             c = checks[name]
-            self.assertEqual((c["verdict"], c["required"]), ("SKIP", False), (name, out))
+            self.assertEqual((c["verdict"], c["required"]), ("PENDING", True), (name, out))
             self.assertEqual(c["observations"].get("pending"), "edge-trace", (name, out))
             self.assertNotIn("trace", c["observations"], name)
         for name, c in checks.items():
@@ -279,7 +282,7 @@ class TraceById(unittest.TestCase):
 
     def test_the_agreed_probes_own_id_is_one_of_the_ids_when_it_is_known(self):
         rc, out = self.deferred({"FED_PROBE_THEIRS_ZID": self.fabric.agreed_zid})
-        self.assertEqual(rc, 0, out)
+        self.assertEqual(rc, 3, out)
         with open(self.ids_json) as f:
             self.assertIn(self.fabric.agreed_zid, json.load(f)["ids"])
 
@@ -292,7 +295,7 @@ class TraceById(unittest.TestCase):
     # --- the whole round: deferred, the edge's filter, the decision -------------
     def test_the_edges_lines_matched_by_id_decide_the_pending_rows_and_nothing_fires(self):
         rc, out = self.deferred({"FED_PROBE_THEIRS_ZID": self.fabric.agreed_zid})
-        self.assertEqual(rc, 0, out)
+        self.assertEqual(rc, 3, out)
         deferred = self.checks()
         path, doc = self.edge_half()
         # Only this run's lines left the edge.
@@ -321,7 +324,7 @@ class TraceById(unittest.TestCase):
     def test_a_denial_the_edge_recorded_for_another_session_still_fails(self):
         self.fabric.faults.deny_from_other_session = True
         rc, out = self.deferred()
-        self.assertEqual(rc, 0, out)
+        self.assertEqual(rc, 3, out)
         path, _ = self.edge_half()
         rc, out, hits = self.decide(path)
         self.assertEqual((rc, hits), (1, []), out)
@@ -332,7 +335,7 @@ class TraceById(unittest.TestCase):
 
     def test_lines_from_before_the_window_do_not_decide_anything(self):
         rc, out = self.deferred()
-        self.assertEqual(rc, 0, out)
+        self.assertEqual(rc, 3, out)
         # The edge's own lines keep their old time: the filter keeps none of them.
         with open(self.fabric.trace_path) as f:
             stale = f.read()
@@ -347,7 +350,7 @@ class TraceById(unittest.TestCase):
 
     def test_a_file_for_other_ids_or_another_window_is_refused(self):
         rc, out = self.deferred()
-        self.assertEqual(rc, 0, out)
+        self.assertEqual(rc, 3, out)
         path, doc = self.edge_half()
         before = self.bundle()
         for bad in (dict(doc, ids=doc["ids"][:1]),
