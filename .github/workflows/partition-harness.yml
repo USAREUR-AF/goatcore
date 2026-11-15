@@ -60,6 +60,10 @@ jobs:
         env:
           IMAGE: postgres-spock:harness
         run: ops/postgres/spock/tests/lib/test-port-wait.sh
+      - name: Teardown removes anonymous volumes (two-site.sh ts_down)
+        env:
+          IMAGE: postgres-spock:harness
+        run: ops/postgres/spock/tests/lib/test-teardown-volumes.sh
       - name: Partition harness
         env:
           IMAGE: postgres-spock:harness
