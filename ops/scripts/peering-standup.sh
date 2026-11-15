@@ -208,6 +208,12 @@ step() {   # step <n> <kind> <label> <command...>
       # status of the negation, which is 0 whenever the command failed — so the
       # recovery text confidently reported "exit 0" on every failure.
       eval "$*"; rc=$?
+      # After compose passes, keep the package the agreement was composed from
+      # beside it: phase 3 rewrites $OURS on every run, and a later phase 3
+      # reads the offer the applied agreement holds from this copy.
+      if [ "$rc" -eq 0 ] && [ "$n" = 6 ]; then
+        cp "$OURS" "$FED_WORK/.ours.composed.json.tmp" && mv "$FED_WORK/.ours.composed.json.tmp" "$FED_WORK/ours.composed.json" || rc=$?
+      fi
       if [ "$rc" -ne 0 ]; then
         # QUOTED delimiter: this block contains backticks, and an unquoted
         # heredoc runs them. The first draft executed `goat federate` while

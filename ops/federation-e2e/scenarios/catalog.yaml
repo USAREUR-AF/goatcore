@@ -1216,7 +1216,7 @@ scenarios:
       reads BLOCKED. Per key, no number is missing at either reader across the key's step, and
       for transport and carrier, whose step has a gap by design, every number is re-delivered
       after it, the gap named in seconds (samples-<key>). A key the goatbuilder under test
-      refuses (GB-189 or GB-282) has every check of its own marked BLOCKED with the refusal's
+      refuses (GB-189, GB-282, GB-312 for a carrier whose forwarder is declared by hand, or GB-317 for a carrier on a side with no forwarder) has every check of its own marked BLOCKED with the refusal's
       words, and the next key goes on. The forced SPIRE CA rotation is not driven yet
       (spire-ca-rotation, BLOCKED).
       Values are stored during and after every rotation and the last five of each flow are
