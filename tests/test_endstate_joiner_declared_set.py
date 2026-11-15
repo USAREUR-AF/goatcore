@@ -3,10 +3,9 @@
 
 `join-node` builds the data router and admit-audit at every joining site's core
 node: the router in phase 13 (zenoh-deploy.yml), admit-audit with the site's
-bootstrap play (site-bootstrap.yml, role admit-audit). A live read of two joined
-sites on 2026-11-13 found both running. So the catalog declares both at every
-site that replicates (every_site), and a pin's `absent: true` or the site's own
-flag still decides.
+bootstrap play (site-bootstrap.yml, role admit-audit). So the catalog declares
+both at every site that replicates (every_site), and a pin's `absent: true` or
+the site's own flag still decides.
 
 A site's own SPIRE server and trust domain is ADR 1164's decision, designed and
 not built. The fleet pin table renders SPIRE for every member, so a joining

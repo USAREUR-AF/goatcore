@@ -403,8 +403,7 @@ services:
     ledger: audit-subscriber
     zenoh: {sub: ["**"]}
   # Built at every joining site with its bootstrap play (site-bootstrap.yml,
-  # role admit-audit), as measured on two joined sites on 2026-11-13. The
-  # site's own flag still decides.
+  # role admit-audit). The site's own flag still decides.
   admit-audit:
     class: mgmt
     present: {every_site: true, var: admit_audit_enabled}
