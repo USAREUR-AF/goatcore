@@ -67,7 +67,15 @@
 - name: peering-edge | retire | the confirmed SA's id and time
   ansible.builtin.set_fact:
     _pe_ret_marker_id: "{{ _pe_ret_marker.content | b64decode | regex_search('(?m)^id=([0-9]+)$', '\\1') | default([''], true) | first }}"
-    _pe_ret_marker_at: "{{ _pe_ret_marker.content | b64decode | regex_search('(?m)^at=([0-9]+)$', '\\1') | default(['0'], true) | first }}"
+    _pe_ret_marker_at: "{{ _pe_ret_marker.content | b64decode | regex_search('(?m)^at=([0-9]+)$', '\\1') | default([''], true) | first }}"
+
+- name: peering-edge | retire | refuse a confirm record that cannot be read (GB-309)
+  ansible.builtin.fail:
+    msg: >-
+      goat-peering-edge refuses (GB-309): the confirm's record {{ _pe_ret_aside }}/confirmed on
+      {{ inventory_hostname }} is unreadable: it needs an id= and an at= line, as the confirm writes
+      them. Run the rotation again with the same id, then retire. Nothing was moved or removed.
+  when: (_pe_ret_marker_id | length == 0) or (_pe_ret_marker_at | length == 0)
 
 - name: peering-edge | retire | the live certificate is its key's
   ansible.builtin.shell:
@@ -79,7 +87,7 @@
   changed_when: false
   failed_when: false
 
-# The SA the confirm recorded, or one established at or after the confirm's time
+# The SA the confirm recorded, or one established after the confirm's time
 # (a re-authentication or rekey since the confirm keeps the new leaf). Never the
 # set-aside's time: the rekey before the re-authentication makes an SA after it
 # that still runs on the old leaf. swanctl prints ages in whole seconds.
@@ -91,7 +99,7 @@
       awk -v n={{ peering_edge_name | quote }} -v lim="$lim" -v want={{ _pe_ret_marker_id | quote }}
       'index($0, n ": #") == 1 { split(substr($0, length(n) + 4), a, ","); cur = a[1] + 0; est = ($0 ~ /ESTABLISHED/); age = -1; next }
       match($0, /established [0-9]+s ago/) { age = substr($0, RSTART + 12, RLENGTH - 16) + 0 }
-      /INSTALLED/ && est && ((want != "" && cur == want + 0) || (age >= 0 && age <= lim)) { ok = 1 }
+      /INSTALLED/ && est && ((want != "" && cur == want + 0) || (age >= 0 && age < lim)) { ok = 1 }
       END { exit ok ? 0 : 1 }'
     executable: /bin/bash
   register: _pe_ret_up

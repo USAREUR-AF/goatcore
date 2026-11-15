@@ -284,10 +284,34 @@
   failed_when: false
   when: not (_pe_rot_prerekey_failed | bool)
 
+# Make-before-break done: no SA that was up before the re-authentication may still be
+# listed. An old-leaf SA left up (strongSwan allows duplicates unless `unique` is set)
+# could later rekey into an SA established after the confirm's record.
+- name: peering-edge | rotation | wait until the SAs from before the re-authentication are gone
+  ansible.builtin.shell:
+    cmd: >-
+      swanctl --list-sas --ike {{ peering_edge_name | quote }} |
+      awk -v n={{ peering_edge_name | quote }} -v old={{ (_pe_rot_before.stdout ~ ' ') | quote }}
+      'index($0, n ": #") == 1 { split(substr($0, length(n) + 4), a, ","); if (index(old, " " (a[1] + 0) " ")) left = 1 }
+      END { exit left ? 1 : 0 }'
+  register: _pe_rot_old_gone
+  until: _pe_rot_old_gone.rc == 0
+  retries: "{{ [((peering_edge_rotation_confirm_seconds | int) / 5) | round(0, 'ceil') | int, 1] | max }}"
+  delay: "{{ 5 if (peering_edge_rotation_confirm_seconds | int) >= 5 else 1 }}"
+  changed_when: false
+  failed_when: false
+  when:
+    - not (_pe_rot_prerekey_failed | bool)
+    - _pe_rot_up_wait.rc == 0
+
+- name: peering-edge | rotation | the old SA was still up after the confirm window
+  ansible.builtin.set_fact:
+    _pe_rot_old_lingered: "{{ (not (_pe_rot_prerekey_failed | bool)) and _pe_rot_up_wait.rc == 0 and (_pe_rot_old_gone.rc | default(0)) != 0 }}"
+
 - name: peering-edge | rotation | the confirm's result
   ansible.builtin.set_fact:
     _pe_rot_up:
-      rc: "{{ 1 if (_pe_rot_prerekey_failed | bool) else _pe_rot_up_wait.rc }}"
+      rc: "{{ 1 if ((_pe_rot_prerekey_failed | bool) or (_pe_rot_old_lingered | bool)) else _pe_rot_up_wait.rc }}"
 
 # The confirm's proof, written before the rotation reports success: the unique id of
 # the IKE SA the re-authentication made on the new leaf, and when. The retire step
@@ -312,6 +336,10 @@
         dest: "{{ _pe_rot_aside }}/rolled-back"
         content: "rotation {{ peering_edge_rotation }} rolled back: the old pair is put back\n"
         mode: "0600"
+    - name: peering-edge | rotation | remove an earlier confirm record
+      ansible.builtin.file:
+        path: "{{ _pe_rot_aside }}/confirmed"
+        state: absent
     - name: peering-edge | rotation | restore the set-aside pair
       ansible.builtin.command:
         argv: [cp, -p, "--", "{{ _pe_rot_aside }}/{{ item.name }}", "{{ item.dest }}"]
@@ -330,7 +358,9 @@
           goat-peering-edge (GB-302): the IKE SA of {{ peering_edge_name }} did not come up on the
           new leaf within {{ peering_edge_rotation_confirm_seconds }} s on {{ inventory_hostname }}{{
           ' (the rekey before the switch did not complete, so the re-authentication was not tried)'
-          if (_pe_rot_prerekey_failed | bool) else '' }}.
+          if (_pe_rot_prerekey_failed | bool) else '' }}{{
+          ' (an SA on the new leaf came up, but the SA from before the re-authentication was still up when the window closed, so make-before-break did not complete and nothing was recorded)'
+          if (_pe_rot_old_lingered | default(false) | bool) else '' }}.
           The old pair was put back from {{ _pe_rot_aside }} and loaded: the old leaf is live{{
           '; with an ipsec-ca rotation whose partner no longer trusts our old CA, it cannot carry the link'
           if peering_edge_rotation_kind == 'ca' else '' }}. Read `swanctl --list-sas` and the charon log

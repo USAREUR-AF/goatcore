@@ -298,8 +298,10 @@ read-back of our new CA's fingerprint (GB-303) before our new CA replaces the
 current one. `peering_edge_rotation_retire` removes the set-aside key only once
 the confirm recorded the new leaf live (`.previous-<id>/confirmed`, the IKE SA
 the re-authentication made), and never moves the live pair, the staged pair or
-our CA (GB-309 for an id with nothing to retire, or a rotation not confirmed;
-a re-run with the same id confirms it). The confirm counts only an IKE SA the
+our CA (GB-309 for an id with nothing to retire, or a rotation not confirmed
+or with an unreadable record; a re-run with the same id confirms it). The
+confirm is recorded only once the SA from before the re-authentication is gone,
+and a roll-back removes the record. The confirm counts only an IKE SA the
 re-authentication made, not the old one still up beside it, and the role now
 sets `make_before_break = yes` in its charon drop-in on every IPsec peering
 edge, instead of leaving it to the packaged strongSwan's default
