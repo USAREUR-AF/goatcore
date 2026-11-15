@@ -46,7 +46,11 @@ sha() { openssl sha256 -r < "$1" | cut -d' ' -f1; }
 # SA established an hour ago), each ESTABLISHED, with its established age and an
 # INSTALLED CHILD SA, as `swanctl --list-sas` prints them. `--rekey --reauth` makes a
 # new SA with the next id and drops the old one (make-before-break done), unless
-# $T/reauth-stalls exists: then the old SA stays and no new one comes.
+# $T/reauth-stalls exists: then the old SA stays and no new one comes. Each SA shows
+# "rekeying in <s>s": an hour, or, with $T/rekey-soon, one second from the first
+# listing. When that time comes, the next listing shows a scheduled IKE rekey: a new
+# SA id with a fresh established time (and, as in strongSwan, the old authentication).
+# A plain `--rekey` (no --reauth) does the same at once and restarts the timer.
 mkdir -p "$T/bin"
 cat > "$T/bin/swanctl" <<'SH'
 #!/bin/sh
@@ -54,20 +58,29 @@ T=@T@
 echo "$*" >> "$T/swanctl.log"
 now=$(date +%s)
 [ -e "$T/sas" ] || echo "1 $((now - 3600))" > "$T/sas"
+newsa() { # a new IKE SA in place of the old ones, its rekey an hour away
+  n=$(($(cut -d' ' -f1 "$T/sas" | sort -n | tail -1) + 1))
+  echo "$n $now" > "$T/sas"; echo $((now + 3600)) > "$T/rekey-at"
+}
 case "$1" in
   --list-sas)
     [ -e "$T/sa-up" ] || exit 0
+    if [ ! -e "$T/rekey-at" ]; then
+      if [ -e "$T/rekey-soon" ]; then echo $((now + 1)) > "$T/rekey-at"; else echo $((now + 3600)) > "$T/rekey-at"; fi
+    fi
+    [ "$now" -ge "$(cat "$T/rekey-at")" ] && newsa
+    at=$(cat "$T/rekey-at")
     while read -r id ep; do
-      printf 'xab: #%s, ESTABLISHED, IKEv2\n  established %ss ago\n  fabric: #%s, reqid 1, INSTALLED, TUNNEL\n' \
-        "$id" "$((now - ep))" "$id"
+      printf 'xab: #%s, ESTABLISHED, IKEv2\n  established %ss ago, rekeying in %ss\n  fabric: #%s, reqid 1, INSTALLED, TUNNEL\n' \
+        "$id" "$((now - ep))" "$((at - now))" "$id"
     done < "$T/sas"
     exit 0 ;;
   --rekey)
-    case "$*" in *--reauth*) ;; *) exit 0 ;; esac
     [ -e "$T/sa-up" ] || exit 0
-    [ -e "$T/reauth-stalls" ] && exit 0
-    n=$(($(cut -d' ' -f1 "$T/sas" | sort -n | tail -1) + 1))
-    echo "$n $now" > "$T/sas"
+    case "$*" in
+      *--reauth*) [ -e "$T/reauth-stalls" ] && exit 0; newsa ;;
+      *) newsa ;;
+    esac
     exit 0 ;;
   *) exit 0 ;;
 esac
@@ -111,7 +124,7 @@ leaf short ca1 fed.xaa.xab.01 10
 
 S="$T/swanctl"
 fresh() { # a fresh edge: live leaf of ca1, our CA ca1, nothing staged
-  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails"
+  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails" "$T/rekey-at" "$T/rekey-soon"
   mkdir -p "$S/x509" "$S/private" "$S/x509ca"
   cp "$T/pki/live.pem" "$S/x509/xab-cert.pem"; cp "$T/pki/live.key" "$S/private/xab-key.pem"
   chmod 600 "$S/private/xab-key.pem"
@@ -343,6 +356,23 @@ if ! rot -e peering_edge_rotation=r8 && grep -q "GB-302" "$LOG" && live_is live;
   pass "the old SA still up and no new one: the confirm does not pass, GB-302, the old pair back"
 else
   fail "the confirm passed on the SA that was up before the re-authentication"; tail -12 "$LOG"
+fi
+
+# A scheduled IKE rekey makes a new SA id, but keeps the old authentication. One due
+# within the confirm window is done first, before the ids are noted, so it cannot pass
+# the confirm on the old leaf.
+fresh; stage good; touch "$T/sa-up" "$T/reauth-stalls" "$T/rekey-soon"
+if ! rot -e peering_edge_rotation=r11 && grep -q "GB-302" "$LOG" && live_is live; then
+  pass "a rekey due in the confirm window, the reauth stalled: no pass on the rekeyed SA, GB-302"
+else
+  fail "a scheduled rekey in the confirm window passed the confirm on the old leaf"; tail -12 "$LOG"
+fi
+fresh; stage good; touch "$T/sa-up" "$T/rekey-soon"
+if rot -e peering_edge_rotation=r12 && live_is good \
+   && awk '/^--rekey --ike xab$/ { p = NR } /--reauth/ && !r { r = NR } END { exit (p && r && p < r) ? 0 : 1 }' "$T/swanctl.log"; then
+  pass "a rekey due in the confirm window is done first (a plain --rekey before the --reauth)"
+else
+  fail "no rekey before the re-authentication"; tail -12 "$LOG"; cat "$T/swanctl.log" 2>/dev/null || true
 fi
 
 # Retire: the SA must be established after the rotation set the old pair aside.
