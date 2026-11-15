@@ -715,14 +715,16 @@ fn not_run(repo: &Path, site: &str) -> Vec<Check> {
             continue;
         };
         let field = |k: &str| g.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        // What closes it: its gate rows, or the decision it waits on
+        // (endstate.py, `gap_closes`).
+        let closes = if field("row").is_empty() { field("decision") } else { format!("gate row {}", field("row")) };
         rows.push(row(
             "not-run",
             not_run_line(
                 name,
                 &format!(
-                    "declared, not yet built at this site: {} (gate row {})",
+                    "declared, not yet built at this site: {} ({closes})",
                     field("why"),
-                    field("row")
                 ),
             ),
         ));
@@ -1145,6 +1147,24 @@ mod tests {
         assert_eq!(rows[1].name, "not-run");
         assert_eq!(rows[1].detail, "not read: ops/goatbuilder/endstate/endstate.py is not in this checkout; this list of what the site does not run yet is left out");
         assert!(rows.iter().all(|r| r.ok), "a missing list is a stated line, not a refusal");
+    }
+
+    /// A gap names what closes it: its gate rows, or, when no gate row does,
+    /// the decision it waits on (a site's own SPIRE server: ADR 1164).
+    #[test]
+    fn a_gap_names_its_gate_row_or_the_decision_it_waits_on() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path().join("ops/goatbuilder/endstate");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("endstate.py"), "import json\nprint(json.dumps({'services': {'portal': {'present': True, 'gap': {'row': 'I1, I4', 'why': 'w1'}}, 'spire': {'present': True, 'gap': {'row': '', 'why': 'w2', 'decision': 'ADR 1164'}}}}))\n").unwrap();
+        let rows: Vec<String> = not_run(t.path(), "zagros-b").into_iter().filter(|r| r.name == "not-run").map(|r| r.detail).collect();
+        assert_eq!(
+            rows,
+            vec![
+                "portal \u{2014} declared, not yet built at this site: w1 (gate row I1, I4)".to_string(),
+                "spire \u{2014} declared, not yet built at this site: w2 (ADR 1164)".to_string(),
+            ]
+        );
     }
 
     /// The scripts and plays a planned command runs: every `*.yml`, `*.py` and
