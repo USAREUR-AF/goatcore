@@ -28,7 +28,12 @@ came, with no code. Each now carries one: a file that cannot be read or written
 GB-254 (it names the file), a value that cannot be written as JSON or YAML
 GB-322, a program that could not be started GB-320, fleet-pins.yaml that is not
 YAML GB-326, a mock fixture's pins GB-024, and the end-state grader's output
-GB-066. One that carries GB-322, GB-320 or GB-066 exits 1, where it exited 2 (on
+GB-066. By file, under `crates/goatbuilder/src/`: converger.rs 10,
+doctor.rs 2, endstate.rs 1, fastlane.rs 1, federate/backout.rs 3,
+federate/handoff.rs 3, federate/measure.rs 1, federate/peering_files.rs 3,
+federate/plan.rs 1, federate/rotation.rs 3, federate/state.rs 1,
+federate/status.rs 2, inspect.rs 8, pins.rs 2, promote.rs 2, push.rs 1,
+release.rs 5, runs.rs 3, standup.rs 10, survey.rs 2, tutor.rs 13, verbs.rs 7. One that carries GB-322, GB-320 or GB-066 exits 1, where it exited 2 (on
 the federation verbs, an internal error already exited 1); the others still
 exit 2.
 
