@@ -564,6 +564,14 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(8, "A", "[internet] mesh-enroll the hosts (a single-use key each, the declared enrolment URL)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", sh_quote(&mesh_ips))));
         ev.push(p(8, "T", "[internet] record the mesh IPs (group_vars, mesh inventory, cert manifest) and re-mint the router cert".into(), format!("python3 '{r}/ops/scripts/standup-mesh-record.py' {site} --ips {}", sh_quote(&mesh_ips))));
     }
+    // A joiner turns signal federation on here, after its Spock wiring (phase 6)
+    // and its mesh enrolment (phase 8), with join-node phase 13's own rows
+    // (signal-federation-pair.md): the gate first, the delivery proof last.
+    if s.joiner {
+        let gv = repo.join("ops/ansible/group_vars").join(g).join("vars.yml");
+        let (rows, _) = crate::joinnode::signal_federation_rows(repo, r, &gv, site, jfs, pre, inv);
+        ev.extend(rows.into_iter().map(|(kind, label, cmd)| p(9, kind, label, cmd)));
+    }
     ev.push(p(9, "A", "zenoh router".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={g}")));
     ev.push(p(9, "A", "SPIRE server on the founder (workload identity)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} spire-deploy.yml -e target={g} -l 'mgmt-{site}-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
     if s.obs {
@@ -2113,6 +2121,39 @@ mod tests {
         std::fs::write(t.join("ops/ansible/zagros-bootstrap.yml"), "---\n").unwrap();
         assert_eq!(bootstrap_play(&t, "zagros"), "zagros-bootstrap.yml");
         let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// A joiner's standup turns signal federation on as join-node phase 13
+    /// does (signal-federation-pair.md): the same rows, built by the same
+    /// function, in phase 9 before the data router, with the gate first and
+    /// the delivery proof last. A founder runs none. A joiner that declares
+    /// it off gets the gate and a SKIP line, and no transport step.
+    #[test]
+    fn a_joiners_standup_turns_signal_federation_on_before_its_router() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let s = test_site(true);
+        let j = phase_lines(&s, &o);
+        let fed: Vec<&(u32, String, String)> = j.iter().filter(|l| l.1.starts_with("[signal federation]")).collect();
+        let gv = repo_root().join("ops/ansible/group_vars/zagros_hosts/vars.yml");
+        let (want, on) = crate::joinnode::signal_federation_rows(&repo_root(), "/r", &gv, "zagros", "alpha", "PRE", "INV");
+        assert!(on);
+        assert_eq!(fed.iter().map(|l| (l.1.clone(), l.2.clone())).collect::<Vec<_>>(), want.iter().map(|(_, l, c)| (l.clone(), c.clone())).collect::<Vec<_>>(), "the rows are join-node's, unchanged");
+        assert!(fed.iter().all(|l| l.0 == 9), "{fed:?}");
+        assert!(fed[0].2.contains("signal-federation-check.py' zagros --peer alpha --resolve --require-env"), "{}", fed[0].2);
+        assert!(fed.last().unwrap().2.contains("signal-federation-verify.yml -e federation_site=zagros -e federation_peer_site=alpha"), "{}", fed.last().unwrap().2);
+        let at = |needle: &str| j.iter().position(|l| l.2.contains(needle)).unwrap();
+        assert!(at("signal-federation-verify.yml") < at("zenoh-deploy.yml"), "before the data router");
+        assert!(at("spock-mesh-wire.yml --limit zagros_hosts") < at("signal-federation-check.py"), "after the joiner's second Spock wiring");
+        // A founder runs no federation step of a joiner's.
+        assert!(!phase_lines(&test_site(false), &o).iter().any(|l| l.2.contains("signal-federation")));
+        // Declared off: the gate, then a SKIP line, and nothing converges.
+        let tree = tempfile::tempdir().unwrap();
+        let gvd = tree.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvd).unwrap();
+        std::fs::write(gvd.join("vars.yml"), "goatnet_founder: false\njoin_founder_site: alpha\nsignal_federation_absent_reason: one node holds every peer\n").unwrap();
+        let off: Vec<(u32, &'static str, String)> = plan(tree.path(), &s, &o, "RESUME").into_iter().filter_map(|e| match e { Event::Phase(p) if p.label.starts_with("[signal federation]") => Some((p.n, p.kind, p.cmd)), _ => None }).collect();
+        assert_eq!(off.iter().map(|l| l.1).collect::<Vec<_>>(), vec!["GATE", "SKIP"], "{off:?}");
+        assert!(!off.iter().any(|l| l.2.contains("signal-federation-transport.yml")));
     }
 
     /// goatcore deploys no Forgejo: an obs host on a goatnet that declares no

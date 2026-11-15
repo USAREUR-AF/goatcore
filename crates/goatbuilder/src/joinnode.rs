@@ -225,16 +225,26 @@ pub(crate) fn leaves(repo: &Path, site: &str) -> Result<Leaves> {
 /// Returns whether the federation steps run, and with them the joiner's
 /// front door (traefik-acme.yml); false when the site declares it off.
 fn signal_federation(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, founder: &str, pre: &str, inv: &str) -> bool {
-    let r = repo.display().to_string();
+    let (rows, on) = signal_federation_rows(repo, &repo.display().to_string(), gv, site, founder, pre, inv);
+    ev.extend(rows.into_iter().map(|(kind, label, cmd)| Phase { n: 13, kind, label, cmd, writes: Vec::new() }));
+    on
+}
+
+/// The signal-federation rows themselves, as (kind, label, command), for
+/// whichever verb runs them: join-node's phase 13 and a joiner's standup
+/// (phase 9). `repo` is where plays and group_vars are read; `r` is the
+/// checkout path the commands carry. Returns whether the federation steps run.
+pub(crate) fn signal_federation_rows(repo: &Path, r: &str, gv: &Path, site: &str, founder: &str, pre: &str, inv: &str) -> (Vec<(&'static str, String, String)>, bool) {
+    let mut ev: Vec<(&'static str, String, String)> = Vec::new();
     let site_group = format!("{}_hosts", site.replace('-', "_"));
     let founder_group = format!("{}_hosts", founder.replace('-', "_"));
-    let p = |kind: &'static str, label: String, cmd: String| Phase { n: 13, kind, label, cmd, writes: Vec::new() };
+    let p = |kind: &'static str, label: String, cmd: String| (kind, label, cmd);
     // The founder site is read from vars.yml: one shell word wherever it is used.
     let w = |v: String| sh_word(&v);
     ev.push(p("GATE", format!("[signal federation] the repo declares it on both sides: {site_group} and {founder_group} crossed and complete, {founder}'s relay inventory pins each federation hostname to its own node, the names resolve to the relays, the shared token is in the environment"), format!("python3 '{r}/ops/scripts/signal-federation-check.py' {site} --peer {} --resolve --require-env", w(founder.to_string()))));
     if !gv_first(gv, "signal_federation_absent_reason").is_empty() {
         ev.push(p("SKIP", format!("[signal federation] declared off at {site} (signal_federation_absent_reason in group_vars/{site_group}); the gate above proved no side expects it: {founder} is off too, or federates with another site"), format!("echo '>> signal federation: declared off for {site} (signal_federation_absent_reason); nothing to converge'")));
-        return false;
+        return (ev, false);
     }
     let rathole = crate::standup::site_play(repo, founder, "rathole-client.yml");
     let relay_inv = w(format!("inventory/hosts-{founder}.ini"));
@@ -247,7 +257,7 @@ fn signal_federation(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, fo
     ev.push(p("A", format!("[signal federation] the joiner's tunnel to every {founder} relay ({rathole}, service rathole_client_service_name)"), format!("cd '{r}/ops/ansible' && {need_relay_inv} && {pre} -i {relay_inv} {inv} {rathole} -e rathole_client_target={site_group}")));
     ev.push(p("A", format!("[signal federation] {founder}'s relays: the {site} backend and its federation-hostname pin, re-rendered and post-checked (relay-ingress-add-site.yml)"), format!("cd '{r}/ops/ansible' && {need_relay_inv} && {pre} -i {relay_inv} -i {} {inv} relay-ingress-add-site.yml -e target=goat_relay_hosts -e {} -e join_site={site}", w(format!("inventory/{founder}-goat-relay-alias.ini")), w(format!("founder_site={founder}")))));
     ev.push(p("GATE", "[signal federation] proven from both nodes: transport up both ways, an offer forwarded and delivered".to_string(), format!("cd '{r}/ops/ansible' && {pre} {inv} signal-federation-verify.yml -e federation_site={site} -e {}", w(format!("federation_peer_site={founder}")))));
-    true
+    (ev, true)
 }
 
 /// The mesh DNS zone file a site serves: the `ops/dns/<dir>/mesh-hosts` whose
