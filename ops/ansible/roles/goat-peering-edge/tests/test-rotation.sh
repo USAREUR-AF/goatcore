@@ -51,6 +51,10 @@ sha() { openssl sha256 -r < "$1" | cut -d' ' -f1; }
 # listing. When that time comes, the next listing shows a scheduled IKE rekey: a new
 # SA id with a fresh established time (and, as in strongSwan, the old authentication).
 # A plain `--rekey` (no --reauth) does the same at once and restarts the timer.
+# $T/partner-rekey-on holds N: the Nth listing shows a rekey the partner started (a
+# new SA id, old authentication) while our own "rekeying in" stays an hour away. A
+# completed rekey or re-authentication of ours resets the partner's timer too, so it
+# cancels a partner rekey still pending.
 mkdir -p "$T/bin"
 cat > "$T/bin/swanctl" <<'SH'
 #!/bin/sh
@@ -65,6 +69,15 @@ newsa() { # a new IKE SA in place of the old ones, its rekey an hour away
 case "$1" in
   --list-sas)
     [ -e "$T/sa-up" ] || exit 0
+    if [ -e "$T/partner-rekey-on" ]; then
+      c=$(($(cat "$T/listings" 2>/dev/null || echo 0) + 1)); echo "$c" > "$T/listings"
+      if [ "$c" -ge "$(cat "$T/partner-rekey-on")" ]; then
+        rm -f "$T/partner-rekey-on"
+        n=$(($(cut -d' ' -f1 "$T/sas" | sort -n | tail -1) + 1))
+        r=$(cat "$T/rekey-at" 2>/dev/null || echo $((now + 3600)))
+        echo "$n $now" > "$T/sas"; echo "$r" > "$T/rekey-at"
+      fi
+    fi
     if [ ! -e "$T/rekey-at" ]; then
       if [ -e "$T/rekey-soon" ]; then echo $((now + 1)) > "$T/rekey-at"; else echo $((now + 3600)) > "$T/rekey-at"; fi
     fi
@@ -78,8 +91,8 @@ case "$1" in
   --rekey)
     [ -e "$T/sa-up" ] || exit 0
     case "$*" in
-      *--reauth*) [ -e "$T/reauth-stalls" ] && exit 0; newsa ;;
-      *) newsa ;;
+      *--reauth*) [ -e "$T/reauth-stalls" ] && exit 0; rm -f "$T/partner-rekey-on"; newsa ;;
+      *) rm -f "$T/partner-rekey-on"; newsa ;;
     esac
     exit 0 ;;
   *) exit 0 ;;
@@ -124,7 +137,7 @@ leaf short ca1 fed.xaa.xab.01 10
 
 S="$T/swanctl"
 fresh() { # a fresh edge: live leaf of ca1, our CA ca1, nothing staged
-  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails" "$T/rekey-at" "$T/rekey-soon"
+  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails" "$T/rekey-at" "$T/rekey-soon" "$T/partner-rekey-on" "$T/listings"
   mkdir -p "$S/x509" "$S/private" "$S/x509ca"
   cp "$T/pki/live.pem" "$S/x509/xab-cert.pem"; cp "$T/pki/live.key" "$S/private/xab-key.pem"
   chmod 600 "$S/private/xab-key.pem"
@@ -373,6 +386,25 @@ if rot -e peering_edge_rotation=r12 && live_is good \
   pass "a rekey due in the confirm window is done first (a plain --rekey before the --reauth)"
 else
   fail "no rekey before the re-authentication"; tail -12 "$LOG"; cat "$T/swanctl.log" 2>/dev/null || true
+fi
+
+# A rekey the partner starts follows its own timer, so our "rekeying in" does not
+# warn of it: the rotation always rekeys first, which resets both sides' timers.
+fresh; stage good; touch "$T/sa-up" "$T/reauth-stalls"; echo 3 > "$T/partner-rekey-on"
+if ! rot -e peering_edge_rotation=r13 && grep -q "GB-302" "$LOG" && live_is live; then
+  pass "a rekey the partner starts in the confirm window, the reauth stalled: no pass, GB-302"
+else
+  fail "a partner-started rekey in the confirm window passed the confirm on the old leaf"; tail -12 "$LOG"
+fi
+
+# The IKE SA's rekey interval must leave room for the confirm: checked before anything moves.
+fresh; stage good; touch "$T/sa-up"
+before=$(snap)
+if ! rot -e peering_edge_rotation=r14 -e peering_edge_ike_rekey_time=30s -e peering_edge_ike_rand_time=10s \
+   && grep -q "peering_edge_ike_rekey_time" "$LOG" && [ "$(snap)" = "$before" ]; then
+  pass "rekey_time minus rand_time shorter than the confirm window and margin: refused, nothing moved"
+else
+  fail "a rekey interval with no room for the confirm was not refused before anything moved"; tail -12 "$LOG"
 fi
 
 # Retire: the SA must be established after the rotation set the old pair aside.
