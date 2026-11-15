@@ -1,0 +1,9 @@
+# The six verbs' site flags given to `federate plan` are refused with their code (C5).
+bin.name = "goatbuilder"
+args = ["federate", "plan", "hello-ally", "--context-dir", "/nonexistent"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: --context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to goatbuilder federate plan
+  (GB-238 — goatbuilder explain GB-238)
+"""

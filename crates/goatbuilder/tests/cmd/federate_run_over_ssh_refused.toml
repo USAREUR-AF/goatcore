@@ -1,0 +1,9 @@
+# `init`'s --over-ssh given to a peering run is refused with its code (C5).
+bin.name = "goatbuilder"
+args = ["federate", "hello-ally", "--over-ssh", "192.0.2.10"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: --over-ssh and its host flags apply to `goatbuilder federate init`; a peering run measures phase 3 over SSH with FED_MEASURE=ssh (for init, put the flags after the word init)
+  (GB-336 — goatbuilder explain GB-336)
+"""

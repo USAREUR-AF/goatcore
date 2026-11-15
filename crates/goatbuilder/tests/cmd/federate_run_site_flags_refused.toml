@@ -1,0 +1,9 @@
+# The six verbs' site flags given to a peering run are refused with their code (C5).
+bin.name = "goatbuilder"
+args = ["federate", "hello-ally", "--context-dir", "/nonexistent"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: --context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run
+  (GB-238 — goatbuilder explain GB-238)
+"""

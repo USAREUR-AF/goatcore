@@ -1,0 +1,9 @@
+# `init`'s --over-ssh given to `federate plan` is refused with its code (C5).
+bin.name = "goatbuilder"
+args = ["federate", "plan", "hello-ally", "--over-ssh", "192.0.2.10"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: --over-ssh and its host flags apply to `goatbuilder federate init`, not to goatbuilder federate plan
+  (GB-336 — goatbuilder explain GB-336)
+"""
