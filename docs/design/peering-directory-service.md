@@ -223,9 +223,16 @@ and a value that is none of `1`, `true`, `yes`, `0`, `false`, `no` or empty is r
 
 Decision: ADR 1225 §6, "Directory: several peerings per party" (`docs/adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md`).
 
-Status: WIP — gate: two peerings of one party exchanged through one directory on the test
-environment, each counterparty composing the package meant for it, and both agreements' digests
-matching on both sides.
+Status: measured in the federation test environment by `back-out-one-peering`
+(`ops/federation-e2e/units/backout-one.sh`), runs `8c6c054c2841-20261115T014642-2624675` and
+`23b8b4bef548-20261115T022840-576158` ([federation-e2e-environment.md](federation-e2e-environment.md),
+"Backing out one of two peerings"). In those runs {A} peers with {B} and with {C} through one
+directory, with goatbuilder's default of one package per counterparty
+(`crates/goatbuilder/tests/federate_per_partner_package.rs`). Each agreement's digest is read
+from the partner's copy and passed to phase 6, which refuses a digest that is not the
+agreement's (`crates/goatbuilder/src/federate/confirm.rs`, `--agreement-digest`). Tested by
+`tests/test_fed_directory.py`
+(`test_a_party_with_two_counterparties_holds_two_packages_and_neither_replaces_the_other`).
 
 A package carries one `transport_offer`: one endpoint, one WireGuard key, one proposed link
 subnet. Each peering has its own interface, port and /31 (the per-peering allocation in

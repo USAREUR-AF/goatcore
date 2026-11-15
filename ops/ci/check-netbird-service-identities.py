@@ -20,8 +20,9 @@ WHAT IT REFUSES
      bootstrap identity;
   2. a registered consumer role that does not exist here or does not include
      ops/ansible/tasks/require-netbird-service-identity.yml for that identity;
-     and an external consumer (a service whose role lives in another
-     repository) that does have a role here, since then step 2 must see it;
+     an external consumer (a service whose role lives in another repository)
+     whose role is present, as in an assembled tree, and lacks that include;
+     and a role listed under both consumers and external_consumers;
   3. an unregistered consumer: a role whose templates render a NetBird token
      variable (a name segment NB or NETBIRD followed by _TOKEN, e.g.
      ENROLL_WATCH_NB_TOKEN, NOVA_NB_API_TOKEN) but that no identity lists;
@@ -31,7 +32,8 @@ WHAT IT REFUSES
 
 Usage:
   ops/ci/check-netbird-service-identities.py [repo-root]
-  ops/ci/check-netbird-service-identities.py --self-test
+  ops/ci/check-netbird-service-identities.py --self-test   (includes the assembled case)
+  ops/ci/check-netbird-service-identities.py --self-test-assembled
 
 Exit: 0 clean · 1 a violation (each listed) · 2 self-test failure
 """
@@ -52,6 +54,17 @@ INCLUDE = "require-netbird-service-identity.yml"
 
 def site_upper(site):
     return site.upper().replace("-", "_")
+
+
+def _missing_includes(rdir, keys, kind):
+    tasks = "\n".join(p.read_text() for p in sorted((rdir / "tasks").rglob("*.yml")))
+    out = []
+    for key in keys:
+        pat = re.compile(re.escape(INCLUDE) + r"[\"']?\s*\n(?:\s+.*\n)*?\s+nsi_identity:\s*" + re.escape(key) + r"\b")
+        if not pat.search(tasks):
+            out.append(f"ops/ansible/roles/{rdir.name}/tasks: {kind} of '{key}' does not include "
+                       f"ops/ansible/tasks/{INCLUDE} with nsi_identity: {key}")
+    return out
 
 
 def check(root):
@@ -88,22 +101,24 @@ def check(root):
             consumer_of.setdefault(role, []).append(key)
         for role in ident.get("external_consumers") or []:
             external_of.setdefault(role, []).append(key)
-            if (roles_dir / role).is_dir():
-                problems.append(f"{reg_path}: external consumer {role} of '{key}' has a role in this repository; "
-                                f"list it under consumers so its require task is checked")
+            if role in (ident.get("consumers") or []):
+                problems.append(f"{reg_path}: role {role} of '{key}' is listed under both consumers and "
+                                f"external_consumers; list it once")
 
-    # 2 — every registered consumer includes the require task for its identity
+    # 2 — every registered consumer includes the require task for its identity. An
+    # external consumer's role lives in another repository; in an assembled tree (an
+    # overlay over this one and that repository) it is present, and is checked the same way.
     for role, keys in sorted(consumer_of.items()):
         rdir = roles_dir / role
         if not rdir.is_dir():
             problems.append(f"{reg_path}: consumer role {role} does not exist")
             continue
-        tasks = "\n".join(p.read_text() for p in sorted((rdir / "tasks").rglob("*.yml")))
-        for key in keys:
-            pat = re.compile(re.escape(INCLUDE) + r"[\"']?\s*\n(?:\s+.*\n)*?\s+nsi_identity:\s*" + re.escape(key) + r"\b")
-            if not pat.search(tasks):
-                problems.append(f"ops/ansible/roles/{role}/tasks: consumer of '{key}' does not include "
-                                f"ops/ansible/tasks/{INCLUDE} with nsi_identity: {key}")
+        problems += _missing_includes(rdir, keys, "consumer")
+    for role, keys in sorted(external_of.items()):
+        rdir = roles_dir / role
+        unchecked = [k for k in keys if k not in consumer_of.get(role, [])]
+        if rdir.is_dir() and unchecked:
+            problems += _missing_includes(rdir, unchecked, "external consumer")
 
     # 3 — no unregistered consumer
     for rdir in sorted(p for p in roles_dir.iterdir() if (p / "templates").is_dir()):
@@ -144,6 +159,24 @@ def check(root):
     return problems
 
 
+def _include(key):
+    return (f"- ansible.builtin.include_tasks: \"{{{{ role_path }}}}/../../tasks/{INCLUDE}\"\n"
+            f"  vars:\n    nsi_identity: {key}\n")
+
+
+def _expect(got, want, label):
+    missing = [w for w in want if not any(w in p for p in got)]
+    extra = [p for p in got if not any(w in p for w in want)]
+    if missing or extra:
+        print(f"{label} FAILED")
+        for m in missing:
+            print("  not refused:", m)
+        for e in extra:
+            print("  unexpected:", e)
+        return False
+    return True
+
+
 def self_test():
     real = pathlib.Path(__file__).resolve().parents[2]
     with tempfile.TemporaryDirectory() as d:
@@ -159,15 +192,22 @@ def self_test():
         for key, ident in spec["identities"].items():
             for role in ident["consumers"]:
                 t = roles / role / "tasks/main.yml"
-                t.write_text((t.read_text() if t.exists() else "") +
-                             f"- ansible.builtin.include_tasks: \"{{{{ role_path }}}}/../../tasks/{INCLUDE}\"\n"
-                             f"  vars:\n    nsi_identity: {key}\n")
+                t.write_text((t.read_text() if t.exists() else "") + _include(key))
         # ... except: onboard-runner skips the include (2), an external consumer has a role
-        # here (2), an unregistered role renders a token (3), and zagros_dev_hosts reads
-        # zagros's name (4)
+        # here without the include (2), a second one has a role with it (passes), a role is
+        # listed as both kinds of consumer (1), an unregistered role renders a token (3), and
+        # zagros_dev_hosts reads zagros's name (4)
         (roles / "onboard-runner/tasks/main.yml").write_text("- debug: {msg: no gate}\n")
-        external = next(r for i in spec["identities"].values() for r in i.get("external_consumers") or [])
-        (roles / external / "tasks").mkdir(parents=True)
+        ext = [(r, k) for k, i in spec["identities"].items() for r in i.get("external_consumers") or []]
+        (ungated, ukey), (gated, gkey) = ext[0], ext[1]
+        (roles / ungated / "tasks").mkdir(parents=True)
+        (roles / ungated / "tasks/main.yml").write_text("- debug: {msg: no gate}\n")
+        (roles / gated / "tasks").mkdir(parents=True)
+        (roles / gated / "tasks/main.yml").write_text(_include(gkey))
+        reg = root / "ops/netbird/service-identities.yaml"
+        both_key, both_role = next((k, i["consumers"][0]) for k, i in spec["identities"].items() if i["consumers"])
+        spec["identities"][both_key].setdefault("external_consumers", []).append(both_role)
+        reg.write_text(yaml.safe_dump(spec, sort_keys=False))
         (roles / "rogue/templates").mkdir(parents=True)
         (roles / "rogue/templates/env.j2").write_text("ROGUE_NB_TOKEN={{ x }}\nGITHUB_ONBOARD_TOKEN={{ y }}\n")
         g = root / "ops/ansible/group_vars/zagros_dev_hosts"
@@ -178,29 +218,54 @@ def self_test():
                                     # ends in NB_API_TOKEN) is matched on the longer suffix and passes
                                     + ("warrant_membership_token_env: \"ZAGROS_DEV_WARRANT_NB_API_TOKEN\"\n"
                                        if "warrant-membership" in spec["identities"] else ""))
-        got = check(root)
         want = ["roles/onboard-runner/tasks: consumer of 'netbird-infra'", "roles/rogue: renders ROGUE_NB_TOKEN",
                 "ZAGROS_NB_API_TOKEN on site_id zagros-dev",
-                f"external consumer {external} of 'netbird-infra' has a role in this repository"]
-        missing = [w for w in want if not any(w in p for p in got)]
-        extra = [p for p in got if not any(w in p for w in want)]
-        if missing or extra:
-            print("self-test FAILED")
-            for m in missing:
-                print("  not refused:", m)
-            for e in extra:
-                print("  unexpected:", e)
+                f"roles/{ungated}/tasks: external consumer of '{ukey}' does not include",
+                f"role {both_role} of '{both_key}' is listed under both consumers and external_consumers"]
+        if not _expect(check(root), want, "self-test"):
             return 2
-    print("self-test ok: refused the ungated consumer, the external consumer with a role here, the "
-          "unregistered role and the cross-goatnet name; "
-          "passed GITHUB_ONBOARD_TOKEN, the correctly named portal variable and the "
-          "longer-suffix warrant variable")
+    if self_test_assembled() != 0:
+        return 2
+    print("self-test ok: refused the ungated consumer, the external consumer whose role is here without "
+          "the include, the role listed as both kinds of consumer, the unregistered role and the "
+          "cross-goatnet name; passed the external consumer whose role is here with the include, "
+          "GITHUB_ONBOARD_TOKEN, the correctly named portal variable and the longer-suffix warrant variable")
+    return 0
+
+
+def self_test_assembled():
+    """An assembled tree: goatcore as it is, with another repository's roles for two
+    external consumers laid over it, one including the require task and one not.
+    Exactly the one without it is refused."""
+    real = pathlib.Path(__file__).resolve().parents[2]
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / "ops/netbird").mkdir(parents=True)
+        shutil.copy(real / "ops/netbird/service-identities.yaml", root / "ops/netbird/")
+        shutil.copytree(real / "ops/ansible/roles", root / "ops/ansible/roles", symlinks=True)
+        spec = yaml.safe_load((root / "ops/netbird/service-identities.yaml").read_text())
+        ext = [(r, k) for k, i in spec["identities"].items() for r in i.get("external_consumers") or []]
+        roles = root / "ops/ansible/roles"
+        if any((roles / r).exists() for r, _ in ext):
+            print("self-test-assembled FAILED: this tree already has a role for an external consumer")
+            return 2
+        (gated, gkey), (ungated, ukey) = ext[0], ext[1]
+        for role, body in ((gated, _include(gkey)), (ungated, "- debug: {msg: no gate}\n")):
+            (roles / role / "tasks").mkdir(parents=True)
+            (roles / role / "tasks/main.yml").write_text(body)
+        want = [f"roles/{ungated}/tasks: external consumer of '{ukey}' does not include"]
+        if not _expect(check(root), want, "self-test-assembled"):
+            return 2
+    print(f"self-test-assembled ok: in a tree with roles for {gated} and {ungated} laid over this one, "
+          f"refused only {ungated}, which lacks the include")
     return 0
 
 
 def main(argv):
     if argv[1:2] == ["--self-test"]:
         return self_test()
+    if argv[1:2] == ["--self-test-assembled"]:
+        return self_test_assembled()
     problems = check(argv[1] if len(argv) > 1 else ".")
     if problems:
         print("NetBird service identities are out of agreement:")

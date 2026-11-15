@@ -7,7 +7,7 @@
 | Companions | [`peering-forwarder.md`](peering-forwarder.md), [`goatbuilder.md`](goatbuilder.md) §"Founders, joiners, host-site nodes and sovereign peering", `roles/goat-peering-wg`, `roles/goat-peering-edge` |
 | Audience | Operators of a peering, and whoever accredits the edge and core hosts |
 
-Status: WIP — gate: the port-scan scenario (§8) passes with the baseline on, and with one tightening override, from the partner side and the mesh side on two environments, and the three-party case still passes with it on.
+Not measured: the port-scan scenario (§8) with the baseline on, and with one tightening override, from the partner side and the mesh side on two environments, and the three-party case with it on. The federation test environment's scenarios `node-firewall-profile` and `node-firewall-three-party` (unit `ops/federation-e2e/units/nodesec.sh`) are built, and no run of them is recorded.
 
 ## 1. What it is
 
@@ -111,8 +111,12 @@ reload or the unload fails, the entry is put back as it was, so the stored entri
 ruleset the host carries and the back-out can run again. A pending rollback of an earlier run
 refuses (GB-214) before anything changes. A survey (`--dry-run`) only reports the rows. Built,
 unit-tested by running the play with stand-in tools and a temporary directory
-(`ops/ansible/tests/peering-backout/test_peering_backout.py`, `EdgeFirewallEntry`); the reload
-and the unload are not yet measured in the federation test environment.
+(`ops/ansible/tests/peering-backout/test_peering_backout.py`, `EdgeFirewallEntry`). Measured
+for the last peering on an edge (the unload) in the federation test environment: scenario
+`back-out-to-before`, run `12c522afbd8c-20261115T074028-2401953` on main 12c522af, passed 58 of 58
+checks, its edge check `edge-as-before` included: after the back-out the edge host equals its
+snapshot from before the first phase, which the baseline's table and unit were not part of. The
+reload, with another peering left on the edge, is not yet measured.
 
 **Services sharing the host.** A core router host often runs more (a management server, a
 portal). Before loading, the role reads the host's listening sockets (`ss -Hlntup`) and refuses
@@ -236,4 +240,4 @@ records it as its plan stage 6.4, and that call is not built in this branch.
 | `roles/goat-host-firewall/tests/test_play_vars.py` | the core play puts `spire-bundle` only on the SPIRE server host and never sources it from the edge's inventory address | measured |
 | `roles/goat-host-firewall/tests/netns-behavior.sh` | the rendered rulesets loaded into throwaway network namespaces and scanned from the management source, an outsider, the partner endpoint, the tunnel and the mesh; a tightening override; a loosening through a published (DNAT) port | measured |
 | `ops/ci/test-host-firewall-role.sh` | the role over SSH into a systemd container: converge, second run changes nothing, check mode loads nothing, scans, each refusal (GB-210..215) leaves the loaded table unchanged, tightening and loosening, the boot unit running the host's own `nft`, a non-bridge link named `br-*` refused, a confirm timeout that does not fit twice before the rollback refused, a password-managed host loading and confirming with multiplexing off; from a host with no `/etc/goat-host-firewall`, a peering the host carries without an entry refused while the refused run stores its own (even with an override naming the other peering), the other peering's run then loading both; the rollback timer restoring SSH after a cutting ruleset armed by the same commands the role runs; the switch turned off refused while the baseline is loaded. The role's own failed-confirm path is not exercised | measured |
-| port-scan scenario in the federation test environment | from the partner side and the mesh side, the edge and core answer on exactly the declared ports; baseline and one tightening override; the three-party case with the baseline on | requested, not run |
+| port-scan scenario in the federation test environment | from the partner side and the mesh side, the edge and core answer on exactly the declared ports; baseline and one tightening override; the three-party case with the baseline on | built (scenarios `node-firewall-profile` and `node-firewall-three-party`, unit `ops/federation-e2e/units/nodesec.sh`), not run |

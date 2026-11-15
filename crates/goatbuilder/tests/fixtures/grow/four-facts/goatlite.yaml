@@ -1,0 +1,8 @@
+# The four facts of docs/tutorials/00-goatlite.md, and nothing else: no repo or components.
+schema: goatbuilder/v1
+preset: lite
+lite:
+  name: pasture
+  host: 192.0.2.50
+  ssh_user: ubuntu
+  admin: admin@example.org
