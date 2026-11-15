@@ -271,9 +271,10 @@ def period_problems(base: dict, new: dict, deps: list, base_release: str, versio
             continue
         what = " ".join(str(x) for x in (d.get("command"), d.get("flag"), d.get("value")) if x)
         since = str(d.get("deprecated_in", ""))
-        build_major = int(version.split(".")[0]) if version.split(".")[0].isdigit() else 0
-        if build_major <= base_major:
-            out.append(f"{what}: removed in {version}, but a deprecated item is removed only in a major release; "
+        build_major = _major(version)  # one reading with the A4 exit rule: not <x.y.z> is the same major
+        if build_major is None or build_major <= base_major:
+            built = version or "a build of an unreadable version"
+            out.append(f"{what}: removed in {built}, but a deprecated item is removed only in a major release; "
                        f"keep it, with its warning, until goatbuilder {base_major + 1}.0.0")
             continue
         dm = _RELEASE.match(since)
@@ -299,12 +300,6 @@ def period_problems(base: dict, new: dict, deps: list, base_release: str, versio
     return out
 
 
-def _build_version(repo: str) -> str:
-    with open(os.path.join(repo, "crates", "goatbuilder", "Cargo.toml")) as f:
-        m = re.search(r'^version\s*=\s*"([^"]+)"', f.read(), re.M)
-    return m.group(1) if m else "0.0.0"
-
-
 def period_rows(repo: str, b, new: dict, deps: list, today=None) -> list:
     """The A1 problems of this build: its version from crates/goatbuilder/Cargo.toml,
     the release tags' dates from git, today's date in UTC. The tags are read from
@@ -314,7 +309,7 @@ def period_rows(repo: str, b, new: dict, deps: list, today=None) -> list:
     if not any(_removed(base, new, d) for d in deps):
         return []
     tags = release_tag_dates(repo)
-    return period_problems(base, new, deps, b.release, _build_version(repo), tags, today)
+    return period_problems(base, new, deps, b.release, goatbuilder_version(repo), tags, today)
 
 
 # ---------------------------------------------------------------- A4: the documents
