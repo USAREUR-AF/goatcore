@@ -12,6 +12,26 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// The code a real-host verb and `doctor` refuse `converger: pull-agent` with:
+/// the pull converger is not built, and the push converger must not stand in
+/// for it (docs/design/goatbuilder-pull-converger-options.md).
+pub const PULL_NOT_BUILT: &str = "GB-307";
+
+/// Where an environment declares `converger: pull-agent`, as each converger
+/// resolves (a class's value, else its site's, else the environment's): the
+/// environment itself, `site <s>`, or `site <s> class <c>`. Empty when every
+/// machine of the environment resolves to the push converger.
+pub fn pull_agent_places(_env: &crate::config::Environment) -> Vec<String> {
+    Vec::new()
+}
+
+/// Refuses (PULL_NOT_BUILT) when the repository's `goatbuilder.yaml` declares
+/// `converger: pull-agent` anywhere in the environment `env`. A checkout with no
+/// readable config, or no such environment, is not refused here.
+pub fn refuse_pull_agent(_repo: &Path, _env: &str) -> Result<()> {
+    Ok(())
+}
+
 /// What one observation of one machine says (C7): done only when its record
 /// names the declared ref; pending and unknown are never reported as done.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -364,6 +384,56 @@ impl Converger for Scripted {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn env_of(v: serde_json::Value) -> crate::config::Environment {
+        serde_json::from_value(v).unwrap()
+    }
+
+    /// Every place an environment can declare the pull converger is named, as
+    /// each machine's converger resolves (class, else site, else environment).
+    #[test]
+    fn pull_agent_places_names_the_environment_a_site_and_a_class() {
+        use serde_json::json;
+        let push = env_of(json!({"name": "dev", "converger": "push-ansible", "sites": [{"name": "alpha", "classes": {"core": {}}}]}));
+        assert!(pull_agent_places(&push).is_empty());
+        let whole = env_of(json!({"name": "dev", "converger": "pull-agent"}));
+        assert_eq!(pull_agent_places(&whole), vec!["environment dev".to_string()]);
+        let site = env_of(json!({"name": "dev", "converger": "push-ansible", "sites": [{"name": "alpha", "converger": "pull-agent"}, {"name": "beta"}]}));
+        assert_eq!(pull_agent_places(&site), vec!["site alpha".to_string()]);
+        let class = env_of(json!({"name": "dev", "converger": "push-ansible", "sites": [{"name": "bravo", "classes": {"core": {}, "pod": {"converger": "pull-agent"}}}]}));
+        assert_eq!(pull_agent_places(&class), vec!["site bravo class pod".to_string()]);
+        // A site or class that overrides a pull-agent environment back to push
+        // is not named; the rest of the environment still is.
+        let back = env_of(json!({"name": "dev", "converger": "pull-agent", "sites": [{"name": "alpha", "converger": "push-ansible"}, {"name": "beta"}]}));
+        assert_eq!(pull_agent_places(&back), vec!["site beta".to_string()]);
+    }
+
+    fn repo_with(converger: &str) -> tempfile::TempDir {
+        let t = tempfile::tempdir().unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/fixtures/standup/goatbuilder.yaml");
+        let text = std::fs::read_to_string(fixture).unwrap();
+        let text = text.replacen("- name: dev\n    converger: push-ansible", &format!("- name: dev\n    converger: {converger}"), 1);
+        std::fs::create_dir_all(t.path().join("ops/goatbuilder")).unwrap();
+        std::fs::write(t.path().join("ops/goatbuilder/goatbuilder.yaml"), text).unwrap();
+        t
+    }
+
+    /// A pull-agent environment is refused with the code, naming that pull is
+    /// not built; a push environment, an unknown one and a checkout with no
+    /// config are not refused here.
+    #[test]
+    fn refuse_pull_agent_refuses_only_a_pull_agent_environment() {
+        let pull = repo_with("pull-agent");
+        let e = refuse_pull_agent(pull.path(), "dev").unwrap_err();
+        let shown = format!("{e:#}");
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some(PULL_NOT_BUILT), "{shown}");
+        assert!(shown.contains("not built") && shown.contains("environment dev"), "{shown}");
+        assert!(refuse_pull_agent(pull.path(), "other").is_ok());
+        let push = repo_with("push-ansible");
+        assert!(refuse_pull_agent(push.path(), "dev").is_ok());
+        let none = tempfile::tempdir().unwrap();
+        assert!(refuse_pull_agent(none.path(), "dev").is_ok());
+    }
 
     /// Mock records carry ISO 8601 UTC like every other record (the walkthrough
     /// saw `epoch+20758d43085s` beside `2026-10-20T10:00:00Z` in `history`).

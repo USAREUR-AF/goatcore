@@ -1127,6 +1127,27 @@ mod tests {
 }
 
 #[cfg(test)]
+mod pull_agent_tests {
+    use super::*;
+
+    /// A real-host deploy to a pull-agent environment is refused before any
+    /// step runs, in a dry run too: its plan would be a push.
+    #[test]
+    fn deploy_refuses_a_pull_agent_environment_before_any_step() {
+        let t = tempfile::tempdir().unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/fixtures/standup/goatbuilder.yaml");
+        let text = std::fs::read_to_string(fixture).unwrap().replacen("- name: dev\n    converger: push-ansible", "- name: dev\n    converger: pull-agent", 1);
+        std::fs::create_dir_all(t.path().join("ops/goatbuilder")).unwrap();
+        std::fs::write(t.path().join("ops/goatbuilder/goatbuilder.yaml"), text).unwrap();
+        for dry_run in [false, true] {
+            let o = Options { component: "portal", goatnet: "dev", only_group: None, dry_run, verify_only: false, ack: "" };
+            let e = deploy(t.path(), &o).unwrap_err();
+            assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some(crate::converger::PULL_NOT_BUILT), "{e:#}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod more_tests {
     use super::*;
 

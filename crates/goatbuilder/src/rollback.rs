@@ -1020,3 +1020,21 @@ mod more_tests {
         assert!(e.contains("no Ansible role"), "{e}");
     }
 }
+
+#[cfg(test)]
+mod pull_agent_tests {
+    use super::*;
+
+    /// A rollback of a goatnet that declares the pull converger is refused
+    /// before any ledger is read, in a dry run too.
+    #[test]
+    fn rollback_refuses_a_pull_agent_goatnet() {
+        let t = tempfile::tempdir().unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/fixtures/standup/goatbuilder.yaml");
+        let text = std::fs::read_to_string(fixture).unwrap().replacen("- name: dev\n    converger: push-ansible", "- name: dev\n    converger: pull-agent", 1);
+        std::fs::create_dir_all(t.path().join("ops/goatbuilder")).unwrap();
+        std::fs::write(t.path().join("ops/goatbuilder/goatbuilder.yaml"), text).unwrap();
+        let e = roll(t.path(), "portal", 1, true, Some("dev")).unwrap_err();
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some(crate::converger::PULL_NOT_BUILT), "{e:#}");
+    }
+}
