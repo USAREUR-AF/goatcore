@@ -8,6 +8,7 @@
 #   env down   [--lab N | --all]                  remove what this environment created, and nothing else
 #   env run    --ref REF [--avenue script|goatbuilder|both] [--scenario ID[,ID]|all]
 #              [--jobs N] [--out DIR] [--name NAME] [--merged NAME@SHA]... [--goat-version ID=VER]...
+#              [--goatbuilder-version VER]
 #              [--directory-ref DREF] [--parties "xae xaf"]
 #                                                 run scenarios; write results.json and a page per avenue
 #   env list                                      the scenarios, where each runs, and its pass condition
@@ -21,6 +22,12 @@
 # REF is any git ref or sha the repository knows (origin/<branch> is tried too). The tree
 # under test is that ref; the harness is the checkout this script is in, copied into the
 # run first so that editing it does not disturb a running matrix.
+#
+# VER (--goatbuilder-version) makes every unit run the published goatbuilder VER, the
+# release asset checked against its .sha256 (lib/gbrelease.sh), instead of the one built from
+# REF. REF must be that release's commit. tools.txt names the release and its sha256, the
+# fingerprint carries it, and the result is filed under <sha12>-goatbuilder-<VER>, so such a
+# row never compares with one on a local build.
 #
 # DREF is a ref of the saltlick repository (FE2E_SALTLICK_REPO, default the saltlick clone
 # beside this goatcore clone; it is fetched from origin first). The peering directory is then
@@ -40,6 +47,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
 FE2E_HOME="${FE2E_HOME:-$HOME/.cache/fe2e}"
 # shellcheck source=lib/srctree.sh
 . "$HERE/lib/srctree.sh"
+# shellcheck source=lib/gbrelease.sh
+. "$HERE/lib/gbrelease.sh"
 # Builds, clones and the linker write temporary files; keep them on FE2E_HOME's disk, not a
 # shared /tmp that other work can fill.
 mkdir -p "$FE2E_HOME/tmp"; export TMPDIR="$FE2E_HOME/tmp"
@@ -137,10 +146,12 @@ rp_id() { # $1 sha: the republisher image's config digest, computed once
 # What a result depends on besides the ref: the catalog, the units, the engine and the
 # verdict, and the scenario subset. Rows compare only when this is equal (lib/matrix.py).
 # With --directory-ref, the directory's ref and commit are part of it too; without, the
-# fingerprint is computed exactly as before that option existed.
+# fingerprint is computed exactly as before that option existed. --goatbuilder-version works
+# the same way.
 fingerprint() { # $1 harness ops/federation-e2e dir, $2 scenario subset
   { cat "$1"/scenarios/*.yaml "$1"/units/*.sh "$1"/lib/engine.sh "$1"/lib/unit.sh "$1"/lib/verdict.py; echo "$2"
-    [ -z "${DIRECTORY_REF:-}" ] || echo "directory=$DIRECTORY_REF@$DIRECTORY_SHA"; } | sha256sum | cut -c1-12
+    [ -z "${DIRECTORY_REF:-}" ] || echo "directory=$DIRECTORY_REF@$DIRECTORY_SHA"
+    [ -z "${GB_VERSION:-}" ] || echo "goatbuilder=release:$GB_VERSION"; } | sha256sum | cut -c1-12
 }
 host_tag() { echo "fe2e-host:$(cd "$HERE/host" && cat Dockerfile daemon.json fed-e2e-keys.service | sha256sum | cut -c1-12)"; }
 
@@ -284,6 +295,8 @@ run_unit() { # $1 unit, $2 avenue, $3 sha, $4 run dir, $5 lab (taken), [$6 keep]
   say "unit $unit, avenue $av, lab $lab, parties $parties"
   local extra=() kv ut
   for kv in $(unit_tools "$unit" "$sha"); do extra+=("$kv"); done
+  local gb="${GB_UNDER_TEST:-$FE2E_HOME/bin/$sha/goatbuilder}"
+  for kv in $(gb_tools "$gb"); do extra+=("$kv"); done
   # A unit that waits on people (solo) declares a longer limit under units: (timeout, s).
   ut="$(catalog_unit_field "$unit" timeout)"
   [ -z "$ut" ] || [ -n "${FE2E_UNIT_TIMEOUT:-}" ] || extra+=("FE2E_UNIT_TIMEOUT=$ut")
@@ -294,7 +307,7 @@ run_unit() { # $1 unit, $2 avenue, $3 sha, $4 run dir, $5 lab (taken), [$6 keep]
   # shellcheck disable=SC2046
   env $(lab_env "$lab") FE2E_PARTIES="$parties" FE2E_HOST_IMAGE="$(host_tag)" \
     FE2E_RP_TAG="fe2e-republisher:${sha:0:12}" RP_IMAGE="$(rp_id "$sha")" \
-    SRC="$FE2E_HOME/src/$sha" GOAT="$FE2E_HOME/bin/$sha/goat" GB="$FE2E_HOME/bin/$sha/goatbuilder" \
+    SRC="$FE2E_HOME/src/$sha" GOAT="$FE2E_HOME/bin/$sha/goat" GB="$gb" \
     AVENUE="$av" WORK="$work" RECORD="$rec" KEEP="$keep" ${extra[@]+"${extra[@]}"} \
     bash "$run/harness/ops/federation-e2e/lib/unit.sh" "$unit" > "$rec/unit.log" 2>&1 || true
   [ "$keep" = 1 ] || lab_clean "$lab"
@@ -327,6 +340,10 @@ cmd_run() {
     cat "$run/build-saltlick.log" >&2
     blocked="the peering directory did not build at saltlick ${DIRECTORY_SHA:0:12} ($DIRECTORY_REF): $(grep -m1 -E '^ERROR|^env:' "$run/build-saltlick.log" | cut -c1-200)"
   fi
+  if [ -z "$blocked" ] && [ -n "$GB_VERSION" ]; then
+    if GB_UNDER_TEST="$(gb_under_test "$sha" 2> "$run/goatbuilder-release.log")"; then export GB_UNDER_TEST
+    else cat "$run/goatbuilder-release.log" >&2; blocked="the released goatbuilder $GB_VERSION is not usable: $(head -1 "$run/goatbuilder-release.log" | cut -c1-200)"; fi
+  fi
   # Units run in parallel, one lab each.
   local pids=() INTERRUPTED=0
   # An interrupted run publishes nothing: its stopped units would read BLOCKED everywhere.
@@ -354,6 +371,7 @@ cmd_run() {
   local rc=0 outd="" short="${sha:0:12}"
   # A row on another directory is filed beside the default row, never over it.
   [ -z "$DIRECTORY_REF" ] || short="$short-saltlick-${DIRECTORY_SHA:0:12}"
+  [ -z "$GB_VERSION" ] || short="$short-goatbuilder-$GB_VERSION"
   if [ -n "$OUT" ]; then outd="$OUT/$NAME"; mkdir -p "$outd"; fi
   local subset=all; [ "$SCENARIOS" = all ] || subset="$(printf '%s' "$SCENARIOS" | sha256sum | cut -c1-8)"
   for av in $avenues; do
@@ -381,6 +399,7 @@ PY
   if [ -n "$outd" ]; then
     { echo "# Federation e2e: $NAME @ $short"; echo; echo "Run $run, harness $hsha, started $started."
       [ -z "$DIRECTORY_REF" ] || echo "Peering directory: saltlick $DIRECTORY_REF @ $DIRECTORY_SHA (image fe2e-saltlick:${DIRECTORY_SHA:0:12})."
+      [ -z "$GB_VERSION" ] || echo "goatbuilder under test: the published release $GB_VERSION, sha256 $(sha256sum "$GB_UNDER_TEST" | cut -d' ' -f1)."
       echo
       for av in $avenues; do cat "$run/results-$av.md"; echo; done; } > "$outd/$short-$subset.md"
     python3 "$HERE/lib/matrix.py" --out "$OUT" >/dev/null || true
@@ -393,6 +412,7 @@ PY
 cmd_up() {
   local sha lab; sha="$(resolve "$REF")"; build "$sha"
   [ -z "$DIRECTORY_REF" ] || directory_build "$DIRECTORY_SHA"
+  if [ -n "$GB_VERSION" ]; then GB_UNDER_TEST="$(gb_under_test "$sha")" || die "the released goatbuilder $GB_VERSION is not usable"; export GB_UNDER_TEST; fi
   local run; run="$FE2E_HOME/runs/up-${sha:0:12}-$(date -u +%Y%m%dT%H%M%S)"; mkdir -p "$run"; snapshot_harness "$run"
   if [ -n "$LAB_N" ]; then lab="$LAB_N"; mkdir -p "$FE2E_HOME/labs/l$lab"; echo "held-by-up" > "$FE2E_HOME/labs/l$lab/pid.up"; else lab="$(lab_take "up")"; fi
   rm -f "$FE2E_HOME/labs/l$lab/pid"; echo "up" > "$FE2E_HOME/labs/l$lab/held"
@@ -428,7 +448,7 @@ PY
 }
 
 REF=""; AVENUE="both"; SCENARIOS="all"; OUT=""; NAME=""; LAB_N=""; ALL=0; MERGED=""; GOAT_VERSIONS=""
-DIRECTORY_REF=""; DIRECTORY_SHA=""
+DIRECTORY_REF=""; DIRECTORY_SHA=""; GB_VERSION=""
 CMD="${1:-}"; [ -n "$CMD" ] || usage 2; shift
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -442,6 +462,7 @@ while [ $# -gt 0 ]; do
     --all) ALL=1; shift ;;
     --merged) MERGED="$MERGED $2"; shift 2 ;;
     --goat-version) GOAT_VERSIONS="$GOAT_VERSIONS $2"; shift 2 ;;
+    --goatbuilder-version) GB_VERSION="$2"; shift 2 ;;
     --parties) export FE2E_UP_PARTIES="$2"; shift 2 ;;
     --directory-ref) DIRECTORY_REF="$2"; shift 2 ;;
     -h|--help) usage 0 ;;
@@ -463,7 +484,7 @@ export GOAT_VERSIONS GOAT_VERSIONS_ASKED
 if [ -n "$DIRECTORY_REF" ]; then
   case "$CMD" in run|up|fingerprint) DIRECTORY_SHA="$(directory_resolve "$DIRECTORY_REF")" ;; *) die "--directory-ref applies to run, up and fingerprint" ;; esac
 fi
-export DIRECTORY_REF DIRECTORY_SHA
+export DIRECTORY_REF DIRECTORY_SHA GB_VERSION
 case "$CMD" in
   build) [ -n "$REF" ] || die "build needs --ref"; cmd_build ;;
   run) [ -n "$REF" ] || die "run needs --ref"; cmd_run ;;
