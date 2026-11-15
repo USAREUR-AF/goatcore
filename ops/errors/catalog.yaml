@@ -3614,7 +3614,7 @@ entries:
       - "or merge what it declares into goatlite.yaml, then grow again"
       - "grow's own file from an earlier run, edited: merge the edits into goatlite.yaml and delete ops/goatbuilder/goatbuilder.yaml, or delete it to grow afresh"
     read: docs/design/goatlite-growth.md
-    exit: 2
+    exit: 1
     matches:
       - "^ops/goatbuilder/goatbuilder.yaml already exists and holds another configuration"
       - "^ops/goatbuilder/goatbuilder.yaml is grow's own file from an earlier run"

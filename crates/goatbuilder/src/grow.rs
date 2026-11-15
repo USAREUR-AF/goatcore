@@ -28,6 +28,8 @@ pub const TARGET: &str = "ops/goatbuilder/goatbuilder.yaml";
 pub const RENDERER: &str = "ops/scripts/goatlite-render.py";
 /// `ops/goatbuilder/goatbuilder.yaml` already exists and holds another configuration.
 pub const EXISTS_CODE: &str = "GB-305";
+/// The renderer, a command grow runs, failed (or could not be started).
+pub const RENDERER_FAILED_CODE: &str = "GB-258";
 
 /// The first line of the written configuration.
 const HEADER: &str = "# written by goatbuilder grow from goatlite.yaml (docs/design/goatlite-growth.md §6).\n# The goatlite is handed over: this file is yours, and `goatbuilder validate` checks it.\n";
@@ -46,10 +48,20 @@ pub fn grow_with(
     ask: Option<&mut dyn crate::federate::prompt::Ask>,
 ) -> Result<Report> {
     let lite_path = repo.join(LITE_FILE);
+    let target = repo.join(TARGET);
+    // A finished hand-over: goatlite.yaml is gone and the config is grow's own.
+    // Nothing is left to do, so it says so (exit 0) instead of failing to read
+    // the lite file.
+    if !lite_path.exists()
+        && std::fs::read_to_string(&target)
+            .map(|t| t.starts_with(HEADER))
+            .unwrap_or(false)
+    {
+        return Ok(handed_over_already(&target));
+    }
     let lite = config::load_value(&lite_path)?;
     let checkout = config::checkout_for(&lite_path);
     let grown = config::grow(&lite, checkout.as_ref())?;
-    let target = repo.join(TARGET);
     // A goatbuilder.yaml that already holds the grown configuration is a run that
     // stopped after writing it; anything else is the learner's, and is never replaced.
     let already = if target.is_file() {
@@ -140,13 +152,13 @@ pub fn grow_with(
             .output()
             .map_err(|e| {
                 goat_errors::coded(
-                    "GB-254",
+                    RENDERER_FAILED_CODE,
                     format!("cannot run python3 {RENDERER} --check: {e}"),
                 )
             })?;
         if !matches!(out.status.code(), Some(0 | 1)) {
             return Err(goat_errors::coded(
-                "GB-254",
+                RENDERER_FAILED_CODE,
                 format!(
                     "{RENDERER} --hand-over --check could not say which files the hand-over takes ({}):\n{}{}",
                     out.status,
@@ -217,10 +229,10 @@ pub fn grow_with(
         .args(&render_args)
         .current_dir(repo)
         .output()
-        .map_err(|e| goat_errors::coded("GB-254", format!("cannot run python3 {RENDERER}: {e}")))?;
+        .map_err(|e| goat_errors::coded(RENDERER_FAILED_CODE, format!("cannot run python3 {RENDERER}: {e}")))?;
     if !out.status.success() {
         return Err(goat_errors::coded(
-            "GB-254",
+            RENDERER_FAILED_CODE,
             format!(
                 "{RENDERER} --hand-over did not take the generated headers off ({}); {LITE_FILE} is kept, so grow can run again:\n{}{}",
                 out.status,
@@ -248,6 +260,33 @@ pub fn grow_with(
     ));
     checks.push(row("next", format!("goatbuilder standup {env} --site {name} --dry-run   (after the hand-over, --site is always given)")));
     Ok(Report::new("grow", checks, EXIT_REFUSED))
+}
+
+/// The report of a grow run after the hand-over finished.
+fn handed_over_already(target: &Path) -> Report {
+    let cfg = config::load_value(target).ok();
+    let env = cfg
+        .as_ref()
+        .and_then(|c| c.pointer("/environments/0/name"))
+        .and_then(Value::as_str)
+        .map(String::from);
+    let site = cfg
+        .as_ref()
+        .and_then(|c| c.pointer("/environments/0/sites/0/name"))
+        .and_then(Value::as_str)
+        .map(String::from);
+    let mut checks = vec![row(
+        "handed over",
+        format!("already handed over: {LITE_FILE} is gone and {TARGET} is grow's own file, so there is nothing to grow. Nothing was changed."),
+    )];
+    checks.push(row(
+        "next",
+        match (env, site) {
+            (Some(env), Some(site)) => format!("goatbuilder validate, then goatbuilder standup {env} --site {site} --dry-run"),
+            _ => "goatbuilder validate".to_string(),
+        },
+    ));
+    Report::new("grow", checks, EXIT_REFUSED)
 }
 
 fn row(name: &str, detail: String) -> Check {
@@ -636,7 +675,13 @@ mod tests {
         let e = grow(&dir, false).unwrap_err();
         assert_eq!(code_of(&e).as_deref(), Some("GB-258"), "{e:#}");
         assert!(format!("{e:#}").contains("goatlite-render: no"), "{e:#}");
-        // The dry run's --check is the same command, and fails the same way.
+        // The dry run's --check is the same command; exit 1 there means "would
+        // change", so a renderer that cannot answer exits otherwise.
+        std::fs::write(
+            dir.join(RENDERER),
+            "import sys\nprint('goatlite-render: no', file=sys.stderr)\nsys.exit(2)\n",
+        )
+        .unwrap();
         let e = grow(&dir, true).unwrap_err();
         assert_eq!(code_of(&e).as_deref(), Some("GB-258"), "{e:#}");
         assert!(
