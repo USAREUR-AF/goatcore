@@ -33,6 +33,9 @@
    arrived late, naming the gap, and fails one with a number lost, naming the gap's length.
    Every check units/rotation.sh marks for a refused key (rot_checks) is a check of the
    key-rotation scenario, so a refusal can never mark a check the catalog does not hold.
+7. The units that stage a probe launcher's folder (units/bilateral.sh, units/onecmd.sh,
+   units/nohand-loop.sh) leave its private keys 0600 and open only its certificates to
+   0644: no unit makes the whole folder world-readable.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -259,6 +262,17 @@ table inet goat_host_firewall {
         check(run("198.51.100.10", "eth0") is None, "fwdeclared: a file without the goat_host_firewall table was read as a rule set")
 
 
+def launcher_key_mode_checks():
+    """A launcher folder's private keys stay 0600; only certificates are opened to 0644."""
+    import re
+    for unit in ("bilateral.sh", "onecmd.sh", "nohand-loop.sh"):
+        text = open(os.path.join(ROOT, "units", unit), encoding="utf-8").read()
+        check(not re.search(r'chmod 0644 "\$pl"/\*(\s|;|$)', text, re.M),
+              f"launcher keys: units/{unit} makes the whole launcher folder 0644, private keys included")
+        check(re.search(r'chmod 0600 "\$pl"/\*-key\.pem', text) is not None,
+              f"launcher keys: units/{unit} does not leave the launcher folder's private keys 0600")
+
+
 def srctree_checks():
     """src_tree: the source tree of the commit under test holds every object of it."""
     with tempfile.TemporaryDirectory() as d:
@@ -462,6 +476,7 @@ srctree_checks()
 srcclone_checks()
 verdict_checks()
 fwdeclared_checks()
+launcher_key_mode_checks()
 handoff_checks()
 samples_checks()
 for f in FAIL:
