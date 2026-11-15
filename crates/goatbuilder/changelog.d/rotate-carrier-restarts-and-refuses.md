@@ -24,7 +24,9 @@ Three fixes to `goatbuilder federate rotate <partner> carrier`:
   regular file owned by root, writable by root alone, and is not a link. Our
   offer in the agreement is read from `<work>/ours.composed.json`, the copy of
   our package that phase 6 now keeps beside the agreement; without it the
-  cross-check is blocked.
+  cross-check is blocked. A peering stood up by an earlier build has no copy:
+  its first phase 3 takes ours.canonical.json when it is no newer than the
+  agreement, and writes the copy from it.
 - The peering and carrier key paths, and the ruleset paths beside them, are
   quoted wherever a shell or systemd's EnvironmentFile reads them, so a path
   with a space, `$` or a backtick is read as written. A path holding a newline

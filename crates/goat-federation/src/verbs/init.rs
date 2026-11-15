@@ -1,5 +1,7 @@
 // init: our half of a federation, read from the running system. Reads
-// local state; writes only the package file it is told to.
+// local state; writes only the package file it is told to, and, once, on the
+// upgrade path from builds before phase 6 kept it, <work>/ours.composed.json
+// (agreed_offer).
 
 use super::{
     emit_json, print_outcomes, sign_with, FedOutcome, Site, Verdict, EXIT_FED_UNDERIVED, EXIT_OK,
@@ -682,10 +684,11 @@ where
 /// where `--out` writes our package. `<work>/agreement.json` must name the MTU
 /// the interface was given (`applied`), and `<work>/ours.composed.json` is
 /// phase 6's copy of the package that agreement was composed from, whose
-/// `transport_offer.measured_mtu` is returned. ours.canonical.json is never
+/// `transport_offer.measured_mtu` is returned. ours.canonical.json is not
 /// read for this: phase 3 rewrites it on every run, so after a retry that
-/// stopped before compose it holds an offer no agreement used. A missing
-/// copy is an error (blocked, fail closed).
+/// stopped before compose it holds an offer no agreement used. A missing copy
+/// is an error (blocked, fail closed), except on the upgrade path from builds
+/// before the copy existed ([`upgrade_to_composed`]).
 fn agreed_offer(out: Option<&std::path::Path>, applied: i64) -> Result<i64, String> {
     let work = out
         .and_then(|o| o.parent())
@@ -706,12 +709,50 @@ fn agreed_offer(out: Option<&std::path::Path>, applied: i64) -> Result<i64, Stri
         }
         None => return Err(format!("{} has no transport.mtu", work.join("agreement.json").display())),
     }
+    if !work.join(COMPOSED).exists() {
+        upgrade_to_composed(work)?;
+    }
     read(COMPOSED)
         .map_err(|e| format!("{e} (phase 6 keeps it beside the agreement; run phase 6 again to make it)"))?
         .get("transport_offer")
         .and_then(|t| t.get("measured_mtu"))
         .and_then(JVal::as_int)
         .ok_or_else(|| format!("{} offers no transport_offer.measured_mtu", work.join(COMPOSED).display()))
+}
+
+/// The upgrade path from builds before phase 6 kept ours.composed.json: a
+/// peering they stood up has only ours.canonical.json and agreement.json, and
+/// its first rotation re-runs phase 3 before any phase 6 could write the copy,
+/// after phase 2 has already restarted the link. The agreement records neither
+/// our offer nor our package's digest (it holds min(both offers) and no
+/// digest), so the package is identified by order: phase 3 writes
+/// ours.canonical.json and compose writes agreement.json after it, so a
+/// package no newer than the agreement is the one it was composed from. That
+/// package stands in once and the copy is written from it, so every later
+/// phase 3 reads the copy. A package newer than the agreement was written by a
+/// later phase 3 no agreement has used: nothing is written, and the caller
+/// blocks.
+fn upgrade_to_composed(work: &std::path::Path) -> Result<(), String> {
+    let (ours, agreement) = (work.join("ours.canonical.json"), work.join("agreement.json"));
+    let modified = |p: &std::path::Path| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .map_err(|e| format!("{}: {e}", p.display()))
+    };
+    let missing = format!("no {}", work.join(COMPOSED).display());
+    if modified(&ours).map_err(|e| format!("{missing}, and {e}"))?
+        > modified(&agreement).map_err(|e| format!("{missing}, and {e}"))?
+    {
+        return Err(format!(
+            "{missing} (phase 6 keeps it beside the agreement), and {} is newer than {}: a later phase 3 wrote it, and no agreement has been composed from it; run phase 6 again to make the copy",
+            ours.display(),
+            agreement.display()
+        ));
+    }
+    let tmp = work.join(".ours.composed.json.tmp");
+    std::fs::copy(&ours, &tmp)
+        .and_then(|_| std::fs::rename(&tmp, work.join(COMPOSED)))
+        .map_err(|e| format!("{missing}, and it could not be written from {}: {e}", ours.display()))
 }
 
 /// Phase 6's copy of our package as composed into the agreement, in `<work>`.
