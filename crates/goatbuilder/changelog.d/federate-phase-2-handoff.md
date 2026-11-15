@@ -13,6 +13,7 @@ public key, and no private key leaves the edge. On the controller,
 and `--from 2` runs the controller's half: the SPIRE bundle export on the
 SPIRE server host, which never reaches the edge host. Phase 3's import then
 refuses an edge half that measured another interface or another public key
-than phase 2's result handed over (GB-114). A phase 2 that also runs
+than phase 2's result handed over (GB-114). When there is nothing to compare,
+the import says in a row of its own that the key was not checked, and why. A phase 2 that also runs
 a forwarder's steps is refused as not built (GB-267), as are the edge's own
 leaf keys, which phase 8 still makes on the controller.

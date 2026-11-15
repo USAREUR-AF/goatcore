@@ -615,9 +615,7 @@ fn import_edge_half(a: &ImportArgs, work: &Path, repo: &Path) -> anyhow::Result<
         ),
         fix: None,
     }];
-    if let Some(agrees) = handed_key_agrees(work, a, &half)? {
-        checked.push(Check { name: "edge-half".into(), ok: true, detail: agrees, fix: None });
-    }
+    checked.push(Check { name: "edge-half".into(), ok: true, detail: handed_key_agrees(work, a, &half)?, fix: None });
     place(a, work, &bytes, &sha, checked)
 }
 
@@ -626,19 +624,22 @@ fn import_edge_half(a: &ImportArgs, work: &Path, repo: &Path) -> anyhow::Result<
 /// the ones phase 2 handed over. Either differing means the interface changed
 /// between the phases (phase 2 run again on the edge and not imported, or
 /// another interface), and the package would offer a key the agreement's
-/// tunnel does not hold: GB-114, nothing placed. `None` when there is nothing
-/// to compare: no phase 2 result imported here, one that names no interface,
-/// or a key phase 3 could not measure (the package refuses that later).
+/// tunnel does not hold: GB-114, nothing placed. The row it returns says
+/// what was compared, or, when there is nothing to compare, that the binding
+/// was NOT checked and why (it reads "not checked", so `-o json` marks it
+/// skipped): no phase 2 result imported here, one that names no interface,
+/// or a key phase 3 could not measure. Never silent.
 fn handed_key_agrees(
     work: &Path,
     a: &ImportArgs,
     half: &super::measure::ImportedEdgeHalf,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<String> {
+    let unchecked = |why: String| format!("not checked: the key binding between phase 2 and phase 3 was NOT checked: {why}");
     let Some(state) = super::state::State::read(work)? else {
-        return Ok(None);
+        return Ok(unchecked(format!("{} has no run journal", work.display())));
     };
     let Some((file, bound)) = imported(&state, 2) else {
-        return Ok(None);
+        return Ok(unchecked("no phase 2 edge result was imported here, so there is no key it handed over".into()));
     };
     let refuse = |why: String| -> anyhow::Error {
         goat_errors::coded(
@@ -653,7 +654,7 @@ fn handed_key_agrees(
     };
     let doc = check_imported(work, 2, &file, &bound).map_err(|c| refuse(c.detail))?;
     let (Some(iface), Some(handed)) = (doc["interface"].as_str(), doc["public_key"].as_str()) else {
-        return Ok(None);
+        return Ok(unchecked(format!("phase 2's edge result names no interface (imported at {bound}), so it handed over no key")));
     };
     if half.interface.as_deref() != Some(iface) {
         return Err(refuse(format!(
@@ -661,17 +662,19 @@ fn handed_key_agrees(
             half.interface.as_deref().unwrap_or("(none)")
         )));
     }
-    let Some(Ok(measured)) = half.half.public_key.as_ref().map(|k| k.outcome.as_ref()) else {
-        return Ok(None);
+    let measured = match half.half.public_key.as_ref().map(|k| k.outcome.as_ref()) {
+        Some(Ok(k)) => k,
+        Some(Err(e)) => return Ok(unchecked(format!("phase 3's edge half could not measure the public key on {iface} ({e}); the package refuses a key it does not have"))),
+        None => return Ok(unchecked(format!("phase 3's edge half could not measure the public key on {iface}: it measured no interface"))),
     };
     if measured != handed {
         return Err(refuse(format!(
             "phase 3 measured the public key {measured} on {iface}, and phase 2's edge result, imported at {bound}, handed over {handed}: the interface's key changed between phase 2 and phase 3"
         )));
     }
-    Ok(Some(format!(
+    Ok(format!(
         "phase 3's edge half measured on {iface} the public key phase 2's edge result handed over (imported at {bound})"
-    )))
+    ))
 }
 
 /// The import's last part, for every phase: this peering's journal must be
