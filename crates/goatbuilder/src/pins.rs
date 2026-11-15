@@ -1462,6 +1462,38 @@ pub fn render_all(repo: &Path) -> Result<Rendered> {
 mod tests {
     use super::*;
 
+    /// The code a pins error carries, or a panic naming the uncoded error.
+    fn code_of(e: &anyhow::Error) -> String {
+        e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone()).unwrap_or_else(|| panic!("uncoded: {e:#}"))
+    }
+
+    /// Gate row C5: a fleet-pins.yaml that breaks the pins schema is refused with
+    /// GB-337 (every `die`), not passed up uncoded.
+    #[test]
+    fn a_table_that_breaks_the_pins_schema_is_refused_with_gb_337() {
+        let t = crate::testdir::path("gb-pins-schema-");
+        std::fs::create_dir_all(t.join("ops/pins")).unwrap();
+        let table = t.join("ops/pins/fleet-pins.yaml");
+        std::fs::write(&table, "goatnets: []\ncomponents: {}\n").unwrap();
+        let Err(e) = load_table(&table) else { panic!("the table was accepted") };
+        assert_eq!(code_of(&e), "GB-337", "{e:#}");
+        assert!(format!("{e:#}").contains("`goatnets:` must be a mapping"), "{e:#}");
+    }
+
+    /// The sidecar's deviations for a component whose fleet-pins.yaml entry is not
+    /// a mapping (pins.rs's one SchemaError raised outside `die`) carry GB-337 too.
+    #[test]
+    fn a_sidecar_deviation_on_a_component_that_is_not_a_mapping_is_refused_with_gb_337() {
+        let t = crate::testdir::path("gb-pins-sidecar-");
+        std::fs::create_dir_all(t.join("ops/pins")).unwrap();
+        let table = t.join("ops/pins/fleet-pins.yaml");
+        std::fs::write(&table, "goatnets:\n  zagros: {members: [zagros_hosts]}\ncomponents:\n  zenoh: 5\n").unwrap();
+        std::fs::write(t.join("ops/pins").join(LITE_BASENAME), "goatnets:\n  pasture: {members: [pasture_hosts]}\ncomponents:\n  zenoh:\n    deviations: {}\n").unwrap();
+        let Err(e) = load_table(&table) else { panic!("the table was accepted") };
+        assert_eq!(code_of(&e), "GB-337", "{e:#}");
+        assert!(format!("{e:#}").contains("is not a mapping"), "{e:#}");
+    }
+
     #[test]
     fn canonical_json_sorts_keys_indents_two_and_ends_with_one_newline() {
         let v = json!({"b": 1, "a": {"d": [], "c": {}}, "s": "é\"\\\n"});
