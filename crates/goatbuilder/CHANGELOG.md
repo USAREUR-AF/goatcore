@@ -10,6 +10,115 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Fixed: the errors the rest of goatbuilder raises carry their catalog code
+
+Sixty-four more errors had no catalog code, so a log of a run that met one
+(stderr not a terminal, no explanation page) showed only `goatbuilder: <text>`.
+Each now prints its code. They use existing codes where one fits: a file
+goatbuilder reads or writes GB-254 (a pins file, a run record, the survey page,
+teardown.yaml), a program that could not be started GB-320 (bash, ansible, ssh,
+git, go, a checkout's script), the mock converger's fixture GB-024, the config
+GB-025, a plan file that is not JSON GB-052, a missing deploy playbook GB-005,
+a component block fleet-pins.yaml lacks GB-257, the assembled tree's marker
+GB-259, a release graduation that printed no record GB-020, a git command
+`doctor` runs that failed GB-258, an internal error GB-322, and a mutation
+without a terminal GB-008. One is new: GB-326, a file of the checkout that is
+not YAML (fleet-pins.yaml, doors.yaml, a role's deploy-history.yml,
+teardown.yaml). The errors of `grow`, which is not wired yet, are left to the
+change that wires it.
+
+Five checks inside `goatbuilder federate` now carry a code: phase 1's and the slot
+recheck's exit disagreeing with its result GB-315, phase 1 writing no results and
+an edge result naming the wrong side GB-321, and an imported edge result that
+changed while it was read GB-277.
+
+Eighty-four more errors were a file, program or JSON/YAML error passed up as it
+came, with no code. Each now carries one: a file that cannot be read or written
+GB-254 (it names the file), a value that cannot be written as JSON or YAML
+GB-322, a program that could not be started GB-320, fleet-pins.yaml that is not
+YAML GB-326, a mock fixture's pins GB-024, and the end-state grader's output
+GB-066. One that carries GB-322, GB-320 or GB-066 exits 1, where it exited 2 (on
+the federation verbs, an internal error already exited 1); the others still
+exit 2.
+
+Exit codes, by the contract's meanings (1 refused: a precondition failed; 2
+usage: the command line was wrong). Each of these errors exited 2 with no code.
+Every place here is on goatbuilder's own error path, where an uncoded error exits
+2; none is on the federation verbs' path, where it exits 1. One that now carries
+GB-020 (`release`), GB-025 (`validate` and every verb that loads the config: it
+does not match the typed model, or does not convert to JSON), GB-258 (`doctor`'s
+git, whose error every caller reads with a fallback), GB-277, GB-315, GB-320,
+GB-321 or GB-322 exits 1, since none is a usage error. The others (GB-005,
+GB-008, GB-024, GB-052, GB-254, GB-257, GB-259, GB-326) still exit 2. Every other exit is unchanged.
+
+#### Fixed: every error `goatbuilder federate` raises carries its catalog code
+
+Fifty errors the federate stages and verbs raised had no catalog code, so a log
+of a run that met one (stderr not a terminal, no explanation page) showed only
+`goatbuilder: <text>`, with nothing to look up. Each now prints its code and
+`goatbuilder explain <code>` answers it. They use existing codes where one fits
+(an undeclared environment GB-241, the working folder GB-184, a declaration
+GB-144, a flag for another verb GB-239, a peering on several environments
+GB-252, a host's back-out survey answering for another peering GB-253, a verb
+line the driver cannot parse GB-242), and eight new ones: GB-315 a program a
+step ran gave output or an exit that cannot be used, GB-316 a confirmation could
+not be read from the terminal, GB-320 a program the run starts could not be
+started, GB-321 a file a step wrote is missing or not what it wrote, GB-322 an
+internal error, GB-323 a file outside the working folder cannot be written,
+GB-324 a setting in the environment has a value goatbuilder does not take, and
+GB-325 flags given to a stage or verb that do not go together, or one without
+the flag it needs (a recheck given `--edge-group` or `--as` other than the saved
+plan's among them).
+
+Exit codes, by the contract's meanings (1 refused: a precondition failed; 2
+usage: the command line was wrong). Each change is from the last release:
+
+- `goatbuilder federate <partner>` and its stages (plan, deploy, backout, rotate,
+  status, import, the edge run): an error with no code exited 2. One that now
+  carries GB-184, GB-315, GB-316, GB-320, GB-321, GB-322 or GB-323 exits 1,
+  since none is a usage error. One that carries GB-241, GB-252, GB-253, GB-324
+  or GB-325 still exits 2.
+- The federation verbs (`goatbuilder federate init|lint|compose|diff|verify|apply`,
+  and the phases that run them in process): an error with no code exited 1. A
+  command-line error now exits 2, the contract's usage error: `--over-ssh` given
+  to a verb other than init (GB-239); a host flag or `--side` on init without
+  `--over-ssh`, `--side` without the files it reads or writes, and
+  `init --over-ssh` without `-C` (GB-325). The others still exit 1 (GB-144,
+  GB-322, GB-323), and a verb line the driver cannot parse still exits 2
+  (GB-242).
+
+`federate allocate <peering>` naming an undeclared peering is not coded yet and
+still exits 2. Every other exit is unchanged.
+
+<!-- END generated: changelog unreleased -->
+
+## 0.7.1 — 2026-11-15
+
+What changed since 0.7.0, the previous release. `join-node` builds a node on a
+phone with `--class phone --via usb`, on a fixture and not yet measured on a
+phone, runs a joining site's own mesh DNS, and refuses a node whose clock is
+off. `standup` for a joiner turns signal federation on, and standup,
+join-node and teardown keep timings files whose rows name their cause. Every
+site's end state declares every service a cut-off site needs, and what a
+joining site does not run yet is named as a gap. `federate rotate <partner>
+leaves` replaces a running peering's leaves; `federate test
+--bilateral` completes the partner's half of acceptance, opt-in; on a
+two-driver peering the edge driver runs phases 1 and 3. A back-out keeps the
+core leaf another peering still uses and removes the peering's host-firewall
+entry. After a signing-key rotation, phase 5 hands the peering directory over
+to the new key, and a host-allocation SKIP says what clears it or is accepted
+into the plan. `goatbuilder.yaml` takes three optional `deploy` fields,
+`cloud`, `owner` and `cross_goatnet`; undeclared, nothing changes.
+
+Three behaviour changes: an environment that declares `converger: pull-agent` is
+refused by `doctor` and by every verb that pushes to real hosts, with GB-307;
+`join-node` refuses a node whose clock is unsynchronized or more than 250 ms
+off, with GB-297; and a back-out with no other peering set up, and no record
+of what the core leaf's paths held before, stops with GB-293 where it stopped
+with GB-221.
+
+### For someone deploying
+
 #### Fixed: phase 14's round trip sends a fresh probe until one is acknowledged, so one dropped probe does not fail it
 
 In a bilateral acceptance session both sides run the round trip at once.
@@ -96,47 +205,6 @@ service owns as `SKIPPED` with the same text instead of N/A. `goatbuilder
 join-node` lists the gaps under "What <site> does not run yet", from the
 catalog, before the services the site turns off (ADR 1233, #671).
 
-#### Fixed: the errors the rest of goatbuilder raises carry their catalog code
-
-Sixty-four more errors had no catalog code, so a log of a run that met one
-(stderr not a terminal, no explanation page) showed only `goatbuilder: <text>`.
-Each now prints its code. They use existing codes where one fits: a file
-goatbuilder reads or writes GB-254 (a pins file, a run record, the survey page,
-teardown.yaml), a program that could not be started GB-320 (bash, ansible, ssh,
-git, go, a checkout's script), the mock converger's fixture GB-024, the config
-GB-025, a plan file that is not JSON GB-052, a missing deploy playbook GB-005,
-a component block fleet-pins.yaml lacks GB-257, the assembled tree's marker
-GB-259, a release graduation that printed no record GB-020, a git command
-`doctor` runs that failed GB-258, an internal error GB-322, and a mutation
-without a terminal GB-008. One is new: GB-326, a file of the checkout that is
-not YAML (fleet-pins.yaml, doors.yaml, a role's deploy-history.yml,
-teardown.yaml). The errors of `grow`, which is not wired yet, are left to the
-change that wires it.
-
-Five checks inside `goatbuilder federate` now carry a code: phase 1's and the slot
-recheck's exit disagreeing with its result GB-315, phase 1 writing no results and
-an edge result naming the wrong side GB-321, and an imported edge result that
-changed while it was read GB-277.
-
-Eighty-four more errors were a file, program or JSON/YAML error passed up as it
-came, with no code. Each now carries one: a file that cannot be read or written
-GB-254 (it names the file), a value that cannot be written as JSON or YAML
-GB-322, a program that could not be started GB-320, fleet-pins.yaml that is not
-YAML GB-326, a mock fixture's pins GB-024, and the end-state grader's output
-GB-066. One that carries GB-322, GB-320 or GB-066 exits 1, where it exited 2 (on
-the federation verbs, an internal error already exited 1); the others still
-exit 2.
-
-Exit codes, by the contract's meanings (1 refused: a precondition failed; 2
-usage: the command line was wrong). Each of these errors exited 2 with no code.
-Every place here is on goatbuilder's own error path, where an uncoded error exits
-2; none is on the federation verbs' path, where it exits 1. One that now carries
-GB-020 (`release`), GB-025 (`validate` and every verb that loads the config: it
-does not match the typed model, or does not convert to JSON), GB-258 (`doctor`'s
-git, whose error every caller reads with a fallback), GB-277, GB-315, GB-320,
-GB-321 or GB-322 exits 1, since none is a usage error. The others (GB-005,
-GB-008, GB-024, GB-052, GB-254, GB-257, GB-259, GB-326) still exit 2. Every other exit is unchanged.
-
 #### Fixed: acceptance on a derived session ignores a partner sample left by an earlier run
 
 Phase 14's acceptance script, run on a derived session
@@ -194,45 +262,6 @@ edge checks into `<work>/handoff/1/edge.json` and prints the way back: the
 confirm code, and the `import` and `then` commands for the controller. The
 edge driver's run of phase 3 is built too; phase 2's and those of 11 and
 later are not yet (gate row B10).
-
-#### Fixed: every error `goatbuilder federate` raises carries its catalog code
-
-Fifty errors the federate stages and verbs raised had no catalog code, so a log
-of a run that met one (stderr not a terminal, no explanation page) showed only
-`goatbuilder: <text>`, with nothing to look up. Each now prints its code and
-`goatbuilder explain <code>` answers it. They use existing codes where one fits
-(an undeclared environment GB-241, the working folder GB-184, a declaration
-GB-144, a flag for another verb GB-239, a peering on several environments
-GB-252, a host's back-out survey answering for another peering GB-253, a verb
-line the driver cannot parse GB-242), and eight new ones: GB-315 a program a
-step ran gave output or an exit that cannot be used, GB-316 a confirmation could
-not be read from the terminal, GB-320 a program the run starts could not be
-started, GB-321 a file a step wrote is missing or not what it wrote, GB-322 an
-internal error, GB-323 a file outside the working folder cannot be written,
-GB-324 a setting in the environment has a value goatbuilder does not take, and
-GB-325 flags given to a stage or verb that do not go together, or one without
-the flag it needs (a recheck given `--edge-group` or `--as` other than the saved
-plan's among them).
-
-Exit codes, by the contract's meanings (1 refused: a precondition failed; 2
-usage: the command line was wrong). Each change is from the last release:
-
-- `goatbuilder federate <partner>` and its stages (plan, deploy, backout, rotate,
-  status, import, the edge run): an error with no code exited 2. One that now
-  carries GB-184, GB-315, GB-316, GB-320, GB-321, GB-322 or GB-323 exits 1,
-  since none is a usage error. One that carries GB-241, GB-252, GB-253, GB-324
-  or GB-325 still exits 2.
-- The federation verbs (`goatbuilder federate init|lint|compose|diff|verify|apply`,
-  and the phases that run them in process): an error with no code exited 1. A
-  command-line error now exits 2, the contract's usage error: `--over-ssh` given
-  to a verb other than init (GB-239); a host flag or `--side` on init without
-  `--over-ssh`, `--side` without the files it reads or writes, and
-  `init --over-ssh` without `-C` (GB-325). The others still exit 1 (GB-144,
-  GB-322, GB-323), and a verb line the driver cannot parse still exits 2
-  (GB-242).
-
-`federate allocate <peering>` naming an undeclared peering is not coded yet and
-still exits 2. Every other exit is unchanged.
 
 #### Added: a two-driver peering hands phase 3 to the edge driver and joins its edge half
 
@@ -505,7 +534,9 @@ request's merge commit. Before the tag, a diff between the checked commit and th
 commit must name nothing under `crates/`, `ops/ansible/` or `ops/federation-e2e/`, or each
 stage those paths feed runs again on the merge commit (#772).
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.0 — 2026-11-14
 
