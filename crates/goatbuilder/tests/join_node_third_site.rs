@@ -167,6 +167,9 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         &format!(
             "#!/bin/sh\nprintf 'ssh %s\\n' \"$*\" >> '{l}'\n\
              if [ -f '{st}/unreachable' ]; then echo 'ssh: connect to host 192.0.2.30 port 22: Connection timed out' >&2; exit 255; fi\n\
+             if [ -f '{st}/refusing-jump' ]; then echo 'goat@jump.example.org: Permission denied (publickey).' >&2; echo 'Connection closed by UNKNOWN port 65535' >&2; exit 255; fi\n\
+             kh=; for a in \"$@\"; do case \"$a\" in UserKnownHostsFile=*) kh=\"${{a#UserKnownHostsFile=}}\" ;; esac; done\n\
+             [ -z \"$kh\" ] || echo '192.0.2.30 ssh-ed25519 stand-in-host-key' >> \"$kh\"\n\
              case \"$*\" in *BatchMode=yes*)\n\
                if [ -f '{st}/password-only' ]; then\n\
                  case \"$*\" in *'sudo -n true'*) [ -f '{st}/sudo-seeded' ] || exit 1 ;; *) [ -f '{st}/key-seeded' ] || {{ echo 'goat@192.0.2.30: Permission denied (publickey,password).' >&2; exit 255; }} ;; esac\n\
@@ -797,6 +800,22 @@ fn a_node_that_does_not_answer_stops_the_run_at_phase_1() {
     assert!(all.contains("GB-314") && all.contains("Connection timed out"), "{all}");
     assert!(all.contains("--address"), "the instruction names --address: {all}");
     assert!(all.contains("--from 1"), "{all}");
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(!log.lines().any(|l| l.starts_with("play ") || l.starts_with("sshpass")), "something ran past phase 1:\n{log}");
+}
+
+/// A jump host's "Permission denied" is not the node answering: the run
+/// stops at phase 1. ssh says only that the jump host refused and the
+/// connection closed; the node's own host key never arrived.
+#[test]
+fn a_jump_host_that_refuses_is_not_the_node_answering() {
+    let s = site();
+    std::fs::write(s.root.join("state/refusing-jump"), "").unwrap();
+    let (out, v) = join_node(&s, None);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert_eq!(phases(&v), vec![1], "{all}");
+    assert!(all.contains("GB-314"), "{all}");
     let log = std::fs::read_to_string(&s.log).unwrap_or_default();
     assert!(!log.lines().any(|l| l.starts_with("play ") || l.starts_with("sshpass")), "something ran past phase 1:\n{log}");
 }
