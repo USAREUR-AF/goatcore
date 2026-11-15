@@ -122,49 +122,100 @@ fn a_hand_declared_forwarder_stops_the_carrier_rotation_before_anything_runs() {
     assert!(!w.work.join("state.json").exists(), "a run was journaled");
 }
 
-/// The same peering with its forwarder declared in goatbuilder.yaml instead.
+/// The same peering with its forwarder declared in goatbuilder.yaml instead,
+/// adopted as it runs: its values pinned, the hand-written lines that allocate
+/// now owns removed, and `goatbuilder federate allocate` run.
+fn declare_the_forwarder_in_goatbuilder_yaml(w: &federate_world::World) {
+    let cfg = w.repo.join("ops/goatbuilder/goatbuilder.yaml");
+    let text_before = std::fs::read_to_string(&cfg).unwrap();
+    let declared = text_before.replacen(
+        "    edge_class: edge\n",
+        &format!(
+            "    edge_class: edge\n    forwarder:\n      endpoint: 192.0.2.20\n    values:\n      wg_interface: wg-fed1\n      wg_listen_port: 51821\n      edge_listen_port: 7448\n      republisher_metrics_port: 9464\n      cert_dir: {}\n",
+            w.work.join("pki").display()
+        ),
+        1,
+    );
+    assert_ne!(declared, text_before, "the fixture's peering entry moved");
+    federate_world::write(&cfg, &declared);
+    let gv = w.repo.join("ops/ansible/group_vars/hello-ally_edge/peering.yml");
+    let kept: String = std::fs::read_to_string(&gv)
+        .unwrap()
+        .lines()
+        .filter(|l| !["peering_wg_interface:", "peering_wg_listen_port:", "goat_zenoh_edge_listen_port:"].iter().any(|k| l.starts_with(k)))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    federate_world::write(&gv, &kept);
+    federate_world::write(&w.repo.join("ops/ansible/group_vars/hello-ally_core/peering.yml"), "");
+    let (a, _) = w.run(&["allocate", "hello-ally"]);
+    assert!(a.status.success(), "allocate: {}", says(&a));
+}
+
 #[test]
 fn a_forwarder_declared_in_goatbuilder_yaml_is_a_carrier_to_rotate() {
     let w = world();
-    let cfg = w.repo.join("ops/goatbuilder/goatbuilder.yaml");
-    let text_before = std::fs::read_to_string(&cfg).unwrap();
-    let declared = text_before.replacen(
-        "    edge_class: edge\n",
-        "    edge_class: edge\n    forwarder:\n      endpoint: 192.0.2.20:51900\n",
-        1,
-    );
-    assert_ne!(declared, text_before, "the fixture's peering entry moved");
-    federate_world::write(&cfg, &declared);
-    let (out, _) = w.run(&["rotate", "hello-ally", "carrier"]);
-    let t = text(&out);
-    assert!(!t.contains("no forwarder"), "{t}");
+    declare_the_forwarder_in_goatbuilder_yaml(&w);
+    rotate_the_carrier_through_both_plays(&w);
 }
 
-/// A forwarder declared in goatbuilder.yaml, with a leftover hand switch
-/// (`peering_wg_via_forwarder: true`) still in the edge group's vars: the
-/// declaration wins, so goatbuilder applies the forwarder and the rotation is
-/// neither stopped for a hand-declared forwarder (GB-312) nor refused for
-/// having none.
+/// A forwarder declared in goatbuilder.yaml, with a hand switch
+/// (`peering_wg_via_forwarder: true`) put back in the edge group's vars after
+/// allocate: the declaration wins, so goatbuilder applies the forwarder and
+/// the rotation is neither stopped for a hand-declared forwarder (GB-312) nor
+/// refused for having none.
 #[test]
 fn a_forwarder_in_goatbuilder_yaml_wins_over_a_leftover_hand_switch() {
     let w = world();
-    let cfg = w.repo.join("ops/goatbuilder/goatbuilder.yaml");
-    let text_before = std::fs::read_to_string(&cfg).unwrap();
-    let declared = text_before.replacen(
-        "    edge_class: edge\n",
-        "    edge_class: edge\n    forwarder:\n      endpoint: 192.0.2.20:51900\n",
-        1,
-    );
-    assert_ne!(declared, text_before, "the fixture's peering entry moved");
-    federate_world::write(&cfg, &declared);
+    declare_the_forwarder_in_goatbuilder_yaml(&w);
     federate_world::write(
         &w.repo.join("ops/ansible/group_vars/hello-ally_edge/forwarder.yml"),
         "peering_wg_via_forwarder: true\n",
     );
-    let (out, _) = w.run(&["rotate", "hello-ally", "carrier"]);
+    rotate_the_carrier_through_both_plays(&w);
+}
+
+/// A carrier rotation of a forwarder goatbuilder applies: the run passes,
+/// phase 2 runs the edge's play and the forwarder's, and its command hands
+/// both one rotation id, for this peering; the id is dropped once phase 2
+/// passes. The stand-in plays copy no key, so the forwarder's carrier public
+/// key that phase 2 waits for is put where the copy would leave it.
+fn rotate_the_carrier_through_both_plays(w: &federate_world::World) {
+    federate_world::write(&w.work.join("pki/forwarder-carrier.pub"), "stand-in-forwarder-carrier-public-key\n");
+    let (out, v) = w.run(&["rotate", "hello-ally", "carrier"]);
     let t = text(&out);
-    assert!(!t.contains("GB-312"), "{t}");
-    assert!(!t.contains("no forwarder"), "{t}");
+    assert!(!t.contains("GB-312") && !t.contains("no forwarder"), "{t}");
+    assert_eq!(out.status.code(), Some(0), "{}\n{}", says(&out), w.log());
+    let log = w.log();
+    for play in ["play peering-prepare.yml", "play peering-carrier-keys.yml", "play peering-forwarder.yml"] {
+        assert!(log.lines().any(|l| l == play), "{play} did not run:\n{log}");
+    }
+    let phase_2 = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"] == "cmd")
+        .filter_map(|c| c["detail"].as_str())
+        .find(|d| d.contains("peering-prepare.yml"))
+        .unwrap_or_else(|| panic!("no phase 2 command: {}", says(&out)));
+    let parts: Vec<&str> = phase_2.split(") && (").collect();
+    let edge = parts.iter().find(|p| p.contains(" peering-prepare.yml")).unwrap();
+    let fwd = parts
+        .iter()
+        .find(|p| p.contains(" peering-forwarder.yml"))
+        .unwrap_or_else(|| panic!("phase 2 runs no forwarder play: {phase_2}"));
+    let id = |p: &str| {
+        p.split("-e peering_wg_carrier_rotation='")
+            .nth(1)
+            .and_then(|r| r.split('\'').next())
+            .map(String::from)
+    };
+    let edge_id = id(edge).unwrap_or_else(|| panic!("the edge's play has no rotation id: {edge}"));
+    assert!(edge_id.starts_with("carrier-"), "{edge_id}");
+    assert_eq!(id(fwd).as_deref(), Some(edge_id.as_str()), "one id for both plays: {fwd}");
+    for p in [edge, fwd] {
+        assert!(p.contains(&format!("-e peering_forwarder_carrier_rotation='{edge_id}' -e peering_forwarder_carrier_rotation_name='hello-ally'")), "{p}");
+    }
+    assert!(!w.work.join(".rotation-carrier").exists(), "the id is kept after phase 2 passed");
 }
 
 /// The switch set false in the edge group's vars is no forwarder: still refused.
