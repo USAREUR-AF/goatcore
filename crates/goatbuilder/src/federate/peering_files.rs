@@ -1748,6 +1748,33 @@ mod tests {
         );
     }
 
+    /// The forwarder machine's values have one owner too, and only the
+    /// forwarder's own groups can set them: an edge parent group's file that
+    /// sets the same name (an edge's ansible_user) is not the forwarder's, and
+    /// is left alone; a file of the forwarder group that sets one the
+    /// declaration renders is refused.
+    #[test]
+    fn a_forwarders_machine_value_is_owned_by_its_declaration_only_on_its_groups() {
+        let mut x = p("xab", true);
+        x["forwarder"] = json!({"endpoint": "203.0.113.7", "ansible_user": "goat"});
+        let d = repo_with(json!([x]));
+        let edges = d.path().join("ops/ansible/group_vars/peering_edges");
+        std::fs::create_dir_all(&edges).unwrap();
+        std::fs::write(edges.join("vars.yml"), "ansible_user: ops\n").unwrap();
+        run(d.path(), &opts(false)).unwrap();
+        let f = d.path().join("ops/ansible/group_vars/peering_forwarders/forwarder-host.yml");
+        std::fs::write(&f, "ansible_user: goat\n").unwrap();
+        let e = run(d.path(), &opts(false)).unwrap_err();
+        assert_eq!(
+            e.downcast_ref::<goat_errors::Coded>().unwrap().code,
+            "GB-125"
+        );
+        assert!(
+            e.to_string().contains("ansible_user") && e.to_string().contains("forwarder-host.yml"),
+            "{e}"
+        );
+    }
+
     fn role_defaults(d: &Path) {
         let wg = d.join("ops/ansible/roles/goat-peering-wg/defaults");
         std::fs::create_dir_all(&wg).unwrap();
