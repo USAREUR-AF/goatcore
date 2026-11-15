@@ -2294,6 +2294,64 @@ mod tests {
         assert!(!w.paths.work.join(INCOMING_POINTER).exists());
     }
 
+    fn pem_of(der: &[u8]) -> String {
+        format!(
+            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+            base64::engine::general_purpose::STANDARD.encode(der)
+        )
+    }
+
+    /// backout 1: the skip path vouches for what the normal path checks: their CA
+    /// certificate on disk carries exactly the fingerprint confirmed.
+    #[test]
+    fn keys_unchanged_requires_their_ca_file_to_carry_exactly_the_confirmed_fingerprint() {
+        let (w, st) = bound();
+        assert!(keys_unchanged(&w.paths, &st));
+        let original = std::fs::read(&w.paths.their_ca).unwrap();
+        std::fs::write(&w.paths.their_ca, pem_of(b"another-ca-der")).unwrap();
+        assert!(!keys_unchanged(&w.paths, &st), "another certificate");
+        let mut two = original.clone();
+        two.extend_from_slice(pem_of(b"another-ca-der").as_bytes());
+        std::fs::write(&w.paths.their_ca, two).unwrap();
+        assert!(!keys_unchanged(&w.paths, &st), "the confirmed one and another");
+        std::fs::remove_file(&w.paths.their_ca).unwrap();
+        assert!(!keys_unchanged(&w.paths, &st), "none");
+    }
+
+    /// backout 2: verifying keys are base64, where case is part of the value:
+    /// compared exactly, never case-folded.
+    #[test]
+    fn verifying_keys_are_compared_exactly() {
+        let swap = |k: &str| -> String {
+            k.chars().map(|c| if c.is_ascii_lowercase() { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() }).collect()
+        };
+        for key in ["partner_key", "our_key"] {
+            let (w, mut st) = bound();
+            let c = st.confirmations.iter_mut().find(|c| c.kind == "keys").unwrap();
+            let v = c.values[key].clone();
+            assert_ne!(swap(&v), v);
+            c.values.insert(key.to_string(), swap(&v));
+            assert!(!keys_unchanged(&w.paths, &st), "{key} differs in case only");
+            if key == "partner_key" {
+                assert!(compose_guard(&w.paths, &st).is_some(), "{key}: compose refuses it");
+            }
+        }
+    }
+
+    /// backout 3: with a keys confirmation journaled, a package compose cannot read
+    /// for its keys (not JSON, or a sovereign id that is not a plain id) fails closed.
+    #[test]
+    fn compose_fails_closed_on_a_package_it_cannot_read_for_its_keys() {
+        for garbage in [&b"not json"[..], &br#"{"sovereign_id":"xab
+xac=x"}"#[..]] {
+            let (w, mut st) = bound();
+            std::fs::write(&w.paths.counterparty, garbage).unwrap();
+            st.confirm("r", 5, "partner-package", "flag", &sha256(garbage), BTreeMap::new());
+            let step = compose_guard(&w.paths, &st).expect("fails closed");
+            assert_eq!(code(&step), "GB-191");
+        }
+    }
+
     #[test]
     fn before_their_key_is_bound_nothing_is_a_new_package() {
         let w = world();
