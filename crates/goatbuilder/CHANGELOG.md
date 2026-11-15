@@ -131,6 +131,16 @@ peering is set up and nothing records what the leaf paths held before, the
 back-out stops with GB-293, naming each path and the choice to make, instead
 of stopping as GB-221 or showing the leaf as `absent` (#716).
 
+#### Changed: phase 6 composes the agreement only with the peering's declared partner
+
+Phase 6 now tells `compose` which two parties the agreement is between: us
+and the peering's declared partner (`FED_COUNTERPARTY_ID`, from
+`goatbuilder.yaml`). A counterparty package of any other party is refused
+(GB-191) and no agreement is written, even when the keyring binds that party's
+key, as a keyring shared by several peerings can. Only the two parties' keyring
+lines are passed to compose. `goat federate compose` takes the parties as
+`--party <sovereign_id>`, once or twice; without it, compose behaves as before.
+
 #### Fixed: after a signing-key rotation, phase 5 hands the directory over to the new key
 
 The peering directory binds our identity to the first key that wrote it and

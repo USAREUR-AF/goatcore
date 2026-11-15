@@ -341,8 +341,16 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
         t(4, "lint our package against the spec", Vec::new(), w(&["lint", &ours])),
         { let (label, body) = exchange(&r, &ours, work, &counterparty, &keyring); p(5, "MANUAL", label, body) },
     ];
-    // Each `sovereign=key` line in the keyring becomes one --key argument; a
-    // missing keyring is left for compose's own refusal to name.
+    // The agreement is between us and the peering's declared partner
+    // (FED_COUNTERPARTY_ID, which preflight derives from goatbuilder.yaml's
+    // `with`), named to compose as --party: a package of any other party is
+    // refused, even when a keyring shared by several peerings binds its key.
+    // Of the keyring, the lines of those two parties become --key arguments;
+    // with our id not known yet, every line does, and --party still holds
+    // the agreement to the partner. A missing keyring is left for compose's
+    // own refusal to name.
+    let partner = runenv::var("FED_COUNTERPARTY_ID").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| o.with.to_string());
+    let us = o.r#as.map(String::from).or_else(|| our_id(work));
     let mut compose_words = w(&["compose", &ours, &counterparty]);
     if let Ok(text) = std::fs::read_to_string(&keyring) {
         for line in text.lines() {
@@ -350,11 +358,22 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
                 continue;
             }
             let clean: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+            let id = clean.split('=').next().unwrap_or_default();
+            if let Some(us) = &us {
+                if id != us && id != partner {
+                    continue;
+                }
+            }
             // An unsafe line is left out: compose then refuses, naming the
             // party whose key is not bound (fail closed).
             if shell_safe(&clean) {
                 compose_words.extend(w(&["--key", &clean]));
             }
+        }
+    }
+    for party in us.iter().chain(std::iter::once(&partner)) {
+        if shell_safe(party) {
+            compose_words.extend(w(&["--party", party]));
         }
     }
     compose_words.extend(w(&["--out", &agreement]));

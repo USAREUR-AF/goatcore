@@ -58,8 +58,11 @@ pub struct ComposeArgs {
     #[arg(long)]
     pub json: bool,
 
-    /// A party the agreement must be between, by `sovereign_id`. Repeat for
-    /// each; every party named must be one of the two packages' parties.
+    /// A party the agreement must be between, by `sovereign_id`: once or
+    /// twice (ours, the counterparty's). Every party named must be one of the
+    /// two packages' parties, or compose refuses (GB-191) and writes nothing.
+    /// A keyring can bind more parties than the two of one peering; this
+    /// holds the agreement to the two it is for.
     #[arg(long = "party", value_name = "SOVEREIGN_ID")]
     pub parties: Vec<String>,
 }
@@ -81,6 +84,7 @@ struct ComposeReport<'a> {
 pub fn run_compose(a: &ComposeArgs, out: &mut dyn Write) -> anyhow::Result<i32> {
     let now = evaluation_date(a.now.as_deref())?;
     let keys = build_keyring(&a.keys, a.keyring.as_deref())?;
+    check_parties(&a.parties)?;
 
     let mut outcomes = Vec::new();
     let (p, q) = match (
@@ -93,6 +97,30 @@ pub fn run_compose(a: &ComposeArgs, out: &mut dyn Write) -> anyhow::Result<i32> 
             return Ok(EXIT_FED_MALFORMED);
         }
     };
+
+    // The parties named: each must be one of the two packages' parties.
+    let have = [p.sovereign_id.as_str(), q.sovereign_id.as_str()];
+    if let Some(missing) = a.parties.iter().find(|w| !have.contains(&w.as_str())) {
+        let other: Vec<&str> = have.iter().copied().filter(|h| !a.parties.iter().any(|w| w == h)).collect();
+        outcomes.push(FedOutcome::fail(
+            "parties",
+            format!(
+                "GB-191: the agreement is to be between {}, and the packages are {} and {}: {} is not one of them, and {} is not a party named",
+                a.parties.join(" and "),
+                have[0],
+                have[1],
+                missing,
+                if other.is_empty() { "none".to_string() } else { other.join(" and ") }
+            ),
+            "Compose only the packages of the parties named. Ask which package is the counterparty's; do not compose another party's.",
+        ));
+        outcomes.push(FedOutcome::skip(
+            "digest",
+            "a refusal produces no agreement and no digest",
+        ));
+        report_compose(out, a, Verdict::Fail, &now, None, Some("parties"), outcomes)?;
+        return Ok(EXIT_FED_REFUSED);
+    }
 
     match compose(&p, &q, now, &keys) {
         Composed::Refused(f) => {
@@ -148,6 +176,22 @@ pub fn run_compose(a: &ComposeArgs, out: &mut dyn Write) -> anyhow::Result<i32> 
             Ok(EXIT_OK)
         }
     }
+}
+
+/// `--party`: at most two, distinct, each a plain sovereign id.
+fn check_parties(parties: &[String]) -> anyhow::Result<()> {
+    if parties.len() > 2 {
+        anyhow::bail!("--party names the two parties of one agreement at most, not {}", parties.len());
+    }
+    if parties.len() == 2 && parties[0] == parties[1] {
+        anyhow::bail!("--party {} is given twice: an agreement is between two parties", parties[0]);
+    }
+    if let Some(bad) = parties.iter().find(|p| {
+        p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    }) {
+        anyhow::bail!("--party '{bad}' is not a sovereign id");
+    }
+    Ok(())
 }
 
 fn report_compose(
