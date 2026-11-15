@@ -12,12 +12,14 @@ it. No additional access is required, and none is asked for.
     responder.py <their wire prefix> <one of our release sets>
     e.g.         responder.py from/zagros release/weather
 """
-import json, time, base64, hashlib, urllib.request, sys
+import json, os, time, base64, hashlib, urllib.request, sys
 
-BASE      = "http://127.0.0.1:8000"
+BASE      = os.environ.get("BASE", "http://127.0.0.1:8000")   # this core's REST surface
 THEIR_WIRE= sys.argv[1]          # e.g. from/<them>       — where their probes land
 OUR_SET   = sys.argv[2]          # e.g. release/weather   — where our ack is staged
 seen = set()
+tries = {}                       # key -> failed acknowledgements so far
+TRIES = 25                       # then it is given up, about five seconds of passes
 
 def get(k):
     try:
@@ -36,7 +38,6 @@ while True:
         key = row.get("key", "")
         if key in seen:
             continue
-        seen.add(key)
         raw = base64.b64decode(row.get("value", "")) if row.get("value") else b""
         nonce = key.rsplit("/", 1)[-1]
         # The ack names what we saw and where we saw it. The digest is over the
@@ -49,5 +50,19 @@ while True:
             "observed_at":  time.time(),
             "responder":    OUR_SET,
         }, sort_keys=True)
-        put(f"{OUR_SET}/fedcheck-ack/{nonce}", ack)
+        # A failed write is not fatal: the key stays unseen and is tried again on
+        # the next pass (up to TRIES times), so one refused or timed-out PUT never
+        # stops the responder. The prober sends a fresh probe meanwhile anyway.
+        try:
+            put(f"{OUR_SET}/fedcheck-ack/{nonce}", ack)
+        except Exception as e:
+            tries[key] = tries.get(key, 0) + 1
+            last = tries[key] >= TRIES
+            print(f"responder: could not acknowledge {key}: {e}; " + ("giving up" if last else "trying again"),
+                  file=sys.stderr, flush=True)
+            if last:
+                seen.add(key)
+            continue
+        tries.pop(key, None)
+        seen.add(key)
     time.sleep(0.2)

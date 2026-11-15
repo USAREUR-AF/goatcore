@@ -71,8 +71,23 @@ python3 responder.py from/<them> release/<one of our sets>   # e.g. from/zagros 
 On the publishing sovereign, whenever you want the answer:
 
 ```bash
-./fedcheck.sh release/<one of our sets> from/<them> [timeout]   # e.g. release/weather from/xaa 20
+./fedcheck.sh release/<one of our sets> from/<them> [timeout] [gap]   # e.g. release/weather from/xaa 20 1
 ```
+
+Until an acknowledgement arrives, `fedcheck.sh` stages a probe with a fresh nonce once per
+`gap` seconds (default 1, and never more often than its half-second poll), and an
+acknowledgement of any probe it sent completes the round trip. The partner's edge
+downsamples what it receives from us: a second sample inside its interval is dropped with
+nothing logged. When both sides run phase 14 at once, our probe can arrive just behind their
+responder's acknowledgement of their own probe and be dropped; the next probe, one gap later,
+gets through. The nonce is fresh each time because the responder answers a key once only. A
+probe our core refuses (anything but HTTP 2xx) fails the check at once, naming the status; a
+core that never answers is named as such. Phase 14 passes its own sample gap, which is never
+shorter than the agreement's rate allows.
+
+`responder.py` reads `BASE` (default `http://127.0.0.1:8000`) as `fedcheck.sh` does. An
+acknowledgement it cannot write is logged on stderr and tried again on later passes, up to
+25 times; it does not stop the responder.
 
 Phase 14 (`ops/federation/standup/acceptance.sh`) runs it once per set we offer, and, when the
 partner's surface is reachable (a drill), once per set they offer in the other direction. It

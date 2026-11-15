@@ -59,7 +59,13 @@ Rules that keep the checks honest:
   check's question (§2.1).
 - **Rates.** Samples are spaced by the agreement's lowest `hz` (at least 0.5 seconds), because
   the receiving edge drops a second sample inside its downsampling interval with nothing
-  logged. A delivery read retries up to eight times, one second apart.
+  logged. A delivery read retries up to eight times, one second apart. That spacing holds
+  only among one runner's own samples. In a bilateral session both runners run the round
+  trip at once, so our probe can reach the partner's edge just behind their responder's
+  acknowledgement of their own probe and be dropped (measured in the hermetic two-sided
+  run). So the round trip sends a fresh probe once per gap, never faster, until one is
+  acknowledged, and any acknowledged probe passes (`fedcheck.sh`, built; tests
+  `test_roundtrip.py`). Not yet measured on a real edge.
 - **Where the probes run.** From the operator's machine. Reads and writes go through
   `FED_SSH_OURS` / `FED_SSH_THEIRS` when set (curl runs on the core host), else directly. The
   round-trip script is streamed over that ssh with `bash -s`; nothing is copied to a host.
@@ -328,6 +334,7 @@ broken on purpose (`Faults`). `test_acceptance.py` runs the real script against 
 | everything configured and working | exit 0, every row PASS in `result.json`, both round-trip directions |
 | no counterparty surface; no ACL trace; SPIRE not configured | exit 3, BLOCKED or SKIP rows, the outbound round trip still PASS |
 | a republisher down; a responder down | exit 1 |
+| the partner's edge drops our first round-trip probe | the next probe, one gap later, passes the round trip (exit 0) |
 | a REST surface answering HTTP 500 | no negative row PASS; delivery BLOCKED |
 | a surface answering every key with an old value | `fresh-keys` FAIL |
 | other bytes on arrival | FAIL with both digests |
