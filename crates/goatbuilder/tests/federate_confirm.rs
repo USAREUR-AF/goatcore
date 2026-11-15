@@ -313,3 +313,26 @@ fn a_new_package_by_its_digest_alone_carries_the_run_past_phase_5_when_the_keys_
     assert_eq!(std::fs::read(w.work.join("theirs.canonical.json")).unwrap(), new);
     assert!(w.log().contains("federate compose"), "compose ran on the new package: {}", w.log());
 }
+
+/// Window 6's next stop: after a transport rotation the recomposed agreement is
+/// the one both sides confirmed before (the agreement carries no WireGuard key),
+/// so phase 6 does not ask its digest again, and the run goes on.
+#[test]
+fn an_unchanged_agreement_digest_confirmed_before_is_not_asked_again() {
+    let w = world();
+    let fp = sha256_hex(b"fake-ca-der");
+    let key = their_key();
+    let (out, _) = w.run(&["hello-ally", "--partner-key", &key, "--partner-ca-fingerprint", &fp]);
+    assert!(out.status.success(), "{}", says(&out));
+    let digest = sha256_hex(&std::fs::read(w.work.join("agreement.json")).unwrap());
+    let (out, _) = w.run(&["hello-ally", "--resume", "--agreement-digest", &digest]);
+    assert!(out.status.success(), "{}", says(&out));
+    let new = resigned_with_transport("xab", &fp, Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="));
+    std::fs::write(w.work.join("theirs.incoming.json"), &new).unwrap();
+    let pkg = sha256_hex(&new);
+    let (out, v) = w.run(&["hello-ally", "--from", "5", "--to", "7", "--accept-partner-package", &pkg]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert!(!says(&out).contains("waiting for the agreement digest"), "{}", says(&out));
+    assert_eq!(sha256_hex(&std::fs::read(w.work.join("agreement.json")).unwrap()), digest, "the agreement is unchanged");
+    assert_eq!(phases_run(&v), [5, 6, 7], "{}", says(&out));
+}

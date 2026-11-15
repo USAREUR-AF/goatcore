@@ -2419,6 +2419,8 @@ mod tests {
             &[],
         );
         assert_eq!(code(&agreement(&w.paths, &mut s, &mut st, "r1")), "GB-191");
+        // The same agreement, its digest confirmed before: not asked again (ADR 1229:
+        // a transport rotation leaves the agreement as it was).
         let mut s = surface(
             Values {
                 partner_key: Some("k".into()),
@@ -2426,7 +2428,11 @@ mod tests {
             },
             &[],
         );
+        assert_eq!(code(&agreement(&w.paths, &mut s, &mut st, "r1")), "continue");
+        // Another agreement: asked.
+        std::fs::write(&w.paths.agreement, b"{\"a\":2}").unwrap();
         assert_eq!(code(&agreement(&w.paths, &mut s, &mut st, "r1")), "GB-192");
+        std::fs::write(&w.paths.agreement, b"{\"a\":1}").unwrap();
         let mut s = surface(
             Values {
                 ask: true,
