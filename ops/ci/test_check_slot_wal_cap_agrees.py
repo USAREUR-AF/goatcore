@@ -88,6 +88,11 @@ class Values(unittest.TestCase):
         self.assertEqual(Repo(image="1024 MB").check(), [])
         self.assertEqual(Repo(conf="max_slot_wal_keep_size = 1024MB\n").check(), [])
 
+    def test_a_table_cell_with_markdown_marks_is_read(self):
+        self.assertEqual(slotcap.size_bytes("`1GB`"), 1073741824)
+        self.assertEqual(slotcap.size_bytes("**6 GB**"), 6442450944)
+        self.assertEqual(Repo(image="`1 GB`", role_value="**6 GB**").check(), [])
+
     def test_sizes_are_read_with_decimals_and_every_postgres_unit(self):
         self.assertEqual(slotcap.size_bytes("1.5 GB"), 1610612736)
         self.assertEqual(slotcap.size_bytes("1TB"), 1099511627776)
@@ -125,6 +130,28 @@ class Mentions(unittest.TestCase):
     def test_a_mention_without_a_size_passes(self):
         self.assertEqual(Repo(extra={"docs/x.md": "Read max_slot_wal_keep_size on the site.\n"}).check(), [])
 
+    def test_a_size_on_the_next_line_counts_only_when_the_sentence_runs_on(self):
+        """A line that ends its sentence, followed by an unrelated size, is not a
+        statement of the cap."""
+        text = "Read `max_slot_wal_keep_size` on the site.\nThe disk is 20 GB.\n"
+        self.assertEqual(Repo(extra={"docs/x.md": text}).check(), [])
+        text = "- the setting `max_slot_wal_keep_size`\n- a 20 GB disk\n"
+        self.assertEqual(Repo(extra={"docs/x.md": text}).check(), [], "a new list item is a new sentence")
+
+    def test_a_byte_count_counts_only_in_configuration_files(self):
+        """A seven-digit number in prose (a row count, an id) is not a byte count."""
+        text = "max_slot_wal_keep_size was set during incident 20261114, after 1048576 rows.\n"
+        self.assertEqual(Repo(extra={"docs/x.md": text}).check(), [])
+        bad = Repo(extra={"rules/a.yaml": "x: 1073741824  # max_slot_wal_keep_size\n"}).check()
+        self.assertTrue(any(b.startswith("rules/a.yaml:1") for b in bad), bad)
+        bad = Repo(extra={"conf/x.conf": "# max_slot_wal_keep_size 1073741824\n"}).check()
+        self.assertTrue(any(b.startswith("conf/x.conf:1") for b in bad), bad)
+
+    def test_an_allow_line_naming_no_file_or_a_source_is_refused(self):
+        for entry in ("docs/missing.md", slotcap.README, slotcap.IMAGE_CONF, slotcap.ROLE_DEFAULTS):
+            bad = Repo(extra={slotcap.ALLOW: f"{entry}  a reason\n"}).check()
+            self.assertTrue(any(slotcap.ALLOW in b and entry in b for b in bad), (entry, bad))
+
     def test_the_allow_list_exempts_a_file_with_its_reason(self):
         extra = {
             "docs/drill.md": "Set `max_slot_wal_keep_size = 1GB` for the drill.\n",
@@ -136,6 +163,26 @@ class Mentions(unittest.TestCase):
         extra = {"docs/drill.md": "Set `max_slot_wal_keep_size = 1GB`.\n", slotcap.ALLOW: "docs/drill.md\n"}
         bad = Repo(extra=extra).check()
         self.assertTrue(any(slotcap.ALLOW in b and "reason" in b for b in bad), bad)
+
+
+class TheWorkflow(unittest.TestCase):
+    """The check reads every tracked file, so it runs on every pull request: a
+    violation in a path no other workflow filters on would merge and turn a later,
+    unrelated pull request red."""
+
+    def test_it_runs_on_every_pull_request(self):
+        import yaml
+        path = os.path.join(HERE, "..", "..", ".github", "workflows", "slot-wal-cap.yml")
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        on = doc.get(True, doc.get("on"))
+        self.assertIn("pull_request", on)
+        self.assertFalse((on.get("pull_request") or {}).get("paths"), "no paths filter")
+        runs = " ".join(str(st.get("run", "")) for j in doc["jobs"].values() for st in j["steps"])
+        self.assertIn("check-slot-wal-cap-agrees.py --self-test", runs)
+        self.assertIn("test_check_slot_wal_cap_agrees.py", runs)
+        with open(os.path.join(HERE, "unfiltered-pr-workflows.txt"), encoding="utf-8") as fh:
+            self.assertIn("slot-wal-cap.yml", fh.read())
 
 
 class ThisRepository(unittest.TestCase):
