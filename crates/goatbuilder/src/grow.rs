@@ -235,7 +235,12 @@ pub fn grow_with(
         .args(&render_args)
         .current_dir(repo)
         .output()
-        .map_err(|e| goat_errors::coded(RENDERER_FAILED_CODE, format!("cannot run python3 {RENDERER}: {e}")))?;
+        .map_err(|e| {
+            goat_errors::coded(
+                RENDERER_FAILED_CODE,
+                format!("cannot run python3 {RENDERER}: {e}"),
+            )
+        })?;
     if !out.status.success() {
         return Err(goat_errors::coded(
             RENDERER_FAILED_CODE,
@@ -288,7 +293,9 @@ fn handed_over_already(target: &Path) -> Report {
     checks.push(row(
         "next",
         match (env, site) {
-            (Some(env), Some(site)) => format!("goatbuilder validate, then goatbuilder standup {env} --site {site} --dry-run"),
+            (Some(env), Some(site)) => format!(
+                "goatbuilder validate, then goatbuilder standup {env} --site {site} --dry-run"
+            ),
             _ => "goatbuilder validate".to_string(),
         },
     ));
@@ -625,7 +632,10 @@ mod tests {
     /// A refused precondition exits 1 (EXIT_REFUSED), as the contract says.
     #[test]
     fn another_config_at_the_target_is_refused_and_nothing_changes() {
-        assert_eq!(goat_errors::explain(EXISTS_CODE).and_then(|e| e.exit), Some(EXIT_REFUSED));
+        assert_eq!(
+            goat_errors::explain(EXISTS_CODE).and_then(|e| e.exit),
+            Some(EXIT_REFUSED)
+        );
         let dir = checkout();
         std::fs::create_dir_all(dir.join("ops/goatbuilder")).unwrap();
         let other = "schema: goatbuilder/v1\npreset: full\nrepo: {source: example-org/other}\n";
@@ -664,7 +674,8 @@ mod tests {
             "GB-025's words are not GB-306's: {e:#}"
         );
         // GB-304's second site: preset: lite with no lite: block.
-        let no_block = "schema: goatbuilder/v1\npreset: lite\nrepo: {source: example-org/pasture}\n";
+        let no_block =
+            "schema: goatbuilder/v1\npreset: lite\nrepo: {source: example-org/pasture}\n";
         std::fs::write(dir.join(LITE_FILE), no_block).unwrap();
         let e = grow(&dir, true).unwrap_err();
         assert_eq!(code_of(&e).as_deref(), Some("GB-304"), "{e:#}");
@@ -718,10 +729,17 @@ mod tests {
             let r = grow(&dir, dry_run).unwrap();
             assert!(r.ok, "{}", details(&r));
             assert_eq!(r.exit, crate::EXIT_OK, "{}", details(&r));
-            assert!(details(&r).contains("already handed over"), "{}", details(&r));
+            assert!(
+                details(&r).contains("already handed over"),
+                "{}",
+                details(&r)
+            );
         }
         let written = std::fs::read_to_string(dir.join(TARGET)).unwrap();
         std::fs::write(dir.join(TARGET), written.strip_prefix(HEADER).unwrap()).unwrap();
-        assert_eq!(code_of(&grow(&dir, true).unwrap_err()).as_deref(), Some("GB-244"));
+        assert_eq!(
+            code_of(&grow(&dir, true).unwrap_err()).as_deref(),
+            Some("GB-244")
+        );
     }
 }
