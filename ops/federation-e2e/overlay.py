@@ -113,14 +113,17 @@ for them, o in peerings:
 
     gv = clone / "ops/ansible/group_vars" / f"{them}_edge"
     gv.mkdir(parents=True, exist_ok=True)
-    # The edge's certificates. With the edge on the driver (the inventory reaches it at
-    # 127.0.0.1), the edge mounts phase 8's files where they were minted, <work>/pki. With
+    # The edge's certificates. With the edge on the driver (the inventory reaches it at a
+    # loopback name), the edge mounts phase 8's files where they were minted, <work>/pki. With
     # the edge on a machine of its own (--edge-addr, the operator's workspace), nothing
     # would copy them there (GB-275): the role installs them from the controller instead
     # (goat_zenoh_edge_install_certs), derives the leaf and partner CA paths in its own
     # per-peering directory, and our CA is mounted from there, as goatbuilder renders it
     # (federate/peering_files.rs).
-    if edge_host == "127.0.0.1":
+    # The driver, as goatbuilder's GB-275 check tells it (federate/edge_delivery.rs, is_here):
+    # a 127/8 address, localhost or ::1.
+    h = edge_host.lower()
+    if h in ("localhost", "::1") or h.startswith("127."):
         our_ca_on_edge = f"{work}/pki/our-ca.pem"
         cert_vars = {
             "goat_zenoh_edge_partner_ca_path": f"{work}/pki/partner-ca.pem",
@@ -130,6 +133,9 @@ for them, o in peerings:
             "goat_zenoh_edge_inward_key": f"{work}/pki/peering-inward-key.pem",
         }
     else:
+        # The role's own per-peering directory (goat_zenoh_edge_cert_dir's default), written
+        # as a literal, as goatbuilder renders it (peering_files.rs, our_ca_on_edge): its
+        # GB-275 check reads these values as text and does not evaluate a template.
         our_ca_on_edge = f"/etc/goat-zenoh-edge-{them}/tls/our-ca.pem"
         cert_vars = {"goat_zenoh_edge_install_certs": True}
     edge_vars = {
