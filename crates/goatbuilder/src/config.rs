@@ -216,6 +216,12 @@ pub struct Peering {
     /// transport). Absent: wireguard. The one field for the transport.
     #[serde(default)]
     pub tunnel: Option<String>,
+    /// The federation package version this peering runs: `v1` or `v2`
+    /// (ADR 1242). Absent: v1. Both parties select the same one before either
+    /// emits it; read through [`Peering::package_version`].
+    #[serde(default)]
+    #[allow(dead_code)] // read by phase 3 and phase 6 in the next step (ADR 1242 P3); the tests read it now
+    pub package: Option<String>,
     /// Release sets this peering offers, narrowing the `[data] release` of the
     /// goat context's federation.toml, which owns them. Absent: all of them.
     /// Checked by federate/declaration.rs: it may narrow, never widen.
@@ -248,6 +254,15 @@ pub struct Peering {
     #[serde(default)]
     #[allow(dead_code)] // read where the forwarder is rendered and applied
     pub forwarder: Option<PeeringForwarder>,
+}
+
+impl Peering {
+    /// The package version this peering runs, `v1` unless it selects `v2`.
+    /// The schema admits only those two, so anything else never reaches here.
+    #[allow(dead_code)] // as `package`: phase 3 and phase 6 read it in the next step
+    pub fn package_version(&self) -> &str {
+        self.package.as_deref().unwrap_or("v1")
+    }
 }
 
 /// Where the edge and the core are, as the inventory reaches them.
