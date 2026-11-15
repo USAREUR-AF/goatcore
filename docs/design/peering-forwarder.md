@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built, not yet run between two goatnets.** Forwarder: `roles/goat-peering-forwarder`, play `ops/ansible/peering-forwarder.yml`, applied by `goatbuilder federate` from the peering declaration (§7, built, WIP). Edge: `peering_wg_via_forwarder` in `roles/goat-peering-wg`. Guard: `ops/ci/check-peering-forwarder-holds-nothing.py`. Container test: `ops/ci/test-peering-forwarder-e2e.sh`. `forwarder:` is validated by `ops/federation/validate-partners.py`. The package member `transport_offer.via` (§6) is designed, not built |
+| Status | **Built, not yet run between two goatnets.** Forwarder: `roles/goat-peering-forwarder`, play `ops/ansible/peering-forwarder.yml`, applied by `goatbuilder federate` from the peering declaration (§7: built; not measured on two peerings relayed by one forwarder). Edge: `peering_wg_via_forwarder` in `roles/goat-peering-wg`. Guard: `ops/ci/check-peering-forwarder-holds-nothing.py`. Container test: `ops/ci/test-peering-forwarder-e2e.sh`. `forwarder:` is validated by `ops/federation/validate-partners.py`. The package member `transport_offer.via` (§6) is designed, not built |
 | Decision | [ADR 1218](../adr/1218-peering-forwarder-when-neither-edge-accepts-inbound.md), amends [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md) step 1 |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) (step 1 and step 5), [`federation-package-spec.md`](federation-package-spec.md) (`transport_offer`), `roles/goat-peering-wg` |
 | Audience | Operators of two goatnets that want to federate; whoever accredits the interconnection |
@@ -185,7 +185,7 @@ two parties can establish the same fact on a call.
 
 ### Applied by the driver from the peering declaration
 
-Status: built (`crates/goatbuilder/src/federate/forwarder.rs`, `ops/ansible/peering-carrier-keys.yml`, unit tests, and case 8 of `ops/ci/test-peering-forwarder-role.sh`). Status: WIP — gate: two peerings relayed by one forwarder to one edge, both carrying data, in the federation test environment, with the forwarder applied by `goatbuilder federate` and nothing set by hand.
+Status: built (`crates/goatbuilder/src/federate/forwarder.rs`, `ops/ansible/peering-carrier-keys.yml`, unit tests, and case 8 of `ops/ci/test-peering-forwarder-role.sh`). Not measured: two peerings relayed by one forwarder to one edge, both carrying data, in the federation test environment, with the forwarder applied by `goatbuilder federate` and nothing set by hand. The test environment's `forwarder-path` scenario (`ops/federation-e2e/units/forwarder.sh`) relays one peering and applies the forwarder with the operator's plays, not with `goatbuilder federate` ([federation-e2e-environment.md](federation-e2e-environment.md), the forwarder path row).
 
 A peering says a forwarder relays it with `forwarder:` in its goatbuilder.yaml `peerings:` entry. A peering without it is unchanged.
 

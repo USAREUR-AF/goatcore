@@ -10,6 +10,16 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Fixed: a failed phase prints its fix once, and an incomplete acceptance names the command that resumes it
+
+A failed phase's `interpreted` row printed the error catalog's fix twice:
+inside the row's text, then again on its own `Fix:` line. It now prints
+it once, on the `Fix:` line, and `-o json` keeps it in the row's `fix`
+field. This applies to `standup`, `join-node`, `deploy` and `federate`.
+When phase 14 ends INCOMPLETE (X-ACCEPT-001), the fix now names
+`goatbuilder federate <peering> --from 14` and no longer names the scripts
+avenue's `ops/scripts/peering-standup.sh` (#911).
+
 #### Added: `goatbuilder federate rotate <partner> ipsec-leaf` and `ipsec-ca` rotate an ipsec-fips peering's leaf
 
 On a peering whose agreement chose ipsec-fips, `goatbuilder federate rotate
@@ -25,6 +35,33 @@ removes the set-aside key, only once phase 14 passed here after the switch
 (GB-309; the partner's phase 14 is theirs to confirm on the call), and never while another rotation is under way. A
 new rotation waits for the last one's retire (GB-298). A WireGuard
 peering's keys are rotated with `leaves`, `carrier` or `transport`.
+
+#### Added: goatbuilder grow hands a goatlite over to the full preset
+
+`goatbuilder grow` rewrites `goatlite.yaml` as a full configuration with the
+same values. Before it changes anything, it shows:
+- the difference, leaf by leaf;
+- the configuration file it writes;
+- each file whose generated header it takes off;
+- the removal of `goatlite.yaml`;
+- the renderer command it runs, exactly as it runs it.
+
+`--dry-run` stops there. At a terminal it then asks, and goes on only when
+you type yes. It asks only when stdin and stderr are both a terminal; otherwise,
+including `goatbuilder grow 2>file`, it needs `--yes`. With `--yes` it does not ask. A run writes
+`ops/goatbuilder/goatbuilder.yaml`, takes the generated header off every file
+the goatlite's render wrote, so each is yours, and removes `goatlite.yaml`.
+It changes files in the checkout only, never a host. Before you commit, git
+undoes it: restore `goatlite.yaml` and the files it handed over, and delete
+`ops/goatbuilder/goatbuilder.yaml`.
+It refuses, and changes nothing, when `goatlite.yaml` is not a goatlite
+(GB-304), when `ops/goatbuilder/goatbuilder.yaml` already holds another
+configuration (GB-305, which says so when the file is grow's own from an earlier run, since edited), or when the grown configuration is incomplete
+(GB-306: a four-fact file names no `repo` or `components`). A renderer that
+fails or refuses stops it with the renderer's own words (GB-258). Run again
+after it finished, it says the goatlite was already handed over. It is step 3 of
+the growth design; the other steps are not built, and it has not run on
+hardware.
 
 #### Fixed: join-node reads goatnet_founder as Ansible does
 
@@ -95,8 +132,8 @@ rekeys the IKE SA before the re-authentication, so no rekey of either side, whic
 keeps the old authentication, can pass the confirm on the old leaf, and it refuses
 an IKE rekey interval too short to hold the confirm. `peering_edge_remote_ca_next_path` accepts a
 partner's new CA beside the current one during their rotation. It is opt-in,
-and without a rotation id nothing changes. `goatbuilder federate rotate` does
-not drive it yet.
+and without a rotation id nothing changes. `goatbuilder federate rotate
+<partner> ipsec-leaf` and `ipsec-ca` drive it.
 
 #### Changed: `federate rotate <partner> ca` says the CA rotation is decided, not built
 
