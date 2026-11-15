@@ -122,8 +122,10 @@ under (`ingress_prefix`, of the form `from/<partner>`). `goatbuilder federate
 default, or `v2` (ADR 1242). v2 adds the announcement of a next CA, so our CA
 can rotate without a gap. Both parties select the same version in reviewed
 configuration before either emits it; a pair of one v1 and one v2 package is
-refused, never composed. This build reads the selection; it does not yet act on
-it (`docs/design/federation-package-v2-spec.md`, "Status").
+refused, never composed. This build does not run v2 yet, so `goatbuilder
+validate` refuses `package: v2` ("package v2 is not yet supported by this
+goatbuilder", GB-025) rather than run the peering as v1
+(`docs/design/federation-package-v2-spec.md`, "Status").
 
 ```yaml
 peerings:

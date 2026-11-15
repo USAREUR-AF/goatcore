@@ -220,7 +220,6 @@ pub struct Peering {
     /// (ADR 1242). Absent: v1. Both parties select the same one before either
     /// emits it; read through [`Peering::package_version`].
     #[serde(default)]
-    #[allow(dead_code)] // read by phase 3 and phase 6 in the next step (ADR 1242 P3); the tests read it now
     pub package: Option<String>,
     /// Release sets this peering offers, narrowing the `[data] release` of the
     /// goat context's federation.toml, which owns them. Absent: all of them.
@@ -259,7 +258,6 @@ pub struct Peering {
 impl Peering {
     /// The package version this peering runs, `v1` unless it selects `v2`.
     /// The schema admits only those two, so anything else never reaches here.
-    #[allow(dead_code)] // as `package`: phase 3 and phase 6 read it in the next step
     pub fn package_version(&self) -> &str {
         self.package.as_deref().unwrap_or("v1")
     }
@@ -544,6 +542,16 @@ pub fn cross_field(cfg: &Config) -> Vec<String> {
 /// `cross_field`, with the peering allocation record read from `record_dir`.
 pub fn cross_field_at(cfg: &Config, record_dir: Option<&Path>) -> Vec<String> {
     let mut out = Vec::new();
+    // ADR 1242: `package: v2` is in the schema, and nothing in this build reads
+    // it yet. Refused rather than quietly run as v1; the change that wires v2
+    // into the phases removes this.
+    for (pi, p) in cfg.peerings.iter().enumerate() {
+        if p.package_version() == "v2" {
+            out.push(format!(
+                "peerings/{pi}/package: package v2 is not yet supported by this goatbuilder; leave it out (v1) until a goatbuilder that runs v2 is installed on both sides"
+            ));
+        }
+    }
     let names: Vec<&str> = cfg.environments.iter().map(|e| e.name.as_str()).collect();
     let mut dupes: Vec<&str> = names
         .iter()
