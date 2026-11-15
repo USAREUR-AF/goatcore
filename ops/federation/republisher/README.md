@@ -176,7 +176,7 @@ Everything comes from it:
 | `flows[from == us].release` | the local subscriptions |
 | `flows[…].publish_under` | re-derived and compared; a mismatch means the file was hand-edited, and is a refusal |
 | `envelope.bytes_per_message` | oversize samples are dropped **whole**, never truncated |
-| `envelope.hz` | shed above the receiver's declared rate |
+| `envelope.hz` | the lane's aggregate ceiling, one message per 1/`hz` seconds across every wire key: the receiver's edge drops a second message inside that interval. Today the republisher sheds above `hz` messages in each one-second window, which lets a burst through that the receiver then drops; [ADR 1244](../../../docs/adr/1244-a-lanes-accept-hz-is-its-aggregate-ceiling-and-the-sender-paces-to-it.md) (Proposed) replaces that with pacing to the spacing, shedding and counting only what cannot be sent in time (designed, not built) |
 | `envelope.distinct_keys` | a new wire key beyond the ceiling is refused; keys already admitted keep flowing. The refusal is logged at WARN, naming the limit and the release pattern the key matched (never the key, which may carry data; the key is logged at debug), at most once a minute; the new keys refused in between are counted into the next warning and in `refused_total{reason="cardinality_shed"}` |
 | `expires` | refused at startup, and the flow stops on the day after without an operator touching anything |
 
