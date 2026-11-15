@@ -77,7 +77,10 @@ for it. A phone that is off for days falls behind the founder's WAL limit and
 must be seeded again. The alternative is a phone profile that is a mesh peer
 with its own router and local services and is not a replication member. The
 first phone is a full member, to prove the standard path; which of the two a
-phone node is by default is not decided.
+phone node is by default is not decided. How long a full member may be off
+before a site invalidates its slot is measured during gate row H8's week
+([goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md),
+"How long a phone may be off").
 
 ## Staying up
 

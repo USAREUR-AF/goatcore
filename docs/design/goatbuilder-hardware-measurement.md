@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed.** The per-step timing file and its summary line are built for `standup`, `join-node` and `teardown`, each row with its cause; standup records phase 11 as a row of its own and its summary reads the founder run's numbers from the file (below). The row C3 procedure ("`status` on a standing goatnet", below) uses only built verbs and a built script. Everything else on this page is designed and not built. No run on hardware has been measured against it |
-| Proves | Gate rows C1 (a founder site in 60 minutes or less, a node in 15, a burn-down in 15) C2 (tutorials 2 and 3 on real machines) and C3 (`status` agrees with `verify` and `diff` on a standing goatnet) of the goatbuilder 1.0 gate |
+| Status | **Designed.** The per-step timing file and its summary line are built for `standup`, `join-node` and `teardown`, each row with its cause; standup records phase 11 as a row of its own and its summary reads the founder run's numbers from the file (below). The row C3 procedure ("`status` on a standing goatnet", below) and the phone procedures for rows H7 and H8 ("A phone node on hardware", below) use only built verbs and scripts. Everything else on this page is designed and not built. No run on hardware has been measured against it |
+| Proves | Gate rows C1 (a founder site in 60 minutes or less, a node in 15, a burn-down in 15) C2 (tutorials 2 and 3 on real machines), C3 (`status` agrees with `verify` and `diff` on a standing goatnet), H7 (a phone built by one command) and H8 (a phone node for seven days) of the goatbuilder 1.0 gate |
 | Design | [goatbuilder-speed.md](goatbuilder-speed.md) (the targets and the modelled budget) · [goatnet-tutorials.md](goatnet-tutorials.md) (the tutorials and their checkpoints) · [goatnet-standup.md](../operations/goatnet-standup.md) (the prerequisites and the phases) |
 
 A timed run is worth something only if a second person can repeat it and get a
@@ -258,6 +258,147 @@ verdict.
 The same three verbs run through the binary on a stand-in transport in
 `crates/goatbuilder/tests/status_real_hosts.rs`, so the procedure can be
 rehearsed without a goatnet.
+
+## A phone node on hardware (rows H7 and H8)
+
+Row H7 is one phone built from a reset VM to a verified node by one command,
+with the released binary, in one run that is not resumed. Row H8 is that node
+still a node seven days later, with a phone reboot during the week that it
+comes back from without a person. The phone, the VM and what the tool does to
+them are in [phone-node.md](phone-node.md).
+
+### Before the clock (H7)
+
+- **The phone.** An Android phone whose Linux Terminal app runs a Debian VM
+  (Android 16 on a recent Pixel), with USB debugging allowed. Allowing USB
+  debugging is done by hand on each phone. Switch off the app store's
+  automatic updates: an update of Android's WebView stops the VM.
+- **A reset VM.** In the Terminal app: settings, Recovery, "Reset to
+  initial version". The tool installs the image again if the app asks for
+  it, inside the clock.
+- **The computer.** The released `goatbuilder`, `adb` on the `PATH`, the
+  phone on a USB cable and unlocked. With more than one device attached, set
+  `ANDROID_SERIAL`.
+- **The site.** The phone node declared in the site's inventory with no
+  address, under class `phone`, as site `delta` of
+  `ops/goatbuilder/fixtures/join-node-third-site` declares its phone. The site
+  states none of the values the class carries (gate row H5).
+- **A clean record.** Move aside any earlier
+  `<state_dir>/join-node-<site>-<node>-timings.tsv` and the node's SSH files
+  `<state_dir>/join-node-<site>-<node>-usb.*` (a reset VM has new host keys). `state_dir` is `deploy.state_dir` of
+  `goatbuilder.yaml`, `~/.goat/state` when unset.
+- **A rehearsal.** `--dry-run` prints every phase and runs nothing.
+
+### The run (H7)
+
+```bash
+goatbuilder --version
+goatbuilder join-node <environment> --site <site> --node <node> --class phone --via usb --dry-run
+time goatbuilder join-node <environment> --site <site> --node <node> --class phone --via usb --yes
+```
+
+`--yes` answers the run's confirmations, so no prompt waits inside the clock.
+The clock starts when the command starts and stops when it exits. Phase 2
+prepares the VM and runs its integrity checks, and phases 3 to 15 join the
+node as any `join-node` does.
+
+**It passes** when the command exits 0 after phase 15, and the timing file
+shows one run. The file holds exactly one phase-1 row, every row exits 0, and
+no step label appears twice. A `--from` resume, or a step run again after a
+failure, adds a second row for a step, and that run is not H7: fix the cause
+and start again from a reset VM.
+
+### What to keep (H7)
+
+| Field | Content |
+|---|---|
+| Build | the goatcore commit and the `goatbuilder --version` output |
+| Phone | the model, the Android version, and the VM's kernel after the run (`uname -r` in the VM) |
+| Result | the exit code, the wall time from `time`, and the process summary line `join-node` prints at the end |
+| Phases | the timing file, with phase 2's rows (the VM's preparation and checks) named |
+| Before the clock | whether the Terminal app had to install its image again, and how long the reset took |
+
+The timing file and the run's output name the site, the node and the goatnet's
+hosts, so they go to the operator's private record. The gate row records only
+the version, the commit, the phone model and Android version, the total time,
+phase 2's time and "one run, no resume".
+
+### The seven days (H8)
+
+H8 starts when H7's run ends, with the phone on power, the screen off and the
+launcher installed (`ops/phone/vm-launcher/README.md`). Once a day, from the
+operator's computer:
+
+```bash
+# 1. the H4 checks, in the VM, over the mesh (no USB cable needed after enrolment)
+ssh <deploy user>@<node mesh address> 'bash -s' < ops/scripts/phone-node-integrity.sh
+# 2. the node as goatbuilder reads it
+goatbuilder status --env <environment> -o json > status-day<N>.json
+```
+
+Check 1 writes 512 MiB and drops the page cache, a few seconds of load on a
+running node. Each day keeps the check's exit code (0, or its one
+`integrity: <what>` line), the node's `status` rows, and the time.
+
+**The reboot.** Once during the week, reboot the phone and record three
+times: the reboot, the VM running again (`adb shell` finds the VM's address,
+or the node answers on the mesh), and the node's rows converged in `status`
+again. "Without a person" is met only when nobody touches the phone. The
+launcher starts the VM at the first unlock, and Android delivers its start
+signal at boot only on a phone with no lock screen. A node phone with no lock
+screen is a decision about the phone's own security, and it is the operator's
+to make before the run. With a lock screen, the run records the one unlock,
+and H8 is not met as written.
+
+**It passes** when every day's integrity check exits 0, the node's `status`
+rows are converged on every day, and the node came back after the reboot.
+
+### How long a phone may be off
+
+A phone node is a full replication member (the class's `converges_as: core`).
+Every site that replicates with it keeps a replication slot for it, and
+Postgres invalidates a slot that holds more WAL than `max_slot_wal_keep_size`.
+After that the phone must be seeded again
+([post-partition-convergence-runbook.md](../operations/post-partition-convergence-runbook.md),
+"A. Slot rebuild — the destructive path"); `goatbuilder` has no path for the re-seed yet. The cap is
+1 GB in the image's `postgresql.conf` and 6 GB where the
+`postgres-streaming-replication` role sets it. Read the live value; never
+assume either one.
+
+H8 measures the budget. On each site that replicates, twice a day during the
+week, in the convergence runbook's way (`psql -h 127.0.0.1 -p 5432 -U postgres
+-d postgres` on the site's management host):
+
+```sql
+SELECT now(), pg_current_wal_lsn(), current_setting('max_slot_wal_keep_size');
+SELECT slot_name, active, wal_status, safe_wal_size,
+       pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) AS retained
+  FROM pg_replication_slots ORDER BY slot_name;
+```
+
+The site's WAL rate is the difference of two `pg_current_wal_lsn()` readings
+(`pg_wal_lsn_diff`) divided by the time between them. During the reboot, the
+slots that read `active = f` while every other site is up are the phone's.
+A slot can be off for about `safe_wal_size` divided by the WAL rate before it
+is invalidated, and the phone's budget is the smallest such time over its
+slots. For example, a 1 GiB cap and a rate of 2 MiB an hour allow about
+21 days. That is arithmetic for the reader, not a measurement. The H8 record
+keeps the readings, each site's rate, and the budget computed from them.
+
+### What to keep (H8)
+
+| Field | Content |
+|---|---|
+| Days | each day's integrity exit code or line, and the node's `status` rows |
+| Reboot | the three times, and whether a person touched the phone |
+| Slots | each reading of the two queries, per site |
+| Budget | each site's WAL rate and live cap, and the phone's off-time budget |
+| Unmeasured | anything not watched: battery, Doze, heat, a mobile-data uplink (phone-node.md, "Staying up") |
+
+The readings name slots, sites and hosts, so they go to the operator's private
+record. The gate row records the seven daily verdicts, the reboot's recovery
+time, whether a person acted, and the off-time budget with the cap and rate
+it was computed from.
 
 ## What a measurement records
 
