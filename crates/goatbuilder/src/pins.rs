@@ -703,7 +703,7 @@ pub fn load_allowlist(p: &Paths) -> Result<(BTreeSet<String>, usize, Option<usiz
     }
     let mut rows = BTreeSet::new();
     let mut baseline = None;
-    let text = std::fs::read_to_string(&path)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
     for raw in text.lines() {
         if let Some(b) = raw.trim().strip_prefix("# baseline:") {
             if let Some(n) = b.split_whitespace().next().and_then(|x| x.parse::<usize>().ok()) {
