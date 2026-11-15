@@ -3003,7 +3003,7 @@ entries:
   - code: GB-191
     tool: goatbuilder
     title: a value for confirmation 1 does not match
-    what: "At phase 5 or 6 a value given by flag or typed is not the one the files hold: their CA fingerprint is not their package's, their CA certificate does not carry that fingerprint, their verifying key is not 32 bytes of base64 or does not verify their half, a sovereign id is not a plain id or is not the declared counterparty, the agreement digest differs, or a package offered as the partner's new one is not signed by the key bound for them or is not the one --accept-partner-package names (ADR 1229; a package not signed by that key is set aside as `theirs.incoming.json.refused-<UTC time>`). The run stopped; at phase 5 no keyring was written and no package was placed, and at phase 6 the composed agreement is left for inspection."
+    what: "At phase 5 or 6 a value given by flag or typed is not the one the files hold: their CA fingerprint is not their package's, their CA certificate does not carry that fingerprint, their verifying key is not 32 bytes of base64 or does not verify their half, a sovereign id is not a plain id or is not the declared counterparty, the agreement digest differs, or a package offered as the partner's new one is not well formed, is not signed by the key bound for them, or is not the one --accept-partner-package names (ADR 1229; such a package is set aside as `theirs.incoming.json.refused-<UTC time>`), or, before any phase after 5, the partner's package on disk is not the one confirmed at phase 5 (it changed after phase 5; run phase 5 again). The run stopped; at phase 5 no keyring was written and no package was placed, and at phase 6 the composed agreement is left for inspection."
     causes:
       - a value was misheard or mistyped on the call
       - the partner published a new package or CA after reading theirs aloud
@@ -3621,10 +3621,24 @@ entries:
     matches:
       - "\\(GB-278\\)"
 
+  - code: GB-310
+    tool: goatbuilder
+    title: the package held for a partner cannot be read, so it cannot be recorded as confirmed
+    what: "A peering whose phase 5 was confirmed by a goatbuilder that did not record the partner's package (before ADR 1229) has its held package recorded as the confirmed one on its first run under this build, before any phase: journaled as a migration, not as a person's confirmation, so a package older than it is refused and compose checks it. The package held for <partner> at <work>/theirs.canonical.json could not be read, so nothing could be recorded, and the run stopped rather than going on unprotected. Nothing ran."
+    causes:
+      - "<work>/theirs.canonical.json was removed or moved, or is not readable by this user"
+    fixes:
+      - "put the package confirmed with the partner back at <work>/theirs.canonical.json, then run the same command again"
+      - "or confirm the keys and the package with the partner again: goatbuilder federate <partner> --from 5 --partner-key <key> --partner-ca-fingerprint <fp>"
+    read: docs/design/federation-key-rotation.md
+    exit: 1
+    matches:
+      - "^GB-310: "
+
   - code: GB-308
     tool: goatbuilder
     title: the partner's package offered is older than the one we hold
-    what: "At phase 5, a package from the partner signed by the key already bound was offered as their new one (by the directory step at <work>/theirs.incoming.json, or copied over <work>/theirs.canonical.json by hand), and its `issued` date is before the one of the package we hold (ADR 1229). `issued` is the only member that orders a party's packages, so an older one is a replay or a rollback. It is refused, even with --accept-partner-package and its own digest, so a replay is never asked about and approved by habit. Nothing was placed; a file from the directory step was set aside as theirs.incoming.json.refused-<UTC time>."
+    what: "At phase 5, a package from the partner signed by the key already bound was offered as their new one (by the directory step at <work>/theirs.incoming.json, or copied over <work>/theirs.canonical.json by hand), and its `issued` date is before the one of the package we hold, or it has no readable `issued` date while the one we hold has (ADR 1229). `issued` is the only member that orders a party's packages, so an older one is a replay or a rollback. It is refused, even with --accept-partner-package and its own digest, so a replay is never asked about and approved by habit. Nothing was placed; a file from the directory step was set aside as theirs.incoming.json.refused-<UTC time>."
     causes:
       - "a directory, or a copy on the hand-exchange path, served an older package the partner once signed"
       - "the partner rolled back to an earlier package without publishing it again"

@@ -485,11 +485,10 @@ pub fn exchange(
             ("partner_ca_fingerprint".to_string(), their_fp),
             ("partner_ca_fingerprint_how".to_string(), fp_how.to_string()),
             ("partner_package".to_string(), sha256(&theirs_bytes)),
-            (
-                "partner_package_issued".to_string(),
-                issued(&theirs_bytes).unwrap_or_default(),
-            ),
-        ]),
+        ])
+        .into_iter()
+        .chain(issued(&theirs_bytes).map(|d| ("partner_package_issued".to_string(), d)))
+        .collect(),
     );
     rows.push(ok("confirm", format!("keys confirmed ({how}): {them}'s verifying key verifies their half, and their CA fingerprint is the one read aloud; both keys written to {}", paths.keyring.display())));
     Step {
@@ -691,6 +690,24 @@ fn set_aside(path: &Path, tag: &str) -> std::io::Result<std::path::PathBuf> {
     Ok(aside)
 }
 
+/// A copy of `path` at `<path>.<tag>-<UTC time>`, keeping any earlier copy;
+/// `path` itself is left where it is.
+fn copy_aside(path: &Path, tag: &str) -> std::io::Result<std::path::PathBuf> {
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let name = path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let mut aside = path.with_file_name(format!("{name}.{tag}-{stamp}"));
+    let mut n = 1;
+    while aside.exists() {
+        n += 1;
+        aside = path.with_file_name(format!("{name}.{tag}-{stamp}-{n}"));
+    }
+    std::fs::copy(path, &aside)?;
+    Ok(aside)
+}
+
 /// Write `body` to `path` (0600) through a file beside it, so a reader sees
 /// the old package or the new one, never part of one.
 fn place(path: &Path, body: &[u8]) -> std::io::Result<()> {
@@ -706,15 +723,24 @@ fn place(path: &Path, body: &[u8]) -> std::io::Result<()> {
 /// Replace the package at `path` with `body`, keeping the old one at
 /// `<path>.<tag>-<UTC time>`. `between` runs after the old one is kept and
 /// before the new one is written (a test injects a failure or a crash there).
+///
+/// The old package is COPIED aside and the new one is renamed over it, so at
+/// every moment, a crash included, `path` holds the old package or the new
+/// one, never neither. On a failure the copy is removed and the old package
+/// is where it was.
 fn replace_counterparty(
     path: &Path,
     body: &[u8],
     tag: &str,
     between: &mut dyn FnMut() -> std::io::Result<()>,
 ) -> Result<std::path::PathBuf, (bool, std::io::Error)> {
-    let aside = set_aside(path, tag).map_err(|e| (false, e))?;
-    between().map_err(|e| (true, e))?;
-    place(path, body).map_err(|e| (true, e))?;
+    let aside = copy_aside(path, tag).map_err(|e| (false, e))?;
+    let done = between().and_then(|_| place(path, body));
+    if let Err(e) = done {
+        let _ = std::fs::remove_file(&aside);
+        let _ = std::fs::remove_file(path.with_extension("placing"));
+        return Err((true, e));
+    }
     Ok(aside)
 }
 
@@ -723,9 +749,23 @@ fn replace_counterparty(
 /// partner-package confirmation (ADR 1229), or the migration record a build
 /// writes for a peering confirmed before it recorded the package. The most
 /// recent of them, in journal order. `None` before their key is bound.
-pub fn confirmed_package(_st: &State) -> Option<(String, Option<String>)> {
-    None
+pub fn confirmed_package(st: &State) -> Option<(String, Option<String>)> {
+    let nonempty = |v: Option<&String>| v.filter(|d| !d.is_empty()).cloned();
+    st.confirmations
+        .iter()
+        .rev()
+        .filter(|c| c.phase == 5)
+        .find_map(|c| match c.kind.as_str() {
+            "keys" => nonempty(c.values.get("partner_package"))
+                .map(|d| (d, nonempty(c.values.get("partner_package_issued")))),
+            "partner-package" | MIGRATED => Some((c.bound_to.clone(), nonempty(c.values.get("issued"))))
+                .filter(|(d, _)| !d.is_empty()),
+            _ => None,
+        })
 }
+
+/// The journal kind of the migration record.
+pub const MIGRATED: &str = "partner-package-recorded";
 
 /// The code for a held package that cannot be read when a peering confirmed
 /// before this build is recorded (ADR 1229 migration).
@@ -735,15 +775,74 @@ pub const UNREADABLE_HELD: &str = "GB-310";
 /// package: record the package held now as the confirmed one, journaled as a
 /// migration, not as a person's confirmation. Stops (GB-310) when the held
 /// package cannot be read. `None` when there is nothing to record.
-pub fn migrate(_paths: &Paths, _st: &mut State, _run: &str) -> Option<Step> {
-    None
+pub fn migrate(paths: &Paths, st: &mut State, run: &str) -> Option<Step> {
+    let keys = st.confirmations.iter().any(|c| c.kind == "keys" && c.phase == 5);
+    if !keys || confirmed_package(st).is_some() {
+        return None;
+    }
+    let them = st.peering.clone();
+    let bytes = match std::fs::read(&paths.counterparty) {
+        Ok(b) => b,
+        Err(e) => {
+            return Some(fail(
+                UNREADABLE_HELD,
+                format!(
+                    "the package held for {them} cannot be read, so it cannot be recorded as confirmed ({}: {e}); nothing ran",
+                    paths.counterparty.display()
+                ),
+                format!("put the package confirmed with {them} back at {}, or run phase 5 again with them: goatbuilder federate {them} --from 5", paths.counterparty.display()),
+            ))
+        }
+    };
+    let digest = sha256(&bytes);
+    let when = issued(&bytes);
+    let mut values = BTreeMap::from([
+        ("partner".to_string(), them.clone()),
+        ("digest".to_string(), digest.clone()),
+    ]);
+    if let Some(d) = &when {
+        values.insert("issued".to_string(), d.clone());
+    }
+    st.record_migration(run, 5, MIGRATED, &digest, values);
+    Some(Step {
+        rows: vec![ok(
+            "partner-package",
+            format!(
+                "recorded the package held for {them} ({digest}{}) as the one confirmed: phase 5 was confirmed by a build that did not record it. A migration, not a confirmation; from now on a package older than it is refused and compose checks it",
+                when.map(|d| format!(", issued {d}")).unwrap_or_else(|| ", no readable issued date".into())
+            ),
+        )],
+        verdict: Verdict::Continue,
+    })
 }
 
 /// Before any phase after 5: the package on disk is the one the last
 /// confirmation names (GB-191, naming phase 5), whatever phase the run
 /// started from. `None` when it is, or before their key is bound.
-pub fn compose_guard(_paths: &Paths, _st: &State) -> Option<Step> {
-    None
+pub fn compose_guard(paths: &Paths, st: &State) -> Option<Step> {
+    let (want, _) = confirmed_package(st)?;
+    let them = st.peering.clone();
+    let fix = format!("run phase 5 again, which asks about a package that changed: goatbuilder federate {them} --from 5");
+    match std::fs::read(&paths.counterparty) {
+        Ok(b) if sha256(&b) == want => None,
+        Ok(b) => Some(fail(
+            "GB-191",
+            format!(
+                "{} holds package {}, not the one confirmed at phase 5 ({want}); it changed after phase 5, so nothing after phase 5 ran",
+                paths.counterparty.display(),
+                sha256(&b)
+            ),
+            fix,
+        )),
+        Err(e) => Some(fail(
+            "GB-191",
+            format!(
+                "{} cannot be read ({e}); the package confirmed at phase 5 is {want}, so nothing after phase 5 ran",
+                paths.counterparty.display()
+            ),
+            fix,
+        )),
+    }
 }
 
 /// Phase 5, before the keys: a new package from the partner under the key
@@ -774,13 +873,8 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
         Ok(b) => (b, false),
         Err(_) => {
             // The hand path's other door: a file copied over the placed one.
-            let bound_for = st
-                .confirmations
-                .iter()
-                .find(|c| c.kind == "keys" && c.phase == 5)
-                .and_then(|c| c.values.get("partner_package"))?;
-            let now = sha256(&placed);
-            if *bound_for == now || st.confirmed("partner-package", 5, &now).is_some() {
+            let (bound_for, _) = confirmed_package(st)?;
+            if bound_for == sha256(&placed) {
                 return None;
             }
             (placed.clone(), true)
@@ -788,6 +882,23 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
     };
     let digest = sha256(&body);
     let new_v: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+    // The parser's refusal first: a package it refuses (an `issued` that is not
+    // a date among them) is not checked for a signature, ordered or asked about.
+    if let Err(f) = goat_federation::package::parse_package(&body) {
+        let what = if by_hand {
+            format!("{} is not a well-formed package ({f:?})", paths.counterparty.display())
+        } else {
+            match set_aside(&held, "refused") {
+                Ok(p) => format!("the package offered as {them}'s new one is not a well-formed package ({f:?}); it was set aside at {}", p.display()),
+                Err(e) => format!("the package offered as {them}'s new one is not a well-formed package ({f:?}), and it could not be set aside ({e}); remove {}", held.display()),
+            }
+        };
+        return Some(fail(
+            "GB-191",
+            format!("{what}; nothing was placed"),
+            "do not use it; tell the partner, and ask them to publish their current package again",
+        ));
+    }
     let signed = matches!(signed_by(&body, &their_key), Ok(true));
     if !signed || field(&new_v, &["sovereign_id"]).as_deref() != Some(them.as_str()) {
         let what = if by_hand {
@@ -808,41 +919,41 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
     // asking again would turn a replay into a rollback approved by habit.
     // `issued` (YYYY-MM-DD, checked by the parser) is the only member that
     // orders a party's packages; same day, different digest is asked about.
-    let held_issued = if by_hand {
-        st.confirmations
-            .iter()
-            .find(|c| c.kind == "keys" && c.phase == 5)
-            .and_then(|c| c.values.get("partner_package_issued").cloned())
-    } else {
-        issued(&placed)
+    // The package held: the last one confirmed (or recorded by the migration),
+    // else the one on disk.
+    let record = confirmed_package(st);
+    let held_issued = match &record {
+        Some((_, d)) => d.clone(),
+        None if by_hand => None,
+        None => issued(&placed),
     };
     let new_issued = issued(&body);
-    let held_digest = if by_hand {
-        st.confirmations
-            .iter()
-            .find(|c| c.kind == "keys" && c.phase == 5)
-            .and_then(|c| c.values.get("partner_package").cloned())
-            .unwrap_or_default()
-    } else {
-        sha256(&placed)
+    let held_digest = match &record {
+        Some((d, _)) => d.clone(),
+        None if by_hand => String::new(),
+        None => sha256(&placed),
     };
-    if let (Some(was), Some(now)) = (held_issued.as_deref(), new_issued.as_deref()) {
-        if now < was {
-            let what = if by_hand {
-                format!("{} was replaced by hand with a package of {them}'s issued {now}, older than the one confirmed ({was})", paths.counterparty.display())
-            } else {
-                let aside = match set_aside(&held, "refused") {
-                    Ok(p) => format!("it was set aside at {}", p.display()),
-                    Err(e) => format!("it could not be set aside ({e}); remove {}", held.display()),
-                };
-                format!("the package offered as {them}'s new one was issued {now}, before the one we hold ({was}); {aside}")
+    // Older, or not orderable against a known date: refused, never asked.
+    let refusal = match (held_issued.as_deref(), new_issued.as_deref()) {
+        (Some(was), Some(now)) if now < was => Some((format!("issued {now}"), format!("older than the one {}", if by_hand { "confirmed" } else { "we hold" }), was.to_string())),
+        (Some(was), None) => Some(("with no readable issued date".to_string(), "so it cannot be ordered against the one we hold".to_string(), was.to_string())),
+        _ => None,
+    };
+    if let Some((what_it_is, why, was)) = refusal {
+        let what = if by_hand {
+            format!("{} was replaced by hand with a package of {them}'s {what_it_is}, {why} ({was})", paths.counterparty.display())
+        } else {
+            let aside = match set_aside(&held, "refused") {
+                Ok(p) => format!("it was set aside at {}", p.display()),
+                Err(e) => format!("it could not be set aside ({e}); remove {}", held.display()),
             };
-            return Some(fail(
-                OLDER_PACKAGE,
-                format!("{what}. An older package is never taken, even with its digest confirmed; nothing was placed"),
-                "ask the partner which package is current; if they rolled back on purpose, they publish it again with a later issued date",
-            ));
-        }
+            format!("the package offered as {them}'s new one was {what_it_is}, {why} (issued {was}); {aside}")
+        };
+        return Some(fail(
+            OLDER_PACKAGE,
+            format!("{what}. A package that is older, or has no date to order it by, is never taken, even with its digest confirmed; nothing was placed"),
+            "ask the partner which package is current; if they rolled back on purpose, they publish it again with a later issued date",
+        ));
     }
     let mut changed = Vec::new();
     let old_v = if by_hand {
@@ -865,6 +976,10 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
         (Some(was), Some(now)) if was == now && !held_digest.is_empty() => format!(
             "\n    both issued {now}: nothing in them says which is current.\n    the one held: {}",
             groups(&held_digest)
+        ),
+        (None, _) => format!(
+            "\n    order unknown: the package held has no readable issued date{}",
+            if held_digest.is_empty() { String::new() } else { format!("\n    the one held: {}", groups(&held_digest)) }
         ),
         _ => String::new(),
     };
@@ -923,6 +1038,14 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
             }
         }
         let _ = std::fs::remove_file(&held);
+    } else if let Err(e) = place(&paths.counterparty, &body) {
+        // The bytes confirmed are the bytes placed, whatever was copied over
+        // the file while the person was asked.
+        return Some(fail(
+            "GB-184",
+            format!("cannot write the working folder: the package confirmed could not be written to {} ({e})", paths.counterparty.display()),
+            "check the working folder is writable, then run phase 5 again",
+        ));
     }
     st.confirm(
         run,
@@ -933,17 +1056,12 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
         BTreeMap::from([
             ("partner".to_string(), them.clone()),
             ("digest".to_string(), digest.clone()),
-            (
-                "previous".to_string(),
-                if by_hand {
-                    String::new()
-                } else {
-                    sha256(&placed)
-                },
-            ),
             ("changed".to_string(), changed_text),
-            ("issued".to_string(), new_issued.clone().unwrap_or_default()),
-        ]),
+        ])
+        .into_iter()
+        .chain((!by_hand).then(|| ("previous".to_string(), sha256(&placed))))
+        .chain(new_issued.clone().map(|d| ("issued".to_string(), d)))
+        .collect(),
     );
     rows.push(ok(
         "confirm",
@@ -1881,7 +1999,10 @@ mod tests {
             std::fs::write(w.paths.work.join(INCOMING), &offered).unwrap();
             let mut s = surface(flag(&sha256(&offered)), &[]);
             let step = incoming_step(&w, &mut s, &mut st);
-            assert_eq!(code(&step), OLDER, "{bad}");
+            // The parser refuses an issued that is not a date: that refusal
+            // (GB-191, naming the package as not well formed) comes first.
+            let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
+            assert!(code(&step) == OLDER || (code(&step) == "GB-191" && text.contains("not a well-formed package")), "{bad}: {text}");
             assert!(matches!(step.verdict, Verdict::Fail(_)), "{bad}");
             assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), held, "{bad}");
         }

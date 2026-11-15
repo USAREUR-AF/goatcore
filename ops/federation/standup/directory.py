@@ -1125,6 +1125,18 @@ def changed_members(a, b, at=""):
     return [] if a == b else [at or "(the whole package)"]
 
 
+def _issued(package) -> str:
+    """A package's `issued` date when it is a real YYYY-MM-DD date, else ""."""
+    v = package.get("issued") if isinstance(package, dict) else None
+    if not isinstance(v, str) or not re.fullmatch(r"\d{4}-\d\d-\d\d", v):
+        return ""
+    try:
+        date.fromisoformat(v)
+    except ValueError:
+        return ""
+    return v
+
+
 def offer_new_package(a, their_id: str, bound_key, body: bytes, theirs: dict, on_disk: dict, warnings: list):
     """ADR 1229: a package from the partner that verifies under the key bound for them and
     differs from the one on disk is a new package (after they rotated their WireGuard key, for
@@ -1156,11 +1168,18 @@ def offer_new_package(a, their_id: str, bound_key, body: bytes, theirs: dict, on
     if not (verified and incoming and a.per_counterparty):
         warnings.append(f"{a.theirs} differs from the package `{their_id}` serves; the file on disk is what composes")
         return
-    was, now = str(on_disk.get("issued", "")), str(theirs.get("issued", ""))
+    was, now = _issued(on_disk), _issued(theirs)
     if was and now and now < was:
         # A replay or a rollback: never offered for confirmation (phase 5 refuses it too).
         warnings.append(f"`{their_id}` serves a package issued {now}, before the one on disk ({was}); it is not "
                         f"offered, and {a.theirs} is what composes. Ask `{their_id}` which package is current")
+        return
+    if was and not now:
+        # Not orderable against the date held: never offered (phase 5 refuses it too). With
+        # the held date unknown it is offered, and phase 5 says the order is unknown.
+        warnings.append(f"`{their_id}` serves a package with no readable issued date, and the one on disk was "
+                        f"issued {was}; it is not offered, and {a.theirs} is what composes. Ask `{their_id}` "
+                        "to publish their current package again")
         return
     try:
         _write(incoming, body, exclusive=False)

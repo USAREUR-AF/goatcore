@@ -834,7 +834,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         if let Some(step) = confirm::migrate(&r.paths, &mut r.state, &id) {
             checks.extend(step.rows);
             match step.verdict {
-                confirm::Verdict::Continue => {}
+                confirm::Verdict::Continue => {
+                    let _ = r.state.save(Path::new(&work));
+                }
                 confirm::Verdict::Stop(_) | confirm::Verdict::Fail(_) => {
                     exit = EXIT_REFUSED;
                     migration_stopped = true;
