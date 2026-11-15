@@ -2027,3 +2027,60 @@ mod fold_rungs_tests {
         assert_eq!(fold, vec!["pre".to_string()]);
     }
 }
+
+#[cfg(test)]
+mod malformed_checkout_file_tests {
+    //! A checkout file goatbuilder reads that is not well formed stops with GB-329
+    //! (exit 1), not GB-254 ("cannot be read or written"): the file was read.
+    use super::*;
+
+    fn code_of(e: &anyhow::Error) -> Option<String> {
+        e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone())
+    }
+
+    fn exit_of(code: &str) -> Option<i32> {
+        goat_errors::explain(code).and_then(|e| e.exit)
+    }
+
+    #[test]
+    fn a_pin_table_that_is_not_yaml_is_gb_329_and_names_the_file() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("fleet-pins.yaml");
+        std::fs::write(&p, "components:\n  portal: [unclosed\n").unwrap();
+        let e = read_yaml(&p).unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-329"), "{e:#}");
+        assert!(format!("{e:#}").contains("fleet-pins.yaml"), "{e:#}");
+        assert_eq!(exit_of("GB-329"), Some(1));
+    }
+
+    #[test]
+    fn a_missing_pin_table_is_still_gb_254() {
+        let d = tempfile::tempdir().unwrap();
+        let e = read_yaml(&d.path().join("fleet-pins.yaml")).unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-254"), "{e:#}");
+    }
+
+    fn checkout_with_schema(text: &str) -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        let p = Paths::new(d.path()).intent_schema();
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, text).unwrap();
+        d
+    }
+
+    #[test]
+    fn an_intent_schema_that_does_not_compile_is_gb_329() {
+        let d = checkout_with_schema("{\"type\": 7}\n");
+        let e = validate_schema(&Paths::new(d.path()), &Map::new(), "rendered intent for 'zagros'").unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-329"), "{e:#}");
+        assert!(format!("{e:#}").contains("intent-v1.schema.json"), "{e:#}");
+    }
+
+    #[test]
+    fn an_intent_schema_that_is_not_json_is_gb_329() {
+        let d = checkout_with_schema("{ not json\n");
+        let e = validate_schema(&Paths::new(d.path()), &Map::new(), "rendered intent for 'zagros'").unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-329"), "{e:#}");
+        assert!(format!("{e:#}").contains("intent-v1.schema.json"), "{e:#}");
+    }
+}
