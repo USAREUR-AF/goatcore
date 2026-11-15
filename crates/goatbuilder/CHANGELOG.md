@@ -109,9 +109,11 @@ on the call: `yes` at a terminal, or `--accept-partner-package <digest>`.
 package not signed by the bound key, or one the parser refuses, is refused
 (GB-191) and set aside. A package issued before the one held, or without a
 readable issued date while the held one has one, is refused (GB-308) even with
-its digest given, so a replay is never asked about. Before any phase after 5,
-whatever phase a run starts from, the package on disk must be the last one
-confirmed (GB-191, naming phase 5). A peering confirmed by an earlier build has
+its digest given, so a replay is never asked about. When the keys confirmed before are
+unchanged, the new package's digest is the only question: phase 5 carries on
+without asking the keys again. Before any phase after 5, whatever phase a run
+starts from, the package on disk must be the last one confirmed, with the keys
+confirmed for it (GB-191, naming phase 5). A peering confirmed by an earlier build has
 its held package recorded as confirmed on its first run, as a migration; one
 that cannot be read stops the run (GB-310). This follows ADR 1229, which is
 proposed.

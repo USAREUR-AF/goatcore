@@ -816,6 +816,23 @@ pub fn migrate(paths: &Paths, st: &mut State, run: &str) -> Option<Step> {
     })
 }
 
+/// Whether the last keys confirmation holds for the partner's package `bytes`:
+/// the key the keyring binds and the package's CA fingerprint are the ones it
+/// names. `None` when no keys confirmation is journaled (keys bound by hand).
+fn partner_keys_hold(paths: &Paths, st: &State, bytes: &[u8]) -> Option<bool> {
+    let keys = st.confirmations.iter().rev().find(|c| c.kind == "keys" && c.phase == 5)?;
+    let theirs: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let them = field(&theirs, &["sovereign_id"]).filter(|id| plain_id(id))?;
+    let same = |k: &str, now: Option<String>| match (keys.values.get(k).filter(|v| !v.is_empty()), now) {
+        (Some(a), Some(b)) => prompt::same_value(a, &b),
+        _ => false,
+    };
+    Some(
+        same("partner_key", keyring_key(&paths.keyring, &them))
+            && same("partner_ca_fingerprint", field(&theirs, &["identity", "ca_fingerprint"])),
+    )
+}
+
 /// Before any phase after 5: the package on disk is the one the last
 /// confirmation names (GB-191, naming phase 5), whatever phase the run
 /// started from. `None` when it is, or before their key is bound.
@@ -824,7 +841,16 @@ pub fn compose_guard(paths: &Paths, st: &State) -> Option<Step> {
     let them = st.peering.clone();
     let fix = format!("run phase 5 again, which asks about a package that changed: goatbuilder federate {them} --from 5");
     match std::fs::read(&paths.counterparty) {
-        Ok(b) if sha256(&b) == want => None,
+        Ok(b) if sha256(&b) == want => partner_keys_hold(paths, st, &b).filter(|held| !held).map(|_| {
+            fail(
+                "GB-191",
+                format!(
+                    "the partner's package at {} was confirmed at phase 5, but the keys confirmed there do not hold for it: its CA fingerprint, or the key the keyring binds, is not the one read aloud; nothing after phase 5 ran",
+                    paths.counterparty.display()
+                ),
+                format!("confirm the keys again with them on the call: goatbuilder federate {them} --from 5 --partner-key <key> --partner-ca-fingerprint <fp>"),
+            )
+        }),
         Ok(b) => Some(fail(
             "GB-191",
             format!(
