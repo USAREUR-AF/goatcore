@@ -92,7 +92,9 @@ case "$1" in
     [ -e "$T/sa-up" ] || exit 0
     case "$*" in
       *--reauth*) [ -e "$T/reauth-stalls" ] && exit 0; rm -f "$T/partner-rekey-on"; newsa ;;
-      *) rm -f "$T/partner-rekey-on"; newsa ;;
+      *) rm -f "$T/partner-rekey-on"; newsa
+         # A run killed right after the rekey, before the re-authentication.
+         [ -e "$T/die-after-rekey" ] && exit 1 ;;
     esac
     exit 0 ;;
   *) exit 0 ;;
@@ -137,7 +139,7 @@ leaf short ca1 fed.xaa.xab.01 10
 
 S="$T/swanctl"
 fresh() { # a fresh edge: live leaf of ca1, our CA ca1, nothing staged
-  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails" "$T/rekey-at" "$T/rekey-soon" "$T/partner-rekey-on" "$T/listings"
+  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails" "$T/rekey-at" "$T/rekey-soon" "$T/partner-rekey-on" "$T/listings" "$T/die-after-rekey"
   mkdir -p "$S/x509" "$S/private" "$S/x509ca"
   cp "$T/pki/live.pem" "$S/x509/xab-cert.pem"; cp "$T/pki/live.key" "$S/private/xab-key.pem"
   chmod 600 "$S/private/xab-key.pem"
@@ -405,6 +407,47 @@ if ! rot -e peering_edge_rotation=r14 -e peering_edge_ike_rekey_time=30s -e peer
   pass "rekey_time minus rand_time shorter than the confirm window and margin: refused, nothing moved"
 else
   fail "a rekey interval with no room for the confirm was not refused before anything moved"; tail -12 "$LOG"
+fi
+
+# The confirm leaves its proof: .previous-<id>/confirmed holds the new SA's id and
+# time, and retire requires it. An SA established after the set-aside proves nothing
+# on its own: the rekey before the re-authentication makes one, still on the old leaf.
+fresh; stage good; touch "$T/sa-up"
+if rot -e peering_edge_rotation=r15 && grep -Eq '^id=[0-9]+$' "$S/.previous-r15/confirmed" 2>/dev/null \
+   && grep -Eq '^at=[0-9]+$' "$S/.previous-r15/confirmed" \
+   && rot -e peering_edge_rotation=r15 -e peering_edge_rotation_retire=true && [ ! -e "$S/.previous-r15/xab-key.pem" ]; then
+  pass "the confirm writes confirmed (the new SA's id and time), and retire then removes the set-aside key"
+else
+  fail "no confirmed marker, or retire did not pass on it"; tail -12 "$LOG"
+fi
+# Killed after the rekey, before the re-authentication: retire refuses; a re-run confirms.
+fresh; stage good; touch "$T/sa-up" "$T/die-after-rekey"
+rot -e peering_edge_rotation=r16 || true
+rm -f "$T/die-after-rekey"
+if [ -e "$S/.previous-r16" ] && [ ! -e "$S/.previous-r16/confirmed" ] \
+   && ! rot -e peering_edge_rotation=r16 -e peering_edge_rotation_retire=true && grep -q "$RETIRE_CODE" "$LOG" \
+   && grep -q "was not confirmed" "$LOG" && [ -f "$S/.previous-r16/xab-key.pem" ]; then
+  pass "killed after the rekey, before the re-authentication: retire refuses ($RETIRE_CODE, not confirmed)"
+else
+  fail "retire passed on the rekeyed SA of a rotation that never confirmed"; tail -12 "$LOG"
+fi
+if rot -e peering_edge_rotation=r16 && [ -e "$S/.previous-r16/confirmed" ] && live_is good \
+   && [ "$(calls '--reauth')" -ge 1 ]; then
+  pass "the re-run with the same id re-authenticates, confirms and writes the marker"
+else
+  fail "the re-run after a kill did not confirm"; tail -12 "$LOG"
+fi
+# Killed after the confirm, before the marker: the same; the re-run writes it.
+fresh; stage good; touch "$T/sa-up"
+rot -e peering_edge_rotation=r17 || { fail "setup: r17 did not pass"; tail -12 "$LOG"; }
+rm -f "$S/.previous-r17/confirmed"
+if ! rot -e peering_edge_rotation=r17 -e peering_edge_rotation_retire=true && grep -q "$RETIRE_CODE" "$LOG" \
+   && [ -f "$S/.previous-r17/xab-key.pem" ] \
+   && rot -e peering_edge_rotation=r17 && [ -e "$S/.previous-r17/confirmed" ] \
+   && rot -e peering_edge_rotation=r17 -e peering_edge_rotation_retire=true && [ ! -e "$S/.previous-r17/xab-key.pem" ]; then
+  pass "killed after the confirm, before the marker: retire refuses; the re-run confirms; retire then passes"
+else
+  fail "a rotation without its confirmed marker was retired, or the re-run did not write it"; tail -12 "$LOG"
 fi
 
 # Retire: the SA must be established after the rotation set the old pair aside.
