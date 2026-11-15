@@ -1832,11 +1832,11 @@ fn main() {
                 // to stdout like every report, so a consumer parses one stream.
                 OutputFormat::Json => {
                     eprintln!("goatbuilder: {text}");
-                    println!("{}", serde_json::to_string_pretty(&ErrorOut { schema: "goatbuilder.error/v1", error: &text, code: code.as_deref(), interpretation: &interp, deprecations: &deprecation::recorded() }).unwrap_or_default());
+                    println!("{}", serde_json::to_string_pretty(&ErrorOut::new(&text, code.as_deref(), &interp)).unwrap_or_default());
                 }
                 OutputFormat::Yaml => {
                     eprintln!("goatbuilder: {text}");
-                    println!("{}", serde_yaml::to_string(&ErrorOut { schema: "goatbuilder.error/v1", error: &text, code: code.as_deref(), interpretation: &interp, deprecations: &deprecation::recorded() }).unwrap_or_default());
+                    println!("{}", serde_yaml::to_string(&ErrorOut::new(&text, code.as_deref(), &interp)).unwrap_or_default());
                 }
             }
             let exit = code.as_deref().and_then(goat_errors::explain).and_then(|e| e.exit).unwrap_or(EXIT_USAGE);
@@ -1854,8 +1854,16 @@ struct ErrorOut<'a> {
     code: Option<&'a str>,
     interpretation: &'a goat_errors::Interpretation,
     /// As a report's: the deprecated items this run used, absent when none.
-    #[serde(skip_serializing_if = "<[_]>::is_empty")]
-    deprecations: &'a [deprecation::Used],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    deprecations: Vec<deprecation::Used>,
+}
+
+impl<'a> ErrorOut<'a> {
+    /// A refused run's document, with the deprecated items the run recorded
+    /// (`deprecation::record`), as `Report::new` carries them.
+    fn new(error: &'a str, code: Option<&'a str>, interpretation: &'a goat_errors::Interpretation) -> Self {
+        ErrorOut { schema: "goatbuilder.error/v1", error, code, interpretation, deprecations: deprecation::recorded() }
+    }
 }
 
 #[cfg(test)]
@@ -1929,9 +1937,45 @@ mod deprecation_tests {
     fn an_error_document_lists_the_deprecated_items_the_run_used() {
         let used = used_for(STATUS_COMPONENT, &["goatbuilder", "status", "--env", "dev", "--component", "netbird"]);
         let interp = goat_errors::interpret("nothing known");
-        let doc = |d: &[crate::deprecation::Used]| serde_json::to_value(crate::ErrorOut { schema: "goatbuilder.error/v1", error: "x", code: None, interpretation: &interp, deprecations: d }).unwrap();
+        let doc = |d: &[crate::deprecation::Used]| serde_json::to_value(crate::ErrorOut { schema: "goatbuilder.error/v1", error: "x", code: None, interpretation: &interp, deprecations: d.to_vec() }).unwrap();
         assert!(doc(&[]).get("deprecations").is_none());
         assert_eq!(doc(&used)["deprecations"][0]["flag"], "--component");
+    }
+
+    /// What main records reaches every document the run builds: `Report::new`
+    /// and the error document read the list `deprecation::record` keeps. The
+    /// list is a process-wide OnceLock that is set once, so the check runs in a
+    /// process of its own (this test binary, re-run on the one ignored test
+    /// below); recorded here, it would reach every other test's report.
+    #[test]
+    fn a_recorded_list_reaches_the_reports_and_error_documents_of_the_run() {
+        let exe = std::env::current_exe().unwrap();
+        let out = std::process::Command::new(exe)
+            .args(["deprecation_tests::recorded_in_its_own_process", "--exact", "--ignored", "--test-threads=1", "--nocapture"])
+            .output()
+            .unwrap();
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "{said}");
+        assert!(said.contains("test result: ok. 1 passed"), "the child ran no test: {said}");
+    }
+
+    /// Run only by the test above, in its own process.
+    #[test]
+    #[ignore = "records the process-wide list; run in its own process by a_recorded_list_reaches_the_reports_and_error_documents_of_the_run"]
+    fn recorded_in_its_own_process() {
+        // Under --include-ignored beside the other tests it would record into
+        // their process; it acts only when named alone, as the test above runs it.
+        if !std::env::args().any(|a| a == "deprecation_tests::recorded_in_its_own_process") {
+            return;
+        }
+        assert!(crate::Report::new("status", vec![], crate::EXIT_REFUSED).deprecations.is_empty(), "nothing recorded yet");
+        crate::deprecation::record(used_for(STATUS_COMPONENT, &["goatbuilder", "status", "--env", "dev", "--component", "netbird"]));
+        let r = crate::Report::new("status", vec![], crate::EXIT_REFUSED);
+        let v: serde_json::Value = serde_json::from_str(&crate::output::render(&r, crate::OutputFormat::Json, crate::output::ColorChoice::Never)).unwrap();
+        assert_eq!(v["deprecations"][0]["flag"], "--component", "{v}");
+        let interp = goat_errors::interpret("nothing known");
+        let e = serde_json::to_value(crate::ErrorOut::new("x", None, &interp)).unwrap();
+        assert_eq!(e["deprecations"][0]["replacement"], "--only", "{e}");
     }
 
     /// The list this build ships reads, so main never runs without it.
