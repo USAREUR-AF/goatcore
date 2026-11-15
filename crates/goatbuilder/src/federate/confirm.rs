@@ -713,13 +713,18 @@ fn copy_aside(path: &Path, tag: &str) -> std::io::Result<std::path::PathBuf> {
         n += 1;
         aside = path.with_file_name(format!("{name}.{tag}-{stamp}-{n}"));
     }
-    std::fs::copy(path, &aside)?;
     // On disk before the new package is placed: after a crash the old one is
-    // still somewhere, even if the rename landed and the copy had not.
-    std::fs::File::open(&aside)?.sync_all()?;
-    // And its name in the folder (POSIX: a file's fsync does not sync the
-    // directory entry that names it).
-    sync_dir(&aside)?;
+    // still somewhere, even if the rename landed and the copy had not. And its
+    // name in the folder (POSIX: a file's fsync does not sync the directory
+    // entry that names it). A copy that is not all on disk is removed, so no
+    // stray copy is left beside a package that was never replaced.
+    let kept = std::fs::copy(path, &aside)
+        .and_then(|_| std::fs::File::open(&aside)?.sync_all())
+        .and_then(|_| sync_dir(&aside));
+    if let Err(e) = kept {
+        let _ = std::fs::remove_file(&aside);
+        return Err(e);
+    }
     Ok(aside)
 }
 
@@ -793,6 +798,42 @@ fn replace_counterparty(
         return Err(ReplaceError::AfterRename { aside, error });
     }
     Ok(aside)
+}
+
+/// What a failed replacement of the partner's package says, by the state it
+/// left (GB-191 when no package was held, else GB-184).
+fn replace_failed(them: &str, paths: &Paths, held: &Path, e: ReplaceError) -> Step {
+    match e {
+        ReplaceError::CopyAside(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            fail(
+                "GB-191",
+                format!("no package held at {}; nothing was placed", paths.counterparty.display()),
+                format!("run phase 5 again with them, the keys read aloud: goatbuilder federate {them} --from 5 --partner-key <key> --partner-ca-fingerprint <fp>"),
+            )
+        }
+        ReplaceError::CopyAside(e) => {
+            fail(
+                "GB-184",
+                format!("cannot write the working folder: {} could not be copied aside ({e}); nothing was placed", paths.counterparty.display()),
+                "check the working folder is writable, then run phase 5 again",
+            )
+        }
+        // SyncAfterRename is place()'s alone; replace_counterparty never returns it.
+        ReplaceError::BeforeRename(e) | ReplaceError::SyncAfterRename(e) => {
+            fail(
+                "GB-184",
+                format!("cannot write the working folder: {them}'s new package could not be placed at {} ({e}); the old one is still in place, and no copy of it was kept", paths.counterparty.display()),
+                "check the working folder is writable, then run phase 5 again",
+            )
+        }
+        ReplaceError::AfterRename { aside, error } => {
+            fail(
+                "GB-184",
+                format!("{them}'s new package is in place at {} but the folder could not be synced ({error}), so it was not recorded as confirmed; the old one is kept at {}", paths.counterparty.display(), aside.display()),
+                format!("check the working folder's disk, then run phase 5 again: it asks again about {them}'s held incoming package ({}), the one now in place", held.display()),
+            )
+        }
+    }
 }
 
 /// Where replace_counterparty is (a test injects a failure or a crash there).
@@ -1242,35 +1283,7 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
     if !by_hand {
         match replace_counterparty(&paths.counterparty, &body, "previous", &mut |_| Ok(())) {
             Ok(p) => rows.push(ok("partner-package", format!("the package it replaces is kept at {}", p.display()))),
-            Err(ReplaceError::CopyAside(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Some(fail(
-                    "GB-191",
-                    format!("no package held at {}; nothing was placed", paths.counterparty.display()),
-                    format!("run phase 5 again with them, the keys read aloud: goatbuilder federate {them} --from 5 --partner-key <key> --partner-ca-fingerprint <fp>"),
-                ))
-            }
-            Err(ReplaceError::CopyAside(e)) => {
-                return Some(fail(
-                    "GB-184",
-                    format!("cannot write the working folder: {} could not be copied aside ({e}); nothing was placed", paths.counterparty.display()),
-                    "check the working folder is writable, then run phase 5 again",
-                ))
-            }
-            // SyncAfterRename is place()'s alone; replace_counterparty never returns it.
-            Err(ReplaceError::BeforeRename(e) | ReplaceError::SyncAfterRename(e)) => {
-                return Some(fail(
-                    "GB-184",
-                    format!("cannot write the working folder: {them}'s new package could not be placed at {} ({e}); the old one is kept aside", paths.counterparty.display()),
-                    "check the working folder is writable, then run phase 5 again",
-                ));
-            }
-            Err(ReplaceError::AfterRename { aside, error }) => {
-                return Some(fail(
-                    "GB-184",
-                    format!("{them}'s new package is in place at {} but the folder could not be synced ({error}), so it was not recorded as confirmed; the old one is kept at {}", paths.counterparty.display(), aside.display()),
-                    format!("check the working folder's disk, then run phase 5 again: it asks again about {them}'s held incoming package ({}), the one now in place", held.display()),
-                ));
-            }
+            Err(e) => return Some(replace_failed(&them, paths, &held, e)),
         }
         let _ = std::fs::remove_file(&held);
         drop_marker();
@@ -2169,6 +2182,26 @@ mod tests {
 
     /// The by-hand placement (no copy aside): a failure after the rename is
     /// told apart from one before it, since the bytes given are then in place.
+    /// What each failed replacement says is the state it left (the owner's
+    /// read of bbedc23a: a message that tells the truth). Before the rename
+    /// the old package is still in place and no copy is kept.
+    #[test]
+    fn each_failed_replacement_says_the_state_it_left() {
+        let w = world();
+        let held = w.paths.work.join(INCOMING);
+        let say = |e| {
+            let step = replace_failed("xab", &w.paths, &held, e);
+            step.rows.iter().map(|r| format!("{} {}", r.detail, r.fix.clone().unwrap_or_default())).collect::<Vec<_>>().join("\n")
+        };
+        let before = say(ReplaceError::BeforeRename(std::io::Error::other("x")));
+        assert!(before.contains("the old one is still in place"), "{before}");
+        assert!(!before.contains("kept aside"), "{before}");
+        let after = say(ReplaceError::AfterRename { aside: w.paths.work.join("theirs.canonical.json.previous-1"), error: std::io::Error::other("x") });
+        assert!(after.contains("new package is in place") && after.contains("previous-1") && after.contains(INCOMING), "{after}");
+        let copy = say(ReplaceError::CopyAside(std::io::Error::other("x")));
+        assert!(copy.contains("nothing was placed"), "{copy}");
+    }
+
     #[test]
     fn a_by_hand_placement_tells_a_failure_after_the_rename_from_one_before_it() {
         let w = world();
