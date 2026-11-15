@@ -23,8 +23,8 @@
 #   HARNESS_PORT_PG_A     loopback port for Postgres
 # Optional:
 #   GHCR_ORG              image namespace (else ghcr_org in ops/ansible/group_vars/all.yml)
-#   NETBIRD_CLIENT_IMAGE  the client image (default netbirdio/netbird:0.71.4, the
-#                         upstream release the pinned management is built from)
+#   NETBIRD_CLIENT_IMAGE  the client image (default netbirdio/netbird 0.71.4 by digest,
+#                         the upstream release the pinned management is built from)
 #
 # Needs docker, go and python3 (pyyaml, jinja2, pytest).
 
@@ -54,7 +54,7 @@ print(c.replace("{{ ghcr_org }}", sys.argv[3]))' "$PINS" "$1" "$GHCR_ORG"
 }
 PG_IMAGE="$(pin postgres-spock)"
 MGMT_IMAGE="$(pin netbird-mgmt)"
-CLIENT_IMAGE="${NETBIRD_CLIENT_IMAGE:-netbirdio/netbird:0.71.4}"
+CLIENT_IMAGE="${NETBIRD_CLIENT_IMAGE:-netbirdio/netbird:0.71.4@sha256:c4195811bf9999544db5176950a0d6513c880d0195450b59eb156c254e0dd3b5}"
 
 PG="${HARNESS_PFX}-pg"
 MGMT="${HARNESS_PFX}-mgmt"
