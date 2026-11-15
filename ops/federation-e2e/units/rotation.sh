@@ -13,7 +13,8 @@
 # does, and which numbers each reader missed during the key's step (samples-<key>).
 #
 # A key the goatbuilder under test refuses to rotate (GB-189, designed and not built,
-# GB-282, which needs an ADR first, GB-312, a carrier whose forwarder is declared by hand,
+# GB-282, the CA rotation, decided in ADR 1242 and not built yet,
+# GB-312, a carrier whose forwarder is declared by hand,
 # or GB-317, a carrier on a side with no forwarder; a
 # build before GB-317 refused that with GB-189) is not a failure of the run: its checks are marked
 # BLOCKED with the refusal's own words, and the unit goes on to the next key. A rotation that
