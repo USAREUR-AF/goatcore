@@ -181,9 +181,12 @@ oc_after_run() { # $1 us, $2 them, $3 transcript
       added=0
     fi
   fi
-  # Phase 3 reads the peering's federation.toml from the goat context. Only when phase 3
-  # refuses for want of it is the generated one copied there by hand, and listed.
-  local ctxf="/root/.goat/contexts/default/federation.toml" gen_ft="$WORK/$A/clone/ops/federation/$A/peerings/$2/federation.toml"
+  # Phase 3 reads the peering's federation.toml from the goat context the run selects: the
+  # first peering's is `default`, a later one's is named for its partner (ctx_of, as drive()
+  # and the command's environment select it). Only when phase 3 refuses for want of it is the
+  # generated one copied there by hand, and listed.
+  local ctxf gen_ft
+  ctxf="/root/.goat/contexts/$(ctx_of "$A" "$2")/federation.toml"; gen_ft="$WORK/$A/clone/ops/federation/$A/peerings/$2/federation.toml"
   local ctxline
   ctxline="$(sed 's/\x1b\[[0-9;]*m//g' "$3" 2>/dev/null | grep -m1 -E "no federation\.toml at|federation\.toml.*(GB-[0-9]+|missing|not found)" || true)"
   if ! host_exec "$(drv_host "$A")" test -s "$ctxf" && [ -n "$ctxline" ] && ! oc_passed "$RECORD/status-$A.json" 3 && [ -f "$gen_ft" ]; then
@@ -319,13 +322,18 @@ nh_side_from_nothing() { # $1 us, $2 them, $3 "true" when this side listens
   [ "$add" = 1 ] || rec "$NH_STEP-$A-starts-with-no-peering" -- bash -c \
     "cd '$c' && ls ops/ansible/group_vars/ ops/ansible/inventory/ 2>&1; grep -n 'peerings' ops/goatbuilder/goatbuilder.yaml; ! ls -d ops/ansible/group_vars/${B}_edge ops/ansible/group_vars/${B}_core ops/ansible/inventory/peering-edges.ini 2>/dev/null && ! grep -q '^peerings:' ops/goatbuilder/goatbuilder.yaml"
   # The operator's profile, the sovereign's own before any peering: the goat context holds
-  # the enrolled certificate and the CA roots, and nothing of the peering.
-  local p="/root/.goat/contexts/default"
+  # the enrolled certificate and the CA roots, and nothing of the peering. It goes into the
+  # context this peering's runs select (ctx_of: `default` for the first, the partner's name
+  # for a later one), as prepare_edge (lib/engine.sh) installs it; a second peering's runs
+  # would otherwise find no profile there (GB-144).
+  local p; p="/root/.goat/contexts/$(ctx_of "$A" "$B")"
   host_exec "$h" sh -c "[ -d /opt/goat/.git ] || git clone -q /srv/goat.git /opt/goat"
   host_exec "$h" sh -c "git -C /opt/goat config user.name '$A operator'; git -C /opt/goat config user.email 'ops@$A.test'"
   host_exec "$h" install -d -m 0700 /root/.goat /root/.goat/contexts "$p"
   host_exec "$h" install -m 0644 /etc/fed-e2e/profile.pem "$p/mtls.cert.pem"
   host_exec "$h" install -m 0644 /etc/fed-e2e/ca.pem "$p/ca-roots.pem"
+  rec "$NH_STEP-$A-$B-context-holds-the-profile" --expect-in "$p/mtls.cert.pem" --expect-in "$p/ca-roots.pem" -- \
+    docker exec "$h" sh -c "ls -1 $p/mtls.cert.pem $p/ca-roots.pem && test -s $p/mtls.cert.pem && test -s $p/ca-roots.pem"
   # One group configures the core router, as in a deployment: the site overlay's [core]
   # (the site inventory's hosts, which allocate reads) keeps no goat-zenoh variable of its
   # own, else admission finds two role groups for one machine (GB-236).

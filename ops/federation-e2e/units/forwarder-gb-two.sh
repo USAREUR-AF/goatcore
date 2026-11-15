@@ -40,6 +40,20 @@ v = (yaml.safe_load(open(rec)) or {}).get("peerings", {}).get(key, {}).get(field
 print("" if v is None else v)
 PY
 }
+# One interface's received and sent byte counts, summed over its peers: "<rx> <tx>".
+fg2_transfer() { # $1 container, $2 interface
+  docker exec "$1" wg show "$2" transfer | awk '{rx += $2; tx += $3} END {print rx + 0, tx + 0}'
+}
+# Whether both counts grew from the snapshot in file $1 to "$2"; prints both.
+fg2_grew() { # $1 snapshot file, $2 "<rx> <tx>" now
+  local rx0 tx0 rx1 tx1
+  read -r rx0 tx0 < "$1"
+  read -r rx1 tx1 <<< "$2"
+  echo "before: received $rx0 sent $tx0; after: received $rx1 sent $tx1"
+  [ "$rx1" -gt "$rx0" ] && [ "$tx1" -gt "$tx0" ]
+}
+export -f fg2_transfer fg2_grew
+
 # A carrier /31's two addresses (forwarder.rs carrier_pair): the forwarder's is the network
 # address, the edge's the next one.
 fg2_fwd_carrier_ip() { python3 -c 'import ipaddress,sys; print(ipaddress.ip_network(sys.argv[1]).network_address)' "$1"; }
@@ -111,7 +125,7 @@ fg2_pair() { # $1 the partner ({A}, then {C}), $2 1 for the second peering of {B
 }
 
 fg2_main() {
-  local s h c g l p0 p1 port args=()
+  local s h c g l p0 p1 port nif sif args=()
   : > "$HAND"; : > "$OUTSIDE"
   for s in "$A" "$B" "$C"; do eval "FE2E_OVERLAY_ARGS_$s=--no-peering"; export "FE2E_OVERLAY_ARGS_$s"; done
   FE2E_CORE=role; export FE2E_CORE
@@ -191,14 +205,27 @@ fg2_main() {
     if [ "$s" = "$A" ]; then port="$p0"; else port="$p1"; fi
     rec "fg2-$s-endpoint-is-the-forwarder" --expect-in "$FWD_PUB:${port:-none}" --expect-not-in "$(boundary_ip "$NATED"):" -- \
       docker exec "$HP-$s-edge" wg show "$(iface "$s" "$NATED")" endpoints
+    # {B}'s interface for this peering is the one allocation gave it (wg_interface in the
+    # allocation record), not a position in the harness's partner list, and it must be this
+    # peering's tunnel: its one peer is {s}'s edge key, and {s}'s one peer is its key. Then
+    # its counters are this peering's alone, never the other peering's.
+    nif="$(fg2_value "$s" wg_interface)"; sif="$(iface "$s" "$NATED")"
     rec "fg2-$NATED-sees-$s-at-its-carrier" --expect-in "$(fg2_fwd_carrier_ip "$(fg2_value "$s" carrier_subnet)"):" -- \
-      docker exec "$h" wg show "$(iface "$NATED" "$s")" endpoints
-    rec "fg2-$s-$NATED-tunnel-carried-it" -- bash -c \
-      "docker exec $HP-$s-edge wg show $(iface "$s" "$NATED") transfer | awk '{print; if (\$2 < 1 || \$3 < 1) exit 1}'"
-    rec "fg2-$NATED-$s-tunnel-carried-it" -- bash -c \
-      "docker exec $h wg show $(iface "$NATED" "$s") transfer | awk '{print; if (\$2 < 1 || \$3 < 1) exit 1}'"
+      docker exec "$h" wg show "${nif:-none}" endpoints
+    rec "fg2-$NATED-${nif:-none}-is-the-tunnel-with-$s" -- bash -c \
+      "nk=\$(docker exec $h wg show '${nif:-none}' public-key) && sk=\$(docker exec $HP-$s-edge wg show '$sif' public-key) &&
+       np=\$(docker exec $h wg show '${nif:-none}' peers) && sp=\$(docker exec $HP-$s-edge wg show '$sif' peers) &&
+       echo \"$NATED ${nif:-none} key \$nk peers \$np\"; echo \"$s $sif key \$sk peers \$sp\"; [ \"\$np\" = \"\$sk\" ] && [ \"\$sp\" = \"\$nk\" ]"
+    # The counters before the round trips, then after: each end of this peering's tunnel
+    # received and sent more while this peering's values crossed it.
+    fg2_transfer "$HP-$s-edge" "$sif" > "$WORK/fg2-$s-transfer-before.txt"
+    fg2_transfer "$h" "${nif:-none}" > "$WORK/fg2-$NATED-$s-transfer-before.txt"
     rec "fg2-arrives-$s-to-$NATED" --expect-in "PASS" -- bash -c "fgb_arrives '$s' '$NATED' 90"
     rec "fg2-arrives-$NATED-to-$s" --expect-in "PASS" -- bash -c "fgb_arrives '$NATED' '$s' 90"
+    rec "fg2-$s-$NATED-tunnel-carried-it" -- bash -c \
+      "fg2_grew '$WORK/fg2-$s-transfer-before.txt' \"\$(fg2_transfer $HP-$s-edge $sif)\""
+    rec "fg2-$NATED-$s-tunnel-carried-it" -- bash -c \
+      "fg2_grew '$WORK/fg2-$NATED-$s-transfer-before.txt' \"\$(fg2_transfer $h ${nif:-none})\""
   done
   rec "fg2-forwarder-holds-no-peering-key" -- bash -c fg2_holds_nothing
   docker exec "$FWD_HOST" sh -c 'wg show; nft list ruleset' > "$RECORD/fg2-forwarder-state.txt" 2>&1 || true
