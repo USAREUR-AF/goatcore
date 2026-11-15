@@ -1928,7 +1928,7 @@ pub fn recheck(repo: &Path, o: &PlanOptions) -> Result<Report> {
     let differs = |given: Option<&str>, planned: Option<&str>| given.is_some() && given != planned;
     if differs(o.edge_group, Some(&saved.edge_group)) || differs(o.r#as, saved.us.as_deref()) {
         return Err(goat_errors::coded(
-            "GB-200",
+            "GB-325",
             format!(
                 "--edge-group or --as differs from the saved plan's ({}, {}): make a new plan with them",
                 saved.edge_group,
