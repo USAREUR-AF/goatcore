@@ -195,6 +195,15 @@ jobs:
           set -o pipefail
           export PYTHONPATH="$PWD/ops/consistency/python"
           python3 -m pytest -q --ignore=ops/ci/test_membership_reconcile.py --ignore=ops/consistency/python/tests/test_corpus.py --ignore=ops/consistency/python/tests/test_lite_sidecar.py ops/ci ops/consistency/python ops/goatbuilder ops/federation/standup tests 2>&1 | tail -40
+      # A test that reads the wall clock over a signed fixture fails, or keeps
+      # passing over two refusals, once the fixture's term ends; this fails 60
+      # days before. The normative vector sets in ops/ci/fixture-expiry-exempt.txt
+      # are evaluated on their own now.txt and are exempt by name.
+      # ansible-core (deps) brings the cryptography package.
+      - name: no signed fixture expires within 60 days
+        run: |
+          python3 ops/ci/check-fixture-expiry.py --self-test
+          python3 ops/ci/check-fixture-expiry.py
       - name: Go vulnerability scan coverage
         run: |
           python3 ops/ci/test_go_vuln_coverage.py
