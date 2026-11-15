@@ -28,7 +28,7 @@ partner's `delivery/inbound/<set>` still observes the arrival. (#789)
 because its transport or inventory read failed, the script used to say that
 `verify` had not been run for that component, and exit 3 as if the three verbs
 disagreed. It now names the report that read no machine and exits 2: the run is
-not a C3 measurement. Fix the reach and run the sequence again.
+not a C3 measurement. Fix the reach and run the sequence again (#809).
 
 #### Changed: an environment that declares converger: pull-agent is refused until pull is built
 
