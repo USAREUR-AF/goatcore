@@ -949,7 +949,7 @@ mod tests {
         let manual: Vec<u32> = ph.iter().filter(|p| p.kind == "MANUAL").map(|p| p.n).collect();
         assert_eq!(manual, Vec::<u32>::new(), "phase 1 checks the node answers; no phase stops for a person");
         assert_eq!((ph[0].n, ph[0].kind), (1, "GATE"));
-        assert!(ph[0].cmd.ends_with("/ops/scripts/join-node-reach.sh' ssh <deploy.ssh_user>@<the node's LAN address>") || ph[0].cmd.contains("join-node-reach.sh' ssh "), "{}", ph[0].cmd);
+        assert!(ph[0].cmd.ends_with("/ops/scripts/join-node-reach.sh' ssh <deploy.ssh_user>@<the node's LAN address>"), "{}", ph[0].cmd);
         assert!(ph.iter().all(|p| !p.cmd.contains("NB_SETUP_KEY")), "no phase reads a setup key");
         let p9 = ph.iter().find(|p| p.n == 9).unwrap();
         assert!(p9.cmd.ends_with("'bash -s -- --key-at-enrolment'") && !p9.cmd.contains("SETUP_KEY"), "{}", p9.cmd);
