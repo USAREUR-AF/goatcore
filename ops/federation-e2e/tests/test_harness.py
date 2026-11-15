@@ -41,10 +41,12 @@
 8. lib/burst.py, the lane-pacing burst (ADR 1244), on two receiving-edge logs recorded in the
    shape the lab's edge router writes (tests/fixtures/edge-burst-*.log): `edge` counts a
    burst key as crossed only from its ingress allow on the partner link, never from the
-   core link or another run's prefix, counts each downsampling drop of a burst key, and
-   gives the smallest gap between crossings; `judge` passes a paced burst only when every
-   sample crossed and was stored with no drop at the edge, no queue_full drop at the sender
-   and no gap under 1/hz, fails an unpaced one naming the drops, and in the overflow case
+   core link or another run's prefix, counts each downsampling drop of a burst key, gives
+   the smallest gap between crossings, and counts the samples that crossed out of put order;
+   `judge` passes a paced burst only when every sample crossed in put order and was stored
+   with no drop at the edge, no queue_full drop at the sender and no gap under 1/hz, fails
+   an unpaced one naming the drops, fails a reordered one naming the first sample out of
+   order, and in the overflow case
    passes only when the sender counted what the edge never saw and warned; `metric` sums the
    republisher's queue_full series; `hz` reads the lane's rule from the edge config.
 Exit 0 when all hold; prints one line per failure otherwise.
@@ -553,6 +555,11 @@ def burst_checks():
           f"burst edge: the unpaced log is not 2 crossed (another run's prefix and the core link left out), 8 dropped: {rc} {unpaced}")
     check(unpaced.get("dropped_keys", [None])[0] == pre + "b2" and unpaced.get("info_drop_lines") == 1,
           f"burst edge: the unpaced log's drops are not named: {unpaced}")
+    check((paced.get("out_of_order"), unpaced.get("out_of_order")) == (0, 0),
+          f"burst edge: an in-order log counts samples out of order: {paced.get('out_of_order')} {unpaced.get('out_of_order')}")
+    rc, reordered = edge("edge-burst-reordered.log")
+    check(rc == 0 and (reordered.get("crossed"), reordered.get("out_of_order"), reordered.get("first_out_of_order"))
+          == (5, 1, pre + "b3"), f"burst edge: b3 crossing after b4 is not one sample out of order, named: {rc} {reordered}")
 
     with tempfile.TemporaryDirectory() as d:
         def sent(n, code="200"):
@@ -590,6 +597,11 @@ def burst_checks():
         check(rc == 1 and "no queue-full warning" in last, f"burst judge --overflow: no warning is not a FAIL: {rc} {last}")
         rc, last = judge(ov, "--stored", "4", "--queue-full-before", "0", "--queue-full-after", "5", "--overflow", "--warned", "1")
         check(rc == 1 and "1 sample(s) unaccounted" in last, f"burst judge --overflow: a silent loss is not a FAIL: {rc} {last}")
+        rc, last = judge(reordered, "--stored", "5", *q0, n=5)
+        check(rc == 1 and "1 crossed out of put order" in last and pre + "b3" in last,
+              f"burst judge: a reordered burst is not a FAIL naming the sample: {rc} {last}")
+        rc, last = judge(dict(ov, out_of_order=1, first_out_of_order=pre + "b9"), *over, "--warned", "1")
+        check(rc == 1 and "out of put order" in last, f"burst judge --overflow: a reordered overflow is not a FAIL: {rc} {last}")
         rc, last = judge(paced, "--stored", "10", *q0, n=0)
         check(rc == 1 and "nothing was sent" in last, f"burst judge: an empty burst is not a FAIL: {rc} {last}")
 
