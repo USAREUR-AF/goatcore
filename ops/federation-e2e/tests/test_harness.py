@@ -457,6 +457,31 @@ def samples_checks():
     check(marked <= ids, f"rotation: rot_checks names checks the catalog does not hold: {sorted(marked - ids)}")
 
 
+def drive_rotate_checks():
+    """units/rotation.sh copies lib/engine.sh's drive() as drive_rotate with only its
+    goatbuilder command line swapped. The copy is refused when the swap finds no
+    line, or when it changes any line but that one."""
+    engine = os.path.join(ROOT, "lib", "engine.sh")
+    real = subprocess.run(["sed", "-n", "/^drive()/,/^}/p", engine], capture_output=True, text=True).stdout
+    check("--from \"$from\" --to \"$to\"" in real, "drive_rotate: lib/engine.sh's drive() was not read")
+    line = '    goatbuilder) docker exec "${env[@]}" -w /opt/goat "$h" goatbuilder -C /opt/goat --yes federate "$them" --as "$s" --from "$from" --to "$to" ;;'
+    twice = real.replace(line, line + "\n" + line.replace("goatbuilder)", "again)"), 1)
+    none = real.replace('--from "$from" --to "$to" ;;', '--from "$from" ;;', 1)
+    def run(drive):
+        script = ('die() { echo "DIE $*"; exit 3; }; '
+                  'eval "$(sed -n \'/^make_drive_rotate()/,/^}/p\' units/rotation.sh)"; '
+                  'eval "$DRIVE"; make_drive_rotate; declare -f drive_rotate | grep -c "federate rotate"')
+        p = subprocess.run(["bash", "-c", script], cwd=ROOT, capture_output=True, text=True,
+                           env={**os.environ, "DRIVE": drive})
+        return p.returncode, (p.stdout + p.stderr).strip()
+    rc, out = run(real)
+    check(rc == 0 and out.endswith("1"), f"drive_rotate: the copy of today's drive() is refused: {rc} {out}")
+    rc, out = run(twice)
+    check(rc == 3 and "DIE" in out and "diff lines" in out, f"drive_rotate: a copy that changes a second line is not refused: {rc} {out}")
+    rc, out = run(none)
+    check(rc == 3 and "no longer has the command line" in out, f"drive_rotate: a drive() with no line to swap is not refused: {rc} {out}")
+
+
 catalog_checks()
 srctree_checks()
 srcclone_checks()
@@ -464,6 +489,7 @@ verdict_checks()
 fwdeclared_checks()
 handoff_checks()
 samples_checks()
+drive_rotate_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")

@@ -31,11 +31,19 @@ ROT_KEYS="leaves carrier transport signing"
 # drive's environment for `goatbuilder federate rotate <partner> <key>` (ROT_KEY): the rotation
 # re-runs phases (8 for the leaves, 3 after a carrier or transport key), which read the same
 # values as the command does (FED_CA_CERT/KEY, FED_WORK, GOAT_CONTEXT, the signing key, the
-# directory). drive() is copied with only its goatbuilder command swapped.
-eval "$(declare -f drive | sed '1s/^drive /drive_rotate /; s/goatbuilder -C \/opt\/goat --yes federate "\$them" --as "\$s" --from "\$from" --to "\$to"$/goatbuilder -C \/opt\/goat --yes federate rotate "$them" "$ROT_KEY" --as "$s"/')"
-# shellcheck disable=SC2016 # the literal text of the swapped line, not an expansion
-declare -f drive_rotate | grep -q 'federate rotate "\$them" "\$ROT_KEY"' \
-  || die "rotation.sh: drive() no longer has the command line drive_rotate swaps; update the sed above"
+# directory). drive() is copied with only its goatbuilder command swapped, and the copy is
+# refused when the swap finds no line or changes any line but that one.
+make_drive_rotate() {
+  eval "$(declare -f drive | sed '1s/^drive /drive_rotate /; s/goatbuilder -C \/opt\/goat --yes federate "\$them" --as "\$s" --from "\$from" --to "\$to"$/goatbuilder -C \/opt\/goat --yes federate rotate "$them" "$ROT_KEY" --as "$s"/')"
+  # shellcheck disable=SC2016 # the literal text of the swapped line, not an expansion
+  declare -f drive_rotate | grep -q 'federate rotate "\$them" "\$ROT_KEY"' \
+    || die "rotation.sh: drive() no longer has the command line drive_rotate swaps; update the sed above"
+  local changed
+  changed="$(diff <(declare -f drive | sed 1d) <(declare -f drive_rotate | sed 1d) | grep -c '^[<>]' || true)"
+  [ "$changed" = 2 ] \
+    || die "rotation.sh: drive_rotate differs from drive() in $changed diff lines, not the one swapped command line (2); update the sed above"
+}
+make_drive_rotate
 export -f drive_rotate
 
 # Every stop goes through here: the flows are stopped first, so none keeps releasing.

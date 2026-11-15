@@ -616,6 +616,8 @@ TOML
 # ONE invocation shape per avenue. The environment is what an operator's would be; the
 # only thing specific to a hermetic host is GOAT_AWS_MODE=none, the mode ADR 1204
 # declares for a deploy needing no cloud credential.
+# The environment must not depend on from/to: units/rotation.sh copies this function
+# (make_drive_rotate) with only the goatbuilder command line swapped.
 drive() { # $1 sovereign, $2 them, $3 avenue, $4 from, $5 to
   local s="$1" them="$2" avenue="$3" from="$4" to="$5" h; h="$(drv_host "$1")"
   local env=(
