@@ -282,6 +282,24 @@ pub fn run_argv_to(argv: &[String], out: &mut dyn Write) -> Result<i32> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Gate row C5: a fault the shared library raises with no code takes one at
+    /// goatbuilder's boundary: GB-254 for an operating-system file error that
+    /// names its path, else GB-338. A coded fault keeps its own.
+    #[test]
+    fn an_uncoded_library_fault_takes_gb_254_or_gb_338() {
+        let file = anyhow::anyhow!("/nonexistent/package.json: No such file or directory (os error 2)");
+        assert_eq!(floor_code(&file), "GB-254");
+        let io = anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::NotFound, "no such file"))
+            .context("/var/lib/goat-federation/zagros/agreement.json");
+        assert_eq!(floor_code(&io), "GB-254");
+        // A report that could not be written names no file: not GB-254.
+        let pipe = anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "Broken pipe (os error 32)"));
+        assert_eq!(floor_code(&pipe), "GB-338");
+        assert_eq!(floor_code(&anyhow::anyhow!("--now `x` is not a YYYY-MM-DD date")), "GB-338");
+        let e = goat_errors::explain("GB-338").expect("GB-338 is in the catalog");
+        assert_eq!(e.exit, Some(1));
+    }
     use super::*;
     use anyhow::anyhow;
 
