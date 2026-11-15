@@ -77,6 +77,10 @@ class Faults:
         self.drop_probes = {}              # side -> how many round-trip probes arriving there its edge
         #                                    drops first, as downsampling drops a sample inside its interval
         self.refuse_probe_put = set()      # sides whose core answers a PUT of a round-trip probe with 403
+        self.probe_put_codes = {}          # side -> HTTP codes its core answers successive probe PUTs
+        #                                    with (anything but 200 stages nothing); then 200
+        self.hang_get_after = {}           # side -> after this many probes it accepted, its core's
+        #                                    REST GETs hang (a core under load) for 30 s
 
 
 class Core:
@@ -285,12 +289,16 @@ class Fabric:
     # --- serving ---------------------------------------------------------------
     def _handler(self, on_get, on_put, side=None):
         faults = self.faults
+        fabric = self
 
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
                 pass
 
             def do_GET(self):
+                after = faults.hang_get_after.get(side)
+                if after is not None and sum(1 for _, s, _ in fabric.probe_log if s == side) >= after:
+                    time.sleep(30)
                 if side in faults.broken_get:
                     self.send_response(500)
                     self.send_header("Content-Length", "0")
@@ -310,6 +318,14 @@ class Fabric:
             def do_PUT(self):
                 n = int(self.headers.get("Content-Length") or 0)
                 body = self.rfile.read(n)
+                codes = faults.probe_put_codes.get(side)
+                if codes and "/fedcheck/" in self.path:
+                    code = codes.pop(0)
+                    if code != 200:
+                        self.send_response(code)
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return
                 if side in faults.refuse_put or (side in faults.refuse_probe_put and "/fedcheck/" in self.path):
                     self.send_response(403)
                     self.send_header("Content-Length", "0")

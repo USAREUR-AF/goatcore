@@ -135,6 +135,40 @@ class Fedcheck(unittest.TestCase):
         self.assertLess(took, 5, out)
         self.assertNotIn("PASS", out)
 
+    def test_a_refusal_after_a_probe_was_staged_does_not_fail_the_round_trip(self):
+        # Probe 1 is staged (200) and dropped by the partner's edge; probe 2 gets a single
+        # 503 from our core under load; probe 3 is staged and acknowledged: PASS.
+        self.fabric.faults.drop_probes["xab"] = 1
+        self.fabric.faults.probe_put_codes["xaa"] = [200, 503]
+        rc, out, _ = self.fedcheck(timeout="8", gap="0.5")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("PASS  round trip complete in ", out)
+        self.assertIn("probe 3 of 3", out)
+        self.assertNotIn("refused", out)
+
+    def test_hanging_reads_end_the_run_within_its_timeout_and_one_read(self):
+        # After two probes our core's GETs hang: the run still ends by its deadline plus
+        # one read's timeout, not one timeout per probe sent.
+        self.fabric.faults.responder_down.add("xab")
+        self.fabric.faults.hang_get_after["xaa"] = 2
+        rc, out, took = self.fedcheck(timeout="4", gap="0.5")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no acknowledgement in 4s", out)
+        self.assertLess(took, 4 + 5 + 1.5, out)
+
+    def test_resends_back_off_so_a_long_wait_sends_few_probes(self):
+        # One probe per gap at first, the interval doubling up to 4 s: a 25 s wait at a
+        # half-second gap sends 9 probes, not 50.
+        self.fabric.faults.responder_down.add("xab")
+        rc, out, _ = self.fedcheck(timeout="25", gap="0.5")
+        self.assertEqual(rc, 1, out)
+        times = self.probe_times()
+        self.assertLessEqual(len(times), 10, out)
+        self.assertGreaterEqual(len(times), 7, out)
+        self.assert_spaced(times, 0.5)
+        gaps = [b - a for a, b in zip(times, times[1:])]
+        self.assertTrue(all(g <= 4 + 1.0 for g in gaps), gaps)
+
     def test_a_core_that_does_not_answer_is_named(self):
         s = socket.socket()
         s.bind(("127.0.0.1", 0))
