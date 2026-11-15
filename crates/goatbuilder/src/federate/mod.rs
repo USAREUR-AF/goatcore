@@ -1185,7 +1185,8 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             // The package the agreement was composed from, kept beside it.
             if ph.n == 6 {
                 if let Err(e) = run::keep_composed(&r.paths) {
-                    let d = format!("phase 6 could not keep {} as {}/ours.composed.json: {e}", r.paths.ours.display(), r.paths.work.display());
+                    // The working folder cannot be written (GB-184), as for its lock and journal.
+                    let d = format!("phase 6 could not keep {} as {}/ours.composed.json: {e} (GB-184)", r.paths.ours.display(), r.paths.work.display());
                     checks.push(Check { name: "failed".into(), ok: false, detail: d.clone(), fix: Some(format!("goatbuilder federate {} --from 6", o.with)) });
                     r.end(ph, state::Outcome::Failed, &d);
                     exit = EXIT_REFUSED;

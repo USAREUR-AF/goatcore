@@ -31,7 +31,8 @@ Fixes to `goatbuilder federate rotate <partner> carrier`:
   regular file owned by root, writable by root alone, and is not a link. Our
   offer in the agreement is read from `<work>/ours.composed.json`, the copy of
   our package that phase 6 now keeps beside the agreement; without it the
-  cross-check is blocked. A peering stood up by an earlier build has no copy:
+  cross-check is blocked. A phase 6 that cannot write the copy fails with
+  GB-184, as for the working folder's lock and journal. A peering stood up by an earlier build has no copy:
   its first phase 3 takes ours.canonical.json when it is no newer than the
   agreement, and writes the copy from it.
 - The peering and carrier key paths, and the ruleset paths beside them, are
