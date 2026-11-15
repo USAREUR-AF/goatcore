@@ -244,6 +244,19 @@ carry the check's detail, which gives the case and the route:
 
 GB-188's catalog entry gains this cause (#753, fixes #742).
 
+#### Changed: standup for a joiner site turns signal federation on
+
+`goatbuilder standup <env> --site <joiner>` now runs the joiner's signal
+federation with its founder in phase 9, after the mesh enrolment and before
+the data router. It uses the same steps `join-node` runs in its phase 13: a
+gate on both sites' declarations, the token and proxy on the joiner and then
+the founder, each node's federation router, the joiner's relay tunnel and
+pin, and the delivery proof. A joiner that declares
+`signal_federation_absent_reason` gets the gate and a SKIP line. Before this,
+standup left signal federation off, and the operator ran those plays by hand.
+`ops/scripts/goat-standup.sh` plans the same steps. A founder's plan is
+unchanged.
+
 #### Added: each timings row names its cause, and standup times phase 11 and sums the run
 
 Every row of the timings files that `goatbuilder standup`, `join-node` and

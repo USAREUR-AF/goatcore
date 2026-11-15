@@ -217,19 +217,17 @@ goatbuilder assay <joiner-site>
 goatbuilder status --env <env>
 ```
 
-`standup --site <joiner-site>` does not run the signal federation steps
-([signal-federation-pair.md](signal-federation-pair.md)). After it, run the
-federation rows of the tutorial's phase 13 table, from the federation gate to
-the federation proof, by hand. `join-node` runs the same rows in its phase 13
-for a joiner's core machine. Each further machine of the joiner runs
+`standup --site <joiner-site>` runs the signal federation steps in its phase
+9, the same rows `join-node` runs in its phase 13
+([signal-federation-pair.md](signal-federation-pair.md)). Each further machine
+of the joiner runs
 `goatbuilder join-node <env> --site <joiner-site> --node <name> --class <class> --address <LAN address> --yes`,
 after its `--dry-run`. Compare every command's output with the tutorial's
 text as you go. A difference is a finding even when the command exits 0.
 
 | The run ends with | It means |
 |---|---|
-| `standup` exit 0 | The joiner's three passes and the founder-side mirror ran |
-| `signal-federation-verify.yml` passes, naming the directions a forward proved | The federation half of checkpoint 3 holds |
+| `standup` exit 0, with phase 9's `[signal federation] proven from both nodes` row passing | The joiner's three passes, the founder-side mirror and the federation proof ran: the federation half of checkpoint 3 holds |
 | `assay <joiner-site>` exit 0, every row of the `federation` layer PASS, including `goat-xsite-roundtrip` (`xsite: PASS …`) | Checkpoint 2 holds, and the joiner's half of checkpoint 3 |
 | `status --env <env>` lists both sites' machines, every one `converged` | Checkpoint 4 holds |
 | a phase fails, or `assay` exits 3 | Not yet a measurement. Note the phase, the code and the output. Fix the tool or the text, then resume with `--from <phase>` |
@@ -558,7 +556,5 @@ None of the three clocks has been measured on hardware, and neither tutorial
 has been followed on hardware. Two parts of the tutorial runs are not built:
 - a command for tutorial 2's checkpoint 3 legs, the founder's subscriptions
   and a write and a deletion across the sites;
-- signal federation in `standup` for a joiner site; today only `join-node`
-  phase 13 and the plays turn it on;
 - federation-acceptance.md §6.4, which a two-party tutorial 3 run needs for a
   PASS.

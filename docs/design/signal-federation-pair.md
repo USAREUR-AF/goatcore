@@ -5,9 +5,11 @@ per-node assert (`ops/ansible/tasks/signal-federation-assert.yml`), the plays
 (`signal-federation-transport.yml`, `signal-federation-verify.yml`) and the
 `goatbuilder join-node` phase are built and unit-tested; the sequence is
 unmeasured end to end through these plays on hardware.
-`goatbuilder standup --site <joiner>` and `goat-standup.sh` do not run the
-federation steps; a joiner turns it on through `join-node` phase 13 or the
-plays below.
+`goatbuilder standup --site <joiner>` runs the same steps in its phase 9, built
+by the same function as join-node's phase 13 (`signal_federation_rows` in
+`crates/goatbuilder/src/joinnode.rs`), and `goat-standup.sh` writes them the
+same way (the standup parity gate); built and unit-tested, not run on
+hardware.
 
 A NetBird peer holds its signalling stream on exactly one signal server. When a
 goatnet has two management nodes, an offer from a peer homed on one to a peer
@@ -77,6 +79,9 @@ assert: it is standing by and forwards nothing.
 
 `goatbuilder join-node <env> --site <joiner> --node <n> --class core` plans it in
 phase 13, after the founder-side mirror and the joiner's second Spock wiring.
+`goatbuilder standup <env> --site <joiner>` plans the same rows in phase 9,
+after its Spock wiring (phase 6) and its mesh enrolment (phase 8), before the
+data router.
 The token is enforced before any public path reaches a node.
 
 | # | Kind | Command (from `ops/ansible`) | Proves |

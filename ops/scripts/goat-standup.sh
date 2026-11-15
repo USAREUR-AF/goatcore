@@ -1041,6 +1041,43 @@ step 8 T "[internet] record the mesh IPs (group_vars, mesh inventory, cert manif
   "python3 '$REPO/ops/scripts/standup-mesh-record.py' $SITE --ips $(sh_quote "$MESH_IPS")"
 fi
 
+# Phase 9. [joiner] Signal federation with the founder (signal-federation-pair.md),
+#     after the Spock wiring (phase 6) and the mesh enrolment (phase 8): the same
+#     steps join-node's phase 13 runs for a joiner's core node, written as
+#     standup.rs writes them (joinnode::signal_federation_rows; parity gate).
+#     The gate first, the delivery proof last; a joiner that declares
+#     signal_federation_absent_reason gets the gate and a SKIP line.
+if [ "$JOINER" = 1 ]; then
+  SF_FOUNDER="$JOIN_FOUNDER_SITE"
+  SF_FGROUP="$(printf '%s' "$SF_FOUNDER" | tr '-' '_')_hosts"
+  step 9 GATE "[signal federation] the repo declares it on both sides: $GROUP and $SF_FGROUP crossed and complete, $SF_FOUNDER's relay inventory pins each federation hostname to its own node, the names resolve to the relays, the shared token is in the environment" \
+    "python3 '$REPO/ops/scripts/signal-federation-check.py' $SITE --peer $(sh_word "$SF_FOUNDER") --resolve --require-env"
+  SF_OFF="$(grep -E '^[[:space:]]*signal_federation_absent_reason:' "$GV_FILE" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"'\''' || true)"
+  if [ -n "$SF_OFF" ]; then
+    step 9 SKIP "[signal federation] declared off at $SITE (signal_federation_absent_reason in group_vars/$GROUP); the gate above proved no side expects it: $SF_FOUNDER is off too, or federates with another site" \
+      "echo '>> signal federation: declared off for $SITE (signal_federation_absent_reason); nothing to converge'"
+  else
+    SF_RATHOLE=site-rathole-client.yml
+    [ -f "$REPO/ops/ansible/${SF_FOUNDER}-rathole-client.yml" ] && SF_RATHOLE="${SF_FOUNDER}-rathole-client.yml"
+    SF_RATHOLE="$(sh_word "$SF_RATHOLE")"
+    SF_RELAY_INV="$(sh_word "inventory/hosts-$SF_FOUNDER.ini")"
+    SF_MISSING="$(sh_quote "$SF_FOUNDER relay inventory inventory/hosts-$SF_FOUNDER.ini missing — generate it: inventory/generate-relays.sh $SF_FOUNDER terraform-$SF_FOUNDER")"
+    SF_NEED="{ [ -f $SF_RELAY_INV ] || { echo $SF_MISSING; exit 1; }; }"
+    step 9 A "[signal federation] token + dual-path proxy on the joiner $SITE first (the token is enforced before any public path reaches it)" \
+      "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} signal-federation-transport.yml -e federation_site=$SITE"
+    step 9 A "[signal federation] token + dual-path proxy on the founder $SF_FOUNDER (the same change, not a follow-up: one direction alone leaves offers undeliverable)" \
+      "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} signal-federation-transport.yml -e $(sh_word "federation_site=$SF_FOUNDER")"
+    step 9 A "[signal federation] each node's federation router and its certificate (Traefik, DNS-01)" \
+      "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} traefik-acme.yml -e target=$GROUP && $ANSIBLE_PRE ${INV[*]} traefik-acme.yml -e $(sh_word "target=$SF_FGROUP")"
+    step 9 A "[signal federation] the joiner's tunnel to every $SF_FOUNDER relay ($SF_RATHOLE, service rathole_client_service_name)" \
+      "cd '$REPO/ops/ansible' && $SF_NEED && $ANSIBLE_PRE -i $SF_RELAY_INV ${INV[*]} $SF_RATHOLE -e rathole_client_target=$GROUP"
+    step 9 A "[signal federation] $SF_FOUNDER's relays: the $SITE backend and its federation-hostname pin, re-rendered and post-checked (relay-ingress-add-site.yml)" \
+      "cd '$REPO/ops/ansible' && $SF_NEED && $ANSIBLE_PRE -i $SF_RELAY_INV -i $(sh_word "inventory/$SF_FOUNDER-goat-relay-alias.ini") ${INV[*]} relay-ingress-add-site.yml -e target=goat_relay_hosts -e $(sh_word "founder_site=$SF_FOUNDER") -e join_site=$SITE"
+    step 9 GATE "[signal federation] proven from both nodes: transport up both ways, an offer forwarded and delivered" \
+      "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} signal-federation-verify.yml -e federation_site=$SITE -e $(sh_word "federation_peer_site=$SF_FOUNDER")"
+  fi
+fi
+
 # Phase 9. Per-uuid Zenoh router (binds the mesh IP on internet, LAN IP on lan; cert from phase 4/8).
 step 9 A "zenoh router" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} zenoh-deploy.yml -e target=$GROUP"

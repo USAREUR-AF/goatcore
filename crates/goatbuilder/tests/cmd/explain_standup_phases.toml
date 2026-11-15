@@ -12,7 +12,7 @@ standup: 20 phases. goatbuilder explain standup <phase> answers for one, by numb
   6  ory                                             A             identity stack (Ory), then the rest of site-bootstrap
   7  public-tls                                      A + T         [internet] public TLS + relay tier
   8  mesh-enroll                                     A + T         [internet] mesh-enroll the hosts
-  9  router                                          A             zenoh router + SPIRE server
+  9  router                                          A + GATE      zenoh router + SPIRE server
  10  surfaces                                        A             dashboard and the site's service surface
  11  first-login                                     MANUAL        first login, admin-promote, the bootstrap NetBird token
  12  control-plane                                   A + T + GATE  declared ACL, service identities, and the services

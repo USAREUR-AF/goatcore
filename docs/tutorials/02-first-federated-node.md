@@ -131,10 +131,11 @@ ops/scripts/with-secrets \
 Resume after a manual phase or a fixed failure with `--from <phase>`, as in
 tutorial 1.
 
-`standup` does not turn signal federation on. After it, run the federation rows
-of the phase 13 table below, from the federation gate to the federation proof.
-Or bring the joiner's core machine in with `join-node`, whose phase 13 runs
-them ([signal-federation-pair.md](../design/signal-federation-pair.md)).
+`standup` turns signal federation on in phase 9, before the data router, with
+the federation rows of the phase 13 table below, from the federation gate to
+the federation proof ([signal-federation-pair.md](../design/signal-federation-pair.md)).
+A joiner that declares `signal_federation_absent_reason` gets the gate and a
+SKIP line instead.
 
 **Each further machine at a site** joins with its own verb, which runs the
 node-addition sequence (reach, key seeding, the narrowed baseline, the class's
