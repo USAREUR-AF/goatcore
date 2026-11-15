@@ -1840,6 +1840,21 @@ mod tests {
     use super::*;
     use std::process::Command;
 
+    /// Gate row C5: a teardown stop that fails prints its own code on its failed
+    /// row, so a drill log of it holds no uncoded error.
+    #[test]
+    fn a_failed_teardown_stop_prints_its_code() {
+        let t = crate::testdir::path("gb-teardown-fail-");
+        std::fs::create_dir_all(&t).unwrap();
+        let steps = vec![(7, "goat-zenoh".to_string(), "goat-zenoh".to_string(), "exit 3".to_string())];
+        let (rows, ok) = run_teardown_steps(&t, &t.display().to_string(), "zagros", "goatbuilder teardown zagros --site zagros", &steps).unwrap();
+        assert!(!ok);
+        let failed: Vec<&Check> = rows.iter().filter(|c| c.name == "failed").collect();
+        assert_eq!(failed.len(), 1, "{rows:?}");
+        assert!(failed[0].detail.contains("GB-335"), "{}", failed[0].detail);
+        assert!(failed[0].detail.contains("FAILED — exit 3"), "{}", failed[0].detail);
+    }
+
     /// Both drivers run a planned line through the one runner that refuses an empty
     /// `$(printenv NAME)` (tests/test_standup_phase_run.py tests its refusal).
     #[test]

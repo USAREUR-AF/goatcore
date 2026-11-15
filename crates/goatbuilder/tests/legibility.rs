@@ -1122,6 +1122,24 @@ fn f5_a_failed_standup_phase_carries_its_known_error_s_code_and_fix() {
     let p = goat_errors::phases::explain_phase("standup", &phase.to_string())
         .unwrap_or_else(|| panic!("standup phase {phase} has no phase-catalog entry"));
     assert!(d.contains(&format!("By hand: {}", p.by_hand)), "{d}");
+    the_failed_row_prints(&out, "GB-331");
+}
+
+/// Gate row C5: the one `failed` row of a run that stopped on a failed step
+/// prints the verb's own code for that failure, so a drill log of it holds no
+/// uncoded error even when the interpretation under it carries none.
+fn the_failed_row_prints(out: &Output, code: &str) {
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(out)));
+    let failed: Vec<&str> = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"] == "failed")
+        .filter_map(|c| c["detail"].as_str())
+        .collect();
+    assert_eq!(failed.len(), 1, "one failed row: {}", text(out));
+    assert!(failed[0].contains(code), "the failed row prints {code}: {}", failed[0]);
 }
 
 /// The ssh refusal the F5 standup tests make a command print: ansible's line
@@ -1201,6 +1219,7 @@ fn f5_a_failed_image_pull_carries_its_known_error_s_code_and_fix() {
         .output()
         .unwrap();
     let log = the_step_s_ssh_refusal_is_interpreted(&out, "image-pull");
+    the_failed_row_prints(&out, "GB-333");
     assert!(log.ends_with("/standup-alpha-images.log"), "{log}");
 }
 
@@ -1283,6 +1302,7 @@ fn f5_a_failed_observability_leg_carries_its_known_error_s_code_and_fix() {
         .output()
         .unwrap();
     let log = the_step_s_ssh_refusal_is_interpreted(&out, "observability-leg-host");
+    the_failed_row_prints(&out, "GB-334");
     assert!(log.ends_with("/standup-alpha-obs-host.log"), "{log}");
 }
 
@@ -1318,6 +1338,7 @@ fn f5_a_failed_join_node_phase_carries_its_known_error_s_code_and_fix() {
         .output()
         .unwrap();
     the_ssh_refusal_is_interpreted("join-node", &out, "5");
+    the_failed_row_prints(&out, "GB-332");
 }
 
 /// F5 for deploy: a group's play that fails with a known error carries its

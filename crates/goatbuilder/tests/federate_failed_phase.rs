@@ -40,6 +40,12 @@ fn f5_a_failed_phase_carries_its_known_error_s_code_and_fix() {
     // The command that runs phase 12 by hand.
     let p = goat_errors::phases::explain_phase("federate", "12").unwrap();
     assert!(d.contains(&format!("By hand: {}", p.by_hand)), "{d}");
+    // Gate row C5: the failed row prints GB-183, the code the run journal
+    // records for it, so a drill log holds no uncoded error even when the
+    // interpretation under it carries a code of another tool (X-ACCEPT-001).
+    let failed = rows(&v, "failed");
+    assert_eq!(failed.len(), 1, "{}", says(&out));
+    assert!(failed[0].contains("GB-183"), "{}", failed[0]);
 }
 
 /// The run record keeps the rows that stopped a run that ended without an
