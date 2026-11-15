@@ -106,8 +106,9 @@ package's digest, and places it only once a person confirms the digest compared
 on the call: `yes` at a terminal, or `--accept-partner-package <digest>`.
 `--yes` never confirms it. The old package is kept as a copy,
 `theirs.canonical.json.previous-<UTC time>`, and the place is never empty. A
-package not signed by the bound key, or one the parser refuses, is refused
-(GB-191) and set aside. A package issued before the one held, or without a
+package not signed by the bound key, one the parser refuses, or one issued more
+than 7 days after today (UTC) is refused (GB-191) and set aside; one that came
+through the partner's single pointer is asked about saying so. A package issued before the one held, or without a
 readable issued date while the held one has one, is refused (GB-308) even with
 its digest given, so a replay is never asked about. When the keys confirmed before are
 unchanged, the new package's digest is the only question: phase 5 carries on

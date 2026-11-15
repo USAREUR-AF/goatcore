@@ -1110,6 +1110,9 @@ def refuse_unverified_files(theirs_path, work, key_b64: str, sid: str, warnings:
 
 
 INCOMING = "theirs.incoming.json"
+# Beside INCOMING when the package came through their single pointer (no slot for us): it
+# may be the package of another of their peerings, and phase 5 says so.
+INCOMING_POINTER = INCOMING + ".pointer"
 
 
 def changed_members(a, b, at=""):
@@ -1137,7 +1140,8 @@ def _issued(package) -> str:
     return v
 
 
-def offer_new_package(a, their_id: str, bound_key, body: bytes, theirs: dict, on_disk: dict, warnings: list):
+def offer_new_package(a, their_id: str, bound_key, body: bytes, theirs: dict, on_disk: dict, warnings: list,
+                      via_their_pointer: bool = False):
     """ADR 1229: a package from the partner that verifies under the key bound for them and
     differs from the one on disk is a new package (after they rotated their WireGuard key, for
     example). A signature says who signed a package, not which of two is current, so it is
@@ -1147,14 +1151,16 @@ def offer_new_package(a, their_id: str, bound_key, body: bytes, theirs: dict, on
     (goatbuilder federate's default): without it, before their key is recorded, or without a
     working folder, the file on disk is what composes and the run says so, as before."""
     incoming = os.path.join(a.work, INCOMING) if a.work else None
+    marker = os.path.join(a.work, INCOMING_POINTER) if a.work else None
     try:
         same = read_bytes(a.theirs) == body
     except OSError:
         return
     if same:
-        if incoming and os.path.isfile(incoming):
-            with contextlib.suppress(OSError):
-                os.remove(incoming)
+        for f in (incoming, marker):
+            if f and os.path.isfile(f):
+                with contextlib.suppress(OSError):
+                    os.remove(f)
         return
     verified = False
     if bound_key and theirs.get("sovereign_id") == on_disk.get("sovereign_id") == their_id:
@@ -1183,6 +1189,10 @@ def offer_new_package(a, their_id: str, bound_key, body: bytes, theirs: dict, on
         return
     try:
         _write(incoming, body, exclusive=False)
+        if via_their_pointer:
+            _write(marker, b"", exclusive=False)
+        elif os.path.isfile(marker):
+            os.remove(marker)
     except OSError as e:
         warnings.append(f"`{their_id}` serves a new package, and it could not be saved at {incoming}: {e}")
         return
@@ -1491,7 +1501,8 @@ def main(argv=None) -> int:
                 except OSError as e:
                     warnings.append(f"could not place their package at {a.theirs}: {e}")
             elif via_pointer and theirs_on_disk is not None:
-                offer_new_package(a, their_id, keyring.get(their_id), body, theirs, theirs_on_disk, warnings)
+                offer_new_package(a, their_id, keyring.get(their_id), body, theirs, theirs_on_disk, warnings,
+                                  via_their_pointer=fallback)
             report = compatibility(ours, theirs, False)
             transport_rows(ours, theirs, report)
             report.print("COMPATIBILITY REPORT — computed from the two packages (advisory)")

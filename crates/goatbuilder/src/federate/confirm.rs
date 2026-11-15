@@ -725,8 +725,18 @@ fn place(path: &Path, body: &[u8]) -> std::io::Result<()> {
     o.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-    std::io::Write::write_all(&mut o.open(&tmp)?, body)?;
-    std::fs::rename(tmp, path)
+    let mut f = o.open(&tmp)?;
+    std::io::Write::write_all(&mut f, body)?;
+    // The bytes reach the disk before the rename makes them the package, and
+    // the rename reaches the disk before anything is journaled about it.
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path)?;
+    #[cfg(unix)]
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::File::open(dir)?.sync_all()?;
+    }
+    Ok(())
 }
 
 /// Replace the package at `path` with `body`, keeping the old one at
@@ -929,13 +939,38 @@ pub fn keys_unchanged(paths: &Paths, st: &State) -> bool {
 /// none, or before their key is bound (the first exchange places theirs).
 pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Option<Step> {
     let held = paths.work.join(INCOMING);
-    let placed = std::fs::read(&paths.counterparty).ok()?;
+    let pointer_marker = paths.work.join(INCOMING_POINTER);
+    // Every way the offered file goes (placed, refused, the same as held) takes
+    // its marker with it.
+    let drop_marker = || {
+        let _ = std::fs::remove_file(paths.work.join(INCOMING_POINTER));
+    };
+    let placed = match std::fs::read(&paths.counterparty) {
+        Ok(b) => b,
+        // After their key is bound and a package confirmed, a package missing from
+        // the place is a lost file, named as such (not a folder problem).
+        Err(_) if confirmed_package(st).is_some() && held.exists() => {
+            let them = st.peering.clone();
+            return Some(fail(
+                "GB-191",
+                format!(
+                    "no package held at {} (the one confirmed at phase 5 is {}); a new package is offered at {}, and nothing was placed",
+                    paths.counterparty.display(),
+                    confirmed_package(st).map(|(d, _)| d).unwrap_or_default(),
+                    held.display()
+                ),
+                format!("run phase 5 again with them, the keys read aloud: goatbuilder federate {them} --from 5 --partner-key <key> --partner-ca-fingerprint <fp>"),
+            ));
+        }
+        Err(_) => return None,
+    };
     let placed_v: serde_json::Value = serde_json::from_slice(&placed).ok()?;
     let them = field(&placed_v, &["sovereign_id"]).filter(|id| plain_id(id))?;
     let their_key = keyring_key(&paths.keyring, &them)?;
     let (body, by_hand) = match std::fs::read(&held) {
         Ok(b) if b == placed => {
             let _ = std::fs::remove_file(&held);
+            drop_marker();
             return None;
         }
         Ok(b) => (b, false),
@@ -956,6 +991,7 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
         let what = if by_hand {
             format!("{} is not a well-formed package ({f:?})", paths.counterparty.display())
         } else {
+            drop_marker();
             match set_aside(&held, "refused") {
                 Ok(p) => format!("the package offered as {them}'s new one is not a well-formed package ({f:?}); it was set aside at {}", p.display()),
                 Err(e) => format!("the package offered as {them}'s new one is not a well-formed package ({f:?}), and it could not be set aside ({e}); remove {}", held.display()),
@@ -967,11 +1003,36 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
             "do not use it; tell the partner, and ask them to publish their current package again",
         ));
     }
+    // An issued date far ahead of ours would make every honest later package
+    // read as older (GB-308), locking the peering: refused as not well formed.
+    if let Some(d) = issued(&body) {
+        let today = chrono::Utc::now().date_naive();
+        if let Ok(when) = chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d") {
+            if (when - today).num_days() > ISSUED_AHEAD_DAYS {
+                let what = if by_hand {
+                    format!("{} is not a well-formed package: its issued date {d} is more than {ISSUED_AHEAD_DAYS} days after today's UTC date ({today})", paths.counterparty.display())
+                } else {
+                    drop_marker();
+                    let aside = match set_aside(&held, "refused") {
+                        Ok(p) => format!("it was set aside at {}", p.display()),
+                        Err(e) => format!("it could not be set aside ({e}); remove {}", held.display()),
+                    };
+                    format!("the package offered as {them}'s new one is not a well-formed package: its issued date {d} is more than {ISSUED_AHEAD_DAYS} days after today's UTC date ({today}); {aside}")
+                };
+                return Some(fail(
+                    "GB-191",
+                    format!("{what}. A date that far ahead would make every later package read as older; nothing was placed"),
+                    "ask the partner to publish their package again with today's date (and check the clock that signed it)",
+                ));
+            }
+        }
+    }
     let signed = matches!(signed_by(&body, &their_key), Ok(true));
     if !signed || field(&new_v, &["sovereign_id"]).as_deref() != Some(them.as_str()) {
         let what = if by_hand {
             format!("{} is not the package their last confirmation was for, and it is not {them}'s package signed by the key bound for them", paths.counterparty.display())
         } else {
+            drop_marker();
             match set_aside(&held, "refused") {
                 Ok(p) => format!("the package offered as {them}'s new one is not signed by the key bound for them; it was set aside at {}", p.display()),
                 Err(e) => format!("the package offered as {them}'s new one is not signed by the key bound for them, and it could not be set aside ({e}); remove {}", held.display()),
@@ -1011,6 +1072,7 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
         let what = if by_hand {
             format!("{} was replaced by hand with a package of {them}'s {what_it_is}, {why} ({was})", paths.counterparty.display())
         } else {
+            drop_marker();
             let aside = match set_aside(&held, "refused") {
                 Ok(p) => format!("it was set aside at {}", p.display()),
                 Err(e) => format!("it could not be set aside ({e}); remove {}", held.display()),
@@ -1051,8 +1113,14 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
         ),
         _ => String::new(),
     };
+    let via_pointer = !by_hand && pointer_marker.exists();
+    let pointer_note = if via_pointer {
+        format!("\n    it came through {them}'s single pointer, not a package they host for this peering:\n    it may be the package of another of {them}'s peerings. Confirm on the call that it is this one.")
+    } else {
+        String::new()
+    };
     let text = format!(
-        "\nPhase 5: {them} has a new package\n  It is signed by the key you bound for {them}, and it differs from the one\n  on disk. A signature does not say which of two packages is current, so\n  compare this digest with {them} on the call before it is used.\n    changed:  {changed_text}\n    digest:   {}\n    saved at: {}{same_day}\n",
+        "\nPhase 5: {them} has a new package\n  It is signed by the key you bound for {them}, and it differs from the one\n  on disk. A signature does not say which of two packages is current, so\n  compare this digest with {them} on the call before it is used.\n    changed:  {changed_text}\n    digest:   {}\n    saved at: {}{same_day}{pointer_note}\n",
         groups(&digest),
         if by_hand { paths.counterparty.display() } else { held.display() }
     );
@@ -1090,10 +1158,17 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
     if !by_hand {
         match replace_counterparty(&paths.counterparty, &body, "previous", &mut || Ok(())) {
             Ok(p) => rows.push(ok("partner-package", format!("the package it replaces is kept at {}", p.display()))),
+            Err((false, e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Some(fail(
+                    "GB-191",
+                    format!("no package held at {}; nothing was placed", paths.counterparty.display()),
+                    format!("run phase 5 again with them, the keys read aloud: goatbuilder federate {them} --from 5 --partner-key <key> --partner-ca-fingerprint <fp>"),
+                ))
+            }
             Err((false, e)) => {
                 return Some(fail(
                     "GB-184",
-                    format!("cannot write the working folder: {} could not be moved aside ({e}); nothing was placed", paths.counterparty.display()),
+                    format!("cannot write the working folder: {} could not be copied aside ({e}); nothing was placed", paths.counterparty.display()),
                     "check the working folder is writable, then run phase 5 again",
                 ))
             }
@@ -1106,6 +1181,7 @@ pub fn incoming(paths: &Paths, s: &mut Surface, st: &mut State, run: &str) -> Op
             }
         }
         let _ = std::fs::remove_file(&held);
+        drop_marker();
     } else if let Err(e) = place(&paths.counterparty, &body) {
         // The bytes confirmed are the bytes placed, whatever was copied over
         // the file while the person was asked.
