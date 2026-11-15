@@ -13,7 +13,6 @@ import datetime
 import importlib.util
 import io
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,13 +22,37 @@ from pathlib import Path
 from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parent.parent
 spec = importlib.util.spec_from_file_location("external_service_finish", HERE / "external-service-finish.py")
 esf = importlib.util.module_from_spec(spec)
 sys.modules["external_service_finish"] = esf
 spec.loader.exec_module(esf)
 
 TODAY = datetime.date(2026, 9, 23)
+
+
+# The test's own taxonomy, so the cases do not depend on which goatnets the
+# repository's ops/ansible/netbird_acl_taxonomy.yml lists: a governed scope
+# (zagros-dev), an ungoverned one (zagros), and a hyphenated ungoverned one
+# (zagros-prod), each with the group suffixes the cases name.
+FIXTURE_TAXONOMY = """\
+netbird_acl_taxonomy:
+  _default:
+    site_prefix: __DERIVED__
+  zagros:
+    site_prefix: ZAGROS
+    groups: &groups
+    - suffix: INFRA
+    - suffix: EXTERNAL-INFRA
+    - suffix: PLATFORM-ADMIN
+    - suffix: DEVELOPER
+    - suffix: OBSERVER
+  zagros-dev:
+    site_prefix: ZAGROS-DEV
+    groups: *groups
+  zagros-prod:
+    site_prefix: ZAGROS-PROD
+    groups: *groups
+"""
 
 
 def base_facts(site):
@@ -43,7 +66,15 @@ class GovernanceTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         (self.root / "ops" / "warrant" / "membership").mkdir(parents=True)
         (self.root / "ops" / "ansible").mkdir(parents=True)
-        shutil.copy(REPO / "ops" / "ansible" / "netbird_acl_taxonomy.yml", self.root / "ops" / "ansible")
+        taxonomy = self.root / "ops" / "ansible" / "netbird_acl_taxonomy.yml"
+        taxonomy.write_text(FIXTURE_TAXONOMY)
+        # warrant_membership's own checks (check_scope, validate_scope) read the
+        # repository's taxonomy when no path is given; they read this one instead.
+        real = esf.warrant_membership.taxonomy_scopes
+        patcher = patch.object(esf.warrant_membership, "taxonomy_scopes",
+                               lambda path=taxonomy: real(path))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.sdir = self.root / "ops" / "warrant" / "membership" / "zagros-dev"
         self.sdir.mkdir()
         self.scope = self.sdir / "_scope.yaml"
