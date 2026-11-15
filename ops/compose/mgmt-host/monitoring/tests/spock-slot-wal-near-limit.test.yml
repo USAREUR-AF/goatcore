@@ -63,3 +63,34 @@ tests:
       - eval_time: 15m
         alertname: SpockSlotWALNearLimit
         exp_alerts: []
+
+  # Two cap series, as on a Prometheus that scrapes a pair's postgres-a and
+  # postgres-b, or a hub that federates several sites: each slot is compared
+  # with its own Postgres's cap, matched on `instance`. postgres-b's cap is
+  # 6 GB, so its slot at 0.9 GB is far from it; postgres-a's slot at 0.9 GB
+  # of 1 GB fires.
+  - interval: 1m
+    input_series:
+      - series: 'pg_replication_slot_retained_wal_bytes{job="postgres",instance="postgres-a",site="zagros-a",slot_name="sub_zagros_b"}'
+        values: '966367641x20'
+      - series: 'pg_replication_slot_retained_wal_bytes{job="postgres",instance="postgres-b",site="zagros-a",slot_name="sub_zagros_c"}'
+        values: '966367641x20'
+      - series: 'spock_config_max_slot_wal_keep_size_bytes{job="postgres",instance="postgres-a",site="zagros-a"}'
+        values: '1073741824x20'
+      - series: 'spock_config_max_slot_wal_keep_size_bytes{job="postgres",instance="postgres-b",site="zagros-a"}'
+        values: '6442450944x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpockSlotWALNearLimit
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: spock
+              job: postgres
+              instance: postgres-a
+              site: zagros-a
+              slot_name: sub_zagros_b
+            exp_annotations:
+              summary: "Spock slot sub_zagros_b at zagros-a > 80% of max_slot_wal_keep_size"
+              description: "Replication slot is retaining WAL and approaching max_slot_wal_keep_size. If it hits the ceiling, Postgres invalidates the slot and the disconnected peer will require a full pg_basebackup + Spock re-subscribe to recover. Investigate why the subscriber isn't consuming — network partition, crashed apply worker, or a schema mismatch stopping replay."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
