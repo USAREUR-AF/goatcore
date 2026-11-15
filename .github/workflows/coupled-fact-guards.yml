@@ -117,6 +117,7 @@ on:
       - 'ops/scripts/newsite-secret-store.py'
       - 'tests/test_newsite_secrets.py'
       - 'tests/test_scaffold_reference_address.py'
+      - 'tests/test_traefik_acme_dns_resolvers.py'
       - 'tests/newsite-secrets.bats'
       - '.github/workflows/**'
       - 'ops/ansible/zenoh-deploy.yml'
@@ -186,6 +187,7 @@ jobs:
         run: |
           python3 tests/test_newsite_secrets.py
           python3 tests/test_scaffold_reference_address.py
+          python3 tests/test_traefik_acme_dns_resolvers.py
       - name: "self-test: every guard proves RED on a broken fixture first (P6)"
         run: |
           ops/ci/check-partition-render-consistency.sh --self-test

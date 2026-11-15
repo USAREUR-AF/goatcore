@@ -81,7 +81,19 @@ services:
       - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
       - --certificatesresolvers.le.acme.dnschallenge=true
       - --certificatesresolvers.le.acme.dnschallenge.provider=cloudflare
-      - --certificatesresolvers.le.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53
+      # The resolvers the DNS-01 challenge asks for the zone's SOA record and
+      # for the challenge record. A site whose network permits DNS only to its
+      # own resolver sets acme_dns_resolvers to that resolver, and
+      # acme_dns_skip_authoritative_checks so that the challenge record is
+      # checked through it and not at the zone's authoritative name servers,
+      # which such a network does not reach either.
+      # Declared in the target group's vars as a list of host:port entries:
+      #   acme_dns_resolvers: ["<resolver address>:53"]
+      #   acme_dns_skip_authoritative_checks: true
+      - --certificatesresolvers.le.acme.dnschallenge.resolvers={{ acme_dns_resolvers | default(['1.1.1.1:53', '8.8.8.8:53']) | join(',') }}
+{% if acme_dns_skip_authoritative_checks | default(false) | bool %}
+      - --certificatesresolvers.le.acme.dnschallenge.propagation.disableANSChecks=true
+{% endif %}
     environment:
       # Read at runtime from /opt/mgmt-host/.env (rendered by the playbook).
       # Compose loads .env automatically for env interpolation in the file

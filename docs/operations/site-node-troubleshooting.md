@@ -240,6 +240,18 @@ A joiner returns to the ordered passes and founder-side mirror in
 `dns-service-discovery.md` for the DNS
 contract and the goatnet-specific failover runbook if a core role must move.
 
+**Certificate renewal fails on a network that restricts DNS.** When the
+Traefik log of a core node shows `Error renewing certificate` with `could not
+find the start of authority` and a timeout to a public resolver, the site's
+network permits DNS only to its own resolver. Confirm it from the node: a
+query to a public resolver times out and the same query to the resolver the
+network hands out answers. Declare that resolver in the site's group variables
+(`acme_dns_resolvers: ["<address>:53"]` and
+`acme_dns_skip_authoritative_checks: true`) and run `traefik-acme.yml` for the
+site; the next renewal attempt then succeeds. The served certificate keeps
+working until its expiry date, so read that date first to know how long there
+is.
+
 **Pass condition.** The configured name resolves to the intended current
 endpoint, TLS identity and time validity are correct, the management and signal
 connections succeed, and the applicable acceptance rows pass from the affected
