@@ -22,7 +22,11 @@ unchanged, the new package's digest is the only question: phase 5 carries on
 without asking the keys again, and phase 6 does not ask an agreement digest
 already compared with the partner. Before each phase after 5, whatever phase a run
 starts from, the package on disk must be the last one confirmed, with the keys
-confirmed for it (GB-191, naming phase 5). A peering confirmed by an earlier build has
+confirmed for it (GB-191, naming phase 5). `goatbuilder federate compose` run as a verb
+applies the same check to a package in a peering's working folder: one that is
+not the package confirmed at phase 5 there is refused (GB-191, exit 1, the
+contract's "refused: a precondition failed"); a package outside a working
+folder composes as before. A peering confirmed by an earlier build has
 its held package recorded as confirmed on its first run, as a migration; one
 that cannot be read stops the run (GB-310). This follows ADR 1229, which is
 accepted.

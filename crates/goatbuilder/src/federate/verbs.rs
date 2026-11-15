@@ -173,6 +173,11 @@ pub fn run_to(cmd: FederateCmd, site: &SiteArgs, out: &mut dyn Write) -> Result<
             verbs::run_init_measured(&resolve_site(site)?, &a, out, &measure)
         }
         cmd => {
+            // The verb composes only the partner's package confirmed at phase 5 of
+            // the peering whose working folder it reads, as phase 6 does.
+            if let FederateCmd::Compose(c) = &cmd {
+                super::confirm::compose_verb_guard(&[c.first.as_path(), c.second.as_path()])?;
+            }
             let resolve = || resolve_site(site);
             verbs::run(cmd, &resolve, out)
         }

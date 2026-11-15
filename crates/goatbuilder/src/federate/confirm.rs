@@ -995,6 +995,35 @@ pub fn compose_guard(paths: &Paths, st: &State, phase: u32) -> Option<Step> {
     }
 }
 
+/// [`compose_guard`] for `goatbuilder federate compose` run as a verb: each
+/// package given that lies in a peering's working folder (one with a run
+/// journal), other than our own half there, must be the one confirmed at phase 5
+/// in that journal, with the keys confirmed for it. A package outside any such
+/// folder is composed as before. Refused with GB-191.
+pub fn compose_verb_guard(packages: &[&Path]) -> anyhow::Result<()> {
+    for p in packages {
+        if p.file_name().and_then(|n| n.to_str()) == Some("ours.canonical.json") {
+            continue;
+        }
+        let dir = match p.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d,
+            _ => Path::new("."),
+        };
+        let Some(st) = State::read(dir)? else { continue };
+        let mut paths = Paths::new(&dir.display().to_string());
+        paths.counterparty = p.to_path_buf();
+        if let Some(step) = compose_guard(&paths, &st, 6) {
+            let detail = match &step.verdict {
+                Verdict::Fail(d) | Verdict::Stop(d) => d.clone(),
+                Verdict::Continue => String::new(),
+            };
+            let detail = detail.strip_prefix("GB-191: ").unwrap_or(&detail).to_string();
+            return Err(goat_errors::coded("GB-191", format!("goatbuilder federate compose: {detail}")).into());
+        }
+    }
+    Ok(())
+}
+
 /// Whether the agreement on disk is the one whose digest was compared with
 /// the partner at phase 6 (journaled as the agreement confirmation).
 pub fn agreement_unchanged(paths: &Paths, st: &State) -> bool {
