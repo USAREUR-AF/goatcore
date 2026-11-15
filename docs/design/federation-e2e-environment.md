@@ -15,6 +15,7 @@ The federation e2e environment runs synthetic sovereign environments on one Linu
 | Running the same scenarios on real hosts through `live-host.sh` | Designed, not built (§Real hosts) |
 | `goatbuilder-only-both-sides` and `nothing-hand-written`, the one command on a terminal (`units/onecmd.sh`, `units/nohand.sh`) | Built and measured (§The one command, and nothing hand-written) |
 | `bilateral-acceptance`, each side's acceptance holding the partner's signed result (`units/bilateral.sh`, gate row B2) | Built, not run (§The partner's half of acceptance) |
+| `back-out-one-peering`, one of two peerings on one edge and core backed out while the other carries traffic (`units/backout-one.sh`, gate row B7) | Built and measured (§Backing out one of two peerings) |
 
 ## Run one scenario on your own machine
 
@@ -164,6 +165,12 @@ The checks read each side's evidence directory afterwards (`/var/lib/goat-federa
 | `verdict-pass` | recorded, not required: the combined verdict is PASS |
 
 A combined PASS is not required because the refusal rows need probes that hold the partner's agreed identity, and the SPIRE rows need the partner's `spire-server` command. The unit gives neither, so with `FED_ACCEPTANCE_STRICT=1` those rows cannot pass, and a combined PASS is not expected from it. A tree without `federate test --bilateral` marks every check BLOCKED, and so does a run in which phase 13 did not pass on both sides.
+
+## Backing out one of two peerings
+
+`back-out-one-peering` (`units/backout-one.sh`) peers {A} with {B} and with {C} on one edge host and one core host deployed by the `goat-zenoh` role (`FE2E_CORE=role`), then runs `goatbuilder federate backout {C}` on {A} while a flow runs from {A} to {B}. Both peerings reach their agreements before either is admitted (`peer_agree`, then `peer_finish`, the two halves of `peer_up`): {A}'s admission checks every peering declared on the edge and core it shares, and one with no agreement yet reads host-allocation SKIP, which deploy refuses. {A}'s core admits each peering through goatbuilder's own phase 10, after phase 6 has compared the agreement digest (`--agreement-digest`, read from the partner's copy); the lab's own route to a role core is withheld from the back-out, as in `nothing-hand-written`. The goat-zenoh play pins the core's REST surface to 127.0.0.1, so after goatbuilder's role runs the unit reads {A}'s REST surface through a relay on the core host; it is lab-only and changes nothing in the deployment.
+
+Measured on main 8c6c054c, run `8c6c054c2841-20261115T014642-2624675`: 88 of 89 checks pass. Every resource of {A}-{C} is removed, {A}-{B} is unchanged and passes strict acceptance from both sides before and after. The flow lost 2 of 132 values, longest gap 1.0 s, when the back-out restarted the shared core router; that check is recorded, not required (`known_failure` in the catalog).
 
 ## Solo party (an outside partner)
 

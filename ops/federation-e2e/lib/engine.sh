@@ -868,9 +868,13 @@ side_avenue() { if [ "$1" != "$2" ] && [ -n "${4:-}" ]; then echo "$4"; else ech
 
 # One peering, phases 1-14 from both sides. $1 scenario, $2 the side that listens and goes
 # first, $3 the other side, $4 avenue, [$5 the other side's avenue, default $4].
-peer_up() {
-  local n="$1" first="$2" second="$3" avenue="$4" avenue2="${5:-}" s them i
-  i="$(iface "$first" "$second")"
+peer_up() { peer_agree "$@"; peer_finish "$@"; }
+
+# peer_up's first half: phases 1-10 from both sides, up to one agreement each side holds and
+# the review. A unit that needs two peerings agreed before either is admitted (a shared edge,
+# where admitting one checks the other's agreement) calls the halves itself. Same arguments.
+peer_agree() {
+  local n="$1" first="$2" second="$3" avenue="$4" avenue2="${5:-}" s them
   prepare_edge "$first" "$second" true
   prepare_edge "$second" "$first" false
   local want5="exchange through the directory"; nodir "$first" "$second" && want5="exchange packages by hand"
@@ -890,6 +894,12 @@ peer_up() {
   rec "s$n-$first-$second-both-sides-hold-one-agreement" -- bash -c \
     "a=\$(docker exec $(drv_host "$first") sha256sum /var/lib/goat-federation/$second/agreement.json | cut -d' ' -f1); b=\$(docker exec $(drv_host "$second") sha256sum /var/lib/goat-federation/$first/agreement.json | cut -d' ' -f1); echo \"\$a \$b\"; [ -n \"\$a\" ] && [ \"\$a\" = \"\$b\" ]"
   rec "s$n-$first-$second-the-agreement-selected-wireguard" --expect-in '"kind":"wireguard"' -- docker exec "$(drv_host "$first")" cat "/var/lib/goat-federation/$second/agreement.json"
+}
+
+# peer_up's second half: each side's review and admission, phases 11-14 and acceptance.
+peer_finish() {
+  local n="$1" first="$2" second="$3" avenue="$4" avenue2="${5:-}" s them i
+  i="$(iface "$first" "$second")"
   review_and_admit "$first" "$second" "$n"
   review_and_admit "$second" "$first" "$n"
 
