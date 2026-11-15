@@ -93,6 +93,9 @@ steps:
   - label: "mesh-enroll the hosts"
     action: keep
     why: "the host stays a peer of its own goatnet; removing the peer is a NetBird account change, and the next standup finds it enrolled"
+  - label: "[signal federation]"
+    action: refused
+    why: "founder-side federation state; take it down by hand, both sides at once (federation_peers_for_a empty on each, then signal-federation-transport.yml on each; tutorial 2, Undo): the founder's signal proxy forwarding to this site, the founder's relay backend and pin for it, this site's tunnel to the founder's relays"
   - label: "relay tier"
     action: refused
     why: "the relays are shared cloud infrastructure, torn down by terraform, not by a site"

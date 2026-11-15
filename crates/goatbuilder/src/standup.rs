@@ -1808,6 +1808,27 @@ mod tests {
     }
 
     #[test]
+    fn every_applied_step_of_a_joiners_plan_has_a_teardown_declaration() {
+        let decls = load_teardown(&repo_root()).unwrap();
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        // Steps no declaration covered before signal federation joined the plan:
+        // the joiner's phase 6 rows and two LAN surfaces. Pinned here so a new
+        // undeclared step fails; declaring one of these removes it from the list.
+        let known = |l: &str| ["[joiner] seed-from-peer", "[joiner] founder-side mirror", "[joiner] the joiner's Spock wiring again", "[lan] LAN service surface", "[lan] TLS routes for the mgmt stack"].iter().any(|k| l.starts_with(k));
+        for joiner in [true, false] {
+            let undeclared: Vec<String> = plan(&repo_root(), &test_site(joiner), &o, "RESUME").into_iter().filter_map(|e| match e {
+                Event::Phase(p) if p.kind == "A" && teardown_decl(&decls, &p.label).is_none() && !known(&p.label) => Some(format!("phase {}: {}", p.n, p.label)),
+                _ => None,
+            }).collect();
+            assert!(undeclared.is_empty(), "joiner={joiner}: no teardown declaration for {undeclared:#?}");
+        }
+        // A joiner's signal federation leaves founder-side state; teardown refuses it and says why.
+        let d = teardown_decl(&decls, "[signal federation] the joiner's tunnel to every alpha relay (site-rathole-client.yml, service rathole_client_service_name)").unwrap();
+        assert_eq!(d.action, "refused");
+        assert!(d.why.contains("founder-side federation state"), "{}", d.why);
+    }
+
+    #[test]
     fn teardown_declarations_match_labels_and_name_their_dirs_as_the_script_does() {
         let decls = load_teardown(&repo_root()).unwrap();
         assert_eq!(teardown_decl(&decls, "portal (registry, certificate minting, grant rows)").unwrap().action, "compose-down");

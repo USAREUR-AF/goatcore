@@ -9,7 +9,12 @@ unmeasured end to end through these plays on hardware.
 by the same function as join-node's phase 13 (`signal_federation_rows` in
 `crates/goatbuilder/src/joinnode.rs`), and `goat-standup.sh` writes them the
 same way (the standup parity gate); built and unit-tested, not run on
-hardware.
+hardware. Teardown of a joiner's federation: not built. `goatbuilder teardown`
+declares the five converging rows refused (`ops/goatbuilder/teardown.yaml`),
+because they leave state at the founder: the founder's signal proxy
+forwarding to the joiner, the founder's relay backend and pin for it, and the
+joiner's tunnel to the founder's relays. No verb backs it out; it comes down
+by hand, on both sides at once, as tutorial 2's Undo says.
 
 A NetBird peer holds its signalling stream on exactly one signal server. When a
 goatnet has two management nodes, an offer from a peer homed on one to a peer
