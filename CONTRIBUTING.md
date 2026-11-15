@@ -30,8 +30,15 @@ Every CI check is a script you can run locally before you push. The ones that ap
 | Shell | `shellcheck` · `ops/ci/check-bash-portability.sh` (scripts must run on bash 3.2) |
 | Docs | `ops/ci/check-doc-links.py` · `ops/ci/check-doc-code-citations.sh` — every `path:line` citation must point at an existing line · `ops/ci/check-doc-signer-identity.py` — every documented cosign identity is a release signer's |
 | An ADR | add its row to `docs/adr/INDEX.md` in the same change; ADRs are never rewritten, they are superseded |
+| A workflow (`.github/workflows/`) | `ops/ci/check-workflow-discipline.py` · `ops/ci/check-reusable-workflow-permissions.py` · pin every external action by its full commit SHA with the version in a trailing comment; declare top-level `permissions` (default `contents: read`); put a write scope on the job that needs it; under `pull_request_target` take no checkout `ref` from the event. The four rules, W1 to W4, are in [ci-discipline.md](docs/design/ci-discipline.md#rules-for-writing-a-workflow) |
+| A dependency, a lock file or a `go.mod` | update a dependency that has a published advisory, or record the advisory id and a factual reason in the `osv-scanner.toml` beside that lock file, and keep the ignore list in `.github/workflows/rust-audit.yml` consistent. See [Dependency advisories](docs/design/openssf-scorecard.md#dependency-advisories) |
+| A release workflow, or cutting a release | the release carries `SHA256SUMS`, its signature, and for `wg-cp0` and the grant-crypto SDK a signature per asset and a build provenance file. See [Release signatures and provenance](docs/design/openssf-scorecard.md#release-signatures-and-provenance) |
 
 The pull-request workflow runs the same scripts. A red gate names the script, so the fix is reproducible locally.
+
+Every pull request also gets a `codeql` run, whatever files it changes. It takes about three minutes and is not a required check ([codeql-coverage.md](docs/design/codeql-coverage.md)).
+
+The workflow, dependency and release rows above are the practices that [OpenSSF Scorecard](https://github.com/ossf/scorecard) scores. [openssf-scorecard.md](docs/design/openssf-scorecard.md) has the result per check, what is built, and the command that runs Scorecard on your checkout. The decision is [ADR 1246](docs/adr/1246-workflows-pin-actions-and-start-read-only-releases-carry-signatures-and-provenance.md).
 
 ## Design documents
 
