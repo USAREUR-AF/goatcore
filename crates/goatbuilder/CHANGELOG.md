@@ -20,7 +20,7 @@ hosts used to push to an environment declared `converger: pull-agent`, and
 the value is declared: the environment, a site or a class. `deploy --verify-only`
 still reads, `validate` still accepts the value, and `--mock` still converges
 it on a fixture. Declare `converger: push-ansible` for those machines until
-the pull converger is built.
+the pull converger is built (#803).
 
 #### Added: goatbuilder.yaml takes deploy.cloud, deploy.owner and deploy.cross_goatnet
 
