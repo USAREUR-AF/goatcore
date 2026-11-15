@@ -222,6 +222,10 @@ jobs:
         run: |
           python3 ops/ci/check-ansible-paths-one-argument.py --self-test
           python3 ops/ci/check-ansible-paths-one-argument.py
+      - name: The apt sources a joiner's roles add follow the distribution
+        run: |
+          python3 ops/ci/check-joiner-roles-follow-distribution.py --self-test
+          python3 ops/ci/check-joiner-roles-follow-distribution.py
       - name: Container memory limits are variables with defaults
         run: |
           bash ops/ci/check-compose-memory-is-variable.sh --self-test
