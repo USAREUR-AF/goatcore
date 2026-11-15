@@ -2,9 +2,10 @@
 
 The success path is also run by the Rust test status_agreement_tests in
 crates/goatbuilder/src/inspect.rs. These cases hold the verdicts an operator
-reads: agreement, a disagreement, a component verify was never run for, and a
+reads: agreement, a disagreement, a component verify was never run for, a
 verify report that read no machine at all (its transport failed), which is not
-a measurement and must not be reported as a verify that was not run.
+a measurement and must not be reported as a verify that was not run, and a
+component with no ledger coverage, which has no recorded state to compare.
 
 Run: python3 -m pytest -q ops/goatbuilder/test_c3_agreement.py
 """
@@ -92,6 +93,26 @@ class C3Agreement(unittest.TestCase):
         self.assertNotIn("was not run", out, "verify was run; it read no machine")
         self.assertIn("verify-portal.json", out)
         self.assertIn("read no machine", out)
+
+    def test_a_component_with_no_ledger_coverage_is_named_and_not_compared(self):
+        # ledger_component: null. status and diff say so in one row; verify reads a
+        # ledger that is never written and finds every machine not converged. There
+        # is no recorded state to agree about, so it is outside C3, and said to be.
+        status = rows(*[(c["name"], c["detail"]) for c in STATUS["checks"]],
+                      ("zagros/*/relay", "no ledger coverage (ledger_component: null); main declares relay:v2.0.0"))
+        diff = rows(*[(c["name"], c["detail"]) for c in DIFF["checks"]],
+                    ("zagros/*/relay", "no ledger coverage (ledger_component: null); main declares relay:v2.0.0"))
+        relay = rows(
+            ("zagros/transport", "groups [zagros_hosts] via direct (mgmt-hosts.ini)"),
+            ("zagros/core-a", "NOT converged — ledger tail: core-a | CHANGED | rc=0 | (stdout) NO_LEDGER"),
+            ("zagros/core-b", "NOT converged — ledger tail: core-b | CHANGED | rc=0 | (stdout) NO_LEDGER"),
+            ("zagros/relay", "relay on zagros: NOT converged everywhere (see above)"),
+        )
+        rc, out = self.run_c3(status, diff, [("portal", VERIFY), ("relay", relay)])
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DISAGREE", out)
+        self.assertIn("c3: no ledger coverage, not compared: relay", out)
+        self.assertIn("agree on 2 machine(s), 1 component(s)", out)
 
 
 if __name__ == "__main__":
