@@ -413,7 +413,8 @@ jobs:
         run: ops/tutorials/check.sh crates/target/debug/goatbuilder
 
   # goatbuilder ships darwin binaries (goatbuilder-release.yml), so its unit,
-  # golden and flow tests run on macOS too. No Windows job: goatbuilder drives
+  # golden and flow tests run on macOS too, and the upgrade tests (gate rows E1,
+  # E2, E3) with the released darwin-arm64 binaries. No Windows job: goatbuilder drives
   # Ansible and aws-vault, neither of which runs natively there, and it is not
   # shipped for Windows (goat-cli-pr.yml's windows job has no counterpart here).
   macos:
@@ -450,6 +451,73 @@ jobs:
         run: touch "$RUNNER_TEMP/goatbuilder-tests-start"
       - name: cargo test
         run: cargo test -p goatbuilder
+      # Gate rows E1, E2 and E3 on darwin-arm64, as the host job runs them on
+      # linux-amd64: the released darwin-arm64 binaries, from a cache keyed on their
+      # pinned checksums, checked by fetch.sh. REQUIRED=1: a missing binary fails the job.
+      - name: Cache the released goatbuilder binaries the upgrade test runs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/goatbuilder-upgrade
+          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
+      - name: Fetch the released binaries, checked against their pins
+        run: goatbuilder/tests/upgrade/fetch.sh ~/.cache/goatbuilder-upgrade
+      - name: cargo test (upgrade, gate rows E1, E2 and E3)
+        env:
+          GOATBUILDER_UPGRADE_REQUIRED: '1'
+        run: GOATBUILDER_UPGRADE_DIR="$HOME/.cache/goatbuilder-upgrade" cargo test -p goatbuilder --test upgrade --test upgrade_federation --test upgrade_update
+      - name: The tests wrote nothing into the real state directory
+        working-directory: ${{ github.workspace }}
+        run: bash ops/ci/check-goatbuilder-tests-leave-home.sh --after "$RUNNER_TEMP/goatbuilder-tests-start"
+
+  # Gate rows E1, E2 and E3 on linux-arm64: goatbuilder ships a linux-arm64
+  # binary (goatbuilder-release.yml), so a 0.x install there must move to this
+  # build and back as on linux-amd64. Only the three upgrade tests run here; the
+  # host job runs every other gate. darwin-amd64 is built and shipped but run by
+  # no job: the release cross-compiles it on Apple Silicon, and no runner here
+  # executes an x86_64 macOS binary (docs/design/goatbuilder-v1-gate.md, E3).
+  linux-arm64:
+    name: linux-arm64 upgrade test (gate rows E1, E2, E3)
+    needs: scope
+    # Skipped, which counts as passed, only for a pull request of documents only.
+    if: ${{ !cancelled() && needs.scope.outputs.scope != 'docs-only' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (1.100.0)
+        uses: dtolnay/rust-toolchain@1.100.0
+      - name: Cache cargo registry + git deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-goatbuilder-pr-arm64-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            cargo-goatbuilder-pr-arm64-
+      - name: Cache cargo build target
+        uses: actions/cache@v4
+        with:
+          path: crates/target
+          key: target-goatbuilder-pr-arm64-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            target-goatbuilder-pr-arm64-
+      - name: Install the Python the pins and promote flows render with
+        run: python3 -m pip install --quiet --break-system-packages pyyaml jsonschema || python3 -m pip install --quiet pyyaml jsonschema
+      - name: Cache the released goatbuilder binaries the upgrade test runs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/goatbuilder-upgrade
+          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
+      - name: Fetch the released binaries, checked against their pins
+        run: goatbuilder/tests/upgrade/fetch.sh ~/.cache/goatbuilder-upgrade
+      - name: Mark the time before the tests, for the state-directory guard
+        run: touch "$RUNNER_TEMP/goatbuilder-tests-start"
+      - name: cargo test (upgrade, gate rows E1, E2 and E3)
+        env:
+          GOATBUILDER_UPGRADE_REQUIRED: '1'
+        run: GOATBUILDER_UPGRADE_DIR="$HOME/.cache/goatbuilder-upgrade" cargo test -p goatbuilder --test upgrade --test upgrade_federation --test upgrade_update
       - name: The tests wrote nothing into the real state directory
         working-directory: ${{ github.workspace }}
         run: bash ops/ci/check-goatbuilder-tests-leave-home.sh --after "$RUNNER_TEMP/goatbuilder-tests-start"
