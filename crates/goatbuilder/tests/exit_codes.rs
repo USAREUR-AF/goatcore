@@ -31,15 +31,19 @@ fn copy(from: &Path, to: &Path) {
     }
 }
 
-/// The exit status and stderr of `goatbuilder <args>` in a clean environment.
+/// The exit status and stderr of `goatbuilder <args>` in a clean environment:
+/// PATH and TMPDIR from the test, and an empty HOME of its own, so no run
+/// record lands in the caller's home.
 fn run(args: &[&str]) -> (i32, String) {
+    let home = tempfile::tempdir().unwrap();
     let mut c = Command::new(env!("CARGO_BIN_EXE_goatbuilder"));
     c.env_clear();
-    for k in ["PATH", "HOME", "TMPDIR"] {
+    for k in ["PATH", "TMPDIR"] {
         if let Some(v) = std::env::var_os(k) {
             c.env(k, v);
         }
     }
+    c.env("HOME", home.path());
     let out = c.args(args).output().unwrap();
     (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).into_owned())
 }
@@ -61,6 +65,20 @@ fn each_command_line_exits_as_the_table_says() {
             2,
             "is not declared",
         ),
+        // The federation verbs: an uncoded fault exits 1 there (verbs::fault_exit),
+        // so each command-line error below exited 1 before it was coded; it exits 2
+        // now, the contract's usage error.
+        // A flag for another verb.
+        ("--over-ssh given to lint", vec!["federate", "lint", "/dev/null", "--over-ssh", "xab"], 2, "GB-239"),
+        // A flag without the one it needs.
+        ("a host flag without --over-ssh", vec!["federate", "init", "--edge-host", "h"], 2, "GB-325"),
+        ("--side without --over-ssh", vec!["federate", "init", "--side", "edge"], 2, "GB-325"),
+        (
+            "--side edge without --half-out",
+            vec!["-C", r, "federate", "init", "--over-ssh", "hello-ally", "--side", "edge"],
+            2,
+            "GB-325",
+        ),
     ];
     let mut problems = Vec::new();
     for (what, args, want, word) in &table {
@@ -70,4 +88,30 @@ fn each_command_line_exits_as_the_table_says() {
         }
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// The exit each code this work uses gives, by the contract's meanings: a failure
+/// that is not the command line's (a program, a file, goatbuilder's own state, a
+/// terminal) is 1, refused; a command line that is wrong is 2, usage.
+#[test]
+fn each_code_exits_by_the_contracts_meaning() {
+    let want = [
+        ("GB-184", 1),
+        ("GB-315", 1),
+        ("GB-316", 1),
+        ("GB-320", 1),
+        ("GB-321", 1),
+        ("GB-322", 1),
+        ("GB-323", 1),
+        ("GB-239", 2),
+        ("GB-242", 2),
+        ("GB-324", 2),
+        ("GB-325", 2),
+    ];
+    let got: Vec<(&str, Option<i32>)> = want
+        .iter()
+        .map(|(c, _)| (*c, goat_errors::explain(c).and_then(|e| e.exit)))
+        .collect();
+    let want: Vec<(&str, Option<i32>)> = want.iter().map(|(c, e)| (*c, Some(*e))).collect();
+    assert_eq!(got, want);
 }
