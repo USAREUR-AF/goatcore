@@ -25,6 +25,9 @@ on:
       - 'ops/onboard-runner/**'
       - 'README.md'
       - '.github/release-notes/**'
+      - 'ops/postgres/spock/README.md'
+      - 'ops/postgres/spock/conf/postgresql.conf'
+      - 'ops/compose/mgmt-host/monitoring/**'
       - 'crates/goatbuilder/CHANGELOG.md'
       - 'crates/goatbuilder/changelog.d/**'
       - 'crates/goatbuilder/tests/fixtures/full-plans.golden.json'
@@ -87,6 +90,13 @@ jobs:
         run: python3 ops/ci/check-doc-links.py
       - name: every `path:line` citation is within its file
         run: ./ops/ci/check-doc-code-citations.sh
+
+      # Postgres's slot WAL cap is set by the Spock image and raised by the
+      # streaming-replication role on a pair's primary; the README states the
+      # rule and both values once, and the runbook and alert rules point at it.
+      - name: the slot WAL cap is stated once, with the values the image and the role set
+        run: |
+          python3 ops/ci/check-slot-wal-cap-agrees.py --self-test
 
       # The by-hand signature check in the documents: its cosign identity is the
       # one the release workflows sign with (read from .github/workflows).
