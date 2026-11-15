@@ -117,6 +117,32 @@ fn the_json_form_names_the_command_the_flag_and_the_replacement() {
     assert_eq!(j["deprecated_in"], "goatbuilder/v0.6.0");
 }
 
+/// The run's `-o json` document lists what the stderr warning prints: each
+/// entry the command line used, with that same warning line, and no others
+/// (ADR 1228; gate row A3).
+#[test]
+fn the_entries_a_run_reports_are_the_ones_it_warns_about() {
+    let deps = parse(LIST).unwrap();
+    let argv = ["goatbuilder", "deploy", "--env", "dev"];
+    let m = tree().try_get_matches_from(argv).unwrap();
+    let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    let u = deprecation::in_use(&deps, &tree(), &m, &argv, "0.7.0");
+    let w = deprecation::warnings(&deps, &tree(), &m, &argv, "0.7.0");
+    assert_eq!(u.iter().map(|x| x.warning.clone()).collect::<Vec<_>>(), w);
+    assert_eq!(u.len(), 1, "{u:?}");
+    let j = serde_json::to_value(&u[0]).unwrap();
+    assert_eq!(
+        j,
+        serde_json::json!({
+            "command": "goatbuilder deploy",
+            "flag": "--env",
+            "replacement": "--environment",
+            "deprecated_in": "goatbuilder/v0.6.0",
+            "warning": w[0],
+        })
+    );
+}
+
 #[test]
 fn the_shipped_list_parses() {
     deprecation::shipped().unwrap();

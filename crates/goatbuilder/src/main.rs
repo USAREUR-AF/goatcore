@@ -1885,6 +1885,42 @@ mod deprecation_tests {
         assert!(warnings_for(STATUS_COMPONENT, &["goatbuilder", "status", "--env", "dev"]).is_empty());
     }
 
+    fn used_for(list: &str, argv: &[&str]) -> Vec<crate::deprecation::Used> {
+        let deps = crate::deprecation::parse(list).unwrap();
+        let m = Cli::command().try_get_matches_from(argv).unwrap();
+        let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        crate::deprecation::in_use(&deps, &Cli::command(), &m, &argv, "0.7.0")
+    }
+
+    /// The run's document carries the deprecated items it used, under
+    /// `deprecations`, in -o json and -o yaml alike; a run that used none has
+    /// no such field, so the documents of the last release are unchanged.
+    #[test]
+    fn a_report_lists_the_deprecated_items_the_run_used() {
+        let used = used_for(STATUS_COMPONENT, &["goatbuilder", "status", "--env", "dev", "--component", "netbird"]);
+        let mut r = crate::Report::new("status", vec![], crate::EXIT_REFUSED);
+        let plain = crate::output::render(&r, crate::OutputFormat::Json, crate::output::ColorChoice::Never);
+        let v: serde_json::Value = serde_json::from_str(&plain).unwrap();
+        assert!(v.get("deprecations").is_none(), "{plain}");
+        r.deprecations = used;
+        let v: serde_json::Value = serde_json::from_str(&crate::output::render(&r, crate::OutputFormat::Json, crate::output::ColorChoice::Never)).unwrap();
+        assert_eq!(v["deprecations"][0]["flag"], "--component");
+        assert_eq!(v["deprecations"][0]["replacement"], "--only");
+        assert!(v["deprecations"][0]["warning"].as_str().unwrap().starts_with("warning: `goatbuilder status --component`"));
+        let y: serde_yaml::Value = serde_yaml::from_str(&crate::output::render(&r, crate::OutputFormat::Yaml, crate::output::ColorChoice::Never)).unwrap();
+        assert_eq!(y["deprecations"][0]["flag"].as_str(), Some("--component"));
+    }
+
+    /// A refused run's error document carries them too.
+    #[test]
+    fn an_error_document_lists_the_deprecated_items_the_run_used() {
+        let used = used_for(STATUS_COMPONENT, &["goatbuilder", "status", "--env", "dev", "--component", "netbird"]);
+        let interp = goat_errors::interpret("nothing known");
+        let doc = |d: &[crate::deprecation::Used]| serde_json::to_value(crate::ErrorOut { schema: "goatbuilder.error/v1", error: "x", code: None, interpretation: &interp, deprecations: d }).unwrap();
+        assert!(doc(&[]).get("deprecations").is_none());
+        assert_eq!(doc(&used)["deprecations"][0]["flag"], "--component");
+    }
+
     /// The list this build ships reads, so main never runs without it.
     #[test]
     fn the_shipped_list_reads() {
