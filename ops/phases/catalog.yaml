@@ -104,14 +104,14 @@ phases:
   kind: T
   title: '`compose`'
   verify: one digest, and argument order does not change it
-  what: Composes the two packages into one agreement with one digest, binding each party's verifying key from keys.txt; the argument order does not change the result.
+  what: Composes the two packages into one agreement with one digest, binding each party's verifying key from keys.txt; the argument order does not change the result. The agreement is held to us and the peering's declared partner (--party), so a package of any other party is refused.
   why: Both sides must hold the same agreement; one digest, read to each other aloud, shows they do.
   changes: 'In the working directory: agreement.json.'
   runs: goatbuilder federate compose
-  by_hand: goatbuilder federate compose <work>/ours.canonical.json <work>/theirs.canonical.json <keys> --out <work>/agreement.json
+  by_hand: goatbuilder federate compose <work>/ours.canonical.json <work>/theirs.canonical.json <keys> --party <us> --party <peering> --out <work>/agreement.json
   read: docs/operations/sovereign-federation-runbook.md#plan--validate-and-explain-the-change
   failed_because: exit 20, composition refused
-  then: a key is not bound or the packages disagree; compare with `goatbuilder federate diff`
+  then: a key is not bound, the packages disagree, or the counterparty package is not the declared partner's (GB-191); compare with `goatbuilder federate diff`
 - verb: federate
   phase: 7
   id: verify

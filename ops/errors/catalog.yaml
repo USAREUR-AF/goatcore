@@ -3010,6 +3010,7 @@ entries:
       - a value was misheard or mistyped on the call
       - the partner published a new package or CA after reading theirs aloud
       - the two sides composed different agreements (their halves differ)
+      - "at phase 6, the counterparty package is not the declared partner's (FED_COUNTERPARTY_ID): compose was given the two parties (--party) and composed nothing"
     fixes:
       - "read the values back group by group with the partner, then run the same command again"
       - "goat federate diff <ours> <theirs>   (names the field where two agreements differ)"
