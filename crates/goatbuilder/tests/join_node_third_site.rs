@@ -765,8 +765,9 @@ fn a_failed_join_node_step_is_recorded_with_its_exit_code() {
 /// model marks present on gamma's core node is either built by a play the
 /// run ran, or named under the run's not-run heading. The admin surfaces are
 /// the catalog's gaps (gate row I1, I4); gamma is a single-host site, so its
-/// obs stack is declared on the core node and named with the run that builds
-/// it (`join-node --class obs`). No service is left out in silence.
+/// obs stack is declared on the core node, where no verb builds it yet
+/// (`obs.yml` by hand), and each of the four is named with gate row I3. No
+/// service is left out in silence.
 #[test]
 fn every_service_gamma_declares_is_built_or_named() {
     let s = site();
@@ -841,15 +842,21 @@ fn every_service_gamma_declares_is_built_or_named() {
         let d = line(svc).unwrap_or_else(|| panic!("{svc} not named: {named:#?}"));
         assert!(d.ends_with("(gate row I1, I4)"), "{d}");
     }
-    for svc in ["prometheus", "alertmanager", "grafana", "obs-exporters"] {
+    let obs = ["prometheus", "alertmanager", "grafana", "obs-exporters"];
+    for svc in obs {
         assert_eq!(
             line(svc),
-            Some(format!("{svc} \u{2014} declared at gamma-core-1, built by `join-node --class obs`, not by this run").as_str()),
+            Some(format!("{svc} \u{2014} declared at gamma-core-1, and no join-node step builds it yet (gate row I3)").as_str()),
             "{named:#?}"
         );
     }
     assert!(
-        !named.iter().any(|d| d.ends_with("(gate row I3)")),
-        "gamma declares nothing no step builds: {named:#?}"
+        !named.iter().any(|d| d.ends_with("(gate row I3)")
+            && !obs.iter().any(|o| d.starts_with(&format!("{o} \u{2014} ")))),
+        "gamma declares nothing else no step builds: {named:#?}"
+    );
+    assert!(
+        !named.iter().any(|d| d.contains("--class obs")),
+        "a single-host site is never sent to an obs run: {named:#?}"
     );
 }

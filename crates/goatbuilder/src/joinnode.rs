@@ -705,8 +705,9 @@ const BUILDERS: [(&str, &[&str]); 7] = [
 ];
 
 /// What a site's bootstrap play (site-bootstrap.yml, through mgmt-host.yml)
-/// builds: the replication core of passes 1 and 3.
-const BOOTSTRAP_BUILDS: [&str; 5] = ["postgres-spock", "netbird-mgmt", "signal-server", "pgbackrest", "traefik"];
+/// builds: the replication core of passes 1 and 3, and admit-audit (its role,
+/// on unless the site sets `admit_audit_enabled: false`).
+const BOOTSTRAP_BUILDS: [&str; 6] = ["postgres-spock", "netbird-mgmt", "signal-server", "pgbackrest", "traefik", "admit-audit"];
 
 /// The catalog services the plan's steps build. A gate, a SKIP line and a
 /// person's step build nothing, so a step the site declares off (signal
@@ -731,9 +732,11 @@ fn built_by(repo: &Path, site: &str, phases: &[Phase]) -> std::collections::BTre
 
 /// Each service the model marks present on this node that no step of the
 /// run's plan builds and the catalog does not already name as a gap (gate row
-/// I3): one the same verb builds for the node's other class (core, obs: a
-/// single-host site places its obs stack on its core node) names that run;
-/// one no step builds names gate row I3. A node the model's hosts do not
+/// I3): at a site with its own obs host (`has_obs_host: true`), one the same
+/// verb builds for the node's other class (core, obs) names that run; one no
+/// step builds names gate row I3. A single-host site's obs stack, which the
+/// model places on its core node, is never sent to an obs run: that run would
+/// re-enrol a node already built, and no verb runs `obs.yml` yet. A node the model's hosts do not
 /// list is read by class: a core run answers for the mgmt-class services, an
 /// obs run for the obs-class ones. Only a joining site's core and obs nodes;
 /// a founder's is standup's to build.
@@ -748,7 +751,7 @@ fn unbuilt(repo: &Path, o: &Options, phases: &[Phase], services: &serde_json::Ma
         return Vec::new();
     }
     let built = built_by(repo, o.site, phases);
-    let by_other = plan(repo, &Options { class: other, ..*o }).map(|p| built_by(repo, o.site, &p)).unwrap_or_default();
+    let by_other = if gv_matches(&gv, "has_obs_host", "true") { plan(repo, &Options { class: other, ..*o }).map(|p| built_by(repo, o.site, &p)).unwrap_or_default() } else { Default::default() };
     let on = |s: &serde_json::Value| s.get("hosts").and_then(|h| h.as_array()).is_some_and(|h| h.iter().any(|n| n.as_str() == Some(o.node)));
     let placed = services.values().any(on);
     let mut rows = Vec::new();
@@ -1542,11 +1545,11 @@ mod tests {
     /// Gate row I3, the declared set: every service the end-state model marks
     /// present on the node is either built by a step of the plan or named under
     /// the not-run heading. A catalog gap keeps its own line with its gate rows
-    /// (the admin surfaces: I1, I4). An obs-class service the model places on
-    /// a single-host joiner's core node names the run that builds it
-    /// (`join-node --class obs`). A present service no step builds names gate
-    /// row I3. A service the plan builds, one on another node, and one the
-    /// site does not declare are not named.
+    /// (the admin surfaces: I1, I4). A present service no step builds names gate
+    /// row I3: on a single-host joiner (no `has_obs_host: true`) that is also
+    /// the obs stack the model places on the core node, which no verb runs
+    /// (`obs.yml` by hand). A service the plan builds, one on another node, and
+    /// one the site does not declare are not named.
     #[test]
     fn a_joiner_names_each_declared_service_its_plan_does_not_build() {
         let t = joiner_checkout();
@@ -1575,15 +1578,52 @@ mod tests {
                 "portal \u{2014} declared, not yet built at this site: an admin surface waits (gate row I1, I4)".to_string(),
                 "isitup \u{2014} `isitup_enabled` is false in group_vars".to_string(),
                 "peer-health \u{2014} declared at node-x, and no join-node step builds it yet (gate row I3)".to_string(),
+                "prometheus \u{2014} declared at node-x, and no join-node step builds it yet (gate row I3)".to_string(),
+            ]
+        );
+    }
+
+    /// A site with its own obs host (`has_obs_host: true`): a service the
+    /// node's other class builds names that run (`join-node --class obs` from
+    /// a core run, `--class core` from an obs run); one neither builds names
+    /// gate row I3. Without `has_obs_host: true` the other class is never
+    /// named, since its run would re-enrol a node already built.
+    #[test]
+    fn a_site_with_an_obs_host_names_the_other_class_run() {
+        let t = joiner_checkout();
+        let gv = t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml");
+        let text = std::fs::read_to_string(&gv).unwrap();
+        std::fs::write(&gv, format!("{text}has_obs_host: true\n")).unwrap();
+        fake_model(
+            t.path(),
+            r#"{
+                "zenoh-router": {"present": true, "class": "mgmt", "hosts": ["node-x"]},
+                "peer-health": {"present": true, "class": "mgmt", "hosts": ["node-x"]},
+                "prometheus": {"present": true, "class": "obs", "hosts": ["node-x"]}
+            }"#,
+        );
+        let core = not_run_rows(t.path(), &opts("zagros-b", "core", "zagros"));
+        assert_eq!(
+            core,
+            vec![
+                "peer-health \u{2014} declared at node-x, and no join-node step builds it yet (gate row I3)".to_string(),
                 "prometheus \u{2014} declared at node-x, built by `join-node --class obs`, not by this run".to_string(),
             ]
         );
-        // An obs run on the same node builds the obs stack, and names the
-        // core run for what that builds.
         let obs = not_run_rows(t.path(), &opts("zagros-b", "obs", "zagros"));
         assert!(!obs.iter().any(|d| d.starts_with("prometheus ")), "{obs:#?}");
         assert!(obs.iter().any(|d| d == "zenoh-router \u{2014} declared at node-x, built by `join-node --class core`, not by this run"), "{obs:#?}");
         assert!(obs.iter().any(|d| d == "peer-health \u{2014} declared at node-x, and no join-node step builds it yet (gate row I3)"), "{obs:#?}");
+    }
+
+    /// The site's bootstrap play builds admit-audit (site-bootstrap.yml,
+    /// role admit-audit), so a joiner that declares it is not told it is
+    /// unbuilt.
+    #[test]
+    fn the_bootstrap_play_builds_admit_audit() {
+        let t = joiner_checkout();
+        fake_model(t.path(), r#"{"admit-audit": {"present": true, "class": "mgmt", "hosts": ["node-x"]}}"#);
+        assert_eq!(not_run_rows(t.path(), &opts("zagros-b", "core", "zagros")), vec!["nothing: the model names no gap here, and the site turns nothing off".to_string()]);
     }
 
     /// A model that does not place the node on any host (an inventory that does
