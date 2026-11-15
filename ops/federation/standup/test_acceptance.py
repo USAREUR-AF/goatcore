@@ -835,6 +835,127 @@ class AcceptanceRun(unittest.TestCase):
         for side in ("xaa", "xab"):
             self.assertEqual(self.bilateral(ev[side])["verdict"], "PASS", side)
 
+    # --- one run's challenge per run: xaa alone reads what xab's runs left -----
+    NEW_CHALLENGE = "fedcba9876543210fedcba9876543210"
+
+    def xab_keys(self, name, chal, started=None, sample=True, persist=True):
+        """What one of xab's runs leaves on xaa's core for set `name`: its stamp
+        (when `started` is given), its sample and its second sample."""
+        wire = "from/xab/%s/acceptance/%s/xab" % (name, self.session_id())
+        out = {}
+        if started is not None:
+            out[wire + "/run"] = ("xab-%s-%s@%d" % (chal, name, started)).encode()
+        if sample:
+            out[wire] = ("xab-%s-%s" % (chal, name)).encode()
+        if persist:
+            out[wire + "/persist"] = ("xab-%s-%s-persist" % (chal, name)).encode()
+        return out
+
+    def xab_names(self):
+        return [st[len("release/"):] for st in self.fabric.offered("xab")]
+
+    def lone_xaa(self, before, then=None, wait="6"):
+        """xaa's phase 14 alone, with `before` on its core from the start; `then` is
+        written to its core once xaa first says it is waiting for xab, so xaa has
+        read `before` at least once. Returns (rc, out, rows)."""
+        self.fabric.faults.stale["xaa"] = before
+        ev = os.path.join(self.tmp, "ev-xaa")
+        p = self.derived_side("xaa", ev, wait=wait)
+        lines = []
+        for line in p.stdout:
+            lines.append(line)
+            if then and "waiting for xab's phase 14" in line:
+                self.fabric.cores["xaa"].store.update(then)
+                then = None
+        p.wait(timeout=240)
+        out = "".join(lines)
+        self.assertIsNone(then, "xaa never said it was waiting for xab:\n" + out)
+        return p.returncode, out, self.checks(ev)
+
+    def evidence_text(self):
+        text = []
+        for root, _, files in os.walk(os.path.join(self.tmp, "ev-xaa")):
+            for f in files:
+                text.append(Path(root, f).read_text(errors="replace"))
+        return "\n".join(text)
+
+    def test_derived_a_rerun_within_twice_the_wait_is_judged_by_the_stamp_whose_sample_matched(self):
+        # xab's run 1 stamped OLD and its sample write failed; run 2 (both within 2W)
+        # then stamped NEW and wrote NEW's sample. xaa reads OLD's stamp first. The
+        # challenge is the one whose sample matched, so nothing FAILs on other bytes
+        # and no row or result carries OLD.
+        import time
+        now = int(time.time())
+        before, then = {}, {}
+        for name in self.xab_names():
+            before.update(self.xab_keys(name, self.OLD_CHALLENGE, started=now - 5, sample=False, persist=False))
+            then.update(self.xab_keys(name, self.NEW_CHALLENGE, started=now - 2))
+        rc, out, rows = self.lone_xaa(before, then)
+        for name in self.xab_names():
+            for row in ("delivery/inbound/release/" + name, "persistence/inbound/release/" + name):
+                self.assertEqual(rows[row]["verdict"], "PASS", (row, rows[row], out))
+        self.assertNotIn(self.OLD_CHALLENGE, out)
+        self.assertNotIn(self.OLD_CHALLENGE, self.evidence_text())
+
+    def test_derived_two_runs_stamps_within_twice_the_wait_end_blocked_never_failed(self):
+        # An earlier run of xab's, within 2W, left both its stamp and its sample on
+        # the first set; the second set holds another run's stamp and sample. The
+        # first set cannot be told from this run's (§6.3); the second, carrying
+        # another challenge than the first, is BLOCKED as two runs' stamps, never a
+        # byte FAIL, and so is its second sample.
+        import time
+        now = int(time.time())
+        first, second = self.xab_names()[0], self.xab_names()[1]
+        before = self.xab_keys(first, self.OLD_CHALLENGE, started=now - 5)
+        before.update(self.xab_keys(second, self.NEW_CHALLENGE, started=now - 2))
+        rc, out, rows = self.lone_xaa(before, wait="4")
+        self.assertEqual(rows["delivery/inbound/release/" + first]["verdict"], "PASS", out)
+        for row in ("delivery/inbound/release/" + second, "persistence/inbound/release/" + second):
+            self.assertEqual(rows[row]["verdict"], "BLOCKED", (row, rows[row], out))
+            self.assertIn("two of xab's runs", rows[row]["reason"], (row, out))
+        self.assertNotIn("FAIL", [r["verdict"] for n, r in rows.items() if n.endswith("inbound/release/" + second)])
+
+    def test_derived_an_unstamped_sample_waits_for_a_stamp_in_flight(self):
+        # The first run after xab upgrades: its earlier run (an older runner) left an
+        # unstamped sample; this run's stamp arrives after xaa first reads. xaa waits
+        # instead of learning the earlier sample's challenge, then judges this run's.
+        before, then = {}, {}
+        import time
+        now = int(time.time())
+        for name in self.xab_names():
+            before.update(self.xab_keys(name, self.OLD_CHALLENGE))
+            then.update(self.xab_keys(name, self.NEW_CHALLENGE, started=now))
+        rc, out, rows = self.lone_xaa(before, then)
+        for name in self.xab_names():
+            self.assertEqual(rows["delivery/inbound/release/" + name]["verdict"], "PASS", (name, out))
+        self.assertNotIn(self.OLD_CHALLENGE, out)
+        self.assertNotIn(self.OLD_CHALLENGE, self.evidence_text())
+
+    def test_derived_an_unstamped_sample_is_never_learned_once_the_partner_has_stamped(self):
+        # xab's first set carries this run's stamp and sample; the second holds only
+        # an unstamped sample (an older runner's, left earlier). xab stamps its runs,
+        # so the unstamped one is never learned: BLOCKED, not a FAIL on other bytes.
+        import time
+        now = int(time.time())
+        first, second = self.xab_names()[0], self.xab_names()[1]
+        before = self.xab_keys(first, self.NEW_CHALLENGE, started=now)
+        before.update(self.xab_keys(second, self.OLD_CHALLENGE))
+        rc, out, rows = self.lone_xaa(before, wait="4")
+        self.assertEqual(rows["delivery/inbound/release/" + first]["verdict"], "PASS", out)
+        row = rows["delivery/inbound/release/" + second]
+        self.assertEqual(row["verdict"], "BLOCKED", (row, out))
+        self.assertIn("no run stamp", row["reason"], out)
+
+    def test_derived_a_partner_that_never_stamps_is_read_after_one_wait(self):
+        # An older runner stages no stamp at all: its sample is taken once the first
+        # set's wait ends with no stamp seen, and the next set is read at once.
+        before = {}
+        for name in self.xab_names():
+            before.update(self.xab_keys(name, self.NEW_CHALLENGE))
+        rc, out, rows = self.lone_xaa(before, wait="4")
+        for name in self.xab_names():
+            self.assertEqual(rows["delivery/inbound/release/" + name]["verdict"], "PASS", (name, out))
+
     def test_derived_clocks_apart_by_less_than_the_wait_keep_a_fresh_sample(self):
         # xaa's clock runs 8 s behind, the wait is 10 s, and xab starts 3 s after xaa:
         # the runs overlap and the clocks agree within the wait, so xab keeps xaa's
