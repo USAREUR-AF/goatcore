@@ -240,7 +240,7 @@ last release is 0.x. Once the baseline is `goatbuilder/v1.0.0` or later, it
 refuses `exit_changed:` unless the build's version in
 `crates/goatbuilder/Cargo.toml` is a later major release, since a kept exit
 code is part of the 1.0 promise (ADR 1228). Today's 0.7.0 baseline is
-unaffected.
+unaffected. (#813)
 
 #### Changed: the compatibility check is held to goatbuilder/v0.7.0
 
