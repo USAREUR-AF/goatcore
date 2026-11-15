@@ -439,7 +439,7 @@ session_lanes() {
       done
     fi
     obs key "$key"; obs sent_expected "$val"; obs received "$GOT"; obs attempts "$i"
-    [ -n "$DERIVED" ] && [ -n "${UNSTAMPED:-}" ] && obs run_identity "unstamped: run identity not proven"
+    [ -n "$DERIVED" ] && [ -n "$UNSTAMPED" ] && obs run_identity "unstamped: run identity not proven"
     obs sent_sha256 "$(sha "$val")"; obs received_sha256 "$(sha "$GOT")"
     if [ "$GOT_RC" -ne 0 ]; then blk "delivery/inbound/$set" inbound positive "$THEM's session sample under $set/**: our core's REST surface did not answer" "$GOT_ERR"
     elif [ -n "$DERIVED" ] && [ -n "$NOT_THIS_RUN" ]; then blk "delivery/inbound/$set" inbound positive "$NOT_THIS_RUN" \
