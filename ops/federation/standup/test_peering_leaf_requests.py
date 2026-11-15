@@ -10,8 +10,12 @@ refuses (GB-313), before signing either edge leaf, a request that:
 - has a key that is not EC P-256;
 - is signed with less than SHA-256, or whose self-signature does not verify;
 - reuses a key: the other request's, our CA's, another leaf's in the output
-  folder, or one recorded as signed before (`--key-record`, which outlives the
-  output folder).
+  folder or a previous set there, or one recorded as signed before
+  (`--key-record`, which outlives the output folder).
+
+It stops, signing nothing, on a key file in the output folder for an edge-made
+leaf, a certificate for another key already in place (rotating such a leaf is
+not built), a symlinked certificate, and --request with --rotate.
 
 Real OpenSSL, a CA and keys made at test time; no key material is committed.
 """
@@ -135,8 +139,10 @@ class LeafRequests(unittest.TestCase):
         self.assertIn("IP Address:169.254.77.0", out_text)
         record = [json.loads(line) for line in self.record.read_text().splitlines()]
         self.assertEqual(sorted(e["leaf"] for e in record), ["peering-inward", "peering-outward"])
+        want = {leaf: "sha256:" + hashlib.sha256(self.pub(csr, "csr")).hexdigest()
+                for leaf, csr in (("peering-outward", o), ("peering-inward", i))}
         for e in record:
-            self.assertTrue(e["public_key_sha256"].startswith("sha256:"), e)
+            self.assertEqual(e["public_key_sha256"], want[e["leaf"]], e)
         self.assertTrue((self.out / "our-ca.pem").is_file())
 
     def test_the_same_requests_again_reuse_the_certificates(self):
@@ -157,7 +163,7 @@ class LeafRequests(unittest.TestCase):
         ):
             with self.subTest(name):
                 o = self.request("outward-" + name, self.key("outward-" + name), subj, *extra)
-                self.assert_refused(self.run_helper(o, i), "peering-outward")
+                self.assert_refused(self.run_helper(o, i), "peering-outward", "must be exactly CN=" + OUT_CN)
 
     def test_a_request_with_an_extension_or_attribute_is_refused_not_stripped(self):
         i = self.request("inward", self.key("inward"), "/CN=" + IN_CN)
@@ -168,6 +174,17 @@ class LeafRequests(unittest.TestCase):
             with self.subTest(name):
                 o = self.request("outward-" + name, self.key("outward-" + name), "/CN=" + OUT_CN, *extra)
                 self.assert_refused(self.run_helper(o, i), "extension")
+
+    def test_a_request_with_a_real_attribute_is_refused(self):
+        # challengePassword is a request attribute, not an extension.
+        cnf = self.d / "attr.cnf"
+        cnf.write_text("[req]\ndistinguished_name=dn\nattributes=attrs\nprompt=no\n"
+                       f"[dn]\nCN={OUT_CN}\n[attrs]\nchallengePassword=stand-in-challenge\n")
+        o = self.d / "outward-attr.csr"
+        ossl("req", "-new", "-config", cnf, "-key", self.key("outward-attr"), "-out", o, "-sha256")
+        self.assertIn("challengePassword", ossl("req", "-in", o, "-noout", "-text").decode())
+        i = self.request("inward", self.key("inward"), "/CN=" + IN_CN)
+        self.assert_refused(self.run_helper(o, i), "extension or attribute", "challengePassword")
 
     def test_a_key_that_is_not_ec_p256_is_refused(self):
         i = self.request("inward", self.key("inward"), "/CN=" + IN_CN)
@@ -214,6 +231,70 @@ class LeafRequests(unittest.TestCase):
         o = self.request("outward", self.out / "core-key.pem", "/CN=" + OUT_CN)
         i = self.request("inward", self.key("inward"), "/CN=" + IN_CN)
         self.assert_refused(self.run_helper(o, i), "reuse")
+
+    def test_a_key_in_a_previous_set_here_is_refused(self):
+        # A set a rotation kept beside the live leaves (.previous-<id>): its
+        # keys are this peering's old keys, by key file or by certificate.
+        for name, kind in (("peering-outward-key.pem", "key"), ("peering-outward.pem", "cert")):
+            with self.subTest(kind):
+                shutil.rmtree(self.out, ignore_errors=True)
+                kept = self.out / ".previous-rot-1"
+                kept.mkdir(parents=True)
+                old = self.key("old-" + kind)
+                if kind == "key":
+                    shutil.copy(old, kept / name)
+                else:
+                    ossl("req", "-x509", "-new", "-config", self.cnf, "-key", old, "-subj", "/CN=" + OUT_CN,
+                         "-days", "2", "-out", kept / name)
+                o = self.request("outward-" + kind, old, "/CN=" + OUT_CN)
+                i = self.request("inward", self.key("inward"), "/CN=" + IN_CN)
+                self.assert_refused(self.run_helper(o, i), "reuses the key of .previous-rot-1/" + name)
+
+    def test_a_pending_rotation_with_no_journal_stops_before_any_request_is_signed(self):
+        # The pending rotation's previous/ folder is not read by the request
+        # check: a pending rotation is finished first, or, with no journal,
+        # the run stops before anything is signed.
+        o, i = self.good()
+        (self.out / ".rotation-pending" / "previous").mkdir(parents=True)
+        self.assert_stopped(self.run_helper(o, i), "holds no readable journal")
+        for leaf in ("peering-outward", "peering-inward"):
+            self.assertFalse((self.out / f"{leaf}.pem").exists())
+
+    def assert_stopped(self, r, words):
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(words, r.stdout + r.stderr)
+
+    def test_a_key_file_here_for_an_edge_made_leaf_stops_the_run(self):
+        o, i = self.good()
+        self.out.mkdir()
+        shutil.copy(self.key("stray"), self.out / "peering-outward-key.pem")
+        self.assert_stopped(self.run_helper(o, i), "a key file is in the output folder for a leaf whose key the edge makes")
+        self.assertFalse((self.out / "peering-outward.pem").exists())
+        self.assertFalse((self.out / "peering-inward.pem").exists())
+
+    def test_a_certificate_for_another_key_in_place_stops_the_run(self):
+        o, i = self.good()
+        self.assertEqual(self.run_helper(o, i).returncode, 0)
+        before = (self.out / "peering-outward.pem").read_bytes()
+        o2 = self.request("outward-new", self.key("outward-new"), "/CN=" + OUT_CN)
+        i2 = self.request("inward-new", self.key("inward-new"), "/CN=" + IN_CN)
+        self.assert_stopped(self.run_helper(o2, i2), "a certificate for another key is in place")
+        self.assertEqual((self.out / "peering-outward.pem").read_bytes(), before)
+
+    def test_a_symlinked_certificate_stops_the_run(self):
+        o, i = self.good()
+        self.out.mkdir()
+        target = self.d / "elsewhere.pem"
+        target.write_text("")
+        (self.out / "peering-outward.pem").symlink_to(target)
+        self.assert_stopped(self.run_helper(o, i), "expected a regular file")
+        self.assertEqual(target.read_text(), "", "the link's target was written")
+        self.assertFalse((self.out / "peering-inward.pem").exists())
+
+    def test_request_with_rotate_is_refused(self):
+        o, i = self.good()
+        self.assert_stopped(self.run_helper(o, i, "--rotate"), "rotating a leaf whose key the edge makes is not built")
+        self.assertFalse((self.out / "peering-outward.pem").exists())
 
     def test_a_key_signed_before_is_refused_after_the_output_folder_is_gone(self):
         o, i = self.good()
