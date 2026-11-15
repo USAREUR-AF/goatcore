@@ -1666,3 +1666,30 @@ def test_a_package_issued_far_in_the_future_is_not_offered(tmp_path):
     warnings = []
     d.offer_new_package(a, "xab", PUB["xab"], near, json.loads(near), json.loads(on_disk), warnings)
     assert (tmp_path / d.INCOMING).read_bytes() == near, warnings
+
+
+def _another_partys_package(issued):
+    """A package of another party, `xac`, signed by `xac`'s own key, and that key (base64)."""
+    seed = bytes([7] * 32)
+    v = json.loads(XAB.read_bytes())
+    v.pop("signature", None)
+    v["sovereign_id"], v["issued"] = "xac", issued
+    v["signature"] = base64.b64encode(d.sign(seed, d.canonical(v))).decode()
+    return d.canonical(v), base64.b64encode(d.public_key(seed)).decode()
+
+
+@needs_ed25519
+def test_a_package_naming_another_party_is_not_offered(tmp_path):
+    """The directory path offers a new package only when it names the peering's partner
+    (--their-id), whatever the caller derived the id from: a package of another party, signed
+    by that party's key and on disk under it, is not saved for phase 5."""
+    on_disk, key = _another_partys_package("2026-09-01")
+    body, _ = _another_partys_package("2026-09-20")
+    theirs = tmp_path / "theirs.json"
+    theirs.write_bytes(on_disk)
+    a = type("A", (), {"work": str(tmp_path), "theirs": str(theirs), "per_counterparty": True, "their_id": "xab"})()
+    warnings = []
+    d.offer_new_package(a, "xac", key, body, json.loads(body), json.loads(on_disk), warnings)
+    assert not (tmp_path / d.INCOMING).exists(), warnings
+    assert theirs.read_bytes() == on_disk
+    assert any("GB-191" in w and "`xac`" in w and "`xab`" in w for w in warnings), warnings

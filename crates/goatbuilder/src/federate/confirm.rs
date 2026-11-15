@@ -2490,6 +2490,73 @@ mod tests {
         assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
     }
 
+    /// A package of another party, `xac`, signed by `xac`'s own key, with its
+    /// verifying key returned for the keyring.
+    fn another_partys_package(w: &World, issued: Option<&str>) -> (Vec<u8>, String) {
+        use goat_federation::json::{canonical, parse_document, JVal};
+        let b = package_issued("xab", &w.their_fp, Some(ROTATED), "xab", issued);
+        let JVal::Obj(mut top) = parse_document(&b).unwrap().without_member("signature") else {
+            panic!()
+        };
+        for (k, v) in top.iter_mut() {
+            if k == "sovereign_id" {
+                *v = JVal::Str("xac".into());
+            }
+        }
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let sig = ed25519_dalek::Signer::sign(&sk, canonical(&JVal::Obj(top.clone())).as_bytes());
+        top.push((
+            "signature".into(),
+            JVal::Str(base64::engine::general_purpose::STANDARD.encode(sig.to_bytes())),
+        ));
+        let key = base64::engine::general_purpose::STANDARD.encode(sk.verifying_key().to_bytes());
+        (canonical(&JVal::Obj(top)).into_bytes(), key)
+    }
+
+    fn with_xac_in_the_keyring(w: &World, key: &str) {
+        let ring = std::fs::read_to_string(&w.paths.keyring).unwrap();
+        std::fs::write(&w.paths.keyring, format!("{}xac={key}\n", if ring.ends_with('\n') { ring.clone() } else { format!("{ring}\n") })).unwrap();
+    }
+
+    /// Phase 5 checks the package names the peering's partner, on the hand path:
+    /// a package of another party whose key is in the keyring, copied over the
+    /// placed one, is refused, and nothing is confirmed.
+    #[test]
+    fn a_package_naming_another_party_is_refused_on_the_hand_path() {
+        let (w, mut st) = bound();
+        let (c, key) = another_partys_package(&w, None);
+        with_xac_in_the_keyring(&w, &key);
+        std::fs::write(&w.paths.counterparty, &c).unwrap();
+        let before = serde_json::to_string(&st).unwrap();
+        let mut s = surface(flag(&sha256(&c)), &[]);
+        let step = incoming_step(&w, &mut s, &mut st);
+        assert_eq!(code(&step), "GB-191");
+        let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("'xac'") && text.contains("'xab'"), "{text}");
+        assert_eq!(serde_json::to_string(&st).unwrap(), before, "nothing journaled");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), c, "the placed file is left as it was");
+    }
+
+    /// The same on the directory path: a package of another party offered as
+    /// the partner's new one is refused, and the held package stays in place.
+    #[test]
+    fn a_package_naming_another_party_is_refused_on_the_directory_path() {
+        let (w, mut st) = bound();
+        let held = std::fs::read(&w.paths.counterparty).unwrap();
+        let (c, key) = another_partys_package(&w, Some(LATER));
+        with_xac_in_the_keyring(&w, &key);
+        std::fs::write(w.paths.work.join(INCOMING), &c).unwrap();
+        let before = serde_json::to_string(&st).unwrap();
+        let mut s = surface(flag(&sha256(&c)), &[]);
+        let step = incoming_step(&w, &mut s, &mut st);
+        assert_eq!(code(&step), "GB-191");
+        let text: String = step.rows.iter().map(|r| r.detail.clone()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("'xac'") && text.contains("this peering's partner"), "{text}");
+        assert_eq!(serde_json::to_string(&st).unwrap(), before, "nothing journaled");
+        assert_eq!(std::fs::read(&w.paths.counterparty).unwrap(), held, "the held package is unchanged");
+        assert!(!w.paths.work.join(INCOMING).exists(), "the offered package is set aside");
+    }
+
     /// backout 2: with no package held (it was lost) and a new one offered, the
     /// step names the missing package and phase 5, not a writable working folder.
     #[test]
