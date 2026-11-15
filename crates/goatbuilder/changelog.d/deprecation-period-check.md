@@ -13,4 +13,4 @@ releases, of any major, have been tagged since that release and before the
 build's version; and 90 days have passed since that release was tagged. A refusal names the date it compared
 against (today, UTC) and the date the 90 days end. Before 1.0 an entry
 excuses a removal at once, as before. goatbuilder-pr fetches the release tags
-for this check, and reads each named release's list from its tag (#800).
+for this check, and reads each named release's list from its tag (#800, #826).
