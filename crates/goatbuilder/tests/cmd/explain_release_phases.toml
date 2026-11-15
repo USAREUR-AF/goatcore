@@ -1,0 +1,15 @@
+# explain lists the steps of release from the phase catalog, numbered as release.rs numbers them.
+bin.name = "goatbuilder"
+args = ["explain", "release"]
+stdout = """
+release: 8 phases. goatbuilder explain release <phase> answers for one, by number or id.
+
+  1  preflight   GATE    the nominator, the candidate tag and the secrets
+  2  tag         T       the candidate tag on main, its checks and its image
+  3  dev-pin     T       the candidate on the dev rung, as a landed pin
+  4  dev-deploy  T       deploy the candidate to the dev rung
+  5  dev-rows    GATE    the live acceptance rows on the dev rung
+  6  preprod     T       the candidate record, the preprod rung, its deploy and rows
+  7  soak        MANUAL  the soak: the prod command, and when it may run
+  8  prod        T       graduate, fold into fleet:, deploy prod, read every rung
+"""

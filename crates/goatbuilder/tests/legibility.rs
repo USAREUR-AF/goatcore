@@ -1487,6 +1487,58 @@ fn deploy_steps_are_the_catalog_s_deploy_entries() {
     assert_eq!(catalog, steps);
 }
 
+/// Verbs held to check (d) only (gate row F4): each runs numbered steps that
+/// the phase catalog describes, and checks (a) to (c), which record a run's
+/// processes against its run record, are not asked of them here. Each verb's
+/// own unit test holds these numbers to the step lines it prints
+/// (`release::tests::the_phase_catalog_describes_releases_steps`,
+/// `fastlane::catalog_tests::the_phase_catalog_describes_fastlanes_steps`).
+const D_ONLY: [(&str, [&str; 8]); 2] = [
+    ("release", ["1", "2", "3", "4", "5", "6", "7", "8"]),
+    ("fastlane", ["1", "2", "3", "4", "5", "6", "7", "8"]),
+];
+
+/// The step numbers check (d) holds each (d)-only verb to are its catalog
+/// entries: the list follows the catalog, and check (d) then reads each entry.
+#[test]
+fn d_only_steps_are_the_catalog_s_entries() {
+    let text = std::fs::read_to_string(repo().join(PHASE_CATALOG)).unwrap();
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+    for (verb, steps) in D_ONLY {
+        let catalog: BTreeSet<String> = doc["phases"]
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .filter(|e| e["verb"].as_str() == Some(verb))
+            .filter_map(|e| e["phase"].as_u64().map(|n| n.to_string()).or_else(|| e["phase"].as_str().map(str::to_string)))
+            .collect();
+        let steps: BTreeSet<String> = steps.iter().map(|s| s.to_string()).collect();
+        assert_eq!(catalog, steps, "{verb}");
+    }
+}
+
+/// Check (d) for release and fastlane: every step has a complete catalog
+/// entry whose `read` exists, and every document path the tool prints about
+/// them (`explain <verb>`, `explain <verb> <step>` for each, and `--help`)
+/// exists.
+#[test]
+fn c11_d_only_release_and_fastlane() {
+    let h = hollow();
+    for (verb, steps) in D_ONLY {
+        let mut printed = String::new();
+        let list = ok(&format!("explain {verb}"), h.command(&["explain", verb]).output().unwrap());
+        printed.push_str(&text(&list));
+        for s in steps {
+            let one = ok(&format!("explain {verb} {s}"), h.command(&["explain", verb, s]).output().unwrap());
+            printed.push_str(&text(&one));
+        }
+        let help = ok(&format!("{verb} --help"), h.command(&[verb, "--help"]).output().unwrap());
+        printed.push_str(&text(&help));
+        let steps: BTreeSet<String> = steps.iter().map(|s| s.to_string()).collect();
+        judge(verb, vec![('d', check_d(verb, &steps, &printed))]);
+    }
+}
+
 #[test]
 fn c11_deploy() {
     let h = hollow();
