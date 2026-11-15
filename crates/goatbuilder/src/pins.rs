@@ -1462,6 +1462,20 @@ pub fn render_all(repo: &Path) -> Result<Rendered> {
 mod tests {
     use super::*;
 
+    /// Gate row C5: an unmigrated-pins allowlist that exists and cannot be read
+    /// is refused with GB-254, naming the file, not passed up uncoded.
+    #[test]
+    fn an_allowlist_that_cannot_be_read_is_refused_with_its_code() {
+        let t = crate::testdir::path("gb-pins-allowlist-");
+        let p = Paths::new(&t);
+        // A directory where the file goes exists and cannot be read as text.
+        std::fs::create_dir_all(p.allowlist()).unwrap();
+        let e = load_allowlist(&p).unwrap_err();
+        let c = e.downcast_ref::<goat_errors::Coded>().unwrap_or_else(|| panic!("uncoded: {e:#}"));
+        assert_eq!(c.code, "GB-254", "{e:#}");
+        assert!(format!("{e:#}").contains("unmigrated-pins.txt"), "{e:#}");
+    }
+
     #[test]
     fn canonical_json_sorts_keys_indents_two_and_ends_with_one_newline() {
         let v = json!({"b": 1, "a": {"d": [], "c": {}}, "s": "é\"\\\n"});
