@@ -15,6 +15,7 @@
 | R2 | Every workflow triggered by `pull_request`, `pull_request_target` or `push` declares a `concurrency` group, on the workflow or on every job. | A push that has been superseded is cancelled instead of finished. |
 | R3 | No schedule fires more than once an hour: the minute field of every cron is one literal minute. | A frequent schedule spends runner time without new inputs. |
 | R4 | A pull-request workflow with no `paths` or `paths-ignore` filter is listed in `ops/ci/unfiltered-pr-workflows.txt` with its reason, and every listed file exists. | A workflow that runs on every pull request is a decision, so it is written down. The list shrinks; it does not rot. |
+| R5 | Every export to the GitHub Actions cache (`cache-to: type=gha...` or a `--cache-to type=gha...` argument) carries `ignore-error=true`. A workflow not yet changed is listed in `ops/ci/gha-cache-export-exceptions.txt` with its reason; a listed file that complies, or that no longer exists, fails. | The cache service can lose a blob between listing and reading it. Buildx then fails the whole build on the export with `404 BlobNotFound`, though the image built. A cache is an optimisation, so losing it must not fail a build. Import already tolerates it: buildx logs a failed `cache-from` and builds without that cache. |
 
 Eight workflows are listed under R4 today. `leak-gate` and `contributor-trust` are required checks on `main` and must report on every pull request. `ci`, `agent-references` and `slot-wal-cap` scan whatever a change touches. `codeql` analyzes every pull request and every push to `main`, so that every merged commit carries a code-scanning result; a run takes about three minutes. `acl-assertions` always reports and decides inside its jobs whether to build. `stable-guard` is filtered by branch instead of by path.
 
@@ -39,8 +40,8 @@ Status of the rules on `main`:
 
 | Rule | Status |
 |---|---|
-| W1 | Built in 25 of 446 external action references. The other references, and the `github-actions` entry in `.github/dependabot.yml` that keeps the pins current, are in review in pull request #915. |
-| W2, W3 | Built in 57 of 98 workflows. Most of the other workflows are in review in pull request #915. |
+| W1 | Built in 392 of 446 external action references (#915), and `.github/dependabot.yml` keeps the pins current through its `github-actions` entry. The other references are in four workflow files not yet converted. See [`.github/ACTION-PINS.md`](../../.github/ACTION-PINS.md). |
+| W2, W3 | Built in 96 of 98 workflows (#915). Two workflow files are not yet converted. |
 | W4 | Built in the three `pull_request_target` workflows that check out code: `leak-gate.yml`, `agent-references.yml` and `contributor-trust.yml`. `stable-guard.yml` runs no checkout under `pull_request_target`. |
 
 No check refuses a workflow that breaks W1 to W4. Before you push a workflow change, run Scorecard on your checkout:

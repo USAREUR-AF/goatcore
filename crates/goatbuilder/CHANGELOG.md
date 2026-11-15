@@ -10,6 +10,56 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Added: `goatbuilder explain release` and `explain fastlane` answer for each of their steps
+
+The phase catalog now describes `release`'s eight numbered steps (preflight,
+tag, dev pin, dev deploy, dev rows, preprod, soak, prod) and `fastlane`'s
+eight (component, graduation set, digest, dry run, move fleet, record the
+debt, land, deploy). `goatbuilder explain release` lists them, and
+`goatbuilder explain release 6` (or `explain release preprod`) says what the
+step does, why, what it changes, how to tell it worked, the command by hand
+and what to do when it failed, as `explain` already did for `standup`,
+`join-node`, `deploy` and `federate`. A test holds each verb's entries to the
+step lines it prints, so a new step cannot ship without one. Nothing a run
+does changes.
+
+#### Changed: a checkout file that is not well formed is refused with GB-329, exit 1
+
+A YAML file goatbuilder reads from the checkout that does not parse (a pin
+table, the ladder, a record, a workflow), and an intent schema
+(`ops/consistency/schema/intent-v1.schema.json`) that is not JSON or does not
+compile, now stop with GB-329, "a file goatbuilder reads from the checkout is
+not well formed", and exit 1: refused, a precondition failed. The message names
+the file and the parser's reason.
+
+#### Compatibility for scripts
+
+- A YAML file that does not parse, and a schema that does not compile, were
+  GB-254, "cannot be read or written", with exit 2. They are now GB-329 with
+  exit 1.
+- An intent schema that is not JSON had no code and exited 2. It is now
+  GB-329 with exit 1.
+
+A script that tests for exit 2, or matches GB-254, after one of these sees
+exit 1 and GB-329. A file that is missing or cannot be read stays GB-254 (#929).
+
+<!-- END generated: changelog unreleased -->
+
+## 0.7.2 — 2026-11-15
+
+What changed since 0.7.1, the previous release. `goatbuilder federate rotate
+<partner> ipsec-leaf` and `ipsec-ca` rotate an `ipsec-fips` peering's IPsec
+leaf: the edge role switches to the staged leaf and puts the old pair back if
+the link does not come up. `goatbuilder grow` hands a goatlite over to the full
+preset in the checkout, never on a host.
+
+One behaviour change: the edge role sets `make_before_break = yes` on every
+IPsec peering edge, so the first apply after this release restarts strongSwan
+once on each ipsec-fips edge and drops that peering's link briefly. Apply both
+sides of a peering in one window.
+
+### For someone deploying
+
 #### Fixed: a failed phase prints its fix once, and an incomplete acceptance names the command that resumes it
 
 A failed phase's `interpreted` row printed the error catalog's fix twice:
@@ -62,26 +112,6 @@ fails or refuses stops it with the renderer's own words (GB-258). Run again
 after it finished, it says the goatlite was already handed over. It is step 3 of
 the growth design; the other steps are not built, and it has not run on
 hardware.
-
-#### Changed: a checkout file that is not well formed is refused with GB-329, exit 1
-
-A YAML file goatbuilder reads from the checkout that does not parse (a pin
-table, the ladder, a record, a workflow), and an intent schema
-(`ops/consistency/schema/intent-v1.schema.json`) that is not JSON or does not
-compile, now stop with GB-329, "a file goatbuilder reads from the checkout is
-not well formed", and exit 1: refused, a precondition failed. The message names
-the file and the parser's reason.
-
-#### Compatibility for scripts
-
-- A YAML file that does not parse, and a schema that does not compile, were
-  GB-254, "cannot be read or written", with exit 2. They are now GB-329 with
-  exit 1.
-- An intent schema that is not JSON had no code and exited 2. It is now
-  GB-329 with exit 1.
-
-A script that tests for exit 2, or matches GB-254, after one of these sees
-exit 1 and GB-329. A file that is missing or cannot be read stays GB-254 (#929).
 
 #### Added: goat-peering-edge rotates an IPsec peering's leaf from staged material, and puts the old one back if the link does not come up
 
@@ -136,7 +166,9 @@ published binaries (`crates/goatbuilder/tests/upgrade/releases.sha256`), and
 v0.7.1's configuration files are kept for gate row A2 with the outcome its
 published binary gives each.
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.1 — 2026-11-15
 
