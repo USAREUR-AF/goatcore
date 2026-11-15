@@ -379,6 +379,10 @@ jobs:
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 ops/scripts/test_standup_required_inputs.py
+      - name: The standup pre-pull lists a member's image pins and pulls them N at once, on a fixture checkout of its own
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: python3 -W error::ResourceWarning ops/scripts/test_standup_image_pull.py
       - name: Each phase runs through the shared runner; a goatlite's phase 1 creates its own secrets store (LP-007)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}

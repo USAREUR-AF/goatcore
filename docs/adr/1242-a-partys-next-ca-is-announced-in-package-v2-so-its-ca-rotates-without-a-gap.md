@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-11-15 |
 | Deciders | operator |
 | Repo scope | goat core (`crates/goat-federation`, `crates/goatbuilder/src/federate`, `ops/federation/vectors`, `docs/design/federation-package-spec.md`, `docs/design/federation-key-rotation.md`) |
