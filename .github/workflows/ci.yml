@@ -28,12 +28,17 @@ jobs:
   # python-and-ansible run only when a pull request changes
   # ops/rpi-base-image/, their test scripts or this workflow. Pushes to main,
   # workflow_dispatch and a diff that cannot be computed run them.
+  #
+  # `docker_engine` is narrower in the same way: the docker-engine-distributions
+  # job runs only when a pull request changes ops/ansible/roles/docker-engine/
+  # or this workflow, and on every push to main.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       code: ${{ steps.classify.outputs.code }}
       rpi: ${{ steps.classify.outputs.rpi }}
+      docker_engine: ${{ steps.classify.outputs.docker_engine }}
     steps:
       # A pull_request checkout is the test merge commit; its first parent is
       # the base, so depth 2 is enough to diff the pull request's own changes.
@@ -46,13 +51,16 @@ jobs:
         run: |
           code=false
           rpi=false
+          docker_engine=false
           if [ "$EVENT" != pull_request ]; then
             code=true
             rpi=true
+            docker_engine=true
           elif ! files=$(git diff --name-only HEAD^1 HEAD); then
             echo "cannot diff against the base: running everything"
             code=true
             rpi=true
+            docker_engine=true
           else
             while IFS= read -r f; do
               [ -z "$f" ] && continue
@@ -68,12 +76,17 @@ jobs:
               case "$f" in
                 ops/rpi-base-image/*|ops/ci/test-rpi-flash-linux.sh|tests/test_rpi_flash.py|.github/workflows/ci.yml) rpi=true ;;
               esac
+              case "$f" in
+                ops/ansible/roles/docker-engine/*|.github/workflows/ci.yml) docker_engine=true ;;
+              esac
             done <<< "$files"
           fi
           echo "code=$code"
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "rpi=$rpi"
           echo "rpi=$rpi" >> "$GITHUB_OUTPUT"
+          echo "docker_engine=$docker_engine"
+          echo "docker_engine=$docker_engine" >> "$GITHUB_OUTPUT"
 
   rust:
     needs: changes
@@ -299,6 +312,28 @@ jobs:
       - name: a carrier key rotation sets each key aside once and makes a new one (stand-in wg)
         timeout-minutes: 5
         run: bash ops/ansible/roles/goat-peering-wg/tests/test-rotation.sh
+
+  # docker-engine's repository tasks, run in a Debian and an Ubuntu container:
+  # the apt source names the container's own distribution and codename and apt
+  # offers docker-ce from it (gate row H6).
+  docker-engine-distributions:
+    needs: changes
+    if: needs.changes.outputs.docker_engine == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: deps
+        timeout-minutes: 5
+        run: |
+          python3 -m pip install -q pyyaml ansible-core
+          bash ops/ci/ansible-galaxy-install.sh community.docker
+      - name: docker-engine adds Docker's repository for the host's distribution, on debian:13 and ubuntu:24.04
+        timeout-minutes: 12
+        run: bash ops/ansible/roles/docker-engine/tests/test-apt-source.sh
 
   peering-host-firewall:
     needs: changes
