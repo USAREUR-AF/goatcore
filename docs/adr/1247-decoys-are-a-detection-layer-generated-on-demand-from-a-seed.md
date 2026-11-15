@@ -31,7 +31,9 @@ goat's public repositories contain the full mechanism of every defense. A decoy 
 6. **The responder is isolated.** It initiates no connection, queries no goatnet service, holds no credential except its seed, and rate-limits each source.
 7. **One file per goatnet declares the layer:** `group_vars/<site>_hosts/deception.yml`. The seed appears in it as a secret reference. Entry points are rendered onto hosts at deploy time; no decoy file or decoy credential value is committed to any git tree.
 8. **The mechanism is public and its use is private.** This repository holds the responder, the planting play, the schema and example templates. A goatnet's overlay holds its seed, declaration and templates. This repository states that a goatnet may carry decoys and does not state which do.
-9. **Entry points sit where no declared automation reads.** A touch by a goatnet's own tooling is a defect in the placement or the tooling.
+9. **A decoy is recognized by key, not by list.** Names under the decoy zone and key prefix are decoys by namespace. Every other decoy identifier ends in a 40-bit tag computed with a recognition key derived from the seed. `goat decoy check` recomputes the tag; the key is resolved per command and is never on a goatnet host. The verdict `decoy` means never use and never trust.
+10. **Reading a decoy is not a touch; using one is.** A page needs a decoy credential presented to a service or a request to the responder. A planted file whose content differs from the content computed from the seed is a touch.
+11. **The planting play refuses a placement that declared automation would use.** A touch by a goatnet's own tooling still pages, marked as a declared source, and is a defect in the placement or the tooling. Touches are never suppressed by source.
 
 ## Alternatives considered
 
@@ -39,6 +41,7 @@ goat's public repositories contain the full mechanism of every defense. A decoy 
 - **A stored decoy environment (decoy hosts, databases and services).** Rejected: it has to be built, kept consistent and kept current. Computing answers from a seed gives the same consistency with no stored state.
 - **Answers written by a language model at request time.** Rejected: the goatnet would pay per request, which removes the cost difference the design depends on, and the responder would need an outbound dependency.
 - **Keeping the mechanism private as well.** Rejected: other goatnets could not use it, and the protection comes from the private seed, templates and placements. Publishing that decoys may exist makes an intruder doubt real credentials too.
+- **A stored registry of decoy names or content hashes.** Rejected: wherever the registry is readable it is the map of the decoys, a content hash stops matching when a file is edited, and a name-only list lets an intruder name an implant after a decoy. A keyed tag needs no stored list and cannot be forged without the key.
 - **Decoy files committed to the overlay repository.** Rejected: the repository's secret and identifier gates refuse them, and a decoy in a tree is labeled by its path and history.
 
 ## Consequences

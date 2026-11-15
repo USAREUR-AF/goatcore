@@ -72,6 +72,7 @@ A touch produces one wide event ([observability-wide-events.md](observability-wi
 | `source` | Mesh peer address, and the certificate common name for a Zenoh query |
 | `depth` | For the responder: how many references lie between this name and a planted entry point |
 | `interval_ms` | Time since the same source's previous touch |
+| `source_declared` | `true` when the source is one of the goatnet's declared automation identities |
 
 The page goes through the goatnet's paging service ([ADR 1168](../adr/1168-self-hosted-paging-and-automatic-oncall-enrolment.md)). `depth` and `interval_ms` describe the search: a source that follows many references at intervals of a few seconds is an automated agent.
 
@@ -90,18 +91,42 @@ deception_templates_dir: "files/deception-templates/"
 deception_entry_points:
   - kind: false-documentation
     hosts: "core"
-    path: "/srv/backup-old/README.restore.md"
+    path: "/srv/backup-old-k7q2m4xa/README.restore.md"
     template: "restore-notes"
     stop_notice: false
   - kind: decoy-credential
     hosts: "core"
-    path: "/srv/backup-old/.env.restore"
+    path: "/srv/backup-old-k7q2m4xa/.env.restore"
     credential: "cloud-access-key"
 ```
 
 - **The seed is a secret.** The declaration holds a reference to it ([ADR 1186](../adr/1186-credentials-at-rest-are-references-only.md)). A reader who holds the seed and the templates can compute every answer and so recognize the decoy world.
 - **Decoys are planted on hosts, never committed.** The play renders each entry point onto its host from the declaration. No decoy file or decoy credential value is stored in a git tree, public or private.
-- **Entry points sit where no declared automation reads.** A touch by the goatnet's own tooling or by an operator's AI agent is handled as a defect in the placement or in the tooling, and one of the two is changed.
+- **Entry points sit where no declared automation uses them.** The play enforces this (§Recognizing our own decoys). A touch by the goatnet's own tooling or by an operator's AI agent is handled as a defect in the placement or in the tooling, and one of the two is changed.
+
+## Recognizing our own decoys
+
+Anyone who holds the goatnet's recognition key can decide whether a name, path or credential is a decoy, by computation and without a list. Nobody without the key can decide it, and nobody without the key can make a real object pass as a decoy.
+
+**Three rules identify a decoy.**
+
+| Rule | Covers | Check |
+|---|---|---|
+| Namespace | Every name under `deception_zone` and every key under `deception_zenoh_prefix` | String match against the declaration |
+| Keyed tag | Every identifier that can travel away from where it was planted: credential identifiers, directory and file names of entry points, host labels inside false documentation | The identifier ends in a tag, `base32(HMAC-SHA-256(recognition_key, kind || body))` truncated to 8 characters; the checker recomputes it |
+| Expected content | The content of every planted file and every responder answer | Content is computed from the seed and the declaration, so the expected bytes are recomputed and compared |
+
+- **The recognition key is derived from the seed** (`HKDF-SHA-256(seed, "recognize")`) and is resolved per command from the secret store. It is never written to a goatnet host. A stored list of decoy names or hashes on a host would give an intruder the map; a key that is not on the host gives nothing.
+- **A tag is 40 bits and looks like the random suffix real identifiers carry**, so a real object matches by chance once in about 10^12 and an intruder cannot tell a tagged name from an untagged one.
+- **Identity is the name, never the content.** A decoy file that has been edited is still recognized, and the edit is itself a touch: the planting play recomputes the expected content on every run and emits a touch event for any planted file that differs.
+
+**One command answers the question.** `goat decoy check <text | file | path>` scans its input for names in the decoy namespaces and for tagged identifiers and reports each as `decoy` or `not a decoy`. It accepts pasted output, so an operator, an AI agent session, a credential-exposure scanner and a CI job all use the same check. A credential-exposure scanner that finds a decoy credential on a host reports it as a decoy and not as an exposure.
+
+**`decoy` means "never use and never trust", not "safe to ignore".** An intruder can place their own content in a decoy file. The verdict tells the reader not to act on what the object says; a changed decoy is investigated as a touch.
+
+**Reading is not use.** Nothing pages when a decoy file is read, listed, backed up or scanned. A page needs a decoy credential presented to a service or a request to the responder. Backups, log shipping and file scanners therefore cause no pages.
+
+**The planting play refuses a placement that declared automation would use.** It compares each entry point and the decoy namespaces with the paths, names and key expressions that the goatnet's declared jobs request (health probes, crawlers, name generation) and fails before planting anything on a conflict. A touch from a declared automation identity still pages and carries `source_declared: true`; touches are never suppressed by source, because a suppressed source is where an intruder would work from.
 
 ## What is public and what is private
 
@@ -111,7 +136,7 @@ The mechanism is public so that any goatnet can use it; a goatnet's use of it is
 |---|---|
 | The responder and its template engine | The seed |
 | The declaration schema above | The declaration: zone, key prefix, entry points |
-| The play that plants entry points | The templates the goatnet serves |
+| The play that plants entry points, and `goat decoy check` | The templates the goatnet serves |
 | Example templates, served only by the synthetic goatnet | Touch records and what they showed |
 | The statement that a goatnet may carry decoys | Which goatnets do |
 
@@ -123,7 +148,7 @@ Each stage is usable without the next and is proven on a development goatnet bef
 
 | Stage | Adds | Proof |
 |---|---|---|
-| 1 | Decoy credentials, the touch event, the page | Using a planted credential pages the on-call operator; the time from use to page is measured |
+| 1 | Decoy credentials, keyed tags, `goat decoy check`, the touch event, the page | Using a planted credential pages the on-call operator; the time from use to page is measured. `goat decoy check` reports every planted identifier as `decoy` and every real credential identifier on the test host as `not a decoy` |
 | 2 | False documentation and the stop notice | An AI agent given a shell on a test host follows the documentation to a stage 1 credential |
 | 3 | The responder on DNS and HTTP | The same agent's search is recorded; `depth` reached and total duration are measured; the responder host's load stays within its rate limit |
 | 4 | The responder's Zenoh queryable | A query under the decoy prefix from an enrolled test identity pages, and a query from an identity the rules would otherwise deny is also answered |
