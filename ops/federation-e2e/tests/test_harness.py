@@ -90,6 +90,24 @@ def catalog_checks():
             check(bool(c.get("step")), f"catalog: {s['id']}.{c.get('id')} names no step")
 
 
+def backout_edge_check():
+    """The back-out removes the peering's entry from the edge's host firewall and,
+    with no peering left, unloads the baseline (roles/goat-host-firewall/tasks/
+    absent.yml, docs/design/peering-host-firewall.md "Taking a peering out"), so
+    back-out-to-before holds the edge to its snapshot like the core: the edge check
+    is required, and the scenario records no known failure."""
+    cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
+    sc = next((s for s in cat["scenarios"] if s["id"] == "back-out-to-before"), None)
+    check(sc is not None, "catalog: no back-out-to-before scenario")
+    if sc is None:
+        return
+    check(not sc.get("known_failure"), "catalog: back-out-to-before still records a known failure")
+    by = {c["id"]: c for c in sc.get("checks", [])}
+    for cid in ("edge-as-before", "core-as-before"):
+        check(cid in by, f"catalog: back-out-to-before has no {cid} check")
+        check(by.get(cid, {}).get("required", True) is not False, f"catalog: back-out-to-before's {cid} check is not required")
+
+
 def write(d, name, rows):
     with open(os.path.join(d, name), "w") as fh:
         for r in rows:
@@ -547,6 +565,7 @@ def drive_rotate_checks():
 
 
 catalog_checks()
+backout_edge_check()
 srctree_checks()
 srcclone_checks()
 verdict_checks()
