@@ -79,17 +79,12 @@ rot_all_material() { # $1 side, $2 file
 # The checks of one key on one side, and of the key itself, as the catalog names them.
 # What a refusal of key $1 on side $2 (first|second) marks, one "<check>\t<why>" per line:
 # "refused" for the refused side's own checks and the key's (its samples and old-retired
-# checks need both sides rotated), "not-run" for the second side's when the first was refused
-# (it never runs). The other side's checks are never marked once it has run: a mark outranks
-# a passing step, and would hide its real result.
+# checks need both sides rotated). The other side's checks are never marked: it runs its own
+# rotate and records its own result, and a mark outranks a passing step.
 rot_refused_marks() { # $1 key, $2 first|second
   local k="$1" o="$2" c
   for c in $(rot_checks "$k" "$o"); do printf '%s\trefused\n' "$c"; done
-  if [ "$o" = second ]; then
-    for c in $(rot_checks "$k" first); do case "$c" in *-first) ;; *) printf '%s\trefused\n' "$c" ;; esac; done
-  else
-    for c in $(rot_checks "$k" second); do printf '%s\tnot-run\n' "$c"; done
-  fi
+  for c in $(rot_checks "$k" first); do case "$c" in *-first|*-first-ran) ;; *) [ "$o" = first ] || printf '%s\trefused\n' "$c" ;; esac; done
   return 0
 }
 
@@ -107,12 +102,13 @@ ROT_REFUSED=""
 rot_one() { # $1 key, $2 side
   local k="$1" s="$2" them h out rc ord c o why; them="$(other "$s")"; h="$(drv_host "$s")"
   ord="$([ "$s" = "$NATED" ] && echo first || echo second)"
-  case " $ROT_REFUSED " in *" $k "*) return 0 ;; esac
+  # A side runs its own rotate even after the other side's refusal: a refusal changes
+  # nothing, and each side's own answer is the evidence (GB-312 on one side, GB-317 on the other).
   rot_all_material "$s" "$RECORD/rot-$k-$s-before.txt"
   rot_all_material "$them" "$RECORD/rot-$k-$them-before.txt"
   out="$RECORD/rot-$k-$s-rotate.out"
   rc=0; ROT_KEY="$k" drive_rotate "$s" "$them" goatbuilder 0 0 > "$out" 2>&1 || rc=$?
-  why="$(grep -m1 -oE '(GB-189|GB-282|GB-312)[^|]*' "$out" || true)"
+  why="$(grep -m1 -oE '(GB-189|GB-282|GB-312|GB-317)[^|]*' "$out" || true)"
   if [ "$rc" != 0 ] && [ -n "$why" ]; then
     # A refusal changes nothing: both sides' material is read again and compared with the
     # material before it, the edge's live carrier pair is shown, and no carrier key was set
@@ -124,14 +120,13 @@ rot_one() { # $1 key, $2 side
        diff '$RECORD/rot-$k-$s-before.txt' '$RECORD/rot-$k-$s-after-refusal.txt' && diff '$RECORD/rot-$k-$them-before.txt' '$RECORD/rot-$k-$them-after-refusal.txt' || exit 1
        docker exec $HP-$s-edge sh -c 'wg show wg-carry0 2>/dev/null | grep -E \"public key|peer:|latest handshake\"; ls -d /etc/goat-peering-wg/.previous-carrier-* 2>/dev/null && exit 1; exit 0'"
     # Refused, by this build's own word: the refused side's checks and the key's wait for a
-    # build that rotates it; the other side's are marked only if it has not run yet.
+    # build that rotates it; the other side runs its own rotate and records its own result.
     ROT_REFUSED="$ROT_REFUSED $k"
     local ord c kind
     ord="$([ "$s" = "$NATED" ] && echo first || echo second)"
     while IFS="$(printf '\t')" read -r c kind; do
       case "$kind" in
         refused) mark "key-rotation.$c" BLOCKED "\`rotate $them $k\` is refused by the goatbuilder under test: $why" ;;
-        not-run) mark "key-rotation.$c" BLOCKED "not run: \`rotate $them $k\` was refused on $s first ($why)" ;;
       esac
     done <<EOF_MARKS
 $(rot_refused_marks "$k" "$ord")
