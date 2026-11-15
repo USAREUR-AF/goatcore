@@ -151,7 +151,34 @@ def self_test():
             "- ansible.builtin.meta: end_role\n  when: not (bad_enabled | bool)\n")
         with contextlib.redirect_stdout(io.StringIO()):
             assert check(r) == 0
-    print("self-test ok: an unread flag is refused; when:, assert that: and an import guard pass")
+        # A row whose code lives in a sibling repository (`home:`): absent from this tree it
+        # is named and skipped; present (an assembled tree) it is checked like any other; a
+        # row with no home and no code is still refused.
+        (r / "ops/goatbuilder/endstate/catalog.yaml").write_text(
+            "services:\n"
+            "  good: {present: {var: good_enabled}, containers: [good]}\n"
+            "  sib: {present: {var: sib_enabled}, home: goatstuff, containers: [sib]}\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check(r)
+        out = buf.getvalue()
+        assert rc == 0, out
+        assert "SKIP sib: deployed from goatstuff, not in this tree" in out, out
+        (r / "ops/ansible/roles/sib/tasks").mkdir(parents=True)
+        (r / "ops/ansible/roles/sib/tasks/main.yml").write_text("- ansible.builtin.debug:\n    msg: up\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check(r)
+        out = buf.getvalue()
+        assert rc == 1 and "sib: no deploying code reads sib_enabled" in out, out
+        (r / "ops/goatbuilder/endstate/catalog.yaml").write_text(
+            "services:\n  orphan: {present: {var: orphan_enabled}, containers: [orphan]}\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check(r)
+        assert rc == 1 and "orphan: no role, play" in buf.getvalue(), buf.getvalue()
+    print("self-test ok: an unread flag is refused; when:, assert that: and an import guard pass; "
+          "a row deployed from a sibling repository is skipped only while its code is absent")
     return 0
 
 
