@@ -7,6 +7,18 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+
+### For someone contributing
+
+#### Changed: the compatibility check is held to goatbuilder/v0.7.1
+
+`ops/ci/check-goatbuilder-compat.sh` now compares each build with
+`goatbuilder/v0.7.1`, the last published release: its command surface and its
+kept `-o json` documents. The upgrade tests' list pins v0.7.1's four
+published binaries (`crates/goatbuilder/tests/upgrade/releases.sha256`), and
+v0.7.1's configuration files are kept for gate row A2 with the outcome its
+published binary gives each.
+
 <!-- END generated: changelog unreleased -->
 
 ## 0.7.1 — 2026-11-15
