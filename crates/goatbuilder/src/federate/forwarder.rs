@@ -404,9 +404,11 @@ pub(super) fn splice(
     let limit = format!("--limit '{edge_group}'");
     let prepare = " peering-prepare.yml";
     if !(ph.cmd.contains(&limit) && ph.cmd.ends_with(prepare)) {
-        return Err(anyhow::anyhow!(
-            "phase 2 is no longer one peering-prepare.yml run on --limit '{edge_group}', so the forwarder steps cannot be placed around it"
-        ));
+        return Err(goat_errors::coded(
+            "GB-322",
+            format!("phase 2 is no longer one peering-prepare.yml run on --limit '{edge_group}', so the forwarder steps cannot be placed around it"),
+        )
+        .into());
     }
     let with = |lim: &str, play: &str| {
         ph.cmd
