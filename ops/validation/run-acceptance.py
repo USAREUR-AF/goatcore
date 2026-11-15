@@ -141,7 +141,8 @@ def run(argv=None):
     ap.add_argument("--endstate", help="the site's derived end state (ops/goatbuilder/endstate/endstate.py "
                     "model <site>): a row whose `requires` names a service the site declares "
                     "absent reads N/A (ADR 1206), naming the present services it did not check; "
-                    "a present service that no row could check for that reason reads UNKNOWN")
+                    "a present service that no row could check for that reason reads UNKNOWN "
+                    "and fails the run (exit 1)")
     ap.add_argument("--only", help="run only these row ids (comma-separated)")
     ap.add_argument("--all-eligible", action="store_true",
                     help="run every applicable row (the default when no --only "
@@ -526,6 +527,16 @@ def report(args, results):
     # gate spuriously — the operator's live run treats UNKNOWN as must-resolve.
     fails = counts.get("FAIL", 0)
     passes = counts.get("PASS", 0)
+    # A present service that no row could check (the coverage rows run() adds
+    # under --endstate) fails the gate: a declared-absent service must not leave
+    # a present one unchecked and the run green. Every other UNKNOWN, and a run
+    # in which nothing passed, keeps the rules below.
+    unchecked = sorted(vid[len("coverage:"):] for vid, v, _ in results
+                       if vid.startswith("coverage:") and v.status == probes.UNKNOWN)
+    if unchecked:
+        print(f"\nGATE: FAIL — {len(unchecked)} present service(s) no row could check: {', '.join(unchecked)}"
+              + (f"; {fails} failing row(s)" if fails else ""))
+        return 1
     if fails == 0 and passes == 0:
         # Nothing ran, or nothing that ran could answer: not a pass. The gate
         # counts only PASS (ADR 1115 decision 3).
