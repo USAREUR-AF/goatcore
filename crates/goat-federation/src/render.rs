@@ -1049,6 +1049,20 @@ pub fn wire_keys(publish_under: &str, release: &[String]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// v2's agreement (federation-package-v2-spec.md §3) is read, with each
+    /// party's announced next CA; a v1 agreement reads as before, with none.
+    #[test]
+    fn an_agreement_v2_is_read_with_its_next_ca() {
+        let v2 = |d: &str| std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors-v2").join(d).join("agreement.canonical.json")).unwrap();
+        let ag = parse_agreement(&v2("compose-next-one-side")).expect("a v2 agreement");
+        let next: Vec<Option<&str>> = ag.parties.iter().map(|p| p.ca_fingerprint_next.as_deref()).collect();
+        assert!(next[0].is_some() && next[1].is_none(), "{next:?}");
+        let v1 = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors/compose-full/agreement.canonical.json")).unwrap();
+        assert!(parse_agreement(&v1).unwrap().parties.iter().all(|p| p.ca_fingerprint_next.is_none()));
+        let v3 = String::from_utf8(v1).unwrap().replace("federation-agreement/v1", "federation-agreement/v3");
+        assert_eq!(parse_agreement(v3.as_bytes()).unwrap_err().rule, "A_SPEC");
+    }
     use super::*;
 
     /// Every file this module writes opens with the words [`GENERATED_BY`]

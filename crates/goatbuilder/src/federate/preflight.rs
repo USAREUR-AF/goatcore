@@ -672,6 +672,12 @@ mod tests {
         assert_eq!(get(&v, "FED_COUNTERPARTY_ID").value.as_deref(), Some("xab"));
         assert_eq!(get(&v, "FED_SLOT_ENV").value.as_deref(), Some("zagros"));
         assert_eq!(get(&v, "FED_CORE_GROUP").value.as_deref(), Some("xab_core"));
+        // The package version: v1 unless the peering selects v2.
+        assert_eq!(get(&v, "FED_PACKAGE_VERSION").value.as_deref(), Some("v1"));
+        let mut p2 = peering();
+        p2.package = Some("v2".into());
+        let v2 = from_deployment(repo.path(), &p2, "/w", "xab_edge", None);
+        assert_eq!(get(&v2, "FED_PACKAGE_VERSION").value.as_deref(), Some("v2"));
         for n in [
             "FED_SIGNING_KEY",
             "FED_DIRECTORY_URL",
