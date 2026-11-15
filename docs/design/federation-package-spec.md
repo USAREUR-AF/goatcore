@@ -116,7 +116,7 @@ emitted with a limit it does not have, seen from the other end.
 **`accept_hz` is the lane's aggregate ceiling.** Across every key the sender publishes under
 `from/<sender>/**`, at most one message per 1/`accept_hz` seconds: a minimum spacing, not a count
 per second, and not per key or per release set ([ADR 1244](../adr/1244-a-lanes-accept-hz-is-its-aggregate-ceiling-and-the-sender-paces-to-it.md),
-Proposed). The receiver enforces it at its edge, where a second message inside the interval is
+Accepted). The receiver enforces it at its edge, where a second message inside the interval is
 dropped; a sender paces to it, and sheds and counts what it cannot send in time.
 
 **One-way federation is a real case, not a degenerate one.** A partner who will only receive

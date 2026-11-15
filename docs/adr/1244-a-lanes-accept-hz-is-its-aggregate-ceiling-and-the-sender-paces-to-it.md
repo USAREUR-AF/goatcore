@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted — decided by the operator on 2026-11-15. The pacing is built and measured once in the federation test environment at 1.1/`hz`; the 3 ms jitter floor is built and unit-tested, not run on a lane |
 | Date | 2026-11-15 |
 | Deciders | operator |
 | Repo scope | goat core (`docs/design/federation-package-spec.md`, `ops/federation/republisher`, `ops/ansible/roles/goat-zenoh-edge`, `crates/goat-federation/src/render.rs`, `ops/federation/standup/acceptance.sh`) |
