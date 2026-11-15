@@ -574,8 +574,10 @@ mod tests {
     }
 
     /// GB-305: another configuration at the target is refused, and nothing changes.
+    /// A refused precondition exits 1 (EXIT_REFUSED), as the contract says.
     #[test]
     fn another_config_at_the_target_is_refused_and_nothing_changes() {
+        assert_eq!(goat_errors::explain(EXISTS_CODE).and_then(|e| e.exit), Some(EXIT_REFUSED));
         let dir = checkout();
         std::fs::create_dir_all(dir.join("ops/goatbuilder")).unwrap();
         let other = "schema: goatbuilder/v1\npreset: full\nrepo: {source: example-org/other}\n";
@@ -621,7 +623,8 @@ mod tests {
     }
 
     /// A renderer that fails stops the run before goatlite.yaml is removed, so the
-    /// run can be repeated.
+    /// run can be repeated. It is a command the verb runs that failed (GB-258,
+    /// exit 1), not a file that cannot be read or written (GB-254).
     #[test]
     fn a_failed_hand_over_keeps_the_lite_file() {
         let dir = checkout();
@@ -631,11 +634,33 @@ mod tests {
         )
         .unwrap();
         let e = grow(&dir, false).unwrap_err();
-        assert_eq!(code_of(&e).as_deref(), Some("GB-254"), "{e:#}");
+        assert_eq!(code_of(&e).as_deref(), Some("GB-258"), "{e:#}");
         assert!(format!("{e:#}").contains("goatlite-render: no"), "{e:#}");
+        // The dry run's --check is the same command, and fails the same way.
+        let e = grow(&dir, true).unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-258"), "{e:#}");
         assert!(
             dir.join(LITE_FILE).exists(),
             "goatlite.yaml stays for the next run"
         );
+    }
+
+    /// Grow run again after a finished hand-over says the goatlite was already
+    /// handed over and exits 0, a dry run too: goatlite.yaml is gone and the
+    /// config is grow's own. Without grow's header it is not grow's hand-over, and
+    /// the missing goatlite.yaml is still GB-244.
+    #[test]
+    fn grow_again_after_a_finished_hand_over_says_so() {
+        let dir = checkout();
+        grow(&dir, false).unwrap();
+        for dry_run in [true, false] {
+            let r = grow(&dir, dry_run).unwrap();
+            assert!(r.ok, "{}", details(&r));
+            assert_eq!(r.exit, crate::EXIT_OK, "{}", details(&r));
+            assert!(details(&r).contains("already handed over"), "{}", details(&r));
+        }
+        let written = std::fs::read_to_string(dir.join(TARGET)).unwrap();
+        std::fs::write(dir.join(TARGET), written.strip_prefix(HEADER).unwrap()).unwrap();
+        assert_eq!(code_of(&grow(&dir, true).unwrap_err()).as_deref(), Some("GB-244"));
     }
 }
