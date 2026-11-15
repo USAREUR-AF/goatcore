@@ -306,7 +306,8 @@ fn every_error_the_source_makes_is_coded_or_listed() {
 
 /// The scanner itself: an uncoded `anyhow!` and `.context` are found, with
 /// their messages; a coded one, and one in a test module, are not; one the
-/// catalog would only match by its words is.
+/// catalog would only match by its words is, and so is one whose message only
+/// names a code: the error is not `Coded`, so it takes the uncoded exit.
 #[test]
 fn the_scanner_finds_uncoded_errors_and_only_those() {
     let src = r#"
@@ -328,6 +329,11 @@ fn d() -> Result<()> {
     Err(anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
 }
 
+fn f() -> Result<()> {
+    let line = parse(argv).context(format!("goatbuilder federate {} (GB-242)", argv.join(" ")))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     fn c() { let _ = anyhow!("a test's own error"); }
@@ -339,7 +345,9 @@ mod tests {
         vec![
             "src/x.rs :: context :: the plan file".to_string(),
             "src/x.rs :: anyhow :: an empty plan: {}".to_string(),
+            "src/x.rs :: anyhow :: a refusal with its code, GB-149, inside the message".to_string(),
             "src/x.rs :: anyhow :: federate is a mutation: pass --yes without a terminal (C10)".to_string(),
+            "src/x.rs :: context :: goatbuilder federate {} (GB-242)".to_string(),
         ]
     );
 }
