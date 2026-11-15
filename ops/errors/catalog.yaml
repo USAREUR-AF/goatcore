@@ -3236,6 +3236,20 @@ entries:
     matches:
       - "\\(GB-163\\)"
     exit: 2
+  - code: GB-339
+    tool: goatbuilder
+    title: two peerings on one forwarder declare different values for its machine
+    what: "A peering's forwarder: may declare the forwarder machine's own values: ansible_user (the user the forwarder play reaches it as), public_interface and ssh_sources. goatbuilder federate allocate renders them into the forwarder group's group_vars, which hold one value of each. Two peerings relayed by the same forwarder group declare different values for one of them, so allocate cannot tell which is the machine's. Nothing was written."
+    causes:
+      - "the value was changed on one peering's forwarder: and not on the other's"
+      - "two forwarders share one group (forwarder: group:), so their machines' values meet in one file"
+    fixes:
+      - "declare the same value on every peering of that forwarder, or on one of them only (the others take it)"
+      - "give each forwarder machine its own group under forwarder: group:"
+    read: docs/design/peering-forwarder.md
+    matches:
+      - "\\(GB-339\\)"
+    exit: 2
   - code: GB-203
     tool: goatbuilder
     title: two peerings would bind the same value on one machine

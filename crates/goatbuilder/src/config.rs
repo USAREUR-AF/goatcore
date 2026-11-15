@@ -270,6 +270,15 @@ pub struct PeeringForwarder {
     /// The forwarder's address as the inventory reaches it (for the rendered inventory).
     #[serde(default)]
     pub ansible_host: Option<String>,
+    /// The user the forwarder play reaches the machine as (its group's `ansible_user`).
+    #[serde(default)]
+    pub ansible_user: Option<String>,
+    /// The machine's interface partners reach it on (`peering_forwarder_public_interface`).
+    #[serde(default)]
+    pub public_interface: Option<String>,
+    /// The sources it admits SSH from (`peering_forwarder_ssh_sources`).
+    #[serde(default)]
+    pub ssh_sources: Option<Vec<String>>,
 }
 
 /// Words `goatbuilder federate <word>` takes, or is reserved to take, as a
