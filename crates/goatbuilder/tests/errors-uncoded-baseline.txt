@@ -1,0 +1,4 @@
+# Places in crates/goatbuilder/src that make an error with no catalog code
+# (gate row C5; tests/errors_coded_in_source.rs). One line per place:
+# <file> :: <kind> :: <message>. The list only shrinks: code a place and
+# remove its line; never add one.
