@@ -140,10 +140,14 @@
   register: gcc_readiness_tmp
 
 - name: consistency-console | render the release-readiness document from this checkout
+  # argv: the checkout path (playbook_dir) and the interpreter's may hold a space.
   ansible.builtin.command:
-    cmd: >-
-      {{ ansible_playbook_python }} {{ playbook_dir }}/../release/graduate.py readiness
-      --out {{ gcc_readiness_tmp.path }}
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ playbook_dir }}/../release/graduate.py"
+      - readiness
+      - --out
+      - "{{ gcc_readiness_tmp.path }}"
   delegate_to: localhost
   become: false
   run_once: true

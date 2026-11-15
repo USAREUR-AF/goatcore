@@ -1,0 +1,80 @@
+# check-ansible-paths-one-argument.py baseline: sites known today where a role
+# templates a path into a split command:, script:, shell: or raw: string, unquoted.
+# One per line, `<file> :: <task name>`. Shrink-only: a site not listed fails, and
+# a listed site the check no longer finds is stale and must be removed. Converting
+# these to argv: (command, script) or | quote (shell, raw) is follow-up work; each
+# removes its line here.
+ops/ansible/roles/admit-audit/tasks/deploy.yml :: Package admit-audit source into base64 tarball
+ops/ansible/roles/ca-signing-host/tasks/main.yml :: Build bundle-create binary
+ops/ansible/roles/ca-signing-host/tasks/main.yml :: Build bundle-extract binary
+ops/ansible/roles/ca-signing-host/tasks/main.yml :: Configure git safe.directory for the shared repo
+ops/ansible/roles/compliance-proxy/handlers/main.yml :: reload compliance-proxy compose
+ops/ansible/roles/compliance-proxy/tasks/main.yml :: Bring up compliance-proxy sidecars (idempotent)
+ops/ansible/roles/e2e-canary/tasks/main.yml :: e2e-canary | docker compose up -d (recreate when the file changed)
+ops/ansible/roles/egress-shaping/tasks/main.yml :: egress-shaping | belt-and-braces teardown (revert qdisc + drop nft table)
+ops/ansible/roles/goat-fed-republisher/tasks/main.yml :: republisher | the certificate carries the name the core admits
+ops/ansible/roles/goat-host-firewall/tasks/apply.yml :: host-firewall | load the candidate (one transaction)
+ops/ansible/roles/goat-host-firewall/tasks/apply.yml :: host-firewall | the kernel accepts it
+ops/ansible/roles/goat-peering-forwarder/tasks/absent.yml :: peering-forwarder | absent | load it (replaces only this table)
+ops/ansible/roles/goat-peering-forwarder/tasks/carrier-key.yml :: peering-forwarder | make each carrier's private key if there is none
+ops/ansible/roles/goat-peering-wg/tasks/carrier-key.yml :: peering-wg | carrier | make the carrier's private key if there is none
+ops/ansible/roles/goat-peering-wg/tasks/carrier.yml :: peering-wg | carrier | read the carrier's public key
+ops/ansible/roles/goat-peering-wg/tasks/transport-key.yml :: peering-wg | make the private key if there is none
+ops/ansible/roles/goat-peering-wg/tasks/transport-live.yml :: peering-wg | peering key | the public half of the key on disk
+ops/ansible/roles/goat-zenoh-portal/tasks/main.yml :: Read the Traefik dynamic dir to check referenced middlewares exist
+ops/ansible/roles/goat-zenoh/tasks/acl-migrate.yml :: F-258 migrate | BYTE-VERIFY reassembled == live
+ops/ansible/roles/goat-zenoh/tasks/acl-migrate.yml :: F-258 migrate | capture the drift diff if verify failed
+ops/ansible/roles/goat-zenoh/tasks/acl-migrate.yml :: F-258 migrate | extract the live config into (throwaway seed) + org fragment
+ops/ansible/roles/goat-zenoh/tasks/acl-migrate.yml :: F-258 migrate | reassemble seed (rendered=strict / extracted=capture) + org
+ops/ansible/roles/goat-zenoh/tasks/main.yml :: F-258 | assemble live config from seed + org fragment (to scratch)
+ops/ansible/roles/goat-zenoh/tasks/main.yml :: F-364 | assert narrowing the universal read blinds no live reader
+ops/ansible/roles/goat-zenoh/tasks/main.yml :: Lazy storage | discover active slot anchors (dirs holding rocksdb data)
+ops/ansible/roles/goat-zenoh/tasks/main.yml :: Start zenoh router
+ops/ansible/roles/icam-keycloak-cac/tasks/main.yml :: Generate the Keycloak server TLS cert (self-signed; swap for the mesh CA cert in prod)
+ops/ansible/roles/icam-mtls-proxy/tasks/main.yml :: Generate the proxy server TLS cert (self-signed; a goatnet uses traefik-acme)
+ops/ansible/roles/id-admin-console/handlers/main.yml :: reload id-admin-console compose
+ops/ansible/roles/id-admin-console/tasks/main.yml :: Bring up id-admin-console (idempotent)
+ops/ansible/roles/id-admin-console/tasks/main.yml :: Token clobber-safety — does the host currently hold a GitHub onboard token?
+ops/ansible/roles/isitup/tasks/main.yml :: Bring up isitup + oauth2-proxy (idempotent)
+ops/ansible/roles/netbird-dashboard/tasks/main.yml :: dashboard | read the site identity of the dashboard.env already on the host
+ops/ansible/roles/node-net-health/tasks/main.yml :: node-net-health | prove the textfile is being written
+ops/ansible/roles/ntp-health-agent/tasks/main.yml :: Derive and save attestation public key
+ops/ansible/roles/ntp-health-agent/tasks/main.yml :: Generate Ed25519 attestation keypair (first deploy only)
+ops/ansible/roles/ntp-health-agent/tasks/main.yml :: Probe ntp-health-agent for signed-attestation support
+ops/ansible/roles/ntp-hygiene/tasks/main.yml :: Check whether chrony_exporter binary already present at pinned version
+ops/ansible/roles/oauth2-proxy-dashboard/handlers/main.yml :: reload oauth2-proxy-dashboard compose
+ops/ansible/roles/oauth2-proxy-dashboard/tasks/main.yml :: Bring up {{ dashboard_oauth2_proxy_service }} (idempotent)
+ops/ansible/roles/oauth2-proxy-id-console/handlers/main.yml :: reload oauth2-proxy-id-console compose
+ops/ansible/roles/oauth2-proxy-id-console/tasks/main.yml :: Bring up oauth2-proxy-id-console (idempotent)
+ops/ansible/roles/obs-host/tasks/main.yml :: obs-host | recreate containers whose mounted config drifted
+ops/ansible/roles/ory/tasks/authz-backfill-gate.yml :: authz-backfill-gate | Verify every identity is on metadata_public ({{ ory_authz_gate_stage }})
+ops/ansible/roles/postgres-streaming-replication/tasks/main.yml :: Standby | chown data dir to postgres-spock UID:GID (basebackup wrote as root via docker)
+ops/ansible/roles/postgres-streaming-replication/tasks/main.yml :: Standby | run pg_basebackup A→B with -R (writes standby.signal + primary_conninfo)
+ops/ansible/roles/relay-health/tasks/main.yml :: relay-health | PUBLIC gate — acme.json cert-minting note
+ops/ansible/roles/relay-health/tasks/main.yml :: relay-health | seed an initial probe so the page has data on first load
+ops/ansible/roles/relay-health/tasks/main.yml :: relay-health | seed an initial registry WAL reading (best-effort)
+ops/ansible/roles/relay-health/tasks/main.yml :: relay-health | seed an initial router-health probe (best-effort)
+ops/ansible/roles/relay-health/tasks/main.yml :: relay-health | seed the Grafana bridge .prom (when textfile_out set)
+ops/ansible/roles/relay-health/tasks/peer-names.yml :: relay-health | seed an initial peer-names resolve
+ops/ansible/roles/rollback-ledger/tasks/main.yml :: rollback-ledger | read last ledger row
+ops/ansible/roles/snitch-bundle/tasks/Darwin.yml :: Extract snitch probe key from offline-enrollment bundle (Darwin)
+ops/ansible/roles/snitch-bundle/tasks/Linux.yml :: Extract snitch probe key from offline-enrollment bundle
+ops/ansible/roles/spire/tasks/agent-only.yml :: spire agent-only | export the trust bundle on the CA holder
+ops/ansible/roles/spire/tasks/agent-only.yml :: spire agent-only | mint a join token on the CA holder
+ops/ansible/roles/spire/tasks/agent-only.yml :: spire agent-only | up spire-agent
+ops/ansible/roles/spire/tasks/main.yml :: spire | bootstrap federated partner bundles (one-time bundle set)
+ops/ansible/roles/spire/tasks/main.yml :: spire | check which registration entries exist
+ops/ansible/roles/spire/tasks/main.yml :: spire | create missing registration entries (CN-bearing via dns_name)
+ops/ansible/roles/spire/tasks/main.yml :: spire | drop a retired partner's bundle from the SPIRE datastore
+ops/ansible/roles/spire/tasks/main.yml :: spire | export trust-bundle (CA) to host for the router to trust
+ops/ansible/roles/spire/tasks/main.yml :: spire | generate one-time join token (only when agent not yet attested)
+ops/ansible/roles/spire/tasks/main.yml :: spire | wait for spire-server healthcheck
+ops/ansible/roles/surface-visit/tasks/main.yml :: surface-visit | write a deploy marker through the door log
+ops/ansible/roles/tang-server/tasks/main.yml :: Generate Tang ECDH keys (only when the server has none)
+ops/ansible/roles/traefik-compression-metrics/tasks/main.yml :: traefik-compression-metrics | read back what was published
+ops/ansible/roles/wg-cp0-client/tasks/main.yml :: Apply bundle (renders wg-cp0.conf + writes wg-cp0-priv.key)
+ops/ansible/roles/wg-cp0-client/tasks/main.yml :: Generate fresh wg-cp0 keypair (only if no on-disk key)
+ops/ansible/roles/wg-cp0-client/tasks/main.yml :: Read on-disk privkey
+ops/ansible/roles/wg-cp0-server/tasks/main.yml :: Generate fresh wg-cp0 keypair (when no on-disk key exists)
+ops/ansible/roles/wg-cp0-server/tasks/main.yml :: Read on-disk privkey + derive pubkey
+ops/ansible/roles/zenoh/tasks/main.yml :: Start zenoh router

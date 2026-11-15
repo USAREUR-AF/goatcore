@@ -317,6 +317,103 @@ impl World {
     }
 }
 
+/// Phase 3 measured over SSH in the stand-in world: an `ansible-inventory`
+/// that prints the plays' inventory (edge-1 at 192.0.2.10, core-1 at
+/// 192.0.2.11, both without become), and an `ssh` that records each call as
+/// `ssh <destination> <command line>` in `log` and answers it. An address
+/// listed in `unreachable` (one per line) fails as an unreachable host does
+/// (exit 255); any other host answers `true` and nothing else (exit 1), so
+/// each measurement reads as not found there. Nothing reaches a network.
+pub struct OverSsh {
+    pub bin: PathBuf,
+    pub log: PathBuf,
+    pub unreachable: PathBuf,
+    /// A goat context with a declaration whose transport interface is wg-fed1.
+    pub context: PathBuf,
+}
+
+impl OverSsh {
+    /// The calls `ssh` was asked to make, one line each.
+    pub fn calls(&self) -> String {
+        std::fs::read_to_string(&self.log).unwrap_or_default()
+    }
+
+    /// Only these addresses answer from now on; the other one is unreachable.
+    pub fn reach_only(&self, address: &str) {
+        let other = if address == EDGE_ADDRESS {
+            CORE_ADDRESS
+        } else {
+            EDGE_ADDRESS
+        };
+        std::fs::write(&self.unreachable, format!("{other}\n")).unwrap();
+    }
+
+    pub fn clear(&self) {
+        let _ = std::fs::remove_file(&self.log);
+    }
+}
+
+/// The edge and core hosts' addresses in the stand-in inventory.
+pub const EDGE_ADDRESS: &str = "192.0.2.10";
+pub const CORE_ADDRESS: &str = "192.0.2.11";
+
+impl World {
+    /// The stand-ins phase 3 needs to measure over SSH ([`OverSsh`]).
+    pub fn over_ssh(&self) -> OverSsh {
+        let r = self.root.path();
+        let bin = r.join("ssh-bin");
+        let log = r.join("ssh.log");
+        let unreachable = r.join("ssh-unreachable");
+        let inventory = serde_json::json!({
+            "_meta": {"hostvars": {
+                "edge-1": {"ansible_host": EDGE_ADDRESS, "ansible_become": false},
+                "core-1": {"ansible_host": CORE_ADDRESS, "ansible_become": false}
+            }},
+            "all": {"children": ["hello-ally_edge", "hello-ally_core"]},
+            "hello-ally_edge": {"hosts": ["edge-1"]},
+            "hello-ally_core": {"hosts": ["core-1"]}
+        });
+        write(&r.join("inventory.json"), &inventory.to_string());
+        exe(
+            &bin.join("ansible-inventory"),
+            &format!("#!/bin/sh\ncat '{}'\n", r.join("inventory.json").display()),
+        );
+        exe(
+            &bin.join("ssh"),
+            &format!(
+                "#!/bin/sh\nwhile [ $# -gt 0 ] && [ \"$1\" != -- ]; do shift; done\nshift\ndest=$1\nshift\necho \"ssh $dest $*\" >> '{l}'\nif [ -f '{u}' ] && grep -qx \"$dest\" '{u}'; then echo \"ssh: connect to host $dest port 22: Connection refused\" >&2; exit 255; fi\n[ \"$*\" = 'LC_ALL=C true' ] && exit 0\necho \"stand-in host $dest: nothing answers $*\" >&2\nexit 1\n",
+                l = log.display(),
+                u = unreachable.display()
+            ),
+        );
+        let context = r.join("context");
+        write(
+            &context.join("federation.toml"),
+            "sovereign_id = \"xaa\"\nterm_days = 30\ncut_contact = \"ops@example.org\"\n\n[transport]\ninterface = \"wg-fed1\"\nendpoint = \"192.0.2.10:51821\"\nlistener = true\nproposed_link_subnet = \"100.127.200.0/30\"\nmeasured_mtu = 1420\n",
+        );
+        OverSsh {
+            bin,
+            log,
+            unreachable,
+            context,
+        }
+    }
+
+    /// A run with phase 3 measured over SSH through `s`'s stand-ins.
+    pub fn run_over_ssh(&self, s: &OverSsh, extra: &[&str]) -> (Output, serde_json::Value) {
+        let path = format!("{}:{}", s.bin.display(), std::env::var("PATH").unwrap());
+        let out = self
+            .command(extra)
+            .env("PATH", path)
+            .env("FED_MEASURE", "ssh")
+            .env("GOAT_CONTEXT_DIR", &s.context)
+            .output()
+            .unwrap();
+        let v = serde_json::from_slice(&out.stdout).unwrap_or(serde_json::Value::Null);
+        (out, v)
+    }
+}
+
 pub fn rows<'a>(v: &'a serde_json::Value, name: &str) -> Vec<&'a str> {
     v["checks"]
         .as_array()
