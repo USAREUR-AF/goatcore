@@ -498,7 +498,7 @@ Postgres invalidates a slot that holds more WAL than `max_slot_wal_keep_size`.
 After that the phone must be seeded again
 ([post-partition-convergence-runbook.md](../operations/post-partition-convergence-runbook.md),
 "A. Slot rebuild — the destructive path"); the procedure and the `goatbuilder`
-path for it, designed and not built, are below. The cap is
+path for it, built and measured on lab containers, are below. The cap is
 1 GB in the image's `postgresql.conf` and 6 GB where the
 `postgres-streaming-replication` role sets it. Read the live value; never
 assume either one.
@@ -531,7 +531,8 @@ keeps the readings, each site's rate, and the budget computed from them.
 Status: the window and what a returning node sees are measured on two
 postgres-spock containers (`ops/postgres/spock/tests/slot-offline-window/run.sh`,
 four runs on 2026-11-15); the re-seed procedure is measured on the same
-containers; the re-seed in `goatbuilder` is designed, not built. Nothing in
+containers; the re-seed in `goatbuilder` is built, and its helper is measured
+on the same containers (below). Nothing in
 this part is measured on a phone or a live goatnet. Operator decision,
 2026-11-15 (gate group D, D2): a phone stays a full `core` joiner for
 goatbuilder 1.0, and these are the guards asked for before H8.
@@ -663,36 +664,60 @@ applies to a streaming standby, not to a Spock member such as a phone node.
 
 #### The re-seed in goatbuilder
 
-**Designed, not built.** It is more than a small change: a new verb, run
-against a node's database over the mesh, with refusals and a journal. It is
-listed for gate row H8's prerequisites.
+**Built** (`crates/goatbuilder/src/reseed.rs`, the helper
+`ops/scripts/spock-reseed.py`). The helper is **measured** on lab containers;
+the verb is tested with a stand-in for the helper
+(`crates/goatbuilder/tests/join_node_reseed.rs`). Neither has run on a phone
+or a live goatnet.
 
 ```
-goatbuilder join-node <node> --reseed [--dry-run]
+goatbuilder join-node <env> --site <site> --node <node> --class <core|phone> --reseed [--dry-run] [--from N] [--to N]
 ```
 
-It runs from the operator's machine against the phone and every site that kept
-a slot for it, over the same path `join-node` uses. Each step below is a
-refusal with its own catalog code when its condition does not hold:
+It runs from the operator's machine. It reaches the node at its mesh address
+and the founder (the site's `join_founder_site`) at its first host, both read
+from the mesh inventory, as the `ssh_user` of `goatbuilder.yaml`, through the
+Postgres container `spock-mesh-peering` names
+(`spock_mesh_postgres_container`). Each step is one call of the helper, which
+refuses with its own catalog code and exit 1 when its condition does not hold:
 
 | Step | What it checks or does | Refuses when |
 |---|---|---|
-| 1 | Reads every replicating site's slots for the node | no slot for the node reads `lost`: nothing to re-seed, and a re-seed of a healthy node would only cost a copy |
-| 2 | Reads each site's subscription from the node, and the node's WAL position | a site has not caught up with the node's own writes: they would be lost by the truncate |
-| 3 | Sums the replicated tables' sizes on the site it copies from, and reads the node's live cap | the data is not well under the node's cap (finding 2): the copy would cost the founder its slot on the node |
-| 4 | Drops and creates each subscription from the site whose slot was lost, with `spock-mesh-peering`'s parameters, and runs `sub_resync_table` with truncate for each table of its replication sets | |
-| 5 | Waits for `spock.local_sync_status` to read `r` for every table, and for the node's slots to read `reserved` | a table fails to copy, or a slot on the node reads `lost` |
-| 6 | Runs drift-watch between the node and the site | a table differs |
+| 1 `lost` | Reads the founder's slot for each of the node's subscriptions from it, in every database with a Spock node | no such slot reads `lost` (GB-345): nothing to re-seed, and a re-seed of a healthy node would only cost a copy |
+| 2 `caught-up` | Reads the founder's subscription from the node, and that subscription's slot on the node against the node's WAL position | the founder has not taken the node's own writes within the wait (GB-346): they would be lost by the truncate |
+| 3 `size` | Sums the replicated tables' sizes on the founder, and reads the node's live cap | the data is more than a quarter of the node's cap (GB-347; `--size-fraction`): the copy would cost the founder its slot on the node |
+| 4 `reseed` | Drops each lost subscription on the node and creates it again with the same provider, replication sets and forwarded origins and no initial copy, then runs `sub_resync_table` with truncate for each table of its replication sets | |
+| 5 `synced` | Waits for `spock.local_sync_status` to read `r` for every table and the subscription to read `replicating` | a table is not copied within the wait, or a slot on the node reads `lost` (GB-348) |
+| 6 `converged` | Compares each copied table on the node and the founder, by row count and digest | a table still differs after the wait (GB-349) |
 
-`--dry-run` stops after step 3 and prints what it would do. Each step is
-journaled, as `federate` journals its phases, so a run that stops resumes at
-the step it stopped at. The verb runs only when asked: it never re-seeds
-because an alert fired, since an operator decides that a node is to be copied
-again (runbook, "What this runbook does NOT do").
+When a side cannot be reached or a statement fails, the helper exits 2 with
+no code, and the verb stops at that step as for a refusal. The helper journals each step in
+`<state_dir>/join-node-<site>-<node>-reseed.json`, and a run starts at the
+first step the journal does not record as passed, so a run that stops resumes
+at the step it stopped at; step 4 also records each table it has copied. A
+journal whose last step passed is kept beside it as
+`...-reseed.<time>.done.json`, and the next re-seed starts at step 1. No
+connection string is written to the journal or printed: the provider's is read
+from the node's subscription before the drop and held in memory.
+`--dry-run` prints the six steps' commands and runs nothing. The verb refuses
+a class that does not replicate and a node with no mesh address before any
+step. It runs only when asked: it never re-seeds because an alert fired, since
+an operator decides that a node is to be copied again (runbook, "What this
+runbook does NOT do").
 
-Not built: the verb, its catalog codes, the journal, and a test against the
-harness above. Until it is built, the operator runs the procedure above by
-hand.
+**Measured on lab containers**, 2026-11-15
+(`ops/postgres/spock/tests/slot-offline-window/run.sh` with
+`RESEED_HELPER=ops/scripts/spock-reseed.py`, `RETURN=network`): after the
+founder's slot for B read `lost`, the helper's six steps each exited 0, in
+9 seconds in all. Step 3 read 65536 bytes to copy against a 1 GiB cap; the
+re-seed wrote 32552 bytes of WAL on B, and B's slot for A still read
+`reserved`. Both sites then held the same 161 rows with the same digest. The
+refusals of steps 1, 2, 3, 5 and 6 are not measured on containers; the verb's
+handling of a refusal is tested with the stand-in.
+
+Not built: a re-seed from a second site that also lost its slot for the node.
+The verb reads the founder only; a node that replicates with other sites as
+well has each of them read by hand (step 1 above).
 
 ### What to keep (H8)
 
