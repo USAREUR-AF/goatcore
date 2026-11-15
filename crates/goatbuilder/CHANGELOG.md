@@ -10,6 +10,16 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Fixed: a failed phase prints its fix once, and an incomplete acceptance names the command that resumes it
+
+A failed phase's `interpreted` row printed the error catalog's fix twice:
+inside the row's text, then again on its own `Fix:` line. It now prints
+it once, on the `Fix:` line, and `-o json` keeps it in the row's `fix`
+field. This applies to `standup`, `join-node`, `deploy` and `federate`.
+When phase 14 ends INCOMPLETE (X-ACCEPT-001), the fix now names
+`goatbuilder federate <peering> --from 14` and no longer names the scripts
+avenue's `ops/scripts/peering-standup.sh` (#911).
+
 #### Fixed: acceptance on a derived session learns a partner's challenge from its run stamp
 
 Phase 14's acceptance script, run on a derived session
@@ -41,6 +51,22 @@ checks first (GB-268). An earlier run that started less than twice
 that stages no stamp; its result is still refused (GB-273), so the verdicts
 can differ until a rerun, but a stale result never passes. Tested on the
 in-process fabric only, not on hosts (#792).
+
+#### Added: `goatbuilder federate rotate <partner> ipsec-leaf` and `ipsec-ca` rotate an ipsec-fips peering's leaf
+
+On a peering whose agreement chose ipsec-fips, `goatbuilder federate rotate
+<partner> ipsec-leaf` runs phases 11 to 14 and passes the rotation to
+goat-peering-edge, which checks the leaf an operator staged, sets the live
+pair aside once, switches and rolls back if the link does not come up.
+`rotate <partner> ipsec-ca` also needs `--partner-holds-ipsec-ca <sha256>`,
+the partner's attestation that it placed our new CA: the fingerprint it read
+back (GB-303).
+The rotation's record, `<work>/.rotation-ipsec`, lets a stopped run resume
+with the same id; a run of another kind is refused (GB-298). `--retire <id>`
+removes the set-aside key, only once phase 14 passed here after the switch
+(GB-309; the partner's phase 14 is theirs to confirm on the call), and never while another rotation is under way. A
+new rotation waits for the last one's retire (GB-298). A WireGuard
+peering's keys are rotated with `leaves`, `carrier` or `transport`.
 
 #### Added: goat-peering-edge rotates an IPsec peering's leaf from staged material, and puts the old one back if the link does not come up
 
@@ -74,6 +100,15 @@ an IKE rekey interval too short to hold the confirm. `peering_edge_remote_ca_nex
 partner's new CA beside the current one during their rotation. It is opt-in,
 and without a rotation id nothing changes. `goatbuilder federate rotate` does
 not drive it yet.
+
+#### Changed: `federate rotate <partner> ca` says the CA rotation is decided, not built
+
+`goatbuilder federate rotate <partner> ca` is still refused with GB-282, and
+nothing runs. Its message used to say that the CA rotation needed a decision
+first. That decision is now made: ADR 1242 announces our next CA in package v2,
+so the partner trusts both CAs for an overlap. The message now says the
+rotation is decided and not yet built in this goatbuilder. Rotate the leaves
+under the same CA with `rotate <partner> leaves` meanwhile.
 
 ### For someone contributing
 
