@@ -542,16 +542,6 @@ pub fn cross_field(cfg: &Config) -> Vec<String> {
 /// `cross_field`, with the peering allocation record read from `record_dir`.
 pub fn cross_field_at(cfg: &Config, record_dir: Option<&Path>) -> Vec<String> {
     let mut out = Vec::new();
-    // ADR 1242: `package: v2` is in the schema, and nothing in this build reads
-    // it yet. Refused rather than quietly run as v1; the change that wires v2
-    // into the phases removes this.
-    for (pi, p) in cfg.peerings.iter().enumerate() {
-        if p.package_version() == "v2" {
-            out.push(format!(
-                "peerings/{pi}/package: package v2 is not yet supported by this goatbuilder; leave it out (v1) until a goatbuilder that runs v2 is installed on both sides"
-            ));
-        }
-    }
     let names: Vec<&str> = cfg.environments.iter().map(|e| e.name.as_str()).collect();
     let mut dupes: Vec<&str> = names
         .iter()

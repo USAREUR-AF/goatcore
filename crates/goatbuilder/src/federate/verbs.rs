@@ -263,6 +263,13 @@ struct VerbLine {
     cmd: FederateCmd,
 }
 
+/// Whether `goatbuilder federate <words>` parses as a verb line: what a plan
+/// prints is what it runs. The tests hold every plan's verb phases to it.
+#[cfg(test)]
+pub(crate) fn parses(words: &[String]) -> bool {
+    VerbLine::try_parse_from(words).is_ok()
+}
+
 /// Run `goatbuilder federate <argv...>` in process: the driver's phases 3, 4,
 /// 6, 7 and 9 when FED_VERBS=goatbuilder. The words parsed are the words the
 /// plan prints, so the plan cannot say one thing and run another.

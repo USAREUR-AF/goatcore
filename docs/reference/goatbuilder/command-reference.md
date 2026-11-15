@@ -340,6 +340,7 @@ Exit 23 means something could not be derived; the list is the output.
 |---|---|---|
 | `--with-transport` | Also derive `transport_offer` — that we are willing to connect |  |
 | `--with-data` | Also derive `data_offer` — that we are willing to exchange |  |
+| `--package-version <PACKAGE_VERSION>` | The package version to emit: v1 (the default) or v2. A peering selects it; both parties select the same one | `v1` |
 | `--signing-key <SIGNING_KEY>` | Our Ed25519 signing key: 64 hex characters (the RFC 8032 seed) or 44 base64 characters. Without it this prints the exact bytes to sign and stops — it will not invent a key |  |
 | `--out <OUT>` | Write the package's canonical bytes here |  |
 | `--json` | One JSON object instead of the glyph lines |  |
@@ -392,6 +393,7 @@ Reads two files and the keys you pass. No network, no credentials, no host acces
 | `--keyring <KEYRING>` | A JSON file of bound keys, `{"<sovereign_id>": "<base64>"}`. Convenient for several partners; it establishes nothing that --key does not |  |
 | `--now <NOW>` | The evaluation date, `YYYY-MM-DD`. Defaults to today in UTC — never the local date, which would let two parties either side of local midnight reach different verdicts on the day a package falls due |  |
 | `--out <OUT>` | Write the agreement's canonical bytes here — no trailing newline, no byte-order mark, because that is the digest input |  |
+| `--package-version <PACKAGE_VERSION>` | The package version this peering selected: v1 (the default) composes only a v1 pair, by v1's literal pin; v2 composes only a v2 pair. Both parties select the same one, so any other pair is refused | `v1` |
 | `--print` | Print the agreement's canonical form on stdout |  |
 | `--json` | One JSON object instead of the glyph lines |  |
 

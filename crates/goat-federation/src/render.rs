@@ -17,7 +17,7 @@
 
 use super::compose::{peering_cn, publish_under, republisher_cn};
 use super::json::{parse_document, Finding, JVal};
-use super::package::AGREEMENT_SPEC;
+use super::package::{AGREEMENT_SPEC, AGREEMENT_SPEC_V2};
 
 #[derive(Debug, Clone)]
 pub struct Agreement {
@@ -32,6 +32,9 @@ pub struct Party {
     pub sovereign_id: String,
     pub trust_domain: String,
     pub ca_fingerprint: String,
+    /// v2: the CA the party announced as its next (federation-package-v2-spec.md
+    /// §3). Read; the edge's CA set acting on it is a later step.
+    pub ca_fingerprint_next: Option<String>,
     pub fabric_fips_image: bool,
     pub peering_cn: String,
 }
@@ -64,13 +67,14 @@ pub fn parse_agreement(bytes: &[u8]) -> Result<Agreement, Finding> {
         .get("spec")
         .and_then(JVal::as_str)
         .ok_or_else(|| f("A_MISSING_MEMBER", "spec", "absent".into()))?;
-    if spec != AGREEMENT_SPEC {
+    if spec != AGREEMENT_SPEC && spec != AGREEMENT_SPEC_V2 {
         return Err(f(
             "A_SPEC",
             "spec",
-            format!("`{spec}`; this build reads `{AGREEMENT_SPEC}` and nothing else"),
+            format!("`{spec}`; this build reads `{AGREEMENT_SPEC}` and `{AGREEMENT_SPEC_V2}` and nothing else"),
         ));
     }
+    let v2 = spec == AGREEMENT_SPEC_V2;
     let expires = raw
         .get("expires")
         .and_then(JVal::as_str)
@@ -112,6 +116,8 @@ pub fn parse_agreement(bytes: &[u8]) -> Result<Agreement, Finding> {
             sovereign_id: s("sovereign_id")?,
             trust_domain: s("trust_domain")?,
             ca_fingerprint: s("ca_fingerprint")?,
+            // Read only from a v2 agreement, as a v1 package's grammar has no such member.
+            ca_fingerprint_next: if v2 { p.get("ca_fingerprint_next").and_then(JVal::as_str).map(str::to_string) } else { None },
             fabric_fips_image: p
                 .get("fabric_fips_image")
                 .and_then(JVal::as_bool)

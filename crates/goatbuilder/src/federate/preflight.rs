@@ -368,6 +368,11 @@ fn from_deployment(
             "goatbuilder.yaml peerings: with",
         ),
         input(
+            "FED_PACKAGE_VERSION",
+            Some(peering.package_version().to_string()),
+            "goatbuilder.yaml peerings: package (absent: v1)",
+        ),
+        input(
             "FED_CORE_GROUP",
             Some(core_group.clone()),
             "the allocated core group, else <with>_core",

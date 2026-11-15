@@ -26,6 +26,11 @@ pub struct InitArgs {
     #[arg(long)]
     pub with_data: bool,
 
+    /// The package version to emit: v1 (the default) or v2. A peering selects
+    /// it; both parties select the same one.
+    #[arg(long, value_enum, default_value_t = super::PackageVersion::V1)]
+    pub package_version: super::PackageVersion,
+
     /// Our Ed25519 signing key: 64 hex characters (the RFC 8032 seed) or 44
     /// base64 characters. Without it this prints the exact bytes to sign and
     /// stops — it will not invent a key.
@@ -303,7 +308,7 @@ pub fn run_init_measured(
     let mut members: Vec<(String, JVal)> = Vec::new();
     members.push((
         "spec".into(),
-        JVal::Str(crate::package::PACKAGE_SPEC.into()),
+        JVal::Str(a.package_version.package_spec().into()),
     ));
     members.push(("sovereign_id".into(), JVal::Str(decl.sovereign_id.clone())));
 
@@ -698,6 +703,7 @@ mod tests {
         InitArgs {
             with_transport,
             with_data: false,
+            package_version: super::super::PackageVersion::V1,
             signing_key: None,
             out: None,
             json: true,

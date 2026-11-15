@@ -310,6 +310,13 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
     let router_host = env_or("FED_ROUTER_DOCKER_HOST", String::new());
     let init_env: Vec<(String, String)> = if router_host.is_empty() { Vec::new() } else { vec![("DOCKER_HOST".into(), router_host.clone())] };
     let mut init_words = w(&["init", "--with-transport", "--with-data"]);
+    // The package version the peering selects (FED_PACKAGE_VERSION, from
+    // goatbuilder.yaml `peerings: package`). v1 adds nothing, so a v1 peering's
+    // command lines are the ones they were.
+    let v2 = env_or("FED_PACKAGE_VERSION", String::new()) == "v2";
+    if v2 {
+        init_words.extend(w(&["--package-version", "v2"]));
+    }
     if !signing.is_empty() {
         init_words.extend(w(&["--signing-key", &signing]));
     }
@@ -356,6 +363,9 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
                 compose_words.extend(w(&["--key", &clean]));
             }
         }
+    }
+    if v2 {
+        compose_words.extend(w(&["--package-version", "v2"]));
     }
     compose_words.extend(w(&["--out", &agreement]));
     ev.push(t(6, "compose — one agreement, one digest, no perspective", Vec::new(), compose_words));
