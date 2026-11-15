@@ -135,4 +135,22 @@ impl Metrics {
         TextEncoder::new().encode(&self.registry.gather(), &mut buf)?;
         Ok(String::from_utf8(buf)?)
     }
+
+    /// Received, published and dropped, summed over their labels: the line the
+    /// process prints when it stops.
+    pub fn totals(&self) -> (u64, u64, u64) {
+        fn sum(v: &IntCounterVec) -> u64 {
+            use prometheus::core::Collector;
+            v.collect()
+                .iter()
+                .flat_map(|f| f.get_metric())
+                .map(|m| m.get_counter().get_value() as u64)
+                .sum()
+        }
+        (
+            sum(&self.received),
+            sum(&self.published),
+            sum(&self.dropped),
+        )
+    }
 }

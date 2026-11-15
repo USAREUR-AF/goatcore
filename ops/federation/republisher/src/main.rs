@@ -54,6 +54,10 @@ use crate::policy::{Decision, Policy};
 /// Boot ordering, not an outage strategy: a router routinely comes up after us.
 const SESSION_OPEN_RETRY: Duration = Duration::from_secs(5);
 
+/// How long the stop may take to drain. Inside docker's default stop grace of
+/// 10 s, so the drain finishes before a SIGKILL would end it.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[derive(Parser, Debug)]
 #[command(
     name = "goat-fed-republisher",
@@ -190,25 +194,42 @@ async fn main() -> Result<()> {
         }
     });
 
-    let edge_session = open_session(
-        "edge",
-        &args.edge_endpoint,
-        &args.edge_cert,
-        &args.edge_key,
-        &args.edge_root_ca,
-    )
-    .await;
+    // Before any session: a stop that arrives while a router is still coming
+    // up must end the process too. It runs as PID 1 in its container with no
+    // init, and PID 1 ignores a signal it has no handler for, so without this
+    // `docker stop` (SIGTERM) waits out its grace period and ends in SIGKILL.
+    let mut stop = StopSignal::install()?;
+
+    let edge_session = tokio::select! {
+        s = open_session(
+            "edge",
+            &args.edge_endpoint,
+            &args.edge_cert,
+            &args.edge_key,
+            &args.edge_root_ca,
+        ) => s,
+        sig = stop.recv() => {
+            info!(signal = sig, "stopped before the sessions opened; nothing to drain");
+            return Ok(());
+        }
+    };
     let our_ts_id = provenance::timestamp_id_from_zid(&edge_session.zid().to_le_bytes())?;
     info!(zid = %edge_session.zid(), endpoint = args.edge_endpoint.as_str(), "publishing session open");
 
-    let local_session = open_session(
-        "local",
-        &args.local_endpoint,
-        &args.local_cert,
-        &args.local_key,
-        &args.local_root_ca,
-    )
-    .await;
+    let local_session = tokio::select! {
+        s = open_session(
+            "local",
+            &args.local_endpoint,
+            &args.local_cert,
+            &args.local_key,
+            &args.local_root_ca,
+        ) => s,
+        sig = stop.recv() => {
+            info!(signal = sig, "stopped before the local session opened; nothing to drain");
+            let _ = edge_session.close().await;
+            return Ok(());
+        }
+    };
     info!(zid = %local_session.zid(), endpoint = args.local_endpoint.as_str(), "local session open");
 
     let (tx, rx) = mpsc::channel::<Outbound>(args.queue_depth);
@@ -219,6 +240,7 @@ async fn main() -> Result<()> {
         tokio::spawn(async move { run_publisher(rx, ZenohEdge::new(edge_session), m).await })
     };
 
+    let (stop_ingest, ingest_stop) = tokio::sync::watch::channel(false);
     let policy = Arc::new(Mutex::new(Policy::new(map, flow.envelope, expires)));
     let mut ingest = tokio::task::JoinSet::new();
     // Bound before the loop: the guard must not be alive across the awaits
@@ -233,7 +255,10 @@ async fn main() -> Result<()> {
         let metrics = metrics.clone();
         let tx = tx.clone();
         let label = prefix.to_string();
-        ingest.spawn(async move { ingest_loop(sub, label, policy, metrics, tx, our_ts_id).await });
+        let stop = ingest_stop.clone();
+        ingest.spawn(
+            async move { ingest_loop(sub, label, policy, metrics, tx, our_ts_id, stop).await },
+        );
     }
     metrics.local_subscribed.set(1);
     drop(tx);
@@ -243,22 +268,81 @@ async fn main() -> Result<()> {
     // crossing. Exit non-zero so the supervisor restarts a whole process rather
     // than running on with a partial feed and a healthy-looking /metrics.
     let ended = tokio::select! {
-        r = tokio::signal::ctrl_c() => {
-            r.context("install ctrl_c handler")?;
+        sig = stop.recv() => {
+            info!(signal = sig, "stop signal received; draining");
             None
         }
         _ = ingest.join_next() => Some("a release subscription ended"),
     };
-    ingest.shutdown().await;
-    // The publisher drains until the queue closes, which happens once every
-    // ingest task's `tx` clone is dropped.
-    let _ = tokio::time::timeout(Duration::from_secs(5), publisher).await;
+    let drained = drain(stop_ingest, ingest, publisher, DRAIN_TIMEOUT).await;
+    let _ = local_session.close().await;
+    let (received, published, dropped) = metrics.totals();
+    info!("stopped: received {received}, published {published}, dropped {dropped}");
     match ended {
-        None => {
-            info!("shutdown signal received");
-            Ok(())
-        }
+        None if drained => Ok(()),
+        None => anyhow::bail!(
+            "the hand-off queue did not drain within {}s of the stop",
+            DRAIN_TIMEOUT.as_secs()
+        ),
         Some(why) => anyhow::bail!("{why} — exiting so the supervisor restarts"),
+    }
+}
+
+/// The stop: stop taking samples, let every ingest loop hand what its
+/// subscription already holds to the queue, then let the publisher put the
+/// queue and close its session. True when all of that finished within
+/// `within`; whatever is left then is abandoned.
+async fn drain(
+    stop_ingest: tokio::sync::watch::Sender<bool>,
+    mut ingest: tokio::task::JoinSet<()>,
+    publisher: tokio::task::JoinHandle<()>,
+    within: Duration,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + within;
+    let _ = stop_ingest.send(true);
+    let ingested = tokio::time::timeout_at(deadline, async {
+        while ingest.join_next().await.is_some() {}
+    })
+    .await
+    .is_ok();
+    // Any loop still running past the deadline is abandoned; ending it drops
+    // its sender, which is what lets the publisher finish.
+    ingest.shutdown().await;
+    let published = tokio::time::timeout_at(deadline, publisher).await.is_ok();
+    if ingested && published {
+        info!("hand-off queue drained; publishing session closed");
+    } else {
+        warn!(
+            ingested,
+            published,
+            within_s = within.as_secs(),
+            "the drain did not finish in time; the rest is abandoned"
+        );
+    }
+    ingested && published
+}
+
+/// SIGTERM and SIGINT, installed once. Installing is what stops the default
+/// action, so it happens before anything that can take time.
+struct StopSignal {
+    term: tokio::signal::unix::Signal,
+    int: tokio::signal::unix::Signal,
+}
+
+impl StopSignal {
+    fn install() -> Result<Self> {
+        use tokio::signal::unix::{signal, SignalKind};
+        Ok(Self {
+            term: signal(SignalKind::terminate()).context("install the SIGTERM handler")?,
+            int: signal(SignalKind::interrupt()).context("install the SIGINT handler")?,
+        })
+    }
+
+    async fn recv(&mut self) -> &'static str {
+        tokio::select! {
+            _ = self.term.recv() => "SIGTERM",
+            _ = self.int.recv() => "SIGINT",
+        }
     }
 }
 
@@ -269,100 +353,129 @@ async fn ingest_loop(
     metrics: Metrics,
     tx: mpsc::Sender<Outbound>,
     our_ts_id: zenoh::time::TimestampId,
+    mut stop: tokio::sync::watch::Receiver<bool>,
 ) {
     loop {
-        let sample = match sub.recv_async().await {
-            Ok(s) => s,
-            Err(e) => {
-                warn!(prefix = release_prefix.as_str(), error = %e, "release subscription ended");
+        let sample = tokio::select! {
+            // The stop first, so a busy subscription cannot hold it off.
+            biased;
+            _ = stop.changed() => {
+                // What the subscription already holds was received before the
+                // stop: hand it to the queue, then end, which drops our sender
+                // so the publisher can finish.
+                while let Ok(Some(sample)) = sub.try_recv() {
+                    if !ingest_one(&sample, &release_prefix, &policy, &metrics, &tx, our_ts_id) {
+                        return;
+                    }
+                }
                 return;
             }
-        };
-        let staging_key = sample.key_expr().to_string();
-        let payload = sample.payload().to_bytes().to_vec();
-        metrics
-            .received
-            .with_label_values(&[release_prefix.as_str()])
-            .inc();
-
-        let (decision, shed_warning) = {
-            let mut p = policy.lock().unwrap();
-            let now = now_ms();
-            let d = p.decide(&staging_key, payload.len(), now, Utc::now().date_naive());
-            metrics
-                .distinct_wire_keys
-                .set(p.distinct_keys_seen() as i64);
-            // A new key refused at the ceiling never crosses: warn, at most once a minute.
-            let w = match &d {
-                Decision::Refuse(policy::Refusal::CardinalityShed { .. }) => {
-                    p.cardinality_shed_warning(now)
-                }
-                _ => None,
-            };
-            (d, w)
-        };
-        let wire_key = match decision {
-            Decision::Publish(k) => k,
-            Decision::Refuse(r) => {
-                metrics.refused.with_label_values(&[r.label()]).inc();
-                match r {
-                    // Should be unreachable — the subscriptions ARE the release
-                    // set — so reaching it means the router routed us something
-                    // we never asked for, and forwarding it would have been an
-                    // undeclared disclosure.
-                    policy::Refusal::NotReleased
-                    | policy::Refusal::Unmappable(_)
-                    | policy::Refusal::AgreementExpired(_) => {
-                        warn!(staging_key = staging_key.as_str(), "refused: {r}");
-                    }
-                    // A new key over the distinct-keys ceiling is data that will
-                    // never cross: an operator must see it, so it warns (rate-limited
-                    // in the policy; the held-back refusals are counted into the next).
-                    policy::Refusal::CardinalityShed { limit } => policy::log_cardinality_shed(
-                        release_prefix.as_str(),
-                        staging_key.as_str(),
-                        limit,
-                        shed_warning,
-                    ),
-                    // The rate and size sheds repeat by nature. The counter is the
-                    // repeatable observable; the log would be a firehose.
-                    _ => debug!(staging_key = staging_key.as_str(), "refused: {r}"),
-                }
-                continue;
-            }
-        };
-
-        if sample.timestamp().is_none() {
-            metrics.untimestamped.inc();
-        }
-        if sample.source_info().is_some() {
-            metrics.source_info_dropped.inc();
-        }
-
-        let out = Outbound {
-            wire_key,
-            staging_key: staging_key.clone(),
-            release_prefix: release_prefix.clone(),
-            kind: sample.kind(),
-            payload,
-            encoding: sample.encoding().clone(),
-            timestamp: provenance::rewire_timestamp(sample.timestamp(), our_ts_id),
-            attachment: sample.attachment().map(|a| a.to_bytes().to_vec()),
-        };
-
-        // try_send, never send: see edge.rs on why blocking is forbidden.
-        if let Err(e) = tx.try_send(out) {
-            match e {
-                mpsc::error::TrySendError::Full(_) => {
-                    metrics.dropped.with_label_values(&["queue_full"]).inc();
-                }
-                mpsc::error::TrySendError::Closed(_) => {
-                    warn!("publisher task is gone; ingest stopping");
+            r = sub.recv_async() => match r {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(prefix = release_prefix.as_str(), error = %e, "release subscription ended");
                     return;
                 }
+            },
+        };
+        if !ingest_one(&sample, &release_prefix, &policy, &metrics, &tx, our_ts_id) {
+            return;
+        }
+    }
+}
+
+/// Decide one sample and hand it to the queue. False when the publisher is
+/// gone, so the caller stops.
+fn ingest_one(
+    sample: &zenoh::sample::Sample,
+    release_prefix: &str,
+    policy: &Mutex<Policy>,
+    metrics: &Metrics,
+    tx: &mpsc::Sender<Outbound>,
+    our_ts_id: zenoh::time::TimestampId,
+) -> bool {
+    let staging_key = sample.key_expr().to_string();
+    let payload = sample.payload().to_bytes().to_vec();
+    metrics.received.with_label_values(&[release_prefix]).inc();
+
+    let (decision, shed_warning) = {
+        let mut p = policy.lock().unwrap();
+        let now = now_ms();
+        let d = p.decide(&staging_key, payload.len(), now, Utc::now().date_naive());
+        metrics
+            .distinct_wire_keys
+            .set(p.distinct_keys_seen() as i64);
+        // A new key refused at the ceiling never crosses: warn, at most once a minute.
+        let w = match &d {
+            Decision::Refuse(policy::Refusal::CardinalityShed { .. }) => {
+                p.cardinality_shed_warning(now)
+            }
+            _ => None,
+        };
+        (d, w)
+    };
+    let wire_key = match decision {
+        Decision::Publish(k) => k,
+        Decision::Refuse(r) => {
+            metrics.refused.with_label_values(&[r.label()]).inc();
+            match r {
+                // Should be unreachable — the subscriptions ARE the release
+                // set — so reaching it means the router routed us something
+                // we never asked for, and forwarding it would have been an
+                // undeclared disclosure.
+                policy::Refusal::NotReleased
+                | policy::Refusal::Unmappable(_)
+                | policy::Refusal::AgreementExpired(_) => {
+                    warn!(staging_key = staging_key.as_str(), "refused: {r}");
+                }
+                // A new key over the distinct-keys ceiling is data that will
+                // never cross: an operator must see it, so it warns (rate-limited
+                // in the policy; the held-back refusals are counted into the next).
+                policy::Refusal::CardinalityShed { limit } => policy::log_cardinality_shed(
+                    release_prefix,
+                    staging_key.as_str(),
+                    limit,
+                    shed_warning,
+                ),
+                // The rate and size sheds repeat by nature. The counter is the
+                // repeatable observable; the log would be a firehose.
+                _ => debug!(staging_key = staging_key.as_str(), "refused: {r}"),
+            }
+            return true;
+        }
+    };
+
+    if sample.timestamp().is_none() {
+        metrics.untimestamped.inc();
+    }
+    if sample.source_info().is_some() {
+        metrics.source_info_dropped.inc();
+    }
+
+    let out = Outbound {
+        wire_key,
+        staging_key: staging_key.clone(),
+        release_prefix: release_prefix.to_string(),
+        kind: sample.kind(),
+        payload,
+        encoding: sample.encoding().clone(),
+        timestamp: provenance::rewire_timestamp(sample.timestamp(), our_ts_id),
+        attachment: sample.attachment().map(|a| a.to_bytes().to_vec()),
+    };
+
+    // try_send, never send: see edge.rs on why blocking is forbidden.
+    if let Err(e) = tx.try_send(out) {
+        match e {
+            mpsc::error::TrySendError::Full(_) => {
+                metrics.dropped.with_label_values(&["queue_full"]).inc();
+            }
+            mpsc::error::TrySendError::Closed(_) => {
+                warn!("publisher task is gone; ingest stopping");
+                return false;
             }
         }
     }
+    true
 }
 
 fn now_ms() -> u64 {
