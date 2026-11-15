@@ -120,3 +120,54 @@ fn rotating_the_transport_key_starts_at_phase_2_and_records_the_rotation_for_pha
         "the id is kept after phase 2 passed: {t}"
     );
 }
+
+/// After `rotate <partner> transport` our package changes (the new WireGuard
+/// key), so phase 5 runs again; nothing on our side needs confirming when the
+/// keys confirmed before still hold, so the rotation carries our run past
+/// phase 5, and phase 6 goes on when the agreement digest is the one confirmed.
+#[test]
+fn a_transport_rotation_carries_our_run_past_phase_5_when_the_keys_are_unchanged() {
+    use federate_world::{phases_run, public_b64, sha256_hex};
+    let w = world();
+    let fp = sha256_hex(b"fake-ca-der");
+    let key = public_b64("xab");
+    let (out, _) = w.run(&["hello-ally", "--partner-key", &key, "--partner-ca-fingerprint", &fp]);
+    assert!(out.status.success(), "{}", says(&out));
+    let digest = sha256_hex(&std::fs::read(w.work.join("agreement.json")).unwrap());
+    let (out, _) = w.run(&["hello-ally", "--resume", "--agreement-digest", &digest]);
+    assert!(out.status.success(), "{}", says(&out));
+    let (out, v) = w.run(&["rotate", "hello-ally", "transport"]);
+    let t = text(&out);
+    assert!(!t.contains("OPERATOR STEP"), "stopped at phase 5: {t}");
+    let ran = phases_run(&v);
+    assert!(ran.starts_with(&[2, 3, 4, 5, 6]), "{ran:?}: {t}");
+    let st = w.state();
+    assert_eq!(st["phases"]["5"]["outcome"], "passed", "{}", st["phases"]["5"]);
+    assert!(st["phases"]["5"]["detail"].as_str().unwrap_or("").contains("unchanged"), "phase 5 says why it carried on: {}", st["phases"]["5"]);
+}
+
+/// A change on our side's keys (here their CA certificate on disk is another
+/// one) still stops the rotation at phase 5.
+#[test]
+fn a_transport_rotation_with_a_changed_key_still_stops_at_phase_5() {
+    use federate_world::{public_b64, sha256_hex};
+    let w = world();
+    let fp = sha256_hex(b"fake-ca-der");
+    let key = public_b64("xab");
+    let (out, _) = w.run(&["hello-ally", "--partner-key", &key, "--partner-ca-fingerprint", &fp]);
+    assert!(out.status.success(), "{}", says(&out));
+    let digest = sha256_hex(&std::fs::read(w.work.join("agreement.json")).unwrap());
+    let (out, _) = w.run(&["hello-ally", "--resume", "--agreement-digest", &digest]);
+    assert!(out.status.success(), "{}", says(&out));
+    let ca = w.work.join("theirs-ca.pem");
+    let other = format!(
+        "-----BEGIN CERTIFICATE-----\nb3RoZXItY2EtZGVy\n-----END CERTIFICATE-----\n"
+    );
+    std::fs::write(&ca, other).unwrap();
+    let (out, v) = w.run(&["rotate", "hello-ally", "transport"]);
+    use federate_world::phases_run;
+    let ran = phases_run(&v);
+    assert!(ran.contains(&5) && !ran.contains(&6), "{ran:?}: {}", says(&out));
+    let st = w.state();
+    assert!(!st["phases"]["5"]["detail"].as_str().unwrap_or("").contains("unchanged"), "{}", st["phases"]["5"]);
+}
