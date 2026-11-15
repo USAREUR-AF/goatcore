@@ -15,7 +15,8 @@
 # A key the goatbuilder under test refuses to rotate (GB-189, designed and not built,
 # GB-282, the CA rotation, decided in ADR 1242 and not built yet,
 # GB-312, a carrier whose forwarder is declared by hand,
-# or GB-317, a carrier on a side with no forwarder; a
+# GB-317, a carrier on a side with no forwarder,
+# or one of the IPsec rotation's refusals, GB-298, GB-303, GB-309 and GB-328; a
 # build before GB-317 refused that with GB-189) is not a failure of the run: its checks are marked
 # BLOCKED with the refusal's own words, and the unit goes on to the next key. A rotation that
 # is attempted and fails stops the unit. The partner's step for transport and signing waits
@@ -97,7 +98,7 @@ rot_one() { # $1 key, $2 side
   rot_all_material "$them" "$RECORD/rot-$k-$them-before.txt"
   out="$RECORD/rot-$k-$s-rotate.out"
   rc=0; ROT_KEY="$k" drive_rotate "$s" "$them" goatbuilder 0 0 > "$out" 2>&1 || rc=$?
-  why="$(grep -m1 -oE '(GB-189|GB-282|GB-312|GB-317)[^|]*' "$out" || true)"
+  why="$(grep -m1 -oE '(GB-189|GB-282|GB-298|GB-303|GB-309|GB-312|GB-317|GB-328)[^|]*' "$out" || true)"
   if [ "$rc" != 0 ] && [ -n "$why" ]; then
     # Refused, by this build's own word: every check of this key waits for a build that rotates it.
     ROT_REFUSED="$ROT_REFUSED $k"
