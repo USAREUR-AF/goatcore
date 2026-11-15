@@ -672,6 +672,7 @@ fn a_phone_joins_over_usb_from_phase_1_to_15() {
         "no operator step after phase 1: {}",
         says(&out)
     );
+    the_joiners_gaps_are_the_admin_surfaces("delta", &log);
 
     // H4: the VM was prepared by the real guest script.
     let config: serde_json::Value = serde_json::from_str(
@@ -995,4 +996,55 @@ fn a_shim_takes_the_executable_tool_and_not_an_earlier_file_of_its_name() {
     let path = std::env::join_paths([&plain, &real]).unwrap();
     assert_eq!(host_tool(&path, "env"), Some(real.join("env")));
     assert_eq!(host_tool(&path, "no-such-tool"), None);
+}
+
+/// The joiner's end state, as phase 15 hands it to the rows: the four admin
+/// surfaces are declared and not yet built at a second site (gate rows I1,
+/// I4), and the real runner's plan against that model reads their rows as
+/// gaps (SKIPPED in a run, with the gap's words) and exits 0.
+fn the_joiners_gaps_are_the_admin_surfaces(env: &str, log: &str) {
+    let run = log
+        .lines()
+        .find(|l| l.starts_with("acceptance "))
+        .unwrap_or_else(|| panic!("phase 15 ran no acceptance:\n{log}"));
+    let words: Vec<&str> = run.split(' ').collect();
+    let at = words.iter().position(|w| *w == "--endstate").unwrap_or_else(|| panic!("{run}"));
+    let model = words[at + 1];
+    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(model).unwrap()).unwrap();
+    let gaps: std::collections::BTreeSet<&str> = doc["services"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, s)| !s["gap"].is_null())
+        .map(|(k, _)| k.as_str())
+        .collect();
+    assert_eq!(
+        gaps,
+        ["id-admin-console", "netbird-dashboard", "onboard-runner", "portal"].into_iter().collect(),
+        "{doc}"
+    );
+    let yaml = std::process::Command::new("python3").args(["-c", "import yaml"]).status().map(|s| s.success()).unwrap_or(false);
+    if !yaml {
+        eprintln!("skipped: the acceptance runner needs python3 with PyYAML");
+        return;
+    }
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let values = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(values.path(), "{}\n").unwrap();
+    let out = std::process::Command::new("python3")
+        .arg(repo.join("ops/validation/run-acceptance.py"))
+        .args(["--env", env, "--values"])
+        .arg(values.path())
+        .args(["--endstate", model, "--plan"])
+        .output()
+        .unwrap();
+    let plan = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{plan}{}", String::from_utf8_lossy(&out.stderr));
+    let line = plan
+        .lines()
+        .find(|l| l.contains("gaps here, declared and not yet built at this site:"))
+        .unwrap_or_else(|| panic!("no gaps in the plan:\n{plan}"));
+    for row in ["portal-", "onboard-runner-", "console-audit-path-is-a-file"] {
+        assert!(line.contains(row), "{row}: {line}");
+    }
 }
