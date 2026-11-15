@@ -578,6 +578,57 @@ mod tests {
         assert_eq!(code(render(&c, &bad).unwrap_err()), "GB-160");
     }
 
+    /// The forwarder machine's own values, declared with the forwarder, are
+    /// rendered into its group's group_vars: the user the play reaches it as,
+    /// the interface partners reach it on and the sources it admits SSH from. A
+    /// second peering on the same forwarder that leaves them out takes them; a
+    /// forwarder that declares none renders none, so a hand-written host file
+    /// keeps them.
+    #[test]
+    fn the_forwarder_machines_own_values_are_rendered_into_its_group_vars() {
+        let mut a = p("xab", true);
+        a["forwarder"] = json!({"endpoint": "203.0.113.7", "ansible_user": "goat",
+            "public_interface": "eth1", "ssh_sources": ["198.51.100.9", "192.0.2.0/24"]});
+        let c = cfg(json!([a, p("xac", true)]));
+        let fs = render(&c, &values(&c)).unwrap();
+        assert_eq!(fs.len(), 1);
+        let b = &fs[0].body;
+        for frag in [
+            "ansible_user: \"goat\"\n",
+            "peering_forwarder_public_interface: \"eth1\"\n",
+            "peering_forwarder_ssh_sources:\n  - \"198.51.100.9\"\n  - \"192.0.2.0/24\"\n",
+        ] {
+            assert!(b.contains(frag), "{frag}\n---\n{b}");
+        }
+        let c = cfg(json!([p("xab", true)]));
+        let b = &render(&c, &values(&c)).unwrap()[0].body;
+        for key in ["ansible_user", "peering_forwarder_public_interface", "peering_forwarder_ssh_sources"] {
+            assert!(!b.contains(key), "{key}\n---\n{b}");
+        }
+    }
+
+    /// One forwarder is one machine, and its group_vars hold one value of
+    /// each: two peerings on it that declare different values are refused,
+    /// naming both.
+    #[test]
+    fn two_peerings_declaring_different_values_for_one_forwarder_are_refused() {
+        for (k, x, y) in [
+            ("ansible_user", json!("goat"), json!("ops")),
+            ("public_interface", json!("eth1"), json!("eth2")),
+            ("ssh_sources", json!(["198.51.100.9"]), json!(["198.51.100.10"])),
+        ] {
+            let mut a = p("xab", true);
+            a["forwarder"][k] = x;
+            let mut b = p("xac", true);
+            b["forwarder"][k] = y;
+            let c = cfg(json!([a, b]));
+            let e = render(&c, &values(&c)).unwrap_err();
+            let m = format!("{e}");
+            assert_eq!(code(e), "GB-339", "{k}");
+            assert!(m.contains("dev/xab") && m.contains("dev/xac") && m.contains(k), "{m}");
+        }
+    }
+
     #[test]
     fn one_group_two_forwarders_and_bad_names_are_refused() {
         let mut b = p("xac", true);
