@@ -30,7 +30,7 @@
 # the public images in ops/base-images/ (docs/design/base-images.md).
 ARG BASE_RUNTIME_SHELL=cgr.dev/chainguard/wolfi-base:latest@sha256:8509ee4351a2e501b7f98201f2e2642396e82020c61a589cacdcfe74b9de46c1
 
-FROM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS build
+FROM golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452 AS build
 WORKDIR /src
 # Cache module downloads first for layer reuse.
 COPY go.mod go.sum ./
