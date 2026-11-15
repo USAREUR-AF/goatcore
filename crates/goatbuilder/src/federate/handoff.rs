@@ -259,9 +259,12 @@ pub fn edge_run(
 /// the same argvs.
 pub fn way_back(with: &str, n: u32, e: &EdgeRun) -> anyhow::Result<Stop> {
     let bytes = std::fs::read(&e.result).map_err(|err| {
-        anyhow::anyhow!(
-            "the edge result {} was not written ({err})",
-            e.result.display()
+        goat_errors::coded(
+            "GB-321",
+            format!(
+                "the edge result {} was not written ({err})",
+                e.result.display()
+            ),
         )
     })?;
     let sha = hex_sha256(&bytes);
@@ -813,12 +816,15 @@ pub fn join_phase_1(work: &Path, edge: &serde_json::Value) -> anyhow::Result<boo
     let path = work.join("preflight/result.json");
     let core: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| {
-            anyhow::anyhow!(
-                "phase 1's core half left no result at {} ({e})",
-                path.display()
+            goat_errors::coded(
+                "GB-321",
+                format!(
+                    "phase 1's core half left no result at {} ({e})",
+                    path.display()
+                ),
             )
         })?)
-        .map_err(|e| anyhow::anyhow!("{} is not JSON ({e})", path.display()))?;
+        .map_err(|e| goat_errors::coded("GB-321", format!("{} is not JSON ({e})", path.display())))?;
     anyhow::ensure!(
         core["side"] == "core",
         "{} holds the {} side's result, not the core half's",
