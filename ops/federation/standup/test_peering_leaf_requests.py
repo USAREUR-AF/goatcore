@@ -91,14 +91,14 @@ class LeafRequests(unittest.TestCase):
         i = self.request("inward", self.key("inward"), "/CN=" + IN_CN)
         return o, i
 
-    def run_helper(self, outward, inward, *extra):
+    def run_helper(self, outward, inward, *extra, record=None):
         cmd = [sys.executable, str(HELPER), "--out", str(self.out), "--ca-cert", str(self.ca),
                "--ca-key", str(self.ca_key), "--ca-fingerprint", self.fp,
                "--leaf", "peering-outward", OUT_CN, OUT_SAN,
                "--leaf", "peering-inward", IN_CN, IN_SAN,
                "--request", "peering-outward", str(outward),
                "--request", "peering-inward", str(inward),
-               "--key-record", str(self.record), *extra]
+               "--key-record", str(record or self.record), *extra]
         return subprocess.run(cmd, capture_output=True, text=True)
 
     def pub(self, path, kind):
@@ -295,6 +295,43 @@ class LeafRequests(unittest.TestCase):
         o, i = self.good()
         self.assert_stopped(self.run_helper(o, i, "--rotate"), "rotating a leaf whose key the edge makes is not built")
         self.assertFalse((self.out / "peering-outward.pem").exists())
+
+    def test_a_key_record_inside_the_output_folder_is_refused_before_anything_is_signed(self):
+        # Inside <out>, inside a previous set or the rotation staging there, or
+        # reached through a link: the record must outlive the folder.
+        o, i = self.good()
+        outside = self.d / "elsewhere"
+        outside.mkdir()
+        self.out.mkdir()
+        (outside / "link").symlink_to(self.out)
+        for name, record in (
+            ("in-out", self.out / "edge-leaf-keys.json"),
+            ("previous-set", self.out / ".previous-rot-1" / "edge-leaf-keys.json"),
+            ("rotation-staging", self.out / ".rotation-pending" / "edge-leaf-keys.json"),
+            ("through-a-link", outside / "link" / "edge-leaf-keys.json"),
+        ):
+            with self.subTest(name):
+                r = self.run_helper(o, i, record=record)
+                self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("--key-record", r.stdout + r.stderr)
+                self.assertIn("the key record must live outside the output folder", r.stdout + r.stderr)
+                for leaf in ("peering-outward", "peering-inward"):
+                    self.assertFalse((self.out / f"{leaf}.pem").exists(), name)
+                self.assertFalse(record.exists(), f"{name}: the record was written")
+
+    def test_a_record_in_the_output_folder_is_refused_on_every_run(self):
+        # Kept in <out>, a record would go with the folder, and the same
+        # requests would be signed again: the record check refuses it each time.
+        o, i = self.good()
+        record = self.out / "edge-leaf-keys.json"
+        for run in ("first", "after the folder is removed"):
+            with self.subTest(run):
+                self.out.mkdir(exist_ok=True)
+                r = self.run_helper(o, i, record=record)
+                self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("the key record must live outside the output folder", r.stdout + r.stderr)
+                self.assertFalse((self.out / "peering-outward.pem").exists())
+                shutil.rmtree(self.out)
 
     def test_a_key_signed_before_is_refused_after_the_output_folder_is_gone(self):
         o, i = self.good()
