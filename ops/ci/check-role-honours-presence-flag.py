@@ -206,12 +206,46 @@ def self_test():
             "services:\n"
             "  good: {present: {var: good_enabled}, containers: [good]}\n"
             "  sib: {present: {var: sib_enabled}, home: goatstuff, containers: [sib]}\n")
+        # A `home:` row is an escape from the check, so it must be listed, with its repository
+        # and a reason, in the allowlist's reviewed home entries. Unlisted, it is refused.
+        (r / ALLOWLIST).parent.mkdir(parents=True, exist_ok=True)
+        (r / ALLOWLIST).write_text("")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check(r)
+        out = buf.getvalue()
+        assert rc == 1 and "sib: its catalog row says home: goatstuff" in out and "not listed" in out, out
+        # Listed with another repository: refused, naming both.
+        (r / ALLOWLIST).write_text("# deployed by goatrodeo's play\nhome: sib goatrodeo\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check(r)
+        out = buf.getvalue()
+        assert rc == 1 and "sib: its catalog row says home: goatstuff" in out and "goatrodeo" in out, out
+        # Listed with no reason: refused.
+        (r / ALLOWLIST).write_text("home: sib goatstuff\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check(r)
+        out = buf.getvalue()
+        assert rc == 1 and "home: sib goatstuff" in out and "no reason" in out, out
+        # Listed, with its repository and a reason: skipped by name while its code is absent.
+        (r / ALLOWLIST).write_text("# deployed by goatstuff's sib role\nhome: sib goatstuff\n")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = check(r)
         out = buf.getvalue()
         assert rc == 0, out
         assert "SKIP sib: deployed from goatstuff, not in this tree" in out, out
+        # A listed home entry whose catalog row has no `home:` (or is gone) is stale.
+        (r / ALLOWLIST).write_text("# deployed by goatstuff's sib role\nhome: sib goatstuff\n"
+                                   "# moved\nhome: good goatstuff\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check(r)
+        out = buf.getvalue()
+        assert rc == 1 and "good: listed in" in out and "stale" in out, out
+        (r / ALLOWLIST).write_text("# deployed by goatstuff's sib role\nhome: sib goatstuff\n")
         (r / "ops/ansible/roles/sib/tasks").mkdir(parents=True)
         (r / "ops/ansible/roles/sib/tasks/main.yml").write_text("- ansible.builtin.debug:\n    msg: up\n")
         buf = io.StringIO()
@@ -227,7 +261,12 @@ def self_test():
         assert rc == 1 and "orphan: no role, play" in buf.getvalue(), buf.getvalue()
         # The shrink-only allowlist: a listed row that fails is reported as known, with the
         # reason; a listed row that no longer fails, or is gone, is a stale line and refused.
-        (r / ALLOWLIST).parent.mkdir(parents=True, exist_ok=True)
+        (r / ALLOWLIST).write_text("orphan\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check(r)
+        out = buf.getvalue()
+        assert rc == 1 and "orphan" in out and "no reason" in out, out
         (r / ALLOWLIST).write_text("# deploying code not found; owner unknown\norphan\n")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -247,6 +286,16 @@ def self_test():
         with contextlib.redirect_stdout(buf):
             rc = check(r)
         assert rc == 1 and "not-in-the-catalog: listed in" in buf.getvalue(), buf.getvalue()
+    # Shrink-only against the base: an entry the base does not list is refused, a removed
+    # one passes; a base that is not a commit fails closed.
+    base = parse_allowlist("# a\nbrief\n# b\nhome: herd goatstuff\nhome: gym goatstuff\n")
+    assert grown(base, parse_allowlist("# a\nbrief\n# b\nhome: herd goatstuff\n")) == [], "removing passes"
+    assert len(grown(base, parse_allowlist("# a\nbrief\n# c\nnew\n"))) == 1, "a new known gap fails"
+    assert len(grown(base, parse_allowlist("# b\nhome: herd goatstuff\nhome: brief goatstuff\n"))) == 1, \
+        "a new home entry fails"
+    assert len(grown(base, parse_allowlist("# b\nhome: herd goatrodeo\n"))) == 1, "a home entry's repository changing fails"
+    assert against_base(REPO, "no-such-ref") == 2, "a ref that does not exist"
+    assert against_base(REPO, "0" * 40) == 2, "an all-zero sha"
     print("self-test ok: an unread flag is refused; when:, assert that: and an import guard pass; "
           "a row deployed from a sibling repository is skipped only while its code is absent")
     return 0
