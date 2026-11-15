@@ -845,6 +845,16 @@ pub fn compose_guard(paths: &Paths, st: &State) -> Option<Step> {
     }
 }
 
+/// After a new package from the partner is confirmed and placed (ADR 1229):
+/// whether the keys confirmation journaled before still holds for it. True
+/// when the last keys confirmation names the partner key the keyring binds,
+/// the CA fingerprint the placed package carries, and our own verifying key
+/// and CA fingerprint as they are now. Then confirmation 1 is not asked
+/// again: the digest compared on the call was the new question.
+pub fn keys_unchanged(_paths: &Paths, _st: &State) -> bool {
+    false
+}
+
 /// Phase 5, before the keys: a new package from the partner under the key
 /// already bound (ADR 1229). It is new when the directory step, or a person
 /// on the hand path, left a package at `<work>/theirs.incoming.json` that
@@ -2023,6 +2033,34 @@ mod tests {
         // Before their key is bound there is nothing to compare against.
         let w2 = world();
         assert!(compose_guard(&w2.paths, &State::new("xab")).is_none());
+    }
+
+    /// Lab finding (window 6): after a new package is confirmed and placed,
+    /// confirmation 1 is not asked again when the keys it confirmed are unchanged;
+    /// it is when the new package carries another CA fingerprint, or the keyring
+    /// binds another key.
+    #[test]
+    fn a_confirmed_new_package_with_unchanged_keys_does_not_ask_the_keys_again() {
+        let (w, mut st) = bound();
+        assert!(keys_unchanged(&w.paths, &st), "the keys confirmed for the package on disk");
+        let new = package("xab", &w.their_fp, Some(ROTATED), "xab");
+        std::fs::write(w.paths.work.join(INCOMING), &new).unwrap();
+        let mut s = surface(flag(&sha256(&new)), &[]);
+        assert_eq!(code(&incoming_step(&w, &mut s, &mut st)), "continue");
+        assert!(keys_unchanged(&w.paths, &st), "a transport rotation leaves the keys as confirmed");
+        // Another CA fingerprint in the package: the keys are asked again.
+        let other_fp = format!("sha256:{}", "ab".repeat(32));
+        std::fs::write(&w.paths.counterparty, package("xab", &other_fp, Some(ROTATED), "xab")).unwrap();
+        assert!(!keys_unchanged(&w.paths, &st));
+        // Another key in the keyring: asked again.
+        std::fs::write(&w.paths.counterparty, &new).unwrap();
+        let ring = std::fs::read_to_string(&w.paths.keyring).unwrap();
+        std::fs::write(&w.paths.keyring, ring.replace(&w.their_key, "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")).unwrap();
+        assert!(!keys_unchanged(&w.paths, &st));
+        // No keys confirmation at all (keys bound by hand): asked.
+        let (w2, mut st2) = bound();
+        st2.confirmations.retain(|c| c.kind != "keys");
+        assert!(!keys_unchanged(&w2.paths, &st2));
     }
 
     #[test]

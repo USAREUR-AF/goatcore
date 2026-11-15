@@ -291,3 +291,25 @@ fn a_peering_confirmed_before_1229_is_recorded_or_stopped_with_gb_310() {
         .expect("recorded as a migration");
     assert_eq!(m["bound_to"], sha256_hex(&held).as_str());
 }
+
+/// Lab finding (window 6): once confirmation 1 was given through the command,
+/// a partner's new package confirmed by its digest carries the run on through
+/// compose, without the keys being asked again; the keys are unchanged.
+#[test]
+fn a_new_package_by_its_digest_alone_carries_the_run_past_phase_5_when_the_keys_are_unchanged() {
+    let w = world();
+    let fp = sha256_hex(b"fake-ca-der");
+    let key = their_key();
+    let (out, _) = w.run(&["hello-ally", "--partner-key", &key, "--partner-ca-fingerprint", &fp]);
+    assert!(out.status.success(), "{}", says(&out));
+    let new = resigned_with_transport("xab", &fp, Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="));
+    std::fs::write(w.work.join("theirs.incoming.json"), &new).unwrap();
+    let digest = sha256_hex(&new);
+    w.clear_log();
+    let (out, v) = w.run(&["hello-ally", "--from", "5", "--to", "6", "--accept-partner-package", &digest]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert!(!says(&out).contains("waiting for the keys read aloud"), "{}", says(&out));
+    assert_eq!(phases_run(&v), [5, 6], "{}", says(&out));
+    assert_eq!(std::fs::read(w.work.join("theirs.canonical.json")).unwrap(), new);
+    assert!(w.log().contains("federate compose"), "compose ran on the new package: {}", w.log());
+}
