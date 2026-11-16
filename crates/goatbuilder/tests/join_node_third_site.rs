@@ -145,6 +145,12 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         &checkout.join("ops/scripts/mint-site-certs.sh"),
         &format!("#!/bin/sh\nprintf 'mint %s\\n' \"$*\" >> '{l}'\n"),
     );
+    // join-site-secrets.py takes the joiner's shared secrets from its
+    // founder in phase 3; the stand-in records it.
+    executable(
+        &checkout.join("ops/scripts/join-site-secrets.py"),
+        &format!("import sys\nopen('{l}', 'a').write('secrets ' + ' '.join(sys.argv[1:]) + '\\n')\n"),
+    );
     executable(
         &checkout.join("ops/scripts/ansible-preflight.sh"),
         "#!/bin/sh\nexit 0\n",
@@ -859,4 +865,20 @@ fn every_service_gamma_declares_is_built_or_named() {
         !named.iter().any(|d| d.contains("--class obs")),
         "a single-host site is never sent to an obs run: {named:#?}"
     );
+}
+
+/// Gate row I3, a joining site's secrets: phase 3 runs join-site-secrets.py
+/// for gamma with its founder alpha, once, before phase 5's baseline play
+/// changes the node.
+#[test]
+fn phase_3_takes_gammas_shared_secrets_from_alpha_before_the_node_changes() {
+    let s = site();
+    let (out, _) = join_node(&s, Some("2"));
+    assert!(out.status.success(), "{}", says(&out));
+    let log = std::fs::read_to_string(&s.log).unwrap();
+    let lines: Vec<&str> = log.lines().collect();
+    let secrets: Vec<usize> = (0..lines.len()).filter(|&i| lines[i] == "secrets gamma --founder alpha").collect();
+    assert_eq!(secrets.len(), 1, "{log}");
+    let baseline = lines.iter().position(|l| l.starts_with("play ") && l.contains("mgmt-host-baseline.yml")).expect("phase 5 ran");
+    assert!(secrets[0] < baseline, "{log}");
 }

@@ -1075,6 +1075,18 @@ gb-351-title = a Spock subscription has forward_origins set, which in a mesh rep
 gb-351-what = A Spock subscription, or the setting that creates them, has forward_origins other than empty or 'none'. In a mesh of three or more sites such a subscription passes each change on to the next site, which passes it back, without end, while every subscription still reads replicating and nothing is logged. The spock-forward-origins-check role stopped the run before spock-mesh-peering or ory-narrow-repset changed anything. The message names the setting, or each subscription as <host> <database>.<subscription>.
 gb-351-cause-1 = a site's group_vars set spock_mesh_forward_origins or ory_spock_forward_origins
 gb-351-cause-2 = a subscription was created by hand with forward_origins := '{"{"}all{"}"}'
+gb-352-title = a joining site cannot take a shared secret from its founder
+gb-352-what = join-node's phase 3 gives a joining site the values every site of the goatnet shares (the SPEC lines of newsite-secrets.sh marked cluster: NetBird's datastore key, the replicator, the relay secret, Ory's network id, the Kratos cipher, the Hydra system secret) by taking its founder's. Under a store of references the founder's name has no reference in .envrc.local.d/*.refs; under a store of values it has no value; or, after the secrets injector ran, the founder's or the joiner's name was empty or still a reference. Nothing was written for the joiner's shared names. The message names the variables, never a value.
+gb-352-cause-1 = the founder's value was never stored under the declared secrets posture on this machine
+gb-352-cause-2 = the store's tool is not signed in, so with-secrets could not resolve the reference
+gb-352-cause-3 = join_founder_site in the joiner's group_vars names the wrong site
+gb-353-title = a joining site already holds a shared secret that is not its founder's
+gb-353-what = join-node's phase 3 takes a joining site's shared values from its founder and never overwrites one the joiner already holds. A joiner name holds a value (or a reference to one) whose SHA-256 differs from the founder's. A joiner with a fresh value looks healthy and cannot take part: NetBird cannot decrypt the replicated rows, Spock does not replicate, Kratos and Hydra cannot read the replicated identity data. The value was kept. The message names the variables, never a value or a digest.
+gb-353-cause-1 = the joiner's values were minted fresh, by hand or by newsite-secrets.sh, before this step existed
+gb-353-cause-2 = the joiner's reference points at another goatnet's entry
+gb-354-title = the env store holds none of a joining site's shared secrets
+gb-354-what = join-node's phase 3 takes a joining site's shared values from its founder. Under the env store nothing persists, so it cannot write them: each joiner name must already be exported in the shell that runs join-node. One or more are not. Nothing was written.
+gb-354-cause-1 = the declared store is env (GOAT_SECRET_STORE=env or secrets.store: env)
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened

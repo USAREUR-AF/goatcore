@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed, not built.** Today a joining site's secrets are written by hand before `join-node` reaches phase 13 ([goatbuilder.md](goatbuilder.md), the `join-node` table row "The site's secrets"). |
+| Status | **Built, not measured.** The phase-3 step (`ops/scripts/join-site-secrets.py`, called from `join-node`'s phase 3 at a joining site's core node) is tested against a store of references and a store of values (`tests/test_join_site_secrets.py`) and through the binary on the third-site fixture (`crates/goatbuilder/tests/join_node_third_site.rs`, `phase_3_takes_gammas_shared_secrets_from_alpha_before_the_node_changes`). No joined site has run it. Before it, a joining site's secrets were written by hand before phase 13. |
 | Gate row | I3 in [goatbuilder-v1-gate.md](goatbuilder-v1-gate.md): `join-node` alone builds every service a joining site declares. A step a person does by hand before phase 13 is a step outside the command. |
 | Composes with | [ADR 1186](../adr/1186-credentials-at-rest-are-references-only.md) (credentials at rest are references only), [ADR 1204](../adr/1204-declared-secrets-posture-and-zero-saas-quickstart.md) (the declared secrets posture), [host-site-node-credentialing.md](../operations/host-site-node-credentialing.md) §1 (copy the cluster-shared class, generate the per-site class), [newsite-secret-generation.md](../operations/newsite-secret-generation.md) |
 
@@ -17,7 +17,7 @@ Today `join-node` uses both classes and creates neither. Phase 13 reads `<SITE>_
 
 ## 2. The two classes
 
-The class of each name has one home: a fourth field on each line of `newsite-secrets.sh`'s `SPEC`, `cluster` for the shared class. The field is empty for everything else. `--spec-json` returns it, and `join-node` reads the list from there, so the generator and `join-node` cannot disagree.
+The class of each name has one home: a fourth field on each line of `newsite-secrets.sh`'s `SPEC`, `cluster` for the shared class. The field is empty for everything else. `newsite-secrets.sh <site> --cluster-json` lists the shared names (`--spec-json` keeps its shape), and the step reads the list from there, so the generator and the step cannot disagree.
 
 | Name (`<SITE>_` prefix) | Class | Why |
 |---|---|---|
@@ -52,20 +52,25 @@ What the step never does:
 
 ## 4. What the plan and the refusals say
 
-The dry-run plan prints one line per cluster name and one line for the generator, by name:
+The dry-run plan prints the step, with the founder it takes from. The step itself prints one line per shared name, and the generator's own lines, by name only:
 
 ```
-[core, joiner] site secrets: ZAGROS_B_NB_ENCKEY takes ZAGROS_A_NB_ENCKEY (the founder's reference)
+ZAGROS_B_NB_ENCKEY takes ZAGROS_A_NB_ENCKEY (the founder's reference)
 ...
-[core, joiner] site secrets: newsite-secrets.sh zagros-b mints the site's own values it does not hold yet
+ZAGROS_B_NB_ENCKEY: same as ZAGROS_A_NB_ENCKEY
 ```
 
-Two new refusals, each with a code from `ops/errors/catalog.yaml` (to be allotted when this is built):
+`join-site-secrets.py <site> --founder <founder> --dry-run` prints what it would take and mint, and writes nothing. The generator is told each shared name is present, so it never mints one for a joiner, on a dry run too.
 
-- The founder's value for a cluster name is unset or unresolved after `with-secrets`. The message names `<FOUNDER>_X` and says to store it under the declared posture (`ops/secrets/posture.py hint <FOUNDER>_X`), then resume with `--from 3`.
-- The joiner already holds a value for a cluster name that differs from the founder's. The message names `<SITE>_X` and `<FOUNDER>_X` and says that the step does not overwrite it.
+Three refusals, each with a code from `ops/errors/catalog.yaml`:
 
-The input listing (`inputs/joinnode.rs`) names the cluster names as "taken from the founder in phase 3" and the site class as "minted in phase 3 when missing", in place of "required".
+- GB-352: the founder's value for a shared name is not there to take, or is unset or unresolved after `with-secrets`. The message names `<FOUNDER>_X` and says to store it under the declared posture (`ops/secrets/posture.py hint <FOUNDER>_X`), then resume with `--from 3`.
+- GB-353: the joiner already holds a value for a shared name that differs from the founder's. The message names `<SITE>_X` and `<FOUNDER>_X` and says that the step does not overwrite it.
+- GB-354: under the `env` store, a joiner's shared name is not exported.
+
+At a joiner, the input listing (`inputs/joinnode.rs`) says of `<SITE>_NB_ENCKEY` that it is taken from the founder's in phase 3, and of `<SITE>_PG_PASS` and `<SITE>_BKP_KEY` that they are minted in phase 3 when missing.
+
+**A known gap: a shell that loaded its references before the step.** Under a store of references the step appends to the main checkout's `.envrc.local.d/30-site-services.refs`. A run from the main checkout needs its shell's environment reloaded after phase 3 so the new references are present; the step says so when it writes them.
 
 ## 5. The policy question this leaves
 
