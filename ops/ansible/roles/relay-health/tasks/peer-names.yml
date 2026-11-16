@@ -18,6 +18,41 @@
         - { src: "{{ relay_health_src_dir }}/relay-peer-names.py", dest: relay-peer-names.py, mode: "0755" }
         - { src: "{{ playbook_dir }}/../identity/peerowner.py", dest: peerowner.py, mode: "0644" }
 
+    # The writer puts each peer's owner on every card (peer-identity-resolution.md
+    # §"The owner comes from the record"). A key the portal refuses makes every
+    # card `owner: unread` and the topology and relay-health surfaces show no
+    # owner anywhere, while the timer still succeeds. So the deploy asks the
+    # portal, with the key the writer will present, before reporting success.
+    # The writer and peerview have sent one key on at least one goatnet, and the
+    # portal's handle-map guard never compares the root key, so a portal
+    # redeployed from a shell holding a different root key strands both.
+    - name: relay-health | peer-names — find the portal app address
+      ansible.builtin.command:
+        argv:
+          - docker
+          - inspect
+          - -f
+          - "{{ '{{' }}(index .NetworkSettings.Networks \"{{ relay_peer_names_portal_net }}\").IPAddress{{ '}}' }}"
+          - "{{ relay_peer_names_portal_container }}"
+      register: relay_peer_names_portal_ip
+      changed_when: false
+      failed_when: false
+      when:
+        - relay_peer_names_portal_key | default('') | length > 0
+        - relay_peer_names_portal_url | default('') | length == 0
+        - relay_peer_names_portal_container | default('') | length > 0
+
+    - name: relay-health | peer-names — prove the portal accepts the writer's key
+      ansible.builtin.include_tasks: tasks/assert-portal-key-accepted.yml
+      vars:
+        portal_key_assert_service: relay-peer-names
+        portal_key_assert_url: >-
+          {{ relay_peer_names_portal_url if (relay_peer_names_portal_url | default('') | length > 0)
+             else ('http://' ~ (relay_peer_names_portal_ip.stdout | default('') | trim) ~ ':' ~ relay_peer_names_portal_port
+                   if (relay_peer_names_portal_ip.stdout | default('') | trim | length > 0) else '') }}
+        portal_key_assert_key: "{{ relay_peer_names_portal_key }}"
+      when: relay_peer_names_portal_key | default('') | length > 0
+
     - name: relay-health | peer-names resolver .env
       ansible.builtin.copy:
         dest: "{{ relay_health_dir }}/relay-peer-names.env"

@@ -56,6 +56,11 @@ on:
       - 'ops/relay/health/test_relay_metrics_ingest_allowlist.py'
       - 'ops/relay/health/test_relay_metrics_ingest.py'
       - 'ops/relay/health/test_atomic_ingest.py'
+      # The peer-names writer carries each peer's owner (peer-identity-resolution.md).
+      - 'ops/relay/health/relay-peer-names.py'
+      - 'ops/relay/health/test_relay_peer_names_owner.py'
+      - 'ops/identity/peerowner.py'
+      - 'ops/identity/test_peerowner.py'
       - 'ops/ci/check-grafana-dashboard-promql.sh'
       - 'ops/ci/check-textfile-exposition.sh'
       - 'ops/ci/check-blackbox-covers-registry.sh'
@@ -277,3 +282,9 @@ jobs:
         run: |
           python -m py_compile relay-metrics-ingest.py
           python -W error::ResourceWarning -m unittest test_atomic_ingest -v
+
+      - name: peer owners (shared client + relay-peer-names writer)
+        run: |
+          python -m py_compile ops/relay/health/relay-peer-names.py
+          python -W error::ResourceWarning ops/identity/test_peerowner.py
+          cd ops/relay/health && python -W error::ResourceWarning -m unittest test_relay_peer_names_owner -v

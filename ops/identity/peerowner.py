@@ -118,8 +118,10 @@ def resolve(base, api_key, names, timeout=20, keep_pii=False):
     states: it never returns Err).
 
     Each row: `{attribution, handle, org, affiliation, nation, status, ory_id,
-    id_console_path, reason, custody_of}` — every key present, None where
+    id_console_path, reason, custody_of, owner}` — every key present, None where
     unknown. `custody_of` is the machine's handle when the peer is a machine.
+    `owner` is the resolver's owner block (`owner_block`), or
+    `{source: "unread", reason}` when the portal could not be asked.
     """
     names = [n for n in dict.fromkeys(n.strip() for n in names) if n]
     if not names:
@@ -153,9 +155,47 @@ def resolve(base, api_key, names, timeout=20, keep_pii=False):
 def _row(attribution, **kw):
     row = {"attribution": attribution, "handle": None, "org": None,
            "affiliation": None, "nation": None, "status": None, "ory_id": None,
-           "id_console_path": None, "reason": None, "custody_of": None}
+           "id_console_path": None, "reason": None, "custody_of": None,
+           "owner": None}
     row.update(kw)
+    if attribution == UNREAD and row["owner"] is None:
+        # "We could not ask" is a state of its own on every surface, never an
+        # absent owner: a refused key must not read as an unowned peer.
+        row["owner"] = {"source": "unread", "reason": row["reason"]}
     return row
+
+
+# The resolver's `owner` block, as a host surface may carry it. Everything here
+# is an identifier or a state; the person's e-mail and display name are not in
+# the block (they stay in the resolver's `person`, dropped by default above).
+_OWNER_KEYS = ("source", "via", "matched_by", "link_note", "reason", "note", "machine_unit")
+_OWNER_NESTED = {
+    "person": ("handle", "identity_id", "disabled"),
+    "org": ("id", "kind", "nation", "short_tag", "state", "reason"),
+    "nationality": ("value", "state", "reason"),
+}
+
+
+def owner_block(res):
+    """Where the owner came from, per docs/design/peer-identity-resolution.md
+    §"The owner comes from the record, not the roster": `source` is `record`,
+    `roster` or `none` (and `unread` when the call failed, set in `_row`).
+
+    A portal older than that change sends no `owner`; its answers all came
+    from the declared roster, and the block says so rather than letting a
+    consumer read a roster answer as the record."""
+    o = (res or {}).get("owner")
+    if isinstance(o, dict):
+        out = {k: o.get(k) for k in _OWNER_KEYS if o.get(k) not in (None, "")}
+        for k, keys in _OWNER_NESTED.items():
+            v = o.get(k)
+            if isinstance(v, dict):
+                out[k] = {kk: v.get(kk) for kk in keys if kk in v}
+        return out
+    if (res or {}).get("handle"):
+        return {"source": "roster",
+                "note": "the portal predates owner-from-record; this answer came from the declared roster"}
+    return {"source": "none", "reason": (res or {}).get("reason")}
 
 
 def _read(res, keep_pii):
@@ -171,7 +211,8 @@ def _read(res, keep_pii):
     machine = (res.get("machine") or {}).get("system_handle") or None
     handle = res.get("handle") or None
     if not handle:
-        return _row(UNMATCHED, reason=res.get("reason"), custody_of=machine)
+        return _row(UNMATCHED, reason=res.get("reason"), custody_of=machine,
+                    owner=owner_block(res))
     person = res.get("person") or {}
     ory_id = person.get("ory_identity_id") or None
     if machine:
@@ -190,6 +231,7 @@ def _read(res, keep_pii):
         id_console_path=((res.get("deep_links") or {}).get("id_console_user")
                          or (f"/users/{ory_id}" if ory_id else None)),
         reason=res.get("reason"),
+        owner=owner_block(res),
     )
     if keep_pii:
         row["email"] = person.get("email")

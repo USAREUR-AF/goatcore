@@ -131,12 +131,12 @@ def fetch_peers():
     return m
 
 
-def publish(names):
+def publish(names, owner_read=None):
     if LOCAL_DIR and os.path.isdir(LOCAL_DIR):
         # id_console_url is Thor-local only (the id-admin-console is mesh-internal;
         # the cloud box can't reach it, so the deep-link stays off the cloud dashboard).
         doc = {"names": names, "generated_at": int(time.time()), "count": len(names),
-               "id_console_url": ID_CONSOLE_URL}
+               "id_console_url": ID_CONSOLE_URL, "owner_read": owner_read}
         tmp = os.path.join(LOCAL_DIR, ".peer-names.json.tmp")
         dst = os.path.join(LOCAL_DIR, "peer-names.json")
         with open(tmp, "w") as f:
@@ -157,32 +157,57 @@ def publish(names):
             log(f"POST {url} FAILED: {e}")
 
 
-def enrich_ory(cards):
-    """Bake each card's owning Ory identity id via the shared resolver client.
-    One POST for the whole peer list; best-effort (portal down/unset -> cards
-    keep no ory_id and the dashboard shows no deep-link)."""
+def enrich_owners(cards):
+    """Ask the portal who owns every peer, in one batch, and write the answer
+    onto each card: `owner` (the resolver's owner block: where the owner came
+    from, the organization and its nation, the responsible person's handle, the
+    person's own nationality, each with a state) and, as before, `ory_id`.
+
+    Every peer is asked about, machines and infrastructure included: the owner
+    of a `machine-` peer is its recorded custodian, and a name that carries no
+    owner is itself the answer a surface must show.
+
+    Never leaves a card without an owner state. When the portal cannot be
+    asked (no key on this host, refused, unreachable), every card carries
+    `owner: {source: "unread", reason}` and the file says so once
+    (`owner_read`), so a refused key is a visible state on every surface that
+    reads this file and never reads as "no owner".
+
+    Returns the file-level `owner_read` record."""
+    at = int(time.time())
     if peerowner is None:
-        log("ory enrich skipped (shared client ops/identity/peerowner.py not shipped)")
-        return
-    if not PORTAL_KEY:
-        return
-    base = portal_base()
-    peer_names = sorted({c["name"] for c in cards.values()
-                         if c.get("name", "").startswith("peer-")})
-    if not peer_names:
-        return
-    rows = peerowner.resolve(base, PORTAL_KEY, peer_names)
+        why = "the shared client ops/identity/peerowner.py is not installed on this host"
+    elif not PORTAL_KEY:
+        why = "no portal key is configured for this writer (relay_peer_names_portal_key)"
+    else:
+        why = ""
+    if why:
+        log(f"owners not read: {why}")
+        for c in cards.values():
+            c["owner"] = {"source": "unread", "reason": why}
+        return {"state": "unread", "reason": why, "at": at}
+    names = sorted({c["name"] for c in cards.values() if c.get("name")})
+    rows = peerowner.resolve(portal_base(), PORTAL_KEY, names)
     unread = [r for r in rows.values() if r["attribution"] == peerowner.UNREAD]
-    if unread:
-        log(f"ory enrich skipped ({unread[0]['reason']})")
-        return
-    n = 0
+    if unread and len(unread) == len(rows):
+        why = unread[0]["reason"] or "the portal could not be asked"
+        log(f"owners not read: {why}")
+        for c in cards.values():
+            c["owner"] = {"source": "unread", "reason": why}
+        return {"state": "unread", "reason": why, "at": at}
+    counts = {}
     for c in cards.values():
         row = rows.get(c.get("name") or "")
-        if row and row["ory_id"]:
-            c["ory_id"] = row["ory_id"]
-            n += 1
-    log(f"ory enrich: {n}/{len(cards)} cards resolved to a person id")
+        if row is None:
+            c["owner"] = {"source": "unread", "reason": "the resolver returned no row for this name"}
+        else:
+            c["owner"] = row["owner"] or {"source": "none"}
+            if row["ory_id"]:
+                c["ory_id"] = row["ory_id"]
+        src = c["owner"].get("source") or "none"
+        counts[src] = counts.get(src, 0) + 1
+    log("owners: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    return {"state": "read", "counts": counts, "at": at}
 
 
 if __name__ == "__main__":
@@ -191,5 +216,5 @@ if __name__ == "__main__":
         log("no peers resolved — refusing to publish an empty map")
         sys.exit(1)
     log(f"resolved {len(names)} peer names")
-    enrich_ory(names)
-    publish(names)
+    owner_read = enrich_owners(names)
+    publish(names, owner_read)

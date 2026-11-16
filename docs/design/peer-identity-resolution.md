@@ -73,10 +73,10 @@ here, so that every consumer gets them.
 ## The owner comes from the record, not the roster
 
 **Status:** the resolver's record tiers for machines and for slot-linked
-devices are built (§"The resolver"). The identity handle and nationality
-stamps, declared owners for infrastructure, the ownership audit, the host
-carrier and the surface states are designed, not built; each names where it
-will be built.
+devices are built (§"The resolver"), and so is the host carrier (§"The
+carrier"). The identity handle and nationality stamps, declared owners for
+infrastructure, the ownership audit and the surface states are designed, not
+built; each names where it will be built.
 
 **The rule.** No machine, and above all no router, holds mesh access without a
 recorded responsible person and organization. A surface that cannot show the
@@ -220,19 +220,26 @@ infrastructure, leave the person devices with no identity and the peers whose
 name carries no owner. Each of those needs an owner recorded or its access
 removed. That is an operator action, not code.
 
-### The carrier to the host surfaces (designed, not built)
+### The carrier to the host surfaces (built)
 
-The relay-health `relay-peer-names` writer already calls the batch resolver
-every 5 minutes on the management host and writes `peer-names.json`. Two
-changes:
+The relay-health `relay-peer-names` writer runs every 5 minutes on the
+management host and writes `peer-names.json`. It now:
 
-- **It writes the `owner` block per peer.** When the portal refuses or cannot
-  be reached, it writes `owner.source: "unread"` with the HTTP status. Today it
-  writes the file with no owner fields and no marker, so a refused key is
-  invisible.
-- **A deploy check fails when the portal refuses the writer's key.** The
-  writer and peerview send one key on at least one goatnet, and the existing
-  `assert-portal-key-accepted.yml` is included by neither role.
+- **Asks about every peer in one batch call**, machines and infrastructure
+  included; it used to ask only about `peer-` names.
+- **Writes each card's `owner` block.** The block carries no e-mail or display
+  name; `ory_id` is kept as before. The shared client
+  `ops/identity/peerowner.py` carries the block on every row. It labels the
+  answer of a portal older than this change `source: "roster"`.
+- **Writes `owner: {source: "unread", reason}` on every card** when the portal
+  cannot be asked (no key on the host, refused, unreachable), plus a
+  file-level `owner_read: {state, reason, at}`. Until now a refusal wrote the
+  file with no owner fields and no marker, and the timer still succeeded.
+- **Fails the relay-health deploy when the portal refuses the writer's key.**
+  The role includes `tasks/assert-portal-key-accepted.yml` with the key the
+  writer will present. The writer and peerview send one key on at least one
+  goatnet, and the portal's handle-map guard never compares the root key, so
+  a portal redeployed from a shell holding a different root key strands both.
 
 No new credential: the writer already holds a key.
 
