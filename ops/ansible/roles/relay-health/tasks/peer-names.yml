@@ -19,13 +19,25 @@
         - { src: "{{ playbook_dir }}/../identity/peerowner.py", dest: peerowner.py, mode: "0644" }
 
     # The writer puts each peer's owner on every card (peer-identity-resolution.md
-    # §"The owner comes from the record"). A key the portal refuses makes every
-    # card `owner: unread` and the topology and relay-health surfaces show no
-    # owner anywhere, while the timer still succeeds. So the deploy asks the
-    # portal, with the key the writer will present, before reporting success.
-    # The writer and peerview have sent one key on at least one goatnet, and the
-    # portal's handle-map guard never compares the root key, so a portal
-    # redeployed from a shell holding a different root key strands both.
+    # §"The carrier"). A key the portal refuses makes every card `owner: unread`
+    # while the timer still succeeds, so the deploy asks the portal, with the
+    # key the writer presents and on the route the writer uses (the operator-only
+    # `POST /api/access/peers`), before reporting success. Only a REFUSED key
+    # fails the deploy: a portal that is down or not found is said loudly and
+    # does not block the health dashboard, whose job does not depend on it.
+    # A host writer's key can drift from the portal's root key without anything
+    # else noticing, because the portal's handle-map guard never compares it.
+    - name: relay-health | peer-names — the writer needs a portal key to read owners (ADR 1249)
+      ansible.builtin.fail:
+        msg: >-
+          relay-peer-names is enabled and relay_peer_names_portal_key is empty, so
+          every peer's owner would be "not read" on every surface, permanently.
+          Set the key, or set relay_peer_names_owner_enabled: false to deploy the
+          writer without owners on purpose.
+      when:
+        - relay_peer_names_owner_enabled | default(true) | bool
+        - relay_peer_names_portal_key | default('') | length == 0
+
     - name: relay-health | peer-names — find the portal app address
       ansible.builtin.command:
         argv:
@@ -42,16 +54,59 @@
         - relay_peer_names_portal_url | default('') | length == 0
         - relay_peer_names_portal_container | default('') | length > 0
 
-    - name: relay-health | peer-names — prove the portal accepts the writer's key
-      ansible.builtin.include_tasks: tasks/assert-portal-key-accepted.yml
-      vars:
-        portal_key_assert_service: relay-peer-names
-        portal_key_assert_url: >-
+    - name: relay-health | peer-names — the portal address the writer will use
+      ansible.builtin.set_fact:
+        relay_peer_names_probe_url: >-
           {{ relay_peer_names_portal_url if (relay_peer_names_portal_url | default('') | length > 0)
              else ('http://' ~ (relay_peer_names_portal_ip.stdout | default('') | trim) ~ ':' ~ relay_peer_names_portal_port
                    if (relay_peer_names_portal_ip.stdout | default('') | trim | length > 0) else '') }}
-        portal_key_assert_key: "{{ relay_peer_names_portal_key }}"
       when: relay_peer_names_portal_key | default('') | length > 0
+
+    - name: relay-health | peer-names — ask the owner route with the writer's key
+      ansible.builtin.uri:
+        url: "{{ relay_peer_names_probe_url | trim }}/api/access/peers"
+        method: POST
+        body_format: json
+        body: {"netbird_names": []}
+        headers:
+          Authorization: "Bearer {{ relay_peer_names_portal_key }}"
+        status_code: [200, 401, 403]
+        timeout: 15
+        validate_certs: false
+      register: relay_peer_names_probe
+      until: relay_peer_names_probe.status | default(-1) in [200, 401, 403]
+      retries: 6
+      delay: 5
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when:
+        - relay_peer_names_portal_key | default('') | length > 0
+        - relay_peer_names_probe_url | default('') | trim | length > 0
+
+    - name: relay-health | peer-names — fail when the portal refuses the writer's key
+      ansible.builtin.fail:
+        msg: >-
+          The portal at {{ relay_peer_names_probe_url | trim }} refused the key
+          relay-peer-names presents (HTTP {{ relay_peer_names_probe.status }} on
+          POST /api/access/peers, an operator route). Every peer's owner would be
+          "not read". Re-render relay_peer_names_portal_key from the portal's
+          current operator key, then re-run.
+      when:
+        - relay_peer_names_probe is defined
+        - relay_peer_names_probe.status | default(-1) in [401, 403]
+
+    - name: relay-health | peer-names — say so when the portal cannot be reached
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: relay-peer-names could not reach the portal
+          ({{ (relay_peer_names_probe_url | default('') | trim) or 'no address: the portal container was not found' }}).
+          The health dashboard deploys; every peer's owner reads "not read" until
+          the portal answers. The writer retries every cycle.
+      when:
+        - relay_peer_names_portal_key | default('') | length > 0
+        - (relay_peer_names_probe_url | default('') | trim | length == 0)
+          or (relay_peer_names_probe.status | default(-1) not in [200, 401, 403])
 
     - name: relay-health | peer-names resolver .env
       ansible.builtin.copy:

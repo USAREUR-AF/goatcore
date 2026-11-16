@@ -95,6 +95,18 @@ class IngestTests(unittest.TestCase):
         self.assertTrue(doc["routers"]["router-a"]["currently_wedged"])
         self.assertTrue(any(e["type"] == "wedged" for e in doc["events"]))
 
+    def test_peer_names_lifts_the_writer_record_and_keeps_cards_bare(self):
+        # Review of #977, item 4: the cloud copy carried no owner state and no
+        # generation time. The writer sends them in a reserved key.
+        body = {"7368612d01": {"name": "machine-box-1", "owner": {"source": "record", "exception": False}},
+                "__peer_names_meta__": {"generated_at": 990, "owner_read": {"state": "unread", "reason": "401"}}}
+        self.assertEqual(self.post("peer", body=body, route="/relay-metrics-ingest/peer-names"), 204)
+        doc = json.loads((self.root / "peer-names.json").read_text())
+        self.assertEqual(doc["generated_at"], 990)
+        self.assertEqual(doc["owner_read"]["state"], "unread")
+        self.assertEqual(list(doc["names"]), ["7368612d01"], "the reserved key is not a card")
+        self.assertEqual(doc["count"], 1)
+
     def test_normal_ingest_updates_individual_aggregate_history_and_wedge_timeline(self):
         for kind in ("host", "zenoh"):
             with self.subTest(kind=kind):

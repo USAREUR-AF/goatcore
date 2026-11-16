@@ -223,23 +223,49 @@ removed. That is an operator action, not code.
 ### The carrier to the host surfaces (built)
 
 The relay-health `relay-peer-names` writer runs every 5 minutes on the
-management host and writes `peer-names.json`. It now:
+management host and writes `peer-names.json`. A failed owner read never
+becomes "no owner".
 
-- **Asks about every peer in one batch call**, machines and infrastructure
-  included; it used to ask only about `peer-` names.
-- **Writes each card's `owner` block.** The block carries no e-mail or display
-  name; `ory_id` is kept as before. The shared client
-  `ops/identity/peerowner.py` carries the block on every row. It labels the
-  answer of a portal older than this change `source: "roster"`.
-- **Writes `owner: {source: "unread", reason}` on every card** when the portal
-  cannot be asked (no key on the host, refused, unreachable), plus a
-  file-level `owner_read: {state, reason, at}`. Until now a refusal wrote the
-  file with no owner fields and no marker, and the timer still succeeded.
-- **Fails the relay-health deploy when the portal refuses the writer's key.**
-  The role includes `tasks/assert-portal-key-accepted.yml` with the key the
-  writer will present. The writer and peerview send one key on at least one
-  goatnet, and the portal's handle-map guard never compares the root key, so
-  a portal redeployed from a shell holding a different root key strands both.
+- **It asks about every peer,** machines and infrastructure included. Names go
+  in chunks of 500, under the portal's 1 MiB request cap.
+- **It writes each card's `owner` block.** The block carries no e-mail or
+  display name; `ory_id` is kept as before. The shared client
+  `ops/identity/peerowner.py` carries the block on every row and never raises:
+  a body that is not a peers map is `unread` for every name.
+- **The portal says when it could not read its own sources.** The batch
+  answer carries `owner_sources: {ok, failed}`. When a layer the owner tiers
+  read did not answer (the registry, the slot aliases, the enrolled machines
+  or the identity layer), `ok` is false and every row's owner is `unread`,
+  naming the layer.
+- **Other answers that are unread, not "none":**
+  - the portal cannot be asked (no key on the host, refused, unreachable);
+  - its sources failed;
+  - it is older than the `owner` block;
+  - it sends an owner block without a `source`.
+
+  When every card is unread, the file says so once:
+  `owner_read: {state: "unread", reason, at}`.
+- **The cloud relay-health box gets the owner state only.** It receives the
+  names it always had plus each card's owner state (`source`, and whether an
+  owner exception covers it), and the file-level `owner_read` and
+  `generated_at`. These ride in a reserved key that an older ingest stores
+  harmlessly and a current one lifts to the top of its file. No person,
+  identity id, organization or nationality leaves the management host.
+- **An over-cap or refused cloud body is a failure you can see.** A body over
+  the ingest's cap (262144 bytes) is not sent, and the writer exits non-zero
+  after writing the on-host file. A cloud ingest that refuses the body does
+  the same. A cloud box that cannot be reached is logged only.
+- **The deploy proves the key on the route the writer uses.** The relay-health
+  role sends `POST /api/access/peers` with an empty list and the writer's key.
+  - A refused key (401 or 403) fails the deploy.
+  - A portal that is down or not found is a warning, and the health dashboard
+    still deploys.
+  - The writer enabled with no key fails the deploy, unless
+    `relay_peer_names_owner_enabled: false` switches owners off on purpose.
+
+  A host writer's key can drift from the portal's root key, and the portal's
+  handle-map guard never compares the root key, so this check is the only
+  thing that catches it.
 
 No new credential: the writer already holds a key.
 

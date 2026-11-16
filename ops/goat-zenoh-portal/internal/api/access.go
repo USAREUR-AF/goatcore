@@ -315,8 +315,10 @@ func (s *Server) handleAccessPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	src, warn := s.collectAccessSources(r.Context())
-	resp := resolvePeerName(src, name)
+	out := peersAnswer(src, warn, []string{name})
+	resp := out["peers"].(map[string]map[string]any)[name]
 	resp["notes"] = access.NoteTexts(warn)
+	resp["owner_sources"] = out["owner_sources"]
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -333,15 +335,59 @@ func (s *Server) handleAccessPeersBatch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	src, warn := s.collectAccessSources(r.Context())
-	out := make(map[string]map[string]any, len(body.NetbirdNames))
-	for _, name := range body.NetbirdNames {
+	writeJSON(w, http.StatusOK, peersAnswer(src, warn, body.NetbirdNames))
+}
+
+// ownerSourceKinds are the layers the owner tiers read: the registry (vendor
+// rows), the slot aliases with their recorded identities, the enrolled
+// machines and the identity layer. When one of them did not answer, a missing
+// owner is not evidence of no owner.
+var ownerSourceKinds = map[string]bool{
+	"registry_unavailable":       true,
+	"slot_aliases_unavailable":   true,
+	"machines_unavailable":       true,
+	"identity_layer_unavailable": true,
+	"identity_layer_error":       true,
+}
+
+// ownerSourcesFailed lists the owner-tier layers that did not answer.
+func ownerSourcesFailed(warn []access.Note) []string {
+	var failed []string
+	for _, n := range warn {
+		if ownerSourceKinds[n.Kind] {
+			failed = append(failed, n.Kind)
+		}
+	}
+	return failed
+}
+
+// peersAnswer resolves every name and states, machine-readably, whether the
+// owner sources answered (`owner_sources: {ok, failed}`). When any did not,
+// every row's owner is `unread` with the reason: a failed read must never
+// become "no owner", a page, or an owner exception (ADR 1249). The rest of the
+// row stays as resolved, for consumers that read only the person fields.
+func peersAnswer(src access.Sources, warn []access.Note, names []string) map[string]any {
+	failed := ownerSourcesFailed(warn)
+	out := make(map[string]map[string]any, len(names))
+	for _, name := range names {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
-		out[name] = resolvePeerName(src, name)
+		row := resolvePeerName(src, name)
+		if len(failed) > 0 {
+			row["owner"] = map[string]any{
+				"source": "unread",
+				"reason": "the portal could not read " + strings.Join(failed, ", ") + "; the owner is unknown, not absent",
+			}
+		}
+		out[name] = row
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"peers": out, "notes": access.NoteTexts(warn)})
+	return map[string]any{
+		"peers":         out,
+		"notes":         access.NoteTexts(warn),
+		"owner_sources": map[string]any{"ok": len(failed) == 0, "failed": failed},
+	}
 }
 
 // resolvePeerName does one peer→person resolution against an assembled source
