@@ -119,6 +119,19 @@ no step builds reads "no join-node step builds it yet (gate row I3)". The
 admin surfaces keep their gap line (gate rows I1 and I4). Nothing a run does
 changes (#953).
 
+#### Fixed: a standup play limited to the founder is refused when its limit selects no host, instead of passing
+
+Six standup plays run on the site's first management host alone, limited
+with `-l 'mgmt-<site>-01*'`: SPIRE, the LAN service surface, the LAN TLS
+routes, the dashboard, the portal and grant-keyd. When the site's founder was
+named otherwise and another inventory host matched the pattern, ansible
+skipped the play and exited 0, so the phase passed having done nothing. Each
+of those commands now checks first that a host of `<site>_hosts` in the two
+management inventories matches the limit, and refuses with GB-355, naming the
+pattern, the group and the inventories, when none does. `goatbuilder standup`
+and `ops/scripts/goat-standup.sh` run the same check. The naming rule is
+unchanged.
+
 <!-- END generated: changelog unreleased -->
 
 ## 0.7.2 — 2026-11-15
