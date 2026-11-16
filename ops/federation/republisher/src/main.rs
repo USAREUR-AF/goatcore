@@ -573,3 +573,75 @@ async fn serve_metrics(metrics: Metrics, bind: SocketAddr) -> Result<()> {
     axum::serve(listener, app).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    /// A session that reaches nothing: its subscriber receives only what the
+    /// same session puts, so the test controls exactly what it holds.
+    async fn closed_session() -> zenoh::Session {
+        let mut c = zenoh::Config::default();
+        c.insert_json5("mode", "\"peer\"").unwrap();
+        c.insert_json5("listen/endpoints", "[]").unwrap();
+        c.insert_json5("connect/endpoints", "[]").unwrap();
+        c.insert_json5("scouting/multicast/enabled", "false")
+            .unwrap();
+        c.insert_json5("scouting/gossip/enabled", "false").unwrap();
+        zenoh::open(c).await.unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stop_hands_over_what_the_subscription_already_holds() {
+        // The binary test cannot tell a sample left in the subscriber's FIFO
+        // from one still on the wire: both are simply never received. This
+        // fills the FIFO, stops, and only then runs the loop, so every sample
+        // reaches the queue only if the stop hands the FIFO over.
+        const HELD: usize = 50;
+        let session = closed_session().await;
+        let sub = session
+            .declare_subscriber("release/weather/**")
+            .await
+            .unwrap();
+        for i in 0..HELD {
+            session
+                .put(format!("release/weather/t/{i}"), format!("v{i}"))
+                .await
+                .unwrap();
+        }
+        let map = KeyMap::new("xaa", &["release/weather/**".to_string()]).unwrap();
+        let envelope = agreement::Envelope {
+            hz: 1_000_000,
+            bytes_per_message: 1_000_000,
+            distinct_keys: 1_000_000,
+        };
+        let expires = NaiveDate::from_ymd_opt(2099, 12, 31).unwrap();
+        let policy = Arc::new(Mutex::new(Policy::new(map, envelope, expires)));
+        let metrics = Metrics::new("xaa", "xab").unwrap();
+        let our_ts_id = provenance::timestamp_id_from_zid(&session.zid().to_le_bytes()).unwrap();
+        let (tx, mut rx) = mpsc::channel::<Outbound>(HELD * 2);
+        let (stop_ingest, ingest_stop) = tokio::sync::watch::channel(false);
+        stop_ingest.send(true).unwrap();
+
+        ingest_loop(
+            sub,
+            "release/weather/**".to_string(),
+            policy,
+            metrics.clone(),
+            tx,
+            our_ts_id,
+            ingest_stop,
+        )
+        .await;
+
+        let mut queued = Vec::new();
+        while let Some(o) = rx.recv().await {
+            queued.push(o.wire_key);
+        }
+        assert_eq!(queued.len(), HELD, "every held sample reached the queue");
+        assert_eq!(queued[0], "from/xaa/weather/t/0");
+        assert_eq!(metrics.totals().0, HELD as u64);
+        session.close().await.unwrap();
+    }
+}
