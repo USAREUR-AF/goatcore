@@ -2557,6 +2557,36 @@ mod tests {
         ]
     }
 
+    /// Standup passes secrets through the environment, not the command line:
+    /// for every site shape the plan branches on (a goatlite included), no
+    /// planned line expands a secret-class variable's value into a command's
+    /// arguments (crate::argv_secrets), and the plays read the Postgres password
+    /// themselves.
+    #[test]
+    fn no_site_shape_puts_a_secret_value_on_a_command_line() {
+        let spec = crate::argv_secrets::spec_suffixes(&std::fs::read_to_string(repo_root().join("ops/scripts/newsite-secrets.sh")).unwrap());
+        for (shape, s, obs_only) in catalog_shapes() {
+            let o = Options { env: "dev", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only, dry_run: true, parallel: false, check: false };
+            let ev = plan(&repo_root(), &s, &o, "RESUME");
+            let mut lines: Vec<&str> = Vec::new();
+            for e in &ev {
+                match e {
+                    Event::Phase(p) => lines.push(&p.cmd),
+                    Event::LegStart { cmd, .. } | Event::PullStart { cmd, .. } => lines.push(cmd),
+                    _ => {}
+                }
+            }
+            for l in &lines {
+                let on = crate::argv_secrets::secret_values_on_argv(l, &spec);
+                assert!(on.is_empty(), "{shape}: {on:?} on the command line of: {l}");
+            }
+            if !obs_only {
+                let pg = format!("lookup(\"env\", \"{}_PG_PASS\")", s.upper);
+                assert!(lines.iter().any(|l| l.contains(&pg)), "{shape}: a play reads {pg}");
+            }
+        }
+    }
+
     /// A planned step's catalog key, as its dry-run banner names it: a phase by
     /// its number, every other step by the words of its banner
     /// (tests/legibility.rs, `step_id`, reads the printed banners the same way).
