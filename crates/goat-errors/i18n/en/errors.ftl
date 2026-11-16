@@ -1075,6 +1075,10 @@ gb-351-title = a Spock subscription has forward_origins set, which in a mesh rep
 gb-351-what = A Spock subscription, or the setting that creates them, has forward_origins other than empty or 'none'. In a mesh of three or more sites such a subscription passes each change on to the next site, which passes it back, without end, while every subscription still reads replicating and nothing is logged. The spock-forward-origins-check role stopped the run before spock-mesh-peering or ory-narrow-repset changed anything. The message names the setting, or each subscription as <host> <database>.<subscription>.
 gb-351-cause-1 = a site's group_vars set spock_mesh_forward_origins or ory_spock_forward_origins
 gb-351-cause-2 = a subscription was created by hand with forward_origins := '{"{"}all{"}"}'
+gb-355-title = a standup play limited to the founder selects no host of the site's group
+gb-355-what = Six standup plays run on the site's first management host alone (SPIRE, the LAN service surface, the LAN TLS routes, the dashboard, the portal, grant-keyd), limited with -l 'mgmt-<site>-01*', the declared naming rule. Before the play, the same command checked the site's group, <site>_hosts, in inventory/mgmt-hosts.ini and inventory/mgmt-hosts-mesh.ini, and no host there matches the limit. The play was refused before ansible ran: with another host matching the pattern, ansible prints "skipping: no hosts matched" and exits 0 having done nothing. Both avenues, goatbuilder standup and goat-standup.sh, run the check (ops/scripts/inventory-hosts.py --match --require).
+gb-355-cause-1 = the site's first management host is named otherwise than mgmt-<site>-01 in the inventory
+gb-355-cause-2 = the host is listed under another group than <site>_hosts
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened

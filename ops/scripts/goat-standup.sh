@@ -241,6 +241,12 @@ Q_N=0
 SITE_UPPER="$(printf '%s' "${SITE//-/_}" | tr '[:lower:]' '[:upper:]')"  # env-var prefix, e.g. DEMO
 INV=(-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini)
 OBS_GROUP="${SITE//-/_}_obs_hosts"
+# The plays that run on the site's first management host alone limit to it by
+# the declared naming rule, and check first that a host of the site's group
+# matches: without the check a founder named off the rule, beside another host
+# the pattern matches, let ansible skip the play and exit 0 (GB-355).
+FOUNDER_LIMIT="mgmt-${SITE}-01*"
+FOUNDER_CHECK="python3 ../scripts/inventory-hosts.py $GROUP --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match '$FOUNDER_LIMIT' --require GB-355 >/dev/null"
 # Where this machine keeps the project's local state (run logs, CA keys): the
 # deploy.state_dir the checkout declares in ops/goatbuilder/goatbuilder.yaml
 # (read by project-setting.sh), else ~/.goat/state. The builder reads the same
@@ -1100,7 +1106,7 @@ step 9 A "zenoh router" \
 #      declared here rather than relying on a host_vars line a new goatnet may
 #      not have (SPIRE was reached only by a hand-run play).
 step 9 A "SPIRE server on the founder (workload identity)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} spire-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*' -e spire_enabled=true -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\""
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} spire-deploy.yml -e target=$GROUP -l '$FOUNDER_LIMIT' -e spire_enabled=true -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\""
 
 # The obs STACK starts now: the router is up, and on an internet site phase 8
 # has just produced the core host's mesh address that obs_scrape_targets names.
@@ -1119,12 +1125,12 @@ fi
 #   internet: the dashboard on its own, then the OIDC clients (per-env file).
 if [ "$PROFILE" = lan ]; then
 step 10 A "[lan] LAN service surface (dashboard + DNS + TLS routes + STUN)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} -l 'mgmt-${SITE}-01*' site-services.yml --tags lan-dns,traefik,stun -e target=$GROUP -e site_id=$SITE -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\" -e netbird_encryption_key=\"\$(printenv ${SITE_UPPER}_NB_ENCKEY)\""
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' site-services.yml --tags lan-dns,traefik,stun -e target=$GROUP -e site_id=$SITE -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\" -e netbird_encryption_key=\"\$(printenv ${SITE_UPPER}_NB_ENCKEY)\""
 
 step 10 A "[lan] TLS routes for the mgmt stack (file certs)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} -l 'mgmt-${SITE}-01*' lan-traefik-routes.yml -e target=$GROUP -e site_id=$SITE"
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' lan-traefik-routes.yml -e target=$GROUP -e site_id=$SITE"
 step 10 A "[lan] dashboard" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} -l 'mgmt-${SITE}-01*' dashboard-deploy.yml -e site_id=$SITE"
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' dashboard-deploy.yml -e site_id=$SITE"
 
 # Phase 11. [lan] The same browser step the internet profile has, for EVERY LAN
 #      site (goatlite.md §5 row 6): the bootstrap NetBird token exists only once
@@ -1139,7 +1145,7 @@ step 11 MANUAL "[lan] first login, admin-promote, the bootstrap NetBird token" \
 fi
 else
 step 10 A "[internet] dashboard" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} -l 'mgmt-${SITE}-01*' dashboard-deploy.yml -e site_id=$SITE"
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' dashboard-deploy.yml -e site_id=$SITE"
 # site-oidc-clients.yml is the generic play; a site that keeps its own
 # $SITE-oidc-clients.yml gets that one instead.
 OIDC_PLAY=site-oidc-clients.yml
@@ -1225,7 +1231,7 @@ fi
 #      It was reached only by a hand-run portal-deploy.yml, so a
 #      standup that followed this script got a goatnet with no portal.
 step 12 A "portal (registry, certificate minting, grant rows)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} portal-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*' -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\""
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} portal-deploy.yml -e target=$GROUP -l '$FOUNDER_LIMIT' -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\""
 
 # Phase 12. pub/sub state-of-record Repl (Block 86) — mirror the portal registry to
 #      Forgejo (+ MinIO shadow) so a rebuild restores fabric STRUCTURE, not just
@@ -1289,7 +1295,7 @@ step 12 A "onboard-runner (auto-mint on approval, ADR 1062 stage 3)" \
 #      host and registered in the portal's key directory; the play fails unless
 #      the portal accepts it. Single-homed on the founder.
 step 12 A "grant-keyd (encryption key distribution)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} grant-keyd-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*'"
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} grant-keyd-deploy.yml -e target=$GROUP -l '$FOUNDER_LIMIT'"
 
 # Phase 12. notional publishers/subscribers (synthetic demo traffic) — OPTIONAL per
 #      goatnet. A dev/demo goatnet opts in with synth_vendors_enabled: true in

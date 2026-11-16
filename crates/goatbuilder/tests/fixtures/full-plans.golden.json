@@ -223,7 +223,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -233,7 +233,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' site-services.yml --tags lan-dns,traefik,stun -e target=dev_hosts -e site_id=dev -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\" -e netbird_encryption_key=\"$(printenv DEV_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' site-services.yml --tags lan-dns,traefik,stun -e target=dev_hosts -e site_id=dev -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\" -e netbird_encryption_key=\"$(printenv DEV_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -243,7 +243,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' lan-traefik-routes.yml -e target=dev_hosts -e site_id=dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' lan-traefik-routes.yml -e target=dev_hosts -e site_id=dev"
     },
     {
       "name": "phase",
@@ -253,7 +253,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
     },
     {
       "name": "phase",
@@ -323,7 +323,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -373,7 +373,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
     },
     {
       "name": "phase",
@@ -994,7 +994,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -1004,7 +1004,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
     },
     {
       "name": "phase",
@@ -1094,7 +1094,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -1144,7 +1144,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
     },
     {
       "name": "phase",
@@ -1710,7 +1710,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -1720,7 +1720,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' site-services.yml --tags lan-dns,traefik,stun -e target=preprod_hosts -e site_id=preprod -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\" -e netbird_encryption_key=\"$(printenv PREPROD_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' site-services.yml --tags lan-dns,traefik,stun -e target=preprod_hosts -e site_id=preprod -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\" -e netbird_encryption_key=\"$(printenv PREPROD_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -1730,7 +1730,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' lan-traefik-routes.yml -e target=preprod_hosts -e site_id=preprod"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' lan-traefik-routes.yml -e target=preprod_hosts -e site_id=preprod"
     },
     {
       "name": "phase",
@@ -1740,7 +1740,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' dashboard-deploy.yml -e site_id=preprod"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' dashboard-deploy.yml -e site_id=preprod"
     },
     {
       "name": "phase",
@@ -1810,7 +1810,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -1860,7 +1860,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*'"
     },
     {
       "name": "phase",
@@ -2481,7 +2481,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -2491,7 +2491,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' dashboard-deploy.yml -e site_id=preprod"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' dashboard-deploy.yml -e site_id=preprod"
     },
     {
       "name": "phase",
@@ -2581,7 +2581,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -2631,7 +2631,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*'"
     },
     {
       "name": "phase",
@@ -3197,7 +3197,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -3207,7 +3207,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' site-services.yml --tags lan-dns,traefik,stun -e target=alpha_hosts -e site_id=alpha -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ALPHA_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' site-services.yml --tags lan-dns,traefik,stun -e target=alpha_hosts -e site_id=alpha -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ALPHA_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -3217,7 +3217,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' lan-traefik-routes.yml -e target=alpha_hosts -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' lan-traefik-routes.yml -e target=alpha_hosts -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -3227,7 +3227,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -3297,7 +3297,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -3347,7 +3347,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
     },
     {
       "name": "phase",
@@ -3968,7 +3968,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -3978,7 +3978,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -4068,7 +4068,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -4118,7 +4118,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
     },
     {
       "name": "phase",
@@ -4684,7 +4684,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -4694,7 +4694,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' site-services.yml --tags lan-dns,traefik,stun -e target=alpha_hosts -e site_id=alpha -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ALPHA_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' site-services.yml --tags lan-dns,traefik,stun -e target=alpha_hosts -e site_id=alpha -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ALPHA_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -4704,7 +4704,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' lan-traefik-routes.yml -e target=alpha_hosts -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' lan-traefik-routes.yml -e target=alpha_hosts -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -4714,7 +4714,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -4784,7 +4784,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -4834,7 +4834,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
     },
     {
       "name": "phase",
@@ -5455,7 +5455,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -5465,7 +5465,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -5555,7 +5555,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -5605,7 +5605,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
     },
     {
       "name": "phase",
@@ -6171,7 +6171,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -6181,7 +6181,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' site-services.yml --tags lan-dns,traefik,stun -e target=beta_hosts -e site_id=beta -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv BETA_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' site-services.yml --tags lan-dns,traefik,stun -e target=beta_hosts -e site_id=beta -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv BETA_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -6191,7 +6191,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' lan-traefik-routes.yml -e target=beta_hosts -e site_id=beta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' lan-traefik-routes.yml -e target=beta_hosts -e site_id=beta"
     },
     {
       "name": "phase",
@@ -6201,7 +6201,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
     },
     {
       "name": "phase",
@@ -6271,7 +6271,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -6321,7 +6321,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
     },
     {
       "name": "phase",
@@ -6942,7 +6942,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -6952,7 +6952,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
     },
     {
       "name": "phase",
@@ -7042,7 +7042,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -7092,7 +7092,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
     },
     {
       "name": "phase",
@@ -7658,7 +7658,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -7668,7 +7668,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' site-services.yml --tags lan-dns,traefik,stun -e target=alpha_hosts -e site_id=alpha -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ALPHA_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' site-services.yml --tags lan-dns,traefik,stun -e target=alpha_hosts -e site_id=alpha -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ALPHA_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -7678,7 +7678,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' lan-traefik-routes.yml -e target=alpha_hosts -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' lan-traefik-routes.yml -e target=alpha_hosts -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -7688,7 +7688,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -7758,7 +7758,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -7808,7 +7808,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
     },
     {
       "name": "phase",
@@ -8429,7 +8429,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -8439,7 +8439,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -8529,7 +8529,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -8579,7 +8579,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
     },
     {
       "name": "phase",
@@ -9145,7 +9145,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -9155,7 +9155,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' site-services.yml --tags lan-dns,traefik,stun -e target=beta_hosts -e site_id=beta -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv BETA_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' site-services.yml --tags lan-dns,traefik,stun -e target=beta_hosts -e site_id=beta -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv BETA_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -9165,7 +9165,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' lan-traefik-routes.yml -e target=beta_hosts -e site_id=beta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' lan-traefik-routes.yml -e target=beta_hosts -e site_id=beta"
     },
     {
       "name": "phase",
@@ -9175,7 +9175,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
     },
     {
       "name": "phase",
@@ -9245,7 +9245,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -9295,7 +9295,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
     },
     {
       "name": "phase",
@@ -9916,7 +9916,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -9926,7 +9926,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
     },
     {
       "name": "phase",
@@ -10016,7 +10016,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -10066,7 +10066,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
     },
     {
       "name": "phase",
@@ -10632,7 +10632,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -10642,7 +10642,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' site-services.yml --tags lan-dns,traefik,stun -e target=alpha_hosts -e site_id=alpha -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ALPHA_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' site-services.yml --tags lan-dns,traefik,stun -e target=alpha_hosts -e site_id=alpha -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ALPHA_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -10652,7 +10652,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' lan-traefik-routes.yml -e target=alpha_hosts -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' lan-traefik-routes.yml -e target=alpha_hosts -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -10662,7 +10662,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -10732,7 +10732,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -10782,7 +10782,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
     },
     {
       "name": "phase",
@@ -11403,7 +11403,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -11413,7 +11413,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -11503,7 +11503,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -11553,7 +11553,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
     },
     {
       "name": "phase",
@@ -12119,7 +12119,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -12129,7 +12129,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' site-services.yml --tags lan-dns,traefik,stun -e target=beta_hosts -e site_id=beta -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv BETA_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' site-services.yml --tags lan-dns,traefik,stun -e target=beta_hosts -e site_id=beta -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv BETA_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -12139,7 +12139,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' lan-traefik-routes.yml -e target=beta_hosts -e site_id=beta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' lan-traefik-routes.yml -e target=beta_hosts -e site_id=beta"
     },
     {
       "name": "phase",
@@ -12149,7 +12149,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
     },
     {
       "name": "phase",
@@ -12219,7 +12219,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -12269,7 +12269,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
     },
     {
       "name": "phase",
@@ -12890,7 +12890,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -12900,7 +12900,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-beta-01*' dashboard-deploy.yml -e site_id=beta"
     },
     {
       "name": "phase",
@@ -12990,7 +12990,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*' -e postgres_superuser_password=\"$(printenv BETA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -13040,7 +13040,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py beta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-beta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=beta_hosts -l 'mgmt-beta-01*'"
     },
     {
       "name": "phase",
@@ -13606,7 +13606,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv GAMMA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-gamma-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv GAMMA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -13616,7 +13616,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-gamma-01*' site-services.yml --tags lan-dns,traefik,stun -e target=gamma_hosts -e site_id=gamma -e postgres_superuser_password=\"$(printenv GAMMA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv GAMMA_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-gamma-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-gamma-01*' site-services.yml --tags lan-dns,traefik,stun -e target=gamma_hosts -e site_id=gamma -e postgres_superuser_password=\"$(printenv GAMMA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv GAMMA_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -13626,7 +13626,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-gamma-01*' lan-traefik-routes.yml -e target=gamma_hosts -e site_id=gamma"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-gamma-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-gamma-01*' lan-traefik-routes.yml -e target=gamma_hosts -e site_id=gamma"
     },
     {
       "name": "phase",
@@ -13636,7 +13636,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-gamma-01*' dashboard-deploy.yml -e site_id=gamma"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-gamma-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-gamma-01*' dashboard-deploy.yml -e site_id=gamma"
     },
     {
       "name": "phase",
@@ -13706,7 +13706,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*' -e postgres_superuser_password=\"$(printenv GAMMA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-gamma-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*' -e postgres_superuser_password=\"$(printenv GAMMA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -13756,7 +13756,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-gamma-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*'"
     },
     {
       "name": "phase",
@@ -14377,7 +14377,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv GAMMA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-gamma-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv GAMMA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -14387,7 +14387,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-gamma-01*' dashboard-deploy.yml -e site_id=gamma"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-gamma-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-gamma-01*' dashboard-deploy.yml -e site_id=gamma"
     },
     {
       "name": "phase",
@@ -14477,7 +14477,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*' -e postgres_superuser_password=\"$(printenv GAMMA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-gamma-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*' -e postgres_superuser_password=\"$(printenv GAMMA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -14527,7 +14527,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-gamma-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=gamma_hosts -l 'mgmt-gamma-01*'"
     },
     {
       "name": "phase",
@@ -15093,7 +15093,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DELTA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-delta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DELTA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -15103,7 +15103,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-delta-01*' site-services.yml --tags lan-dns,traefik,stun -e target=delta_hosts -e site_id=delta -e postgres_superuser_password=\"$(printenv DELTA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv DELTA_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-delta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-delta-01*' site-services.yml --tags lan-dns,traefik,stun -e target=delta_hosts -e site_id=delta -e postgres_superuser_password=\"$(printenv DELTA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv DELTA_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -15113,7 +15113,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-delta-01*' lan-traefik-routes.yml -e target=delta_hosts -e site_id=delta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-delta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-delta-01*' lan-traefik-routes.yml -e target=delta_hosts -e site_id=delta"
     },
     {
       "name": "phase",
@@ -15123,7 +15123,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-delta-01*' dashboard-deploy.yml -e site_id=delta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-delta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-delta-01*' dashboard-deploy.yml -e site_id=delta"
     },
     {
       "name": "phase",
@@ -15193,7 +15193,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*' -e postgres_superuser_password=\"$(printenv DELTA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-delta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*' -e postgres_superuser_password=\"$(printenv DELTA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -15243,7 +15243,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-delta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*'"
     },
     {
       "name": "phase",
@@ -15864,7 +15864,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DELTA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-delta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DELTA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -15874,7 +15874,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-delta-01*' dashboard-deploy.yml -e site_id=delta"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-delta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-delta-01*' dashboard-deploy.yml -e site_id=delta"
     },
     {
       "name": "phase",
@@ -15964,7 +15964,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*' -e postgres_superuser_password=\"$(printenv DELTA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-delta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*' -e postgres_superuser_password=\"$(printenv DELTA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -16014,7 +16014,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-delta-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=delta_hosts -l 'mgmt-delta-01*'"
     },
     {
       "name": "phase",
@@ -16580,7 +16580,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ZAGROS_DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ZAGROS_DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -16590,7 +16590,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' site-services.yml --tags lan-dns,traefik,stun -e target=zagros_dev_hosts -e site_id=zagros-dev -e postgres_superuser_password=\"$(printenv ZAGROS_DEV_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ZAGROS_DEV_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' site-services.yml --tags lan-dns,traefik,stun -e target=zagros_dev_hosts -e site_id=zagros-dev -e postgres_superuser_password=\"$(printenv ZAGROS_DEV_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ZAGROS_DEV_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -16600,7 +16600,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' lan-traefik-routes.yml -e target=zagros_dev_hosts -e site_id=zagros-dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' lan-traefik-routes.yml -e target=zagros_dev_hosts -e site_id=zagros-dev"
     },
     {
       "name": "phase",
@@ -16610,7 +16610,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' dashboard-deploy.yml -e site_id=zagros-dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' dashboard-deploy.yml -e site_id=zagros-dev"
     },
     {
       "name": "phase",
@@ -16680,7 +16680,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e postgres_superuser_password=\"$(printenv ZAGROS_DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e postgres_superuser_password=\"$(printenv ZAGROS_DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -16730,7 +16730,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*'"
     },
     {
       "name": "phase",
@@ -17351,7 +17351,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ZAGROS_DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ZAGROS_DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -17361,7 +17361,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' dashboard-deploy.yml -e site_id=zagros-dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' dashboard-deploy.yml -e site_id=zagros-dev"
     },
     {
       "name": "phase",
@@ -17451,7 +17451,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e postgres_superuser_password=\"$(printenv ZAGROS_DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e postgres_superuser_password=\"$(printenv ZAGROS_DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -17501,7 +17501,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*'"
     },
     {
       "name": "phase",
@@ -18067,7 +18067,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -18077,7 +18077,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' site-services.yml --tags lan-dns,traefik,stun -e target=alpha_hosts -e site_id=alpha -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ALPHA_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' site-services.yml --tags lan-dns,traefik,stun -e target=alpha_hosts -e site_id=alpha -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\" -e netbird_encryption_key=\"$(printenv ALPHA_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -18087,7 +18087,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' lan-traefik-routes.yml -e target=alpha_hosts -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' lan-traefik-routes.yml -e target=alpha_hosts -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -18097,7 +18097,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -18167,7 +18167,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -18217,7 +18217,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
     },
     {
       "name": "phase",
@@ -18838,7 +18838,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -18848,7 +18848,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-alpha-01*' dashboard-deploy.yml -e site_id=alpha"
     },
     {
       "name": "phase",
@@ -18938,7 +18938,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*' -e postgres_superuser_password=\"$(printenv ALPHA_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -18988,7 +18988,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py alpha_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-alpha-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=alpha_hosts -l 'mgmt-alpha-01*'"
     },
     {
       "name": "phase",
@@ -19554,7 +19554,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -19564,7 +19564,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' site-services.yml --tags lan-dns,traefik,stun -e target=dev_hosts -e site_id=dev -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\" -e netbird_encryption_key=\"$(printenv DEV_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' site-services.yml --tags lan-dns,traefik,stun -e target=dev_hosts -e site_id=dev -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\" -e netbird_encryption_key=\"$(printenv DEV_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -19574,7 +19574,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' lan-traefik-routes.yml -e target=dev_hosts -e site_id=dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' lan-traefik-routes.yml -e target=dev_hosts -e site_id=dev"
     },
     {
       "name": "phase",
@@ -19584,7 +19584,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
     },
     {
       "name": "phase",
@@ -19654,7 +19654,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -19704,7 +19704,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
     },
     {
       "name": "phase",
@@ -20325,7 +20325,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -20335,7 +20335,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
     },
     {
       "name": "phase",
@@ -20425,7 +20425,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -20475,7 +20475,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
     },
     {
       "name": "phase",
@@ -21041,7 +21041,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py prod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-prod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -21051,7 +21051,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-prod-01*' site-services.yml --tags lan-dns,traefik,stun -e target=prod_hosts -e site_id=prod -e postgres_superuser_password=\"$(printenv PROD_PG_PASS)\" -e netbird_encryption_key=\"$(printenv PROD_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py prod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-prod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-prod-01*' site-services.yml --tags lan-dns,traefik,stun -e target=prod_hosts -e site_id=prod -e postgres_superuser_password=\"$(printenv PROD_PG_PASS)\" -e netbird_encryption_key=\"$(printenv PROD_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -21061,7 +21061,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-prod-01*' lan-traefik-routes.yml -e target=prod_hosts -e site_id=prod"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py prod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-prod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-prod-01*' lan-traefik-routes.yml -e target=prod_hosts -e site_id=prod"
     },
     {
       "name": "phase",
@@ -21071,7 +21071,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-prod-01*' dashboard-deploy.yml -e site_id=prod"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py prod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-prod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-prod-01*' dashboard-deploy.yml -e site_id=prod"
     },
     {
       "name": "phase",
@@ -21141,7 +21141,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*' -e postgres_superuser_password=\"$(printenv PROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py prod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-prod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*' -e postgres_superuser_password=\"$(printenv PROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -21191,7 +21191,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py prod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-prod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*'"
     },
     {
       "name": "phase",
@@ -21812,7 +21812,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py prod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-prod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -21822,7 +21822,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-prod-01*' dashboard-deploy.yml -e site_id=prod"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py prod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-prod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-prod-01*' dashboard-deploy.yml -e site_id=prod"
     },
     {
       "name": "phase",
@@ -21912,7 +21912,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*' -e postgres_superuser_password=\"$(printenv PROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py prod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-prod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*' -e postgres_superuser_password=\"$(printenv PROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -21962,7 +21962,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py prod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-prod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=prod_hosts -l 'mgmt-prod-01*'"
     },
     {
       "name": "phase",
@@ -22528,7 +22528,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -22538,7 +22538,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' site-services.yml --tags lan-dns,traefik,stun -e target=dev_hosts -e site_id=dev -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\" -e netbird_encryption_key=\"$(printenv DEV_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' site-services.yml --tags lan-dns,traefik,stun -e target=dev_hosts -e site_id=dev -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\" -e netbird_encryption_key=\"$(printenv DEV_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -22548,7 +22548,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' lan-traefik-routes.yml -e target=dev_hosts -e site_id=dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' lan-traefik-routes.yml -e target=dev_hosts -e site_id=dev"
     },
     {
       "name": "phase",
@@ -22558,7 +22558,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
     },
     {
       "name": "phase",
@@ -22628,7 +22628,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -22678,7 +22678,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
     },
     {
       "name": "phase",
@@ -23299,7 +23299,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -23309,7 +23309,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-dev-01*' dashboard-deploy.yml -e site_id=dev"
     },
     {
       "name": "phase",
@@ -23399,7 +23399,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*' -e postgres_superuser_password=\"$(printenv DEV_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -23449,7 +23449,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=dev_hosts -l 'mgmt-dev-01*'"
     },
     {
       "name": "phase",
@@ -24015,7 +24015,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -24025,7 +24025,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' site-services.yml --tags lan-dns,traefik,stun -e target=preprod_hosts -e site_id=preprod -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\" -e netbird_encryption_key=\"$(printenv PREPROD_NB_ENCKEY)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' site-services.yml --tags lan-dns,traefik,stun -e target=preprod_hosts -e site_id=preprod -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\" -e netbird_encryption_key=\"$(printenv PREPROD_NB_ENCKEY)\""
     },
     {
       "name": "phase",
@@ -24035,7 +24035,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' lan-traefik-routes.yml -e target=preprod_hosts -e site_id=preprod"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' lan-traefik-routes.yml -e target=preprod_hosts -e site_id=preprod"
     },
     {
       "name": "phase",
@@ -24045,7 +24045,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' dashboard-deploy.yml -e site_id=preprod"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' dashboard-deploy.yml -e site_id=preprod"
     },
     {
       "name": "phase",
@@ -24115,7 +24115,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -24165,7 +24165,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*'"
     },
     {
       "name": "phase",
@@ -24786,7 +24786,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -24796,7 +24796,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' dashboard-deploy.yml -e site_id=preprod"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-preprod-01*' dashboard-deploy.yml -e site_id=preprod"
     },
     {
       "name": "phase",
@@ -24886,7 +24886,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*' -e postgres_superuser_password=\"$(printenv PREPROD_PG_PASS)\""
     },
     {
       "name": "phase",
@@ -24936,7 +24936,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*'"
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py preprod_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-preprod-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=preprod_hosts -l 'mgmt-preprod-01*'"
     },
     {
       "name": "phase",
