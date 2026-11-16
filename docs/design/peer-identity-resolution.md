@@ -70,6 +70,169 @@ here, so that every consumer gets them.
    fallback that never overrides a resolved answer. A declared-owner tier
    belongs in the registry rather than in one surface's config.
 
+## The owner comes from the record, not the roster
+
+**Status:** the resolver's record tiers for machines and for slot-linked
+devices are built (§"The resolver"). The identity handle and nationality
+stamps, declared owners for infrastructure, the ownership audit, the host
+carrier and the surface states are designed, not built; each names where it
+will be built.
+
+**The rule.** No machine, and above all no router, holds mesh access without a
+recorded responsible person and organisation. A surface that cannot show the
+owner says the lookup failed. "Not recorded" is a finding, never a label.
+
+**Why the roster cannot answer.** Until this change the resolver answered every
+peer through the declared roster (`roster.json`), which `gen-roster.py`
+generates from operator manifests. Onboarding through the identity console and
+the portal writes no manifest, so the roster stopped growing when onboarding
+moved there.
+
+### What one goatnet's records hold (audit, 2026-11-16)
+
+Every mesh peer of one goatnet (487) was read against the portal registry and
+the Kratos identities (455):
+
+| Peers | Class | What the record holds |
+|---|---|---|
+| 44 | `machine-<system>` | an enrollment row with custodian and affiliation, for every one (67 of 67 enrolled machines) |
+| 249 | person device the old resolver answered | a live identity, reached through the roster |
+| 145 | person device (`peer-<handle>-…`) the old resolver did not answer | an identity that matches the handle only by name or e-mail local part, not by a recorded link |
+| 9 | person device | no identity at all |
+| 40 | a name that carries no owner | nothing; 14 of them are the goatnet's own infrastructure |
+
+Two more facts from the same read:
+- 444 of 455 identities carry an organisation and 0 carry a nationality.
+- 0 of the 67 machine custodians are in the roster.
+
+### Where each fact is recorded
+
+| Fact | Recorded in | Read by the portal |
+|---|---|---|
+| A machine's custodian | `slots.enrolled_by` on the machine's slot (ADR 1096): the custodian's slot anchor or handle | yes |
+| A machine's unit | `slots.affiliation`, inherited from the custodian's grant. Free text until it becomes an org id (ADR 1112) | yes |
+| A person's slot and identity | `slots.assigned_to` (the handle, ADR 1039) and `slots.identity_id` (the Kratos identity, stamped at onboard) | yes |
+| A person's organisation and its nation | Kratos `metadata_public.aff {id, kind, nation}` and `.org {short_tag, display_name}`, written at mint from the approved manifest (`goat-cli` `admin.rs`, ADR 1188). The console's `orgs` table is the org registry | yes |
+| A person's handle | the approved manifest in the console's `onboard_proposals`; the mint writes it nowhere on the identity | **no** |
+| A person's own nationality | `identity.nationality` on the same approved manifest | **no** |
+| Who answers for an infrastructure peer | nowhere a resolver reads; peerview keeps a local glob map | **no** |
+
+### The resolver (built: machine custody and slot identity)
+
+`POST /api/access/peers` and `GET /api/access/peer` resolve from the record
+first. Every answer carries an `owner` block that says where each fact came
+from. The tiers, in order:
+
+1. **`machine-custody`** for a `machine-<handle>[-<host>]` peer. Built. The
+   enrolled machine's `enrolled_by` is matched to the custodian's slot by
+   anchor or alias, then to that slot's `identity_id`, then to the Kratos
+   identity. The responsible person is the custodian. The organisation and its
+   nation are the custodian's recorded `aff`. The machine's own unit
+   (`slots.affiliation`) is carried beside them.
+2. **`slot-identity`** for a `peer-<handle>-…` device. Built. The handle is
+   matched, longest first, against the aliases of slots, then to the slot's
+   `identity_id`.
+3. **`identity-handle`** for a person device with no slot link. Designed: the
+   mint stamps `metadata_public.handle` from the approved manifest, and `goat
+   admin identity resync` backfills it from the console's approved proposals.
+   The resolver then matches the peer's handle to an identity exactly, so the
+   145 approximate matches become recorded ones.
+4. **`declared`** for an infrastructure peer (management hosts, relays, DNS,
+   collaboration and help-desk hosts). Designed: a per-goatnet declaration in
+   the overlay, beside `ops/netbird/service-identities.yaml`. Each entry
+   matches peer names exactly or by an anchored pattern and names an owner
+   handle that must itself resolve to a recorded identity, plus the reason the
+   peer exists. The portal reads it through a configured path. A declaration
+   whose owner does not resolve is itself a finding.
+5. **`roster`**, a labelled fallback (`owner.source: "roster"`) while tiers 3
+   and 4 are not built.
+6. **`none`**, with a `reason` naming the missing link. Examples: no enrolled
+   machine and no slot handle matches the name; the custodian holds no live
+   slot; the slot carries no recorded identity; the identity is not in Kratos.
+
+| `owner` field | Meaning |
+|---|---|
+| `source` | `record`, `roster` or `none` (`declared` when tier 4 is built) |
+| `via` | `machine-custody` or `slot-identity`; `identity-handle` when built |
+| `person` | the responsible person: `handle`, `identity_id`, `disabled`. E-mail and display name stay in the existing `person` block |
+| `org` | `id`, `kind`, `nation` (the organisation's nation), `short_tag`, and `state`: `recorded`, or `missing` with a reason |
+| `nationality` | `value` and `state`: `recorded`, or `not_stamped` with a reason. Never filled from the organisation's nation (ADR 1171) |
+| `machine_unit` | a machine's `slots.affiliation`, as recorded |
+
+The existing top-level fields (`handle`, `org`, `nation`, `nationality`,
+`resolved`, `person`) are filled from the record when the record answers, so a
+consumer that reads only those fields improves without a change. `resolved`
+stays true only for a live, enabled identity.
+
+### The nationality stamp (designed, not built)
+
+The mint writes the authorization fields to `metadata_public` from the approved
+manifest. It also writes `metadata_public.nationality` from
+`identity.nationality` and `metadata_public.handle` from `identity.handle`.
+`goat admin identity resync` backfills both for existing identities from the
+console's approved proposals. The resolver already reads `nationality`, so it
+fills in with no portal change. Until then every answer carries
+`nationality.state: not_stamped`.
+
+### The ownership audit (designed, not built)
+
+The check that keeps the rule true runs in the portal, because the portal
+already holds the mesh peer list (`PeersForAccess`) beside the records:
+
+- `GET /api/access/ownership` (operator) resolves every mesh peer through the
+  tiers above. It returns counts by tier and class, and the peers whose
+  `owner.source` is not `record` or `declared`, each with its reason.
+- The same counts are exported as `goat_peer_owner_unrecorded{class}`. The
+  expected value is 0, and a rule on the existing Alertmanager path fires
+  while it is not.
+- A peer that is connected and unrecorded is critical. An offline one is a
+  warning until its access is removed or its owner recorded.
+
+On the audited goatnet, the built tiers take the peers the resolver could not
+answer from 238 (145 + 9 + 40 + the 44 machines) to at most 194: the 44
+machines answer from custody, and every person device with a slot link answers
+from it, which also moves roster answers onto the record. Tiers
+3 and 4 plus owner declarations for the 14 infrastructure peers leave the 9
+devices with no identity and the 26 unknown peers. Each of those needs an
+owner recorded or its access removed. That is an operator action, not code.
+
+### The carrier to the host surfaces (designed, not built)
+
+The relay-health `relay-peer-names` writer already calls the batch resolver
+every 5 minutes on the management host and writes `peer-names.json`. Two
+changes:
+
+- **It writes the `owner` block per peer.** When the portal refuses or cannot
+  be reached, it writes `owner.source: "unread"` with the HTTP status. Today it
+  writes the file with no owner fields and no marker, so a refused key is
+  invisible.
+- **A deploy check fails when the portal refuses the writer's key.** The
+  writer and peerview send one key on at least one goatnet, and the existing
+  `assert-portal-key-accepted.yml` is included by neither role.
+
+No new credential: the writer already holds a key.
+
+### The topology surface (designed, not built)
+
+`goat-topology serve` reads the `owner` block from `peer-names.json` first. The
+roster file remains only as a fallback, and the page labels it as one.
+
+| State | Shown as |
+|---|---|
+| recorded or declared | the organisation, its nation and the person, marked "from the record" |
+| lead | from the roster or the name only, marked "a lead, not the record" |
+| lookup failed | "owner not read", with the reason |
+| no record | a **critical finding**: a router in the fabric with no recorded responsible person or organisation |
+
+### The roster after this
+
+`roster.json` stops being the source of ownership. It remains a fallback only
+until every peer answers from the record or a declaration; then it is retired
+from the resolver. Designed, not built: `gen-roster.py` refuses to write a
+roster with fewer members than the committed one unless it is told to, so
+regenerating against an empty manifest folder fails loudly instead of emptying
+the file.
+
 ## The problem
 
 Surfaces that hold a **NetBird peer** (the relay-health baseball card, `goat who`, panoscope) want to resolve it to the **person** who owns it — their Ory identity, credentialing, roles, affiliations, permissions. There was no obvious link, and the natural key is empty.

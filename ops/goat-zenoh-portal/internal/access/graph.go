@@ -294,6 +294,11 @@ type MachineIn struct {
 	Custodian string
 	NodeClass string
 	SlotID    string
+	// Affiliation is slots.affiliation: the unit the machine was enrolled
+	// under, inherited from its custodian's grant. Free text until it becomes
+	// an org id (ADR 1112), so it is carried beside the custodian's recorded
+	// organisation, never in place of it.
+	Affiliation string
 }
 
 // IdentityIn is an Ory person/service. Vendor is the legacy per-identity
@@ -311,8 +316,12 @@ type IdentityIn struct {
 	AffID     string
 	AffKind   string
 	AffNation string
-	Groups    []string
-	Disabled  bool
+	// Nationality is the person's own citizenship from the identity record
+	// (metadata_public.nationality). Distinct from AffNation, the nation of
+	// the organisation (ADR 1171). Empty = the record carries none.
+	Nationality string
+	Groups      []string
+	Disabled    bool
 }
 
 // PeerIn is a Netbird mesh peer. Vendor is the matched org (peer name →
