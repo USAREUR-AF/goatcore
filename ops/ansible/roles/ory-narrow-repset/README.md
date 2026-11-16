@@ -54,6 +54,12 @@ Before any SQL runs, the role:
   Ory-side migrations have populated the tables before we try to add
   them to a repset.
 
+Before the role runs, the playbook runs
+[`spock-forward-origins-check`](../spock-forward-origins-check/README.md):
+a subscription with forward_origins set in a mesh replicates in a loop, so a
+non-empty `ory_spock_forward_origins` or any existing subscription with
+forwarding set is refused (GB-351).
+
 ## Idempotency
 
 Every SQL operation is wrapped in a catalog `EXISTS` check (or
