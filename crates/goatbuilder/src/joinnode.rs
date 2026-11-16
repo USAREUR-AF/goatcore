@@ -1248,7 +1248,7 @@ mod tests {
         let d = t.path().join("ops/goatbuilder/endstate");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("endstate.py"), "import json\nprint(json.dumps({'services': {'portal': {'present': True, 'gap': {'row': 'I1, I4', 'why': 'w1'}}, 'spire': {'present': True, 'gap': {'row': '', 'why': 'w2', 'decision': 'ADR 1164'}}}}))\n").unwrap();
-        let rows: Vec<String> = not_run(t.path(), "zagros-b").into_iter().filter(|r| r.name == "not-run").map(|r| r.detail).collect();
+        let rows: Vec<String> = not_run(t.path(), &opts("zagros-b", "core", "zagros"), None).into_iter().filter(|r| r.name == "not-run").map(|r| r.detail).collect();
         assert_eq!(
             rows,
             vec![

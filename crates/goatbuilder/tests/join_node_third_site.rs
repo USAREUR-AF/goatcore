@@ -816,6 +816,9 @@ fn every_service_gamma_declares_is_built_or_named() {
         ("mesh-coredns", "goat-coredns.yml"),
         ("fabric-health", "fabric-health-deploy.yml"),
         ("mesh-health", "mesh-health-deploy.yml"),
+        // Declared at every site since the catalog says so (#968).
+        ("zenoh-router", "zenoh-deploy.yml"),
+        ("admit-audit", "bootstrap"),
     ];
     let line = |svc: &str| {
         named
