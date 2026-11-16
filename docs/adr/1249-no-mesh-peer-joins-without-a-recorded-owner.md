@@ -79,7 +79,7 @@ Doors 1 and 2 record an owner before the key exists. Doors 3 to 6 and 8 record n
    - **Staleness.** An exception whose peer later gets a recorded owner, or leaves the mesh, is reported as stale so it can be removed.
    - **The initial file.** It is written once by `relay-peer-names.py --write-exceptions` for the peers present that day. The tool refuses when owners were not read, never overwrites, and leaves `review_by` empty.
    - **New peers.** A peer that joins later is excepted only by an entry the operator adds.
-8. **No change reaches a running peer.** This decision removes, re-keys, renames and regroups nothing. Behaviour changes only at mint time and in what the surfaces report. Anything that would change a running peer goes on the operator's list instead.
+8. **No change reaches a running peer.** This decision removes, re-keys, renames and regroups nothing. Behavior changes only at mint time and in what the surfaces report. Anything that would change a running peer goes on the operator's list instead.
 
 9. **SSO login (door 9) records an owner through its identity.** A peer admitted by SSO login carries `peer.user_id`. The reconcile treats that peer as recorded only when the NetBird user maps to a Kratos identity whose `metadata_public.aff` names an organization. Until that mapping is verified on a goatnet that enables SSO login, its SSO peers are graded unrecorded.
 
@@ -109,7 +109,7 @@ Doors 1 and 2 record an owner before the key exists. Doors 3 to 6 and 8 record n
 - Five tools change at mint time and each needs an owner argument, which makes bootstrap and bench work one step longer.
 - Door 8 stays physically open. A NetBird admin can still mint a key, and the result is detected, not prevented.
 - The reconcile depends on NetBird's peer-add activity events, which a deployment that prunes its activity log could lose. Retention must cover at least one cycle.
-- Until the console stamps a handle on each identity (designed in `peer-identity-resolution.md`), person devices without a slot link resolve only through the roster fallback. On the audited goatnet that is most person devices.
+- Until the console stamps a handle on each identity (designed in `peer-identity-resolution.md`), person devices without a slot link resolve only through the roster fallback.
 
 ## Assessor view (SCA-R)
 
