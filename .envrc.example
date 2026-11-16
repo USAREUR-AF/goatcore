@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 980 variables, 135 of them secret-bearing by name.
+# 981 variables, 136 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 135 variables.
+# 136 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -121,6 +121,9 @@ export FED_CA_KEY_FROM_AGE=""  # SECRET
 
 # ops/federation/standup/mint-peering-leaves.sh
 export FED_CA_KEY_TMP=""  # SECRET
+
+# ops/federation/standup/mint-peering-leaves.sh
+export FED_LEAF_KEY_RECORD=""  # SECRET
 
 # ops/federation-e2e/live.sh
 export FED_LIVE_GHCR_TOKEN_ENV=""  # SECRET
