@@ -221,7 +221,7 @@ CASES = [
     ('admit-audit pg_hba reload and env', 'roles/admit-audit/tasks/deploy.yml',
      ['Ensure pg_hba.conf admits admit_audit from the docker compose network',
       'Append admit-audit env vars to /opt/mgmt-host/.env'],
-     {'admit_audit_image': 'goat-admit-audit:test'}, ['postgres_superuser_password']),
+     {'admit_audit_image': 'goat-admit-audit:test'}, []),
     ('operator-idp app user smoke', 'roles/operator-idp-postgres/tasks/main.yml',
      ['Smoke — verify operator_idp app user can connect'],
      {'operator_idp_pg_container_name': 'operator-idp-postgres',
