@@ -69,7 +69,7 @@ func TestAMachineResolvesFromItsEnrolledCustodianWithNoRoster(t *testing.T) {
 }
 
 func TestAPersonsDeviceResolvesFromTheSlotIdentityWithNoRoster(t *testing.T) {
-	resp := resolvePeerName(recordSources(), "peer-rivera-j-zagros-2026-11-04-laptop")
+	resp := resolvePeerName(recordSources(), "peer-rivera-j-zagros-2026-02-09-laptop")
 	o := owner(t, resp)
 	if o["source"] != "record" || o["via"] != "slot-identity" {
 		t.Fatalf("owner = %v, want source record via slot-identity", o)
@@ -105,7 +105,7 @@ func TestNationalityIsTheIdentitysOwnAndNeverTheOrgNation(t *testing.T) {
 func TestAMissingLinkIsNamedNotLeftBlank(t *testing.T) {
 	cases := []struct{ peer, want string }{
 		{"machine-orphan-box", "holds no live slot"},
-		{"peer-okafor-n-zagros-2026-09-17-desk", "carries no recorded identity"},
+		{"peer-okafor-n-zagros-2026-01-05-desk", "carries no recorded identity"},
 		{"edge-gw-unlisted", "no enrolled machine and no slot handle"},
 	}
 	for _, c := range cases {
@@ -127,10 +127,10 @@ func TestTheRosterAnswersOnlyWhenTheRecordCannotAndSaysSo(t *testing.T) {
 		Handle: "okafor-n", Type: "person", Org: "org-birch", Status: "active",
 		EmailHash: access.EmailHash("okafor.n@example.org"),
 	}}
-	resp := resolvePeerName(src, "peer-okafor-n-zagros-2026-09-17-desk")
+	resp := resolvePeerName(src, "peer-okafor-n-zagros-2026-01-05-desk")
 	o := owner(t, resp)
 	if o["source"] != "roster" || resp["org"] != "org-birch" {
-		t.Fatalf("owner = %v org = %v, want the roster's org-birch labelled roster", o, resp["org"])
+		t.Fatalf("owner = %v org = %v, want the roster's org-birch labeled roster", o, resp["org"])
 	}
 	if !strings.Contains(o["note"].(string), "carries no recorded identity") {
 		t.Fatalf("note = %v, want it to say why the record did not answer", o["note"])
@@ -154,11 +154,11 @@ func TestADisabledRecordedOwnerIsNotResolved(t *testing.T) {
 	}
 }
 
-func TestAnIdentityWithNoOrganisationSaysSo(t *testing.T) {
+func TestAnIdentityWithNoOrganizationSaysSo(t *testing.T) {
 	src := recordSources()
 	src.Identities[0].AffID, src.Identities[0].Vendor, src.Identities[0].AffNation = "", "", ""
 	org := owner(t, resolvePeerName(src, "machine-anvil-pod-7"))["org"].(map[string]any)
-	if org["state"] != "missing" || !strings.Contains(org["reason"].(string), "no organisation") {
+	if org["state"] != "missing" || !strings.Contains(org["reason"].(string), "no organization") {
 		t.Fatalf("org = %v, want state missing with a reason", org)
 	}
 }

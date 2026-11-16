@@ -236,7 +236,7 @@ func (s *Server) collectAccessSources(ctx context.Context) (access.Sources, []ac
 // identityNationality returns metadata_public.nationality: the PERSON's own
 // citizenship (ADR 1171), ISO 3166-1 alpha-3. Read from admin-managed metadata
 // only, never from self-editable traits, and never derived from the
-// organisation's nation in aff. Empty means the identity record carries none:
+// organization's nation in aff. Empty means the identity record carries none:
 // the approved manifest holds it, and stamping it onto the identity is
 // designed, not built (docs/design/peer-identity-resolution.md).
 func identityNationality(id kratosadmin.Identity) string {
@@ -495,7 +495,7 @@ func (a ownerAnswer) row(src access.Sources, name string) map[string]any {
 	org := map[string]any{"id": id.AffID, "kind": id.AffKind, "nation": id.AffNation, "short_tag": id.Vendor}
 	if orgID == "" {
 		org["state"] = "missing"
-		org["reason"] = "the identity record carries no organisation (metadata_public.aff and .org are absent)"
+		org["reason"] = "the identity record carries no organization (metadata_public.aff and .org are absent)"
 	} else {
 		org["state"] = "recorded"
 	}
@@ -516,7 +516,7 @@ func (a ownerAnswer) row(src access.Sources, name string) map[string]any {
 		// that admitted this peer (ADR 1249 decision 3, designed). Said here
 		// so a consumer does not read this as stronger than it is.
 		"matched_by":  "peer-name",
-		"link_note":   "the slot was found by the handle in the peer name; the slot's owner, identity and organisation are recorded links",
+		"link_note":   "the slot was found by the handle in the peer name; the slot's owner, identity and organization are recorded links",
 		"person":      map[string]any{"handle": a.handle, "identity_id": id.ID, "disabled": id.Disabled},
 		"org":         org,
 		"nationality": nat,
@@ -527,7 +527,7 @@ func (a ownerAnswer) row(src access.Sources, name string) map[string]any {
 		"handle":       a.handle,
 		"org":          orgID,
 		"affiliation":  id.AffKind,
-		// Two facts, kept apart (ADR 1171): the organisation's nation and the
+		// Two facts, kept apart (ADR 1171): the organization's nation and the
 		// person's own nationality. Neither is filled from the other.
 		"nation":      id.AffNation,
 		"nationality": id.Nationality,

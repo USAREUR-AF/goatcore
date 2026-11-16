@@ -79,7 +79,7 @@ carrier and the surface states are designed, not built; each names where it
 will be built.
 
 **The rule.** No machine, and above all no router, holds mesh access without a
-recorded responsible person and organisation. A surface that cannot show the
+recorded responsible person and organization. A surface that cannot show the
 owner says the lookup failed. "Not recorded" is a finding, never a label.
 
 **Why the roster cannot answer.** Until this change the resolver answered every
@@ -88,22 +88,21 @@ generates from operator manifests. Onboarding through the identity console and
 the portal writes no manifest, so the roster stopped growing when onboarding
 moved there.
 
-### What one goatnet's records hold (audit, 2026-11-16)
+### What the records hold, peer by peer
 
-Every mesh peer of one goatnet (487) was read against the portal registry and
-the Kratos identities (455):
+An audit of every mesh peer of a goatnet against the portal registry and the
+Kratos identities sorts each peer into one of five classes:
 
-| Peers | Class | What the record holds |
-|---|---|---|
-| 44 | `machine-<system>` | an enrollment row with custodian and affiliation, for every one (67 of 67 enrolled machines) |
-| 249 | person device the old resolver answered | a live identity, reached through the roster |
-| 145 | person device (`peer-<handle>-…`) the old resolver did not answer | an identity that matches the handle only by name or e-mail local part, not by a recorded link |
-| 9 | person device | no identity at all |
-| 40 | a name that carries no owner | nothing; 14 of them are the goatnet's own infrastructure |
+| Class | What the record holds |
+|---|---|
+| `machine-<system>` | an enrollment row with custodian and affiliation |
+| person device the roster resolver answered | a live identity, reached through the roster |
+| person device (`peer-<handle>-…`) the roster resolver did not answer | an identity that matches the handle only by name or e-mail local part, not by a recorded link |
+| person device | no identity at all |
+| a name that carries no owner | nothing, including some of the goatnet's own infrastructure |
 
-Two more facts from the same read:
-- 444 of 455 identities carry an organisation and 0 carry a nationality.
-- 0 of the 67 machine custodians are in the roster.
+The identities carry an organization; none carries a nationality. Machine
+custodians onboarded through the console are not in the roster.
 
 ### Where each fact is recorded
 
@@ -112,7 +111,7 @@ Two more facts from the same read:
 | A machine's custodian | `slots.enrolled_by` on the machine's slot (ADR 1096): the custodian's slot anchor or handle | yes |
 | A machine's unit | `slots.affiliation`, inherited from the custodian's grant. Free text until it becomes an org id (ADR 1112) | yes |
 | A person's slot and identity | `slots.assigned_to` (the handle, ADR 1039) and `slots.identity_id` (the Kratos identity, stamped at onboard) | yes |
-| A person's organisation and its nation | Kratos `metadata_public.aff {id, kind, nation}` and `.org {short_tag, display_name}`, written at mint from the approved manifest (`goat-cli` `admin.rs`, ADR 1188). The console's `orgs` table is the org registry | yes |
+| A person's organization and its nation | Kratos `metadata_public.aff {id, kind, nation}` and `.org {short_tag, display_name}`, written at mint from the approved manifest (`goat-cli` `admin.rs`, ADR 1188). The console's `orgs` table is the org registry | yes |
 | A person's handle | the approved manifest in the console's `onboard_proposals`; the mint writes it nowhere on the identity | **no** |
 | A person's own nationality | `identity.nationality` on the same approved manifest | **no** |
 | Who answers for an infrastructure peer | nowhere a resolver reads; peerview keeps a local glob map | **no** |
@@ -126,7 +125,7 @@ from. The tiers, in order:
 1. **`machine-custody`** for a `machine-<handle>[-<host>]` peer. Built. The
    enrolled machine's `enrolled_by` is matched to the custodian's slot by
    anchor or alias, then to that slot's `identity_id`, then to the Kratos
-   identity. The responsible person is the custodian. The organisation and its
+   identity. The responsible person is the custodian. The organization and its
    nation are the custodian's recorded `aff`. The machine's own unit
    (`slots.affiliation`) is carried beside them.
 2. **`slot-identity`** for a `peer-<handle>-…` device. Built. The handle is
@@ -136,7 +135,7 @@ from. The tiers, in order:
    mint stamps `metadata_public.handle` from the approved manifest, and `goat
    admin identity resync` backfills it from the console's approved proposals.
    The resolver then matches the peer's handle to an identity exactly, so the
-   145 approximate matches become recorded ones.
+   approximate matches become recorded ones.
 4. **`declared`** for an infrastructure peer (management hosts, relays, DNS,
    collaboration and help-desk hosts). Designed: a per-goatnet declaration in
    the overlay, beside `ops/netbird/service-identities.yaml`. Each entry
@@ -144,7 +143,7 @@ from. The tiers, in order:
    handle that must itself resolve to a recorded identity, plus the reason the
    peer exists. The portal reads it through a configured path. A declaration
    whose owner does not resolve is itself a finding.
-5. **`roster`**, a labelled fallback (`owner.source: "roster"`) while tiers 3
+5. **`roster`**, a labeled fallback (`owner.source: "roster"`) while tiers 3
    and 4 are not built.
 6. **`none`**, with a `reason` naming the missing link. Examples: no enrolled
    machine and no slot handle matches the name; the custodian holds no live
@@ -156,15 +155,15 @@ from. The tiers, in order:
 | `via` | `machine-custody` or `slot-identity`; `identity-handle` when built |
 | `matched_by` | `peer-name` for both built tiers: see below |
 | `person` | the responsible person: `handle`, `identity_id`, `disabled`. E-mail and display name stay in the existing `person` block |
-| `org` | `id`, `kind`, `nation` (the organisation's nation), `short_tag`, and `state`: `recorded`, or `missing` with a reason |
-| `nationality` | `value` and `state`: `recorded`, or `not_stamped` with a reason. Never filled from the organisation's nation (ADR 1171) |
+| `org` | `id`, `kind`, `nation` (the organization's nation), `short_tag`, and `state`: `recorded`, or `missing` with a reason |
+| `nationality` | `value` and `state`: `recorded`, or `not_stamped` with a reason. Never filled from the organization's nation (ADR 1171) |
 | `machine_unit` | a machine's `slots.affiliation`, as recorded |
 
 **How strong a record answer is.** Both built tiers find the slot by name:
 `machine-custody` reads the machine handle in `machine-<handle>-…` and
 `slot-identity` reads the longest slot alias in `peer-<handle>-…`. Every hop
 after that is a recorded link: the slot's custodian, its `identity_id`, and the
-identity's organisation. So `matched_by: "peer-name"` says the first hop is
+identity's organization. So `matched_by: "peer-name"` says the first hop is
 the name, which the mint set from the same record but which a hand-made key
 could imitate.
 
@@ -179,14 +178,11 @@ ADR 1249 decision 3, designed and not built. `matched_by` then becomes
 | Slot | Expected to carry `identity_id` |
 |---|---|
 | A person's slot | Yes, stamped at onboard. One per person identity |
-| An organisation's own slot (vendor prefix, no person) | No |
+| An organization's own slot (vendor prefix, no person) | No |
 | A machine's slot | No. Its owner is `enrolled_by`, the custodian |
 
-On the audited goatnet, 334 of the 930 live slots that are not machine slots
-carry `identity_id`. Those 930 include organisation slots, which are not
-expected to. The number that matters is person slots without an identity:
-each one is a person device that falls back to the roster. The ownership
-audit (below) reports it.
+A person slot without an identity is a person device that falls back to the
+roster. The ownership audit (below) reports how many there are.
 
 The existing top-level fields (`handle`, `org`, `nation`, `nationality`,
 `resolved`, `person`) are filled from the record when the record answers, so a
@@ -217,13 +213,12 @@ already holds the mesh peer list (`PeersForAccess`) beside the records:
 - A peer that is connected and unrecorded is critical. An offline one is a
   warning until its access is removed or its owner recorded.
 
-On the audited goatnet, the built tiers take the peers the resolver could not
-answer from 238 (145 + 9 + 40 + the 44 machines) to at most 194: the 44
-machines answer from custody, and every person device with a slot link answers
-from it, which also moves roster answers onto the record. Tiers
-3 and 4 plus owner declarations for the 14 infrastructure peers leave the 9
-devices with no identity and the 26 unknown peers. Each of those needs an
-owner recorded or its access removed. That is an operator action, not code.
+The built tiers answer every enrolled machine from custody and every person
+device that has a slot link from it, which also moves roster answers onto the
+record. Tiers 3 and 4, plus owner declarations for the goatnet's own
+infrastructure, leave the person devices with no identity and the peers whose
+name carries no owner. Each of those needs an owner recorded or its access
+removed. That is an operator action, not code.
 
 ### The carrier to the host surfaces (designed, not built)
 
@@ -248,10 +243,10 @@ roster file remains only as a fallback, and the page labels it as one.
 
 | State | Shown as |
 |---|---|
-| recorded or declared | the organisation, its nation and the person, marked "from the record" |
+| recorded or declared | the organization, its nation and the person, marked "from the record" |
 | lead | from the roster or the name only, marked "a lead, not the record" |
 | lookup failed | "owner not read", with the reason |
-| no record | a **critical finding**: a router in the fabric with no recorded responsible person or organisation |
+| no record | a **critical finding**: a router in the fabric with no recorded responsible person or organization |
 
 ### The roster after this
 
