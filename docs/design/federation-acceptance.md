@@ -579,20 +579,58 @@ open (exit 3, X-ACCEPT-001); a retry draws a new challenge and needs the partner
 its wait.
 
 **A partner sample from an earlier run** (built, tests
-`test_derived_a_partner_sample_left_by_an_earlier_run_is_ignored_and_both_verdicts_agree` and
-`test_derived_each_run_stages_when_it_started_beside_its_samples`). Samples stay on the cores
-between runs, and an earlier run's sample carries that run's challenge. So each run stages, beside
-each sample, the time it started, in seconds since the epoch (UTC):
-`release/<set>/acceptance/<session id>/<us>/started`, written after the sample. A reader reads
-the start time first, then the sample, so the start time it holds is never newer than the sample.
-It ignores a sample whose start time is before its own start minus `FED_SESSION_WAIT`, printing
-that the partner's sample is from an earlier run, and keeps waiting for this run's. Its challenge
-is never learned, so our result never echoes it. When only an earlier run's samples are there,
-their rows are BLOCKED and the run ends open (exit 3). A sample with no start time beside it is
-from a partner whose runner does not stage one, and is read as before. A partner's earlier run
-that started within `FED_SESSION_WAIT` of ours is not told apart this way; its result is still
-refused when it echoes another challenge (GB-273, §6.1), so it can leave the two verdicts unequal
-until a rerun, never pass a stale result.
+`test_derived_a_partner_sample_left_by_an_earlier_run_is_ignored_and_both_verdicts_agree`,
+`test_derived_each_run_stamps_its_challenge_and_start_time_in_one_value` and the
+`test_derived_a_partner_*` and `test_derived_clocks_*` cases beside them). Samples stay on the
+cores between runs, and an earlier run's sample carries that run's challenge. So each run stages,
+beside each sample and before it, a run stamp: `release/<set>/acceptance/<session id>/<us>/run`,
+holding `<us>-<challenge>-<set>@<started>`, the start time in seconds since the epoch (UTC). The
+challenge and the start time are one value in one write, so a reader never pairs one run's start
+time with another run's challenge, whatever order the keys arrive in and whichever write fails.
+
+A reader takes the partner's challenge from the stamp whose sample it found, and only from that
+one (tests `test_derived_a_rerun_within_twice_the_wait_is_judged_by_the_stamp_whose_sample_matched`
+and the `test_derived_two_runs_*` and `test_derived_an_unstamped_*` cases beside it). It reads each
+of the partner's sets in turn:
+
+- A stamp that started before the reader's own start minus twice `FED_SESSION_WAIT` (`2W`) is an
+  earlier run's. Its challenge is never learned, the run prints that the partner's sample is from an
+  earlier run, and it keeps waiting for a stamp started within `2W` of its own.
+- A stamp started within `2W` is read, and the sample carrying its challenge waited for. A later
+  stamp replaces it while the reader waits, so a rerun whose first run's sample never arrived is
+  judged by the rerun's stamp and sample. When an earlier set already fixed the challenge and this
+  set's stamp carries another, the set holds two of the partner's runs: its delivery and persistence
+  rows end BLOCKED ("two of the partner's runs' stamps"), never a FAIL on other bytes.
+- A stamp that cannot be read is not there yet; the reader waits. It is never taken for a partner
+  whose runner stages no stamp.
+- No stamp, read cleanly. A sample with no stamp beside it is taken only from a partner whose runner
+  stages none, and the reader concludes that only after a whole `FED_SESSION_WAIT` on one set with no
+  stamp of the partner's on any set; later sets are then read at once. Until then it waits, because
+  this run's stamp may still be in flight: the first run after the partner upgrades, on a session id
+  that its older runner used before, finds that runner's unstamped sample, and learning it would
+  have the partner refuse our result (GB-273). Once the reader has read any stamp of the partner's,
+  it never learns from an unstamped sample; that set ends BLOCKED. A garbled stamp counts as a stamp
+  read. The cost: a partner on an older runner is read one `FED_SESSION_WAIT` later than before.
+  An unstamped sample proves no run's identity: its delivery row records `run_identity:
+  unstamped: run identity not proven`, and a later set whose unstamped sample carries another
+  challenge than the one learned is BLOCKED as two runs, never a FAIL on other bytes. An earlier
+  run's unstamped sample can still pass a set alone; its result is refused (GB-273, §6.1).
+- The delivery row reads the reason a set is not this run's before it compares bytes, so the stamp
+  decides a set whenever it says the sample is not this run's. When the wait ends without the
+  sample, the row is BLOCKED and its reason names what is there: a stamp from the partner's earlier
+  run, a stamp started within `2W` beside an earlier run's sample, that stamp with no sample, two
+  runs' stamps, or an unstamped sample from a partner that stamps. The run ends open (exit 3), with
+  no FAIL row. A sample of another shape beside a stamp started within `2W` is a FAIL (other bytes),
+  as on any lane. A stamp's own sample read at the end of the wait is this run's, and passes.
+
+**The clock tolerance.** Let `W` be `FED_SESSION_WAIT`, `x` how long before us the partner's run
+started, and `D` how far the partner's clock runs behind ours (negative when ahead). A fresh sample
+is kept when `x + D <= 2W`. Both sides start within `W` of each other (`x <= W`), so a fresh sample
+is kept whenever the two clocks agree within `W`. An earlier run is told apart when it started
+more than `2W - D` before ours, that is more than `2W` with agreeing clocks. An earlier run that
+started closer than that is not told apart; its result is still refused when it echoes another
+challenge (GB-273, §6.1), so it can leave the two verdicts unequal until a rerun, never pass a
+stale result.
 
 This rests on the two sides' clocks agreeing within `FED_SESSION_WAIT`. Phase 1's preflight
 checks that each of our hosts' clocks is synchronized and within its budget (GB-268), and
