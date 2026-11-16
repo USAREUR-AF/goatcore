@@ -154,10 +154,39 @@ from. The tiers, in order:
 |---|---|
 | `source` | `record`, `roster` or `none` (`declared` when tier 4 is built) |
 | `via` | `machine-custody` or `slot-identity`; `identity-handle` when built |
+| `matched_by` | `peer-name` for both built tiers: see below |
 | `person` | the responsible person: `handle`, `identity_id`, `disabled`. E-mail and display name stay in the existing `person` block |
 | `org` | `id`, `kind`, `nation` (the organisation's nation), `short_tag`, and `state`: `recorded`, or `missing` with a reason |
 | `nationality` | `value` and `state`: `recorded`, or `not_stamped` with a reason. Never filled from the organisation's nation (ADR 1171) |
 | `machine_unit` | a machine's `slots.affiliation`, as recorded |
+
+**How strong a record answer is.** Both built tiers find the slot by name:
+`machine-custody` reads the machine handle in `machine-<handle>-…` and
+`slot-identity` reads the longest slot alias in `peer-<handle>-…`. Every hop
+after that is a recorded link: the slot's custodian, its `identity_id`, and the
+identity's organisation. So `matched_by: "peer-name"` says the first hop is
+the name, which the mint set from the same record but which a hand-made key
+could imitate.
+
+The link becomes recorded end to end when the slot (or the approved proposal,
+for a person) carries the setup key id that admitted the peer, and the
+resolver joins the peer to it through NetBird's peer-add event. That is
+ADR 1249 decision 3, designed and not built. `matched_by` then becomes
+`setup-key`.
+
+**Which slots carry an identity.**
+
+| Slot | Expected to carry `identity_id` |
+|---|---|
+| A person's slot | Yes, stamped at onboard. One per person identity |
+| An organisation's own slot (vendor prefix, no person) | No |
+| A machine's slot | No. Its owner is `enrolled_by`, the custodian |
+
+On the audited goatnet, 334 of the 930 live slots that are not machine slots
+carry `identity_id`. Those 930 include organisation slots, which are not
+expected to. The number that matters is person slots without an identity:
+each one is a person device that falls back to the roster. The ownership
+audit (below) reports it.
 
 The existing top-level fields (`handle`, `org`, `nation`, `nationality`,
 `resolved`, `person`) are filled from the record when the record answers, so a

@@ -507,8 +507,16 @@ func (a ownerAnswer) row(src access.Sources, name string) map[string]any {
 		nat["reason"] = "the identity record carries no nationality; it is held on the approved manifest and not yet stamped onto the identity"
 	}
 	owner := map[string]any{
-		"source":      "record",
-		"via":         a.via,
+		"source": "record",
+		"via":    a.via,
+		// The first hop of both record tiers is still the peer NAME: the
+		// machine or slot handle is found in the name the key minted. Every
+		// hop after it is a recorded link. The link is recorded end to end
+		// only when the slot carries the setup key id or the NetBird peer id
+		// that admitted this peer (ADR 1249 decision 3, designed). Said here
+		// so a consumer does not read this as stronger than it is.
+		"matched_by":  "peer-name",
+		"link_note":   "the slot was found by the handle in the peer name; the slot's owner, identity and organisation are recorded links",
 		"person":      map[string]any{"handle": a.handle, "identity_id": id.ID, "disabled": id.Disabled},
 		"org":         org,
 		"nationality": nat,

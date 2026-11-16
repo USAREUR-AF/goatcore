@@ -50,6 +50,9 @@ func TestAMachineResolvesFromItsEnrolledCustodianWithNoRoster(t *testing.T) {
 		if o["source"] != "record" || o["via"] != "machine-custody" {
 			t.Fatalf("%s: owner = %v, want source record via machine-custody", peer, o)
 		}
+		if o["matched_by"] != "peer-name" {
+			t.Fatalf("%s: matched_by = %v, want peer-name: the first hop is the name, and the answer must say so", peer, o["matched_by"])
+		}
 		if resp["handle"] != "rivera-j" || resp["resolved"] != true {
 			t.Fatalf("%s: handle/resolved = %v/%v, want the custodian rivera-j, resolved", peer, resp["handle"], resp["resolved"])
 		}
