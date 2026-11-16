@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Written.** Options for a decision the operator has not yet made. It decides one open row of the 1.0 gate, group D, "A pull converger" |
+| Status | **Decided.** The operator decided (15 Nov) option A: 1.0 ships push only, and pull arrives later as a value of `converger:`. The gate's group D row "A pull converger" records it, with the items it leaves before 1.0 |
 | Design | [goatbuilder.md](goatbuilder.md) (the converger interface) · [fleet-management.md](fleet-management.md) (P8 and §5, convergence is pulled) · [ADR 1198](../adr/1198-goatbuilder-config-driven-deploy-release-cli.md) · [ADR 1109](../adr/1109-fleet-management-dimension-and-pull-convergence.md) |
 | Audience | the operator, who decides; anyone who later needs to know why 1.0 was cut the way it was |
 

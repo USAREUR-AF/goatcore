@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use serde::Deserialize;
 
 use crate::config;
@@ -340,14 +340,18 @@ fn driver_plan(dc: &DriverCore, partner: &str, dir: &Path) -> Result<serde_json:
             .arg(dir)
             .output(),
     }
-    .with_context(|| format!("run {}", dc.tool.display()))?;
+    .map_err(|e| goat_errors::coded("GB-320", format!("could not start {}: {e}", dc.tool.display())))?;
     let text = String::from_utf8_lossy(&out.stdout);
-    serde_json::from_str(text.trim()).with_context(|| {
-        format!(
-            "{} gave no plan: {}",
-            dc.tool.display(),
-            String::from_utf8_lossy(&out.stderr).trim()
+    serde_json::from_str(text.trim()).map_err(|_| {
+        goat_errors::coded(
+            "GB-315",
+            format!(
+                "{} gave no plan: {}",
+                dc.tool.display(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
         )
+        .into()
     })
 }
 
@@ -1018,9 +1022,10 @@ pub fn read_records(dir: &Path) -> Result<Vec<HostRecord>> {
         .collect();
     paths.sort();
     for p in paths {
-        let text = std::fs::read_to_string(&p).with_context(|| format!("read {}", p.display()))?;
+        let text = std::fs::read_to_string(&p)
+            .map_err(|e| goat_errors::coded("GB-321", format!("cannot read the back-out host record {}: {e}", p.display())))?;
         let rec: HostRecord = serde_json::from_str(&text)
-            .with_context(|| format!("{} is not a back-out host record", p.display()))?;
+            .map_err(|e| goat_errors::coded("GB-321", format!("{} is not a back-out host record ({e})", p.display())))?;
         out.push(rec);
     }
     Ok(out)
@@ -1289,7 +1294,7 @@ fn run_bash(repo: &Path, cmd: &str) -> Result<bool> {
         .args(["-euo", "pipefail", "-c", cmd])
         .current_dir(repo)
         .status()
-        .context("bash")?
+        .map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?
         .success())
 }
 
@@ -1390,13 +1395,17 @@ pub fn backout_with(
     let cfg = config::load(&cfg_path)?;
     if let Some(env) = o.env {
         if !cfg.environments.iter().any(|e| e.name == env) {
-            return Err(anyhow!(
-                "unknown environment \"{env}\"; declared: {:?}",
-                cfg.environments
-                    .iter()
-                    .map(|e| e.name.as_str())
-                    .collect::<Vec<_>>()
-            ));
+            return Err(goat_errors::coded(
+                "GB-241",
+                format!(
+                    "unknown environment \"{env}\"; declared: {:?}",
+                    cfg.environments
+                        .iter()
+                        .map(|e| e.name.as_str())
+                        .collect::<Vec<_>>()
+                ),
+            )
+            .into());
         }
     }
     let declared = cfg
@@ -1651,12 +1660,14 @@ pub fn backout_with(
     }
     for rec in &recs {
         if rec.peering != t.partner {
-            return Err(anyhow!(
-                "{} answered for peering '{}', not '{}'",
-                rec.host,
-                rec.peering,
-                t.partner
-            ));
+            return Err(goat_errors::coded(
+                "GB-253",
+                format!(
+                    "{} answered for peering '{}', not '{}'",
+                    rec.host, rec.peering, t.partner
+                ),
+            )
+            .into());
         }
         for r in &rec.rows {
             checks.push(row(
@@ -1831,7 +1842,7 @@ pub fn backout_with(
         let mut line = String::new();
         std::io::stdin()
             .read_line(&mut line)
-            .context("read the confirmation")?;
+            .map_err(|e| goat_errors::coded("GB-316", format!("the confirmation could not be read from the terminal ({e}): pass --yes without a terminal")))?;
         if line.trim() != t.partner {
             checks.push(row(
                 "confirm",
@@ -2135,8 +2146,9 @@ pub fn backout_with(
 
     // 7 the partner record, then the survey again
     if core_done && rec_ours == Some(true) {
-        std::fs::remove_file(&rec_path)
-            .with_context(|| format!("delete {}", rec_path.display()))?;
+        std::fs::remove_file(&rec_path).map_err(|e| {
+            goat_errors::coded("GB-323", format!("cannot delete {} from the checkout: {e}", rec_path.display()))
+        })?;
         checks.push(row(
             "partner-record",
             true,
