@@ -854,8 +854,12 @@
               CLI output (key plaintext is in here):
               {{ create_key.stdout }}
               -----------------------------------------------------------
+              {% if setup_key_custody is defined %}
+              {{ setup_key_custody }}
+              {% else %}
               Copy to 1Password as
                 "goat / {{ site_id }} / bootstrap key / <today>"
+              {% endif %}
               Revoke within 24 h via:
                 mgmt-host-bootstrap rotate-setup-key --id <sk_...>
               -----------------------------------------------------------

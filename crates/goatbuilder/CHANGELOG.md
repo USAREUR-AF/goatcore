@@ -70,6 +70,15 @@ writes it; it said phase 3. The browser step that pauses a LAN standup at
 phase 11 names `goatbuilder secrets hint <SITE>_NB_API_TOKEN` as the command
 that says where to store the token, instead of the posture script behind it.
 
+#### Fixed: a goatlite standup no longer points at 1Password or goatbuilder.yaml
+
+Phase 6 of a goatlite standup told the learner to copy the bootstrap setup key
+to 1Password. It now says to keep the key only until it enrols the first peer,
+and only in the goatnet's local secrets store. Phase 1 told a goatlite to
+declare `secrets: {store: env-file}` in `ops/goatbuilder/goatbuilder.yaml`, a
+file a goatlite does not have; under goatlite it no longer gives that advice.
+The full preset's text is unchanged in both places.
+
 #### Fixed: `teardown` says what each host had, stops the LAN surfaces, and names a refused stop's cause
 
 Each stop of `goatbuilder teardown` and `ops/scripts/goat-teardown.sh` now
