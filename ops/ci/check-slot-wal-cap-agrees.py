@@ -109,7 +109,8 @@ def image_value(repo: str):
     def walk(path: str, depth: int):
         if depth > 10 or not os.path.isfile(path):
             return
-        text = open(path, encoding="utf-8").read()
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
         for n, line in enumerate(text.splitlines(), 1):
             inc = INCLUDE.match(line)
             if inc:
@@ -184,7 +185,9 @@ def allowed(repo: str, bad: list[str], tracked: set[str]) -> set[str]:
     if not os.path.isfile(p):
         return set()
     out = set()
-    for n, line in enumerate(open(p, encoding="utf-8").read().splitlines(), 1):
+    with open(p, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    for n, line in enumerate(lines, 1):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         parts = line.split(None, 1)
@@ -303,10 +306,12 @@ def self_test(repo: str) -> int:
 
     def swap(d):
         p = os.path.join(d, README)
-        s = open(p, encoding="utf-8").read()
+        with open(p, encoding="utf-8") as fh:
+            s = fh.read()
         rows = table_values(section(s)[1])
         s = s.replace(f"| {rows['image']} |", "| @IMAGE@ |", 1).replace(f"| {rows['role']} |", f"| {rows['image']} |", 1)
-        open(p, "w", encoding="utf-8").write(s.replace("| @IMAGE@ |", f"| {rows['role']} |", 1))
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(s.replace("| @IMAGE@ |", f"| {rows['role']} |", 1))
 
     cases = {
         "a later image line moves the cap": append(IMAGE_CONF, f"\n{SETTING} = 3GB\n"),
@@ -318,9 +323,11 @@ def self_test(repo: str) -> int:
 
     def role_moves(d):
         p = os.path.join(d, ROLE_DEFAULTS)
-        s = open(p, encoding="utf-8").read()
+        with open(p, encoding="utf-8") as fh:
+            s = fh.read()
         s = re.sub(r'^postgres_max_slot_wal_keep_size:.*$', 'postgres_max_slot_wal_keep_size: "8GB"', s, flags=re.M)
-        open(p, "w", encoding="utf-8").write(s)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(s)
     cases["the role's value moves"] = role_moves
 
     failed = 0
