@@ -40,7 +40,7 @@ Doors 1 and 2 record an owner before the key exists. Doors 3 to 6 and 8 record n
 
 ## Decision
 
-1. **The rule.** A peer may join a goatnet only through a door that records a responsible person and an organization before the key exists, and that records the key's id against that owner. A peer that joins any other way is a finding, raised within one reconcile cycle and paged.
+1. **The rule.** A peer may join a goatnet only through a door that records a responsible person and an organization before the key exists, and that records the key's id against that owner. A peer that joins any other way is a finding: the reconcile counts it on its next 5-minute cycle, and the page fires once the count has held for 10 minutes.
 
 2. **Owner records for infrastructure.** Each goatnet's overlay carries a declared-owner registry for its own infrastructure peers (management hosts, relays, DNS, observability, collaboration and help-desk hosts), beside `ops/netbird/service-identities.yaml`. Each entry carries:
    - an exact name, or an anchored name pattern;
@@ -58,7 +58,7 @@ Doors 1 and 2 record an owner before the key exists. Doors 3 to 6 and 8 record n
    - **Door 7:** carries the person's record over, as today, and writes the new key id beside it.
    - **The bootstrap default changes from 200 uses to 1.** The re-mint keys stay reusable, short-lived and bounded.
 
-4. **Keys made outside these paths are not part of the process.** Door 8 is not closed in NetBird (stock NetBird, ADR 1248). It is covered by decision 5: a peer admitted by a key with no recorded owner is reported within one cycle.
+4. **Keys made outside these paths are not part of the process.** Door 8 is not closed in NetBird (stock NetBird, ADR 1248). It is covered by decision 5: a peer admitted by a key with no recorded owner is counted on the next reconcile cycle and paged 10 minutes later.
 
 5. **The reconcile.** Every cycle (5 minutes), the host writer that already reads every mesh peer and asks the portal for its owner (relay-health `relay-peer-names`) grades each peer:
    - **Recorded:** by the record tiers of [`peer-identity-resolution.md`](../design/peer-identity-resolution.md), or, once decision 3 is built, by the key id that admitted it (NetBird's peer-add activity event joined to the recorded key ids).
@@ -66,9 +66,10 @@ Doors 1 and 2 record an owner before the key exists. Doors 3 to 6 and 8 record n
    - **Excepted:** under an owner exception (decision 7). Counted in `goat_peer_owner_excepted`; it does not page.
    - **Exception stale:** under an exception, but the record now names an owner, or the peer has left the mesh. Reported for removal (`PeerOwnerExceptionStale`, warning).
    - **Lead:** answered only by the declared roster. A lead is not a record.
-   - **Unrecorded:** anything else.
+   - **Unrecorded:** anything else that was read.
+   - **Unread:** the owner was not read this cycle. A failed read is never unrecorded: it does not page, and no owner exception is written from it.
 
-   Leads and unrecorded peers are counted in `goat_peer_owner_unrecorded`, whose expected value is 0. The rule `PeerOwnerUnrecorded` pages (critical) while it is above 0. Two warnings say when the count is blind: `PeerOwnerNotRead` (the lookup failed) and `PeerOwnerReconcileStale` (the writer stopped). The names are in the writer's journal, never in the metric. Nothing is removed automatically: removing access is an operator action.
+   Leads and unrecorded peers are counted in `goat_peer_owner_unrecorded`, per host, whose expected value is 0. The rule `PeerOwnerUnrecorded` pages (critical) while it is above 0. A cycle that did not read owners carries the last read count, so a failed lookup neither clears the page nor raises it. Warnings say when the count is blind: `PeerOwnerNotRead` (the lookup failed), `PeerOwnerPartlyUnread` (some peers were not read), `PeerOwnerReconcileStale` (the writer stopped) and `PeerOwnerMetricsAbsent` (no host reports at all). The names are in the writer's journal, never in the metric. Nothing is removed automatically: removing access is an operator action.
 
 6. **Surfaces show the record.** The portal resolver answers from the record first, and every answer says its source. This is **built**: machine custody and slot identity. The host writer carries the answer, says when it could not ask, and fails its deploy when the portal refuses its key. Surfaces show an unrecorded peer, and above all an unrecorded router, as a finding, never as a gray label.
 
@@ -77,7 +78,8 @@ Doors 1 and 2 record an owner before the key exists. Doors 3 to 6 and 8 record n
    - **The public tree** carries only the schema (`ops/identity/peer-owner-exceptions.schema.json`), a synthetic example and tests.
    - **How it is shown.** An excepted peer is not counted in `goat_peer_owner_unrecorded` and does not page. It is counted in `goat_peer_owner_excepted`. Every surface that shows owners shows it as "owner exception" with its reason, never as recorded and never hidden: the peer-names card, the topology page, and any later ownership endpoint.
    - **Staleness.** An exception whose peer later gets a recorded owner, or leaves the mesh, is reported as stale so it can be removed.
-   - **The initial file.** It is written once by `relay-peer-names.py --write-exceptions` for the peers present that day. The tool refuses when owners were not read, never overwrites, and leaves `review_by` empty.
+   - **The initial file.** It is written once by `relay-peer-names.py --write-exceptions` for the peers present then, with the grant date the operator gives (`--granted-on`). The tool refuses when owners were not read, never overwrites, and leaves `review_by` empty.
+   - **A file that cannot be applied is said.** The deploy checks the file against the schema before it lands. On the host, a file that does not load, or entries that are refused, are counted and raise `PeerOwnerExceptionsNotLoaded`.
    - **New peers.** A peer that joins later is excepted only by an entry the operator adds.
 8. **No change reaches a running peer.** This decision removes, re-keys, renames and regroups nothing. Behavior changes only at mint time and in what the surfaces report. Anything that would change a running peer goes on the operator's list instead.
 
@@ -100,7 +102,7 @@ Doors 1 and 2 record an owner before the key exists. Doors 3 to 6 and 8 record n
 ## Consequences
 
 **Positive.**
-- Every peer that joins after the list's date traces to a person and an organization, or is reported within one cycle.
+- Every peer that joins after the list's date traces to a person and an organization, or is paged within about 15 minutes of joining.
 - The key id ties a peer to the act that admitted it, not just to a name.
 - Infrastructure peers have owners on record.
 - Owner exceptions make every gap countable and visible, each with a reason and the name of whoever granted it. A stale exception is reported, so the list does not outlive its reason.
@@ -122,7 +124,7 @@ Doors 1 and 2 record an owner before the key exists. Doors 3 to 6 and 8 record n
 
 **Residual risk, stated plainly:**
 - Excepted peers keep their access until the operator records an owner or decides otherwise.
-- A NetBird admin can admit a peer that is detected within one cycle but not refused.
+- A NetBird admin can admit a peer that is detected and paged, but not refused.
 
 ## Status of each decision
 
@@ -133,5 +135,5 @@ Doors 1 and 2 record an owner before the key exists. Doors 3 to 6 and 8 record n
 | 3 key ids recorded at each mint; bootstrap default of 1 use | designed, not built |
 | 5 reconcile and metric | built (`relay-peer-names` grading, `goat_peer_owner_*`, rules `peer-owner.yml` with promtool tests); the key-id tier waits on decision 3 |
 | 6 resolver from the record, host carrier | built for machines and slot-linked devices (portal resolver; relay-peer-names); the surface finding is designed |
-| 7 owner exceptions | built: schema, synthetic example, `--write-exceptions`, `goat_peer_owner_excepted` and `_exception_stale`, the card's `owner_exception`, and `PeerOwnerExceptionStale`; each goatnet's file is written on its first reconcile day. The topology page shows it (goatstuff) |
+| 7 owner exceptions | built: schema, synthetic example, `--write-exceptions`, `goat_peer_owner_excepted` and `_exception_stale`, the card's `owner_exception`, and `PeerOwnerExceptionStale`. The topology page shows it (goatstuff) |
 | 9 SSO login mapping | designed, not built |
