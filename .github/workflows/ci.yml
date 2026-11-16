@@ -204,6 +204,12 @@ jobs:
         run: |
           python3 ops/ci/check-fixture-expiry.py --self-test
           python3 ops/ci/check-fixture-expiry.py
+      # The far-term fixture's keys come from public seed names, so anyone can
+      # sign with them: its verifying keys and CA fingerprints never appear
+      # outside the fixtures and tests.
+      - name: the far-term fixture's keys and fingerprints stay in fixtures and tests
+        run: |
+          ! git grep -nF -f ops/federation/fixtures/far-term/refused-outside-fixtures.txt -- . ':!ops/federation/fixtures/' ':!tests/' ':(glob,exclude)**/tests/**'
       - name: Go vulnerability scan coverage
         run: |
           python3 ops/ci/test_go_vuln_coverage.py

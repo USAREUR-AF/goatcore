@@ -117,6 +117,16 @@ def make(binary, out):
             fh.write(canonical(p))
         paths.append(path)
         keyflags += ["--key", "%s=%s" % (sid, pub)]
+    # The values anyone can derive from the public seeds, one per line with no
+    # blank line: CI refuses each of them anywhere outside the fixtures and
+    # tests (`git grep -F -f`), so no configuration or document trusts them.
+    with open(os.path.join(out, "refused-outside-fixtures.txt"), "w") as fh:
+        for p in pkgs:
+            sid = p["sovereign_id"]
+            key = Ed25519PrivateKey.from_private_bytes(seed_of(sid)).public_key().public_bytes_raw()
+            fh.write(base64.b64encode(key).decode() + "\n")
+            fh.write(key.hex() + "\n")
+            fh.write(p["identity"]["ca_fingerprint"].split(":", 1)[1] + "\n")
     agreement = os.path.join(out, "agreement.canonical.json")
     r = subprocess.run([binary, "federate", "compose", paths[0], paths[1], *keyflags,
                         "--now", ISSUED, "--out", agreement], capture_output=True, text=True)
@@ -130,7 +140,7 @@ def make(binary, out):
 
 OUTPUTS = ("agreement.canonical.json", "agreement.digest.txt",
            "package-xta.canonical.json", "package-xtb.canonical.json",
-           "keys/xta.public.b64", "keys/xtb.public.b64")
+           "keys/xta.public.b64", "keys/xtb.public.b64", "refused-outside-fixtures.txt")
 
 
 def main(argv):

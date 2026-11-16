@@ -13,7 +13,10 @@ two packages between the test parties `xta` and `xtb`, both expiring
 - **Test keys.** Each package is signed with an Ed25519 key whose seed is a
   fixed public name in [`generate.py`](generate.py). Anyone can sign with it;
   a signature by one proves nothing about who made a package. Only the public
-  halves are committed (`keys/`).
+  halves are committed (`keys/`). Because anyone can derive the private
+  halves, CI refuses the verifying keys and the CA fingerprints, listed in
+  `refused-outside-fixtures.txt`, in any tracked file outside
+  `ops/federation/fixtures/` and `tests/` directories.
 - **Made, not edited.** `python3 generate.py <goat or goatbuilder>` writes
   every file here; `generate.py --check <binary>` makes it again in a scratch
   directory and fails unless it matches byte for byte, or once the fixture is
