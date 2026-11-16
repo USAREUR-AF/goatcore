@@ -271,11 +271,18 @@ class Reconcile(unittest.TestCase):
         self.assertIn("goat_peer_owner_read 1", text)
         self.assertNotIn("edge-gw-unlisted", text, "names stay out of the metric")
 
-    def test_an_unread_cycle_is_not_counted_as_unrecorded(self):
+    def test_an_unread_cycle_writes_no_fresh_count(self):
+        # Review item 3: an unread cycle used to write unrecorded 0, which
+        # cleared the critical page. It carries the last read count, or none.
         cards = {k: dict(c, owner={"source": "unread", "reason": "401"}) for k, c in self.cards().items()}
         text = rpn.owner_metrics(cards, {"state": "unread"}, {}, now=5)
         self.assertIn("goat_peer_owner_read 0", text)
-        self.assertIn('goat_peer_owner_unrecorded{class="other"} 0', text)
+        self.assertNotIn("goat_peer_owner_unrecorded{", text)
+        before = rpn.owner_metrics(self.cards(), {"state": "read"}, {}, now=3)
+        text = rpn.owner_metrics(cards, {"state": "unread"}, {}, now=5, previous=before)
+        self.assertIn('goat_peer_owner_unrecorded{class="other"} 2', text)
+        self.assertIn("goat_peer_owner_counts_timestamp_seconds 3", text)
+        self.assertIn("goat_peer_owner_last_run_timestamp_seconds 5", text)
 
     def test_an_incomplete_exception_is_refused_and_the_file_must_carry_its_schema(self):
         with tempfile.TemporaryDirectory() as d:
@@ -293,11 +300,16 @@ class Reconcile(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "exc.json")
             with self.assertRaises(SystemExit):
-                rpn.write_exceptions(self.cards(), {"state": "unread"}, path, "ops-lead", "r")
+                rpn.write_exceptions(self.cards(), {"state": "unread"}, path, "ops-lead", "r", "2026-01-05")
             with self.assertRaises(SystemExit):
-                rpn.write_exceptions(self.cards(), {"state": "read"}, path, "", "r")
+                rpn.write_exceptions(self.cards(), {"state": "read"}, path, "", "r", "2026-01-05")
+            # The operator states the date; the tool never picks one.
+            for bad in (None, "", "2026-1-5", "2026-02-30"):
+                with self.assertRaises(SystemExit):
+                    rpn.write_exceptions(self.cards(), {"state": "read"}, path, "ops-lead", "r", bad)
+                self.assertFalse(os.path.exists(path))
             rpn.write_exceptions(self.cards(), {"state": "read"}, path, "ops-lead",
-                                 "present before the owner rule", today="2026-01-05")
+                                 "present before the owner rule", "2026-01-05")
             with open(path) as f:
                 doc = json.load(f)
             self.assertEqual(doc["schema"], rpn.EXCEPTIONS_SCHEMA)
@@ -305,7 +317,7 @@ class Reconcile(unittest.TestCase):
             self.assertTrue(all("review_by" not in e for e in doc["exceptions"]))
             self.assertTrue(all(e["granted_on"] == "2026-01-05" for e in doc["exceptions"]))
             with self.assertRaises(SystemExit):
-                rpn.write_exceptions(self.cards(), {"state": "read"}, path, "ops-lead", "r")
+                rpn.write_exceptions(self.cards(), {"state": "read"}, path, "ops-lead", "r", "2026-01-05")
             self.assertEqual(sorted(rpn.load_exceptions(path)), ["p2", "p3", "p4"])
 
     def test_the_public_example_validates_against_the_schema_shape(self):

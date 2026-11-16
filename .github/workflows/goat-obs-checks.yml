@@ -60,6 +60,7 @@ on:
       - 'ops/relay/health/relay-peer-names.py'
       - 'ops/relay/health/test_relay_peer_names_owner.py'
       - 'ops/relay/health/test_peer_names_role.py'
+      - 'ops/relay/health/test_relay_peer_names_cli.py'
       - 'ops/ansible/roles/relay-health/tasks/peer-names.yml'
       - 'ops/identity/peerowner.py'
       - 'ops/identity/test_peerowner.py'
@@ -293,4 +294,4 @@ jobs:
           python -m pip install --quiet jinja2 pyyaml
           python -m py_compile ops/relay/health/relay-peer-names.py
           python -W error::ResourceWarning ops/identity/test_peerowner.py
-          cd ops/relay/health && python -W error::ResourceWarning -m unittest test_relay_peer_names_owner test_peer_names_role -v
+          cd ops/relay/health && python -W error::ResourceWarning -m unittest test_relay_peer_names_owner test_peer_names_role test_relay_peer_names_cli -v

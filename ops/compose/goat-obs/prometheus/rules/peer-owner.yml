@@ -7,26 +7,33 @@
 # counted unrecorded. A peer under an owner exception the operator granted
 # (ADR 1249 decision 7: one entry per peer, with a reason, who granted it and
 # when) is counted in goat_peer_owner_excepted, not here, and is shown as an
-# owner exception on every surface. NO names in the metric; the names are in the writer's journal
-# (`journalctl -u relay-peer-names`). Nothing here removes a peer: removing
-# access is an operator action.
+# owner exception on every surface. NO names in the metric; the names are in
+# the writer's journal (`journalctl -u relay-peer-names`). Nothing here removes
+# a peer: removing access is an operator action.
+#
+# Every rule keeps the instance label: each management host runs its own
+# writer, and an alert names the host it came from. A cycle that could not
+# read owners carries the last read count (goat_peer_owner_counts_timestamp_
+# seconds says when it was read), so a failed lookup neither clears nor raises
+# the critical page; PeerOwnerNotRead says the count is old.
 groups:
   - name: peer-owner
     rules:
       # GATE: a peer has no recorded or declared owner and no owner exception.
       # Expected 0 at all times.
       - alert: PeerOwnerUnrecorded
-        expr: sum by (class) (goat_peer_owner_unrecorded) > 0
+        expr: sum by (instance, class) (goat_peer_owner_unrecorded) > 0
         for: 10m
         labels:
           severity: critical
           component: identity
         annotations:
-          summary: "{{ $value }} {{ $labels.class }} mesh peer(s) have no recorded owner"
-          description: "{{ $value }} mesh peer(s) of class {{ $labels.class }} have no recorded responsible person and organization and no owner exception (ADR 1249). Record the owner through enrollment or onboarding, declare it if the peer is ours, or ask the operator for an owner exception or a decision on its access. Names: `journalctl -u relay-peer-names` on the mgmt host."
+          summary: "{{ $value }} {{ $labels.class }} mesh peer(s) have no recorded owner ({{ $labels.instance }})"
+          description: "{{ $value }} mesh peer(s) of class {{ $labels.class }}, reported by {{ $labels.instance }}, have no recorded responsible person and organization and no owner exception (ADR 1249). Record the owner through enrollment or onboarding, declare it if the peer is ours, or ask the operator for an owner exception or a decision on its access. Names: `journalctl -u relay-peer-names` on that host."
 
-      # BLIND: the owner lookup failed (key refused, portal down), so the count
-      # above is unknown, not zero.
+      # BLIND: the owner lookup failed (key refused, portal down, or the
+      # portal's own owner sources failed), so the count above is the last
+      # read one, not this cycle's.
       - alert: PeerOwnerNotRead
         expr: goat_peer_owner_read == 0
         for: 30m
@@ -34,8 +41,8 @@ groups:
           severity: warning
           component: identity
         annotations:
-          summary: "peer owners could not be read for 30m"
-          description: "goat_peer_owner_read=0: relay-peer-names could not ask the portal's owner resolver (key refused, portal unreachable or no key configured). Unowned peers are not being detected. Check `journalctl -u relay-peer-names` and that the portal accepts relay_peer_names_portal_key."
+          summary: "peer owners could not be read for 30m ({{ $labels.instance }})"
+          description: "goat_peer_owner_read=0 on {{ $labels.instance }}: relay-peer-names could not read owners from the portal (key refused, portal unreachable, no key configured, or the portal could not read its own owner sources). New unowned peers are not being detected; the unrecorded count is the last one read. Check `journalctl -u relay-peer-names` and that the portal accepts relay_peer_names_portal_key."
 
       # STALE: the reconcile stopped running, so silence is "blind", not "clear".
       - alert: PeerOwnerReconcileStale
@@ -45,18 +52,56 @@ groups:
           severity: warning
           component: identity
         annotations:
-          summary: "the peer owner reconcile has not run for over 30m"
-          description: "goat_peer_owner_last_run_timestamp_seconds is stale: relay-peer-names is not running. Unowned peers are not being detected until it recovers."
+          summary: "the peer owner reconcile has not run for over 30m ({{ $labels.instance }})"
+          description: "goat_peer_owner_last_run_timestamp_seconds is stale on {{ $labels.instance }}: relay-peer-names is not running. Unowned peers are not being detected until it recovers."
 
-      # HOUSEKEEPING: an owner exception no longer applies: its peer now has a
-      # recorded owner, or has left the mesh. Remove the entry from the
-      # goatnet's exceptions file so the list stays true.
-      - alert: PeerOwnerExceptionStale
-        expr: sum by (reason) (goat_peer_owner_exception_stale) > 0
+      # ABSENT: no host reports owners at all (the writer never ran, or
+      # relay_health_textfile_out is unset so it has no textfile). Silence
+      # here is "nobody is looking", not "every peer is owned".
+      - alert: PeerOwnerMetricsAbsent
+        expr: absent(goat_peer_owner_last_run_timestamp_seconds)
         for: 1h
         labels:
           severity: warning
           component: identity
         annotations:
-          summary: "{{ $value }} owner exception(s) to remove ({{ $labels.reason }})"
-          description: "{{ $value }} owner exception(s) no longer apply: reason=recorded means the peer now has a recorded owner, reason=peer_gone means it has left the mesh. Remove them from the goatnet's owner exceptions file in the overlay. Names: `journalctl -u relay-peer-names` on the mgmt host."
+          summary: "no host reports peer owners"
+          description: "goat_peer_owner_last_run_timestamp_seconds is absent: no relay-peer-names writer is reporting the peer owner reconcile (ADR 1249), so unowned peers are not being detected. Set relay_health_textfile_out for the management host's relay-health role and check `systemctl status relay-peer-names.timer`."
+
+      # PARTLY BLIND: the lookup answered but some peers' owners were not read
+      # (no row for the name, a malformed row). Those peers are in no count.
+      - alert: PeerOwnerPartlyUnread
+        expr: (sum by (instance) (goat_peer_owner_peers{state="unread"}) > 0) and on (instance) (goat_peer_owner_read == 1)
+        for: 30m
+        labels:
+          severity: warning
+          component: identity
+        annotations:
+          summary: "{{ $value }} peer(s) whose owner was not read ({{ $labels.instance }})"
+          description: "The owner lookup on {{ $labels.instance }} answered, but {{ $value }} peer(s) came back with no readable owner, so they are in neither the unrecorded nor the recorded count. Names: `journalctl -u relay-peer-names` on that host (\"whose owner was not read\")."
+
+      # EXCEPTIONS NOT APPLIED: the host was given an owner exceptions file and
+      # it did not load, or some entries were refused. The excepted peers then
+      # count as unrecorded; this says why.
+      - alert: PeerOwnerExceptionsNotLoaded
+        expr: (goat_peer_owner_exceptions_configured == 1 and goat_peer_owner_exceptions_loaded == 0) or goat_peer_owner_exceptions_refused > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: identity
+        annotations:
+          summary: "owner exceptions not fully applied ({{ $labels.instance }})"
+          description: "The owner exceptions file on {{ $labels.instance }} did not load, or some of its entries were refused (wrong schema, a bad date, an unknown key, a repeated peer id). Peers it should except are counted as unrecorded. Run `relay-peer-names.py --check-exceptions <file>` against the overlay's file; the journal names each refused entry."
+
+      # HOUSEKEEPING: an owner exception no longer applies: its peer now has a
+      # recorded owner, or has left the mesh. Remove the entry from the
+      # goatnet's exceptions file so the list stays true.
+      - alert: PeerOwnerExceptionStale
+        expr: sum by (instance, reason) (goat_peer_owner_exception_stale) > 0
+        for: 1h
+        labels:
+          severity: warning
+          component: identity
+        annotations:
+          summary: "{{ $value }} owner exception(s) to remove ({{ $labels.reason }}, {{ $labels.instance }})"
+          description: "{{ $value }} owner exception(s) reported by {{ $labels.instance }} no longer apply: reason=recorded means the peer now has a recorded owner, reason=peer_gone means it has left the mesh. Remove them from the goatnet's owner exceptions file in the overlay. Names: `journalctl -u relay-peer-names` on that host."

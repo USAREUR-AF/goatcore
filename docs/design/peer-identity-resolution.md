@@ -215,7 +215,7 @@ host, every 5 minutes (ADR 1249 decisions 5 and 7). Each peer is graded:
 | `exception_stale` | under an owner exception, but the record now names an owner: counted as recorded, and the exception is reported for removal |
 | `lead` | `owner.source: roster`: a lead, not a record |
 | `unrecorded` | `owner.source: none` |
-| `unread` | the owner lookup failed this cycle |
+| `unread` | the owner was not read this cycle: the lookup failed, the portal could not read its own owner sources, or the answer for the peer was missing or malformed |
 
 **Owner exceptions.** An exception is a decision the operator made about one
 peer, not a gap in the rule.
@@ -229,21 +229,42 @@ peer, not a gap in the rule.
   - `name`, as granted;
   - `reason`, `granted_by` and `granted_on`;
   - optionally `review_by`, which only the operator sets: no tool fills it in.
-  An entry missing any required field is refused and logged.
+
+  The writer enforces the schema and never crashes on the file:
+  - A file that is missing, unreadable, of the wrong schema or the wrong
+    shape is not loaded. No exception applies, and the metrics say so.
+  - An entry with a required field missing or empty, a date that is not
+    `YYYY-MM-DD`, or a key the schema does not have is refused, counted and
+    logged.
+  - Two entries for one peer id are both refused: neither is the decision.
+
+  The deploy checks the overlay's file with `relay-peer-names.py
+  --check-exceptions` before it lands, so a bad file fails the deploy. With no
+  file in the overlay, any file left on the host is removed.
 - **How it is shown.** The writer puts `owner_exception {reason, granted_by,
   granted_on, review_by, state}` on the peer's card in `peer-names.json`. Every
   surface that shows owners shows it as "owner exception" with its reason,
   never as recorded and never hidden.
 - **When it goes stale.** An exception whose peer now has a recorded owner, or
-  has left the mesh, is reported as stale so it can be removed.
+  has left the mesh, is reported as stale so it can be removed. The journal
+  names both kinds.
 - **The initial file.** `relay-peer-names.py --write-exceptions <path>
-  --granted-by <who> --reason <why>` writes it once, with one entry for every
-  peer present that day without a recorded or declared owner. It refuses when
-  the owners were not read, refuses to overwrite, and leaves `review_by`
-  empty. Later changes are made by hand in the overlay.
+  --granted-by <who> --reason <why> --granted-on <YYYY-MM-DD>` writes it once,
+  with one entry for every peer present without a recorded or declared owner.
+  - The operator states the grant date; the tool never picks one.
+  - It refuses when the owners were not read, including when the portal could
+    not read its own owner sources.
+  - It never overwrites: the file is opened for exclusive creation.
+  - It leaves `review_by` empty.
+
+  Later changes are made by hand in the overlay.
 
 **The metrics.** A node-exporter textfile (`relay_peer_names_owner_textfile`,
-by default beside the relay-health textfile) carries counts only:
+by default beside the relay-health textfile) carries counts only. A cycle that
+did not read owners writes no fresh count. It carries the last read cycle's
+counts and the time they were read, so a failed lookup neither clears the
+critical page nor raises one. With no earlier read, the counts are absent,
+never 0.
 
 | Metric | Counts |
 |---|---|
@@ -251,19 +272,27 @@ by default beside the relay-health textfile) carries counts only:
 | `goat_peer_owner_excepted{class}` | peers under an active exception |
 | `goat_peer_owner_exception_stale{reason}` | `recorded`, or `peer_gone` |
 | `goat_peer_owner_peers{state,class,connected}` | every state |
+| `goat_peer_owner_counts_timestamp_seconds` | when the three counts above were read |
 | `goat_peer_owner_read`, `goat_peer_owner_last_run_timestamp_seconds` | whether, and when, the lookup ran |
+| `goat_peer_owner_exceptions_configured`, `_loaded`, `_refused` | whether the host was given an exceptions file, whether it loaded, how many entries were refused |
 
 The names go to the writer's journal, never into the metric.
 
 **The alerts** (`ops/compose/goat-obs/prometheus/rules/peer-owner.yml`, each
 with a promtool test):
 
+Every alert keeps the `instance` label. Each management host runs its own
+writer, and an alert names its host and that host's own count.
+
 | Alert | Fires when | Severity |
 |---|---|---|
 | `PeerOwnerUnrecorded` | the unrecorded count is above 0 for 10 minutes. An excepted peer does not page | critical |
 | `PeerOwnerExceptionStale` | an exception no longer applies, for 1 hour | warning |
 | `PeerOwnerNotRead` | the lookup has failed for 30 minutes | warning |
+| `PeerOwnerPartlyUnread` | the lookup answered, but some peers' owners were not read, for 30 minutes | warning |
+| `PeerOwnerExceptionsNotLoaded` | the exceptions file did not load, or entries were refused, for 10 minutes | warning |
 | `PeerOwnerReconcileStale` | the writer has stopped | warning |
+| `PeerOwnerMetricsAbsent` | no host reports the reconcile at all, for 1 hour | warning |
 
 Nothing is removed: removing a peer's access is an operator action.
 

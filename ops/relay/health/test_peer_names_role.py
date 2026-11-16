@@ -37,7 +37,8 @@ class PeerNamesRole(unittest.TestCase):
         self.by = {t["name"].split("— ", 1)[-1]: t for t in self.block}
 
     def task(self, start):
-        hits = [t for k, t in self.by.items() if k.startswith(start)]
+        hits = [t for k, t in self.by.items() if k.startswith(start)] or \
+               [t for t in self.block if t["name"] == start]
         self.assertEqual(len(hits), 1, start)
         return hits[0]
 
@@ -65,6 +66,26 @@ class PeerNamesRole(unittest.TestCase):
         self.assertTrue(holds(need, relay_peer_names_portal_key=""))
         self.assertFalse(holds(need, relay_peer_names_portal_key="", relay_peer_names_owner_enabled=False))
         self.assertFalse(holds(need, relay_peer_names_portal_key="k"))
+
+    # Review of the reconcile, item 10: the seed run after each deploy runs
+    # with the same environment as the timer, owners and exceptions included.
+    def test_the_seed_run_has_the_timers_environment(self):
+        env_file = self.task("relay-health | peer-names resolver .env")
+        keys = {line.split("=", 1)[0] for line in env_file["ansible.builtin.copy"]["content"].splitlines() if "=" in line}
+        seed = self.task("relay-health | seed an initial peer-names resolve")
+        self.assertEqual(set(seed["environment"]), keys)
+        self.assertEqual(seed["environment"]["RELAY_PEER_NAMES_OWNER_EXCEPTIONS"],
+                         [l for l in env_file["ansible.builtin.copy"]["content"].splitlines()
+                          if l.startswith("RELAY_PEER_NAMES_OWNER_EXCEPTIONS=")][0].split("=", 1)[1])
+
+    # Item 7: the file is checked at deploy, and no overlay file means none on the host.
+    def test_the_exceptions_file_is_checked_and_follows_the_overlay(self):
+        cp = self.task("the goatnet's owner exceptions")["ansible.builtin.copy"]
+        self.assertIn("--check-exceptions %s", cp["validate"])
+        rm = self.task("no owner exceptions in the overlay")
+        self.assertEqual(rm["ansible.builtin.file"]["state"], "absent")
+        self.assertTrue(holds(rm["when"], relay_peer_names_owner_exceptions_src=""))
+        self.assertFalse(holds(rm["when"], relay_peer_names_owner_exceptions_src="files/x.json"))
 
 
 if __name__ == "__main__":

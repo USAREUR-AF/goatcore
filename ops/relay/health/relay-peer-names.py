@@ -286,28 +286,86 @@ def peer_class(name):
     return "other"
 
 
+_EXC_REQUIRED = ("peer_id", "name", "reason", "granted_by", "granted_on")
+_EXC_ALLOWED = set(_EXC_REQUIRED) | {"review_by"}
+
+
+def _is_date(v):
+    import datetime
+    if not isinstance(v, str) or len(v) != 10:
+        return False
+    try:
+        datetime.date.fromisoformat(v)
+        return True
+    except ValueError:
+        return False
+
+
+class Exceptions(dict):
+    """{peer_id: entry}, plus how the file loaded: `configured` (a path is
+    set), `loaded` (the file was read and has the schema), `refused` (entries
+    not used, each logged with why), `problems` (the reasons, for
+    --check-exceptions)."""
+
+    def __init__(self, configured=False):
+        super().__init__()
+        self.configured, self.loaded, self.refused, self.problems = configured, False, 0, []
+
+
 def load_exceptions(path):
-    """{peer_id: entry} from the goatnet's exceptions file. An entry without a
-    peer id, reason, granted_by or granted_on is refused (logged, not used): an
-    exception is a decision someone made and dated, not a name on a list. A
-    missing or unreadable file means no exceptions, said in the log: the alert
-    then counts every unrecorded peer, which errs toward reporting."""
+    """The goatnet's owner exceptions, checked against
+    ops/identity/peer-owner-exceptions.schema.json. Never raises.
+
+    A file that is missing, unreadable, not the schema, or not the right shape
+    is not loaded: no exception applies and every unrecorded peer is counted,
+    which errs toward reporting; the metrics say the file did not load. An
+    entry that breaks the schema (a required field missing or empty, a date
+    that is not YYYY-MM-DD, a key the schema does not have) is refused and
+    counted. Two entries for one peer id are both refused: neither is the
+    decision."""
+    out = Exceptions(configured=bool(path))
     if not path:
-        return {}
+        return out
+
+    def problem(m):
+        out.problems.append(m)
+        log(f"owner exceptions {path}: {m}")
+
     try:
         with open(path) as f:
             doc = json.load(f)
     except Exception as e:  # noqa: BLE001
-        log(f"owner exceptions {path} not read ({e}); no exception applies")
-        return {}
-    if doc.get("schema") != EXCEPTIONS_SCHEMA:
-        log(f"owner exceptions {path}: schema is not {EXCEPTIONS_SCHEMA}; no exception applies")
-        return {}
-    out = {}
-    for e in doc.get("exceptions") or []:
-        missing = [k for k in ("peer_id", "reason", "granted_by", "granted_on") if not e.get(k)]
-        if missing:
-            log(f"owner exception for {e.get('name') or e.get('peer_id') or '?'} refused: missing {', '.join(missing)}")
+        problem(f"not read ({e}); no exception applies")
+        return out
+    if not isinstance(doc, dict) or doc.get("schema") != EXCEPTIONS_SCHEMA:
+        problem(f"schema is not {EXCEPTIONS_SCHEMA}; no exception applies")
+        return out
+    entries = doc.get("exceptions")
+    if not isinstance(entries, list) or set(doc) - {"schema", "exceptions"}:
+        problem("not {schema, exceptions: [...]}; no exception applies")
+        return out
+    out.loaded = True
+    good, seen = [], {}
+    for e in entries:
+        if not isinstance(e, dict):
+            out.refused += 1
+            problem("an entry that is not an object was refused")
+            continue
+        who = e.get("name") or e.get("peer_id") or "?"
+        why = [f"{k} missing" for k in _EXC_REQUIRED if not isinstance(e.get(k), str) or not e.get(k)]
+        why += [f"{k} is not YYYY-MM-DD" for k in ("granted_on", "review_by")
+                if k in e and e.get(k) and not _is_date(e.get(k))]
+        why += [f"unknown key {k}" for k in sorted(set(e) - _EXC_ALLOWED)]
+        if why:
+            out.refused += 1
+            problem(f"exception for {who} refused: {', '.join(why)}")
+            continue
+        good.append(e)
+        seen[e["peer_id"]] = seen.get(e["peer_id"], 0) + 1
+    for e in good:
+        if seen[e["peer_id"]] > 1:
+            out.refused += 1
+            problem(f"exception for {e['name']} refused: peer_id {e['peer_id']} is listed {seen[e['peer_id']]} times")
             continue
         out[e["peer_id"]] = e
     return out
@@ -342,10 +400,31 @@ def mark_exceptions(cards, exceptions):
                                     state="stale" if stale else "active")
 
 
-def owner_metrics(cards, owner_read, exceptions, now=None):
+_CARRIED = ("goat_peer_owner_unrecorded{", "goat_peer_owner_excepted{",
+            "goat_peer_owner_exception_stale{", "goat_peer_owner_counts_timestamp_seconds ")
+
+
+def _carried(previous):
+    """The count lines of the last cycle that read owners, from the previous
+    textfile, so an unread cycle keeps the last known count instead of 0."""
+    out = []
+    for line in (previous or "").splitlines():
+        if line.startswith(_CARRIED):
+            out.append(line)
+    return out
+
+
+def owner_metrics(cards, owner_read, exceptions, now=None, previous=None):
     """The goat_peer_owner_* textfile. Counts only, no names: the names of the
-    unrecorded peers go to the journal (relay-peer-names log lines)."""
+    unrecorded peers go to the journal (relay-peer-names log lines).
+
+    A cycle that did not read owners writes no fresh count: it carries the
+    last read cycle's unrecorded, excepted and stale counts and the time they
+    were read (`goat_peer_owner_counts_timestamp_seconds`), so a failed lookup
+    neither clears the critical page nor raises one. With no previous read,
+    the counts are absent."""
     now = int(now if now is not None else time.time())
+    read = (owner_read or {}).get("state") == "read"
     present = {c.get("id") for c in cards.values()}
     counts, unrecorded, excepted, stale = {}, {}, {}, 0
     for c in cards.values():
@@ -366,26 +445,42 @@ def owner_metrics(cards, owner_read, exceptions, now=None):
     ]
     for (st, cl, conn), n in sorted(counts.items()):
         out.append(f'goat_peer_owner_peers{{state="{st}",class="{cl}",connected="{conn}"}} {n}')
-    out += [
-        "# HELP goat_peer_owner_unrecorded Mesh peers with no recorded or declared owner and no owner exception. Expected 0.",
+    help_ = [
+        "# HELP goat_peer_owner_unrecorded Mesh peers with no recorded or declared owner and no owner exception. Expected 0. Carried from the last read cycle when this one did not read owners.",
         "# TYPE goat_peer_owner_unrecorded gauge",
-    ]
-    for cl in ("machine", "person", "other"):
-        out.append(f'goat_peer_owner_unrecorded{{class="{cl}"}} {unrecorded.get(cl, 0)}')
-    out += [
         "# HELP goat_peer_owner_excepted Mesh peers under an owner exception the operator granted, by class.",
         "# TYPE goat_peer_owner_excepted gauge",
-    ]
-    for cl in ("machine", "person", "other"):
-        out.append(f'goat_peer_owner_excepted{{class="{cl}"}} {excepted.get(cl, 0)}')
-    out += [
         "# HELP goat_peer_owner_exception_stale Owner exceptions to remove: the peer now has a recorded owner (reason=recorded) or is no longer on the mesh (reason=peer_gone).",
         "# TYPE goat_peer_owner_exception_stale gauge",
-        f'goat_peer_owner_exception_stale{{reason="recorded"}} {stale}',
-        f'goat_peer_owner_exception_stale{{reason="peer_gone"}} {gone}',
+        "# HELP goat_peer_owner_counts_timestamp_seconds When the owner counts above were read.",
+        "# TYPE goat_peer_owner_counts_timestamp_seconds gauge",
+    ]
+    if read:
+        out += help_
+        for cl in ("machine", "person", "other"):
+            out.append(f'goat_peer_owner_unrecorded{{class="{cl}"}} {unrecorded.get(cl, 0)}')
+        for cl in ("machine", "person", "other"):
+            out.append(f'goat_peer_owner_excepted{{class="{cl}"}} {excepted.get(cl, 0)}')
+        out += [f'goat_peer_owner_exception_stale{{reason="recorded"}} {stale}',
+                f'goat_peer_owner_exception_stale{{reason="peer_gone"}} {gone}',
+                f"goat_peer_owner_counts_timestamp_seconds {now}"]
+    else:
+        carried = _carried(previous)
+        if carried:
+            out += help_ + carried
+    out += [
         "# HELP goat_peer_owner_read 1 when the portal's owner resolver answered this cycle, 0 when it could not be asked.",
         "# TYPE goat_peer_owner_read gauge",
-        f"goat_peer_owner_read {1 if (owner_read or {}).get('state') == 'read' else 0}",
+        f"goat_peer_owner_read {1 if read else 0}",
+        "# HELP goat_peer_owner_exceptions_configured 1 when this host is given an owner exceptions file.",
+        "# TYPE goat_peer_owner_exceptions_configured gauge",
+        f"goat_peer_owner_exceptions_configured {1 if getattr(exceptions, 'configured', False) else 0}",
+        "# HELP goat_peer_owner_exceptions_loaded 1 when the owner exceptions file was read and has the schema.",
+        "# TYPE goat_peer_owner_exceptions_loaded gauge",
+        f"goat_peer_owner_exceptions_loaded {1 if getattr(exceptions, 'loaded', False) else 0}",
+        "# HELP goat_peer_owner_exceptions_refused Owner exception entries not used because they break the schema or repeat a peer id.",
+        "# TYPE goat_peer_owner_exceptions_refused gauge",
+        f"goat_peer_owner_exceptions_refused {getattr(exceptions, 'refused', 0)}",
         "# HELP goat_peer_owner_last_run_timestamp_seconds When the reconcile last ran.",
         "# TYPE goat_peer_owner_last_run_timestamp_seconds gauge",
         f"goat_peer_owner_last_run_timestamp_seconds {now}",
@@ -406,58 +501,90 @@ def reconcile(cards, owner_read, exceptions=None):
         if stale:
             log(f"owner reconcile: {len(stale)} owner exception(s) to remove, the peer now has a recorded owner: "
                 + ", ".join(stale[:50]))
+    present = {c.get("id") for c in cards.values()}
+    gone = sorted((e.get("name") or pid) for pid, e in exceptions.items() if pid not in present)
+    if gone:
+        log(f"owner reconcile: {len(gone)} owner exception(s) to remove, the peer has left the mesh: "
+            + ", ".join(gone[:50]))
+    unread = sorted(c["name"] for c in cards.values() if grade(c, exceptions) == "unread")
+    if unread and (owner_read or {}).get("state") == "read":
+        log(f"owner reconcile: {len(unread)} peer(s) whose owner was not read: " + ", ".join(unread[:50]))
     if not OWNER_TEXTFILE:
         return
-    body = owner_metrics(cards, owner_read, exceptions)
+    try:
+        with open(OWNER_TEXTFILE) as f:
+            previous = f.read()
+    except OSError:
+        previous = ""
+    body = owner_metrics(cards, owner_read, exceptions, previous=previous)
     tmp = OWNER_TEXTFILE + ".tmp"
     with open(tmp, "w") as f:
         f.write(body)
     os.replace(tmp, OWNER_TEXTFILE)
 
 
-def write_exceptions(cards, owner_read, path, granted_by, reason, today=None):
+def write_exceptions(cards, owner_read, path, granted_by, reason, granted_on):
     """Write the goatnet's initial owner exceptions once: one entry for every
     peer present now without a recorded or declared owner. Refuses when the
-    owners were not read (a file made blind would except everyone) and refuses
-    to overwrite (later changes are made by hand, in the overlay). review_by is
-    never set here: only the operator sets it."""
+    owners were not read (a file made blind would except everyone) and never
+    overwrites (later changes are made by hand, in the overlay). The operator
+    states the grant date; review_by is never set here, only the operator sets
+    it."""
     if (owner_read or {}).get("state") != "read":
         raise SystemExit("refusing to write owner exceptions: owners were not read this run")
-    if os.path.exists(path):
-        raise SystemExit(f"refusing to overwrite {path}: edit the exceptions by hand in the overlay")
     if not granted_by or not reason:
         raise SystemExit("--granted-by and --reason are required: an exception is a decision someone made")
-    today = today or time.strftime("%Y-%m-%d", time.gmtime())
+    if not _is_date(granted_on):
+        raise SystemExit("--granted-on YYYY-MM-DD is required: the date the operator granted the exceptions")
     entries = [{"peer_id": c["id"], "name": c["name"], "reason": reason,
-                "granted_by": granted_by, "granted_on": today}
+                "granted_by": granted_by, "granted_on": granted_on}
                for c in sorted(cards.values(), key=lambda c: c["name"])
                if c.get("id") and grade(c, {}) in ("unrecorded", "lead")]
-    with open(path, "w") as f:
+    try:
+        f = open(path, "x")
+    except FileExistsError:
+        raise SystemExit(f"refusing to overwrite {path}: edit the exceptions by hand in the overlay")
+    with f:
         json.dump({"schema": EXCEPTIONS_SCHEMA, "exceptions": entries}, f, indent=1)
         f.write("\n")
-    log(f"wrote {len(entries)} owner exception(s) to {path} (granted_on {today}, no review_by)")
+    log(f"wrote {len(entries)} owner exception(s) to {path} (granted_on {granted_on}, no review_by)")
 
 
-if __name__ == "__main__":
+def main(argv):
+    import argparse
+    ap = argparse.ArgumentParser(prog="relay-peer-names.py",
+                                 description="Publish peer names and owners; reconcile peer owners (ADR 1249).")
+    ap.add_argument("--write-exceptions", metavar="PATH",
+                    help="write the goatnet's initial owner exceptions file and exit")
+    ap.add_argument("--granted-by", help="who granted the exceptions (with --write-exceptions)")
+    ap.add_argument("--reason", help="why these peers are excepted (with --write-exceptions)")
+    ap.add_argument("--granted-on", help="YYYY-MM-DD the operator granted them (with --write-exceptions)")
+    ap.add_argument("--check-exceptions", metavar="PATH",
+                    help="check an owner exceptions file against the schema and exit (0 = every entry is used)")
+    a = ap.parse_args(argv)
+    if a.check_exceptions:
+        exc = load_exceptions(a.check_exceptions)
+        if not exc.loaded or exc.refused:
+            return 1
+        log(f"owner exceptions {a.check_exceptions}: {len(exc)} entr{'y' if len(exc) == 1 else 'ies'}, all used")
+        return 0
+    if a.write_exceptions and not (a.granted_by and a.reason and _is_date(a.granted_on)):
+        ap.error("--write-exceptions needs --granted-by, --reason and --granted-on YYYY-MM-DD")
     names = fetch_peers()
     if not names:
         log("no peers resolved — refusing to publish an empty map")
-        sys.exit(1)
+        return 1
     log(f"resolved {len(names)} peer names")
     owner_read = enrich_owners(names)
-    if len(sys.argv) > 1 and sys.argv[1] == "--write-exceptions":
-        import argparse
-        ap = argparse.ArgumentParser(prog="relay-peer-names.py --write-exceptions")
-        ap.add_argument("flag")
-        ap.add_argument("path")
-        ap.add_argument("--granted-by", required=True)
-        ap.add_argument("--reason", required=True)
-        a = ap.parse_args()
-        write_exceptions(names, owner_read, a.path, a.granted_by, a.reason)
-        sys.exit(0)
+    if a.write_exceptions:
+        write_exceptions(names, owner_read, a.write_exceptions, a.granted_by, a.reason, a.granted_on)
+        return 0
     exceptions = load_exceptions(OWNER_EXCEPTIONS)
     mark_exceptions(names, exceptions)
     failures = publish(names, owner_read)
     reconcile(names, owner_read, exceptions)
-    if failures:
-        sys.exit(3)
+    return 3 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

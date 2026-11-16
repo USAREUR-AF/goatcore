@@ -1,106 +1,293 @@
-# promtool unit test for peer-owner.yml.
+# promtool unit test for peer-owner.yml. Generated expectations: each case's
+# annotations are the rule's templates with the case's values.
 # Run:  promtool test rules ops/compose/goat-obs/prometheus/tests/peer-owner.test.yml
+#
+# Cases: 1 one unrecorded machine pages, with its host. 2 the lookup fails
+# after a read: the writer carries the count, so the page stays up and
+# PeerOwnerNotRead fires (it used to write 0 and clear the page). 2b never
+# read: no count at all, never 0. 3 the writer stops. 4 excepted peers do not
+# page; a stale exception warns. 5 two writers page once each, with their own
+# host and count. 6 no host reports at all. 7 some peers unread while the
+# lookup answered. 8 an exceptions file that did not load, or refused entries.
 rule_files:
-  - ../rules/peer-owner.yml
-
+- ../rules/peer-owner.yml
 evaluation_interval: 1m
-
 tests:
-  # 1. One unrecorded machine joins: PeerOwnerUnrecorded fires (critical); the
-  #    lookup is healthy and fresh, so the other two stay quiet.
-  - interval: 1m
-    input_series:
-      - series: 'goat_peer_owner_unrecorded{class="machine"}'
-        values: '1x30'
-      - series: 'goat_peer_owner_unrecorded{class="person"}'
-        values: '0x30'
-      - series: 'goat_peer_owner_read'
-        values: '1x30'
-      - series: 'goat_peer_owner_last_run_timestamp_seconds'
-        values: '0+60x30'
-    alert_rule_test:
-      - eval_time: 15m
-        alertname: PeerOwnerUnrecorded
-        exp_alerts:
-          - exp_labels:
-              class: machine
-              severity: critical
-              component: identity
-            exp_annotations:
-              summary: "1 machine mesh peer(s) have no recorded owner"
-              description: "1 mesh peer(s) of class machine have no recorded responsible person and organization and no owner exception (ADR 1249). Record the owner through enrollment or onboarding, declare it if the peer is ours, or ask the operator for an owner exception or a decision on its access. Names: `journalctl -u relay-peer-names` on the mgmt host."
-      - eval_time: 15m
-        alertname: PeerOwnerNotRead
-        exp_alerts: []
-      - eval_time: 15m
-        alertname: PeerOwnerReconcileStale
-        exp_alerts: []
-
-  # 2. Everything recorded (0): quiet. The lookup fails for 40m: NotRead fires.
-  - interval: 1m
-    input_series:
-      - series: 'goat_peer_owner_unrecorded{class="machine"}'
-        values: '0x50'
-      - series: 'goat_peer_owner_read'
-        values: '0x50'
-      - series: 'goat_peer_owner_last_run_timestamp_seconds'
-        values: '0+60x50'
-    alert_rule_test:
-      - eval_time: 45m
-        alertname: PeerOwnerUnrecorded
-        exp_alerts: []
-      - eval_time: 45m
-        alertname: PeerOwnerNotRead
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: identity
-            exp_annotations:
-              summary: "peer owners could not be read for 30m"
-              description: "goat_peer_owner_read=0: relay-peer-names could not ask the portal's owner resolver (key refused, portal unreachable or no key configured). Unowned peers are not being detected. Check `journalctl -u relay-peer-names` and that the portal accepts relay_peer_names_portal_key."
-
-  # 3. The writer stops: last_run frozen at 0, Stale fires after 30m + 10m.
-  - interval: 1m
-    input_series:
-      - series: 'goat_peer_owner_last_run_timestamp_seconds'
-        values: '0x60'
-    alert_rule_test:
-      - eval_time: 50m
-        alertname: PeerOwnerReconcileStale
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: identity
-            exp_annotations:
-              summary: "the peer owner reconcile has not run for over 30m"
-              description: "goat_peer_owner_last_run_timestamp_seconds is stale: relay-peer-names is not running. Unowned peers are not being detected until it recovers."
-
-  # 4. Excepted peers do not page; a stale exception is a warning after 1h.
-  - interval: 1m
-    input_series:
-      - series: 'goat_peer_owner_unrecorded{class="other"}'
-        values: '0x90'
-      - series: 'goat_peer_owner_excepted{class="other"}'
-        values: '40x90'
-      - series: 'goat_peer_owner_exception_stale{reason="recorded"}'
-        values: '2x90'
-      - series: 'goat_peer_owner_exception_stale{reason="peer_gone"}'
-        values: '0x90'
-      - series: 'goat_peer_owner_read'
-        values: '1x90'
-      - series: 'goat_peer_owner_last_run_timestamp_seconds'
-        values: '0+60x90'
-    alert_rule_test:
-      - eval_time: 80m
-        alertname: PeerOwnerUnrecorded
-        exp_alerts: []
-      - eval_time: 80m
-        alertname: PeerOwnerExceptionStale
-        exp_alerts:
-          - exp_labels:
-              reason: recorded
-              severity: warning
-              component: identity
-            exp_annotations:
-              summary: "2 owner exception(s) to remove (recorded)"
-              description: "2 owner exception(s) no longer apply: reason=recorded means the peer now has a recorded owner, reason=peer_gone means it has left the mesh. Remove them from the goatnet's owner exceptions file in the overlay. Names: `journalctl -u relay-peer-names` on the mgmt host."
+- interval: 1m
+  input_series:
+  - series: goat_peer_owner_read{instance="mgmt-a:9100"}
+    values: 1x30
+  - series: goat_peer_owner_last_run_timestamp_seconds{instance="mgmt-a:9100"}
+    values: 0+60x30
+  - series: goat_peer_owner_exceptions_configured{instance="mgmt-a:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_exceptions_loaded{instance="mgmt-a:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_exceptions_refused{instance="mgmt-a:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_unrecorded{instance="mgmt-a:9100",class="machine"}
+    values: 1x30
+  - series: goat_peer_owner_unrecorded{instance="mgmt-a:9100",class="person"}
+    values: '0x30'
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: PeerOwnerUnrecorded
+    exp_alerts:
+    - exp_labels:
+        instance: mgmt-a:9100
+        class: machine
+        severity: critical
+        component: identity
+      exp_annotations:
+        summary: 1 machine mesh peer(s) have no recorded owner (mgmt-a:9100)
+        description: '1 mesh peer(s) of class machine, reported by mgmt-a:9100, have no recorded responsible person and organization and no owner exception (ADR 1249). Record the owner through enrollment or onboarding, declare it if the peer is ours, or ask the operator for an owner exception or a decision on its access. Names: `journalctl -u relay-peer-names` on that host.'
+  - eval_time: 15m
+    alertname: PeerOwnerNotRead
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: PeerOwnerReconcileStale
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: PeerOwnerMetricsAbsent
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: PeerOwnerPartlyUnread
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: PeerOwnerExceptionsNotLoaded
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: goat_peer_owner_unrecorded{instance="mgmt-a:9100",class="machine"}
+    values: 1x60
+  - series: goat_peer_owner_read{instance="mgmt-a:9100"}
+    values: 1x10 0x50
+  - series: goat_peer_owner_last_run_timestamp_seconds{instance="mgmt-a:9100"}
+    values: 0+60x60
+  alert_rule_test:
+  - eval_time: 50m
+    alertname: PeerOwnerUnrecorded
+    exp_alerts:
+    - exp_labels:
+        instance: mgmt-a:9100
+        class: machine
+        severity: critical
+        component: identity
+      exp_annotations:
+        summary: 1 machine mesh peer(s) have no recorded owner (mgmt-a:9100)
+        description: '1 mesh peer(s) of class machine, reported by mgmt-a:9100, have no recorded responsible person and organization and no owner exception (ADR 1249). Record the owner through enrollment or onboarding, declare it if the peer is ours, or ask the operator for an owner exception or a decision on its access. Names: `journalctl -u relay-peer-names` on that host.'
+  - eval_time: 50m
+    alertname: PeerOwnerNotRead
+    exp_alerts:
+    - exp_labels:
+        instance: mgmt-a:9100
+        severity: warning
+        component: identity
+      exp_annotations:
+        summary: peer owners could not be read for 30m (mgmt-a:9100)
+        description: 'goat_peer_owner_read=0 on mgmt-a:9100: relay-peer-names could not read owners from the portal (key refused, portal unreachable, no key configured, or the portal could not read its own owner sources). New unowned peers are not being detected; the unrecorded count is the last one read. Check `journalctl -u relay-peer-names` and that the portal accepts relay_peer_names_portal_key.'
+- interval: 1m
+  input_series:
+  - series: goat_peer_owner_read{instance="mgmt-a:9100"}
+    values: '0x50'
+  - series: goat_peer_owner_last_run_timestamp_seconds{instance="mgmt-a:9100"}
+    values: 0+60x50
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: PeerOwnerNotRead
+    exp_alerts:
+    - exp_labels:
+        instance: mgmt-a:9100
+        severity: warning
+        component: identity
+      exp_annotations:
+        summary: peer owners could not be read for 30m (mgmt-a:9100)
+        description: 'goat_peer_owner_read=0 on mgmt-a:9100: relay-peer-names could not read owners from the portal (key refused, portal unreachable, no key configured, or the portal could not read its own owner sources). New unowned peers are not being detected; the unrecorded count is the last one read. Check `journalctl -u relay-peer-names` and that the portal accepts relay_peer_names_portal_key.'
+  - eval_time: 45m
+    alertname: PeerOwnerUnrecorded
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: PeerOwnerMetricsAbsent
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: goat_peer_owner_last_run_timestamp_seconds{instance="mgmt-a:9100"}
+    values: '0x60'
+  alert_rule_test:
+  - eval_time: 50m
+    alertname: PeerOwnerReconcileStale
+    exp_alerts:
+    - exp_labels:
+        instance: mgmt-a:9100
+        severity: warning
+        component: identity
+      exp_annotations:
+        summary: the peer owner reconcile has not run for over 30m (mgmt-a:9100)
+        description: 'goat_peer_owner_last_run_timestamp_seconds is stale on mgmt-a:9100: relay-peer-names is not running. Unowned peers are not being detected until it recovers.'
+- interval: 1m
+  input_series:
+  - series: goat_peer_owner_read{instance="mgmt-a:9100"}
+    values: 1x90
+  - series: goat_peer_owner_last_run_timestamp_seconds{instance="mgmt-a:9100"}
+    values: 0+60x90
+  - series: goat_peer_owner_exceptions_configured{instance="mgmt-a:9100"}
+    values: '0x90'
+  - series: goat_peer_owner_exceptions_loaded{instance="mgmt-a:9100"}
+    values: '0x90'
+  - series: goat_peer_owner_exceptions_refused{instance="mgmt-a:9100"}
+    values: '0x90'
+  - series: goat_peer_owner_unrecorded{instance="mgmt-a:9100",class="other"}
+    values: '0x90'
+  - series: goat_peer_owner_excepted{instance="mgmt-a:9100",class="other"}
+    values: 7x90
+  - series: goat_peer_owner_exception_stale{instance="mgmt-a:9100",reason="recorded"}
+    values: 2x90
+  - series: goat_peer_owner_exception_stale{instance="mgmt-a:9100",reason="peer_gone"}
+    values: '0x90'
+  alert_rule_test:
+  - eval_time: 80m
+    alertname: PeerOwnerUnrecorded
+    exp_alerts: []
+  - eval_time: 80m
+    alertname: PeerOwnerExceptionStale
+    exp_alerts:
+    - exp_labels:
+        instance: mgmt-a:9100
+        reason: recorded
+        severity: warning
+        component: identity
+      exp_annotations:
+        summary: 2 owner exception(s) to remove (recorded, mgmt-a:9100)
+        description: '2 owner exception(s) reported by mgmt-a:9100 no longer apply: reason=recorded means the peer now has a recorded owner, reason=peer_gone means it has left the mesh. Remove them from the goatnet''s owner exceptions file in the overlay. Names: `journalctl -u relay-peer-names` on that host.'
+- interval: 1m
+  input_series:
+  - series: goat_peer_owner_read{instance="mgmt-a:9100"}
+    values: 1x30
+  - series: goat_peer_owner_last_run_timestamp_seconds{instance="mgmt-a:9100"}
+    values: 0+60x30
+  - series: goat_peer_owner_exceptions_configured{instance="mgmt-a:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_exceptions_loaded{instance="mgmt-a:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_exceptions_refused{instance="mgmt-a:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_read{instance="mgmt-b:9100"}
+    values: 1x30
+  - series: goat_peer_owner_last_run_timestamp_seconds{instance="mgmt-b:9100"}
+    values: 0+60x30
+  - series: goat_peer_owner_exceptions_configured{instance="mgmt-b:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_exceptions_loaded{instance="mgmt-b:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_exceptions_refused{instance="mgmt-b:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_unrecorded{instance="mgmt-a:9100",class="machine"}
+    values: 1x30
+  - series: goat_peer_owner_unrecorded{instance="mgmt-b:9100",class="machine"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: PeerOwnerUnrecorded
+    exp_alerts:
+    - exp_labels:
+        instance: mgmt-a:9100
+        class: machine
+        severity: critical
+        component: identity
+      exp_annotations:
+        summary: 1 machine mesh peer(s) have no recorded owner (mgmt-a:9100)
+        description: '1 mesh peer(s) of class machine, reported by mgmt-a:9100, have no recorded responsible person and organization and no owner exception (ADR 1249). Record the owner through enrollment or onboarding, declare it if the peer is ours, or ask the operator for an owner exception or a decision on its access. Names: `journalctl -u relay-peer-names` on that host.'
+    - exp_labels:
+        instance: mgmt-b:9100
+        class: machine
+        severity: critical
+        component: identity
+      exp_annotations:
+        summary: 1 machine mesh peer(s) have no recorded owner (mgmt-b:9100)
+        description: '1 mesh peer(s) of class machine, reported by mgmt-b:9100, have no recorded responsible person and organization and no owner exception (ADR 1249). Record the owner through enrollment or onboarding, declare it if the peer is ours, or ask the operator for an owner exception or a decision on its access. Names: `journalctl -u relay-peer-names` on that host.'
+- interval: 1m
+  input_series:
+  - series: up{job="node"}
+    values: 1x90
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: PeerOwnerMetricsAbsent
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        component: identity
+      exp_annotations:
+        summary: no host reports peer owners
+        description: 'goat_peer_owner_last_run_timestamp_seconds is absent: no relay-peer-names writer is reporting the peer owner reconcile (ADR 1249), so unowned peers are not being detected. Set relay_health_textfile_out for the management host''s relay-health role and check `systemctl status relay-peer-names.timer`.'
+  - eval_time: 30m
+    alertname: PeerOwnerMetricsAbsent
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: goat_peer_owner_read{instance="mgmt-a:9100"}
+    values: 1x50
+  - series: goat_peer_owner_last_run_timestamp_seconds{instance="mgmt-a:9100"}
+    values: 0+60x50
+  - series: goat_peer_owner_exceptions_configured{instance="mgmt-a:9100"}
+    values: '0x50'
+  - series: goat_peer_owner_exceptions_loaded{instance="mgmt-a:9100"}
+    values: '0x50'
+  - series: goat_peer_owner_exceptions_refused{instance="mgmt-a:9100"}
+    values: '0x50'
+  - series: goat_peer_owner_peers{instance="mgmt-a:9100",state="unread",class="other",connected="true"}
+    values: 3x50
+  - series: goat_peer_owner_peers{instance="mgmt-b:9100",state="unread",class="other",connected="true"}
+    values: 5x50
+  - series: goat_peer_owner_read{instance="mgmt-b:9100"}
+    values: '0x50'
+  - series: goat_peer_owner_last_run_timestamp_seconds{instance="mgmt-b:9100"}
+    values: 0+60x50
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: PeerOwnerPartlyUnread
+    exp_alerts:
+    - exp_labels:
+        instance: mgmt-a:9100
+        severity: warning
+        component: identity
+      exp_annotations:
+        summary: 3 peer(s) whose owner was not read (mgmt-a:9100)
+        description: 'The owner lookup on mgmt-a:9100 answered, but 3 peer(s) came back with no readable owner, so they are in neither the unrecorded nor the recorded count. Names: `journalctl -u relay-peer-names` on that host ("whose owner was not read").'
+- interval: 1m
+  input_series:
+  - series: goat_peer_owner_exceptions_configured{instance="mgmt-a:9100"}
+    values: 1x30
+  - series: goat_peer_owner_exceptions_loaded{instance="mgmt-a:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_exceptions_refused{instance="mgmt-a:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_exceptions_configured{instance="mgmt-b:9100"}
+    values: 1x30
+  - series: goat_peer_owner_exceptions_loaded{instance="mgmt-b:9100"}
+    values: 1x30
+  - series: goat_peer_owner_exceptions_refused{instance="mgmt-b:9100"}
+    values: 2x30
+  - series: goat_peer_owner_exceptions_configured{instance="mgmt-c:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_exceptions_loaded{instance="mgmt-c:9100"}
+    values: '0x30'
+  - series: goat_peer_owner_exceptions_refused{instance="mgmt-c:9100"}
+    values: '0x30'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: PeerOwnerExceptionsNotLoaded
+    exp_alerts:
+    - exp_labels:
+        instance: mgmt-a:9100
+        severity: warning
+        component: identity
+      exp_annotations:
+        summary: owner exceptions not fully applied (mgmt-a:9100)
+        description: The owner exceptions file on mgmt-a:9100 did not load, or some of its entries were refused (wrong schema, a bad date, an unknown key, a repeated peer id). Peers it should except are counted as unrecorded. Run `relay-peer-names.py --check-exceptions <file>` against the overlay's file; the journal names each refused entry.
+    - exp_labels:
+        instance: mgmt-b:9100
+        severity: warning
+        component: identity
+      exp_annotations:
+        summary: owner exceptions not fully applied (mgmt-b:9100)
+        description: The owner exceptions file on mgmt-b:9100 did not load, or some of its entries were refused (wrong schema, a bad date, an unknown key, a repeated peer id). Peers it should except are counted as unrecorded. Run `relay-peer-names.py --check-exceptions <file>` against the overlay's file; the journal names each refused entry.

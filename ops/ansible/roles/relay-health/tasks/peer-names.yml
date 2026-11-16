@@ -108,12 +108,34 @@
         - (relay_peer_names_probe_url | default('') | trim | length == 0)
           or (relay_peer_names_probe.status | default(-1) not in [200, 401, 403])
 
+    # The overlay's file is checked against the schema before it lands
+    # (`--check-exceptions` refuses a wrong schema, a bad date, an unknown key
+    # or a repeated peer id), so a bad file fails the deploy instead of
+    # silently excepting nobody. With no file in the overlay, a file left on
+    # the host from an earlier deploy is removed: the host follows the overlay.
     - name: relay-health | peer-names — the goatnet's owner exceptions (ADR 1249)
       ansible.builtin.copy:
         src: "{{ relay_peer_names_owner_exceptions_src }}"
         dest: "{{ relay_health_dir }}/owner-exceptions.json"
         mode: "0644"
+        validate: "/usr/bin/env python3 {{ relay_health_dir }}/relay-peer-names.py --check-exceptions %s"
       when: relay_peer_names_owner_exceptions_src | default('') | length > 0
+
+    - name: relay-health | peer-names — no owner exceptions in the overlay, none on the host
+      ansible.builtin.file:
+        path: "{{ relay_health_dir }}/owner-exceptions.json"
+        state: absent
+      when: relay_peer_names_owner_exceptions_src | default('') | length == 0
+
+    - name: relay-health | peer-names — say so when owners have nowhere to be counted
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: relay_peer_names_owner_textfile is empty (relay_health_textfile_out
+          is unset), so the peer owner reconcile writes no metrics and
+          PeerOwnerMetricsAbsent will fire. Set relay_health_textfile_out.
+      when:
+        - relay_peer_names_owner_enabled | default(true) | bool
+        - relay_peer_names_owner_textfile | default('') | length == 0
 
     - name: relay-health | peer-names resolver .env
       ansible.builtin.copy:
@@ -163,6 +185,8 @@
         RELAY_PEER_NAMES_PORTAL_CONTAINER: "{{ relay_peer_names_portal_container }}"
         RELAY_PEER_NAMES_PORTAL_NET: "{{ relay_peer_names_portal_net }}"
         RELAY_PEER_NAMES_PORTAL_PORT: "{{ relay_peer_names_portal_port }}"
+        RELAY_PEER_NAMES_OWNER_TEXTFILE: "{{ relay_peer_names_owner_textfile }}"
+        RELAY_PEER_NAMES_OWNER_EXCEPTIONS: "{{ (relay_health_dir ~ '/owner-exceptions.json') if (relay_peer_names_owner_exceptions_src | default('') | length > 0) else '' }}"
       changed_when: false
       failed_when: false
       no_log: true
