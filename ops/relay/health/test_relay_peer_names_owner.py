@@ -221,5 +221,112 @@ class ReviewOfTheWriter(unittest.TestCase):
             rpn.REMOTE_MAX_BYTES, rpn.URLS = old, []
 
 
+class Reconcile(unittest.TestCase):
+    """ADR 1249 decisions 5 and 7: the metric whose expected value is 0, and
+    owner exceptions that are shown and counted, never hidden."""
+
+    def cards(self):
+        return {
+            "h1": {"id": "p1", "name": "machine-anvil-pod-7", "conn": True, "owner": {"source": "record"}},
+            "h2": {"id": "p2", "name": "peer-rivera-j-zagros-2026-02-09-laptop", "conn": True, "owner": {"source": "roster"}},
+            "h3": {"id": "p3", "name": "edge-gw-unlisted", "conn": True, "owner": {"source": "none"}},
+            "h4": {"id": "p4", "name": "old-kiosk", "conn": False, "owner": {"source": "none"}},
+            "h5": {"id": "p5", "name": "infra-dns-a", "conn": True, "owner": {"source": "declared"}},
+            "h6": {"id": "p6", "name": "machine-was-excepted", "conn": True, "owner": {"source": "record"}},
+        }
+
+    def exc(self):
+        e = lambda pid, name: {"peer_id": pid, "name": name, "reason": "present before the rule",
+                               "granted_by": "ops-lead", "granted_on": "2026-01-05"}
+        return {"p4": e("p4", "old-kiosk"), "p6": e("p6", "machine-was-excepted"),
+                "p9": e("p9", "left-the-mesh")}
+
+    def test_only_the_record_or_a_declaration_is_compliant_and_an_exception_is_its_own_state(self):
+        g = {k: rpn.grade(c, self.exc()) for k, c in self.cards().items()}
+        self.assertEqual(g, {"h1": "recorded", "h2": "lead", "h3": "unrecorded",
+                             "h4": "excepted", "h5": "recorded", "h6": "exception_stale"})
+
+    def test_an_exception_matches_the_peer_id_not_the_name(self):
+        renamed = {"x": {"id": "p4", "name": "renamed-kiosk", "owner": {"source": "none"}}}
+        self.assertEqual(rpn.grade(renamed["x"], self.exc()), "excepted")
+        same_name = {"x": {"id": "other", "name": "old-kiosk", "owner": {"source": "none"}}}
+        self.assertEqual(rpn.grade(same_name["x"], self.exc()), "unrecorded")
+
+    def test_the_card_shows_the_exception_with_its_reason(self):
+        cards = self.cards()
+        rpn.mark_exceptions(cards, self.exc())
+        self.assertEqual(cards["h4"]["owner_exception"]["reason"], "present before the rule")
+        self.assertEqual(cards["h4"]["owner_exception"]["state"], "active")
+        self.assertEqual(cards["h6"]["owner_exception"]["state"], "stale")
+        self.assertNotIn("owner_exception", cards["h3"])
+        self.assertNotIn("review_by", cards["h4"]["owner_exception"], "no date is invented")
+
+    def test_the_metric_counts_exceptions_apart_and_reports_stale_ones(self):
+        text = rpn.owner_metrics(self.cards(), {"state": "read"}, self.exc(), now=5)
+        self.assertIn('goat_peer_owner_unrecorded{class="person"} 1', text)
+        self.assertIn('goat_peer_owner_unrecorded{class="other"} 1', text)
+        self.assertIn('goat_peer_owner_excepted{class="other"} 1', text)
+        self.assertIn('goat_peer_owner_exception_stale{reason="recorded"} 1', text)
+        self.assertIn('goat_peer_owner_exception_stale{reason="peer_gone"} 1', text)
+        self.assertIn("goat_peer_owner_read 1", text)
+        self.assertNotIn("edge-gw-unlisted", text, "names stay out of the metric")
+
+    def test_an_unread_cycle_is_not_counted_as_unrecorded(self):
+        cards = {k: dict(c, owner={"source": "unread", "reason": "401"}) for k, c in self.cards().items()}
+        text = rpn.owner_metrics(cards, {"state": "unread"}, {}, now=5)
+        self.assertIn("goat_peer_owner_read 0", text)
+        self.assertIn('goat_peer_owner_unrecorded{class="other"} 0', text)
+
+    def test_an_incomplete_exception_is_refused_and_the_file_must_carry_its_schema(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "exc.json")
+            with open(path, "w") as f:
+                json.dump({"schema": rpn.EXCEPTIONS_SCHEMA, "exceptions": [
+                    {"peer_id": "p4", "name": "old-kiosk", "reason": "r", "granted_by": "ops-lead", "granted_on": "2026-01-05"},
+                    {"peer_id": "p3", "name": "edge-gw-unlisted", "reason": "r"}]}, f)
+            self.assertEqual(sorted(rpn.load_exceptions(path)), ["p4"])
+            with open(path, "w") as f:
+                json.dump({"exceptions": []}, f)
+            self.assertEqual(rpn.load_exceptions(path), {})
+
+    def test_the_initial_file_is_written_once_never_blind_and_without_a_review_date(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "exc.json")
+            with self.assertRaises(SystemExit):
+                rpn.write_exceptions(self.cards(), {"state": "unread"}, path, "ops-lead", "r")
+            with self.assertRaises(SystemExit):
+                rpn.write_exceptions(self.cards(), {"state": "read"}, path, "", "r")
+            rpn.write_exceptions(self.cards(), {"state": "read"}, path, "ops-lead",
+                                 "present before the owner rule", today="2026-01-05")
+            with open(path) as f:
+                doc = json.load(f)
+            self.assertEqual(doc["schema"], rpn.EXCEPTIONS_SCHEMA)
+            self.assertEqual([e["peer_id"] for e in doc["exceptions"]], ["p3", "p4", "p2"])
+            self.assertTrue(all("review_by" not in e for e in doc["exceptions"]))
+            self.assertTrue(all(e["granted_on"] == "2026-01-05" for e in doc["exceptions"]))
+            with self.assertRaises(SystemExit):
+                rpn.write_exceptions(self.cards(), {"state": "read"}, path, "ops-lead", "r")
+            self.assertEqual(sorted(rpn.load_exceptions(path)), ["p2", "p3", "p4"])
+
+    def test_the_public_example_validates_against_the_schema_shape(self):
+        here = os.path.join(HERE, "..", "..", "identity")
+        with open(os.path.join(here, "peer-owner-exceptions.example.json")) as f:
+            ex = json.load(f)
+        with open(os.path.join(here, "peer-owner-exceptions.schema.json")) as f:
+            sch = json.load(f)
+        self.assertEqual(ex["schema"], sch["properties"]["schema"]["const"])
+        req = sch["properties"]["exceptions"]["items"]["required"]
+        allowed = set(sch["properties"]["exceptions"]["items"]["properties"])
+        for e in ex["exceptions"]:
+            self.assertTrue(all(k in e for k in req))
+            self.assertTrue(set(e) <= allowed)
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(ex, f)
+        try:
+            self.assertEqual(len(rpn.load_exceptions(f.name)), 2)
+        finally:
+            os.unlink(f.name)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/usareur-af/goatcore/ops/identity/peer-owner-exceptions.schema.json",
+  "title": "Owner exceptions for one goatnet's mesh peers (ADR 1249 decision 7)",
+  "description": "A peer listed here is excepted, for now, from the rule that every mesh peer has a recorded responsible person and organization. It is shown as an owner exception, with its reason, on every surface that shows owners; it is counted in goat_peer_owner_excepted and not in goat_peer_owner_unrecorded. The file lives in each goatnet's private overlay. An exception whose peer later gets a recorded owner, or leaves the mesh, is reported as stale so it can be removed.",
+  "type": "object",
+  "required": ["schema", "exceptions"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "goat.peer-owner-exceptions/v1"},
+    "exceptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["peer_id", "name", "reason", "granted_by", "granted_on"],
+        "additionalProperties": false,
+        "properties": {
+          "peer_id": {"type": "string", "minLength": 1, "description": "The NetBird peer id: stable across renames. The exception applies to this peer only."},
+          "name": {"type": "string", "minLength": 1, "description": "The peer's name when the exception was granted. Informative; the id decides."},
+          "reason": {"type": "string", "minLength": 1, "description": "Why the peer stays without a recorded owner for now. Shown beside it on every surface."},
+          "granted_by": {"type": "string", "minLength": 1, "description": "Who granted the exception."},
+          "granted_on": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+          "review_by": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "Optional. Set only by the operator; no tool fills it in."}
+        }
+      }
+    }
+  }
+}

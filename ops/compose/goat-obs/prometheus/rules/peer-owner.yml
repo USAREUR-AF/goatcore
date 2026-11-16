@@ -1,0 +1,62 @@
+# Peer ownership reconcile (ADR 1249 decision 5): every mesh peer traces to a
+# recorded responsible person and organization, or it is reported.
+#
+# relay-peer-names (ops/relay/health/relay-peer-names.py) resolves every mesh
+# peer's owner through the portal every 5 minutes and writes the
+# goat_peer_owner_* textfile. A roster answer is a lead, not a record, so it is
+# counted unrecorded. A peer under an owner exception the operator granted
+# (ADR 1249 decision 7: one entry per peer, with a reason, who granted it and
+# when) is counted in goat_peer_owner_excepted, not here, and is shown as an
+# owner exception on every surface. NO names in the metric; the names are in the writer's journal
+# (`journalctl -u relay-peer-names`). Nothing here removes a peer: removing
+# access is an operator action.
+groups:
+  - name: peer-owner
+    rules:
+      # GATE: a peer has no recorded or declared owner and no owner exception.
+      # Expected 0 at all times.
+      - alert: PeerOwnerUnrecorded
+        expr: sum by (class) (goat_peer_owner_unrecorded) > 0
+        for: 10m
+        labels:
+          severity: critical
+          component: identity
+        annotations:
+          summary: "{{ $value }} {{ $labels.class }} mesh peer(s) have no recorded owner"
+          description: "{{ $value }} mesh peer(s) of class {{ $labels.class }} have no recorded responsible person and organization and no owner exception (ADR 1249). Record the owner through enrollment or onboarding, declare it if the peer is ours, or ask the operator for an owner exception or a decision on its access. Names: `journalctl -u relay-peer-names` on the mgmt host."
+
+      # BLIND: the owner lookup failed (key refused, portal down), so the count
+      # above is unknown, not zero.
+      - alert: PeerOwnerNotRead
+        expr: goat_peer_owner_read == 0
+        for: 30m
+        labels:
+          severity: warning
+          component: identity
+        annotations:
+          summary: "peer owners could not be read for 30m"
+          description: "goat_peer_owner_read=0: relay-peer-names could not ask the portal's owner resolver (key refused, portal unreachable or no key configured). Unowned peers are not being detected. Check `journalctl -u relay-peer-names` and that the portal accepts relay_peer_names_portal_key."
+
+      # STALE: the reconcile stopped running, so silence is "blind", not "clear".
+      - alert: PeerOwnerReconcileStale
+        expr: time() - goat_peer_owner_last_run_timestamp_seconds > 1800
+        for: 10m
+        labels:
+          severity: warning
+          component: identity
+        annotations:
+          summary: "the peer owner reconcile has not run for over 30m"
+          description: "goat_peer_owner_last_run_timestamp_seconds is stale: relay-peer-names is not running. Unowned peers are not being detected until it recovers."
+
+      # HOUSEKEEPING: an owner exception no longer applies: its peer now has a
+      # recorded owner, or has left the mesh. Remove the entry from the
+      # goatnet's exceptions file so the list stays true.
+      - alert: PeerOwnerExceptionStale
+        expr: sum by (reason) (goat_peer_owner_exception_stale) > 0
+        for: 1h
+        labels:
+          severity: warning
+          component: identity
+        annotations:
+          summary: "{{ $value }} owner exception(s) to remove ({{ $labels.reason }})"
+          description: "{{ $value }} owner exception(s) no longer apply: reason=recorded means the peer now has a recorded owner, reason=peer_gone means it has left the mesh. Remove them from the goatnet's owner exceptions file in the overlay. Names: `journalctl -u relay-peer-names` on the mgmt host."

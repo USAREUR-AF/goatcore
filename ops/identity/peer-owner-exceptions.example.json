@@ -1,0 +1,20 @@
+{
+ "schema": "goat.peer-owner-exceptions/v1",
+ "exceptions": [
+  {
+   "peer_id": "cq0example0000000001",
+   "name": "edge-gw-unlisted",
+   "reason": "present before the owner rule; owner to be found",
+   "granted_by": "ops-lead",
+   "granted_on": "2026-01-05"
+  },
+  {
+   "peer_id": "cq0example0000000002",
+   "name": "peer-okafor-n-zagros-2026-01-05-desk",
+   "reason": "person device whose slot carries no identity yet",
+   "granted_by": "ops-lead",
+   "granted_on": "2026-01-05",
+   "review_by": "2026-03-01"
+  }
+ ]
+}

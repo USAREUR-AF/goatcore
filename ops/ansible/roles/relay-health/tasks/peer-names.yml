@@ -108,6 +108,13 @@
         - (relay_peer_names_probe_url | default('') | trim | length == 0)
           or (relay_peer_names_probe.status | default(-1) not in [200, 401, 403])
 
+    - name: relay-health | peer-names — the goatnet's owner exceptions (ADR 1249)
+      ansible.builtin.copy:
+        src: "{{ relay_peer_names_owner_exceptions_src }}"
+        dest: "{{ relay_health_dir }}/owner-exceptions.json"
+        mode: "0644"
+      when: relay_peer_names_owner_exceptions_src | default('') | length > 0
+
     - name: relay-health | peer-names resolver .env
       ansible.builtin.copy:
         dest: "{{ relay_health_dir }}/relay-peer-names.env"
@@ -127,6 +134,8 @@
           RELAY_PEER_NAMES_PORTAL_CONTAINER={{ relay_peer_names_portal_container }}
           RELAY_PEER_NAMES_PORTAL_NET={{ relay_peer_names_portal_net }}
           RELAY_PEER_NAMES_PORTAL_PORT={{ relay_peer_names_portal_port }}
+          RELAY_PEER_NAMES_OWNER_TEXTFILE={{ relay_peer_names_owner_textfile }}
+          RELAY_PEER_NAMES_OWNER_EXCEPTIONS={{ (relay_health_dir ~ '/owner-exceptions.json') if (relay_peer_names_owner_exceptions_src | default('') | length > 0) else '' }}
       no_log: true
 
     - name: relay-health | install peer-names resolver service + timer

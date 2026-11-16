@@ -286,6 +286,20 @@ relay_peer_names_portal_port: "8090"  # portal app port (not the oauth2/ADMINS g
 # on purpose.
 relay_peer_names_owner_enabled: true
 
+# Peer ownership reconcile (ADR 1249 decision 5): the node-exporter textfile
+# for goat_peer_owner_* (alert rules: ops/compose/goat-obs/prometheus/rules/
+# peer-owner.yml). Defaults beside relay_health_textfile_out; empty = off.
+relay_peer_names_owner_textfile: "{{ ((relay_health_textfile_out | default('') | dirname) ~ '/peer-owners.prom') if (relay_health_textfile_out | default('') | length > 0) else '' }}"
+# The goatnet's owner exceptions (ADR 1249 decision 7): a file in the private
+# overlay, schema ops/identity/peer-owner-exceptions.schema.json, copied to the
+# host. Each entry excepts one peer (by NetBird peer id) with a reason, who
+# granted it and when; review_by is set only by the operator. Excepted peers are
+# shown and counted as exceptions, never as recorded. Empty = none: every
+# unrecorded peer is counted. Write the initial file once with
+# `relay-peer-names.py --write-exceptions <path> --granted-by <who> --reason <why>`
+# on the host; it refuses when owners were not read and never overwrites.
+relay_peer_names_owner_exceptions_src: ""
+
 # --- Host-net health ingest (site-uplink diagnosis) --------------
 # Comma-separated site network hosts (mgmt-hosts/Thors) allowed to POST
 # HostNetHealthV1 to /host-net-ingest/<host> on this box's ingest. Empty (the

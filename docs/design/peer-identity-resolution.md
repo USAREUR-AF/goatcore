@@ -73,10 +73,12 @@ here, so that every consumer gets them.
 ## The owner comes from the record, not the roster
 
 **Status:** the resolver's record tiers for machines and for slot-linked
-devices are built (§"The resolver"), and so is the host carrier (§"The
-carrier"). The identity handle and nationality stamps, declared owners for
-infrastructure, the ownership audit and the surface states are designed, not
-built; each names where it will be built.
+devices are built (§"The resolver"), and so are the host carrier (§"The
+carrier") and the ownership reconcile with owner exceptions (§"The ownership
+reconcile and owner exceptions"). The
+identity handle and nationality stamps, declared owners for infrastructure
+and the key-id record at mint are designed, not built; each names where it
+will be built.
 
 **The rule.** No machine, and above all no router, holds mesh access without a
 recorded responsible person and organization. A surface that cannot show the
@@ -182,7 +184,8 @@ ADR 1249 decision 3, designed and not built. `matched_by` then becomes
 | A machine's slot | No. Its owner is `enrolled_by`, the custodian |
 
 A person slot without an identity is a person device that falls back to the
-roster. The ownership audit (below) reports how many there are.
+roster. The ownership reconcile (below) counts them, unless an owner exception
+covers them.
 
 The existing top-level fields (`handle`, `org`, `nation`, `nationality`,
 `resolved`, `person`) are filled from the record when the record answers, so a
@@ -199,26 +202,75 @@ console's approved proposals. The resolver already reads `nationality`, so it
 fills in with no portal change. Until then every answer carries
 `nationality.state: not_stamped`.
 
-### The ownership audit (designed, not built)
+### The ownership reconcile and owner exceptions (built)
 
-The check that keeps the rule true runs in the portal, because the portal
-already holds the mesh peer list (`PeersForAccess`) beside the records:
+The check that keeps the rule true runs where every mesh peer and its owner
+are already read: the relay-health `relay-peer-names` writer on the management
+host, every 5 minutes (ADR 1249 decisions 5 and 7). Each peer is graded:
 
-- `GET /api/access/ownership` (operator) resolves every mesh peer through the
-  tiers above. It returns counts by tier and class, and the peers whose
-  `owner.source` is not `record` or `declared`, each with its reason.
-- The same counts are exported as `goat_peer_owner_unrecorded{class}`. The
-  expected value is 0, and a rule on the existing Alertmanager path fires
-  while it is not.
-- A peer that is connected and unrecorded is critical. An offline one is a
-  warning until its access is removed or its owner recorded.
+| State | When |
+|---|---|
+| `recorded` | `owner.source` is `record` or `declared` |
+| `excepted` | not recorded, and under an owner exception the operator granted |
+| `exception_stale` | under an owner exception, but the record now names an owner: counted as recorded, and the exception is reported for removal |
+| `lead` | `owner.source: roster`: a lead, not a record |
+| `unrecorded` | `owner.source: none` |
+| `unread` | the owner lookup failed this cycle |
 
-The built tiers answer every enrolled machine from custody and every person
-device that has a slot link from it, which also moves roster answers onto the
-record. Tiers 3 and 4, plus owner declarations for the goatnet's own
-infrastructure, leave the person devices with no identity and the peers whose
-name carries no owner. Each of those needs an owner recorded or its access
-removed. That is an operator action, not code.
+**Owner exceptions.** An exception is a decision the operator made about one
+peer, not a gap in the rule.
+- **Where it lives.** Each goatnet keeps its exceptions in a file in its
+  private overlay (`relay_peer_names_owner_exceptions_src`, copied to the
+  host). The public tree carries only the schema
+  (`ops/identity/peer-owner-exceptions.schema.json`) and a synthetic example.
+- **What an entry carries.** One entry per peer:
+  - `peer_id`, the stable NetBird peer id. The exception applies to that peer
+    only, whatever it is renamed to;
+  - `name`, as granted;
+  - `reason`, `granted_by` and `granted_on`;
+  - optionally `review_by`, which only the operator sets: no tool fills it in.
+  An entry missing any required field is refused and logged.
+- **How it is shown.** The writer puts `owner_exception {reason, granted_by,
+  granted_on, review_by, state}` on the peer's card in `peer-names.json`. Every
+  surface that shows owners shows it as "owner exception" with its reason,
+  never as recorded and never hidden.
+- **When it goes stale.** An exception whose peer now has a recorded owner, or
+  has left the mesh, is reported as stale so it can be removed.
+- **The initial file.** `relay-peer-names.py --write-exceptions <path>
+  --granted-by <who> --reason <why>` writes it once, with one entry for every
+  peer present that day without a recorded or declared owner. It refuses when
+  the owners were not read, refuses to overwrite, and leaves `review_by`
+  empty. Later changes are made by hand in the overlay.
+
+**The metrics.** A node-exporter textfile (`relay_peer_names_owner_textfile`,
+by default beside the relay-health textfile) carries counts only:
+
+| Metric | Counts |
+|---|---|
+| `goat_peer_owner_unrecorded{class}` | `lead` plus `unrecorded`, by class (machine, person, other). **Expected 0** |
+| `goat_peer_owner_excepted{class}` | peers under an active exception |
+| `goat_peer_owner_exception_stale{reason}` | `recorded`, or `peer_gone` |
+| `goat_peer_owner_peers{state,class,connected}` | every state |
+| `goat_peer_owner_read`, `goat_peer_owner_last_run_timestamp_seconds` | whether, and when, the lookup ran |
+
+The names go to the writer's journal, never into the metric.
+
+**The alerts** (`ops/compose/goat-obs/prometheus/rules/peer-owner.yml`, each
+with a promtool test):
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| `PeerOwnerUnrecorded` | the unrecorded count is above 0 for 10 minutes. An excepted peer does not page | critical |
+| `PeerOwnerExceptionStale` | an exception no longer applies, for 1 hour | warning |
+| `PeerOwnerNotRead` | the lookup has failed for 30 minutes | warning |
+| `PeerOwnerReconcileStale` | the writer has stopped | warning |
+
+Nothing is removed: removing a peer's access is an operator action.
+
+**Not built: a portal ownership endpoint.** There is no `GET
+/api/access/ownership`. The grading runs in the writer, and the surfaces read
+it from `peer-names.json`. If an endpoint is added later it reads the same
+exceptions file and shows exceptions the same way.
 
 ### The carrier to the host surfaces (built)
 
