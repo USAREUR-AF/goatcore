@@ -34,6 +34,9 @@ SECRETS = {
     'nb_relay_auth_secret': 'relayAuthSynthetic8Tx',
     'shared_turn_secret': 'turnSharedSynthetic6Px',
     'rathole_auth_token': 'ratholeTokSynthetic2Nx',
+    'admit_audit_password': 'admitAudSynthetic5Lx',
+    'operator_idp_pg_app_password': 'opIdpAppSynthetic7Vx',
+    'postgres_replicator_password': 'replicaSynthetic3Jx',
 }
 
 # Values the stand-ins print that are themselves secrets.
@@ -67,6 +70,8 @@ fi
 all="$* $input"
 case "$all" in
   *'token generate'*) echo 'Token: joinTokSynthetic1Hx' ;;
+  *pg_is_in_recovery*) echo f ;;
+  *"grep -q 'host all admit_audit'"*|*'grep -q host all admit_audit'*) exit 1 ;;
   *pg_get_userbyid*) echo '' ;;
   *'SHOW hba_file'*) echo /var/lib/postgresql/data/pg_hba.conf ;;
   *pg_hba_file_rules*) echo 1 ;;
@@ -210,6 +215,25 @@ CASES = [
       'Deploy Netbird relay container (with TLS cert from certbot)'],
      {'relay_cert_dns01': True, 'relay_dns_name': 'relay.zagros.example.org'},
      ['nb_relay_auth_secret']),
+    ('admit-audit role, password and grants', 'roles/admit-audit/tasks/pg-role.yml', None,
+     {'pg_admit_audit_role': 'admit_audit', 'pg_admit_audit_db': 'netbird'},
+     ['postgres_superuser_password', 'admit_audit_password']),
+    ('admit-audit pg_hba reload and env', 'roles/admit-audit/tasks/deploy.yml',
+     ['Ensure pg_hba.conf admits admit_audit from the docker compose network',
+      'Append admit-audit env vars to /opt/mgmt-host/.env'],
+     {'admit_audit_image': 'goat-admit-audit:test'}, ['postgres_superuser_password']),
+    ('operator-idp app user smoke', 'roles/operator-idp-postgres/tasks/main.yml',
+     ['Smoke — verify operator_idp app user can connect'],
+     {'operator_idp_pg_container_name': 'operator-idp-postgres',
+      'operator_idp_pg_app_user': 'operator_idp'}, ['operator_idp_pg_app_password']),
+    ('streaming replicator role and base backup',
+     'roles/postgres-streaming-replication/tasks/main.yml',
+     ['Primary | ensure replicator role exists with provided password',
+      'Standby | run pg_basebackup A→B with -R (writes standby.signal + primary_conninfo)'],
+     {'router_role': 'A', 'postgres_streaming_container': 'postgres-a',
+      'postgres_data_volume_path': '/srv/pgdata', 'postgres_basebackup_client_image': 'postgres:16',
+      'postgres_primary_lan_ip': '192.0.2.20', 'postgres_primary_port': 5432},
+     ['postgres_replicator_password']),
     ('relay TURN secret', 'relay-server.yml',
      ['Read existing TURN secret', 'Set TURN secret fact'], {}, []),
     ('relay credentials in Secrets Manager', 'relay-server.yml',
@@ -264,6 +288,7 @@ class SecretTasksDoNotLogOrPassOnTheCommandLine(unittest.TestCase):
                 'tasks': tasks,
             }]
             (tmp / 'compose').mkdir()
+            (tmp / 'compose' / '.env').write_text('')
             (tmp / 'play.yml').write_text(yaml.safe_dump(play, allow_unicode=True, sort_keys=False))
             env = dict(os.environ,
                        PATH=f'{bindir}:{os.environ["PATH"]}',
