@@ -218,10 +218,13 @@ def self_test():
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, ".github", "workflows"))
             os.makedirs(os.path.join(d, "docs"))
-            open(os.path.join(d, ".github/workflows/release.yml"), "w").write(caller)
-            open(os.path.join(d, ".github/workflows/_sign.yml"), "w").write(signer)
+            with open(os.path.join(d, ".github/workflows/release.yml"), "w") as f:
+                f.write(caller)
+            with open(os.path.join(d, ".github/workflows/_sign.yml"), "w") as f:
+                f.write(signer)
             flag = "--certificate-identity" if "@refs/" in value and not value.startswith("'^") else "--certificate-identity-regexp"
-            open(os.path.join(d, "docs/install.md"), "w").write(f"cosign verify-blob \\\n  {flag} {value} \\\n")
+            with open(os.path.join(d, "docs/install.md"), "w") as f:
+                f.write(f"cosign verify-blob \\\n  {flag} {value} \\\n")
             try:
                 if env_repo is None:
                     repo = "Org/Repo"
