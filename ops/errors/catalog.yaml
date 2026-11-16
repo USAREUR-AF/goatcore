@@ -3910,6 +3910,21 @@ entries:
     matches:
       - "has no play to pass .* to \\(no `-e fed_work=` in its command\\)"
 
+  - code: GB-351
+    tool: goatbuilder
+    title: a Spock subscription has forward_origins set, which in a mesh replicates in a loop
+    what: "A Spock subscription, or the setting that creates them, has forward_origins other than empty or 'none'. In a mesh of three or more sites such a subscription passes each change on to the next site, which passes it back, without end, while every subscription still reads replicating and nothing is logged. The spock-forward-origins-check role stopped the run before spock-mesh-peering or ory-narrow-repset changed anything. The message names the setting, or each subscription as <host> <database>.<subscription>."
+    causes:
+      - "a site's group_vars set spock_mesh_forward_origins or ory_spock_forward_origins"
+      - "a subscription was created by hand with forward_origins := '{all}'"
+    fixes:
+      - "remove spock_mesh_forward_origins and ory_spock_forward_origins from the site's group_vars (both default to [])"
+      - "on the host and database named, run SELECT spock.sub_drop('<subscription>'); then run the playbook again, which creates it with forward_origins empty"
+    read: docs/design/spock-mesh-peering.md
+    exit: 2
+    matches:
+      - "GB-351 refusing to wire Spock: "
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable

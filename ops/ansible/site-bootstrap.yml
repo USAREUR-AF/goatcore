@@ -1283,6 +1283,18 @@
   gather_facts: false
   become: true
   tasks:
+    - name: Refuse Spock subscriptions with forward_origins set (GB-351)
+      # A subscription with forward_origins set in a mesh replicates in a loop.
+      # Reads every subscription here and at each peer, and installs the timer
+      # behind the SpockSubscriptionForwardOriginsSet alert.
+      ansible.builtin.include_role:
+        name: spock-forward-origins-check
+      vars:
+        spock_forward_origins_watch: true
+      when:
+        - participates_in_spock | default(false) | bool
+        - (inter_site_spock_topology | default('none')) != 'none'
+
     - name: Apply spock-mesh-peering role
       # include_role (dynamic) not import_role (static) — when this play's
       # gate evaluates false, the WHOLE role is skipped. With import_role,
@@ -1388,6 +1400,15 @@
   gather_facts: false
   become: true
   tasks:
+    - name: Refuse Spock subscriptions with forward_origins set (GB-351)
+      # A subscription with forward_origins set in a mesh replicates in a loop.
+      ansible.builtin.include_role:
+        name: spock-forward-origins-check
+      when:
+        - participates_in_spock | default(false) | bool
+        - (inter_site_spock_topology | default('none')) != 'none'
+        - ory_spock_enabled | default(false) | bool
+
     - name: Apply ory-narrow-repset role
       ansible.builtin.import_role:
         name: ory-narrow-repset

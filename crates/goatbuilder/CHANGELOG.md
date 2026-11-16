@@ -23,6 +23,38 @@ and what to do when it failed, as `explain` already did for `standup`,
 step lines it prints, so a new step cannot ship without one. Nothing a run
 does changes.
 
+#### Fixed: acceptance on a derived session learns a partner's challenge from its run stamp
+
+Phase 14's acceptance script, run on a derived session
+(`ops/federation/standup/acceptance.sh` with `FED_ACCEPTANCE_ATTEMPT`),
+staged only its start time beside its samples, so a partner's rerun soon
+after a first run could be judged by the first run's challenge, giving a
+false FAIL. Each run now stages a run stamp beside its samples, holding its
+challenge and the time it started in one value. A reader learns the
+partner's challenge from the stamp and waits for the sample carrying it. It
+ignores a stamp that started more than twice `FED_SESSION_WAIT` before its
+own start, says so, and keeps waiting for this run's; a stamp it cannot read
+is waited for, never taken as missing. The challenge is the one of the stamp
+whose sample it found, so a rerun whose first run's sample never arrived is
+judged by the rerun's; two runs' stamps on two sets end BLOCKED, never FAIL.
+With only an earlier run's sample there, the delivery rows are BLOCKED, say
+that an earlier run's sample is what is there, and the run ends open
+(exit 3). A partner whose runner stages no stamp is read once a whole
+`FED_SESSION_WAIT` has passed with no stamp of its own, since this run's
+stamp may still be in flight; once a partner's stamp has been read (a
+garbled one included), a sample without one is never learned; an unstamped
+sample's row says its run identity is not proven, and a second unstamped
+challenge is BLOCKED as two runs.
+
+Limits: a partner's current run is kept when both sides start phase 14
+within `FED_SESSION_WAIT` of each other and their clocks agree within
+`FED_SESSION_WAIT`, which `goatbuilder federate test <partner> --bilateral`
+checks first (GB-268). An earlier run that started less than twice
+`FED_SESSION_WAIT` before ours is not told apart, nor is one from a runner
+that stages no stamp; its result is still refused (GB-273), so the verdicts
+can differ until a rerun, but a stale result never passes. Tested on the
+in-process fabric only, not on hosts (#792).
+
 #### Fixed: every error `goatbuilder federate` raises carries its catalog code
 
 Fifty errors the federate stages and verbs raised had no catalog code, so a log
@@ -78,6 +110,19 @@ than phase 2's result handed over (GB-114). When there is nothing to compare,
 the import says in a row of its own that the key was not checked, and why. A phase 2 that also runs
 a forwarder's steps is refused as not built (GB-267), as are the edge's own
 leaf keys, which phase 8 still makes on the controller.
+
+#### Changed: `goatbuilder join-node` names each declared service its run does not build
+
+At a joining site, the dry-run plan and the run's summary already listed the
+end-state model's gaps and the services the site turns off. They now also
+list each service the model marks present on the node that no step of the run
+builds. At a site with its own obs host, a service the node's other class
+builds names that run, for example `join-node --class obs`. At a single-host
+site, the observability stack the model places on the core node is not built
+by any verb yet, and reads as the gap it is. A service
+no step builds reads "no join-node step builds it yet (gate row I3)". The
+admin surfaces keep their gap line (gate rows I1 and I4). Nothing a run does
+changes (#953).
 
 <!-- END generated: changelog unreleased -->
 
