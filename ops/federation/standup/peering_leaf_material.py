@@ -150,10 +150,14 @@ def check_request(leaf, path, cn):
         raise RequestRefused(leaf, 'the file holds a PRIVATE KEY block; only the request may leave the edge')
     if text.count('-----BEGIN CERTIFICATE REQUEST-----') != 1 or text.count('-----BEGIN ') != 1:
         raise RequestRefused(leaf, 'the file is not exactly one CERTIFICATE REQUEST block')
-    try:
-        openssl('req', '-in', path, '-noout', '-verify')
-    except ValueError as exc:
-        raise RequestRefused(leaf, 'its self-signature does not verify') from exc
+    # OpenSSL 3.0 exits 0 when the self-signature fails and says so only in its
+    # output; later versions exit non-zero. Success is the exit code AND the
+    # explicit "verify OK", wherever that version prints it.
+    verify = subprocess.run(['openssl', 'req', '-in', str(path), '-noout', '-verify'],
+                            capture_output=True, env={**os.environ, 'LC_ALL': 'C'})
+    said = (verify.stdout + verify.stderr).decode(errors='replace')
+    if verify.returncode or 'verify OK' not in said or 'verify failure' in said:
+        raise RequestRefused(leaf, 'its self-signature does not verify')
     subject = openssl('req', '-in', path, '-noout', '-subject', '-nameopt', 'RFC2253').decode().strip()
     want = 'CN=' + cn
     got = subject.partition('=')[2].strip()
