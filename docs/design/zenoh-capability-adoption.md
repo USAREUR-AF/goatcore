@@ -145,6 +145,25 @@ cert URI-SAN, not a structured ZID prefix (the [deliberate delta](https://github
   subscribers; useful to *suppress* publishing when nobody's listening (save CPU/bandwidth on the denied edge).
   Not needed until a measured idle-publish cost justifies it. Revisit alongside the fabric-health active
   idle-probe roadmap.
+- **zenoh-nostd (a Zenoh client for microcontrollers)** —
+  [`eclipse-zenoh/zenoh-nostd`](https://github.com/eclipse-zenoh/zenoh-nostd) is a pure-Rust Zenoh client that
+  needs no standard library and no heap. Watched, not adopted: it cannot present a client certificate, so it
+  cannot join a goat fabric directly, and no goat component runs Zenoh on a device that small today.
+  - *What it offers (read from its source at tag `0.2.0`, 2026-11-16):* put, publisher, subscriber, get and
+    queryable in client mode; platforms for ESP32-S3 (Embassy), ordinary hosts and the browser
+    (`wasm32-unknown-unknown`); a small broker that joins several clients and can forward to a Zenoh network;
+    a `zenoh-sansio` crate that holds the transport state machine with no I/O attached. Links are `tcp`, `udp`
+    and `ws`. Its README marks it as early development; it is consumed as a git dependency and needs Rust 1.91.
+  - *What it lacks for goat:* TLS, and with it the client certificate every goat router requires; the `serial`
+    link (parsed, not implemented, upstream issue #11); the Interest protocol (upstream issue #46).
+  - *How a device that small would join:* behind a gateway peer that holds the fabric certificate, has a
+    recorded owner and publishes for the device, the same shape as the REST publish bridge
+    ([ADR 1023](../adr/1023-zenoh-rest-pub-bridge-for-non-rust-publishers.md)). Designed, not built.
+  - *Revisit when any one of these is true:* upstream adds TLS with client certificates; upstream implements
+    the serial link, which makes it a candidate for bearers below IP; a microcontroller-class publisher is
+    required by a goat component or a partner integration.
+  - *Lowest-risk first trial:* the browser playground's isolated router, where the client would speak the
+    native protocol over `ws` and the remote-api plugin would not be needed.
 
 ## What stays behind the router-image boundary (no change)
 
