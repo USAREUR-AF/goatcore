@@ -2154,6 +2154,62 @@ mod tests {
         assert!(!fl.iter().any(|l| l.2.contains("require-secret.sh")));
     }
 
+    /// Six plays reach the founder alone through `-l 'mgmt-<site>-01*'`, the
+    /// declared naming rule (SPIRE, the LAN service surface, the LAN TLS
+    /// routes, the dashboard, the portal, grant-keyd). An inventory whose
+    /// founder is named otherwise, beside another host the pattern does match,
+    /// let ansible print "skipping: no hosts matched" and exit 0 having done
+    /// nothing. Each of those commands now runs its check first, in the same
+    /// command: no host of the site's group in the two management inventories
+    /// matches the limit, and the play is refused with GB-355, naming the
+    /// pattern, the group and the inventories.
+    #[test]
+    fn a_founder_limit_that_selects_no_host_of_the_group_is_refused() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let t = crate::testdir::path("goatbuilder-founder-limit-");
+        let root: &Path = t.as_ref();
+        std::fs::create_dir_all(root.join("ops/scripts")).unwrap();
+        std::fs::create_dir_all(root.join("ops/ansible/inventory")).unwrap();
+        std::fs::copy(repo_root().join("ops/scripts/inventory-hosts.py"), root.join("ops/scripts/inventory-hosts.py")).unwrap();
+        let limit = "-l 'mgmt-zagros-01*'";
+        let mut checks = Vec::new();
+        for (profile, plays) in [("lan", 6), ("internet", 4)] {
+            let mut s = test_site(false);
+            s.profile = profile.into();
+            s.repo = root.display().to_string();
+            let lines = phase_lines(&s, &o);
+            let limited: Vec<&(u32, String, String)> = lines.iter().filter(|l| l.2.contains(limit)).collect();
+            assert_eq!(limited.len(), plays, "{profile}: {limited:#?}");
+            for l in limited {
+                let (check, play) = l.2.split_once(" && PRE ").unwrap_or_else(|| panic!("{profile} phase {}: no play after a check: {}", l.0, l.2));
+                assert!(check.ends_with("--match 'mgmt-zagros-01*' --require GB-355 >/dev/null"), "{profile} phase {} {}: the check must come first: {}", l.0, l.1, l.2);
+                assert!(play.contains(limit));
+                checks.push(check.to_string());
+            }
+        }
+        let run = |c: &str| Command::new("sh").arg("-c").arg(c).output().unwrap();
+        // The founder named off the rule, and another host the pattern matches:
+        // the case ansible passes having done nothing.
+        std::fs::write(root.join("ops/ansible/inventory/mgmt-hosts.ini"), "[zagros_hosts]\ncore-1 ansible_host=192.0.2.10\n\n[zagros_obs_hosts]\nmgmt-zagros-01-obs ansible_host=192.0.2.11\n").unwrap();
+        for c in &checks {
+            let out = run(c);
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(out.status.code(), Some(1), "{c}\n{err}");
+            assert!(err.starts_with("GB-355: "), "{err}");
+            for word in ["'mgmt-zagros-01*'", "[zagros_hosts]", "inventory/mgmt-hosts.ini", "inventory/mgmt-hosts-mesh.ini"] {
+                assert!(err.contains(word), "{word} not in: {err}");
+            }
+        }
+        // The founder named by the rule, in the mesh inventory a later file
+        // adds: every check passes and prints nothing.
+        std::fs::write(root.join("ops/ansible/inventory/mgmt-hosts-mesh.ini"), "[zagros_hosts]\nmgmt-zagros-01 ansible_host=100.127.0.10\n").unwrap();
+        for c in &checks {
+            let out = run(c);
+            assert_eq!(out.status.code(), Some(0), "{c}\n{}", String::from_utf8_lossy(&out.stderr));
+            assert!(out.stdout.is_empty() && out.stderr.is_empty());
+        }
+    }
+
     /// Phase 5 no longer stops on purpose and phase 6 no longer re-runs the whole
     /// mgmt stack: 5 runs site-bootstrap's `stack` plays, 6 deploys Ory and then
     /// the `after-ory` plays, whose seed waits for the schema with Ory up.
