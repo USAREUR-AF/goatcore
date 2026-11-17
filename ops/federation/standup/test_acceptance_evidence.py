@@ -8,6 +8,7 @@ from pathlib import Path
 import contextlib
 import tempfile
 import unittest
+from unittest import mock
 
 _spec = importlib.util.spec_from_file_location("acceptance_evidence", Path(__file__).with_name("acceptance_evidence.py"))
 ev = importlib.util.module_from_spec(_spec)
@@ -148,6 +149,55 @@ class PersistenceScope(unittest.TestCase):
                 self.assertEqual(ev.key_matches(expr, key), want)
 
 
+class PersistenceInputs(unittest.TestCase):
+    def run_scope(self, router, subscribers):
+        with tempfile.TemporaryDirectory() as d:
+            paths = [os.path.join(d, name) for name in ("router", "subscribers")]
+            for path, text in zip(paths, (router, subscribers)):
+                if text is not None:
+                    with open(path, "w") as f:
+                        f.write(text)
+            opened = []
+
+            def tracked_open(*args, **kwargs):
+                f = open(*args, **kwargs)
+                opened.append(f)
+                return f
+
+            out = io.StringIO()
+            try:
+                with mock.patch.object(ev, "open", tracked_open, create=True), contextlib.redirect_stdout(out):
+                    rc = ev.main(["persistence-scope", "--key", PersistenceScope.KEY,
+                                  "--router", paths[0], "--subscribers", paths[1]])
+                for f in opened:
+                    self.assertTrue(f.closed, "persistence-scope left an input file open")
+                return rc, json.loads(out.getvalue())
+            finally:
+                for f in opened:
+                    f.close()
+
+    def test_cli_closes_inputs_and_preserves_scope_outcomes(self):
+        store = sub("from/xab/**", [ZID])
+        diagnostic = sub("from/xab/all/**", ["e" * 32])
+        for router, subscribers, outcome, rc in (
+                (ROUTER, [store], "ready", 0),
+                (ROUTER, [], "no-storage", 1),
+                ([], [], "closed", 4),
+                (ROUTER, [store, diagnostic], "diagnostic", 5)):
+            with self.subTest(outcome=outcome):
+                actual_rc, result = self.run_scope(json.dumps(router) + "\n200", json.dumps(subscribers) + "\n200")
+                self.assertEqual((actual_rc, result["outcome"]), (rc, outcome))
+
+    def test_cli_closes_inputs_when_either_cannot_be_read_or_parsed(self):
+        valid = json.dumps(ROUTER) + "\n200"
+        for bad in (None, "\n500", "not JSON\n200"):
+            for router, subscribers in ((bad, valid), (valid, bad)):
+                with self.subTest(router=router, subscribers=subscribers):
+                    rc, result = self.run_scope(router, subscribers)
+                    self.assertEqual((rc, result["outcome"]), (4, "unreadable"))
+                    self.assertIn("the receiving core's admin space", result["reason"])
+
+
 class Bundle(unittest.TestCase):
     def run_cli(self, *argv):
         out = io.StringIO()
@@ -190,6 +240,25 @@ class Bundle(unittest.TestCase):
                                  "--started", T)
             self.assertEqual(rc, 2)
             self.assertFalse(os.path.exists(checks) and open(checks).read().strip())
+
+    def test_missing_or_invalid_agreement_metadata_keeps_the_check_verdict(self):
+        with tempfile.TemporaryDirectory() as d:
+            agreement = os.path.join(d, "agreement.json")
+            for text in (None, "not JSON", "{}"):
+                if text is not None:
+                    with open(agreement, "w") as f:
+                        f.write(text)
+                for verdict, expected in (("PASS", ("PASS", 0)), ("FAIL", ("FAIL", 1)),
+                                          ("BLOCKED", ("INCOMPLETE", 3))):
+                    with self.subTest(agreement=text, verdict=verdict):
+                        checks = [check("delivery", verdict)]
+                        b = ev.bundle(checks, agreement, "xaa", "xab", "acc-1", T, {}, ended=T)
+                        self.assertEqual((b["verdict"], b["exit"]), expected)
+                        self.assertEqual(b["checks"], checks)
+                        self.assertIsNone(b["agreement"]["spec"])
+                        self.assertIsNone(b["agreement"]["expires"])
+                        digest = ev.sha256_file(agreement) if text is not None else None
+                        self.assertEqual(b["agreement"]["sha256"], digest)
 
     def test_an_unwritable_bundle_exits_2(self):
         with tempfile.TemporaryDirectory() as d:
