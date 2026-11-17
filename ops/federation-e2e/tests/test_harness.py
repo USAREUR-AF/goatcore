@@ -285,7 +285,8 @@ table inet goat_host_firewall {
 def hostfw_checks():
     """lib/hostfw.sh: the edge's other-tcp override admits a side's own driver to its probe ports."""
     import re
-    engine = open(os.path.join(ROOT, "lib", "engine.sh"), encoding="utf-8").read()
+    with open(os.path.join(ROOT, "lib", "engine.sh"), encoding="utf-8") as fh:
+        engine = fh.read()
     helpers = []
     for name in ("party_pos", "octet", "core_ip", "edge_ip", "ops_ip", "partners", "probe_port"):
         m = re.search(r"^%s\(\) \{.*\}.*$" % name, engine, re.M)
@@ -496,7 +497,8 @@ def samples_checks():
                   "data: {\"key\": \"from/xaa/all/fla2b101n2\"}\n"
                   "data: {\"key\": \"from/xaa/all/round-trip-n7\"}\n")
         p = subprocess.run([sys.executable, lib, "record", out, "--prefix", "fla2b"], input=stream, capture_output=True, text=True)
-        rows = [r.split("\t") for r in open(out, encoding="utf-8").read().splitlines()]
+        with open(out, encoding="utf-8") as fh:
+            rows = [r.split("\t") for r in fh.read().splitlines()]
         check(p.returncode == 0 and [r[1] for r in rows] == ["fla2b100n1", "fla2b101n2"],
               f"samples record: kept {[r[1:] for r in rows]}, rc {p.returncode}")
 
