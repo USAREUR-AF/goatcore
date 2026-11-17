@@ -7,6 +7,15 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+<!-- END generated: changelog unreleased -->
+
+## 0.7.3 — 2026-11-17
+
+What changed since 0.7.2, the previous release. `goatbuilder federate directory
+ls|show|check` reads the peering directory and says, for a file a peering
+cannot fetch, whether the party has not uploaded it or the directory's release
+lacks the route. Every error `goatbuilder federate` raises carries its catalog
+code, and `explain release` and `explain fastlane` answer for each step.
 
 ### For someone deploying
 
@@ -76,7 +85,7 @@ files it hosts; `show <party>` gives each hosted file's size and sha256;
 for a missing one, whether the party has not uploaded it (`NOT HOSTED`: the
 party runs phase 5) or the directory's release does not serve the route
 (`ROUTE MISSING`: its operator moves the directory to a newer release). The
-URL is `--url` or `FED_DIRECTORY_URL`. New codes GB-370, GB-371 and GB-372.
+URL is `--url` or `FED_DIRECTORY_URL`. New codes GB-370, GB-371 and GB-372 (#1000).
 
 #### Fixed: every error `goatbuilder federate` raises carries its catalog code
 
@@ -130,7 +139,13 @@ no step builds reads "no join-node step builds it yet (gate row I3)". The
 admin surfaces keep their gap line (gate rows I1 and I4). Nothing a run does
 changes (#953).
 
-<!-- END generated: changelog unreleased -->
+### For someone contributing
+
+Nothing.
+
+### To be removed
+
+Nothing.
 
 ## 0.7.2 — 2026-11-15
 
