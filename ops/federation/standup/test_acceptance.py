@@ -679,7 +679,8 @@ class AcceptanceRun(unittest.TestCase):
             second = json.load(f)["session"]
         self.assertRegex(second["challenge"], r"^[0-9a-f]{32}$")
         self.assertNotEqual(second["challenge"], first)
-        self.assertEqual(second["id"], json.load(open(os.path.join(ev["xab"], "result.json")))["session"]["id"])
+        with open(os.path.join(ev["xab"], "result.json")) as f:
+            self.assertEqual(second["id"], json.load(f)["session"]["id"])
         self.assertEqual(p.returncode, 3, out)
         self.assertIn("from an earlier run", out)
         self.assertIn("BILATERAL OPEN", out)
@@ -1034,7 +1035,8 @@ class AcceptanceRun(unittest.TestCase):
     def test_derived_a_signature_over_other_bytes_than_the_published_result_is_refused_gb_272(self):
         # The partner's signer signs other bytes than the result it publishes; a wire
         # edit of the value on the core is not exercised here.
-        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(second={"extra": {"FED_TEST_SIG_TAMPER": "1"}})
+        # Only the receiver's refusal is asserted; the peer's result is discarded.
+        ev, (rc_a, out_a), _ = self.both_derived(second={"extra": {"FED_TEST_SIG_TAMPER": "1"}})
         self.assertEqual(rc_a, 2, out_a)
         self.assertIn("GB-272", out_a)
         self.assertFalse(os.path.isdir(os.path.join(ev["xaa"], "bilateral")), out_a)
