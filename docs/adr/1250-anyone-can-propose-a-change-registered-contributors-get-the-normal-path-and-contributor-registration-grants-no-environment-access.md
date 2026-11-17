@@ -43,8 +43,11 @@ existing developer to advocate for an applicant and an identity check that is no
 ## Decision
 
 - **Two registries, kept apart.**
-  - The **contributor registry** answers "how much do we trust this person's code". It is run by the maintainers on their
-    hosted collaboration environment, outside every deployment environment, and grants standing on pull requests only.
+  - The **contributor registry** answers "how much do we trust this person's code". It grants standing on pull requests only.
+    It runs on an **open collaboration environment** the maintainers host for anyone, including people outside the allies and
+    partners who use goat's deployment environments. That environment is separate from the deployment environments and from the
+    community space that supports them, and carries only public goat material: the registry, introductions, contributor
+    discussion and public documentation. Nothing about the alliance, a deployment environment or a partner is posted there.
   - **Environment onboarding** answers "may this person reach a live environment". Each environment keeps its own onboarding
     and policy.
   - The link runs one way: a person onboarded to an environment with a linked GitHub account counts as registered. Contributor
@@ -98,7 +101,7 @@ existing developer to advocate for an applicant and an identity check that is no
 
 ## Designed, not built
 
-`contributor-trust` reading standing and expiry from registry records, the outside-lane gates (no sensitive paths, seven-day
+the open collaboration environment, `contributor-trust` reading standing and expiry from registry records, the outside-lane gates (no sensitive paths, seven-day
 wait, CI approval, scan report), the registry with introduction, identity sign-in, sponsor vouch and generated roster, roster
 removal on offboarding, and the `CONTRIBUTING.md` text. The security review, two-owner merge and label removal on push are built
 (ADR 1221).
