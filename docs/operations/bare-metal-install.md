@@ -97,6 +97,21 @@ enrolls TPM2 and carves the `docker-data` LV) → `goat-standup.sh <site>` take 
 from. **Do not** enable TPM2 auto-unlock by hand here — the LUKS node class does
 it idempotently and records it.
 
+## 5. Standards for every node: it will move
+
+Nodes are built at one site and run at another. Each of these is checked before a node leaves the bench:
+
+| Standard | How |
+|---|---|
+| **Every wired port takes DHCP** | The installed netplan matches `en*` with `dhcp4: true` and cloud-init's network config is disabled (autoinstall `late-commands` do both). One port configured means a cable in any other port gives nothing. |
+| **The boot image takes DHCP too** | `dropbear-initramfs` and `luks-unlock` default to `IP=dhcp`. A static `ip=` string names one site's LAN: a moved node boots unreachable and keeps that route after boot. |
+| **The disk passphrase is in the team store before the disk is encrypted** | Put it in the store first, install second, then prove the stored value with `cryptsetup open --test-passphrase` before the node leaves the bench. Automatic unlock (TPM, Tang) hides a missing passphrase until the day it is needed. |
+| **No login lives only in a file** | Build and console logins go into the team store with the node's name; local env files hold references only. |
+| **Every MAC and the port map are recorded** | All NIC MACs (not just the cabled one), which interface is which case port, and which port is cabled, in the site inventory in the team store. |
+| **Labels survive handling** | Hostname and first MAC on the case, durable (engraved or laminated), and the same on the box. A hardware key (YubiKey) is labelled with the node it unlocks and its serial is recorded against that node. |
+| **Operator keys on every node** | Every platform admin's SSH key on the node and in its unlock shell, so any of them can reach it from a jump host on the same switch. |
+| **One setting per goatnet** | Mesh client settings such as quantum resistance match the goatnet's declared value on every node. |
+
 ## Raspberry Pi (arm64, no TPM)
 
 The Pi path is not yet turnkey the way the x86 autoinstall is. Read this
