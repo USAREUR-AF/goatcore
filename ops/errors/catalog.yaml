@@ -272,6 +272,20 @@ entries:
     read: docs/design/platform-admin-lifecycle.md
     exit: 4
 
+  - code: E_SLOT_SCOPE
+    tool: goat
+    title: the request names a slot this profile does not own
+    what: "the portal refused a write under a slot (HTTP 403 scope mismatch): the topic key's first segment is not this profile's slot, and this profile is not that machine's recorded custodian. Nothing changed."
+    causes:
+      - the topic key starts with a machine's slot and the command ran in the person's or org's own context
+      - the slot belongs to someone else
+    fixes:
+      - "goat profile show   (the publish anchor is this profile's slot)"
+      - "goat profile init <machine .cbor> --context <machine>, then goat --context <machine> topic create …"
+      - "ask the slot's owner or custodian; an operator key is not the fix"
+    read: docs/adr/1096-delegated-machine-enrollment.md
+    exit: 4
+
   - code: E_TOPIC_CONFLICT
     tool: goat
     title: the topic already exists
@@ -4283,8 +4297,9 @@ entries:
       - "gh auth refresh -s read:packages"
     read: CONTRIBUTING.md
     matches:
-      - "HTTP 403"
       - "API rate limit exceeded"
+      - "HTTP 403: Resource not accessible"
+      - "api.github.com"
 
   - code: X-COSIGN-001
     tool: cosign
