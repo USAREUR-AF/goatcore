@@ -73,10 +73,20 @@ existing developer to advocate for an applicant and an identity check that is no
      alone proves nothing.
   4. **Sponsor vouches:** a registered member who has worked with the person says how, in a sentence or two. The sponsor's name
      is on the record, and vouching for someone who abuses it is reviewed.
-  5. **Recorded:** person, verification method, sponsor, organization, date and a one-year expiry. The trust roster that
+  5. **Recorded:** person, verification method, sponsor, organization, affiliation category, date and a one-year expiry. The trust roster that
      `contributor-trust` reads is generated from these records; offboarding removes the entry.
 
   While registration is pending the person contributes through the outside lane.
+- **Affiliation category.** Each record carries one category: `vendor:<organization>` for a person contributing for a company
+  that sells a product goat integrates with or competes with, `government`, `academic`, `individual`, or `unspecified`.
+  `unspecified` is a normal value: the project will not always know, and a person is never refused standing for leaving it
+  open. The category does not change a standing or its gates. It is used for two things:
+  - **Conflict of interest.** A pull request from `vendor:<organization>` that changes the integration of a different named
+    vendor (for example another vendor's adapter package) needs a security review by an owner, as a sensitive path does. Each
+    repository lists which paths belong to which vendor's integration beside `sensitive-paths.txt`.
+  - **Visibility.** Pull requests from vendor contributors carry the label `vendor` beside `community`, so maintainers can see
+    commercial contributions at a glance.
+  A sponsor states the category when vouching; the person can correct it, and a change is recorded with its date.
 - **Rules for every standing.** A change to a sensitive path (`.github/contributor-trust/sensitive-paths.txt`) needs two
   maintainers, one of whom did not write it. Maintainer status is never granted to relieve workload. Pressure from little-known
   accounts to add a maintainer, merge faster or take over a component is reported to the platform admins. Release signing and
@@ -98,10 +108,11 @@ existing developer to advocate for an applicant and an identity check that is no
 - Outside contributors wait longer and cannot change sensitive paths directly; a maintainer re-writes a good idea and credits it.
 - The maintainers run and staff a registry and a sponsor process; sponsors take on accountability.
 - Authors known today only through a merged pull request are asked to register, within a transition period the owners set.
+- Vendor engineers can contribute on the same terms as anyone else, and a change one vendor makes to another vendor's integration always gets an owner's review.
 
 ## Designed, not built
 
-the open collaboration environment, `contributor-trust` reading standing and expiry from registry records, the outside-lane gates (no sensitive paths, seven-day
+the open collaboration environment, `contributor-trust` reading standing, expiry and affiliation category from registry records, the per-repository vendor-path lists and the `vendor` label, the outside-lane gates (no sensitive paths, seven-day
 wait, CI approval, scan report), the registry with introduction, identity sign-in, sponsor vouch and generated roster, roster
 removal on offboarding, and the `CONTRIBUTING.md` text. The security review, two-owner merge and label removal on push are built
 (ADR 1221).
