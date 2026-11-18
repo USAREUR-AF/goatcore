@@ -75,6 +75,10 @@ jobs:
       # runs only on a main push, after merge).
       - name: Groups and aff forwarding read admin metadata
         run: node ops/ory-consent/tests/claim-forwarding.test.js
+      # GHSA-9v3v: the ory role's deploy-time gate (verify-image.sh) accepts a
+      # fixed consent image, rejects a pre-fix one, and fails closed.
+      - name: Deploy-time consent image gate
+        run: node ops/ory-consent/tests/verify-image.test.js
 
   detect-relevant-changes:
     # Guard against redundant re-fires on PR syncs (merge commits, rebases

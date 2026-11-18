@@ -63,6 +63,11 @@ func main() {
 			slog.Error("render-acl failed", "err", err)
 			os.Exit(1)
 		}
+	case "rr3p-reissue":
+		if err := cmdRR3PReissue(os.Args[2:]); err != nil {
+			slog.Error("rr3p-reissue failed", "err", err)
+			os.Exit(1)
+		}
 	case "healthcheck":
 		if err := cmdHealthcheck(os.Args[2:]); err != nil {
 			// Plain stderr, not slog: this runs as a container healthcheck, whose
@@ -93,6 +98,7 @@ func usage() {
 usage:
   goat-zenoh-portal serve       --listen ... --db ... --operator-api-key ... [flags]
   goat-zenoh-portal render-acl  --db ... --acl-config ... --acl-storage-dir-prefix ... [flags]
+  goat-zenoh-portal rr3p-reissue [--dry-run|--apply] --db ... [--acl-config ...]
   goat-zenoh-portal healthcheck [--url http://127.0.0.1:8090/api/health] [--timeout 3s]
   goat-zenoh-portal problem-pages [--listen 0.0.0.0:8091]
   goat-zenoh-portal version
@@ -111,12 +117,20 @@ func cmdServe(args []string) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	// GHSA-qc75: every bundle path is minted from, and swept against, the
+	// canonical directory; a directory that cannot be resolved stops start-up.
+	if err := cfg.CanonicalizeVendorBundleDir(); err != nil {
+		return err
+	}
 
 	reg, err := registry.Open(cfg.DBDSN)
 	if err != nil {
 		return fmt.Errorf("open registry: %w", err)
 	}
 	defer reg.Close()
+	// GHSA-qc75: a tarball no row names any more (rotated, deleted, cleared)
+	// holds an old private key; the registry removes it from this directory.
+	reg.SetBundleDir(cfg.VendorBundleDir)
 
 	// Per-uuid slot-pool mode (ADR 1025): bake the deterministic slot pool into
 	// the registry once. Idempotent (no-op once populated). The salt + size MUST
@@ -168,6 +182,32 @@ func cmdServe(args []string) error {
 	}
 	if cfg.ACLAdminRESTURL != "" {
 		aclR.AdminREST = &acl.AdminRESTClient{BaseURL: cfg.ACLAdminRESTURL}
+	}
+	// GHSA-rr3p: render the router's slot subjects from the registry at boot,
+	// so the fragment file the router role includes exists before the role's
+	// next render and the live config matches the registry. Not fatal: the
+	// router keeps the subjects it has, and every slot change re-renders.
+	if cfg.IdentityModel == config.IdentityModelPerUUID {
+		if res, err := api.SyncSlotFragment(context.Background(), reg, aclR); err != nil {
+			slog.Warn("slot fragment: boot render failed", "err", err)
+		} else {
+			slog.Info("slot fragment rendered", "digest", res.Digest, "config_changed", res.ConfigChanged)
+		}
+		// Re-render every minute as well: a co-publish grant that reaches its
+		// effective_to (or effective_from) changes the fragment with no
+		// request to trigger a sync (GHSA-rr3p review r8 F1). A render that
+		// changes nothing writes nothing.
+		go func() {
+			t := time.NewTicker(time.Minute)
+			defer t.Stop()
+			for range t.C {
+				if res, err := api.SyncSlotFragment(context.Background(), reg, aclR); err != nil {
+					slog.Warn("slot fragment: periodic render failed", "err", err)
+				} else if res.ConfigChanged {
+					slog.Info("slot fragment: periodic render changed the router config", "digest", res.Digest)
+				}
+			}
+		}()
 	}
 	staticFS, err := fs.Sub(web.Static, "static")
 	if err != nil {
@@ -240,6 +280,11 @@ func cmdServe(args []string) error {
 	// never reach a log. A read failure keeps the last good set and says so.
 	warnShadowedOperatorKeys(slog.Default(), cfg.OperatorKeys)
 	if cfg.OperatorKeys != nil {
+		// A collision or a tombstone that appears while the portal runs is
+		// logged when it appears, not only at the next restart.
+		cfg.OperatorKeys.SetNotice(func(shadowed, envRevoked []string) {
+			logOperatorKeyNotice(slog.Default(), shadowed, envRevoked)
+		})
 		if every := parseInterval(cfg.OperatorAPIKeysReloadInterval, 30*time.Second); every > 0 && cfg.OperatorAPIKeysDir != "" {
 			slog.Info("operator-key directory is live",
 				"dir", cfg.OperatorAPIKeysDir, "every", every, "handles", len(cfg.OperatorKeys.Handles()))
@@ -257,8 +302,15 @@ func cmdServe(args []string) error {
 		}
 	}
 
+	if cfg.AuditS3Endpoint != "" {
+		if _, err := audittail.StorageClient(audittail.Config{Endpoint: cfg.AuditS3Endpoint, CABundle: cfg.AuditS3CABundle}); err != nil {
+			slog.Error("invalid audit storage TLS configuration", "error", err)
+			os.Exit(1)
+		}
+	}
 	tailer := audittail.New(audittail.Config{
 		Endpoint:     cfg.AuditS3Endpoint,
+		CABundle:     cfg.AuditS3CABundle,
 		Bucket:       cfg.AuditS3Bucket,
 		Region:       cfg.AuditS3Region,
 		AccessKey:    cfg.AuditS3AccessKey,
@@ -274,6 +326,10 @@ func cmdServe(args []string) error {
 	// member of any new zero-admin org, re-checking on the interval so a freshly
 	// onboarded org is governed without a restart. See internal/api/govern_seed.go.
 	srv.RunGovernReconcile(ctx, parseInterval(cfg.GovernReconcileInterval, 5*time.Minute))
+
+	// GHSA-qc75: a bundle tarball holds the org's private key; once its link
+	// is past PORTAL_BUNDLE_TTL nothing serves it, so it is removed from disk.
+	srv.RunBundlePrune(ctx, api.BundlePruneInterval)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.ListenAndServe() }()
@@ -392,6 +448,138 @@ func cmdRenderACL(args []string) error {
 	return renderACLFromRegistry(context.Background(), reg, aclR2)
 }
 
+// cmdRR3PReissue is GHSA-rr3p migration step 3: every assigned slot that was
+// handed to someone else before slot generations existed has its generation
+// advanced, so the earlier holders' bare-anchor leaves stop matching at the
+// router's next reload of the slot subjects, and its current holder is set up
+// to get a new leaf (re-collect from the console, or an operator rotate).
+//
+// --dry-run (the default) opens the registry without migrating or normalizing
+// it (OpenExisting), commits nothing (the bundle leaves it reads are inserted
+// in a transaction it rolls back, so they count as evidence) and prints, per
+// affected slot, its anchor (the pool slot id: no handle or identity), its
+// path and what would end, then the totals.
+// --apply changes each slot in its own transaction (audit action
+// "rr3p-reissue", which carries the anchor) and re-renders the slot fragment
+// file and the router config. It runs outside the serving portal: the
+// portal's own periodic render reconciles within a minute in any case.
+func cmdRR3PReissue(args []string) error {
+	apply := false
+	var rest []string
+	for _, a := range args {
+		switch a {
+		case "--apply":
+			apply = true
+		case "--dry-run":
+			apply = false
+		default:
+			rest = append(rest, a)
+		}
+	}
+	cfg, err := config.LoadFromFlags(rest)
+	if err != nil {
+		return err
+	}
+	if err := cfg.RequireDSN(); err != nil {
+		return err
+	}
+	if cfg.IdentityModel != config.IdentityModelPerUUID {
+		return errors.New("rr3p-reissue applies to per-uuid-slot-pool goatnets only")
+	}
+	reg, err := registry.OpenExisting(cfg.DBDSN)
+	if err != nil {
+		return err
+	}
+	defer reg.Close()
+	ctx := context.Background()
+	// Migration step 2 first: leaves still identifiable from onboarding
+	// tarballs on disk count as evidence of a second bare-anchor leaf, so
+	// they are recorded (or, in a dry run, recorded and rolled back) before
+	// the candidates are listed. Collect-minted leaves left none; migration
+	// 2's unknown-leaf rows keep those slots quarantined regardless.
+	var bundleLeaves []registry.BundleLeaf
+	if st, err := os.Stat(cfg.VendorBundleDir); err == nil && st.IsDir() {
+		var skipped int
+		bundleLeaves, skipped, err = registry.ReadBundleLeaves(cfg.VendorBundleDir)
+		if err != nil {
+			return fmt.Errorf("read bundles: %w", err)
+		}
+		fmt.Printf("bundle tarballs: %d slot leaf/leaves readable, %d tarball(s) without a readable slot leaf\n", len(bundleLeaves), skipped)
+	} else {
+		fmt.Printf("bundle tarballs: %s not present; no leaf serials to record (the unknown-leaf quarantine rows stand)\n", cfg.VendorBundleDir)
+	}
+	var cands []registry.ReissueCandidate
+	if apply {
+		n, err := reg.RecordBundleLeaves(ctx, bundleLeaves)
+		if err != nil {
+			return fmt.Errorf("record bundle leaves: %w", err)
+		}
+		fmt.Printf("recorded %d bundle leaf/leaves not already on file\n", n)
+		if cands, err = reg.ReissueCandidates(ctx); err != nil {
+			return err
+		}
+	} else if cands, err = reg.ReissueCandidatesWithBundles(ctx, bundleLeaves); err != nil {
+		return err
+	}
+	counts := map[registry.ReissuePath]int{}
+	for _, c := range cands {
+		counts[c.Path()]++
+	}
+	fmt.Printf("rr3p-reissue: %d assigned slot(s) at generation 0 hold more than one live bare-anchor leaf (re-collect: %d, operator rotate: %d)\n",
+		len(cands), counts[registry.ReissueRecollect], counts[registry.ReissueRotate])
+	var ends registry.ReissueEnded
+	restamped := 0
+	for _, c := range cands {
+		if c.Restamped {
+			restamped++
+		}
+		e, err := reg.ReissueWouldEnd(ctx, c)
+		if err != nil {
+			return err
+		}
+		ends = ends.Add(e)
+		// Anchors only (pool slot ids), never handles or identities.
+		fmt.Printf("  slot %s: path=%s restamped=%t ends machine-grants=%d custody=%d topic-budgets=%d data-grants=%d\n",
+			c.SlotID, c.Path(), c.Restamped, e.MachineGrants, e.Custody, e.TopicBudgets, e.DataGrants)
+	}
+	fmt.Printf("inherited from earlier holders (set before the current assignment), to be ended: %d machine grant(s), %d machine custody edge(s), %d topic budget(s), %d data grant(s)\n",
+		ends.MachineGrants, ends.Custody, ends.TopicBudgets, ends.DataGrants)
+	if ends != (registry.ReissueEnded{}) {
+		fmt.Println("  the current holders keep what was set for them after their assignment; anything they legitimately need from the list above an operator re-applies")
+		fmt.Println("  machine grants are ended whenever the row was CREATED before the cut-off, even if updated since (its affiliation, site and network_admin may be the earlier holder's): re-apply the current holder's with POST /api/machines/grant")
+	}
+	if restamped > 0 {
+		fmt.Printf("  %d of these slot(s) changed hands by an identity re-stamp during the assignment: nothing records whose allowances are whose, so ALL of their allowances are counted above and end; re-apply the current holders'\n", restamped)
+	}
+	if !apply {
+		fmt.Println("dry run: nothing changed (the bundle leaves were counted in a rolled-back transaction). Re-run with --apply to record them, advance these slots and end the inherited allowances.")
+		return nil
+	}
+	done := 0
+	for _, c := range cands {
+		ok, err := reg.ApplyReissue(ctx, "rr3p-reissue", c)
+		if err != nil {
+			return fmt.Errorf("after %d slot(s): %w", done, err)
+		}
+		if ok {
+			done++
+		}
+	}
+	fmt.Printf("applied to %d slot(s); the audit log (action rr3p-reissue) names each anchor and its path\n", done)
+	if cfg.ACLConfigPath != "" {
+		res, err := api.SyncSlotFragment(ctx, reg, &acl.Renderer{ConfigPath: cfg.ACLConfigPath, ReloadFake: true})
+		if err != nil {
+			return fmt.Errorf("slot fragment: %w (the registry change is done; the portal re-renders at its next slot change or restart)", err)
+		}
+		fmt.Printf("slot fragment re-rendered (digest %s); the router drops the earlier leaves at its next reload\n", res.Digest)
+	} else {
+		fmt.Println("WARNING: no --acl-config, so the router's slot subjects were NOT re-rendered: the earlier holders' leaves " +
+			"keep matching until the portal re-renders (its next slot change or restart) and the router reloads. " +
+			"Re-run with --acl-config, or restart the portal.")
+	}
+	return nil
+}
+
 func renderACLFromRegistry(ctx context.Context, reg *registry.Registry, aclR *acl.Renderer) error {
 	ps, err := reg.ApprovedVendorPrefixes(ctx)
 	if err != nil {
@@ -416,16 +604,26 @@ func parseInterval(s string, dflt time.Duration) time.Duration {
 
 // warnShadowedOperatorKeys logs one WARN line per handle whose directory key is
 // overridden by an env key (PORTAL_OPERATOR_API_KEYS). Revoking such a handle
-// in the console has no effect while the env pin exists, so the condition must
-// be in the startup log rather than discovered after a revocation fails. The
-// handle is logged; the key never is. Which key wins is not changed here:
-// removing an env pin is a deployment decision.
+// by deleting its file leaves the env key working (a console revoke also
+// writes a tombstone, which does refuse it), so the condition must be in the
+// startup log rather than discovered after a revocation fails. Env keys refused
+// by a tombstone are logged too. The handle is logged; the key never is.
 func warnShadowedOperatorKeys(logger *slog.Logger, store *config.OperatorKeyStore) {
 	if store == nil {
 		return
 	}
-	for _, handle := range store.Shadowed() {
-		logger.Warn("operator key in the directory is shadowed by an env key; console revocation of this handle has no effect until the env pin is removed",
+	logOperatorKeyNotice(logger, store.Shadowed(), store.EnvRevoked())
+}
+
+// logOperatorKeyNotice is the one wording for both the boot log and the
+// runtime notice from the key store's reloads.
+func logOperatorKeyNotice(logger *slog.Logger, shadowed, envRevoked []string) {
+	for _, handle := range shadowed {
+		logger.Warn("operator key in the directory is shadowed by an env key; deleting the directory file does not revoke this handle (a console revoke writes a tombstone that does)",
 			"handle", handle, "env", "PORTAL_OPERATOR_API_KEYS")
+	}
+	for _, handle := range envRevoked {
+		logger.Warn("env operator key refused: the operator-key directory holds a revocation tombstone for this handle; remove the env pin, then the tombstone, to restore it",
+			"handle", handle, "env", "PORTAL_OPERATOR_API_KEYS", "tombstone", config.RevokedFilePrefix+"*")
 	}
 }

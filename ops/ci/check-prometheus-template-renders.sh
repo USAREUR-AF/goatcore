@@ -120,6 +120,16 @@ def isitup_services(path, site, zone):
     return yaml.safe_load(block)["isitup_services"]
 
 
+def _bool(v):
+    return (str(v).strip().lower() in ("1", "true", "yes", "on", "y", "t")) if isinstance(v, str) else bool(v)
+
+
+def template_env(**kwargs):
+    env = jinja2.Environment(**kwargs)
+    env.filters["bool"] = _bool
+    return env
+
+
 raw = open(template_path).read()
 failures = []
 
@@ -171,7 +181,7 @@ for name, gv, site, zone in GOATNETS:
         continue
 
     try:
-        tmpl = jinja2.Template(raw, undefined=jinja2.ChainableUndefined)
+        tmpl = template_env(undefined=jinja2.ChainableUndefined).from_string(raw)
         rendered = tmpl.render(site_id=site, site_dns_zone=zone,
                                isitup_services=svcs,
                                obs_relay_tls_targets=relay_tls_targets(gv_path),
@@ -266,7 +276,7 @@ for name, gv, site, zone in GOATNETS:
               _fixture("ci-past-retire", retire_after="2000-01-01")]
     control = _fixture("ci-live-control")
     try:
-        doc2 = yaml.safe_load(jinja2.Template(raw, undefined=jinja2.ChainableUndefined).render(
+        doc2 = yaml.safe_load(template_env(undefined=jinja2.ChainableUndefined).from_string(raw).render(
             site_id=site, site_dns_zone=zone,
             isitup_services=svcs + parked + [control],
             obs_relay_tls_targets=relay_tls_targets(gv_path),
@@ -323,7 +333,7 @@ def _unique(seq):
             out.append(x)
     return out
 
-role_env = jinja2.Environment(undefined=jinja2.ChainableUndefined)
+role_env = template_env(undefined=jinja2.ChainableUndefined)
 role_env.filters["regex_replace"] = _regex_replace
 role_env.filters["unique"] = _unique
 
@@ -335,7 +345,7 @@ role_checked = 0
 # per external-service hostname.
 import json as _json
 reg_env = jinja2.Environment(undefined=jinja2.StrictUndefined)
-reg_env.filters["bool"] = lambda v: (str(v).strip().lower() in ("1", "true", "yes", "on", "y", "t")) if isinstance(v, str) else bool(v)
+reg_env.filters["bool"] = _bool
 reg_env.filters["to_json"] = _json.dumps
 reg_env.globals["now"] = _now
 reg_env.tests["match"] = lambda v, pat: re.match(pat, str(v)) is not None   # Ansible's test
@@ -463,6 +473,34 @@ for obs_vars in sorted(glob.glob("ops/ansible/group_vars/*_obs_hosts/vars.yml"))
     verdict = "OK  " if len(role_failures) == before else "FAIL"
     state = f"blackbox={'on' if enabled else 'off'}"
     print(f"  {group:24} {verdict}  {state} targets={n_targets}")
+
+for label, source, env, context in [
+    ("goat-obs", raw, template_env(undefined=jinja2.ChainableUndefined),
+     {"site_id": "fixture", "site_dns_zone": "example.invalid", "isitup_services": [],
+      "obs_relay_tls_targets": [], "now": _now}),
+    ("obs-host", role_raw, role_env,
+     {"obs_scrape_targets": [{"job": job, "addr": "host.docker.internal:9000",
+                              "name": job, "host": "fixture"}
+                             for job in ("minio", "minio-bucket")],
+      "obs_blackbox_enabled": False, "now": _now}),
+]:
+    for enabled in (False, True, "false", "true"):
+        try:
+            doc = yaml.safe_load(env.from_string(source).render(
+                **context, minio_tls_enabled=enabled,
+                minio_service_host="storage.example.invalid", minio_api_port=9000))
+            jobs = {j["job_name"]: j for j in doc["scrape_configs"]}
+            for name in ("minio", "minio-bucket"):
+                job = jobs[name]
+                expected = "storage.example.invalid:9000" if _bool(enabled) else "host.docker.internal:9000"
+                assert job["static_configs"][0]["targets"] == [expected], (label, enabled, job)
+                if _bool(enabled):
+                    assert job["scheme"] == "https" and job["tls_config"] == {
+                        "ca_file": "/storage-ca/ca.crt", "server_name": "storage.example.invalid"}
+                else:
+                    assert "scheme" not in job and "tls_config" not in job
+        except (jinja2.TemplateError, yaml.YAMLError, AssertionError, KeyError) as e:
+            role_failures.append(f"{label}: MinIO TLS={enabled!r} fixture failed — {e}")
 
 failures.extend(role_failures)
 

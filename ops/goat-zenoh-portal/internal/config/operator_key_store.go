@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,13 +29,20 @@ import (
 //
 //   - ENV keys (PORTAL_OPERATOR_API_KEYS) are frozen at startup. They are the
 //     deploying laptop's intent, they are how the portal boots with a working
-//     credential even if the directory is empty or unreadable, and nothing at
-//     runtime can remove them. A break-glass key belongs here.
+//     credential even if the directory is empty or unreadable. A break-glass key
+//     belongs here.
 //   - DIRECTORY keys are live. Adding a file grants; removing it revokes. Env
-//     wins on a handle collision, so a directory can never quietly redefine a
-//     handle the deployment pinned. The collision is recorded (Shadowed): a
-//     directory key the env tier overrides is one that revoking in the console
-//     cannot revoke, and that must be visible rather than silent.
+//     wins on a handle collision, so a directory key can never quietly redefine
+//     a handle the deployment pinned. The collision is recorded (Shadowed, and
+//     it stays recorded after the directory file goes) because deleting the
+//     file alone does not revoke the handle.
+//   - REVOCATION is fail-closed across both tiers (GHSA-2w7v,
+//     operator_key_tombstones.go). A console revoke writes a tombstone naming
+//     the handle, and the env key of a tombstoned handle is refused. A person
+//     revoked in the console is revoked on the portal even when a deployment
+//     also pinned their handle in the environment. The cost, chosen
+//     deliberately: revoking a break-glass handle through the console disables
+//     that break-glass key until the tombstone is removed on the host.
 //
 // FAILURE DIRECTION. A reload that cannot READ the directory keeps the last
 // good set: a transient I/O error, a half-written file, or an unmounted volume
@@ -53,18 +61,39 @@ type OperatorKeyStore struct {
 	// silently ignoring the directory.
 	lastErr  error
 	loadedAt time.Time
+	// tomb is the GHSA-2w7v revocation state (operator_key_tombstones.go).
+	tomb tombstoneState
 	// shadowed lists the handles that have a directory key AND an env key.
 	// The env key is the one accepted; the directory key is ignored, so
 	// deleting its file through the console does not revoke the handle.
 	shadowed []string
+	// refused lists the handles a directory file named that are reserved
+	// service labels (service_handles.go). They are never accepted from the
+	// directory; this is kept so each one is logged once, not every reload.
+	refused []string
 }
 
 // NewOperatorKeyStore builds the store and performs the first load. A first
 // load that fails to read the directory is a hard error: at startup there is no
 // last-good set worth preserving, and booting with a silently smaller key set
 // is how a portal comes up refusing the credentials its operators hold.
+//
+// Revocations read from tombstones are also kept in a ledger beside (never
+// inside) the directory, DefaultRevocationLedgerPath(dir); see
+// NewOperatorKeyStoreWithLedger.
 func NewOperatorKeyStore(env map[string]string, dir string) (*OperatorKeyStore, error) {
+	return NewOperatorKeyStoreWithLedger(env, dir, "")
+}
+
+// NewOperatorKeyStoreWithLedger is NewOperatorKeyStore with an explicit
+// revocation ledger path ("" = DefaultRevocationLedgerPath(dir)). A ledger
+// that exists but cannot be read or parsed is a hard error: booting without
+// the revocations it records would re-accept revoked env keys (GHSA-2w7v).
+func NewOperatorKeyStoreWithLedger(env map[string]string, dir, ledger string) (*OperatorKeyStore, error) {
 	s := &OperatorKeyStore{env: cloneKeys(env), dir: strings.TrimSpace(dir)}
+	if err := s.loadRevocationLedger(ledger); err != nil {
+		return nil, err
+	}
 	if _, err := s.Reload(); err != nil {
 		return nil, err
 	}
@@ -109,10 +138,10 @@ func (s *OperatorKeyStore) Handles() []string {
 	return out
 }
 
-// Shadowed returns, sorted, the handles whose directory key is overridden by
-// an env key as of the last successful load. Handles only, never keys. A
-// non-empty result means console revocation of those handles has no effect
-// until the env pin is removed and the portal redeployed.
+// Shadowed returns, sorted, the handles whose directory key is (or since boot
+// was) overridden by an accepted env key. Handles only, never keys. A
+// non-empty result means deleting the directory file does not revoke those
+// handles; a console revoke does, through its tombstone (see EnvRevoked).
 func (s *OperatorKeyStore) Shadowed() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -132,18 +161,25 @@ func (s *OperatorKeyStore) LastError() error {
 // interesting event is "somebody gained or lost access", not "the timer fired".
 func (s *OperatorKeyStore) Reload() (changed bool, err error) {
 	next := cloneKeys(s.env)
-	shadowed, err := mergeOperatorKeysFromDirReportingShadowed(s.dir, next, s.env)
+	shadowed, refused, err := mergeOperatorKeysFromDirReportingShadowed(s.dir, next, s.env)
 	if err != nil {
 		s.mu.Lock()
 		s.lastErr = err
 		s.mu.Unlock()
 		return false, err
 	}
+	if terr := s.applyTombstones(next, &shadowed); terr != nil {
+		s.mu.Lock()
+		s.lastErr = terr
+		s.mu.Unlock()
+		return false, terr
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	changed = !sameKeys(s.merged, next)
 	s.merged = next
 	s.shadowed = shadowed
+	s.noteRefusedLocked(refused)
 	s.lastErr = nil
 	s.loadedAt = time.Now()
 	return changed, nil
@@ -189,7 +225,7 @@ func (s *OperatorKeyStore) Watch(ctx context.Context, interval time.Duration, on
 			return
 		case <-t.C:
 			next := cloneKeys(s.env)
-			shadowed, err := mergeOperatorKeysFromDirReportingShadowed(s.dir, next, s.env)
+			shadowed, refused, err := mergeOperatorKeysFromDirReportingShadowed(s.dir, next, s.env)
 			if err != nil {
 				s.mu.Lock()
 				s.lastErr = err
@@ -199,10 +235,20 @@ func (s *OperatorKeyStore) Watch(ctx context.Context, interval time.Duration, on
 				}
 				continue
 			}
+			if terr := s.applyTombstones(next, &shadowed); terr != nil {
+				s.mu.Lock()
+				s.lastErr = terr
+				s.mu.Unlock()
+				if onError != nil {
+					onError(terr)
+				}
+				continue
+			}
 			s.mu.Lock()
 			added, removed := s.diffAgainst(next)
 			s.merged = next
 			s.shadowed = shadowed
+			s.noteRefusedLocked(refused)
 			s.lastErr = nil
 			s.loadedAt = time.Now()
 			s.mu.Unlock()
@@ -211,6 +257,31 @@ func (s *OperatorKeyStore) Watch(ctx context.Context, interval time.Duration, on
 			}
 		}
 	}
+}
+
+// Refused returns, sorted, the reserved service handles the directory named as
+// of the last successful load. Handles only, never keys.
+func (s *OperatorKeyStore) Refused() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]string(nil), s.refused...)
+}
+
+// noteRefusedLocked records the refused set and logs each handle that was not
+// refused last time. Caller holds s.mu.
+func (s *OperatorKeyStore) noteRefusedLocked(refused []string) {
+	before := map[string]bool{}
+	for _, h := range s.refused {
+		before[h] = true
+	}
+	for _, h := range refused {
+		if !before[h] {
+			slog.Warn("operator-keys dir names a reserved service handle; key refused",
+				"handle", h, "dir", s.dir,
+				"hint", "service labels delegate attribution and are never accepted from the directory; a person's key needs their own handle")
+		}
+	}
+	s.refused = refused
 }
 
 func cloneKeys(in map[string]string) map[string]string {
@@ -243,7 +314,7 @@ func sameKeys(a, b map[string]string) bool {
 // silently dropped a key would present as an operator's credential mysteriously
 // not working, which is a much worse afternoon than a loud config failure.
 func mergeOperatorKeysFromDir(dir string, into map[string]string) error {
-	_, err := mergeOperatorKeysFromDirReportingShadowed(dir, into, nil)
+	_, _, err := mergeOperatorKeysFromDirReportingShadowed(dir, into, nil)
 	return err
 }
 
@@ -251,18 +322,26 @@ func mergeOperatorKeysFromDir(dir string, into map[string]string) error {
 // also returns, sorted and de-duplicated, the directory handles that collide
 // with a handle in pinned (the env tier). Which key wins is unchanged: the one
 // already in into.
-func mergeOperatorKeysFromDirReportingShadowed(dir string, into, pinned map[string]string) ([]string, error) {
+//
+// A line under a reserved service handle (service_handles.go) is skipped and
+// returned in refused, sorted. Every service label has its own source in the
+// environment, so a directory file under one is a person's key, or a
+// mistake, wearing a name the portal trusts to delegate (GHSA-q7qx). Skipped
+// rather than fatal: one bad file must not freeze every other key at its last
+// good value.
+func mergeOperatorKeysFromDirReportingShadowed(dir string, into, pinned map[string]string) (shadowed, refused []string, err error) {
 	if strings.TrimSpace(dir) == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, fmt.Errorf("read operator-keys dir %q: %w", dir, err)
+		return nil, nil, fmt.Errorf("read operator-keys dir %q: %w", dir, err)
 	}
 	shadowSet := map[string]struct{}{}
+	refusedSet := map[string]struct{}{}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -277,7 +356,7 @@ func mergeOperatorKeysFromDirReportingShadowed(dir string, into, pinned map[stri
 		path := filepath.Join(dir, name)
 		body, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("read operator-keys file %q: %w", path, err)
+			return nil, nil, fmt.Errorf("read operator-keys file %q: %w", path, err)
 		}
 		// Errors name the file and line NUMBER, never the line: a malformed
 		// line is still a handle:key pair, and the error reaches the logs.
@@ -288,12 +367,16 @@ func mergeOperatorKeysFromDirReportingShadowed(dir string, into, pinned map[stri
 			}
 			idx := strings.IndexByte(line, ':')
 			if idx < 0 || strings.IndexByte(line[idx+1:], ':') >= 0 {
-				return nil, fmt.Errorf("operator-keys file %q line %d must be exactly one handle:key pair", path, lineIndex+1)
+				return nil, nil, fmt.Errorf("operator-keys file %q line %d must be exactly one handle:key pair", path, lineIndex+1)
 			}
 			handle := strings.TrimSpace(line[:idx])
 			key := strings.TrimSpace(line[idx+1:])
 			if handle == "" || key == "" {
-				return nil, fmt.Errorf("operator-keys file %q line %d has an empty handle or key", path, lineIndex+1)
+				return nil, nil, fmt.Errorf("operator-keys file %q line %d has an empty handle or key", path, lineIndex+1)
+			}
+			if reservedOperatorHandle(handle) {
+				refusedSet[handle] = struct{}{}
+				continue
 			}
 			if _, isPinned := pinned[handle]; isPinned {
 				shadowSet[handle] = struct{}{}
@@ -303,13 +386,17 @@ func mergeOperatorKeysFromDirReportingShadowed(dir string, into, pinned map[stri
 			}
 		}
 	}
-	if len(shadowSet) == 0 {
-		return nil, nil
+	return sortedSet(shadowSet), sortedSet(refusedSet), nil
+}
+
+func sortedSet(set map[string]struct{}) []string {
+	if len(set) == 0 {
+		return nil
 	}
-	shadowed := make([]string, 0, len(shadowSet))
-	for h := range shadowSet {
-		shadowed = append(shadowed, h)
+	out := make([]string, 0, len(set))
+	for h := range set {
+		out = append(out, h)
 	}
-	sort.Strings(shadowed)
-	return shadowed, nil
+	sort.Strings(out)
+	return out
 }

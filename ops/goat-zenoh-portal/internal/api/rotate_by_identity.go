@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/config"
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/registry"
@@ -32,7 +31,7 @@ func (s *Server) rotateByIdentity(w http.ResponseWriter, r *http.Request) {
 		writeDecodeError(w, err)
 		return
 	}
-	identityID := strings.TrimSpace(req.IdentityID)
+	identityID := registry.NormalizeIdentityID(req.IdentityID)
 	if identityID == "" {
 		writeError(w, http.StatusBadRequest, "bad_request", "identity_id is required")
 		return

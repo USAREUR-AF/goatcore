@@ -1,0 +1,46 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# Rendered by ops/ansible/roles/goat-logship (tasks/expose-guard.yml).
+#
+# The collector's metrics port ({{ logship_metrics_port }}) publishes on
+# {{ _logship_bind | trim }}, the host's {{ logship_mesh_iface }} address. Binding
+# alone does not keep the site LAN out: Docker's DNAT keys on the destination
+# address only, and Linux accepts a packet for a local address on any
+# interface, so a LAN client that routes {{ _logship_bind | trim }} via this
+# host's LAN address reaches the port. The exporter has no authentication.
+#
+# These two chains drop that traffic unless it arrives on {{ logship_mesh_iface }}
+# (mesh peers) or, for the input path, on loopback (the host itself).
+{% if (_logship_gw_bind | default('', true) | trim) | length > 0 %}
+#
+# The same port is published on {{ _logship_gw_bind | trim }}, the default Docker
+# bridge gateway, for the co-located goat-obs Prometheus. Every container on
+# the host can reach that address, so traffic to it is dropped unless it
+# arrives on {{ _logship_scraper_iface | trim }}, the bridge of Docker network
+# {{ logship_metrics_scraper_network }} (the Prometheus's), or on loopback.
+{% endif %}
+#
+# forward catches the DNAT path, matching the original destination from
+# conntrack and only in the original direction; input catches the
+# docker-proxy path.
+#
+# Its own table: Docker never touches it, and a restart of dockerd leaves it in
+# place. goat-logship-expose-guard.service loads it at boot, before docker.
+table inet goat_logship_expose
+delete table inet goat_logship_expose
+table inet goat_logship_expose {
+	chain forward {
+		type filter hook forward priority filter - 10; policy accept;
+		ct direction original iifname != "{{ logship_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _logship_bind | trim }} ct original proto-dst {{ logship_metrics_port }} counter drop
+{% if (_logship_gw_bind | default('', true) | trim) | length > 0 %}
+		ct direction original iifname != "{{ _logship_scraper_iface | trim }}" meta l4proto tcp ct original ip daddr {{ _logship_gw_bind | trim }} ct original proto-dst {{ logship_metrics_port }} counter drop
+{% endif %}
+	}
+	chain input {
+		type filter hook input priority filter - 10; policy accept;
+		iifname != "lo" iifname != "{{ logship_mesh_iface }}" ip daddr {{ _logship_bind | trim }} tcp dport {{ logship_metrics_port }} counter drop
+{% if (_logship_gw_bind | default('', true) | trim) | length > 0 %}
+		iifname != "lo" iifname != "{{ _logship_scraper_iface | trim }}" ip daddr {{ _logship_gw_bind | trim }} tcp dport {{ logship_metrics_port }} counter drop
+{% endif %}
+	}
+}

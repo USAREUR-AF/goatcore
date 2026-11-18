@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/registry"
 )
@@ -199,20 +198,55 @@ func (s *Server) handlePutSlotIdentity(w http.ResponseWriter, r *http.Request) {
 		writeBodyError(w, err, "decode", err.Error())
 		return
 	}
-	id := strings.TrimSpace(body.IdentityID)
+	id := registry.NormalizeIdentityID(body.IdentityID)
 	if id != "" {
 		if err := registry.ValidIdentityID(id); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_identity_id", err.Error())
 			return
 		}
 	}
-	if err := s.reg.StampSlotIdentity(r.Context(), anchor, id); err != nil {
+	rl, err := s.reg.RelinkSlotIdentity(r.Context(), anchor, id)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "notfound", err.Error())
 		return
 	}
+	resp := map[string]any{"anchor": anchor, "identity_id": id, "handed_over": rl.HandedOver}
+	if rl.HandedOver {
+		// The slot held a live leaf issued for another identity: the relink
+		// ended that holder's access as the anchor in the registry (GHSA-rr3p
+		// reviews r4 F1, r5 F2). The router stops admitting the leaf only
+		// when it loads the re-rendered slot subjects, which fabric_revocation
+		// reports.
+		s.syncSlotFragment(r.Context())
+		cutCN := registry.LeafCN(anchor, rl.GenerationFrom)
+		status, fabricNote := s.revocationStatus(cutCN)
+		resp["previous_identity_id"] = rl.PreviousIdentity // the identity on file before
+		resp["previous_holder"] = rl.PreviousHolder        // the issuer recorded on the live leaf that was cut
+		resp["late_attributed"] = rl.LateAttributed
+		resp["machines_still_live"] = rl.MachinesStillLive
+		resp["revoked_cn"] = cutCN
+		resp["fabric_revocation"] = status
+		resp["note"] = "The slot held a fabric leaf issued for another identity, so this relink was a hand-over. In the registry the " +
+			"previous holder's leaf was superseded and the generation advanced, the portal api key on the org row was erased, and " +
+			"the anchor's machine grant, machine custody, topic budget and producer data grants were ended (machines it enrolled " +
+			"are operator-only until re-assigned). The new identity collects its own credential from the console. " + fabricNote +
+			" Not ended: the fabric leaves of machines the previous holder enrolled (machines_still_live). They are device identities " +
+			"and stay valid, so whoever keeps such a device keeps its fabric access until an operator revokes the machine with " +
+			"DELETE /api/machines/{anchor}."
+		if rl.LateAttributed {
+			// r6 F4: the cut leaf's issuer was written by a late linkage. If
+			// this relink corrects a wrong stamp, the leaf (and the anchor's
+			// allowances, which are keyed by the anchor and cannot be split by
+			// person) were the real holder's.
+			resp["note"] = resp["note"].(string) + " The cut leaf was attributed to previous_holder by a late linkage, not at mint: " +
+				"if this relink corrects a wrong stamp, it was the restored identity's own leaf. That person collects again, and an " +
+				"operator re-applies the anchor's machine grant (POST /api/machines/grant) and any topic budget or data grants it had."
+		}
+	}
 	_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "slot.identity.set", anchor,
-		fmt.Sprintf(`{"identity_id":%q}`, id))
-	writeJSON(w, http.StatusOK, map[string]any{"anchor": anchor, "identity_id": id})
+		fmt.Sprintf(`{"identity_id":%q,"previous_identity_id":%q,"previous_holder":%q,"late_attributed":%t,"handed_over":%t,"generation_from":%d,"generation_to":%d}`,
+			id, rl.PreviousIdentity, rl.PreviousHolder, rl.LateAttributed, rl.HandedOver, rl.GenerationFrom, rl.GenerationTo))
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleListSlotLifecycles returns anchor -> class for every classified slot
