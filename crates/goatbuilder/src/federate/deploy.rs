@@ -317,7 +317,8 @@ pub fn record_baseline(a: &Approved) -> Result<()> {
         serde_json::to_vec_pretty(&Baseline {
             plan_hash: a.hash.clone(),
             sections: now,
-        })?,
+        })
+        .map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?,
     )
     .map_err(|e| cannot("write", e))?;
     std::fs::rename(&tmp, &p).map_err(|e| cannot("rename into", e))?;
