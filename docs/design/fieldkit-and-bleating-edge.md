@@ -55,6 +55,23 @@ The boundary that keeps it away from load-bearing parts of goat:
 | No new authority | Every action maps to an existing CLI command (the scope guard); a tool holds no state or logic, so a defect can show something wrong but never grant something |
 | Path ownership | Tool code lives in its own directories with its own code owners. Router templates, portal authorization, certificate minting and ACL generators stay on the sensitive-paths list, so changes there need platform review whoever proposes them |
 
+### Build approach: a complete v0.1, then room to grow
+
+Each piece ships first as a minimal but complete v0.1: it works end to end, is tested and is documented, with no gaps left for
+someone else to fill. The pieces marked **open for refinement** are then handed to the software and UX roles to refactor,
+rebuild and mature. Load-bearing pieces stay with the platform team.
+
+| Piece | v0.1 (built first) | Open for refinement by | Stays with platform |
+|---|---|---|---|
+| Bleating Edge | Tokens, the eight components, one CSS and one script, a starter template | UX and design: research-led refinement, accessibility review, localization, component documentation | — |
+| Fieldkit Gatepost | The six actions working against a mock pod and a real one, with the scope guard | UX research and full-stack: field usability study, layout and wording, tablet sign-in | The action list and its mapping to the CLI |
+| Ratification queue in the console | List, ratify, let lapse | Full-stack and UX | The ratification rules |
+| `goat pod` CLI and the pod API | Every verb in the design doc | — | All of it |
+| Provenance signing and the ingress adapter | ASTERIX adapter, three grades, CLI verification | Software: further feed decoders and display of provenance grades | Signing, key handling, grades |
+| Carriage rules and ACL rendering | Rules, rendering, drift check | — | All of it |
+
+Issues for refinement work carry the label `open-for-refinement` and a role label, so the work is visible and owned.
+
 ## 6. Fieldkit Gatepost
 
 Who may use this pod, managed on site with no backhaul.
