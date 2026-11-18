@@ -49,10 +49,14 @@ Before any SQL runs, the role:
 
 - Resolves `<SITE_UPPER>_REPLICATOR_PASS` from env (refuses to start
   if empty) — same convention as `spock-mesh-peering`.
-- Waits up to `ory_spock_preflight_wait_seconds` (default 60) for
-  `kratos-a` and `hydra-a` containers to be `healthy`. Ensures the
-  Ory-side migrations have populated the tables before we try to add
-  them to a repset.
+- Waits up to `ory_spock_preflight_wait_seconds` (default 60) for both
+  `kratos-a` and `hydra-a` containers to have Docker state `running` and health
+  exactly `healthy`. Every attempt inspects both containers; a missing
+  healthcheck, an `exited`, `paused`, `restarting`, or other non-running state,
+  or any inspection error fails the
+  attempt and is reported with the container name and observed state. This
+  ensures the Ory-side migrations have populated the tables before we try to
+  add them to a repset.
 
 Before the role runs, the playbook runs
 [`spock-forward-origins-check`](../spock-forward-origins-check/README.md):
@@ -94,10 +98,14 @@ container name, etc.).
 
 ## Tests
 
-- [`tests/syntax-check.sh`](tests/syntax-check.sh) — parse-only smoke
-  via `ansible-playbook --syntax-check`. CI-gated.
+- [`tests/syntax-check.sh`](tests/syntax-check.sh) — CI-invoked wrapper for
+  the parse-only smoke and focused container-health behavior suite.
 - [`tests/playbook.yml`](tests/playbook.yml) — parse-only fixture
   used by syntax-check.
+- [`tests/test-container-health.py`](tests/test-container-health.py) — runs
+  the production role task on localhost with a stand-in Docker CLI, covering
+  accepted, refused, diagnostic, retry, and exhaustion states without
+  contacting a Docker daemon.
 - **Full 2-node docker-compose integration test:** queued as a
   follow-on. The fixture lives at
   [`tests/run-test.sh`](tests/run-test.sh) (stub today; will mirror

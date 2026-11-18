@@ -62,9 +62,27 @@
   # ory_spock_kratos_container / ory_spock_hydra_container group_vars.
   ansible.builtin.shell:
     cmd: |
-      set -e
-      docker inspect --format '{{ "{{" }}.State.Health.Status{{ "}}" }}' {{ ory_spock_kratos_container | default('kratos-a') }} 2>/dev/null | grep -q healthy
-      docker inspect --format '{{ "{{" }}.State.Health.Status{{ "}}" }}' {{ ory_spock_hydra_container | default('hydra-a') }} 2>/dev/null | grep -q healthy
+      failed=0
+      inspect_format='{{ "{{" }}.State.Status{{ "}}" }} {{ "{{" }}if .State.Health{{ "}}" }}{{ "{{" }}.State.Health.Status{{ "}}" }}{{ "{{" }}else{{ "}}" }}none{{ "{{" }}end{{ "}}" }}'
+      for container in \
+        {{ ory_spock_kratos_container | default('kratos-a') | quote }} \
+        {{ ory_spock_hydra_container | default('hydra-a') | quote }}
+      do
+        if state=$(docker inspect --format "$inspect_format" "$container" 2>&1); then
+          inspect_rc=0
+        else
+          inspect_rc=$?
+        fi
+
+        if [ "$inspect_rc" -ne 0 ]; then
+          printf '%s: inspection error (rc=%s): %s\n' "$container" "$inspect_rc" "$state" >&2
+          failed=1
+        elif [ "$state" != "running healthy" ]; then
+          printf '%s: %s\n' "$container" "$state" >&2
+          failed=1
+        fi
+      done
+      exit "$failed"
   register: ory_spock_container_health
   retries: "{{ (ory_spock_preflight_wait_seconds / 5) | int }}"
   delay: 5
