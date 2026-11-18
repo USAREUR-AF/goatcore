@@ -352,14 +352,13 @@ pub(super) fn map_portal_err(e: PortalError) -> anyhow::Error {
             403 if e.server_message().is_some_and(|m| m.contains("scope mismatch")) => {
                 GoatError::SlotScope {
                     hint: format!(
-                        "the portal refused this because the slot in the request is not this                          profile's slot (HTTP {status}). Nothing was changed.\n\
+                        "the portal refused this because the slot in the request is not this profile's slot (HTTP {status}). Nothing was changed.\n\
                          \n\
                          The first segment of a topic key is the slot that owns it. `goat profile \
                          show` prints this profile's slot as its publish anchor.\n\
-                         \x20 - a machine you enrolled: its custodian may manage its topics with \
-                         their own profile; on a portal without custodian authority, use the \
-                         machine's own bundle as a second context (`goat profile init <machine \
-                         .cbor> --context <machine>`).\n\
+                         \x20 - a machine (yours or your org's): it has its own slot and key. \
+                         Use its bundle as a second context (`goat profile init <machine .cbor> \
+                         --context <machine>`) and run the command there.\n\
                          \x20 - someone else's slot: ask that slot's owner or custodian.\n\
                          An operator key does not belong in this fix.{server}"
                     ),
