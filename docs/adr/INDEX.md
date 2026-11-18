@@ -470,6 +470,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1247 | [Decoys are a detection layer, generated on demand from a seed; the mechanism is public and each goatnet's placements are private](1247-decoys-are-a-detection-layer-generated-on-demand-from-a-seed.md) | Proposed. Decisions 1 to 14 are built except the Zenoh surface of decision 6 and provider-issued credentials (decision 2), which are designed. | — |
 | 1248 | [goat follows stock upstream NetBird and WireGuard, and retires each of its own departures when upstream offers the same](1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md) | Proposed. The watch list it governs is written ([`upstream-netbird-wireguard-watch.md`](../design/upstream-netbird-wireguard-watch.md)); merging this record changes no build and no goatnet. | — |
 | 1250 | [Anyone can propose a change; registered contributors get the normal path, and contributor registration grants no access to any environment](1250-anyone-can-propose-a-change-registered-contributors-get-the-normal-path-and-contributor-registration-grants-no-environment-access.md) | Proposed | Amends 1221 |
+| 1251 | [Every source keeps its identity through a pod: carriage rules, provenance at entry, and pod local authority](1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md) | Proposed | Amends 1105 |
 
 <!-- END generated: adr-index -->
 
