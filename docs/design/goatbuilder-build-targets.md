@@ -189,6 +189,15 @@ One revertible pull request per step, on the program's normal path. Each step bu
    - Acceptance rows for breakglass and network-jump, which have none today.
    - `doctor --target` for these four types.
    - The CI tier's VM harness, for the first type that uses it.
+   - **A pure refactor.** `join-node` and `standup` print the same plans before and after: the golden plans (`crates/goatbuilder/tests/full_plans_unchanged.rs`) stay byte-identical, and a per-type `join-node --dry-run` parity test is written first.
+   - **Phase entries are of three kinds:** a play, run as today; a built-in step whose logic stays in Rust behind a name (a core joiner's seeding, replication wiring and certificates); or a declared skip with its reason.
+   - **A play may live outside goatcore.** The type file names its source repository as data, and the loader does not require the play, so a public clone loads every type. At run time a missing play is refused with its own error code, naming what to assemble. The network-jump play is the first such case.
+   - **Platforms stay in `ops/bootstrap/hardware-classes.yaml`**, which gains what each platform delivers. Its roles axis is marked superseded by the type files; it is deleted in a later step, once first-boot role selection stops reading it.
+
+   Follow-ups to step 1, each its own pull request (Designed):
+   - The `breakglass-node` role gains ADR 1114 §5's out-of-band route metric. The role does not set it today, so `doctor --target`'s route-metric check for a break-glass node fails until it does.
+   - A type's required inputs refused before the node is changed: for network-jump, `herd_connector_image`, which today is only named in a label. It changes `join-node`'s plan, so it carries its own golden update.
+   - The roles axis of `hardware-classes.yaml` deleted, once first-boot role selection reads the type files.
 2. **Standup phase 11 automated.** This removes the two manual steps at `standup.rs:611` and `standup.rs:617`.
    - **Today**, the operator does four things by hand. First, the first dashboard login with the bootstrap password (`goatnet-standup.md:529`). Second, a re-run of `dashboard-deploy.yml`, whose post-task promotes the first user (`dashboard-deploy.yml:212`). Third, the admin service user `svc-<site>-netbird-infra` and its token, made in the UI. Fourth, storing the token as `<SITE>_NB_API_TOKEN` and resuming at phase 12, which mints every other identity from it (`standup.rs:628`). It is manual because the first NetBird admin needs an interactive sign-in (`goatbuilder-speed.md:152`).
    - **The route:** extend `ops/mgmt-host-bootstrap`. It already writes NetBird's database directly (its `create-account` and `create-setup-key` verbs, raw SQL under ADR 0413), and its tests are held to the NetBird management version it is pinned to. It gains a verb that creates the admin service user and a hashed token. The plaintext token is written once, to a mode-0600 file under `/run`, and then into the declared secrets store. Phase 11 becomes an applied step plus the existing `--live` gate, and the first human login moves after the standup.
