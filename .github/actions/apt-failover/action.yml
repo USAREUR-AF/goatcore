@@ -108,6 +108,17 @@ runs:
           t0=$(date +%s)
           if probe; then
             echo "apt-failover: mirror $host answered in $(( $(date +%s) - t0 ))s; apt and docker unchanged"
+            # A docker build of an ubuntu image does not use the runner's sources: its apt
+            # goes to archive.ubuntu.com, which a runner can reach badly while this mirror
+            # answers. Later steps pass the mirror just proved to such builds as
+            # --build-arg UBUNTU_MIRROR (ops/ci/test_docker_apt_builds_take_ubuntu_mirror.py).
+            case "$url" in
+              http://*|https://*)
+                if [[ "$url" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]]; then
+                  echo "UBUNTU_MIRROR=${url%/}" >> "$GITHUB_ENV"
+                  echo "apt-failover: UBUNTU_MIRROR=${url%/} for docker builds of ubuntu images"
+                fi ;;
+            esac
             exit 0
           fi
           stage "probe: mirror $host gave no answer in $(( $(date +%s) - t0 ))s"

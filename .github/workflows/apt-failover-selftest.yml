@@ -73,6 +73,8 @@ jobs:
             if timeout 5 bash -c 'exec 3<>"/dev/tcp/$1/80"' _ "$h" 2>/dev/null; then fail "$h answers directly"; fi
           done
           [ -n "${APT_FAILOVER_ADD_HOSTS:-}" ] || fail "APT_FAILOVER_ADD_HOSTS is not set"
+          # The mirror is exported only when it answered; here the cache serves instead.
+          [ -z "${UBUNTU_MIRROR:-}" ] || fail "UBUNTU_MIRROR is set on the failover path ($UBUNTU_MIRROR)"
           echo "ok: cache $(docker inspect -f '{{.Config.Image}}' ci-apt-cache) serving; the archive hosts closed"
       - name: (b) the runner's apt-get update and two installs, through the cache
         id: b
@@ -159,3 +161,24 @@ jobs:
           [ -z "$(docker ps -aq --filter name='^ci-apt-cache$')" ] || fail "a ci-apt-cache container exists"
           if grep -qE '^0\.0\.0\.0 .*ubuntu\.com' /etc/hosts; then fail "/etc/hosts black-holes an Ubuntu host"; fi
           echo "ok: apt, docker, /etc/hosts and the environment are as the runner image left them"
+      # The one thing the normal path adds: the mirror it proved, for docker builds of ubuntu
+      # images, whose apt would otherwise go to archive.ubuntu.com.
+      - name: The action exported the mirror it proved, and an ubuntu build takes it
+        if: steps.mirror.outputs.up == '1'
+        timeout-minutes: 8
+        run: |
+          set -o pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          python3 ops/ci/test_docker_apt_builds_take_ubuntu_mirror.py
+          [ -n "${UBUNTU_MIRROR:-}" ] || fail "the action did not export UBUNTU_MIRROR though the mirror answered"
+          case "$UBUNTU_MIRROR" in http://*|https://*) ;; *) fail "UBUNTU_MIRROR is not an http(s) URL: $UBUNTU_MIRROR" ;; esac
+          # The same lines every such Dockerfile carries; --no-cache, so apt runs here.
+          # shellcheck disable=SC2016,SC1003  # $UBUNTU_MIRROR and the \ are the Dockerfile's
+          printf '%s\n' 'FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852' \
+            'ARG UBUNTU_MIRROR=' \
+            'RUN if [ -n "$UBUNTU_MIRROR" ] && [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \' \
+            '      sed -i -E "s#https?://(archive|security)\.ubuntu\.com/ubuntu/?#$UBUNTU_MIRROR/#" /etc/apt/sources.list.d/ubuntu.sources; fi' \
+            'RUN ! grep -E "^URIs:.*//(archive|security)\.ubuntu\.com/" /etc/apt/sources.list.d/ubuntu.sources' \
+            'RUN apt-get -o APT::Update::Error-Mode=any update && apt-get install -y --no-install-recommends nftables' > "$RUNNER_TEMP/Dockerfile.mirror"
+          docker build --no-cache --progress=plain --build-arg UBUNTU_MIRROR="$UBUNTU_MIRROR" -f "$RUNNER_TEMP/Dockerfile.mirror" -t apt-failover-selftest-mirror "$RUNNER_TEMP"
+          echo "ok: UBUNTU_MIRROR=$UBUNTU_MIRROR, and an ubuntu build installed from it"
