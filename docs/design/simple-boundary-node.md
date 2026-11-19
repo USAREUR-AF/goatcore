@@ -146,10 +146,10 @@ documents for the node it runs on, visible only from inside the goatnet.
   - `GET /api/status`: the documents as JSON.
   - `GET /healthz`.
 - **Binding:** the node's mesh address only (`wt0`), never `0.0.0.0`, on port 8740.
-- **Visibility:** the mesh ACL is the outer gate. Fronting through the goatnet's Traefik with `door: group-gated` uses
-  the external-service declaration ([`external-service-golden-path.md`](external-service-golden-path.md), ADR 1178). That
-  path needs the host to hold `EXTERNAL-INFRA`, so a host in another group is first moved there with
-  `external-service-finish.py`. Status: designed.
+- **Visibility:** the mesh ACL is the outer gate. For a named audience, publish the monitor as an external service
+  with `door: admit` and `host_class: INFRA` ([ADR 1254](../adr/1254-external-service-admit-door-sign-in-and-admission-by-organization-nation-group-or-email.md),
+  [`external-service-golden-path.md`](external-service-golden-path.md) §"Door `admit`"). goat then signs people in and
+  admits them by organization, nation, group or e-mail. Status: built; the router switch to the door is a follow-up change.
 - **What each feed card shows:**
   - name, SAC/SIC, source port and update period
   - state: `sending`, `stalled`, `receiver-refusing`, `send-error` or `stopped`

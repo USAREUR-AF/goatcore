@@ -68,6 +68,10 @@ oauth2_proxy_surface_cookie_secret: ""
 # must say `door: group-gated` — ops/ci/check-group-permissions-parity.sh
 # enforces that agreement in both directions.
 oauth2_proxy_surface_allowed_groups: ""
+# Pass the signed-in person's ID token upstream as `Authorization: Bearer <id token>`.
+# Off by default: only an upstream that decides from the token's claims needs it, and
+# that upstream must not be reachable except through this door (ADR 1254: door-admit).
+oauth2_proxy_surface_pass_id_token: false
 
 # ----- Route classes the door must NOT treat as a browser navigation -------
 # API_ROUTES: a request matching this returns 401 instead of starting
