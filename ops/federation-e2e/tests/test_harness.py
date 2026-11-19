@@ -38,6 +38,17 @@
    from the docker host and from the ops host, the driver's address when FE2E_DRIVER is
    workspace (a driver on the edge reaches them over loopback), and not from an address the
    values do not name.
+8. lib/burst.py, the lane-pacing burst (ADR 1244), on two receiving-edge logs recorded in the
+   shape the lab's edge router writes (tests/fixtures/edge-burst-*.log): `edge` counts a
+   burst key as crossed only from its ingress allow on the partner link, never from the
+   core link or another run's prefix, counts each downsampling drop of a burst key, gives
+   the smallest gap between crossings, and counts the samples that crossed out of put order;
+   `judge` passes a paced burst only when every sample crossed in put order and was stored
+   with no drop at the edge, no queue_full drop at the sender and no gap under 1/hz, fails
+   an unpaced one naming the drops, fails a reordered one naming the first sample out of
+   order, and in the overflow case
+   passes only when the sender counted what the edge never saw and warned; `metric` sums the
+   republisher's queue_full series; `hz` reads the lane's rule from the edge config.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -539,6 +550,97 @@ def samples_checks():
     check(marked <= ids, f"rotation: rot_checks names checks the catalog does not hold: {sorted(marked - ids)}")
 
 
+def burst_checks():
+    """lib/burst.py: what the receiving edge did with a burst on one lane (ADR 1244)."""
+    lib = os.path.join(ROOT, "lib", "burst.py")
+    fx = os.path.join(HERE, "fixtures")
+    pre = "from/xaa/all/fe2ebst7/"
+
+    def edge(name):
+        p = subprocess.run([sys.executable, lib, "edge", "--log", os.path.join(fx, name), "--key-prefix", pre],
+                           capture_output=True, text=True)
+        try:
+            return p.returncode, json.loads(p.stdout)
+        except ValueError:
+            return p.returncode, {"stderr": p.stderr.strip()}
+
+    rc, paced = edge("edge-burst-paced.log")
+    check(rc == 0 and (paced.get("crossed"), paced.get("dropped")) == (10, 0),
+          f"burst edge: the paced log is not 10 crossed, 0 dropped: {rc} {paced}")
+    check(paced.get("min_gap_ms") == 11.0, f"burst edge: the paced log's smallest gap is not 11.0 ms: {paced.get('min_gap_ms')}")
+    rc, unpaced = edge("edge-burst-unpaced.log")
+    check(rc == 0 and (unpaced.get("crossed"), unpaced.get("dropped")) == (2, 8),
+          f"burst edge: the unpaced log is not 2 crossed (another run's prefix and the core link left out), 8 dropped: {rc} {unpaced}")
+    check(unpaced.get("dropped_keys", [None])[0] == pre + "b2" and unpaced.get("info_drop_lines") == 1,
+          f"burst edge: the unpaced log's drops are not named: {unpaced}")
+    check((paced.get("out_of_order"), unpaced.get("out_of_order")) == (0, 0),
+          f"burst edge: an in-order log counts samples out of order: {paced.get('out_of_order')} {unpaced.get('out_of_order')}")
+    rc, reordered = edge("edge-burst-reordered.log")
+    check(rc == 0 and (reordered.get("crossed"), reordered.get("out_of_order"), reordered.get("first_out_of_order"))
+          == (5, 1, pre + "b3"), f"burst edge: b3 crossing after b4 is not one sample out of order, named: {rc} {reordered}")
+
+    with tempfile.TemporaryDirectory() as d:
+        def sent(n, code="200"):
+            f = os.path.join(d, "sent")
+            write_text(f, "".join(f"{100 + i / 1000}\trelease/all/fe2ebst7/b{i + 1}\t{code}\n" for i in range(n)))
+            return f
+
+        def judge(e, *extra, n=10):
+            fe = os.path.join(d, "edge.json")
+            write_text(fe, json.dumps(e))
+            p = subprocess.run([sys.executable, lib, "judge", "--sent", sent(n), "--edge", fe, "--hz", "100", *extra],
+                               capture_output=True, text=True)
+            out = p.stdout.strip().splitlines()
+            return p.returncode, out[-1] if out else p.stderr.strip()
+
+        q0 = ["--queue-full-before", "0", "--queue-full-after", "0"]
+        rc, last = judge(paced, "--stored", "10", *q0)
+        check(rc == 0 and last.startswith("burst: PASS"), f"burst judge: a paced burst is not a PASS: {rc} {last}")
+        rc, last = judge(unpaced, "--stored", "2", *q0)
+        check(rc == 1 and "8 dropped at the receiving edge" in last and pre + "b2" in last,
+              f"burst judge: an unpaced burst is not a FAIL naming the drops: {rc} {last}")
+        rc, last = judge(paced, "--stored", "9", *q0)
+        check(rc == 1 and "9 of 10 stored" in last, f"burst judge: a sample not stored is not a FAIL: {rc} {last}")
+        rc, last = judge(paced, "--stored", "10", "--queue-full-before", "3", "--queue-full-after", "5")
+        check(rc == 1 and "2 queue_full" in last, f"burst judge: a queue_full drop in a paced burst is not a FAIL: {rc} {last}")
+        close = dict(paced, min_gap_ms=6.0)
+        rc, last = judge(close, "--stored", "10", *q0)
+        check(rc == 1 and "6.0 ms" in last, f"burst judge: a gap under 1/hz is not a FAIL naming it: {rc} {last}")
+        ov = dict(paced, crossed=4, dropped=0)
+        over = ["--stored", "4", "--queue-full-before", "0", "--queue-full-after", "6", "--overflow"]
+        rc, last = judge(ov, *over, "--warned", "1")
+        check(rc == 0 and last.startswith("burst: PASS") and "6 queue_full" in last,
+              f"burst judge --overflow: counted and warned is not a PASS: {rc} {last}")
+        rc, last = judge(ov, *over, "--warned", "0")
+        check(rc == 1 and "no queue-full warning" in last, f"burst judge --overflow: no warning is not a FAIL: {rc} {last}")
+        rc, last = judge(ov, "--stored", "4", "--queue-full-before", "0", "--queue-full-after", "5", "--overflow", "--warned", "1")
+        check(rc == 1 and "1 sample(s) unaccounted" in last, f"burst judge --overflow: a silent loss is not a FAIL: {rc} {last}")
+        rc, last = judge(reordered, "--stored", "5", *q0, n=5)
+        check(rc == 1 and "1 crossed out of put order" in last and pre + "b3" in last,
+              f"burst judge: a reordered burst is not a FAIL naming the sample: {rc} {last}")
+        rc, last = judge(dict(ov, out_of_order=1, first_out_of_order=pre + "b9"), *over, "--warned", "1")
+        check(rc == 1 and "out of put order" in last, f"burst judge --overflow: a reordered overflow is not a FAIL: {rc} {last}")
+        rc, last = judge(paced, "--stored", "10", *q0, n=0)
+        check(rc == 1 and "nothing was sent" in last, f"burst judge: an empty burst is not a FAIL: {rc} {last}")
+
+    prom = ('# HELP goat_fed_republisher_dropped_total x\n'
+            'goat_fed_republisher_dropped_total{prefix="release/all/",reason="queue_full"} 3\n'
+            'goat_fed_republisher_dropped_total{prefix="release/xab/",reason="queue_full"} 2\n'
+            'goat_fed_republisher_dropped_total{prefix="release/all/",reason="edge_down"} 7\n'
+            'goat_fed_republisher_source_info_dropped_total{reason="queue_full"} 9\n')
+    p = subprocess.run([sys.executable, lib, "metric"], input=prom, capture_output=True, text=True)
+    check(p.returncode == 0 and p.stdout.strip() == "5", f"burst metric: queue_full is not summed to 5: {p.returncode} {p.stdout!r}")
+    p = subprocess.run([sys.executable, lib, "metric"], input="", capture_output=True, text=True)
+    check(p.returncode == 0 and p.stdout.strip() == "0", f"burst metric: no series is not 0: {p.stdout!r}")
+    with tempfile.TemporaryDirectory() as d:
+        cfg = os.path.join(d, "config.json5")
+        write_text(cfg, 'downsampling: [ { id: "partner-ingress-rate", rules: [\n'
+                        '  { key_expr: "from/xab/**", freq: 50 },\n  { key_expr: "from/xaa/**", freq: 100 },\n] } ]\n')
+        p = subprocess.run([sys.executable, lib, "hz", "--config", cfg, "--key", "from/xaa/**"], capture_output=True, text=True)
+        check(p.returncode == 0 and p.stdout.strip() == "100", f"burst hz: the lane's rule is not read: {p.returncode} {p.stdout!r}")
+        p = subprocess.run([sys.executable, lib, "hz", "--config", cfg, "--key", "from/xac/**"], capture_output=True, text=True)
+        check(p.returncode == 1, f"burst hz: a lane with no rule is not an error: {p.returncode} {p.stdout!r}")
+
 def drive_rotate_checks():
     """units/rotation.sh copies lib/engine.sh's drive() as drive_rotate with only its
     goatbuilder command line swapped. The copy is refused when the swap finds no
@@ -573,6 +675,7 @@ fwdeclared_checks()
 hostfw_checks()
 handoff_checks()
 samples_checks()
+burst_checks()
 drive_rotate_checks()
 for f in FAIL:
     print(f"FAIL {f}")
