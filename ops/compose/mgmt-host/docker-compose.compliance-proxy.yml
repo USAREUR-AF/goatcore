@@ -20,6 +20,10 @@
 services:
   oauth2-proxy-compliance:
     image: "${OAUTH2_PROXY_COMPLIANCE_IMAGE:-quay.io/oauth2-proxy/oauth2-proxy:v7.6.0@sha256:dcb6ff8dd21bf3058f6a22c6fa385fa5b897a9cd3914c88a2cc2bb0a85f8065d}"
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: oauth2-proxy-compliance
     restart: unless-stopped
     env_file:
@@ -43,6 +47,10 @@ services:
 
   aws-sigv4-proxy-compliance:
     image: "${AWS_SIGV4_PROXY_IMAGE:-public.ecr.aws/aws-observability/aws-sigv4-proxy:latest@sha256:34bbec3cb98403d3e040ec1dadb53bb02285f70d2f0ead2d16435fd30980abaa}"
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: aws-sigv4-proxy-compliance
     restart: unless-stopped
     # --name lambda + --host <function-url-host> so the proxy signs for the

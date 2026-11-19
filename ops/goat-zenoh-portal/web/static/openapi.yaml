@@ -12,7 +12,7 @@ info:
     **Base URL.** Every operation below is relative to the `/api` server
     entry, so `GET /vendors` is `GET https://<portal-host>/api/vendors`.
 
-    **Authentication.** All operations except `GET /health` and the one-time
+    **Authentication.** All operations except `GET /health` and the time-limited
     org/vendor bundle downloads require an `Authorization: Bearer <key>`
     header or a browser session cookie. Browsers exchange their key with
     POST /browser-session, then use an opaque HttpOnly, SameSite=Strict cookie.
@@ -64,7 +64,7 @@ info:
     `304` to a matching `If-None-Match`; larger responses stream without a
     validator. Schema downloads use their stored digest as the validator
     regardless of size and also honour `If-Modified-Since`. The event
-    stream sends `Cache-Control: no-cache`; one-time bundle downloads
+    stream sends `Cache-Control: no-cache`; time-limited bundle downloads
     send `Cache-Control: no-store`.
 
     **Limits.** Schema upload limit: 1 MiB (1048576 bytes); a larger upload is
@@ -123,6 +123,10 @@ components:
         full admin, or a per-vendor key issued once by `POST /vendors` for
         vendor-scoped routes. A lost vendor key is
         replaced by `POST /vendors/{vendor}/rotate`, which issues a fresh one.
+        A vendor key issued before the key digest existed is checked by a
+        slower path with a bounded queue; when that queue is full the portal
+        answers `503` with `Retry-After` and code `auth_busy` instead of
+        `401`. The key was not judged: retry after the interval.
 
   parameters:
     VendorPath:
@@ -146,7 +150,7 @@ components:
       name: token
       in: path
       required: true
-      description: One-time bundle token from the `bundle_url` of the mint or rotate response.
+      description: Bundle token from the `bundle_url` of the mint or rotate response; valid for `PORTAL_BUNDLE_TTL` (24 h) after mint.
       schema:
         type: string
         example: example-bundle-token
@@ -169,7 +173,7 @@ components:
         example: 0.2.0
   responses:
     Default:
-      description: Any other failure, including `401` (missing or invalid bearer), `403` (wrong scope or operator-only), `400` (`unsupported_api_version`) and `500`. Body is a `Problem`.
+      description: Any other failure, including `401` (missing or invalid bearer), `403` (wrong scope or operator-only), `400` (`unsupported_api_version`), `500`, and `503` with `Retry-After` and code `auth_busy` (a vendor key the portal could not check yet; retry, the key was not judged). Body is a `Problem`.
       content:
         application/problem+json:
           schema:
@@ -518,6 +522,11 @@ components:
           format: int64
           description: Internal convergence counter for API-key storage, a count of authentications since boot; 0 once every key has converged.
           example: 0
+        api_key_bcrypt_refused:
+          type: integer
+          format: int64
+          description: Number of legacy API-key authentications answered `503 auth_busy` since boot without a key check because the check queue was full; nonzero means the legacy path is being flooded, and affected vendors should retry, not rotate.
+          example: 0
         api_key_digest_awaiting:
           type: integer
           format: int64
@@ -597,6 +606,11 @@ components:
           format: int64
           description: Internal convergence counter for API-key storage, a count of authentications since boot; 0 once every key has converged.
           example: 0
+        api_key_bcrypt_refused:
+          type: integer
+          format: int64
+          description: Number of legacy API-key authentications answered `503 auth_busy` since boot without a key check because the check queue was full; nonzero means the legacy path is being flooded, and affected vendors should retry, not rotate.
+          example: 0
         api_key_digest_awaiting:
           type: integer
           format: int64
@@ -615,6 +629,7 @@ components:
         sunset: ""
         legacy_vendor_surface_hits: 12
         api_key_bcrypt_compares: 0
+        api_key_bcrypt_refused: 0
         api_key_digest_awaiting: 0
         operator_keys_shadowed: 0
 
@@ -919,11 +934,11 @@ components:
           example: example-vendor-key-shown-once
         bundle_url:
           type: string
-          description: Single-use URL for the cert + key + root + onboarding-packet tarball.
+          description: URL for the cert + key + root + onboarding-packet tarball; it works for `PORTAL_BUNDLE_TTL` (24 h) after mint, then answers 410.
           example: /api/org-bundle/homemade-sensors/example-bundle-token
         bundle_token:
           type: string
-          description: The raw one-time token, so the operator can rebuild `bundle_url` if needed.
+          description: The raw download token, so the operator can rebuild `bundle_url` if needed.
           example: example-bundle-token
         uri_san:
           type: string
@@ -1871,11 +1886,11 @@ paths:
         the unchanged anchor/CN.
 
         Operator-gated. Returns the same shape as onboarding (`POST
-        /vendors`) with a fresh one-time bundle URL; swap the tarball's
+        /vendors`) with a fresh bundle URL; swap the tarball's
         cert+key on the peer and restart it.
       responses:
         "200":
-          description: Cert re-issued; body carries the fresh api_key and one-time bundle URL.
+          description: Cert re-issued; body carries the fresh api_key and fresh bundle URL, valid for `PORTAL_BUNDLE_TTL` (24 h default).
           content:
             application/json:
               schema:
@@ -2704,15 +2719,16 @@ paths:
       - $ref: "#/components/parameters/BundleToken"
       - $ref: '#/components/parameters/ApiVersion'
     get:
-      summary: One-time org bundle download (no bearer auth; token-gated)
+      summary: Time-limited org bundle download (no bearer auth; token-gated)
       operationId: downloadOrgBundle
       description: >
         The rename target (ADR 1052) and behavior-identical alias of
         `/vendor-bundle/{vendor}/{token}`. New mints emit this org path;
         the legacy `/vendor-bundle` path is deprecated. The `{vendor}`
         path-param name is kept for now (param rename is the deferred cosmetic
-        step). Token-gated; no bearer auth. The token is consumed on the first
-        successful download, so the response is not cacheable.
+        step). Token-gated; no bearer auth. The link serves any number of
+        downloads for `PORTAL_BUNDLE_TTL` (24 h default) after it is minted,
+        then answers 410; the response is not cacheable.
       tags: [orgs]
       security: []
       responses:
@@ -2739,7 +2755,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
         "404":
-          description: Not found, or the token was already consumed.
+          description: No bundle matches this org and token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        "410":
+          description: The link is older than `PORTAL_BUNDLE_TTL`; an operator re-issues the bundle with a rotate.
           content:
             application/problem+json:
               schema:
@@ -2755,13 +2777,14 @@ paths:
       - $ref: "#/components/parameters/BundleToken"
       - $ref: '#/components/parameters/ApiVersion'
     get:
-      summary: One-time vendor bundle download (deprecated; prefer /org-bundle)
+      summary: Time-limited vendor bundle download (deprecated; prefer /org-bundle)
       operationId: downloadVendorBundle
       description: >
         Deprecated alias of `/org-bundle/{vendor}/{token}` (ADR 1052).
         Still served for back-compat, and each hit increments
-        `legacy_vendor_surface_hits` (the Phase-4 removal gate). The token is
-        consumed on the first successful download, so the response is not cacheable.
+        `legacy_vendor_surface_hits` (the Phase-4 removal gate). The link serves any number of
+        downloads for `PORTAL_BUNDLE_TTL` (24 h default) after it is minted,
+        then answers 410; the response is not cacheable.
       tags: [vendors]
       deprecated: true
       security: []
@@ -2789,7 +2812,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
         "404":
-          description: Not found, or the token was already consumed.
+          description: No bundle matches this org and token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        "410":
+          description: The link is older than `PORTAL_BUNDLE_TTL`; an operator re-issues the bundle with a rotate.
           content:
             application/problem+json:
               schema:

@@ -201,6 +201,7 @@ func TestSlotReclaim_ClearsPriorIdentityLinkage(t *testing.T) {
 	if err := reg.RevokeSlot(t.Context(), anchor); err != nil {
 		t.Fatalf("RevokeSlot: %v", err)
 	}
+	pastReuseQuarantine(t)
 	slot, err := reg.AllocateSlot(t.Context(), "next-tenant")
 	if err != nil {
 		t.Fatalf("AllocateSlot: %v", err)

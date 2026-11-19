@@ -135,8 +135,10 @@ func TestApiRequestOperatorKey_selfServiceDoor(t *testing.T) {
 		t.Fatalf("non-sponsor-authorized self-request = %d, want 403 (refused by onboardAPIGate, not this handler); %s", w4.Code, w4.Body.String())
 	}
 
-	// The operator door is completely unchanged: it may still name any handle,
-	// with no reason, and the queue decides.
+	// The operator door may still name somebody else, with no reason, and the
+	// queue decides; the handle must name a person on the roster
+	// (GHSA-mxf4-8rv7-774w), so seed one.
+	seedRosterPerson(t, s, "someone-else", "someone-else@example.org")
 	w5 := machineReq(t, h, "runner-key", "POST", "/api/onboard/operator-keys",
 		`{"handle":"someone-else","env":"zagros"}`)
 	if w5.Code != http.StatusOK {

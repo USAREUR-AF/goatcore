@@ -36,3 +36,7 @@ bash "$SCRIPT_DIR/render-release-sets.sh"
 # An unset portal_release_sets installs the example registry only on the example
 # goatnet or on request; anywhere else the play fails.
 bash "$SCRIPT_DIR/release-sets-guard.sh"
+
+# GHSA-6828: the Docker socket tasks pass with the role defaults (no socket),
+# give back a socket an earlier deploy regrouped, and leave others alone.
+bash "$SCRIPT_DIR/docker-socket.sh"

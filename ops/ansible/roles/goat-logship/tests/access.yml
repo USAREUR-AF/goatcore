@@ -1,0 +1,24 @@
+---
+# Runs tasks/access.yml with the role defaults and the vars a case passes
+# (-e), then prints the collector identity and groups. Driven by
+# tests/access.sh, which points every path at scratch files.
+- name: goat-logship | collector access
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  vars:
+    site_id: test-site
+  tasks:
+    - name: Refuse to touch the host's real auditd config or Docker socket
+      ansible.builtin.assert:
+        that:
+          - logship_auditd_conf_path != '/etc/audit/auditd.conf'
+          - logship_docker_socket != '/var/run/docker.sock'
+          - not (logship_create_user | bool)
+        quiet: true
+    - name: The access tasks, as the role runs them
+      ansible.builtin.include_tasks: ../tasks/access.yml
+    - name: Report
+      ansible.builtin.debug:
+        msg: "ACCESS={{ {'uid': _logship_uid, 'gids': _logship_read_gids, 'docker_gid': _logship_docker_gid | default('')} | to_json }}"

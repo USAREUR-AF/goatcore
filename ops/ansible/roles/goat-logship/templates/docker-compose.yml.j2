@@ -1,12 +1,32 @@
 # Rendered by ops/ansible/roles/goat-logship on {{ ansible_date_time.iso8601 }}
 # Source: ops/ansible/roles/goat-logship/templates/docker-compose.yml.j2
 # Anchor: ADR 1078 — off-box OCSF cyber logging via Vector.
+#
+# GHSA-x44g: Vector runs as {{ logship_user }}, not root, and never holds the
+# Docker socket; only the goat-logship-docker-proxy container does, and it
+# passes on read-only docker_logs requests alone, over a unix socket only
+# Vector's group can reach. The metrics port binds loopback, the mesh address
+# and (optionally) the Docker bridge gateway, never every interface
+# (tasks/bind.yml resolves the addresses; the exposure guard limits who may
+# use the mesh and gateway bindings).
 
 services:
   goat-logship:
     image: {{ logship_vector_image }}
     container_name: goat-logship
     restart: unless-stopped
+    # Unprivileged host system user; read access to the logs is by group
+    # (the owning group of each path a source reads).
+    user: "{{ _logship_uid }}:{{ _logship_gid }}"
+{% if _logship_read_gids | length > 0 %}
+    group_add:
+{% for gid in _logship_read_gids %}
+      - "{{ gid }}"
+{% endfor %}
+{% endif %}
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     command:
       - --config
       - /etc/vector/vector.yaml
@@ -23,6 +43,11 @@ services:
     volumes:
       - {{ logship_compose_dir }}/vector.yaml:/etc/vector/vector.yaml:ro
       - {{ logship_data_root }}:/var/lib/vector
+{% if logship_docker_sources_enabled | bool %}
+      # The Docker API proxy's unix socket (docker_host in vector.yaml).
+      # Read-only: connecting needs no write to the mount.
+      - {{ logship_docker_proxy_socket_dir }}:/run/goat-logship-docker-proxy:ro
+{% endif %}
       # journald — journal files + machine-id (Vector's journald source).
       - /var/log/journal:/var/log/journal:ro
       - /run/log/journal:/run/log/journal:ro
@@ -36,9 +61,6 @@ services:
 {% if logship_source_zenoh_audit %}
       - {{ logship_zenoh_audit_glob | dirname }}:{{ logship_zenoh_audit_glob | dirname }}:ro
 {% endif %}
-{% if logship_source_identity_enroll or logship_source_app_http or logship_source_app_auth %}
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-{% endif %}
 {% if logship_source_falco %}
       - {{ logship_falco_events_path | dirname }}:{{ logship_falco_events_path | dirname }}:ro
 {% endif %}
@@ -46,12 +68,77 @@ services:
       - {{ logship_osquery_results_path | dirname }}:{{ logship_osquery_results_path | dirname }}:ro
 {% endif %}
     ports:
-      # Self-metrics for Prometheus (absence-alarm). Bound to the mesh IP at
-      # the host level by the two-layer firewall pattern; container-side we
-      # expose only the metrics port — no ingest port is listened on.
+      # Self-metrics for Prometheus (absence-alarm); no ingest port is
+      # listened on. The exporter has no authentication, so it publishes on
+      # loopback and the mesh address only (plus the Docker bridge gateway for
+      # the co-located goat-obs Prometheus), and the exposure guard
+      # (goat-logship-expose-guard.service) drops traffic to the mesh address
+      # that does not arrive on the mesh interface, and to the gateway address
+      # that does not arrive from the goat-obs Prometheus's network. No other
+      # firewall covers this port: ports Docker publishes skip ufw.
+{% if logship_bind_all | bool %}
       - "{{ logship_metrics_port }}:{{ logship_metrics_port }}"
+{% else %}
+{% for ip in _logship_bind_ips %}
+      - "{{ ip }}:{{ logship_metrics_port }}:{{ logship_metrics_port }}"
+{% endfor %}
+{% endif %}
     networks:
       - goat-logship-net
+{% if logship_docker_sources_enabled | bool %}
+    depends_on:
+      - goat-logship-docker-proxy
+
+  # The only holder of the Docker socket. nginx passes on GET/HEAD for the
+  # endpoints docker_logs uses (ping, version, events, container list, inspect,
+  # logs) and answers 403 to every other method and path; see
+  # docker-proxy.nginx.conf. It has no network at all: it listens only on a
+  # unix socket in {{ logship_docker_proxy_socket_dir }}, a directory owned by
+  # its own user ({{ logship_docker_proxy_user }}) and Vector's group, mode
+  # 0710, and the socket itself is made 0660 (nginx creates unix sockets
+  # 0666). No other host user and no other container can connect.
+  # Read-only root, no capabilities, the Docker socket's group added.
+  goat-logship-docker-proxy:
+    image: {{ logship_docker_proxy_image }}
+    container_name: goat-logship-docker-proxy
+    restart: unless-stopped
+    network_mode: none
+    # Primary group = Vector's, so the socket nginx creates is in it.
+    user: "{{ _logship_dproxy_uid }}:{{ _logship_gid }}"
+    group_add:
+      - "{{ _logship_docker_gid }}"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        # nginx does not replace a socket left by a killed predecessor.
+        s=/run/goat-logship-docker-proxy/api.sock
+        rm -f "$$s"
+        nginx -c /etc/goat-logship-docker-proxy/nginx.conf &
+        pid=$$!
+        trap 'kill -TERM "$$pid"' TERM INT
+        i=0
+        while [ ! -S "$$s" ] && [ "$$i" -lt 100 ]; do sleep 0.1; i=$$((i + 1)); done
+        chmod 0660 "$$s" || { kill -TERM "$$pid"; exit 1; }
+        # The first wait returns when the trap fires; the second lets nginx
+        # finish shutting down.
+        wait "$$pid"; wait "$$pid"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=0700,uid={{ _logship_dproxy_uid }},gid={{ _logship_gid }}
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+    volumes:
+      - {{ logship_compose_dir }}/docker-proxy.nginx.conf:/etc/goat-logship-docker-proxy/nginx.conf:ro
+      # A socket mount's :ro does not stop writes through the socket; the
+      # nginx allow-list is what limits this container to reads.
+      - {{ logship_docker_socket }}:/var/run/docker.sock
+      - {{ logship_docker_proxy_socket_dir }}:/run/goat-logship-docker-proxy
+{% endif %}
 
 networks:
   goat-logship-net:

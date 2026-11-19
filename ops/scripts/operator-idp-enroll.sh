@@ -152,26 +152,28 @@ esac
 
 IDENTITY_ID=$(jq -r '.id' "$HTTP_OUT")
 
-# Generate a one-time recovery link. The new operator follows the link
-# in their browser, which lands them in the Kratos settings flow where
-# they enroll their FIDO2 token. Link expires in 1h by default.
+# Generate a one-time recovery link and code. The new operator opens the
+# link in their browser, enters the code, and lands in the Kratos settings
+# flow where they enroll their FIDO2 token. Kratos v1.3.1 route:
+# POST /admin/recovery/code (201). Expires in 1h by default.
 RECOVERY_PAYLOAD=$(jq -n --arg id "$IDENTITY_ID" '{identity_id: $id}')
 RECOVERY_OUT=$(mktemp)
 trap 'rm -f "$HTTP_OUT" "$RECOVERY_OUT"' EXIT
 RECOVERY_CODE=$(curl -sS -o "$RECOVERY_OUT" -w '%{http_code}' \
-  -X POST "${KRATOS_ADMIN}/admin/recovery/link/code/admin" \
+  -X POST "${KRATOS_ADMIN}/admin/recovery/code" \
   -H 'Content-Type: application/json' \
   -d "$RECOVERY_PAYLOAD")
 
-if [[ "$RECOVERY_CODE" != "200" ]]; then
+if [[ "$RECOVERY_CODE" != "201" ]]; then
   echo "warning: identity created (id=${IDENTITY_ID}) but recovery link failed (HTTP ${RECOVERY_CODE})" >&2
   cat "$RECOVERY_OUT" >&2
   echo "         operator can re-trigger via:" >&2
-  echo "           curl -X POST ${KRATOS_ADMIN}/admin/recovery/link/code/admin -d '{\"identity_id\":\"${IDENTITY_ID}\"}'" >&2
+  echo "           curl -X POST ${KRATOS_ADMIN}/admin/recovery/code -H 'Content-Type: application/json' -d '{\"identity_id\":\"${IDENTITY_ID}\"}'" >&2
   exit 0
 fi
 
 RECOVERY_LINK=$(jq -r '.recovery_link' "$RECOVERY_OUT")
+RECOVERY_ONE_TIME_CODE=$(jq -r '.recovery_code' "$RECOVERY_OUT")
 EXPIRES_AT=$(jq -r '.expires_at' "$RECOVERY_OUT")
 
 cat <<DONE
@@ -184,15 +186,17 @@ cat <<DONE
  Groups:   ${GROUPS_RAW}
  Expires:  ${EXPIRES_AT}
 
- Recovery link (share with the new operator out-of-band — Matrix DM /
- phone call / in-person; do NOT email):
+ Recovery link and code (share with the new operator out-of-band —
+ Matrix DM / phone call / in-person; do NOT email):
 
  ${RECOVERY_LINK}
+ Code: ${RECOVERY_ONE_TIME_CODE}
 
  New-operator workflow:
    1. Open the link in a browser on the same network as the operator
       IdP (wg-cp0 mesh).
-   2. Kratos lands them in the settings flow. Click "Set up Passkey."
+   2. Enter the code. Kratos lands them in the settings flow.
+      Click "Set up Passkey."
    3. Plug in FIDO2 token, follow the WebAuthn prompts.
    4. Done. Operator can now log into any operator-IdP-fronted
       consumer (Grafana, MinIO, OpenObserve, Forgejo) using their

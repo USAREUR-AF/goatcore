@@ -1,20 +1,19 @@
 ---
-# Reload-not-restart for prometheus + alertmanager (both support
-# --web.enable-lifecycle / SIGHUP). Avoid full container restart so
-# scrape counters stay continuous across config edits.
+# Reload-not-restart for prometheus + alertmanager, by SIGHUP to the
+# container. Prometheus' HTTP /-/reload exists only with --web.enable-lifecycle,
+# which is off by default (obs_prometheus_web_lifecycle). Avoid full container
+# restart so scrape counters stay continuous across config edits.
 
 - name: prometheus reload
-  ansible.builtin.uri:
-    url: http://localhost:9090/-/reload
-    method: POST
-    status_code: 200
+  ansible.builtin.command:
+    argv: [docker, kill, --signal, HUP, prometheus]
+  changed_when: true
   failed_when: false  # if Prometheus isn't up yet, the next-up handler picks up
 
 - name: alertmanager reload
-  ansible.builtin.uri:
-    url: http://localhost:9093/-/reload
-    method: POST
-    status_code: 200
+  ansible.builtin.command:
+    argv: [docker, kill, --signal, HUP, alertmanager]
+  changed_when: true
   failed_when: false
 
 - name: obs-host compose changed

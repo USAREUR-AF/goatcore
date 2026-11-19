@@ -25,6 +25,10 @@ services:
     # Tag-only dev default; the deploy overrides SPIRE_AGENT_IMAGE with the
     # digest from the generated pins, same as the co-located overlay.
     image: ${SPIRE_AGENT_IMAGE:-ghcr.io/spiffe/spire-agent:1.11.2}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: spire-agent
     restart: unless-stopped
     command: ["-config", "/run/spire/config/agent.conf", "-expandEnv"]

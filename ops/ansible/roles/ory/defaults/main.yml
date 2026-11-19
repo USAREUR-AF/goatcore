@@ -3,7 +3,8 @@
 ory_kratos_image: "oryd/kratos:v1.3.1"
 ory_hydra_image: "oryd/hydra:v2.3.0"
 # Patched consent UI per ADR 0857 — overlay-only image that forwards
-# Kratos `traits.groups` into the OIDC JWT (patch 1), falls back to
+# Kratos `metadata_public.groups` (never traits, GHSA-9v3v) into the OIDC
+# JWT (patch 1), falls back to
 # `body.client.audience` when Hydra delivers empty
 # `requested_access_token_audience` (patch 2, F-144), and falls back
 # to `body.client.scope.split(' ')` when grantScope is empty (patch 3,
@@ -79,10 +80,21 @@ ory_site_vendor_trait_compat: true
 # F-572 / ADR 1188 — authorization fields (groups, org, aff) in admin-managed
 # metadata_public instead of self-editable traits. true drops them from the
 # traits schema, so a self-service settings save can no longer carry them.
-# Per-site order: (1) deploy the metadata-first readers and writers with this
-# false, (2) run ops/identity/backfill-authz-traits-to-metadata.py --apply on
-# the mgmt host until --verify prints READY, (3) set true and redeploy this
-# role. tasks/authz-backfill-gate.yml refuses (3) while --verify is not READY.
+# Since GHSA-9v3v every reader is metadata-only, so with this false a
+# self-edited traits value is accepted by the settings flow but grants nothing.
+# Per-site order: (1) run ops/identity/backfill-authz-traits-to-metadata.py
+# on the mgmt host BEFORE deploying the fail-closed readers, or a
+# not-yet-backfilled identity holds no groups until it runs. It needs
+# --trusted FILE (keyed by Kratos identity id, never email) to promote any
+# groups/org/aff/vendor: without it --apply refuses while any identity carries
+# a non-empty one, and with it every value the record does not back is
+# dropped and printed as DROP. Dry-run with --trusted first, then
+# --trusted FILE --apply; (2) deploy the readers, including the GHSA-9v3v
+# consent image (kratos_selfservice_ui_image repinned; tasks/consent-image-gate.yml
+# refuses a pre-fix image and any image it cannot check), then run
+# backfill-aff-trait.py (metadata_public-only too); (3) once --verify prints
+# READY, set true and redeploy this role.
+# tasks/authz-backfill-gate.yml refuses (3) while --verify is not READY.
 ory_authz_in_metadata: false
 
 # Canonical shared network ID for both Kratos and Hydra multi-tenancy.

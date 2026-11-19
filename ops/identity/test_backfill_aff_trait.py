@@ -35,15 +35,18 @@ UNIT = {"id": "some-unit", "kind": "organic", "nation": "USA", "status": "active
 GONE = {"id": "old-org", "kind": "vendor", "nation": "USA", "status": "absorbed"}
 
 
-def identity(email, short_tag=None, aff=None, meta=None):
+def identity(email, short_tag=None, aff=None, meta=None, self_edited=False):
+    """An identity whose org/aff sit in admin-managed metadata_public, or in
+    self-editable traits when self_edited (never read since GHSA-9v3v)."""
     traits = {"email": email}
+    authz = traits if self_edited else {}
     if short_tag is not None:
-        traits["org"] = {"short_tag": short_tag, "display_name": short_tag.title()}
+        authz["org"] = {"short_tag": short_tag, "display_name": short_tag.title()}
     if aff is not None:
-        traits["aff"] = aff
+        authz["aff"] = aff
     out = {"id": f"id-{email}", "traits": traits}
-    if meta is not None:
-        out["metadata_public"] = meta
+    if meta is not None or (authz and not self_edited):
+        out["metadata_public"] = {**(authz if not self_edited else {}), **(meta or {})}
     return out
 
 
@@ -160,17 +163,33 @@ class MetadataTest(unittest.TestCase):
 
     def test_an_unmigrated_identity_gets_no_groups_marker(self):
         actions, _ = backfill.plan([identity("a@x.test", "acme")], catalog(ACME))
-        self.assertEqual(actions[0]["metadata_public"], {"aff": {"id": "acme", "kind": "vendor", "nation": "USA"}})
+        self.assertNotIn("groups", actions[0]["metadata_public"])
+        self.assertEqual(actions[0]["metadata_public"]["aff"], {"id": "acme", "kind": "vendor", "nation": "USA"})
 
     def test_a_migrated_identity_ignores_an_aff_in_its_traits(self):
         row = identity("a@x.test", aff={"id": "self-granted", "kind": "vendor"},
-                       meta={"groups": [], "org": {"short_tag": "acme"}})
+                       meta={"groups": [], "org": {"short_tag": "acme"}}, self_edited=True)
+        actions, skipped = backfill.plan([row], catalog(ACME))
+        self.assertEqual((len(actions), skipped), (1, []))
+        self.assertEqual(actions[0]["aff"]["id"], "acme")
+
+    def test_an_unmigrated_identity_ignores_a_self_edited_org(self):
+        # GHSA-9v3v: traits.org is self-editable; it must not pick the org
+        # whose aff becomes admin-managed metadata_public.aff.
+        row = identity("a@x.test", "acme", self_edited=True)
+        actions, skipped = backfill.plan([row], catalog(ACME))
+        self.assertEqual(actions, [])
+        self.assertIn("no org.short_tag", skipped[0]["why"])
+
+    def test_an_unmigrated_identity_with_a_self_edited_aff_is_still_fillable(self):
+        row = identity("a@x.test", aff={"id": "self-granted", "kind": "vendor"},
+                       meta={"org": {"short_tag": "acme"}}, self_edited=True)
         actions, skipped = backfill.plan([row], catalog(ACME))
         self.assertEqual((len(actions), skipped), (1, []))
         self.assertEqual(actions[0]["aff"]["id"], "acme")
 
     def test_a_migrated_identity_ignores_an_org_in_its_traits(self):
-        row = identity("a@x.test", "acme", meta={"groups": []})
+        row = identity("a@x.test", "acme", meta={"groups": []}, self_edited=True)
         actions, skipped = backfill.plan([row], catalog(ACME))
         self.assertEqual(actions, [])
         self.assertIn("no org.short_tag", skipped[0]["why"])
