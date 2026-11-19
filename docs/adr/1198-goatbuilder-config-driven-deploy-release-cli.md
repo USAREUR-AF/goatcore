@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Proposed** |
+| Status | **Accepted** (2026-11-15, operator) — built for push: `goatbuilder` is released, and its verbs reach real hosts through the push converger. The pull converger is not built; the operator decided (15 Nov) that goatbuilder 1.0 ships push only, with `converger: pull-agent` refused on real hosts (GB-307) until it is (the gate's group D, [goatbuilder-v1-gate.md](../design/goatbuilder-v1-gate.md)). Amended by [ADR 1201](1201-two-avenues-scripts-documented-cli-supported.md) (the scripts are kept and documented) |
 | Date | 2026-10-27 |
 | Deciders | operator |
 | Supersedes | — |

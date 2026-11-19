@@ -105,6 +105,13 @@ The goat `E_*` namespace, its exit codes and `docs/design/goat-cli-error-codes.m
 
 ## The gate
 
+**Built:** the bare-HTTP-arm ratchet recognizes both `Http { status }` and
+the current `Http { status, .. }` shape. It excludes constructors, quoted text,
+line comments and explicit pairs handling `HttpWithBody` as well. Missing or
+empty Rust source is refused. The check remains line-oriented; its self-test
+exercises both refusal shapes and the allowed paired fallback. Existing
+command migrations remain subject to the per-file baselines.
+
 `ops/ci/check-error-catalog.py` (workflow `error-catalog.yml`, on any change to the catalog, the crate, the citing code, the codes doc or the reference):
 
 - every entry has `code`, `tool`, `title`, `what`, at least one cause and one fix, and a `read` path that exists; codes are unique and shaped; goat and goatbuilder codes carry `exit`

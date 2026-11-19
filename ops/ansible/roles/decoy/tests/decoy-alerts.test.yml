@@ -1,0 +1,61 @@
+# promtool unit tests for files/decoy-alerts.yml.
+#   promtool test rules ops/ansible/roles/decoy/tests/decoy-alerts.test.yml
+rule_files:
+  - ../files/decoy-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # No touch: the responder reports 0 and nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'goat_decoy_last_touch_timestamp_seconds{instance="core"}'
+        values: '0x120'
+      - series: 'goat_decoy_responder_up{instance="core"}'
+        values: '1x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: DecoyTouched
+        exp_alerts: []
+
+  # One touch at minute 10 (t=600s): it fires at once and clears an hour later.
+  - interval: 1m
+    input_series:
+      - series: 'goat_decoy_last_touch_timestamp_seconds{instance="core"}'
+        values: '0x9 600x200'
+      - series: 'goat_decoy_responder_up{instance="core"}'
+        values: '1x210'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: DecoyTouched
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              instance: core
+            exp_annotations:
+              summary: "A decoy was used on core"
+              description: "Nothing legitimate uses a decoy. Treat this as an intrusion until the source is explained: read the responder's journal (journalctl -u goat-decoy-responder) for the source, the names and the pace. Runbook: docs/operations/decoy-layer-runbook.md."
+      - eval_time: 75m
+        alertname: DecoyTouched
+        exp_alerts: []
+
+  # The metrics file stops changing at minute 5 (t=300s): a warning once it has
+  # been stale for five minutes and stayed so for ten more.
+  - interval: 1m
+    input_series:
+      - series: 'node_textfile_mtime_seconds{instance="core", file="/textfile/goat_decoy.prom"}'
+        values: '0 60 120 180 240 300x60'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: DecoyResponderStale
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: DecoyResponderStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              instance: core
+              file: /textfile/goat_decoy.prom
+            exp_annotations:
+              summary: "The decoy responder on core stopped reporting"
+              description: "Its metrics file has not changed for five minutes. Check systemctl status goat-decoy-responder on the host."

@@ -1,0 +1,16 @@
+---
+# Plant a goatnet's declared decoys and, on the host that declares it, run the
+# decoy responder. ADR 1247; docs/design/deception-layer.md;
+# docs/operations/decoy-layer-runbook.md.
+#
+#   ../scripts/ansible-preflight.sh -i <inventory> decoy-deploy.yml -e target=<site>_hosts
+#
+# The seed comes from the environment for this run (the goatnet's
+# deception.yml reads it with lookup('env', ...)). Nothing is planted unless the
+# goatnet's declaration sets deception_enabled: true.
+- name: decoy layer
+  hosts: "{{ target }}"
+  become: true
+  gather_facts: false
+  roles:
+    - role: decoy

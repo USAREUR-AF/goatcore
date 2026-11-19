@@ -24,7 +24,7 @@ crate, the schema, the catalog or this directory.
 
 ## The last release
 
-`baseline.yaml` names it: `goatbuilder/v0.7.1`, commit `56d0f650`, with the
+`baseline.yaml` names it: `goatbuilder/v0.7.3`, commit `93989626`, with the
 SHA-256 of the released `goatbuilder-linux-amd64` binary the baseline was
 recorded from and of the `SHA256SUMS` that listed it. That binary's SHA-256 must
 also be its line in `crates/goatbuilder/tests/upgrade/releases.sha256`, the one
@@ -118,7 +118,7 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
   `documents/manifest.yaml` in the same pull request and give the reason in
   `exit_changed:`. `release_exit` keeps what the release did, and `check`
   refuses an `exit` that differs from it without a reason. The next refresh
-  records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.7.1's exit 2 for this purpose.
+  records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.7.3's exit 2 for this purpose.
   From a 1.0 baseline (`baseline.yaml` names `goatbuilder/v1.0.0` or later),
   `check` refuses `exit_changed:` on any kept invocation, with or without a
   changed `exit`: a kept exit code changes only in a major release (ADR 1228).
@@ -172,6 +172,15 @@ the published 0.6.0 wrote there: a `deploy` and a `rollback` of the basic
 fixture, each stopped by its first refusal, with the scratch directory they ran
 in written as `/tmp/goatbuilder-compat`. A4 keeps `runs`, `show` of the second
 and `runs diff` of the two.
+
+## A goatlite already handed over
+
+`documents/fixtures/grown/` holds a checkout with no `goatlite.yaml` whose
+`ops/goatbuilder/goatbuilder.yaml` starts with the header `grow` writes. A4
+keeps `grow --dry-run` on it: the answer that the goatlite is already handed
+over, exit 0, with nothing changed. A dry run on a goatlite that is not yet
+handed over runs the checkout's own `ops/scripts/goatlite-render.py`, which
+a kept fixture would have to copy, so that run is not kept.
 
 ## What is not checked here
 
