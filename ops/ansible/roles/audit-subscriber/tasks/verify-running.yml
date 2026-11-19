@@ -1,0 +1,99 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# After `docker compose up`: the subscriber must still be running, and not
+# restarting, once a settle window has passed. `up -d` returns 0 as soon as the
+# container is created, so a binary that exits at startup would otherwise leave
+# a crash loop behind a green play. audit_subscriber_container names another
+# container (tests only).
+
+- name: audit-subscriber | verify — container state right after up
+  ansible.builtin.command:
+    argv: ["docker", "inspect", "--format", !unsafe '{{json .State}} {{.RestartCount}}', "{{ audit_subscriber_container | default('audit-subscriber') }}"]
+  register: audit_subscriber_state_0
+  changed_when: false
+  check_mode: false
+
+- name: audit-subscriber | verify — settle window
+  ansible.builtin.wait_for:
+    timeout: "{{ audit_subscriber_settle_seconds }}"
+  check_mode: false
+
+- name: audit-subscriber | verify — container state after the settle window
+  ansible.builtin.command:
+    argv: ["docker", "inspect", "--format", !unsafe '{{json .State}} {{.RestartCount}}', "{{ audit_subscriber_container | default('audit-subscriber') }}"]
+  register: audit_subscriber_state_1
+  changed_when: false
+  check_mode: false
+
+- name: audit-subscriber | verify — running, not restarting, no restarts during the window
+  vars:
+    _s: "{{ audit_subscriber_state_1.stdout | regex_replace(' [0-9]+$', '') | from_json }}"
+    _r0: "{{ audit_subscriber_state_0.stdout.split(' ') | last | int }}"
+    _r1: "{{ audit_subscriber_state_1.stdout.split(' ') | last | int }}"
+  ansible.builtin.assert:
+    that:
+      - _s.Status == 'running'
+      - not (_s.Restarting | bool)
+      - _r1 | int == _r0 | int
+    fail_msg: >-
+      {{ audit_subscriber_container | default('audit-subscriber') }} is
+      {{ _s.Status }}, last exit code
+      {{ _s.ExitCode }}, {{ _r1 | int - _r0 | int }} restart(s) in
+      {{ audit_subscriber_settle_seconds }}s. The site has no running audit
+      writer. Read `docker logs {{ audit_subscriber_container | default('audit-subscriber') }}`;
+      the usual causes are a missing V2 cutover step
+      (docs/operations/audit-replay-cutover.md) or storage TLS.
+    quiet: true
+
+# A running writer can still store nothing: with an endpoint whose certificate
+# does not match, every upload fails and the process carries on. When it
+# writes to storage, read its own counters on the host-published metrics port
+# (loopback) until the first batch has either uploaded or failed, at most one
+# batch interval plus 30 s. No traffic in that time is not a failure.
+- name: audit-subscriber | verify — first upload outcome from the writer's metrics
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ audit_subscriber_metrics_port }}/metrics"
+    return_content: true
+  register: audit_subscriber_metrics
+  until: >-
+    audit_subscriber_metrics.status | default(0) == 200
+    and ((audit_subscriber_metrics.content
+          | regex_findall('(?m)^goat_audit_(?:batches_uploaded|write_errors)_total(?:[{][^}]*[}])? ([0-9.eE+]+)$')
+          | map('float') | sum) > 0)
+  retries: "{{ ((audit_subscriber_batch_interval_ms | int) // 1000 + 30) // 5 }}"
+  delay: 5
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: audit_subscriber_s3_endpoint | length > 0
+
+- name: audit-subscriber | verify — the writer is storing batches, not failing every upload
+  vars:
+    _m: "{{ audit_subscriber_metrics.content | default('') }}"
+    _ok: "{{ _m | regex_findall('(?m)^goat_audit_batches_uploaded_total(?:[{][^}]*[}])? ([0-9.eE+]+)$') | map('float') | sum }}"
+    _err: "{{ _m | regex_findall('(?m)^goat_audit_write_errors_total(?:[{][^}]*[}])? ([0-9.eE+]+)$') | map('float') | sum }}"
+  ansible.builtin.assert:
+    that:
+      - not ((_ok | float) == 0 and (_err | float) >= 1)
+    fail_msg: >-
+      {{ audit_subscriber_container | default('audit-subscriber') }} is running but has
+      stored no batch and failed {{ _err | float | int }} upload(s) to
+      {{ audit_subscriber_s3_endpoint }}. The site's durable audit copy is not being
+      written. Read `docker logs {{ audit_subscriber_container | default('audit-subscriber') }}`;
+      the usual cause is storage TLS: an endpoint name the certificate does not carry,
+      or the wrong CA bundle (docs/operations/audit-replay-cutover.md).
+    quiet: true
+  when:
+    - audit_subscriber_s3_endpoint | length > 0
+    - audit_subscriber_metrics.status | default(0) == 200
+
+- name: audit-subscriber | verify — say so when the metrics could not be read
+  ansible.builtin.debug:
+    msg: >-
+      http://127.0.0.1:{{ audit_subscriber_metrics_port }}/metrics did not answer
+      ({{ audit_subscriber_metrics.msg | default('no response') }}); upload success
+      was not checked.
+  when:
+    - audit_subscriber_s3_endpoint | length > 0
+    - audit_subscriber_metrics.status | default(0) != 200

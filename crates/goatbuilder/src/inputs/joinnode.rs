@@ -344,9 +344,9 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             true,
             "phase 2 (seed-ssh-key.sh), unless key auth already works",
         ),
-        (format!("{upper}_PG_PASS"), true, "phase 13 (core)"),
-        (format!("{upper}_NB_ENCKEY"), true, "phase 13 (core)"),
-        (format!("{upper}_BKP_KEY"), true, "phase 13 (core)"),
+        (format!("{upper}_PG_PASS"), true, if joiner { "phase 13 (core); minted in phase 3 when missing (join-site-secrets.py)" } else { "phase 13 (core)" }),
+        (format!("{upper}_NB_ENCKEY"), true, if joiner { "phase 13 (core); taken from the founder's in phase 3 (join-site-secrets.py)" } else { "phase 13 (core)" }),
+        (format!("{upper}_BKP_KEY"), true, if joiner { "phase 13 (core); minted in phase 3 when missing (join-site-secrets.py)" } else { "phase 13 (core)" }),
         (
             "OWNER_EMAIL".to_string(),
             false,

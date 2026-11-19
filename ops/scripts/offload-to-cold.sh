@@ -111,6 +111,28 @@ mc_remote() {
     "sudo docker exec ${MINIO_CONTAINER} mc $*"
 }
 
+# Alias output contains credentials: inspect it only inside the child process.
+# Reject HTTP before any bucket read or write. mc performs CA/hostname checks.
+for alias_name in "$SOURCE_ALIAS" "$TARGET_ALIAS"; do
+  if ! [[ "$alias_name" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "invalid storage alias" >&2
+    exit 2
+  fi
+  mc_remote --json alias list "$alias_name" | python3 -c '
+import json, sys
+from urllib.parse import urlsplit
+try:
+    rows = [json.loads(line) for line in sys.stdin if line.strip()]
+    valid = len(rows) == 1 and rows[0].get("status") == "success"
+    endpoint = urlsplit(rows[0].get("URL", "")) if valid else None
+    valid = valid and endpoint.scheme == "https" and bool(endpoint.hostname) and not endpoint.username
+except Exception:
+    valid = False
+if not valid:
+    sys.exit("cold-storage alias must use verified HTTPS")
+'
+done
+
 # ---- pre-flight ----
 echo
 echo "==> pre-flight: target bucket exists with Object Lock"

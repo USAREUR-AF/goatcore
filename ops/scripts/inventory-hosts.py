@@ -7,8 +7,11 @@ reads before running anything — into a wall of Python.
 
 Prints nothing and exits 0 when the group does not exist, because "this site has
 no hosts yet" is the normal state before a standup's first phase, not an error.
+With --require it exits 1 instead: standup runs it that way before each play it
+limits to the founder, when the hosts must be there (GB-355).
 """
 import argparse
+import fnmatch
 import getpass
 import re
 import sys
@@ -55,6 +58,16 @@ def main() -> int:
                     help="ssh user when the inventory line carries no ansible_user=")
     ap.add_argument("--host", default=None,
                     help="print this one host only, when a group lists it")
+    # A play limited with `-l <pattern>` runs on the hosts of its target group
+    # that the pattern selects. When none is selected but another inventory
+    # host matches, ansible prints "skipping: no hosts matched" and exits 0
+    # having done nothing, so standup checks the limit first (GB-355).
+    ap.add_argument("--match", default=None, metavar="PATTERN",
+                    help="print only the hosts this ansible limit selects: shell "
+                         "globs, several joined by ':'")
+    ap.add_argument("--require", default=None, metavar="CODE",
+                    help="exit 1, printing '<CODE>: ...' on stderr, when no host "
+                         "is printed")
     a = ap.parse_args()
 
     files = ([Path(x) for x in a.inventory] if a.inventory
@@ -105,8 +118,18 @@ def main() -> int:
                     out.append(f"{host} {tgt}")
                 elif host not in out:
                     out.append(host)
+    if a.match is not None:
+        pats = [p for p in a.match.split(":") if p]
+        out = [o for o in out if any(fnmatch.fnmatchcase(o.split(" ", 1)[0], p) for p in pats)]
     if a.ssh_target:
         out = [o.split(" ", 1)[1] for o in out]
+    if not out and a.require:
+        where = ", ".join(str(f) for f in files)
+        groups = " ".join(f"[{g}]" for g in a.group)
+        what = f"the limit '{a.match}' selects no host of {groups}" if a.match is not None else f"no host in {groups}"
+        print(f"{a.require}: {what} in {where}, so the play would run on nothing and report "
+              f"success. Name the host in the group as the limit expects, then re-run.", file=sys.stderr)
+        return 1
     print("\n".join(out))
     return 0
 

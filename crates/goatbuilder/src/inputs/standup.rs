@@ -88,7 +88,7 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
     ));
     v.push(Input::new(
         "first_mgmt_host",
-        format!("mgmt-{site}-01*"),
+        crate::standup::founder_limit(site),
         site_rule("mgmt-<site>-01*, the site's first management host"),
     ));
     for i in s.inv.split_whitespace().filter(|w| *w != "-i") {
@@ -504,7 +504,6 @@ pub(super) fn fixed(site: &str) -> Vec<Input> {
         fixed("confirm_cutover", "YES", "the ACL cutover is confirmed by running the phase (standup phase 12)"),
         fixed("relay_target", "goat_relay_hosts", "the relay ingress group a joiner is wired into"),
         fixed("target_site", site, "the site itself"),
-        Input::new("VF", "$(mktemp -t goat-relay-vars.XXXXXX)", Source::derived("mktemp, when standup phase 7 runs", "a private file for the relay secrets, removed after the play")),
         fixed("acl_inventory", "localhost,", "the ACL plays run on this machine against the NetBird API"),
     ]
 }

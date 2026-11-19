@@ -40,6 +40,15 @@ type Proposal struct {
 	// by a concurrent second click. '' / 0 when never requested.
 	OffboardRequestedBy string `db:"offboard_requested_by" json:"offboard_requested_by,omitempty"`
 	OffboardRequestedAt int64  `db:"offboard_requested_at" json:"offboard_requested_at,omitempty"`
+	// OffboardRequestedByIdentity is that admin's Kratos identity id, taken
+	// from the authenticated session at the click (never looked up from a
+	// record), so the runner can write the operator-action record under the
+	// person who approved the cut. '' when the session carried no identity id.
+	OffboardRequestedByIdentity string `db:"offboard_requested_by_identity" json:"offboard_requested_by_identity,omitempty"`
+	// OffboardOperatorAudit is the runner's report on the cut's
+	// operator-action record: "recorded", or "failed: <why>". '' until a
+	// runner that reports it writes the result back.
+	OffboardOperatorAudit string `db:"offboard_operator_audit" json:"offboard_operator_audit,omitempty"`
 	// SponsorApprovedBy/At record who acted at the SPONSOR gate (an admin may
 	// act there, so it can differ from Sponsor) + when. decided_by is stamped
 	// at each decision, so on an onboarded row it is the FINAL admin approver.
@@ -270,6 +279,9 @@ func (s *Store) CreateProposal(ctx context.Context, p *Proposal) error {
 	if err := prepareProposal(p); err != nil {
 		return err
 	}
+	if err := s.admitRunnerQueue7788(ctx, p, p.Status); err != nil {
+		return err
+	}
 	return createProposal(ctx, s.db, p)
 }
 
@@ -468,7 +480,7 @@ func (s *Store) RecordSponsorApproval(ctx context.Context, id, by string) error 
 // status + decider + timestamp + note. Returns ErrNotFound when id is unknown.
 func (s *Store) DecideProposal(ctx context.Context, id, status, decidedBy, note string) error {
 	now := time.Now().Unix()
-	res, err := s.db.ExecContext(ctx,
+	res, err := s.execAdmitted7788(ctx, id, status,
 		`UPDATE onboard_proposals SET status = $1, decided_by = $2, decided_at = $3, note = $4 WHERE id = $5`,
 		status, decidedBy, now, note, id)
 	if err != nil {
@@ -494,6 +506,9 @@ func (s *Store) DecideProposal(ctx context.Context, id, status, decidedBy, note 
 // guard (unknown id, or a status outside the offboardable set). Callers that
 // need to distinguish those cases should re-read the row.
 func (s *Store) MarkOffboardedFrom(ctx context.Context, id, decidedBy, note string) (bool, error) {
+	if err := s.admitAction7788(ctx, id, ActionOffboard7788); err != nil {
+		return false, err
+	}
 	// ArchiveProposal trims its reason; trim here too so a whitespace-only
 	// note cannot blank out a recorded archive reason via the CASE below.
 	note = strings.TrimSpace(note)
@@ -513,12 +528,51 @@ func (s *Store) MarkOffboardedFrom(ctx context.Context, id, decidedBy, note stri
 // status, or a cut already queued/running (the two-admins double-click; the
 // guard is what keeps the first requester's attribution intact).
 func (s *Store) RequestOffboard(ctx context.Context, id, requestedBy string) (bool, error) {
+	return s.RequestOffboardBy(ctx, id, requestedBy, "")
+}
+
+// RequestOffboardBy is RequestOffboard that also records the requester's
+// session identity id (empty when unknown). Both come from the same
+// authenticated session and are written in the same guarded UPDATE, so a
+// second click can never pair one admin's email with another's identity.
+// It also clears offboard_operator_audit: a re-queue after offboard-failed
+// starts a new cut, and the previous attempt's record outcome must not be
+// read as this one's.
+func (s *Store) RequestOffboardBy(ctx context.Context, id, requestedBy, requestedByIdentity string) (bool, error) {
 	eligible := append(append([]string{}, OffboardableStatuses...), ProposalOffboardFailed)
 	query := `UPDATE onboard_proposals
-	   SET status = $1, offboard_requested_by = $2, offboard_requested_at = $3
-	 WHERE id = $4 AND status = ANY($5)`
-	args := []any{ProposalOffboardRequested, requestedBy, time.Now().Unix(), id, eligible}
+	   SET status = $1, offboard_requested_by = $2, offboard_requested_at = $3, offboard_requested_by_identity = $4,
+	       offboard_operator_audit = ''
+	 WHERE id = $5 AND status = ANY($6)`
+	args := []any{ProposalOffboardRequested, requestedBy, time.Now().Unix(), requestedByIdentity, id, eligible}
 	return s.offboardTransition(ctx, id, query, args...)
+}
+
+// SetOffboardResult records the offboard leg's terminal result in ONE
+// statement: the status (offboarded / offboard-failed), the failure reason as
+// the note (only when non-empty, as SetProposalResult does), and the runner's
+// operator-action outcome ("recorded", "failed: <why>", or "" when the runner
+// reported none). One statement, so a row can never show the new status
+// without the mark that qualifies it. Returns ErrNotFound when id is unknown.
+func (s *Store) SetOffboardResult(ctx context.Context, id, status, note, operatorAudit string) error {
+	if status != ProposalOffboarded && status != ProposalOffboardFailed {
+		return fmt.Errorf("set offboard result: %q is not an offboard result", status)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE onboard_proposals SET status = $1,
+		   note = CASE WHEN $2 <> '' THEN $3 ELSE note END,
+		   offboard_operator_audit = $4
+		 WHERE id = $5`,
+		status, note, note, operatorAudit, id)
+	if err != nil {
+		return fmt.Errorf("set offboard result: %w", err)
+	}
+	n, raErr := res.RowsAffected()
+	_ = raErr // best-effort; unknown row count falls through as "not found"
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ClaimOffboard atomically transitions an offboard-requested proposal to
@@ -559,7 +613,14 @@ func (s *Store) ClaimOffboard(ctx context.Context, id string) error {
 // (e.g. approved → onboarded once the mint succeeds, or → failed). Returns
 // ErrNotFound when id is unknown.
 func (s *Store) SetProposalStatus(ctx context.Context, id, status string) error {
-	res, err := s.db.ExecContext(ctx,
+	// Any other status write is bookkeeping about the mint or the person
+	// (onboarded, failed, ...): it carries the result cap (GHSA-7788).
+	if status != ProposalApproved {
+		if err := s.admitAction7788(ctx, id, ActionResult7788); err != nil {
+			return err
+		}
+	}
+	res, err := s.execAdmitted7788(ctx, id, status,
 		`UPDATE onboard_proposals SET status = $1 WHERE id = $2`, status, id)
 	if err != nil {
 		return fmt.Errorf("set proposal status: %w", err)
@@ -583,6 +644,12 @@ func (s *Store) SetProposalResult(ctx context.Context, id, status, setupKey, han
 	// stored value. `note` carries the mint failure reason on a `failed` result so
 	// the admin queue can show WHY it failed instead of discarding it. collab_activated
 	// only ever latches to 1 (once provisioned, stays), never back to 0.
+	if err := s.admitRunnerQueueByID7788(ctx, id, status); err != nil {
+		return err
+	}
+	if err := s.admitAction7788(ctx, id, ActionResult7788); err != nil {
+		return err
+	}
 	activatedInt := 0
 	if collabActivated {
 		activatedInt = 1
@@ -657,6 +724,9 @@ func (s *Store) SetProposalRepoOverrides(ctx context.Context, id, repoOverridesJ
 // but isn't approved (already claimed / onboarded / rejected). The onboard-runner
 // calls this before it mints; only the winner proceeds.
 func (s *Store) ClaimProposal(ctx context.Context, id string) error {
+	if err := s.admitAction7788(ctx, id, ActionClaim7788); err != nil {
+		return err
+	}
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE onboard_proposals SET status = $1, claimed_at = $2 WHERE id = $3 AND status = $4`,
 		ProposalOnboarding, time.Now().Unix(), id, ProposalApproved)
@@ -736,6 +806,9 @@ func (s *Store) SetProposalOrgSource(ctx context.Context, id, source string) err
 //
 // Idempotent: a second call matches no row and reports false.
 func (s *Store) ArchiveProposal(ctx context.Context, id, reason string) (bool, error) {
+	if err := s.admitAction7788(ctx, id, ActionArchive7788); err != nil {
+		return false, err
+	}
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE onboard_proposals SET status = $1, note = $2 WHERE id = $3 AND status = $4`,
 		ProposalArchived, strings.TrimSpace(reason), id, ProposalOnboarded)
@@ -791,15 +864,21 @@ func (s *Store) reenterApproved(ctx context.Context, id, from, update string, ar
 		return false, fmt.Errorf("re-enter approved: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	var manifest string
-	err = tx.GetContext(ctx, &manifest,
-		`SELECT manifest_json FROM onboard_proposals WHERE id = $1 AND status = $2 FOR UPDATE`, id, from)
+	// The whole row is read under the lock: the runner-queue check
+	// (GHSA-7788) ranks its tier and manifest before it re-enters `approved`.
+	var row Proposal
+	err = tx.GetContext(ctx, &row,
+		`SELECT * FROM onboard_proposals WHERE id = $1 AND status = $2 FOR UPDATE`, id, from)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("re-enter approved: %w", err)
 	}
+	if err := s.admitRunnerQueue7788(ctx, &row, ProposalApproved); err != nil {
+		return false, err
+	}
+	manifest := row.ManifestJSON
 	if fixed, changed := dropUnjustifiedTTL(manifest); changed {
 		manifest = fixed
 	}

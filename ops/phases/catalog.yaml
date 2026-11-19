@@ -353,7 +353,7 @@ phases:
   why: The data fabric and every service that takes a workload identity (the portal bridge, the id console, onboard-runner, grant-keyd) need these. A peer holds its signalling stream on one signal server, so a joiner's signal and the founder's must forward offers to each other (signal-federation-pair.md).
   changes: 'The router and SPIRE containers on the site''s hosts. For a joiner: the signal federation token and proxy on both sites'' management nodes, each node''s federation router and certificate, the joiner''s tunnel to the founder''s relays and its pin on them.'
   verify: the router container `Up (healthy)` with a 7447 listener on the intended IP; `spire-server entry show` lists the grant-keyd entry; for a joiner, `signal-federation-verify.yml` passes, naming the directions a forward proved
-  runs: 'ops/scripts/signal-federation-check.py, ops/ansible/signal-federation-transport.yml, ops/ansible/traefik-acme.yml, ops/ansible/site-rathole-client.yml, ops/ansible/relay-ingress-add-site.yml, ops/ansible/signal-federation-verify.yml, ops/ansible/inventory/generate-relays.sh (not run here: named in the refusal when the founder''s relay inventory is missing), ops/ansible/zenoh-deploy.yml, ops/ansible/spire-deploy.yml, ops/ansible/obs-host-bootstrap.yml'
+  runs: 'ops/scripts/signal-federation-check.py, ops/scripts/inventory-hosts.py, ops/ansible/signal-federation-transport.yml, ops/ansible/traefik-acme.yml, ops/ansible/site-rathole-client.yml, ops/ansible/relay-ingress-add-site.yml, ops/ansible/signal-federation-verify.yml, ops/ansible/inventory/generate-relays.sh (not run here: named in the refusal when the founder''s relay inventory is missing), ops/ansible/zenoh-deploy.yml, ops/ansible/spire-deploy.yml, ops/ansible/obs-host-bootstrap.yml'
   by_hand: goatbuilder standup <env> --site <site> --from 9 --to 9 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
   read: docs/operations/goatnet-standup.md#phase-9--the-router-is-bound-not-just-up
   failed_because: the router could not bind its address or read its certificate
@@ -367,7 +367,7 @@ phases:
   why: Phase 11's first login happens at this dashboard; on a LAN site the laptop resolves it through this DNS.
   changes: The dashboard and the site's service containers and routes; on an internet site, the OIDC clients registered in Hydra.
   verify: 'LAN: the dashboard is reachable on the LAN; internet: `dashboard-deploy` ends `failed=0` and the OIDC clients are registered'
-  runs: ops/ansible/site-services.yml, ops/ansible/lan-traefik-routes.yml, ops/ansible/dashboard-deploy.yml, ops/ansible/site-oidc-clients.yml
+  runs: ops/scripts/inventory-hosts.py, ops/ansible/site-services.yml, ops/ansible/lan-traefik-routes.yml, ops/ansible/dashboard-deploy.yml, ops/ansible/site-oidc-clients.yml
   by_hand: goatbuilder standup <env> --site <site> --from 10 --to 10 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
   read: docs/operations/goatnet-standup.md#the-run
   failed_because: a route or client could not be registered
@@ -395,7 +395,7 @@ phases:
   why: Enrolled peers reach nothing until the declared ACL is enforced, and the services after it read the identities and the portal; this order lets each step find what it needs.
   changes: The NetBird account's policies and service identities, and a joining site's own nameserver group `<site>-mesh-dns`; the service containers on the site's hosts; the mirror bot's token in the operator's envrc.
   verify: 'the ACL gate prints `OK: no All-group rule; every enabled policy is declared.`; the identity gate prints `OK: every required identity is present and verified.`; each play ends `failed=0`, and an add-on whose group_var is absent skips with its reason'
-  runs: ops/ansible/netbird-acl-bootstrap.yml, ops/ansible/netbird-acl-cutover.yml, ops/scripts/netbird-policy-posture.py, ops/scripts/netbird-service-identities.py, ops/ansible/goat-netbird-account-init.yml, ops/dns/generate-mesh-hosts.py, ops/scripts/with-secrets, ops/scripts/require-secret.sh, ops/ansible/goat-coredns.yml, ops/ansible/portal-deploy.yml, ops/scripts/forgejo-mint-pubsub-bot.sh, ops/scripts/standup-required-inputs.py, ops/ansible/pubsub-state-mirror-deploy.yml, ops/ansible/onboard-intake-deploy.yml, ops/ansible/onboard-runner-deploy.yml, ops/ansible/grant-keyd-deploy.yml, ops/ansible/zenoh-synth-vendors-slot-pool-deploy.yml (an assembled tree's play; goatcore has none)
+  runs: ops/ansible/netbird-acl-bootstrap.yml, ops/scripts/inventory-hosts.py, ops/ansible/netbird-acl-cutover.yml, ops/scripts/netbird-policy-posture.py, ops/scripts/netbird-service-identities.py, ops/ansible/goat-netbird-account-init.yml, ops/dns/generate-mesh-hosts.py, ops/scripts/with-secrets, ops/scripts/require-secret.sh, ops/ansible/goat-coredns.yml, ops/ansible/portal-deploy.yml, ops/scripts/forgejo-mint-pubsub-bot.sh, ops/scripts/standup-required-inputs.py, ops/ansible/pubsub-state-mirror-deploy.yml, ops/ansible/onboard-intake-deploy.yml, ops/ansible/onboard-runner-deploy.yml, ops/ansible/grant-keyd-deploy.yml, ops/ansible/zenoh-synth-vendors-slot-pool-deploy.yml (an assembled tree's play; goatcore has none)
   by_hand: goatbuilder standup <env> --site <site> --from 12 --to 12 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
   read: docs/operations/goatnet-standup.md#phase-12--netbird-service-identities
   failed_because: the live ACL differs from the declared one, an identity is missing, or a service play failed
@@ -515,17 +515,17 @@ phases:
 - verb: join-node
   phase: 1
   id: reach
-  kind: MANUAL
-  title: reach the box on the site LAN
-  what: 'A person''s step: find the box''s real LAN address and reach it over ssh, then pass that address as --address. On a Jetson the address first handed over may be the USB device-mode bridge, not the LAN. A phone node (--class phone --via usb) has no LAN address: the step is attaching the phone by USB, allowing USB debugging on it and unlocking it, and no --address is passed.'
-  why: Every later phase reaches the node at this address; a wrong one makes the baseline and enrolment act on another machine or none.
-  changes: Nothing; a person reaches the box.
+  kind: GATE
+  title: the node answers
+  what: 'Before anything is done on the node, checks it answers: over SSH at --address (one batch-mode connection with this machine''s ssh, a 10 s connect timeout and no password prompt, the whole check bounded by JOIN_NODE_REACH_LIMIT, default 30 s; the node has answered when it logs in or when its own host key arrives, which ssh writes to a known_hosts file of the run''s own; a Jetson''s USB bridge address, 192.168.55.0/24, is refused), or for a phone node (--class phone --via usb) over the Android debug bridge (`adb get-state` says device). A login that the node refuses still counts as an answer: before phase 2 seeds this machine''s key, a node that takes only its first-login password refuses every batch login, so phase 1 cannot prove a login and phase 2 does. The run goes on to phase 2; it stops only when the node does not answer (GB-314), with the step for a person.'
+  why: Every later phase reaches the node at this address or over this cable; a wrong address makes the baseline and enrolment act on another machine or none, and a node that does not answer would fail later with less said.
+  changes: 'Nothing on the node, and nothing in this machine''s known_hosts: the node''s host key goes to a temporary file, removed when the check ends. Phase 2''s ssh records it.'
   verify: '`ssh <user>@<address>` reaches the box on the site LAN; for a phone node, `adb devices` lists the phone as `device`'
-  runs: 'nothing: a step for a person, with the instructions the run prints'
-  by_hand: ssh <user>@<the node's LAN address>, then run goatbuilder join-node again with --address <that address>
+  runs: ops/scripts/join-node-reach.sh
+  by_hand: ops/scripts/join-node-reach.sh ssh <user>@<address> (or usb), then run goatbuilder join-node again with --from 1
   read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
-  failed_because: the box is not reachable at the address given
-  then: find its LAN address on the site network, then pass it as --address
+  failed_because: the node does not answer at the address given, or no phone answers over USB
+  then: 'reach the box on the site LAN (ssh <user>@<address>) and pass its real LAN address as --address; for a phone, attach it by USB, allow USB debugging, accept this machine''s key on its screen and unlock it; then resume with --from 1'
 - verb: join-node
   phase: 2
   id: seed-key
@@ -543,17 +543,17 @@ phases:
 - verb: join-node
   phase: 3
   id: repo-work
-  kind: GATE
-  title: 'repo work first: group, inventory, pins, exclusions; then the node''s clock'
-  what: 'Runs the config preflight on the node''s group before it enrols: the node is in the inventory group, the pins and exclusions are declared. The mesh-address placeholder is allowed until phase 12. Then reads the node''s clock from its own time service over ssh, read-only (chronyc -c tracking, else timedatectl show): it must be synchronized to an outside reference and, where chrony gives an offset, within the budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router''s 500 ms limit). A clock that cannot be read is said to be not verified, never passed.'
+  kind: GATE + T
+  title: 'repo work first: group, inventory, pins, exclusions; then the node''s clock; a joiner''s secrets'
+  what: 'Runs the config preflight on the node''s group before it enrols: the node is in the inventory group, the pins and exclusions are declared. The mesh-address placeholder is allowed until phase 12. Then reads the node''s clock from its own time service over ssh, read-only (chronyc -c tracking, else timedatectl show): it must be synchronized to an outside reference and, where chrony gives an offset, within the budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router''s 500 ms limit). A clock that cannot be read is said to be not verified, never passed. Last, on a joining site''s core node, its secrets (join-site-secrets.py): each value every site shares (the SPEC lines of newsite-secrets.sh marked cluster) is taken from the founder''s, as a reference in the reference file or, under a value store, as a value; newsite-secrets.sh mints the site''s own; each shared value is compared with the founder''s by digest, printing names only. A joiner value that differs is refused and kept (GB-353); a founder value that is missing or does not resolve is refused (GB-352).'
   why: A node that is not declared in the repository cannot be converged or graded, and a Zenoh router refuses a timestamp more than 500 ms ahead of its own clock without telling the node's owner; checking first means nothing on the node changes for an undeclared node or a wrong clock.
-  changes: Nothing.
-  verify: the config preflight passes for the node's group, and the clock line prints the node's offset or says it was not verified
-  runs: ops/scripts/standup-config-preflight.py, ops/scripts/join-node-clock-check.py
+  changes: Nothing on the node. On a joining site's core node, the operator's secret store or reference file gains the site's values, and none is overwritten.
+  verify: the config preflight passes for the node's group, the clock line prints the node's offset or says it was not verified, and on a joiner every shared value reads `same as` the founder's
+  runs: ops/scripts/standup-config-preflight.py, ops/scripts/join-node-clock-check.py, ops/scripts/join-site-secrets.py, ops/scripts/newsite-secrets.sh, ops/scripts/with-secrets
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 3 --to 3 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#before-the-real-run
-  failed_because: the node or one of its declared values is missing from the repository, or the node's clock is not synchronized or is over the budget (GB-297)
-  then: declare it in the inventory and group_vars, or repair time synchronization on the node, then resume with --from 3
+  failed_because: the node or one of its declared values is missing from the repository, the node's clock is not synchronized or is over the budget (GB-297), or a joiner's shared secret is missing at the founder (GB-352) or differs at the joiner (GB-353, GB-354)
+  then: declare it in the inventory and group_vars, repair time synchronization on the node, or do what the secret's code says (goatbuilder explain GB-352), then resume with --from 3
 - verb: join-node
   phase: 4
   id: quiet-apt
@@ -713,11 +713,11 @@ phases:
   id: proven
   kind: GATE
   title: done means proven
-  what: Derives the acceptance values and runs every eligible acceptance row; every applicable row must PASS, never UNKNOWN. A joiner adds the replicating-both-ways evidence.
-  why: A node is joined when its acceptance rows are green, not when its plays exit 0.
-  changes: Nothing on a host; it writes the acceptance values.
+  what: Derives the site's end state and the acceptance values, then runs every eligible acceptance row against that end state; every applicable row must PASS, never UNKNOWN. A row whose services the site declares absent reads N/A. A joiner adds the replicating-both-ways evidence.
+  why: A node is joined when its acceptance rows are green, not when its plays exit 0. Without the end state, a row for a service the site declares absent reads FAIL and stops a run that has nothing to fix.
+  changes: Nothing on a host; it writes the end-state model in the state directory and the acceptance values.
   verify: '`run-acceptance.py` reports every applicable row PASS'
-  runs: ops/validation/generate-values.py, ops/validation/run-acceptance.py
+  runs: ops/goatbuilder/endstate/endstate.py, ops/validation/generate-values.py, ops/validation/run-acceptance.py
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 15 --to 15 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#done-means-proven-not-deployed
   failed_because: an applicable row is not PASS

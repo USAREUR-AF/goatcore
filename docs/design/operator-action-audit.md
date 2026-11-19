@@ -187,6 +187,22 @@ exceptions, **and encryption — not permissions — for anything that must be t
   UUID anchor — the handle is their stable machine id; this is the one place a handle is a path segment, and
   it is an operator handle, not a vendor slot alias, so the ADR 1039 alias-never-in-machine-paths invariant
   for *vendor* slots is unaffected).
+  - **Session actors.** An action approved in the identity console and executed by the onboard-runner
+    (`admin.offboard`, `admin.hold.release`) is filed under `kratos-<identity id>`: the approving admin's
+    Kratos identity id, taken by the console from the authenticated session (the OIDC `sub` oauth2-proxy
+    forwards), never looked up from an onboarding record by email, since any record can carry an admin's
+    email (GHSA-3m4r). It is a valid kebab actor (43 characters) and cannot collide with an operator handle,
+    which the manifest schema caps at 32. `goat audit ops` prints it whole and `--actor kratos-<id>` lists one
+    admin's console approvals; mapping it to a name needs the Kratos admin API, or the console's
+    `onboard_offboard_cut` / `release_hold` event, which carries the email beside the identity id.
+  - **Executor.** The runner's own record of the same cut (`admin.revoke-native`, actor = the runner id) names
+    the executor; `admin.offboard` carries it only inside the hashed `args_digest`.
+- **Runner fallback and visibility.** `goat audit emit` is the fallible path and keeps no fallback of its own.
+  When it fails for an `admin.offboard` record, the onboard-runner appends the record, in the CLI's fallback-log
+  shape, to `--audit-fallback` (default `<repo-root>/out/audit/operator-actions.log`, mode 0600), and writes
+  `operator_audit: failed` with the reason back on the offboard result. The console stores it on the row,
+  shows "Offboarded, operator-action record not written" on the card, and audits the result as `partial`.
+  The access cut never waits on the audit record.
 - **On-wire:** `age(roster, prost_encode(OperatorActionV1))` — the whole serialized message is age-encrypted
   (binary, non-armored) before `session.put` (CongestionControl::Block). Ciphertext is what the audit
   subscriber persists.

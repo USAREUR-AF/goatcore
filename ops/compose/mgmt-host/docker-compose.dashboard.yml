@@ -41,6 +41,10 @@ services:
     # bump along with the tag when intentionally upgrading. Tag+digest pinning
     # required by ADR 0703 + ops/ci/check-pin-compat.sh CI gate.
     image: ${NETBIRD_DASHBOARD_IMAGE:-netbirdio/dashboard:latest@sha256:e3ee15351a46345d338a5f9d20cf49bcc3d3594d6d61bc4e5d6f640dda2cbdb0}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: dashboard
     restart: unless-stopped
     env_file:

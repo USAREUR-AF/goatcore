@@ -118,7 +118,7 @@ class Installers(unittest.TestCase):
         cls.rendered = Environment(undefined=StrictUndefined).from_string(source).render(
             goat_get_hostname="download.example.invalid",
             goat_get_release_tag="fixture-v0",
-            goat_get_assets=ASSETS + [a + ".sha256" for a in ASSETS] + ["SHA256SUMS"],
+            goat_get_assets=ASSETS + [a + ".sha256" for a in ASSETS] + ["SHA256SUMS", "SHA256SUMS.cosign-bundle"],
         )
         panels = Panels()
         panels.feed(cls.rendered)

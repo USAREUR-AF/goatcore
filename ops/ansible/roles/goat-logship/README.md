@@ -28,6 +28,51 @@ design `cyber-logging-and-conmon-export.md`.
 - **Absence-alarm:** `internal_metrics` → `prometheus_exporter`; the rules in
   `prom-rules-goat-logship.yml.j2` fire on stream silence (closes F-169).
 
+## Privilege and exposure (GHSA-x44g)
+
+- **Not root.** Vector runs as the host system user `logship_user`
+  (`goat-logship`), with no capabilities and `no-new-privileges`. It reads
+  each log path through that path's owning group (added with `group_add`):
+  the journal's `systemd-journal`, and the audit log's group. auditd writes
+  `audit.log` root-only unless `auditd.conf` names a `log_group`, so the role
+  sets `log_group = adm` and regroups the current log (0640) and its
+  directory (0750); `logship_auditd_manage_log_group: false` turns that off.
+  A path an enabled source reads that only root can read stops the play.
+- **No Docker socket.** The admit-audit, Traefik and oauth2-proxy sources
+  read container stdout through `goat-logship-docker-proxy`, an nginx
+  container (the repo's pinned `nginx:1.27-alpine`) that alone mounts the
+  socket and passes on only GET/HEAD for ping, version, events, container
+  list, inspect and logs (`templates/docker-proxy.nginx.conf.j2`). It has no
+  network: it listens on a unix socket in `logship_docker_proxy_socket_dir`,
+  a directory owned by its own user (`goat-logship-dproxy`) and the
+  collector's group, mode 0710, with the socket 0660, so no other host user
+  and no other container can connect (a TCP listener on a Docker network,
+  even an internal one, is reachable from every process on the host). Vector
+  mounts that directory read-only. The proxy is not deployed when those three
+  sources are off. The json-file logs under `/var/lib/docker/containers` are
+  not used instead: they are named by container id, not name, and Docker
+  makes each container's directory root-only.
+- **Metrics port.** 9598 publishes on loopback, the mesh address
+  (`logship_mesh_iface`, default `wt0`; the play stops if it has no IPv4)
+  and the default Docker bridge gateway (the co-located goat-obs Prometheus
+  scrapes `host.docker.internal:9598`; `logship_metrics_bind_docker_gateway`).
+  `goat-logship-expose-guard.service` loads an nftables table that drops
+  traffic to the mesh address that does not arrive on the mesh interface,
+  and traffic to the gateway address that does not arrive on the bridge of
+  `logship_metrics_scraper_network` (default `mgmt`, the goat-obs
+  Prometheus's network) or loopback. Without that network the gateway
+  binding is left out. `logship_bind_all: true` restores publishing on every
+  interface and removes the guard.
+- **Data dir.** The collector can write its data dir, so the root-run tasks
+  on it never follow a link (`follow: false`), and walk the tree only once,
+  to hand over a dir a root-run collector wrote (`tasks/datadir.yml`).
+
+Residual: the proxy's inspect endpoint returns other containers'
+environment, and its logs endpoint serves any container's output, so a
+compromised collector can still read those; it can no longer create, start,
+exec into or change anything. Other containers on the goat-obs Prometheus's
+network (`mgmt`) can also reach the gateway binding.
+
 ## Deploy
 
 Default (`mock`) needs no credentials — deploy straight to a host:

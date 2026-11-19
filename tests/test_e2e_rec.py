@@ -14,7 +14,8 @@ def run(tmp, *argv):
     rows = []
     path = os.path.join(tmp, "report.jsonl")
     if os.path.exists(path):
-        rows = [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
+        with open(path, encoding="utf-8") as fh:
+            rows = [json.loads(line) for line in fh if line.strip()]
     return p, rows
 
 

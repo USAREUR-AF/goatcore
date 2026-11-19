@@ -69,6 +69,54 @@
     loadtest_mc_alias: loadtest-minio
 
   tasks:
+    # ---- 0. The loadtest subscriber image runs with this play's compose -----
+    # Step 4 renders the legacy writer configuration: no receiving site, state
+    # directory or storage CA. A metadata-only subscriber image (label
+    # io.goat.audit-subscriber.cutover) refuses that at startup, so stop here,
+    # before anything on the host changes.
+    - name: Loadtest subscriber image | read its labels
+      ansible.builtin.command:
+        argv: ["docker", "image", "inspect", "--format", !unsafe '{{json .Config.Labels}}', "{{ loadtest_audit_image }}"]
+      register: _lt_image_labels
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: loadtest_state == 'present'
+
+    - name: Loadtest subscriber image | pull it to read its labels
+      ansible.builtin.command:
+        argv: ["docker", "pull", "{{ loadtest_audit_image }}"]
+      changed_when: true
+      check_mode: false
+      when: loadtest_state == 'present' and _lt_image_labels.rc != 0
+
+    - name: Loadtest subscriber image | read the pulled image's labels
+      ansible.builtin.command:
+        argv: ["docker", "image", "inspect", "--format", !unsafe '{{json .Config.Labels}}', "{{ loadtest_audit_image }}"]
+      register: _lt_image_labels_pulled
+      changed_when: false
+      check_mode: false
+      when: loadtest_state == 'present' and _lt_image_labels.rc != 0
+
+    - name: Loadtest subscriber image | refuse a metadata-only subscriber
+      vars:
+        _labels: >-
+          {{ ((_lt_image_labels_pulled.stdout if _lt_image_labels.rc != 0 else _lt_image_labels.stdout)
+              | default('null', true) | from_json | default({}, true)) }}
+        _generation: "{{ _labels['io.goat.audit-subscriber.cutover'] | default('', true) }}"
+      ansible.builtin.assert:
+        that:
+          - _generation | length == 0
+        fail_msg: >-
+          loadtest_audit_image {{ loadtest_audit_image }} is a metadata-only audit
+          subscriber (io.goat.audit-subscriber.cutover={{ _generation }}). This play
+          renders the legacy writer configuration (no receiving site, state
+          directory or storage CA), which that binary refuses at startup. The
+          loadtest subscriber does not support it yet; see
+          docs/operations/audit-replay-cutover.md. Nothing on the host has changed.
+        quiet: true
+      when: loadtest_state == 'present'
+
     # ---- 1. ACL: register loadtest as a write vendor ------------------------
     - name: Register loadtest vendor ACL (loadtest/** write rule)
       ansible.builtin.command:
@@ -145,6 +193,11 @@
         mode: "0644"
         content: |
           # Managed by ops/ansible/zenoh-loadtest.yml — do not edit.
+          # An explicit project name: this directory's basename is
+          # audit-subscriber, the same as the production stack's, so without it
+          # both are one compose project and the production role's
+          # `up --remove-orphans` deletes this container.
+          name: audit-subscriber-loadtest
           services:
             audit-subscriber-loadtest:
               image: {{ loadtest_audit_image }}
@@ -166,6 +219,12 @@
                 AUDIT_SUBSCRIBER_CERT: "/certs/audit-subscriber-cert.pem"
                 AUDIT_SUBSCRIBER_KEY_FILE: "/certs/audit-subscriber-key.pem"
                 AUDIT_SUBSCRIBER_ROOT_CA: "/ca/ca-root.pem"
+                # The per-producer audit rate meter (GHSA-hq6c) would alert on
+                # (and, if enforcement were on, cap) this dedicated,
+                # quota-capped, wipeable sink at 500 records/s. Off here, and
+                # only here.
+                GOAT_AUDIT_PRODUCER_QUOTA_RECORDS: "0"
+                GOAT_AUDIT_PRODUCER_QUOTA_BYTES: "0"
               volumes:
                 - "{{ loadtest_audit_cert_dir }}:/certs:ro"
                 - "{{ loadtest_audit_ca_root }}:/ca/ca-root.pem:ro"

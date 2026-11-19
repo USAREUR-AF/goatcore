@@ -1,0 +1,31 @@
+---
+# Rendered by the door-admit role (ADR 1254). Do not edit on the host.
+services:
+  door-admit-{{ door_admit_name }}:
+    image: "{{ door_admit_image }}"
+    container_name: "door-admit-{{ door_admit_name }}"
+    command: ["python3", "-u", "/app/door_admit.py", "--listen", "0.0.0.0:8080",
+              "--upstream", "{{ door_admit_upstream }}", "--rules", "/app/rules.json"]
+    read_only: true
+    user: "65534:65534"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: "{{ door_admit_memory_limit }}"
+    restart: unless-stopped
+    networks:
+      - "{{ door_admit_network }}"
+    expose:
+      - "8080"
+    volumes:
+      - "./door_admit.py:/app/door_admit.py:ro"
+      - "./rules.json:/app/rules.json:ro"
+    labels:
+      - "traefik.enable=false"
+
+networks:
+  "{{ door_admit_network }}":
+    external: true
+    name: "{{ door_admit_network }}"

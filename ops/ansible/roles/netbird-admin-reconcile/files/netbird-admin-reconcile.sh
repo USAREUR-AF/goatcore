@@ -116,10 +116,10 @@ for i in identities:
         continue
     traits = i.get("traits") or {}
     meta = i.get("metadata_public") or {}
-    # Login groups live in admin-managed metadata_public. A
-    # groups key there, even null, marks the identity migrated: traits are never
-    # read for it. Only a not-yet-backfilled identity falls back to traits.
-    groups = set((meta.get("groups") or []) if "groups" in meta else (traits.get("groups") or []))
+    # Login groups come ONLY from admin-managed metadata_public (GHSA-9v3v):
+    # self-editable traits never grant a role, even for a not-yet-backfilled
+    # identity.
+    groups = set(meta.get("groups") or [])
     best = "user"
     for group, role in role_map:
         if group in groups and RANK[role] > RANK[best]:

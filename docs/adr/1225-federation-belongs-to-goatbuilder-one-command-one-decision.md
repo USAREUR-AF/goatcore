@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | **Accepted** (2026-11-15, operator) — the operator accepted it (15 Nov). Built: the six federation verbs and `goatbuilder federate <partner>` run on the `goat-federation` library, and both avenues run the goatbuilder verbs by default; `goat federate` still runs the same library during the transition. Amended by [ADR 1229](1229-a-partners-new-package-is-confirmed-within-confirmation-1.md) (confirmation 1 covers a partner's new package) |
 | Date | 2026-11-09 |
 | Deciders | operator |
 | Repo scope | goat core (`crates/goat-federation`, `crates/goatbuilder`, `crates/goat-cli`, `ops/scripts/peering-standup.sh`, `ops/federation/standup/`, the federation design documents) |

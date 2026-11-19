@@ -56,6 +56,21 @@ selfservice:
       # two cannot drift if it is ever switched on.
       lifespan: {{ operator_idp_kratos_registration_flow_lifespan | default('60m') }}
       ui_url: "https://auth.{{ operator_idp_kratos_webauthn_rp_id_prefix }}.{{ site_id }}.{{ site_dns_zone }}/registration"
+    # Recovery is the enrolment path. An enrolled identity has no credential,
+    # so its first session comes from an admin-minted recovery code
+    # (operator-idp-enroll.sh, POST /admin/recovery/code). The operator opens
+    # the link, enters the code and lands in a privileged settings flow, where
+    # webauthn is the only method on. The same path re-enrols after token
+    # loss. Recovery writes no trait. A self-requested code goes to the dead
+    # courier sink below and is never delivered.
+    recovery:
+      enabled: true
+      use: code
+      ui_url: "https://auth.{{ operator_idp_kratos_webauthn_rp_id_prefix }}.{{ site_id }}.{{ site_dns_zone }}/recovery"
+    # Verification stays OFF (also Kratos's default), stated so it cannot
+    # appear by omission.
+    verification:
+      enabled: false
     error:
       ui_url: "https://auth.{{ operator_idp_kratos_webauthn_rp_id_prefix }}.{{ site_id }}.{{ site_dns_zone }}/error"
     logout:
@@ -63,12 +78,37 @@ selfservice:
         default_browser_return_url: "https://auth.{{ operator_idp_kratos_webauthn_rp_id_prefix }}.{{ site_id }}.{{ site_dns_zone }}/"
 
   methods:
+    # Profile editing is OFF. traits.groups is the operator's authorization
+    # (Grafana Admin, X-User-Groups to Prometheus/Alertmanager/Ollama), and
+    # traits are holder-writable through the settings flow's profile method,
+    # which Kratos enables by default. Only operator-idp-enroll.sh, over the
+    # admin API, may set them. GHSA-2fjv-48gw-744g.
+    profile:
+      enabled: false
     # WebAuthn-ONLY per ADR 0842 §"Open questions" → resolved.
     # Operator population is small + YubiKey-equipped; password adds
     # attack surface without usability gain.
     password:
       enabled: false
     totp:
+      enabled: false
+    # code carries the recovery code above, and nothing else. It cannot log
+    # anyone in or register anyone: passwordless_enabled and mfa_enabled
+    # stay false (they are Kratos's defaults, stated here).
+    code:
+      enabled: true
+      passwordless_enabled: false
+      mfa_enabled: false
+    # Every other method is off. link, lookup_secret, passkey and oidc are off
+    # by default and stated so they cannot appear by omission (oidc and
+    # passkey can register identities and map traits).
+    link:
+      enabled: false
+    lookup_secret:
+      enabled: false
+    passkey:
+      enabled: false
+    oidc:
       enabled: false
     webauthn:
       enabled: true

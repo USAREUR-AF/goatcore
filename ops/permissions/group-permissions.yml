@@ -439,7 +439,11 @@ step_up_required:
   - grant_PLATFORM-ADMIN        # promoting any identity to PLATFORM-ADMIN group
   - revoke_PLATFORM-ADMIN       # demoting a PLATFORM-ADMIN-bearing identity
   - delete_identity             # any delete-identity action
+  - mint_recovery_link          # minting a recovery link that signs its holder in as the identity
+  - rotate_credential           # re-keying a person's fabric credential (the admin is shown the new key)
   - revoke_sessions_of_admin    # revoking sessions of an identity holding PLATFORM-ADMIN
   - reset_2fa                   # clearing a user's second factor (admin 2FA reset, PR #168)
   - offboard_identity           # queueing the real offboard cut from the console (goat#372)
   - release_hold                # restoring a dormancy hold's recorded mesh membership
+  - reactivate_identity         # setting an inactive identity back to active
+  - mint_escalated_invite       # minting an onboarding invite at an escalated (admin) tier

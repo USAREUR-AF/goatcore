@@ -1678,8 +1678,10 @@ entries:
       - the surface is mid-deploy and the binary, its checksum and SHA256SUMS are from different releases
       - the download was altered or truncated on the way
       - the signature over SHA256SUMS is not from the release workflow of the repository goatbuilder.yaml names
+      - "this goatbuilder was built before the repository move: it expects the signature of the previous release repository, releases are now signed by the current one, and the refusal's expected identity names a different repository from the one it got. Such a binary cannot update itself"
     fixes:
       - "retry in a few minutes; the surface's files are written together"
+      - "built before the repository move: reinstall once with the line under \"Built before the repository move\" at get.<site>.<zone>/goatbuilder/. It downloads SHA256SUMS, its signature and this platform's binary, runs cosign verify-blob against the current release repository, checks the binary against SHA256SUMS, and only then replaces the installed goatbuilder; later updates then work"
       - "goatbuilder update --check   (what the surface serves now)"
       - "cosign verify-blob --bundle SHA256SUMS.cosign-bundle --certificate-identity-regexp '^https://github.com/<owner>/<repo>/' --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS   (the check by hand)"
     read: docs/design/goatbuilder-distribution.md
@@ -3867,6 +3869,23 @@ entries:
     matches:
       - "\\(GB-278\\)"
 
+  - code: GB-314
+    tool: goatbuilder
+    title: the node does not answer at join-node's phase 1
+    what: "join-node phase 1 checks the node answers before anything is done on it: over SSH at --address (one batch-mode connection with this machine's ssh, a 10 s connect timeout and no password prompt), or for a phone node over the Android debug bridge (adb get-state). A node whose SSH server refuses the login has answered: before phase 2 seeds this machine's key, a password-only node refuses every batch login. This node did not answer: the connection never reached its SSH server (no route, refused, timed out, a name that does not resolve, a changed host key), or no single phone answers over USB. Nothing was done on the node and no later phase ran."
+    causes:
+      - "--address is not the box's address on the site LAN, or the box is off or not yet on the network (on a Jetson, 192.168.55.1 is the USB device-mode bridge, reachable only over a direct USB-C cable)"
+      - "the box's host key changed since this machine last connected (ssh names it), or the address is a name this machine cannot resolve"
+      - "for a phone: it is not attached, USB debugging is not allowed for this machine, its screen is locked, or more than one device is attached without ANDROID_SERIAL"
+    fixes:
+      - "ssh <user>@<address>   (reach the box on the site LAN, then pass its real LAN address as --address)"
+      - "adb devices   (for a phone: it lists the phone as device; set ANDROID_SERIAL when several are attached)"
+      - "goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 1"
+    read: docs/design/phone-node.md
+    exit: 1
+    matches:
+      - "^GB-314: "
+
   - code: GB-289
     tool: goatbuilder
     title: the IPsec rotation's staged material is missing or unreadable
@@ -4056,6 +4075,66 @@ entries:
     exit: 2
     matches:
       - "GB-351 refusing to wire Spock: "
+
+  - code: GB-352
+    tool: goatbuilder
+    title: a joining site cannot take a shared secret from its founder
+    what: "join-node's phase 3 gives a joining site the values every site of the goatnet shares (the SPEC lines of newsite-secrets.sh marked cluster: NetBird's datastore key, the replicator, the relay secret, Ory's network id, the Kratos cipher, the Hydra system secret) by taking its founder's. Under a store of references the founder's name has no reference in .envrc.local.d/*.refs; under a store of values it has no value; or, after the secrets injector ran, the founder's or the joiner's name was empty or still a reference. Nothing was written for the joiner's shared names. The message names the variables, never a value."
+    causes:
+      - "the founder's value was never stored under the declared secrets posture on this machine"
+      - "the store's tool is not signed in, so with-secrets could not resolve the reference"
+      - "join_founder_site in the joiner's group_vars names the wrong site"
+    fixes:
+      - "python3 ops/secrets/posture.py hint <FOUNDER>_<NAME> says where to store it"
+      - "sign in to the declared store's tool, then resume: goatbuilder join-node <environment> --site <site> --node <node> --class core --address <address> --from 3"
+    read: docs/design/join-node-site-secrets.md
+    exit: 1
+    matches:
+      - "^GB-352: "
+
+  - code: GB-353
+    tool: goatbuilder
+    title: a joining site already holds a shared secret that is not its founder's
+    what: "join-node's phase 3 takes a joining site's shared values from its founder and never overwrites one the joiner already holds. A joiner name holds a value (or a reference to one) whose SHA-256 differs from the founder's. A joiner with a fresh value looks healthy and cannot take part: NetBird cannot decrypt the replicated rows, Spock does not replicate, Kratos and Hydra cannot read the replicated identity data. The value was kept. The message names the variables, never a value or a digest."
+    causes:
+      - "the joiner's values were minted fresh, by hand or by newsite-secrets.sh, before this step existed"
+      - "the joiner's reference points at another goatnet's entry"
+    fixes:
+      - "decide which value is right; remove the joiner's own entry for that name from the store or the reference file, then resume with --from 3, and the step takes the founder's"
+      - "for NetBird's datastore key: a joiner whose NetBird database already holds rows encrypted with its own key is rebuilt, not re-keyed"
+    read: docs/design/join-node-site-secrets.md
+    exit: 1
+    matches:
+      - "^GB-353: "
+
+  - code: GB-354
+    tool: goatbuilder
+    title: the env store holds none of a joining site's shared secrets
+    what: "join-node's phase 3 takes a joining site's shared values from its founder. Under the env store nothing persists, so it cannot write them: each joiner name must already be exported in the shell that runs join-node. One or more are not. Nothing was written."
+    causes:
+      - "the declared store is env (GOAT_SECRET_STORE=env or secrets.store: env)"
+    fixes:
+      - "export each named variable with the founder's value in this shell, then resume with --from 3"
+      - "declare a store that persists (secrets.store in goatbuilder.yaml; docs/design/pluggable-dependencies.md)"
+    read: docs/design/join-node-site-secrets.md
+    exit: 1
+    matches:
+      - "^GB-354: "
+
+  - code: GB-355
+    tool: goatbuilder
+    title: a standup play limited to the founder selects no host of the site's group
+    what: "Six standup plays run on the site's first management host alone (SPIRE, the LAN service surface, the LAN TLS routes, the dashboard, the portal, grant-keyd), limited with -l 'mgmt-<site>-01*', the declared naming rule. Before the play, the same command checked the site's group, <site>_hosts, in inventory/mgmt-hosts.ini and inventory/mgmt-hosts-mesh.ini, and no host there matches the limit. The play was refused before ansible ran: with another host matching the pattern, ansible prints \"skipping: no hosts matched\" and exits 0 having done nothing. Both avenues, goatbuilder standup and goat-standup.sh, run the check (ops/scripts/inventory-hosts.py --match --require)."
+    causes:
+      - "the site's first management host is named otherwise than mgmt-<site>-01 in the inventory"
+      - "the host is listed under another group than <site>_hosts"
+    fixes:
+      - "python3 ops/scripts/inventory-hosts.py <site>_hosts   (run in ops/ansible; lists the hosts of the group)"
+      - "name the site's first management host mgmt-<site>-01 in <site>_hosts, in inventory/mgmt-hosts.ini (and mgmt-hosts-mesh.ini when it lists it), then resume: goatbuilder standup <environment> --site <site> --from <phase>"
+    read: docs/design/goatbuilder-speed.md
+    exit: 1
+    matches:
+      - "^GB-355: "
 
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
