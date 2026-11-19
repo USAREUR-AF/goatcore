@@ -101,17 +101,15 @@
 
     # Entitled role per Kratos identity id: the HIGHEST role any of its groups
     # maps to. An inactive or absent identity is entitled to `user`. Login groups
-    # live in admin-managed metadata_public; a groups key
-    # there, even null, marks the identity migrated and its self-editable traits
-    # are never read. Only a not-yet-backfilled identity falls back to traits.
+    # come ONLY from admin-managed metadata_public (GHSA-9v3v): self-editable
+    # traits never grant a role, even for a not-yet-backfilled identity.
     - name: Compute each person's entitled role
       ansible.builtin.set_fact:
         realign_entitled: >-
           {%- set out = {} -%}
           {%- for i in realign_kratos.json if i.state | default('') == 'active' -%}
           {%-   set meta = i.metadata_public | default({}, true) -%}
-          {%-   set src = meta if 'groups' in meta else (i.traits | default({}, true)) -%}
-          {%-   set groups = src.get('groups') | default([], true) -%}
+          {%-   set groups = meta.get('groups') | default([], true) -%}
           {%-   set ns = namespace(best='user') -%}
           {%-   for e in realign_map if e.group in groups and realign_rank[e.role] > realign_rank[ns.best] -%}
           {%-     set ns.best = e.role -%}

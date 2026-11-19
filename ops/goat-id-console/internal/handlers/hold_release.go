@@ -242,10 +242,14 @@ func (s *Server) handleReleaseHoldConfirm(w http.ResponseWriter, r *http.Request
 		s.emitAudit(r, actor, "release_hold", nil, p.Record.Site, nil, nil, false, "refused", stepUpChallengeAudit)
 		return
 	}
-	actorHandle, err := s.handleForLoginEmail(r.Context(), actor.Email)
-	if err != nil {
-		s.emitAudit(r, actor, "release_hold", nil, p.Record.Site, nil, nil, step.Verified, "refused", "operator handle cannot be resolved")
-		s.renderError(w, r, http.StatusConflict, "Your operator handle cannot be resolved, so the fabric audit record cannot be attributed safely.")
+	// The operator-action actor comes ONLY from the authenticated session.
+	// It used to be handleForLoginEmail, the newest onboarding record carrying
+	// the admin's email, which an intake key could plant with any handle and
+	// so attribute this release to someone else (GHSA-3m4r review).
+	actorHandle := sessionOperatorActor(actor)
+	if actorHandle == "" {
+		s.emitAudit(r, actor, "release_hold", nil, p.Record.Site, nil, nil, step.Verified, "refused", "session carries no identity id")
+		s.renderError(w, r, http.StatusConflict, "Your session carries no identity id, so the fabric audit record cannot be attributed safely.")
 		return
 	}
 	params := releaseHoldParams{Site: p.Record.Site, PeerID: p.Record.PeerID, PeerName: p.Record.PeerName,

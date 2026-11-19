@@ -11,6 +11,10 @@
 services:
   audit-subscriber:
     image: {{ audit_subscriber_image }}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: audit-subscriber
     # Memory ceiling: 4x the 7-day peak working set, floor 512M. An unbounded
     # leak on a shared host takes the identity plane down with it.
@@ -19,6 +23,10 @@ services:
         limits:
           memory: "{{ audit_subscriber_memory_limit }}"
     restart: unless-stopped
+{% if audit_subscriber_v2_enabled | bool %}
+    # Allow the binary's 60-second drain deadline before Docker kills it.
+    stop_grace_period: 70s
+{% endif %}
     networks:
       # `zenoh` reaches the router for the subscribe-side traffic;
       # `mgmt` lets the observability Prometheus scrape :9303 by docker DNS name
@@ -33,12 +41,33 @@ services:
       AUDIT_SUBSCRIBER_KEY: "{{ audit_subscriber_subscribe_key }}"
       AUDIT_SUBSCRIBER_EXCLUDE_KEYS: "{{ audit_subscriber_exclude_keys }}"
       AUDIT_SUBSCRIBER_ID: "{{ audit_subscriber_id }}"
+{% if audit_subscriber_v2_enabled | bool %}
+      AUDIT_SUBSCRIBER_STATE_DIR: "/state"
+      AUDIT_SUBSCRIBER_RECEIVING_SITE: "{{ audit_subscriber_receiving_site }}"
+{% if audit_subscriber_router_policy_present | default(false) | bool %}
+      AUDIT_SUBSCRIBER_ROUTER_POLICY: "/policy/router.json5"
+{% endif %}
+{% if audit_subscriber_s3_endpoint | length > 0 %}
+      AUDIT_SUBSCRIBER_S3_CA_BUNDLE: "/storage-ca/ca.crt"
+{% endif %}
+{% endif %}
+{% if audit_subscriber_replay_enabled | bool %}
+      AUDIT_SUBSCRIBER_REPLAY_BUCKET: "{{ audit_subscriber_replay_bucket }}"
+      AUDIT_SUBSCRIBER_REPLAY_ACCESS_KEY: "${AUDIT_SUBSCRIBER_REPLAY_ACCESS_KEY}"
+      AUDIT_SUBSCRIBER_REPLAY_SECRET_KEY: "${AUDIT_SUBSCRIBER_REPLAY_SECRET_KEY}"
+{% endif %}
       AUDIT_SUBSCRIBER_IDENTITY_MODEL: "{{ audit_subscriber_identity_model }}"
       AUDIT_SUBSCRIBER_METRICS_BIND: "0.0.0.0:9303"
       AUDIT_SUBSCRIBER_MAX_INLINE_PAYLOAD: "{{ audit_subscriber_max_inline_payload }}"
       AUDIT_SUBSCRIBER_BATCH_EVENTS: "{{ audit_subscriber_batch_events }}"
       AUDIT_SUBSCRIBER_BATCH_INTERVAL_MS: "{{ audit_subscriber_batch_interval_ms }}"
       AUDIT_SUBSCRIBER_CHANNEL_DEPTH: "{{ audit_subscriber_channel_depth }}"
+      GOAT_AUDIT_PRODUCER_QUOTA_ENFORCE: "{{ audit_subscriber_producer_quota_enforce | bool | lower }}"
+      GOAT_AUDIT_PRODUCER_QUOTA_RECORDS: "{{ audit_subscriber_producer_quota_records }}"
+      GOAT_AUDIT_PRODUCER_QUOTA_BYTES: "{{ audit_subscriber_producer_quota_bytes }}"
+      GOAT_AUDIT_PRODUCER_QUOTA_WINDOW_SECS: "{{ audit_subscriber_producer_quota_window_secs }}"
+      GOAT_AUDIT_PRODUCER_QUOTA_BURST_SECS: "{{ audit_subscriber_producer_quota_burst_secs }}"
+      GOAT_AUDIT_PRODUCER_QUOTA_NAMESPACE_FACTOR: "{{ audit_subscriber_producer_quota_namespace_factor }}"
       RUST_LOG: "{{ audit_subscriber_rust_log }}"
 {% if audit_subscriber_local_ndjson_dir | length > 0 %}
       # Best-effort local NDJSON tail for off-box cyber-logging (goat-logship,
@@ -64,8 +93,19 @@ services:
       AUDIT_SUBSCRIBER_S3_ACCESS_KEY: "${AUDIT_SUBSCRIBER_S3_ACCESS_KEY}"
       AUDIT_SUBSCRIBER_S3_SECRET_KEY: "${AUDIT_SUBSCRIBER_S3_SECRET_KEY}"
 {% endif %}
-{% if audit_subscriber_zenoh_endpoint.startswith('tls/') or (audit_subscriber_local_ndjson_dir | length > 0) %}
+{% if audit_subscriber_zenoh_endpoint.startswith('tls/') or (audit_subscriber_local_ndjson_dir | length > 0) or (audit_subscriber_v2_enabled | bool) %}
     volumes:
+{% if audit_subscriber_v2_enabled | bool %}
+      - "{{ audit_subscriber_state_dir }}:/state"
+{# A short-syntax bind of a missing source makes Docker create a DIRECTORY #}
+{# there; mount only files tasks/v2-mounts.yml has seen as regular files.  #}
+{% if audit_subscriber_router_policy_present | default(false) | bool %}
+      - "{{ audit_subscriber_router_policy_path }}:/policy/router.json5:ro"
+{% endif %}
+{% if audit_subscriber_s3_endpoint | length > 0 %}
+      - "{{ audit_subscriber_s3_ca_bundle }}:/storage-ca/ca.crt:ro"
+{% endif %}
+{% endif %}
 {% if audit_subscriber_zenoh_endpoint.startswith('tls/') %}
       - "{{ audit_subscriber_cert_dir }}:/certs:ro"
       - "{{ audit_subscriber_ca_root_src }}:/ca/ca-root.pem:ro"

@@ -4,7 +4,7 @@
 #
 #   1. goat-maintainer-groups-forwarding-patch (documented in patches/0001-...):
 #      forward the login groups (admin-managed metadata_public.groups since
-#      F-572 / ADR 1188; traits.groups only for a not-yet-backfilled identity)
+#      F-572 / ADR 1188; never traits.groups, GHSA-9v3v)
 #      into session.id_token.groups so the JWT carries the groups claim every
 #      downstream RBAC consumer needs.
 #
@@ -65,6 +65,12 @@ MARKER1='goat-maintainer-groups-forwarding-patch'
 ANCHOR1='if (identity.updated_at)'
 
 if grep -q "$MARKER1" "$TARGET"; then
+  # GHSA-9v3v: an older copy of this patch fell back to identity.traits.groups.
+  # The marker alone does not make a target current; refuse a stale one.
+  if grep -q "identity\.traits\.groups" "$TARGET"; then
+    echo "apply-patch.sh: $TARGET carries the pre-GHSA-9v3v groups-forwarding patch (reads identity.traits.groups); rebuild from the upstream image" >&2
+    exit 1
+  fi
   echo "apply-patch.sh: groups-forwarding marker already present; skipping patch 1"
 else
   if ! grep -q "$ANCHOR1" "$TARGET"; then
@@ -79,10 +85,10 @@ else
     if (!inserted && index($0, anchor) > 0) {
       indent = $0
       sub(/[^[:space:]].*/, "", indent)
-      print indent "// F-572 / ADR 1188: groups live in admin-managed metadata_public. Once it has"
-      print indent "// a groups key (even [] or null) the identity is migrated and traits are never read."
+      print indent "// F-572 / ADR 1188, GHSA-9v3v: groups come ONLY from admin-managed metadata_public."
+      print indent "// Self-editable traits never grant a role, even for a not-yet-backfilled identity."
       print indent "// " marker " — forward the groups claim into the JWT id_token."
-      print indent "var __gm = identity.metadata_public || {}, __groups = Object.prototype.hasOwnProperty.call(__gm, \"groups\") ? __gm.groups : identity.traits.groups;"
+      print indent "var __gm = identity.metadata_public || {}, __groups = __gm.groups;"
       print indent "if (Array.isArray(__groups) && __groups.length > 0) session.id_token.groups = __groups;"
       print ""
       inserted = 1
@@ -112,6 +118,12 @@ MARKER4='goat-maintainer-aff-forwarding-patch'
 ANCHOR4='if (identity.updated_at)'
 
 if grep -q "$MARKER4" "$TARGET"; then
+  # GHSA-9v3v: an older copy of this patch fell back to identity.traits.aff.
+  # The marker alone does not make a target current; refuse a stale one.
+  if grep -q "identity\.traits\.aff" "$TARGET"; then
+    echo "apply-patch.sh: $TARGET carries the pre-GHSA-9v3v aff-forwarding patch (reads identity.traits.aff); rebuild from the upstream image" >&2
+    exit 1
+  fi
   echo "apply-patch.sh: aff-forwarding marker already present; skipping patch 4"
 else
   if ! grep -q "$ANCHOR4" "$TARGET"; then
@@ -126,10 +138,10 @@ else
     if (!inserted && index($0, anchor) > 0) {
       indent = $0
       sub(/[^[:space:]].*/, "", indent)
-      print indent "// F-572 / ADR 1188: aff lives in admin-managed metadata_public. A migrated"
-      print indent "// identity (a groups key in metadata_public) never falls back to self-editable traits."
+      print indent "// F-572 / ADR 1188, GHSA-9v3v: aff comes ONLY from admin-managed metadata_public;"
+      print indent "// self-editable traits are never forwarded."
       print indent "// " marker " — forward the aff claim into the JWT id_token."
-      print indent "var __am = identity.metadata_public || {}, __aff = Object.prototype.hasOwnProperty.call(__am, \"groups\") ? __am.aff : (__am.aff || identity.traits.aff);"
+      print indent "var __am = identity.metadata_public || {}, __aff = __am.aff;"
       print indent "if (__aff && typeof __aff === \"object\" && Object.keys(__aff).length > 0) session.id_token.aff = __aff;"
       print ""
       inserted = 1

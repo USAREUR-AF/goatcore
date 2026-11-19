@@ -50,6 +50,11 @@ services:
   # Re-runs are idempotent (Kratos's migrate is safe to re-apply).
   kratos-migrate:
     image: ${ORY_KRATOS_IMAGE:-oryd/kratos:v1.3.1@sha256:c47903ba278bbcb330b5af4ce43d33dc17adacc1d40456b8e2a235add8ababa5}
+    # GHSA-6x9h: no capabilities. In particular no CAP_NET_RAW, which a
+    # container on the shared mgmt bridge could use to ARP-spoof a
+    # neighbour's address. Verified to start and serve without any.
+    cap_drop:
+      - ALL
     depends_on:
       postgres-a:
         condition: service_healthy
@@ -67,6 +72,11 @@ services:
   # for `kratos identity import` and similar.
   kratos:
     image: ${ORY_KRATOS_IMAGE:-oryd/kratos:v1.3.1@sha256:c47903ba278bbcb330b5af4ce43d33dc17adacc1d40456b8e2a235add8ababa5}
+    # GHSA-6x9h: no capabilities. In particular no CAP_NET_RAW, which a
+    # container on the shared mgmt bridge could use to ARP-spoof a
+    # neighbour's address. Verified to start and serve without any.
+    cap_drop:
+      - ALL
     depends_on:
       kratos-migrate:
         condition: service_completed_successfully
@@ -136,6 +146,10 @@ services:
 
   hydra-migrate:
     image: ${ORY_HYDRA_IMAGE:-oryd/hydra:v2.3.0@sha256:38bbfe332099e9214b8041dffe5e3eaa271140993f148d3c8a5f7af825013097}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     depends_on:
       postgres-a:
         condition: service_healthy
@@ -150,6 +164,10 @@ services:
 
   hydra:
     image: ${ORY_HYDRA_IMAGE:-oryd/hydra:v2.3.0@sha256:38bbfe332099e9214b8041dffe5e3eaa271140993f148d3c8a5f7af825013097}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     depends_on:
       hydra-migrate:
         condition: service_completed_successfully
@@ -202,6 +220,10 @@ services:
   # `https://auth.<site>.<zone>`.
   selfservice-ui:
     image: ${KRATOS_SELFSERVICE_UI_IMAGE:-oryd/kratos-selfservice-ui-node:v1.3.1@sha256:2d6f9a84456c0e6797664e65f2a743f695794788f1e276f915d247f9e35684a3}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: selfservice-ui
     depends_on:
       kratos:

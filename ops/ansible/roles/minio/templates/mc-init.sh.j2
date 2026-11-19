@@ -1,4 +1,5 @@
 #!/bin/sh
+{% set minio_effective_users = minio_effective_users | default(minio_extra_users) %}
 # mc-init.sh — bucket + Object-Lock + lifecycle bootstrap for the
 # Orin-C MinIO instance. Idempotent.
 #
@@ -124,6 +125,10 @@ echo "$LIFECYCLE_JSON" > /tmp/lifecycle.json
 mc ilm import "local/{{ minio_telemetry_bucket }}" < /tmp/lifecycle.json
 echo "updated: {{ minio_telemetry_bucket }} expiration = {{ minio_telemetry_retention_days }}d"
 
+{% if minio_replay_enabled | default(false) | bool %}
+{% include 'replay-bucket.sh.j2' %}
+{% endif %}
+
 {% if (minio_operator_idp_enabled | default(operator_idp_enabled | default(false))) | bool %}
 # 2.5 Block 21H.3c — alias policies for operator-IdP claim -> policy mapping.
 # MinIO matches each value in the JWT `groups` claim to a policy of the
@@ -186,15 +191,15 @@ echo "updated: {{ minio_runtime_detection_bucket }} quota = {{ minio_runtime_det
 echo "unchanged: {{ minio_runtime_detection_bucket }} has no quota (production posture)"
 {% endif %}
 
-{% if minio_extra_users %}
+{% if minio_effective_users %}
 # 3.5 Extra service users — per-bucket IAM policies + scoped users
 # Each entry mints a named policy from a controller-side JSON file, adds
-# the user with the secret from {{ '${' + (minio_extra_users[0].name | upper | replace('-', '_')) + '_SECRET}' }} (etc.)
+# the user with the secret from {{ '${' + (minio_effective_users[0].name | upper | replace('-', '_')) + '_SECRET}' }} (etc.)
 # loaded into the container via env_file mc-extra-users.env. Idempotent:
 #   - `mc admin policy create` overwrites if same name (no-op when content matches)
 #   - `mc admin user add` overwrites if same access key (rotates secret atomically)
 #   - `mc admin policy attach` returns rc=1 if already attached; we trap that case
-{% for user in minio_extra_users %}
+{% for user in minio_effective_users %}
 {% set sec_var = (user.name | upper | replace('-', '_')) + '_SECRET' %}
 echo "--- mc extra user: {{ user.name }} ---"
 mc admin policy create local "{{ user.policy_name }}" "/policies/{{ user.policy_name }}.json"
@@ -204,11 +209,15 @@ echo "updated: user {{ user.name }}"
 # POSIX case — the upstream minio/mc image ships a minimal busybox
 # without grep/sed, so we inspect mc's stderr/stdout via shell pattern
 # match instead of piping through grep.
-attach_out=$(mc admin policy attach local "{{ user.policy_name }}" --user "{{ user.name }}" 2>&1) || true
-case "$attach_out" in
-  *already*|*exists*) echo "unchanged: policy {{ user.policy_name }} already attached to user {{ user.name }}" ;;
-  *) echo "updated: attached policy {{ user.policy_name }} to user {{ user.name }} ($attach_out)" ;;
-esac
+if attach_out=$(mc admin policy attach local "{{ user.policy_name }}" --user "{{ user.name }}" 2>&1); then
+  echo "updated: attached policy {{ user.policy_name }} to user {{ user.name }}"
+else
+  case "$attach_out" in
+    *"The specified policy change is already in effect."*|*"The specified policy is already attached."*)
+      echo "unchanged: policy {{ user.policy_name }} already attached to user {{ user.name }}" ;;
+    *) echo "Policy attachment failed: $attach_out" >&2; exit 1 ;;
+  esac
+fi
 {% endfor %}
 {% endif %}
 
@@ -225,9 +234,9 @@ echo "--- mc quota info (all three buckets) ---"
 for b in "{{ minio_audit_bucket }}" "{{ minio_telemetry_bucket }}" "{{ minio_runtime_detection_bucket }}"; do
   mc quota info "local/$b" 2>&1 | sed "s|^|  $b: |" || true
 done
-{% if minio_extra_users %}
+{% if minio_effective_users %}
 echo "--- mc admin user list (extra users) ---"
-for u in {% for user in minio_extra_users %}"{{ user.name }}" {% endfor %}; do
+for u in {% for user in minio_effective_users %}"{{ user.name }}" {% endfor %}; do
   mc admin user info local "$u" 2>&1 | sed "s|^|  $u: |" || true
 done
 {% endif %}

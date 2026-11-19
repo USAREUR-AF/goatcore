@@ -49,24 +49,40 @@
     logship_s3_secret_access_key: "{{ lookup('env', 'LOGSHIP_S3_SECRET_ACCESS_KEY') | default('', true) }}"
   when: logship_durable_sink_mode == 's3'
 
+# 1b. Collector identity, read access and the metrics bind (GHSA-x44g):
+#     Vector runs as logship_user, reads logs by group, and publishes its
+#     metrics port on loopback + the mesh address (+ the bridge gateway).
+
+- name: Collector user and read access
+  ansible.builtin.include_tasks: access.yml
+
+- name: Metrics port bind addresses
+  ansible.builtin.include_tasks: bind.yml
+
+# A collector from a build before GHSA-x44g runs as root and keeps writing
+# root-owned files into the data dir. Stop it before the data dir is handed
+# to the collector user, so the new one does not start on files it cannot
+# write. Its sources resume from their checkpoints; the up below restarts it.
+- name: User the running collector runs as
+  ansible.builtin.command:
+    argv: [docker, inspect, -f, '{{ "{{" }}.Config.User{{ "}}" }}', goat-logship]
+  register: _logship_running_user
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Stop a collector still running as root before handing over its data dir
+  ansible.builtin.command:
+    argv: [docker, stop, goat-logship]
+  changed_when: true
+  when:
+    - _logship_running_user.rc == 0
+    - (_logship_running_user.stdout | trim) in ['', '0', 'root', '0:0', 'root:root']
+
 # 2. Storage layout
 
-- name: Ensure Vector data dir exists (data_dir + disk buffer)
-  ansible.builtin.file:
-    path: "{{ logship_data_root }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-
-- name: Ensure mock OCSF sink dir exists (mock mode)
-  ansible.builtin.file:
-    path: "{{ logship_mock_sink_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-  when: logship_durable_sink_mode == 'mock'
+- name: Collector data dir, mock sink dir and the proxy's socket dir
+  ansible.builtin.include_tasks: datadir.yml
 
 # Make the "demonstration tail, not a store" claim true. tmpfiles rather than a
 # private timer because the host already runs systemd-tmpfiles-clean.timer
@@ -163,6 +179,22 @@
     mode: "0644"
   notify: goat-logship config changed
 
+- name: Render the Docker API proxy config (container-stdout sources)
+  ansible.builtin.template:
+    src: docker-proxy.nginx.conf.j2
+    dest: "{{ logship_compose_dir }}/docker-proxy.nginx.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _logship_proxy_conf
+  when: logship_docker_sources_enabled | bool
+
+- name: No Docker API proxy config when no source reads container stdout
+  ansible.builtin.file:
+    path: "{{ logship_compose_dir }}/docker-proxy.nginx.conf"
+    state: absent
+  when: not (logship_docker_sources_enabled | bool)
+
 - name: Render .env (AWS ingest creds; s3 mode only; mode 0600, never committed)
   ansible.builtin.template:
     src: env.j2
@@ -186,22 +218,38 @@
 
 # 4. Bring up
 
+- name: Exposure guard for the mesh-bound metrics port
+  ansible.builtin.include_tasks: expose-guard.yml
+
 - name: Pull Vector image
   ansible.builtin.command:
     cmd: docker compose pull
     chdir: "{{ logship_compose_dir }}"
   changed_when: true
 
+# --remove-orphans: a proxy left from a deploy whose container-stdout sources
+# have since been turned off still holds the Docker socket.
 - name: Bring up goat-logship
   ansible.builtin.command:
-    cmd: docker compose up -d
+    cmd: docker compose up -d --remove-orphans
     chdir: "{{ logship_compose_dir }}"
   register: _logship_up
-  changed_when: "'Started' in _logship_up.stderr or 'Created' in _logship_up.stderr or 'Recreated' in _logship_up.stderr"
+  changed_when: "'Started' in _logship_up.stderr or 'Created' in _logship_up.stderr or 'Recreated' in _logship_up.stderr or 'Removed' in _logship_up.stderr"
+
+# nginx reads its config at start; a bind-mounted file edit does not recreate
+# the container.
+- name: Restart the Docker API proxy on a config change
+  ansible.builtin.command:
+    cmd: docker compose restart goat-logship-docker-proxy
+    chdir: "{{ logship_compose_dir }}"
+  changed_when: true
+  when:
+    - logship_docker_sources_enabled | bool
+    - _logship_proxy_conf is changed
 
 - name: Wait for goat-logship self-metrics endpoint
   ansible.builtin.uri:
-    url: "http://localhost:{{ logship_metrics_port }}/metrics"
+    url: "http://127.0.0.1:{{ logship_metrics_port }}/metrics"
     status_code: 200
   register: _logship_ready
   retries: "{{ logship_health_retries }}"
@@ -232,7 +280,8 @@
   ansible.builtin.debug:
     msg: |
       goat-logship up.
-        Self-metrics: http://{{ ansible_host }}:{{ logship_metrics_port }}/metrics
+        Self-metrics: {{ ('http://<any-interface>:' ~ logship_metrics_port ~ '/metrics (logship_bind_all)') if logship_bind_all | bool else ('http://' ~ (_logship_bind | trim) ~ ':' ~ logship_metrics_port ~ '/metrics from a mesh peer; ' ~ (_logship_bind_ips | join(', ')) ~ ' on the host') }}
+        Runs as: {{ logship_user }} ({{ _logship_uid }}:{{ _logship_gid }}{{ (', groups ' ~ (_logship_read_gids | join(','))) if _logship_read_gids | length > 0 else '' }}); Docker API: {{ ('read-only proxy goat-logship-docker-proxy, unix socket in ' ~ logship_docker_proxy_socket_dir) if logship_docker_sources_enabled | bool else 'not used' }}
         Durable sink ({{ logship_durable_sink_mode }}): {{ ('s3://' ~ logship_s3_bucket ~ ' (' ~ logship_s3_region ~ ')') if logship_durable_sink_mode == 's3' else (logship_mock_sink_dir ~ '/ocsf-*.json (local mock — swap to s3 by mode)') }}
         external-collector egress: {{ 'ENABLED → ' ~ logship_collector_endpoint if logship_sink_collector_enabled else 'default-off' }}
       Local retention: disk buffer {{ logship_buffer_max_bytes }} bytes{{

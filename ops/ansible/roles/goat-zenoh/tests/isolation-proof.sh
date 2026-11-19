@@ -34,18 +34,26 @@ A0="$(anchor 0)"; A1="$(anchor 1)"
 echo "slot anchors: 0=$A0  1=$A1"
 
 # --- 1. minimal zenohd config: render the template's access_control, strip storage/rest ---
-python3 - "$ROLE/templates/config.json5.j2" "$CERTS" > "$WORK/router.json5" <<'PY'
+python3 - "$ROLE/templates/config.json5.j2" "$CERTS" "$HERE/slot-fragment" > "$WORK/router.json5" <<'PY'
 import hashlib, sys
 from jinja2 import Environment, BaseLoader
 tpl, certs = sys.argv[1], sys.argv[2]
+sys.path.insert(0, sys.argv[3])
+import slotfragment  # GHSA-rr3p: slot subjects come from the portal's fragment
+_a = lambda k: hashlib.sha256(f"isoproof:{k}".encode()).hexdigest()[:32]
+# slots 0 and 1 assigned at generation 0 (CN = bare anchor, the certs below)
+frag = slotfragment.render([(_a(0), _a(0)), (_a(1), _a(1)), (_a(2), ""), (_a(3), "")])
 e = Environment(loader=BaseLoader(), trim_blocks=True, lstrip_blocks=True)
 e.filters["hash"] = lambda s, algo="sha256": hashlib.new(algo, str(s).encode()).hexdigest()
+e.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).strip().lower() in ("true", "yes", "1", "on")
 rendered = e.from_string(open(tpl).read()).render(
     goat_zenoh_listen_host="0.0.0.0", goat_zenoh_listen_port=7447,
-    goat_zenoh_rest_port=8000, goat_zenoh_retention_days=7,
+    goat_zenoh_rest_port=8000, goat_zenoh_retention_days=7, goat_zenoh_audit_retention_days=365,
+    goat_zenoh_tx_queue_size=None, goat_zenoh_tx_block_wait_before_close_us=2000000,
     goat_zenoh_storage_path="/data", goat_zenoh_tls_dir="/certs",
     zenoh_seed_vendors=[], zenoh_identity_model="per-uuid-slot-pool",
-    zenoh_slot_pool_size=4, zenoh_slot_pool_salt="isoproof")
+    zenoh_slot_pool_size=4, zenoh_slot_pool_salt="isoproof",
+    zenoh_universal_read_cns=["reader-trial-peer"], zenoh_slot_fragment_content=frag)
 # brace-extract the access_control: { ... } block
 i = rendered.index("access_control: {")
 j = rendered.index("{", i); depth = 0

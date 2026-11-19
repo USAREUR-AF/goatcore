@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 986 variables, 136 of them secret-bearing by name.
+# 987 variables, 136 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -239,10 +239,10 @@ export JETSON_FLASH_USER_PASS=""  # SECRET
 # ops/zenoh/docker-compose.yml, ops/zenoh/loadgen/main.go
 export KEY_PREFIX=""  # SECRET
 
-# ops/compose/mgmt-host/docker-compose.ory.yml
+# ops/ansible/roles/operator-idp-kratos/templates/docker-compose.yml.j2, ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SECRETS_CIPHER=""  # SECRET
 
-# ops/compose/mgmt-host/docker-compose.ory.yml
+# ops/ansible/roles/operator-idp-kratos/templates/docker-compose.yml.j2, ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SECRETS_COOKIE=""  # SECRET
 
 # ops/ansible/zenoh-loadtest.yml
@@ -442,7 +442,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 850 variables.
+# 851 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2139,6 +2139,9 @@ export ONBOARD_INVITE_ARCHIVE_AFTER=""
 
 # ops/onboard-runner/main.go
 export ONBOARD_MTLS_SERVER_ID=""
+
+# ops/goat-id-console/internal/config/config.go, ops/goat-id-console/internal/handlers/admin_operator_key.go …
+export ONBOARD_SERVICE_OPERATOR_HANDLES=""
 
 # ops/ansible/roles/otel-collector/defaults/main.yml
 export OPENOBSERVE_ROOT_EMAIL=""

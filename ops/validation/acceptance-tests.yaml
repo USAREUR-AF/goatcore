@@ -594,6 +594,38 @@ tests:
     params: {part: mesh-reach, opt_in: "{{ enroll_probe }}", mgmt_url: "https://{{ public_mgmt_fqdn }}", peer_host: "{{ enroll_peer_host }}",
              image: "{{ enroll_client_image }}", token_env: "{{ nb_api_token_env }}", reach_ip: "{{ mesh_ip_a }}", reach_port: 443}
     requires: [netbird-mgmt, relay-fleet]
+  - id: relay-refuses-mesh-only-hosts
+    aspect: relays/isolation
+    probe: relay-mesh-isolation
+    applies_when: relay_public_ips
+    params:
+      hosts_from: relay_public_ips
+      public_name: "{{ public_mgmt_fqdn }}"
+      protected_targets:
+        - {name: "dashboard.{{ site_id }}.{{ public_mgmt_fqdn }}", path: "/"}
+        - {name: "auth.{{ site_id }}.{{ public_mgmt_fqdn }}", path: "/sessions/whoami"}
+        - {name: "oauth2.{{ site_id }}.{{ public_mgmt_fqdn }}", path: "/.well-known/openid-configuration"}
+      timeout: 8
+    severity: gate
+    caught_would_have: >-
+      A relay tunnel sent to websecure instead of the enrollment-only listener
+      can reach mesh-only routers through the container bridge. This probe
+      requires a live unauthenticated management response on each relay before
+      requiring routing refusal for protected hosts on that same relay.
+      Network or TLS failures remain UNKNOWN, never proof of isolation.
+  # GHSA-p22f: websecure is published IPv4-only ("0.0.0.0:443:443"). The live
+  # half of tests/test_mesh_allowlist_ingress.py, which sees only the repo copy
+  # of the compose: this reads the mgmt host's own listeners. It is also the
+  # paired positive for mgmt-websecure-has-no-ipv6-listener below.
+  - id: mgmt-websecure-listens-on-ipv4
+    applies_when: {goatlite: false}   # a goatlite's edge is not the mgmt-host compose
+    aspect: mgmt-stack/websecure
+    probe: cmd-assert
+    params: {host: "{{ orin_a }}", cmd: "ss -Hltn sport = :443", expect: "0.0.0.0:443", timeout: 20}
+    requires: [traefik]
+    caught_would_have: >-
+      websecure not listening on the mgmt host's IPv4 addresses, so the IPv6
+      refusal row below would pass against a Traefik that is simply down.
   - id: relay-cert-system-trust
     applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: relays/tls
@@ -901,6 +933,25 @@ tests:
       identity. The positive asserts the Let's Encrypt issuer; this asserts the
       default cert is NOT what answers, which is the failure that actually
       happens when a router is misconfigured.
+
+  - id: mgmt-websecure-has-no-ipv6-listener
+    applies_when: {goatlite: false}
+    aspect: mgmt-stack/websecure
+    probe: cmd-assert
+    must_refuse: true
+    paired_positive: mgmt-websecure-listens-on-ipv4
+    # Prints the token only when something listens on [::]:443 or *:443, so the
+    # probe "answering" is the finding. rc 3 = no ss on the host: UNKNOWN.
+    params: {host: "{{ orin_a }}", cmd: 'sh -c "command -v ss >/dev/null || exit 3; if ss -Hltn sport = :443 | grep -Eq ''(\[[^]]*\]|[*]):443[[:space:]]''; then echo ipv6-listener-on-443; else echo ipv4-only; fi"', expect: "ipv6-listener-on-443", unknown_rc: 3, timeout: 20}
+    requires: [traefik]
+    severity: gate
+    caught_would_have: >-
+      GHSA-p22f. A "443:443" publish also listens on [::]:443; on the IPv4-only
+      mgmt network docker-proxy serves it and reconnects from the bridge
+      gateway, so every IPv6 LAN client passes mesh-source-allowlist (it trusts
+      172.16.0.0/12) and reaches every mesh-only route. The repo guard cannot
+      see a host-edited compose, a dropped-in override or an engine change;
+      this reads the live listeners.
 
   - id: adminspace-is-not-writable-from-the-fabric
     aspect: fabric/goat-zenoh

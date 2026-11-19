@@ -6,7 +6,13 @@ import { CONSOLE_URL, CONSOLE_API_KEY, GOVERNED_CONSOLE_URL } from "../playwrigh
 const SKIP = !!process.env.INTAKE_URL || process.env.CONSOLE_E2E === "0";
 const RUNNER = { Authorization: `Bearer ${CONSOLE_API_KEY}`, "Content-Type": "application/json" };
 
-test.use({ baseURL: CONSOLE_URL, viewport: { width: 1366, height: 768 } });
+// A release is attributed to the signed-in session's identity id, so the
+// browser carries one, as the sign-in proxy does in production.
+test.use({
+  baseURL: CONSOLE_URL,
+  viewport: { width: 1366, height: 768 },
+  extraHTTPHeaders: { "X-Forwarded-User": "8d7f3c2a-1b4e-4f6a-9c0d-2e5b7a9f1c3d" },
+});
 test.skip(SKIP, "needs the local console (mocked mode only)");
 
 async function seedHandle(request: APIRequestContext, name: string, email: string) {
