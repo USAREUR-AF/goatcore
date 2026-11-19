@@ -94,6 +94,8 @@ class Faults:
         self.own_zid = {}                  # side -> {kind: zid} its own launcher reports instead
         self.own_dead = {}                 # side -> kinds whose own probe session's REST does not answer
         self.trace_clock_offset = {}       # side -> seconds its edge's clock is off (negative: behind)
+        self.trace_stamp = None            # one fixed stamp for every trace line, in place of
+        #                                    the edge's clock (the two-driver tests' old stamp)
 
 
 class Core:
@@ -306,7 +308,8 @@ class Fabric:
             with open(self.trace_paths[edge], "a") as f:
                 for line in lines:
                     f.write("%s INFO zenoh::net::routing::interceptor::access_control: %s\n"
-                            % (stamp(time.time() + self.faults.trace_clock_offset.get(edge, 0)), line))
+                            % (self.faults.trace_stamp
+                               or stamp(time.time() + self.faults.trace_clock_offset.get(edge, 0)), line))
 
     # --- serving ---------------------------------------------------------------
     def _handler(self, on_get, on_put, side=None):

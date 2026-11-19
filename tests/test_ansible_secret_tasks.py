@@ -3,7 +3,7 @@ files or stdin, not the command line.
 
 Each case runs real tasks from a playbook or role on localhost at -vvv --diff,
 with a stand-in `docker` and `aws` on PATH and a synthetic value for every
-secret. A case passes when no secret value, nor its first eight characters,
+secret. A case passes when no secret value, nor its first five characters,
 appears in ansible's output, none appears on the command line a stand-in was
 given, each secret a case names reached the container or the AWS CLI through a
 mode-0600 file or stdin, and no such file is left behind.
@@ -25,19 +25,25 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 ANSIBLE = ROOT / 'ops/ansible'
 
+# Each value starts with five characters found nowhere else in a run, so a
+# task that prints any five of them at the start is caught.
 SECRETS = {
-    'postgres_superuser_password': 'pgSuperSynthetic7Q2x',
-    'spire_db_password': 'spireDbSynthetic4Kx',
-    'portal_db_password': 'portalDbSynthetic9Wx',
-    'id_admin_console_db_password': 'consoleDbSynthetic3Mx',
-    'cloudflare_api_token': 'cfTokenSynthetic5Rx',
-    'nb_relay_auth_secret': 'relayAuthSynthetic8Tx',
-    'shared_turn_secret': 'turnSharedSynthetic6Px',
-    'rathole_auth_token': 'ratholeTokSynthetic2Nx',
+    'postgres_superuser_password': 'Kp7Zq-pgSuperSynthetic',
+    'spire_db_password': 'Vb3Wm-spireDbSynthetic',
+    'portal_db_password': 'Hx9Lr-portalDbSynthetic',
+    'id_admin_console_db_password': 'Jd4Tn-consoleDbSynthetic',
+    'cloudflare_api_token': 'Wc8Fy-cfTokenSynthetic',
+    'nb_relay_auth_secret': 'Rm2Gs-relayAuthSynthetic',
+    'shared_turn_secret': 'Ty6Nd-turnSharedSynthetic',
+    'rathole_auth_token': 'Pz5Hk-ratholeTokSynthetic',
+    'admit_audit_password': 'Ls1Qv-admitAudSynthetic',
+    'operator_idp_pg_app_password': 'Gn3Xb-opIdpAppSynthetic',
+    'postgres_replicator_password': 'Fw7Cj-replicaSynthetic',
+    'cgnat_site_a_setup_key': 'qz4uv9f3-1a2b-4c3d-9e8f-0a1b2c3d4e5f',
 }
 
 # Values the stand-ins print that are themselves secrets.
-JOIN_TOKEN = 'joinTokSynthetic1Hx'
+JOIN_TOKEN = 'Ud4Ye-joinTokSynthetic'
 
 FAKE_DOCKER = r'''#!/usr/bin/env bash
 # Stand-in docker: records its command line, every env file it is given (path,
@@ -66,7 +72,9 @@ if [ "$interactive" = 1 ]; then
 fi
 all="$* $input"
 case "$all" in
-  *'token generate'*) echo 'Token: joinTokSynthetic1Hx' ;;
+  *'token generate'*) echo 'Token: Ud4Ye-joinTokSynthetic' ;;
+  *pg_is_in_recovery*) echo f ;;
+  *"grep -q 'host all admit_audit'"*|*'grep -q host all admit_audit'*) exit 1 ;;
   *pg_get_userbyid*) echo '' ;;
   *'SHOW hba_file'*) echo /var/lib/postgresql/data/pg_hba.conf ;;
   *pg_hba_file_rules*) echo 1 ;;
@@ -159,21 +167,40 @@ def extract(path, names):
     return picked
 
 
-def redirect_etc(node, tmp):
-    """A copy into /etc writes into the test's directory instead, owned by
-    whoever runs the test."""
+def redirect_etc(node, tmp, moved=None):
+    """A copy into /etc or /tmp writes into the test's directory instead,
+    owned by whoever runs the test, and every other mention of that path in
+    the tasks names the new one."""
+    top = moved is None
+    moved = {} if top else moved
     if isinstance(node, list):
         for n in node:
-            redirect_etc(n, tmp)
+            redirect_etc(n, tmp, moved)
     elif isinstance(node, dict):
         for key in ('copy', 'ansible.builtin.copy'):
             args = node.get(key)
-            if isinstance(args, dict) and str(args.get('dest', '')).startswith('/etc/'):
-                args['dest'] = str(tmp / Path(args['dest']).name)
+            if isinstance(args, dict) and str(args.get('dest', '')).startswith(('/etc/', '/tmp/')):
+                new = str(tmp / Path(args['dest']).name)
+                moved[args['dest']] = new
+                args['dest'] = new
                 args.pop('owner', None)
                 args.pop('group', None)
         for v in node.values():
-            redirect_etc(v, tmp)
+            redirect_etc(v, tmp, moved)
+    if top and moved:
+        rename(node, moved)
+
+
+def rename(node, moved):
+    """Replace each moved path in every string of the tasks, in place."""
+    items = enumerate(node) if isinstance(node, list) else node.items() if isinstance(node, dict) else ()
+    for k, v in list(items):
+        if isinstance(v, str):
+            for old, new in moved.items():
+                v = v.replace(old, new)
+            node[k] = v
+        else:
+            rename(v, moved)
 
 
 # (label, file, task names or None for the whole file, extra vars,
@@ -195,8 +222,16 @@ CASES = [
       'id_admin_console_onboard_db_name': 'id_onboard', 'id_admin_console_org_db_name': 'id_org',
       'id_admin_console_db_password_env': 'ZAGROS_ID_CONSOLE_DB_PASS'},
      ['postgres_superuser_password', 'id_admin_console_db_password']),
-    ('cgnat seed and peer counts', 'cgnat-validation.yml',
-     ['Apply seed SQL via psql', 'Query enrolled peer count (site α)',
+    ('cgnat setup-key hash and seed SQL', 'cgnat-validation.yml',
+     ['Hash the setup key (base64 of its sha256, as NetBird stores it)',
+      'Compute setup-key hash + mask', 'Render seed SQL', 'Apply seed SQL via psql'],
+     {'site_uuid_upper': "{{ cgnat_site_a_setup_key | upper }}", 'site_account_id': 'acc_a',
+      'site_key_id': 'sk_a', 'site_group_id': 'grp_a', 'site_domain': 'cgnat-a.local',
+      'site_net_id': 'cgnat-a-net', 'site_network_net': '{"IP":"100.64.0.0","Mask":"//8AAA=="}'},
+     ['postgres_superuser_password'], 'cgnat_seed'),
+    # The seed's apply runs in the setup-key case above, after the render.
+    ('cgnat peer counts', 'cgnat-validation.yml',
+     ['Query enrolled peer count (site α)',
       'Query enrolled peer count (site β)'], {}, ['postgres_superuser_password']),
     ('relay DNS-01 credentials', 'goat-relay-deploy.yml',
      ['LE — write Cloudflare DNS-01 credentials (0600)'], {'goat_relay_le_dns01': True}, []),
@@ -210,13 +245,32 @@ CASES = [
       'Deploy Netbird relay container (with TLS cert from certbot)'],
      {'relay_cert_dns01': True, 'relay_dns_name': 'relay.zagros.example.org'},
      ['nb_relay_auth_secret']),
+    ('admit-audit role, password and grants', 'roles/admit-audit/tasks/pg-role.yml', None,
+     {'pg_admit_audit_role': 'admit_audit', 'pg_admit_audit_db': 'netbird'},
+     ['postgres_superuser_password', 'admit_audit_password']),
+    ('admit-audit pg_hba reload and env', 'roles/admit-audit/tasks/deploy.yml',
+     ['Ensure pg_hba.conf admits admit_audit from the docker compose network',
+      'Append admit-audit env vars to /opt/mgmt-host/.env'],
+     {'admit_audit_image': 'goat-admit-audit:test'}, []),
+    ('operator-idp app user smoke', 'roles/operator-idp-postgres/tasks/main.yml',
+     ['Smoke — verify operator_idp app user can connect'],
+     {'operator_idp_pg_container_name': 'operator-idp-postgres',
+      'operator_idp_pg_app_user': 'operator_idp'}, ['operator_idp_pg_app_password']),
+    ('streaming replicator role and base backup',
+     'roles/postgres-streaming-replication/tasks/main.yml',
+     ['Primary | ensure replicator role exists with provided password',
+      'Standby | run pg_basebackup A→B with -R (writes standby.signal + primary_conninfo)'],
+     {'router_role': 'A', 'postgres_streaming_container': 'postgres-a',
+      'postgres_data_volume_path': '/srv/pgdata', 'postgres_basebackup_client_image': 'postgres:16',
+      'postgres_primary_lan_ip': '192.0.2.20', 'postgres_primary_port': 5432},
+     ['postgres_replicator_password']),
     ('relay TURN secret', 'relay-server.yml',
      ['Read existing TURN secret', 'Set TURN secret fact'], {}, []),
     ('relay credentials in Secrets Manager', 'relay-server.yml',
      ['Store rathole credentials in Secrets Manager'],
      {'aws_cmd': '', 'aws_region': 'eu-west-1', 'rathole_secret_name': 'zagros/rathole',
       'rathole_public_key': 'ratholePublicKeyNotSecret', 'vps_public_ip': '192.0.2.10',
-      'turn_secret': 'turnSharedSynthetic6Px'},
+      'turn_secret': 'Ty6Nd-turnSharedSynthetic'},
      ['rathole_auth_token', 'shared_turn_secret']),
     ('relay status', 'relay-server.yml', ['Print relay status'],
      {'vps_public_ip': '192.0.2.10', 'rathole_public_key': 'ratholePublicKeyNotSecret',
@@ -237,7 +291,7 @@ CASES = [
 
 class SecretTasksDoNotLogOrPassOnTheCommandLine(unittest.TestCase):
 
-    def run_case(self, label, rel, names, extra, delivered):
+    def run_case(self, label, rel, names, extra, delivered, post=None):
         require_ansible_playbook(self)
         path = ANSIBLE / rel
         with tempfile.TemporaryDirectory() as d:
@@ -264,6 +318,11 @@ class SecretTasksDoNotLogOrPassOnTheCommandLine(unittest.TestCase):
                 'tasks': tasks,
             }]
             (tmp / 'compose').mkdir()
+            (tmp / 'compose' / '.env').write_text('')
+            if post == 'cgnat_seed':
+                # A seed an earlier run left readable by everyone.
+                (tmp / 'cgnat-a-seed.sql').write_text('-- an earlier run\n')
+                (tmp / 'cgnat-a-seed.sql').chmod(0o644)
             (tmp / 'play.yml').write_text(yaml.safe_dump(play, allow_unicode=True, sort_keys=False))
             env = dict(os.environ,
                        PATH=f'{bindir}:{os.environ["PATH"]}',
@@ -289,12 +348,13 @@ class SecretTasksDoNotLogOrPassOnTheCommandLine(unittest.TestCase):
 
             argv = read('argv')
             values = dict(SECRETS, spire_join_token=JOIN_TOKEN)
+            values['cgnat_site_a_setup_key, upper case'] = SECRETS['cgnat_site_a_setup_key'].upper()
             for var, value in values.items():
-                # The first eight characters too: a summary that prints a
-                # secret's prefix gives part of it away.
-                self.assertFalse(value[:8] in out,
-                                 f'{label}: {var} (its first 8 characters) appears in the -vvv '
-                                 f'output:\n{lines_with(out, value[:8])}')
+                # Its first five characters too: no task prints any part of a
+                # secret, a prefix or a mask included.
+                self.assertFalse(value[:5] in out,
+                                 f'{label}: {var} (its first 5 characters) appears in the -vvv '
+                                 f'output:\n{lines_with(out, value[:5])}')
                 self.assertFalse(value in out,
                                  f'{label}: {var} appears in the -vvv output:\n{lines_with(out, value)}')
                 self.assertFalse(value in argv,
@@ -311,11 +371,26 @@ class SecretTasksDoNotLogOrPassOnTheCommandLine(unittest.TestCase):
                     f, mode = line.rsplit(' ', 1)
                     self.assertEqual(mode, '600', f'{label}: {f} is mode {mode}')
                     self.assertFalse(Path(f).exists(), f'{label}: {f} was left behind')
+            if post == 'cgnat_seed':
+                # The seed still carries what NetBird stores: the key's hash and
+                # its own masked form, in a file only its owner reads.
+                import base64, hashlib
+                key = SECRETS['cgnat_site_a_setup_key'].upper()
+                seed = tmp / 'cgnat-a-seed.sql'
+                text = seed.read_text()
+                self.assertIn(base64.b64encode(hashlib.sha256(key.encode()).digest()).decode(), text)
+                self.assertIn(f"'{key[:5]}****'", text)
+                self.assertEqual(oct(seed.stat().st_mode & 0o777), '0o600', f'{label}: {seed} mode')
+                # psql reads the seed on stdin: a copy into the container would be
+                # root-owned and mode 0600, which psql (the image's postgres user)
+                # cannot read.
+                self.assertNotRegex(argv, r'(?m)^cp ', f'{label}: the seed was copied into the container')
+                self.assertIn('INSERT INTO accounts', read('stdin'), f'{label}: psql never read the seed')
 
     def test_cases(self):
-        for label, rel, names, extra, delivered in CASES:
+        for label, rel, names, extra, delivered, *post in CASES:
             with self.subTest(label):
-                self.run_case(label, rel, names, extra, delivered)
+                self.run_case(label, rel, names, extra, delivered, *post)
 
 
 class PreflightAdvisesReadingSecretsFromTheEnvironment(unittest.TestCase):

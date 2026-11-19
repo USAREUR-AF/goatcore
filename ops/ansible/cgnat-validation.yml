@@ -149,14 +149,30 @@
     site_net_id: "cgnat-a-net"
     site_network_net: '{"IP":"100.64.0.0","Mask":"//8AAA=="}'
   tasks:
+    # The setup key reaches the hash on stdin, not a command line, and no task
+    # here prints it, its hash or the masked form NetBird stores.
+    - name: Hash the setup key (base64 of its sha256, as NetBird stores it)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "import base64, hashlib, sys; print(base64.b64encode(hashlib.sha256(sys.stdin.buffer.read()).digest()).decode())"
+        stdin: "{{ site_uuid_upper }}"
+        stdin_add_newline: false
+      delegate_to: localhost
+      become: false
+      register: site_key_hash_out
+      changed_when: false
+      no_log: true
     - name: Compute setup-key hash + mask
       ansible.builtin.set_fact:
-        site_key_hash: "{{ lookup('pipe', 'echo -n ' + site_uuid_upper + ' | sha256sum | xxd -r -p | base64') }}"
+        site_key_hash: "{{ site_key_hash_out.stdout | trim }}"
         site_key_mask: "{{ site_uuid_upper[:5] }}****"
+      no_log: true
     - name: Render seed SQL
       ansible.builtin.copy:
         dest: /tmp/cgnat-a-seed.sql
-        mode: "0644"
+        mode: "0600"
         content: |
           -- Account row — all NOT-NULL-expected columns populated; nullable *netip.Prefix kept NULL.
           INSERT INTO accounts (
@@ -222,6 +238,8 @@
           -- "can't scan NULL into *string". Clear them defensively.
           DELETE FROM users WHERE account_id = '{{ site_account_id }}'
             AND name = '' AND email = '';
+      # The content carries the setup key's hash and masked form.
+      no_log: true
     - name: Seed site α through psql, the password from a 0600 env file
       block:
         - name: Create the postgres env file (0600)
@@ -238,10 +256,11 @@
           no_log: true
 
         - name: Apply seed SQL via psql
+          # On stdin: psql runs as the image's postgres user, and a copy in the
+          # container would be root-owned at the seed's mode 0600.
           ansible.builtin.shell: |
-            docker cp /tmp/cgnat-a-seed.sql postgres-a:/tmp/seed.sql
-            docker exec --env-file '{{ pg_env.path }}' postgres-a \
-              psql -U postgres -d netbird -f /tmp/seed.sql
+            docker exec -i --env-file '{{ pg_env.path }}' postgres-a \
+              psql -U postgres -d netbird -f - < /tmp/cgnat-a-seed.sql
           changed_when: true
       always:
         - name: Remove the postgres env file
@@ -264,14 +283,30 @@
     # Different /16 to keep the two sites' WG IP ranges disjoint.
     site_network_net: '{"IP":"100.65.0.0","Mask":"//8AAA=="}'
   tasks:
+    # The setup key reaches the hash on stdin, not a command line, and no task
+    # here prints it, its hash or the masked form NetBird stores.
+    - name: Hash the setup key (base64 of its sha256, as NetBird stores it)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "import base64, hashlib, sys; print(base64.b64encode(hashlib.sha256(sys.stdin.buffer.read()).digest()).decode())"
+        stdin: "{{ site_uuid_upper }}"
+        stdin_add_newline: false
+      delegate_to: localhost
+      become: false
+      register: site_key_hash_out
+      changed_when: false
+      no_log: true
     - name: Compute setup-key hash + mask
       ansible.builtin.set_fact:
-        site_key_hash: "{{ lookup('pipe', 'echo -n ' + site_uuid_upper + ' | sha256sum | xxd -r -p | base64') }}"
+        site_key_hash: "{{ site_key_hash_out.stdout | trim }}"
         site_key_mask: "{{ site_uuid_upper[:5] }}****"
+      no_log: true
     - name: Render seed SQL
       ansible.builtin.copy:
         dest: /tmp/cgnat-b-seed.sql
-        mode: "0644"
+        mode: "0600"
         content: |
           INSERT INTO accounts (
             id, created_by, created_at,
@@ -331,6 +366,8 @@
 
           DELETE FROM users WHERE account_id = '{{ site_account_id }}'
             AND name = '' AND email = '';
+      # The content carries the setup key's hash and masked form.
+      no_log: true
     - name: Seed site β through psql, the password from a 0600 env file
       block:
         - name: Create the postgres env file (0600)
@@ -347,10 +384,11 @@
           no_log: true
 
         - name: Apply seed SQL via psql
+          # On stdin: psql runs as the image's postgres user, and a copy in the
+          # container would be root-owned at the seed's mode 0600.
           ansible.builtin.shell: |
-            docker cp /tmp/cgnat-b-seed.sql postgres-a:/tmp/seed.sql
-            docker exec --env-file '{{ pg_env.path }}' postgres-a \
-              psql -U postgres -d netbird -f /tmp/seed.sql
+            docker exec -i --env-file '{{ pg_env.path }}' postgres-a \
+              psql -U postgres -d netbird -f - < /tmp/cgnat-b-seed.sql
           changed_when: true
 
     # =============================================================================

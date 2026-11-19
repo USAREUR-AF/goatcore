@@ -922,7 +922,8 @@ entries:
       - "python3 ops/release/graduate.py status"
     read: docs/design/release-graduation.md
     matches:
-      - "REFUSE — "
+      - "fastlane: REFUSE — "
+      - "(?m)^REFUSE — "
     exit: 1
 
   - code: GB-022
@@ -1672,7 +1673,7 @@ entries:
   - code: GB-074
     tool: goatbuilder
     title: the downloaded goatbuilder is not vouched for by its release
-    what: "Before touching anything, update checks that the <asset>.sha256 the surface serves agrees with the release's SHA256SUMS, that the SHA256SUMS signature verifies against the release workflow's identity (when cosign is on PATH), and that the downloaded binary hashes to that digest. One of these failed, so it refused to install; the installed binary is unchanged."
+    what: "Before touching anything, update checks that the <asset>.sha256 the surface serves agrees with the release's SHA256SUMS, and that the downloaded binary hashes to that digest. One of these failed, so it refused to install; the installed binary is unchanged. The signature over SHA256SUMS is checked in the binary itself; a signature that does not verify is GB-261, and an older goatbuilder reports it as GB-074."
     causes:
       - the surface is mid-deploy and the binary, its checksum and SHA256SUMS are from different releases
       - the download was altered or truncated on the way
@@ -4119,6 +4120,21 @@ entries:
     exit: 1
     matches:
       - "^GB-354: "
+
+  - code: GB-355
+    tool: goatbuilder
+    title: a standup play limited to the founder selects no host of the site's group
+    what: "Six standup plays run on the site's first management host alone (SPIRE, the LAN service surface, the LAN TLS routes, the dashboard, the portal, grant-keyd), limited with -l 'mgmt-<site>-01*', the declared naming rule. Before the play, the same command checked the site's group, <site>_hosts, in inventory/mgmt-hosts.ini and inventory/mgmt-hosts-mesh.ini, and no host there matches the limit. The play was refused before ansible ran: with another host matching the pattern, ansible prints \"skipping: no hosts matched\" and exits 0 having done nothing. Both avenues, goatbuilder standup and goat-standup.sh, run the check (ops/scripts/inventory-hosts.py --match --require)."
+    causes:
+      - "the site's first management host is named otherwise than mgmt-<site>-01 in the inventory"
+      - "the host is listed under another group than <site>_hosts"
+    fixes:
+      - "python3 ops/scripts/inventory-hosts.py <site>_hosts   (run in ops/ansible; lists the hosts of the group)"
+      - "name the site's first management host mgmt-<site>-01 in <site>_hosts, in inventory/mgmt-hosts.ini (and mgmt-hosts-mesh.ini when it lists it), then resume: goatbuilder standup <environment> --site <site> --from <phase>"
+    read: docs/design/goatbuilder-speed.md
+    exit: 1
+    matches:
+      - "^GB-355: "
 
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
