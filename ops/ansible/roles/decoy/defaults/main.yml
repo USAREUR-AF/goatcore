@@ -1,0 +1,52 @@
+---
+# ops/ansible/roles/decoy — the decoy layer (ADR 1247, docs/design/deception-layer.md).
+#
+# A goatnet turns this on with its own declaration,
+# group_vars/<site>_hosts/deception.yml. Everything here is OFF by default.
+deception_enabled: false
+
+# The seed, resolved for this one run from the goatnet's secret store. The role
+# never writes it to a host; the responder host receives only the responder key
+# derived from it.
+deception_seed: ""
+
+# The DNS zone the goatnet's services already live under. Decoy host names are
+# single tagged labels under it, so the existing wildcard certificate covers them.
+deception_service_zone: ""
+
+# Entry points to plant; see the design doc for the shape.
+deception_entry_points: []
+
+# Templates on the control machine (relative to the playbook directory, or absolute).
+# A goatnet supplies its own; the public examples are for tests and the synthetic goatnet.
+deception_templates_dir: "{{ playbook_dir }}/../decoy/templates/example"
+
+# Restore a planted file whose content no longer matches. Off: a changed decoy
+# stops the run, because a changed decoy is a touch to investigate.
+deception_replant: false
+
+# ---- responder (one host per goatnet) ----------------------------------------
+deception_responder_enabled: false
+deception_reply_delay_ms: 3000
+deception_page_period_seconds: 3600
+decoy_user: goat-decoy
+decoy_install_dir: /opt/goat-decoy
+decoy_config_dir: /etc/goat-decoy
+decoy_listen_port: 8642
+# The address Traefik reaches the responder on. Empty: the gateway address of
+# the Docker network Traefik runs on, read from the host.
+decoy_listen_addr: ""
+decoy_traefik_network: mgmt
+decoy_traefik_dynamic_dir: /etc/traefik/dynamic
+decoy_traefik_middlewares:
+  - "mesh-only-allowlist@file"
+decoy_rate_per_second: 2
+decoy_rate_burst: 20
+decoy_max_inflight: 64
+decoy_memory_max: 128M
+decoy_metrics_file: "{{ node_exporter_textfile_host_dir | default('/var/lib/node_exporter/textfile') }}/goat_decoy.prom"
+
+# Where this host's Prometheus reads rule files, and the container to reload.
+# Empty: no alert rule is installed and a touch pages nobody; the role says so.
+decoy_prometheus_rules_dir: ""
+decoy_prometheus_container: ""

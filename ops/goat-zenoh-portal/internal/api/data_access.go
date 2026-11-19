@@ -599,6 +599,9 @@ func (s *Server) handleCreateCoPublishGrant(w http.ResponseWriter, r *http.Reque
 		Justification: body.Justification,
 		EffectiveTo:   body.EffectiveTo,
 	}
+	// The writer's copub-<anchor> subject carries its CN only while it holds
+	// an active co-publish grant (GHSA-rr3p): re-render the slot fragment.
+	defer s.syncSlotFragment(r.Context())
 	if err := s.reg.CreateGrant(r.Context(), grant); err != nil {
 		writeError(w, http.StatusBadRequest, "validate", err.Error())
 		return
@@ -681,6 +684,9 @@ func (s *Server) handleRevokeGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not_custodian", "only the producer's custodian or an operator may revoke its grants")
 		return
 	}
+	// A revoked co-publish grant stops at the router through the slot
+	// fragment's copub-<anchor> subject (GHSA-rr3p r7): re-render it.
+	defer s.syncSlotFragment(r.Context())
 	if err := s.reg.RevokeGrant(r.Context(), id, actorOf(r)); err != nil {
 		writeError(w, http.StatusInternalServerError, "revoke", err.Error())
 		return

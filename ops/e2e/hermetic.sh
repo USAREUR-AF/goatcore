@@ -115,7 +115,8 @@ export E2E_ORIGIN="$ORIGIN"; export E2E_GH_STATE="$WORK/gh-state"; rm -rf "$E2E_
 export PATH="$HERE/stubs:$PATH"
 export GOAT_RC_ROLE_CHECK=0 GOAT_MESH_PROBE=0 GOAT_SKIP_GHCR_PARITY=1 GOAT_ANSIBLE_TRUNK_REMOTE=origin
 export GOAT_DEPLOY_LOG_DIR="$RECORD"
-unset GCP_HEIMDALL_OP_ITEM 2>/dev/null || true
+# The run starts without any GCP_*OP_ITEM variable from the caller's shell.
+for var in $(compgen -v | grep -E '^GCP_([A-Z0-9_]+_)?OP_ITEM$' || true); do unset "$var"; done
 
 # --- hosts, registry, images --------------------------------------------------------
 declare -a HOST_ARGS=()
@@ -160,7 +161,7 @@ if [ "$HOSTS" = 1 ]; then
   HOT_DIGEST="$(build_push sha-$HOT1 hotfix)"
   HOT2_DIGEST="$(build_push sha-$HOT2 hotfix2)"
   say "hosts: three containers that look like management hosts"
-  docker build -q -f "$HERE/host/$HOST_DOCKERFILE" -t e2e-host "$HERE/host" >/dev/null
+  docker build -q --build-arg UBUNTU_MIRROR="${UBUNTU_MIRROR:-}" -f "$HERE/host/$HOST_DOCKERFILE" -t e2e-host "$HERE/host" >/dev/null
   for h in dev preprod prod; do
     docker run -d --name "e2e-$h-01" --hostname "e2e-$h-01" --network e2e-net --add-host ghcr.io:host-gateway \
       -v /var/run/docker.sock:/var/run/docker.sock -v "$SSH_KEY.pub:/pubkey:ro" e2e-host >/dev/null

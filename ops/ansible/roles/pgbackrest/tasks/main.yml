@@ -172,11 +172,17 @@
   register: pgbackrest_in_container
   changed_when: false
 
+# Root steps inside {{ postgres_container_name }} use `docker exec --privileged -u 0`.
+# The base compose starts the container with no capabilities, so a plain
+# `exec -u 0` is root without CAP_CHOWN, CAP_DAC_OVERRIDE or CAP_FOWNER and
+# cannot chown or write into directories the postgres user owns. --privileged
+# applies to that one exec only; the running database keeps none.
 - name: Install PGDG repo inside {{ postgres_container_name }} (prereq for pgbackrest on RHEL 9)
   ansible.builtin.command:
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -192,6 +198,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -225,6 +232,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -238,6 +246,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -251,6 +260,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -285,6 +295,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -316,6 +327,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"

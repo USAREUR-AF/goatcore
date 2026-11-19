@@ -1,0 +1,48 @@
+---
+# Docker socket access for the portal's opt-in router SIGHUP (GHSA-6828).
+# Tested by tests/docker-socket.sh.
+#
+# Default (portal_acl_docker_socket empty): the portal gets no socket, and a
+# socket an earlier deploy handed to the portal's gid is given back to the
+# Docker daemon's group. Opt-in (the variable set): the socket is made
+# group-accessible to the portal's uid, which makes the portal root on the
+# host; set it only for a router build whose SIGHUP reloads config.
+
+- name: Ensure docker socket is group-accessible to portal container user
+  ansible.builtin.file:
+    path: "{{ portal_acl_docker_socket }}"
+    group: "65532"
+    mode: "0660"
+  when:
+    - not (portal_acl_reload_fake | bool)
+    - portal_acl_docker_socket | default('') | length > 0
+  # On boot the socket re-renders with the docker daemon's default
+  # group/perms; this task is idempotent at apply time.
+
+- name: Look up the host Docker socket an earlier portal deploy may have regrouped
+  ansible.builtin.stat:
+    path: "{{ portal_docker_host_socket }}"
+  register: _portal_host_docker_socket
+  when: portal_acl_docker_socket | default('') | length == 0
+
+- name: Look up the Docker daemon's socket group
+  ansible.builtin.getent:
+    database: group
+    key: "{{ portal_docker_socket_group }}"
+    fail_key: false
+  check_mode: false
+  when:
+    - portal_acl_docker_socket | default('') | length == 0
+    - _portal_host_docker_socket.stat.exists | default(false)
+    - _portal_host_docker_socket.stat.gid | default(-1) | int == portal_docker_socket_residue_gid | int
+
+- name: Give the Docker socket back to the daemon's group (residue of the old portal grant)
+  ansible.builtin.file:
+    path: "{{ portal_docker_host_socket }}"
+    # dockerd itself falls back to root when its group does not exist.
+    group: "{{ portal_docker_socket_group if (ansible_facts.getent_group | default({}))[portal_docker_socket_group] | default(none) is not none else 'root' }}"
+    mode: "0660"
+  when:
+    - portal_acl_docker_socket | default('') | length == 0
+    - _portal_host_docker_socket.stat.exists | default(false)
+    - _portal_host_docker_socket.stat.gid | default(-1) | int == portal_docker_socket_residue_gid | int

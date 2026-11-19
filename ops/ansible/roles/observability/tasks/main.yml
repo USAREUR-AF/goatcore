@@ -18,6 +18,20 @@
 #   postgres_superuser_password  — to bootstrap the monitoring role
 #   postgres_exporter_password   — password the new role will be given
 
+- name: Prepare public storage trust directory
+  ansible.builtin.file:
+    path: "{{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') | dirname }}"
+    state: directory
+    mode: "0755"
+  when: minio_tls_enabled | default(false) | bool
+
+- name: Install organization storage trust on this consumer
+  ansible.builtin.copy:
+    src: "{{ minio_tls_ca_src }}"
+    dest: "{{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') }}"
+    mode: "0644"
+  when: minio_tls_enabled | default(false) | bool
+
 - name: Require site_name
   ansible.builtin.assert:
     that: site_name is defined and site_name | length > 0
@@ -185,6 +199,13 @@
     state: directory
     mode: "0755"
 
+- name: Render storage TLS trust mounts for monitoring
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../compose/mgmt-host/docker-compose.minio-tls.yml"
+    dest: "{{ compose_dir }}/docker-compose.minio-tls.yml"
+    mode: '0644'
+  when: minio_tls_enabled | default(false) | bool
+
 - name: Copy docker-compose.obs.yml
   ansible.builtin.copy:
     src: "../compose/mgmt-host/docker-compose.obs.yml"
@@ -273,6 +294,7 @@
       -f docker-compose.yml
       {% if phase2 | bool %}-f docker-compose.phase2.yml{% endif %}
       -f docker-compose.obs.yml
+      {% if minio_tls_enabled | default(false) | bool %}-f docker-compose.minio-tls.yml{% endif %}
       pull {{ _obs_overlay_services | join(' ') }}
     chdir: "{{ compose_dir }}"
   changed_when: true
@@ -294,6 +316,7 @@
       {% if phase2 | bool %}-f docker-compose.phase2.yml{% endif %}
       {% if _obs_acme_overlay.stat.exists %}-f docker-compose.acme.yml{% endif %}
       -f docker-compose.obs.yml
+      {% if minio_tls_enabled | default(false) | bool %}-f docker-compose.minio-tls.yml{% endif %}
       up -d {{ _obs_overlay_services | join(' ') }}
     chdir: "{{ compose_dir }}"
   changed_when: true

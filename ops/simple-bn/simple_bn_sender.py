@@ -1,0 +1,381 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""simple-bn sender with notional sensor feeds.
+
+Sends synthetic radar data as ASTERIX CAT034 (service messages) and CAT048 (target
+reports) over UDP to one declared receiver. One feed per notional sensor; each feed has
+its own SAC/SIC, its own UDP source socket, its own update rate and target mix.
+Every CAT048 report sets the SIM bit (I048/020): the data is simulated.
+
+Writes a status file (default /run/simple-bn/status.json) every 5 s for the boundary
+monitor: per-feed counters, per-minute history (24 h), state, last error, ack state.
+
+Python standard library only. The receiver address is never logged or written to status.
+
+  simple_bn_sender.py --dest HOST:PORT --label NAME [--profiles FILE] [--feeds a,b,c]
+"""
+import argparse
+import json
+import math
+import os
+import random
+import socket
+import struct
+import tempfile
+import threading
+import time
+
+NM_M = 1852.0
+FT_M = 0.3048
+
+# ---------------------------------------------------------------- ASTERIX framing
+
+def fspec(frns):
+    n = (max(frns) - 1) // 7 + 1
+    out = bytearray(n)
+    for f in frns:
+        i, pos = divmod(f - 1, 7)
+        out[i] |= 0x80 >> pos
+    for i in range(n - 1):
+        out[i] |= 0x01
+    return bytes(out)
+
+
+def record(items):
+    frns = sorted(items)
+    return fspec(frns) + b"".join(items[f] for f in frns)
+
+
+def block(cat, recs):
+    body = b"".join(recs)
+    return struct.pack(">BH", cat, 3 + len(body)) + body
+
+
+def tod(t):
+    return (int(round((t % 86400) * 128)) & 0xFFFFFF).to_bytes(3, "big")
+
+
+def ang16(deg):
+    return int(round((deg % 360.0) * 65536 / 360.0)) & 0xFFFF
+
+
+def cat034(sac, sic, t, msg_type, rot_s=None, sector_deg=None):
+    items = {1: bytes([sac, sic]), 2: bytes([msg_type]), 3: tod(t)}
+    if sector_deg is not None:
+        items[4] = bytes([int((sector_deg % 360) * 256 / 360) & 0xFF])   # I034/020
+    if rot_s is not None:
+        items[5] = struct.pack(">H", int(round(rot_s * 128)) & 0xFFFF)   # I034/041
+    return record(items)
+
+
+def cat048(sac, sic, t, tgt, with_track):
+    rng_nm, az = tgt.polar()
+    items = {
+        1: bytes([sac, sic]),                                            # I048/010
+        2: tod(t),                                                       # I048/140
+        3: bytes([((3 if tgt.ssr else 1) << 5) | 0x10]),                 # I048/020 TYP, SIM=1
+        4: struct.pack(">HH", min(int(rng_nm * 256), 0xFFFF), ang16(az)),  # I048/040
+    }
+    if tgt.ssr:
+        items[5] = struct.pack(">H", tgt.mode3a & 0x0FFF)                # I048/070
+        items[6] = struct.pack(">H", int(tgt.alt / FT_M / 100 * 4) & 0x3FFF)  # I048/090
+    if with_track:
+        items[11] = struct.pack(">H", tgt.track_no & 0x0FFF)             # I048/161
+        items[12] = struct.pack(">hh", int(tgt.x / NM_M * 128), int(tgt.y / NM_M * 128))  # I048/042
+        items[13] = struct.pack(">HH", min(int(tgt.speed / NM_M * (1 << 14)), 0xFFFF),
+                                ang16(tgt.course))                       # I048/200
+        items[14] = bytes([(0x00 if tgt.confirmed else 0x80) | ((0 if tgt.ssr else 1) << 5)])  # I048/170
+    if tgt.height3d is not None:
+        h = int(round(tgt.height3d / FT_M / 25))                         # I048/110, 25 ft
+        items[19] = struct.pack(">H", h & 0x3FFF)
+    return record(items)
+
+# ---------------------------------------------------------------- targets
+
+class Target:
+    """kind: uas | fixed-wing | rotary | projectile | clutter"""
+
+    def __init__(self, kind, track_no, rnd, max_nm, x=None, y=None):
+        self.kind, self.track_no, self.rnd = kind, track_no, rnd
+        r = rnd.uniform(0.2, 0.9) * max_nm * NM_M
+        b = rnd.uniform(0, 360)
+        self.x = r * math.sin(math.radians(b)) if x is None else x
+        self.y = r * math.cos(math.radians(b)) if y is None else y
+        self.course = rnd.uniform(0, 360)
+        self.age = 0
+        self.ssr = False
+        self.mode3a = 0
+        self.alive = True
+        if kind == "uas":
+            self.speed, self.alt = rnd.uniform(12, 45), rnd.uniform(50, 800)
+        elif kind == "rotary":
+            self.speed, self.alt = rnd.uniform(30, 70), rnd.uniform(100, 1200)
+            self.ssr = rnd.random() < 0.7
+        elif kind == "fixed-wing":
+            self.speed, self.alt = rnd.uniform(110, 240), rnd.uniform(1500, 9000)
+            self.ssr = True
+        elif kind == "projectile":
+            self.speed = rnd.uniform(250, 700)
+            self.t_flight = rnd.uniform(20, 55)
+            self.apex = rnd.uniform(2500, 9000)
+            self.t = 0.0
+            self.alt = 0.0
+        else:  # clutter
+            self.speed, self.alt = 0.0, rnd.uniform(0, 300)
+        if self.ssr:
+            self.mode3a = int("".join(rnd.choice("01234567") for _ in range(4)), 8)
+
+    @property
+    def confirmed(self):
+        return self.age >= 3
+
+    @property
+    def height3d(self):
+        return self.alt
+
+    def polar(self):
+        return math.hypot(self.x, self.y) / NM_M, math.degrees(math.atan2(self.x, self.y)) % 360
+
+    def step(self, dt, max_nm):
+        self.age += 1
+        if self.kind == "clutter":
+            return
+        if self.kind == "projectile":
+            self.t += dt
+            if self.t >= self.t_flight:
+                self.alive = False
+                return
+            f = self.t / self.t_flight
+            self.alt = 4 * self.apex * f * (1 - f)
+        else:
+            turn = {"uas": 8, "rotary": 4, "fixed-wing": 2}[self.kind]
+            self.course = (self.course + self.rnd.gauss(0, turn)) % 360
+        self.x += self.speed * dt * math.sin(math.radians(self.course))
+        self.y += self.speed * dt * math.cos(math.radians(self.course))
+        if self.kind != "projectile" and math.hypot(self.x, self.y) > max_nm * NM_M:
+            self.course = (math.degrees(math.atan2(-self.x, -self.y)) + self.rnd.uniform(-30, 30)) % 360
+
+# ---------------------------------------------------------------- notional sensor profiles
+# Generic notional sensor classes, for integration testing only. Values are illustrative.
+# A deployment names its own feeds with --profiles FILE (JSON: name -> profile); a file
+# entry may set "base" to one of these and override any key.
+
+PROFILES = {
+    "hemispheric-cuas": {"title": "Hemispheric C-UAS radar (notional)", "sic": 1, "period": 1.0, "max_nm": 16,
+                         "mix": {"uas": 6, "rotary": 1, "fixed-wing": 2}, "clutter": 2, "salvo": None},
+    "counterfire": {"title": "Counterfire radar (notional)", "sic": 2, "period": 1.0, "max_nm": 32,
+                    "mix": {}, "clutter": 1, "salvo": [60, 180, 2, 4]},   # every 60-180 s, 2-4 rounds
+    "surveillance-3d": {"title": "3D surveillance radar (notional)", "sic": 3, "period": 2.0, "max_nm": 12,
+                        "mix": {"uas": 4, "rotary": 2, "fixed-wing": 1}, "clutter": 2, "salvo": None},
+}
+
+
+def load_profiles(path):
+    if not path or path == "none":
+        return dict(PROFILES)
+    with open(path) as f:
+        extra = json.load(f)
+    out = dict(PROFILES)
+    for name, prof in extra.items():
+        base = dict(PROFILES[prof["base"]]) if "base" in prof else {}
+        base.update({k: v for k, v in prof.items() if k != "base"})
+        out[name] = base
+    return out
+
+
+WINDOWS = {"1m": 60, "15m": 900, "1h": 3600, "24h": 86400}
+
+
+class Feed:
+    def __init__(self, name, sac, dest, rnd, profiles):
+        p = profiles[name]
+        self.name, self.p, self.sac, self.sic, self.rnd = name, p, sac, p["sic"], rnd
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.connect(dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
+        self.src_port = self.sock.getsockname()[1]
+        self.next_tn = 1
+        self.targets = []
+        for kind, n in p["mix"].items():
+            for _ in range(n):
+                self.targets.append(self._new(kind))
+        self.next_salvo = time.time() + rnd.uniform(5, 20) if p["salvo"] else None
+        self.lock = threading.Lock()
+        self.total = {"datagrams": 0, "bytes": 0, "cat034": 0, "detections": 0, "tracks": 0,
+                      "send_errors": 0, "refused": 0}
+        self.by_kind = {}
+        self.minutes = {}   # epoch-minute -> counts
+        self.state = "starting"
+        self.last_error = None
+        self.last_send = None
+        self.last_refused = None
+
+    def _new(self, kind, **kw):
+        t = Target(kind, self.next_tn, self.rnd, self.p["max_nm"], **kw)
+        self.next_tn = self.next_tn % 4095 + 1
+        return t
+
+    def _count(self, key, n=1):
+        m = int(time.time() // 60)
+        b = self.minutes.setdefault(m, {})
+        b[key] = b.get(key, 0) + n
+        self.total[key] = self.total.get(key, 0) + n
+
+    def send(self, data, kind_counts=None):
+        try:
+            self.sock.send(data)
+            with self.lock:
+                self._count("datagrams")
+                self._count("bytes", len(data))
+                self.last_send = time.time()
+                self.state = "sending"
+        except ConnectionRefusedError:
+            with self.lock:
+                self._count("refused")
+                self.last_refused = time.time()
+                self.state = "receiver-refusing"
+                self.last_error = "ICMP port unreachable from receiver"
+        except OSError as e:
+            with self.lock:
+                self._count("send_errors")
+                self.state = "send-error"
+                self.last_error = str(e)
+
+    def scan(self):
+        p, t0 = self.p, time.time()
+        self.send(block(34, [cat034(self.sac, self.sic, t0, 1, rot_s=p["period"])]))
+        with self.lock:
+            self._count("cat034")
+        if p["salvo"] and t0 >= self.next_salvo:
+            lo, hi, nmin, nmax = p["salvo"]
+            az = self.rnd.uniform(0, 360)
+            r0 = self.rnd.uniform(0.5, 0.95) * p["max_nm"] * NM_M
+            ox, oy = r0 * math.sin(math.radians(az)), r0 * math.cos(math.radians(az))
+            for _ in range(self.rnd.randint(nmin, nmax)):
+                pr = self._new("projectile", x=ox + self.rnd.gauss(0, 150), y=oy + self.rnd.gauss(0, 150))
+                pr.course = (az + 180 + self.rnd.gauss(0, 10)) % 360   # inbound
+                self.targets.append(pr)
+            self.next_salvo = t0 + self.rnd.uniform(lo, hi)
+        recs, kinds = [], {}
+        for tg in self.targets:
+            recs.append(cat048(self.sac, self.sic, time.time(), tg, with_track=True))
+            kinds[tg.kind] = kinds.get(tg.kind, 0) + 1
+        n_clutter = self.rnd.randint(0, p["clutter"])
+        for _ in range(n_clutter):
+            recs.append(cat048(self.sac, self.sic, time.time(), self._new("clutter"), with_track=False))
+        # keep datagrams well under a typical MTU
+        for i in range(0, len(recs), 20):
+            self.send(block(48, recs[i:i + 20]))
+        with self.lock:
+            self._count("tracks", len(self.targets))
+            self._count("detections", len(self.targets) + n_clutter)
+            for k, n in kinds.items():
+                self.by_kind[k] = n
+        for tg in self.targets:
+            tg.step(p["period"], p["max_nm"])
+        self.targets = [t for t in self.targets if t.alive]
+        if not p["salvo"] and self.rnd.random() < 0.01 and self.targets:   # occasional churn
+            old = self.targets.pop(self.rnd.randrange(len(self.targets)))
+            self.targets.append(self._new(old.kind))
+
+    def run(self):
+        k = 0
+        start = time.time()
+        while True:
+            self.scan()
+            k += 1
+            nxt = start + k * self.p["period"]
+            time.sleep(max(0.0, nxt - time.time()))
+
+    def status(self, now):
+        with self.lock:
+            cutoff = int(now // 60) - 1440
+            for m in [m for m in self.minutes if m < cutoff]:
+                del self.minutes[m]
+            win = {}
+            for w, secs in WINDOWS.items():
+                lo = (now - secs) // 60
+                agg = {}
+                for m, b in self.minutes.items():
+                    if m >= lo:
+                        for kk, v in b.items():
+                            agg[kk] = agg.get(kk, 0) + v
+                win[w] = agg
+            stale = self.last_send is None or now - self.last_send > 3 * self.p["period"] + 5
+            state = self.state
+            if self.last_refused and now - self.last_refused < 15:
+                state = "receiver-refusing"
+            elif state == "receiver-refusing":
+                state = "sending"
+            if stale and state == "sending":
+                state = "stalled"
+            return {
+                "feed": self.name, "title": self.p["title"], "sac": self.sac, "sic": self.sic,
+                "src_port": self.src_port, "update_period_s": self.p["period"],
+                "state": state,
+                "last_send": self.last_send, "last_error": self.last_error,
+                "ack": {"mode": "none", "note": "UDP one-way; receiver sends no acknowledgement",
+                        "last_refused": self.last_refused},
+                "live_targets_by_kind": dict(self.by_kind),
+                "totals": dict(self.total), "windows": win,
+                "per_minute": [[m, self.minutes.get(m, {}).get("datagrams", 0)]
+                               for m in range(int(now // 60) - 59, int(now // 60) + 1)],
+            }
+
+
+def write_status(path, doc):
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".status.")
+    with os.fdopen(fd, "w") as f:
+        json.dump(doc, f)
+    os.chmod(tmp, 0o600)   # bn-monitor runs as the same user (User=simple-bn), so owner-read is enough
+    os.replace(tmp, path)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dest", required=True, help="HOST:PORT (never logged)")
+    ap.add_argument("--label", required=True, help="receiver name shown in logs and the monitor")
+    ap.add_argument("--node", default=socket.gethostname(), help="boundary node name")
+    ap.add_argument("--feeds", default="hemispheric-cuas,counterfire,surveillance-3d")
+    ap.add_argument("--profiles", default=None, help="JSON file of named feed profiles")
+    ap.add_argument("--sac", type=int, default=0)
+    ap.add_argument("--status", default="/run/simple-bn/status.json")
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--duration", type=float, default=0, help="seconds to run, 0 = forever")
+    a = ap.parse_args()
+
+    host, port = a.dest.rsplit(":", 1)
+    dest = (socket.gethostbyname(host), int(port))
+    rnd = random.Random(a.seed)
+    profiles = load_profiles(a.profiles)
+    feeds = [Feed(n.strip(), a.sac, dest, random.Random(rnd.random()), profiles)
+             for n in a.feeds.split(",") if n.strip()]
+    started = time.time()
+    for f in feeds:
+        threading.Thread(target=f.run, daemon=True, name=f.name).start()
+    print(json.dumps({"event": "start", "node": a.node, "receiver": a.label,
+                      "feeds": [{"feed": f.name, "sac": f.sac, "sic": f.sic, "src_port": f.src_port}
+                                for f in feeds]}), flush=True)
+    os.makedirs(os.path.dirname(a.status), exist_ok=True)
+    last_log = 0
+    while True:
+        time.sleep(5)
+        now = time.time()
+        doc = {"schema": "goat.boundary-status/v1", "kind": "simple-bn", "node": a.node,
+               "service": "simple-bn-sender", "receiver": {"label": a.label, "transport": "udp",
+                                                         "format": "ASTERIX CAT034/CAT048",
+                                                         "encryption": "none"},
+               "started": started, "now": now, "uptime_s": round(now - started),
+               "feeds": [f.status(now) for f in feeds]}
+        write_status(a.status, doc)
+        if now - last_log >= 60:
+            print(json.dumps({"event": "stats", "uptime_s": doc["uptime_s"],
+                              "feeds": {f["feed"]: {"state": f["state"], **f["totals"]} for f in doc["feeds"]}}),
+                  flush=True)
+            last_log = now
+        if a.duration and now - started >= a.duration:
+            return
+
+
+if __name__ == "__main__":
+    main()

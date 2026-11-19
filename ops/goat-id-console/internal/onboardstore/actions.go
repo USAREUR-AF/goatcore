@@ -295,6 +295,9 @@ func (s *Store) ListActionsForProposal(ctx context.Context, proposalID string) (
 // ClaimAction atomically flips queued → claimed for one runner. Exactly one
 // claimer wins; the rest get ErrActionNotQueued (or ErrNotFound).
 func (s *Store) ClaimAction(ctx context.Context, id, runnerID string) error {
+	if err := s.admitFollowUp7788(ctx, id, ActionClaim7788); err != nil {
+		return err
+	}
 	claimToken, err := newClaimToken()
 	if err != nil {
 		return fmt.Errorf("claim token: %w", err)
@@ -342,6 +345,9 @@ func (s *Store) SetActionResult(ctx context.Context, id, claimToken, status, res
 	if status != ActionDone && status != ActionFailed {
 		return fmt.Errorf("set action result: status must be done or failed, got %q", status)
 	}
+	if err := s.admitFollowUp7788(ctx, id, ActionResult7788); err != nil {
+		return err
+	}
 	if resultJSON == "" {
 		resultJSON = "{}"
 	}
@@ -372,6 +378,9 @@ func (s *Store) SetActionResult(ctx context.Context, id, claimToken, status, res
 func (s *Store) SetReleaseActionResult(ctx context.Context, id, claimToken, status, resultJSON, errMsg, peerID string, enteredAt time.Time, actor string, closeRequest bool) error {
 	if status != ActionDone && status != ActionFailed {
 		return fmt.Errorf("set release result: invalid status %q", status)
+	}
+	if err := s.admitFollowUp7788(ctx, id, ActionResult7788); err != nil {
+		return err
 	}
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {

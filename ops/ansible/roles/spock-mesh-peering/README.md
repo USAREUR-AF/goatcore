@@ -82,6 +82,13 @@ without renaming any subscription.
   this role only wires the subscription graph; table population is
   controlled by `spock.repset_add_table` (separate Block 64Q.5 / 64R
   decision).
+- **`forward_origins` empty.** Subscriptions are created with
+  `forward_origins` empty. A subscription with forward_origins set in a mesh
+  replicates in a loop, so the playbooks that run this role first run
+  [`spock-forward-origins-check`](../spock-forward-origins-check/README.md),
+  which refuses a non-empty `spock_mesh_forward_origins` and any existing
+  subscription with forwarding set (GB-351); an alert fires if one has it
+  set ([`docs/design/spock-mesh-peering.md`](../../../../docs/design/spock-mesh-peering.md)).
 
 ## Inputs
 

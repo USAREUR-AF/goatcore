@@ -408,6 +408,15 @@ documents:
   - 20261114T022342Z-rollback-352859
   exit: 0
   release_exit: 0
+- name: grow-handed-over
+  format: json
+  args:
+  - grow
+  - --dry-run
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/grown
+  exit: 0
+  release_exit: 0
 not_kept:
   completion: prints a shell script, not a document
   docs: prints the command reference as Markdown, not a document

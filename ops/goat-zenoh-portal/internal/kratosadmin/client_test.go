@@ -2,8 +2,8 @@ package kratosadmin
 
 import "testing"
 
-// ADR 1052 Phase 4 — VendorShortTag reads traits.org first, falling back to the
-// legacy traits.vendor for identities not yet backfilled.
+// ADR 1052 Phase 4 — VendorShortTag reads metadata_public.org first, falling
+// back to the legacy metadata_public.vendor block (GHSA-9v3v: never traits).
 func TestVendorShortTag_PrefersOrgFallsBackToVendor(t *testing.T) {
 	org := func(tag string) map[string]interface{} {
 		return map[string]interface{}{"org": map[string]interface{}{"short_tag": tag}}
@@ -30,7 +30,7 @@ func TestVendorShortTag_PrefersOrgFallsBackToVendor(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Identity{Traits: tc.traits}.VendorShortTag()
+			got := Identity{MetadataPublic: tc.traits}.VendorShortTag()
 			if got != tc.want {
 				t.Fatalf("VendorShortTag() = %q, want %q", got, tc.want)
 			}
@@ -71,8 +71,13 @@ func TestAuthz_MetadataPublicAndNoFallbackOnceMigrated(t *testing.T) {
 		t.Fatalf("Aff() id = %q, want acme", id)
 	}
 
-	legacy := Identity{Traits: map[string]interface{}{"org": selfOrg}}
-	if got := legacy.VendorShortTag(); got != "self" {
-		t.Fatalf("not-yet-backfilled VendorShortTag() = %q, want traits fallback", got)
+	// GHSA-9v3v: fail closed. A not-yet-backfilled identity's self-editable
+	// traits are never read either.
+	legacy := Identity{Traits: map[string]interface{}{"org": selfOrg, "aff": selfAff}}
+	if got := legacy.VendorShortTag(); got != "" {
+		t.Fatalf("not-yet-backfilled VendorShortTag() = %q, want empty (no traits fallback)", got)
+	}
+	if id, _, _ := legacy.Aff(); id != "" {
+		t.Fatalf("not-yet-backfilled Aff() id = %q, want empty (no traits fallback)", id)
 	}
 }

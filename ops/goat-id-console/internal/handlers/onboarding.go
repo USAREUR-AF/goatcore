@@ -184,6 +184,9 @@ func proposalToView(p onboardstore.Proposal) proposalView {
 		Note:                    p.Note,
 		OffboardRequestedBy:     p.OffboardRequestedBy,
 		OffboardRequestedAt:     offboardRequestedAt,
+		OperatorAuditFailed:     strings.HasPrefix(p.OffboardOperatorAudit, "failed"),
+		OperatorAuditReason:     strings.TrimSpace(strings.TrimPrefix(p.OffboardOperatorAudit, "failed:")),
+		OperatorAuditUnreported: p.Status == onboardstore.ProposalOffboarded && p.OffboardRequestedBy != "" && p.OffboardOperatorAudit == "",
 		OffboardRequestedAtUnix: p.OffboardRequestedAt,
 		Created:                 p.CreatedAt,
 	}
@@ -894,6 +897,20 @@ func (s *Server) handleOnboardInviteCreate(w http.ResponseWriter, r *http.Reques
 				return
 			}
 		}
+	} else if prebound.Tier != "" && inviteTierRankVr6w(prebound.Tier) > adminTierRank(actor.Groups) {
+		// Admin tier ceiling (GHSA-vr6w): an admin session invites nobody
+		// above its own tier, as POST /invites and the machine invite do.
+		s.emitAuditWithInviteToken(r, actor, "onboard_mint_invite", "", "", nil,
+			map[string]interface{}{"tier": prebound.Tier, "env": env}, false, "refused", tierGrantRefusal)
+		s.renderError(w, r, 403, tierGrantRefusal)
+		return
+	} else if prebound.Tier != "" && inviteTierRankVr6w(prebound.Tier) >= platformTier {
+		// A platform-tier invite takes a fresh step-up (review F2).
+		if out := s.requireStepUp(w, r, actor, "invite_platform_tier"); out.Handled {
+			s.emitAuditWithInviteToken(r, actor, "onboard_mint_invite", "", "", nil,
+				map[string]interface{}{"tier": prebound.Tier, "env": env}, false, "refused", stepUpChallengeAudit)
+			return
+		}
 	}
 	// Recommended org (ADR 1112). The sponsor names a REGISTERED org; the invite
 	// carries its canonical id so the candidate is shown their organization
@@ -934,6 +951,16 @@ func (s *Server) handleOnboardInviteCreate(w http.ResponseWriter, r *http.Reques
 		ExpiresAt:      time.Now().Add(time.Duration(ttl) * time.Hour).Unix(),
 		Note:           strings.TrimSpace(r.FormValue("note")),
 		CandidateEmail: candidateEmail,
+	}
+	// An invite at an escalated tier mints a future admin, so it takes
+	// step-up like a direct admin grant does.
+	if isEscalatedTier(prebound.Tier) && s.stepUpRequired("mint_escalated_invite") {
+		out := s.requireStepUp(w, r, actor, "onboard_mint_invite")
+		if out.Handled {
+			s.emitAuditWithInviteToken(r, actor, "onboard_mint_invite", "", "", nil,
+				map[string]interface{}{"tier": prebound.Tier}, false, "refused", stepUpChallengeAudit)
+			return
+		}
 	}
 	token, err := s.Onboard.MintInvite(r.Context(), inv)
 	if err != nil {
@@ -1220,12 +1247,15 @@ func (s *Server) handleOnboardingDecide(w http.ResponseWriter, r *http.Request) 
 	}
 	note := r.FormValue("note")
 	actor := actorFromCtx(r.Context())
+	if s.platformTierDecisionStepUpVr6w(w, r, actor, id, action) {
+		return
+	}
 
 	// The REAL cut (goat#372) queues work for the onboard-runner and is
 	// step-up-gated; it shares nothing with the decide flow below (whose
 	// offboard action asserts the cut already happened elsewhere).
 	if action == "offboard-cut" {
-		s.handleOffboardCut(w, r, id, actor)
+		s.offboardCutRevokingKeys(w, r, id, actor)
 		return
 	}
 
@@ -1414,9 +1444,24 @@ func (s *Server) handleOnboardingRestore(w http.ResponseWriter, r *http.Request)
 		s.renderError(w, r, 502, "load proposal: "+err.Error())
 		return
 	}
+	// A restore re-enters the mint queue: the admin tier ceiling of an
+	// approve applies (GHSA-vr6w).
+	if derr := s.queueCeilingVr6w(r, p0, true); derr != nil {
+		s.emitAudit(r, actor, "onboard_restore_proposal", nil, "", map[string]interface{}{"status": p0.Status}, nil, false, "refused", derr.msg)
+		s.renderError(w, r, derr.status, derr.msg)
+		return
+	}
+	if s.platformTierDecisionStepUpVr6w(w, r, actor, id, "restore") {
+		return
+	}
 	before := map[string]interface{}{"status": p0.Status}
 	ok, err := s.Onboard.RestoreProposal(r.Context(), id, actor.Email)
 	if err != nil {
+		if rq, refused := asRunnerQueueRefusal7788(err); refused {
+			s.emitAudit(r, actor, "onboard_restore_proposal", nil, "", before, nil, false, "refused", rq.Msg)
+			s.renderError(w, r, http.StatusForbidden, rq.Msg)
+			return
+		}
 		s.emitAudit(r, actor, "onboard_restore_proposal", nil, "", before, nil, false, "error", err.Error())
 		if errors.Is(err, onboardstore.ErrInvalidManifest) {
 			s.renderError(w, r, http.StatusConflict, err.Error())
@@ -1648,22 +1693,36 @@ func (s *Server) recordRelationship(r *http.Request, id, rel string) error {
 
 func (s *Server) approvalCeiling(r *http.Request, p *onboardstore.Proposal, decidedBy string) *decideError {
 	// Rule 2 first: it needs no tier data and applies to every principal.
-	if e := strings.TrimSpace(strings.ToLower(decidedBy)); e != "" &&
-		e == strings.TrimSpace(strings.ToLower(p.Email)) {
+	// It compares the decider as they are now (session identity, current
+	// addresses, handle), not only the decided-by string, with case,
+	// plus-addressing and lookalikes folded (deciderIsApplicant).
+	self, err := s.deciderIsApplicant(r, p, decidedBy)
+	if err != nil {
+		return &decideError{status: http.StatusServiceUnavailable,
+			msg: "could not confirm you are not the applicant (" + err.Error() + ") — refusing rather than risking a self-approval"}
+	}
+	if self {
 		return &decideError{status: http.StatusForbidden,
 			msg: "you cannot approve your own onboarding — a request is decided by a different admin, the same rule the operator-key queue already applies"}
 	}
 
 	tier := strings.TrimSpace(p.Tier)
-	if tier == "" {
-		return nil // no tier to compare; the manifest lint governs completeness
-	}
 	hints, err := loadIntakeHints()
-	if err != nil {
+	if err != nil && tier != "" {
 		// Fail CLOSED. Without the tier table there is no ceiling, and "no
 		// ceiling" is exactly the state this function exists to end.
 		return &decideError{status: http.StatusServiceUnavailable,
 			msg: "onboarding tier definitions unavailable — refusing to decide without a ceiling to check against"}
+	}
+	// Admin tier ceiling (GHSA-vr6w), ranked by what approving p would
+	// write to the new identity (grantCeilingVr6w).
+	if derr, uncapped := s.grantCeilingVr6w(r, p, hints, true); derr != nil {
+		return derr
+	} else if uncapped {
+		return nil
+	}
+	if tier == "" {
+		return nil // no tier to compare; the manifest lint governs completeness
 	}
 
 	// A SPONSOR's ceiling is their sponsorship annotation, not their groups —
@@ -1685,9 +1744,9 @@ func (s *Server) approvalCeiling(r *http.Request, p *onboardstore.Proposal, deci
 
 	actor := actorFromCtx(r.Context())
 	if len(actor.Groups) == 0 {
-		// No sponsor session and no browser groups: an operator/service
-		// principal that already passed requireOperatorPrincipal. Top of the
-		// ladder, so the ceiling is vacuous — but the self rule above applied.
+		// No sponsor session and no browser groups: the admin tier ceiling
+		// above has already refused an admin grant to anything but a service
+		// key, and the remaining tier is not an admin tier.
 		return nil
 	}
 	own, ownRank, ok := hints.actorTier(actor.Groups)
@@ -1759,6 +1818,11 @@ func (s *Server) decideProposal(r *http.Request, id, action, decidedBy, note, re
 			return "", &decideError{status: http.StatusInternalServerError, msg: "could not record offboard", code: flashOffboardFailed}
 		}
 		if ok {
+			// The person's operator keys go with the offboard, in the
+			// same operation (GHSA-mxf4-8rv7-774w).
+			if derr := s.revokeKeysForProposal(r, decidedBy, p, "offboard"); derr != nil {
+				return "", derr
+			}
 			return onboardstore.ProposalOffboarded, nil
 		}
 		// Zero rows matched: a concurrent transition moved the row out of the
@@ -1786,10 +1850,18 @@ func (s *Server) decideProposal(r *http.Request, id, action, decidedBy, note, re
 		// the row returns to `approved` and the runner claims it again. The
 		// alternative is a hand-written UPDATE against the console's SQLite file,
 		// which is exactly the out-of-band surgery onboarding-rails.md forbids.
+		// The re-mint is held to the same admin tier ceiling as an approve
+		// (GHSA-vr6w).
+		if derr := s.queueCeilingVr6w(r, p, true); derr != nil {
+			return "", derr
+		}
 		if p.Status != onboardstore.ProposalFailed {
 			return "", &decideError{status: http.StatusConflict, msg: fmt.Sprintf("proposal is %q, not failed — only a failed mint can be retried", p.Status)}
 		}
 		if err := s.Onboard.RetryProposal(r.Context(), id); err != nil {
+			if rq, refused := asRunnerQueueRefusal7788(err); refused {
+				return "", &decideError{status: http.StatusForbidden, msg: rq.Msg}
+			}
 			if errors.Is(err, onboardstore.ErrInvalidManifest) {
 				return "", &decideError{status: http.StatusConflict, msg: err.Error(), code: "invalid_manifest"}
 			}
@@ -1883,6 +1955,9 @@ func (s *Server) decideProposal(r *http.Request, id, action, decidedBy, note, re
 				msg: "proposal no longer passes the onboard lint gate: " + lintFindingsSummary(lint.Findings)}
 		}
 		if err := s.Onboard.DecideProposal(r.Context(), id, onboardstore.ProposalApproved, decidedBy, note); err != nil {
+			if rq, refused := asRunnerQueueRefusal7788(err); refused {
+				return "", &decideError{status: http.StatusForbidden, msg: rq.Msg}
+			}
 			return "", &decideError{status: http.StatusInternalServerError, msg: "could not record approval"}
 		}
 		return onboardstore.ProposalApproved, nil

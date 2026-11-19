@@ -1,0 +1,19 @@
+---
+# Runs tasks/datadir.yml with the role defaults and the vars a case passes
+# (-e). Driven by tests/datadir.sh, which points every path at scratch dirs.
+- name: goat-logship | data dirs
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  vars:
+    site_id: test-site
+  tasks:
+    - name: Refuse to touch the host's real data dir
+      ansible.builtin.assert:
+        that:
+          - logship_data_root != '/opt/docker-data/goat-logship'
+          - logship_compose_dir != '/opt/goat-logship'
+        quiet: true
+    - name: The data-dir tasks, as the role runs them
+      ansible.builtin.include_tasks: ../tasks/datadir.yml

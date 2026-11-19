@@ -25,7 +25,7 @@ use std::process::Stdio;
 
 use crate::runner::Cmd;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Deserialize;
 
 use crate::config;
@@ -203,6 +203,24 @@ pub(crate) fn gv_value(file: &Path, key: &str) -> Option<String> {
         other => serde_yaml::to_string(other).unwrap_or_default(),
     };
     Some(s.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+/// The limit the plays that run on the site's first management host alone
+/// pass to ansible (`-l`): the declared naming rule, `mgmt-<site>-01*`
+/// (inputs::standup names it `first_mgmt_host`).
+pub(crate) fn founder_limit(site: &str) -> String {
+    format!("mgmt-{site}-01*")
+}
+
+/// The check a founder-limited play runs first, in its own command, from
+/// ops/ansible: a host of the site's group in the two management inventories
+/// matches the limit, or GB-355 refuses the play. Without it, a founder named
+/// off the rule beside another host the pattern matches let ansible print
+/// "skipping: no hosts matched" and exit 0 having done nothing. It runs when
+/// the play does, not when the plan is made: before phase 1 a site may have
+/// no hosts in the inventory yet.
+fn founder_check(group: &str, site: &str) -> String {
+    format!("python3 ../scripts/inventory-hosts.py {group} --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match '{}' --require GB-355 >/dev/null", founder_limit(site))
 }
 
 /// `python3 ops/scripts/inventory-hosts.py <groups...> [--ssh-target]`, one line per host.
@@ -426,6 +444,9 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let inv = s.inv;
     let og = &s.obs_group;
     let p = |n: u32, kind: &'static str, label: String, cmd: String| Event::Phase(Phase { n, kind, label, cmd, stop_after: false });
+    // The founder-limited plays: the limit, and the check each runs first (GB-355).
+    let fc = founder_check(g, site);
+    let lim = founder_limit(site);
 
     let leg_o1 = format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={og} -e site_id={site} && {pre} {inv} tang-server.yml -e target={og} && {pre} {inv} mgmt-host-luks.yml -e target={og} -e site_id={site}");
     let leg_o2 = format!("cd '{r}/ops/ansible' && {pre} {inv} utility-host-bootstrap.yml -e target={og}");
@@ -493,7 +514,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         "if grep -qE 'name_snapshot_enabled:[[:space:]]*true' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null; then      python3 '{r}/ops/dns/generate-mesh-hosts.py';      if [ -f {ca_key} ]; then        ( cd '{r}/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '{r}/ops/dns/{site}/name-snapshot.json' --root-key {ca_key} --age-identity ~/.config/age/keys.txt --audit-log {audit} );      else echo {no_key}; fi;    else echo 'name_snapshot_enabled not true for {g} — skipping (ADR 1082)'; fi")));
 
     let owner_arg = owner_word(oe);
-    let ev_secrets = format!("-e bootstrap_owner_email={owner_arg} -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\" -e netbird_encryption_key=\"$(printenv {u}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"$(printenv {u}_BKP_KEY)\"");
+    let ev_secrets = format!("-e bootstrap_owner_email={owner_arg} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}' -e 'netbird_encryption_key={{{{ lookup(\"env\", \"{u}_NB_ENCKEY\") }}}}' -e 'pgbackrest_cipher_pass={{{{ lookup(\"env\", \"{u}_BKP_KEY\") }}}}'");
     // A joiner's bootstrap carries site_id as a play variable (bootstrap_play):
     // as an extra var it would reach every host and the Spock roles would find
     // no peer. A founder keeps the plain form.
@@ -522,7 +543,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         let rathole_play = site_play(repo, site, "rathole-client.yml");
         ev.push(p(5, "A", format!("[internet] relay-connect (rathole-client, {rathole_play})"), format!("cd '{r}/ops/ansible' && {pre} -i inventory/hosts-{site}.ini {inv} {rathole_play} -e rathole_client_target={g}")));
     }
-    ev.push(p(6, "A", "ory (kratos/hydra/ui)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {g} -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
+    ev.push(p(6, "A", "ory (kratos/hydra/ui)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {g} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}'")));
     let jfs = &s.join_founder_site;
     let jfg = &s.join_founder_group;
     // The founder a joiner joins, as one shell word each place it is used.
@@ -547,9 +568,9 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(6, "A", "[joiner] the joiner's Spock wiring again, now that the founder's half exists (Ory subscription + history reconcile)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {g}")));
     }
     if internet {
-        ev.push(p(7, "A", "[internet] public TLS certificate (traefik-acme)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={g} -e cf_api_token=\"$(printenv CLOUDFLARE_API_TOKEN_{u})\"")));
+        ev.push(p(7, "A", "[internet] public TLS certificate (traefik-acme)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={g} -e 'cf_api_token={{{{ lookup(\"env\", \"CLOUDFLARE_API_TOKEN_{u}\") }}}}'")));
         ev.push(p(7, "T", "[internet] generate relay inventory from terraform".into(), format!("'{r}/ops/ansible/inventory/generate-relays.sh' {site} terraform-{site}")));
-        ev.push(p(7, "A", "[internet] relay tier (coturn + rathole + TLS renewal)".into(), format!("cd '{r}/ops/ansible' && umask 077 && VF=$(mktemp -t goat-relay-vars.XXXXXX) && printf 'nb_relay_auth_secret: \"%s\"\\nrelay_secret: \"%s\"\\ncloudflare_api_token: \"%s\"\\n' \"$(printenv {u}_RELAY_SECRET)\" \"$(printenv {u}_RELAY_SECRET)\" \"$(printenv CLOUDFLARE_API_TOKEN_{u})\" > \"$VF\" && {pre} -i inventory/hosts-{site}.ini relay-server.yml -e @\"$VF\"; rc=$?; rm -f \"$VF\"; exit $rc")));
+        ev.push(p(7, "A", "[internet] relay tier (coturn + rathole + TLS renewal)".into(), format!("cd '{r}/ops/ansible' && {pre} -i inventory/hosts-{site}.ini relay-server.yml -e 'nb_relay_auth_secret={{{{ lookup(\"env\", \"{u}_RELAY_SECRET\") }}}}' -e 'relay_secret={{{{ lookup(\"env\", \"{u}_RELAY_SECRET\") }}}}' -e 'cloudflare_api_token={{{{ lookup(\"env\", \"CLOUDFLARE_API_TOKEN_{u}\") }}}}'")));
         if s.joiner {
             ev.push(p(7, "A", format!("[joiner] wire {site} into the founder ({}) relay ingress + re-render", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n {jfs_q} ] || {{ echo 'joiner: join_founder_site not set in group_vars/{g}/vars.yml'; exit 1; }}; }} && {{ ls {hosts} >/dev/null 2>&1 || {{ echo {missing}; exit 1; }}; }} && {pre} -i {hosts} -i {alias} {inv} relay-ingress-add-site.yml -e target=goat_relay_hosts -e {founder} -e join_site={site}",
                 hosts = sh_word(&format!("inventory/hosts-{jfs}.ini")),
@@ -573,14 +594,14 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.extend(rows.into_iter().map(|(kind, label, cmd)| p(9, kind, label, cmd)));
     }
     ev.push(p(9, "A", "zenoh router".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={g}")));
-    ev.push(p(9, "A", "SPIRE server on the founder (workload identity)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} spire-deploy.yml -e target={g} -l 'mgmt-{site}-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
+    ev.push(p(9, "A", "SPIRE server on the founder (workload identity)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} spire-deploy.yml -e target={g} -l '{lim}' -e spire_enabled=true -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}'")));
     if s.obs {
         ev.push(Event::LegStart { leg: "stack", label: "observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets".into(), cmd: leg_o3, log: format!("{}/standup-{site}-obs-stack.log", s.state_dir) });
     }
     if !internet {
-        ev.push(p(10, "A", "[lan] LAN service surface (dashboard + DNS + TLS routes + STUN)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} -l 'mgmt-{site}-01*' site-services.yml --tags lan-dns,traefik,stun -e target={g} -e site_id={site} -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\" -e netbird_encryption_key=\"$(printenv {u}_NB_ENCKEY)\"")));
-        ev.push(p(10, "A", "[lan] TLS routes for the mgmt stack (file certs)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} -l 'mgmt-{site}-01*' lan-traefik-routes.yml -e target={g} -e site_id={site}")));
-        ev.push(p(10, "A", "[lan] dashboard".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} -l 'mgmt-{site}-01*' dashboard-deploy.yml -e site_id={site}")));
+        ev.push(p(10, "A", "[lan] LAN service surface (dashboard + DNS + TLS routes + STUN)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' site-services.yml --tags lan-dns,traefik,stun -e target={g} -e site_id={site} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}' -e 'netbird_encryption_key={{{{ lookup(\"env\", \"{u}_NB_ENCKEY\") }}}}'")));
+        ev.push(p(10, "A", "[lan] TLS routes for the mgmt stack (file certs)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' lan-traefik-routes.yml -e target={g} -e site_id={site}")));
+        ev.push(p(10, "A", "[lan] dashboard".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' dashboard-deploy.yml -e site_id={site}")));
         // Phase 11 on a LAN site (goatlite.md §5 row 6): the same first login and
         // bootstrap token the internet branch pauses for, printed only while the
         // token is not yet available under the declared posture. The driver-made
@@ -590,7 +611,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
             ev.push(p(11, "MANUAL", "[lan] first login, admin-promote, the bootstrap NetBird token".into(), format!("handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/{g}/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/{oe}.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-{site}-netbird-infra (Team > Service Users, role admin), create its token, and store it as {u}_NB_API_TOKEN under the declared secrets posture (posture.py hint {u}_NB_API_TOKEN says where). THEN resume: {resume} --from 12")));
         }
     } else {
-        ev.push(p(10, "A", "[internet] dashboard".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} -l 'mgmt-{site}-01*' dashboard-deploy.yml -e site_id={site}")));
+        ev.push(p(10, "A", "[internet] dashboard".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' dashboard-deploy.yml -e site_id={site}")));
         let oidc_play = site_play(repo, site, "oidc-clients.yml");
         ev.push(p(10, "A", format!("[internet] register OIDC clients ({oidc_play})"), format!("cd '{r}/ops/ansible' && {pre} {inv} {oidc_play} -e target={g}")));
         ev.push(p(11, "MANUAL", "[internet] first login, admin-promote, the bootstrap NetBird token".into(), format!("handbook §'Phase 11' has the exact block. In short: enroll YOUR laptop (netbird up), pin the three dashboard hosts in /etc/hosts, read the one-time password from /opt/mgmt-host/.bootstrap-passwords/{oe}.txt, log in; re-run the phase-10 dashboard-deploy line ONCE (promotes you to admin — the UI 403s until then); create service user svc-{site}-netbird-infra (Team > Service Users, role admin), create its token, add 'export {u}_NB_API_TOKEN=<token>' to .envrc.local.d/30-site-services.envrc and store it in 1Password as {site}-netbird / api_token. THEN resume: {resume} --from 12")));
@@ -620,7 +641,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
             None => ev.push(p(12, "A", "[internet] mesh CoreDNS (only if this site has a mesh zone)".into(), format!("cd '{r}' && python3 ops/dns/generate-mesh-hosts.py && {{ if [ -f ops/dns/{site}/mesh-hosts ]; then cd ops/ansible && {pre} {inv} goat-coredns.yml --limit {g}; else echo '    no ops/dns/{site}/mesh-hosts — this site declares no mesh zone; skipping mesh CoreDNS'; fi; }}"))),
         }
     }
-    ev.push(p(12, "A", "portal (registry, certificate minting, grant rows)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} portal-deploy.yml -e target={g} -l 'mgmt-{site}-01*' -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
+    ev.push(p(12, "A", "portal (registry, certificate minting, grant rows)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} portal-deploy.yml -e target={g} -l '{lim}' -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}'")));
     if s.obs {
         ev.push(Event::LegJoin { leg: "host", at: 12 });
     }
@@ -640,7 +661,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "A", "pubsub-state Repl mirror (Block 86)".into(), format!("cd '{r}/ops/ansible' && if ls group_vars/{g}/pubsub-state.yml >/dev/null 2>&1; then {pre} {inv} pubsub-state-mirror-deploy.yml -e target={g}; else echo 'no group_vars/{g}/pubsub-state.yml — the pub/sub state mirror is not configured for this goatnet; skipping. It needs a Forgejo you run for this goatnet (goatcore ships no Forgejo role): see ops/ansible/roles/pubsub-state-repo/README.md, then re-run --from 12'; fi")));
     ev.push(p(12, "A", "onboarding intake front desk (public, ADR 1062 stage 1)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-intake-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "onboard-runner (auto-mint on approval, ADR 1062 stage 3)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-runner-deploy.yml -e target={g} -e site_id={site}")));
-    ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l 'mgmt-{site}-01*'")));
+    ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l '{lim}'")));
     ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && {{ [ ! -e group_vars/{g}/synth-vendors.yml ] || [ -r group_vars/{g}/synth-vendors.yml ] || {{ echo 'cannot read group_vars/{g}/synth-vendors.yml' >&2; false; }}; }} && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/{g}/synth-vendors.yml 2>/dev/null; then {pre} {inv} zenoh-synth-vendors-slot-pool-deploy.yml -e target={g}; else echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping'; fi")));
     if s.obs {
         ev.push(Event::LegJoin { leg: "stack", at: 13 });
@@ -952,9 +973,9 @@ fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks
         let mut kids = Vec::new();
         for i in &idx {
             let log = format!("{}/standup-{}-12-{}.log", s.state_dir, s.site, q[*i].id);
-            let f = std::fs::File::create(&log)?;
+            let f = std::fs::File::create(&log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&log)).display())))?;
             crate::runner::phase("12", &q[*i].label, "");
-            let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().context("bash")?;
+            let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
             kids.push((*i, child, std::time::Instant::now(), log));
         }
         let mut failed = Vec::new();
@@ -1040,8 +1061,9 @@ fn in_range(n: u32, o: &Options) -> bool {
 }
 
 /// One planned standup line, run the way goat-standup.sh runs it: through
-/// ops/scripts/standup-phase-run, which refuses an empty `$(printenv NAME)`,
-/// naming it, and under a value store reads the store afresh for each phase.
+/// ops/scripts/standup-phase-run, which refuses an empty `$(printenv NAME)` or
+/// an empty variable a play reads with `lookup("env", "NAME")`, naming it, and
+/// under a value store reads the store afresh for each phase.
 fn phase_command(repo: &Path, cmd: &str) -> Cmd {
     let mut c = Cmd::new(repo.join("ops/scripts/standup-phase-run"));
     c.arg(cmd);
@@ -1246,11 +1268,11 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     continue;
                 }
                 if let Some(d) = Path::new(log).parent() {
-                    std::fs::create_dir_all(d)?;
+                    std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
                 }
-                let f = std::fs::File::create(log)?;
+                let f = std::fs::File::create(log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(log)).display())))?;
                 crate::runner::phase(&format!("observability-leg-{leg}"), label, "");
-                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 legs.insert(leg, (child, log.clone()));
             }
             Event::PullStart { label, cmd, log } => {
@@ -1261,11 +1283,11 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     continue;
                 }
                 if let Some(d) = Path::new(log).parent() {
-                    std::fs::create_dir_all(d)?;
+                    std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
                 }
-                let f = std::fs::File::create(log)?;
+                let f = std::fs::File::create(log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(log)).display())))?;
                 crate::runner::phase("image-pull", label, "");
-                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 pulling = Some((child, log.clone()));
             }
             Event::PullJoin { at } => {
@@ -1283,7 +1305,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Image pull FAILED — exit {rc} (full log: {log}). Phase {at} and every later phase run these images, so the run stops here; the log names each image that could not be pulled."), fix: Some(format!("a private package needs GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it); a pin naming an image the registry no longer has needs a new pin in ops/pins/. Then resume: {resume} --from {at}{prof}")) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Image pull FAILED — exit {rc} (GB-333; full log: {log}). Phase {at} and every later phase run these images, so the run stops here; the log names each image that could not be pulled."), fix: Some(format!("a private package needs GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it); a pin naming an image the registry no longer has needs a new pin in ops/pins/. Then resume: {resume} --from {at}{prof}")) });
                     checks.extend(interpreted("image-pull", Some(&log)));
                     exit = EXIT_REFUSED;
                     break 'run;
@@ -1303,7 +1325,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Observability leg \"{leg}\" FAILED — exit {rc} (full log: {log}). The core phases up to {at} have run; phase {at} needs this leg, so the run stops here."), fix: Some(format!("fix the cause (the log names it; obs_scrape_targets unset is the usual one for the stack leg), then: {resume} --obs-only && {resume} --from {at}")) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Observability leg \"{leg}\" FAILED — exit {rc} (GB-334; full log: {log}). The core phases up to {at} have run; phase {at} needs this leg, so the run stops here."), fix: Some(format!("fix the cause (the log names it; obs_scrape_targets unset is the usual one for the stack leg), then: {resume} --obs-only && {resume} --from {at}")) });
                     checks.extend(interpreted(&format!("observability-leg-{leg}"), Some(&log)));
                     exit = EXIT_REFUSED;
                     break 'run;
@@ -1336,7 +1358,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let t0 = std::time::Instant::now();
                 crate::runner::phase(&ph.n.to_string(), &ph.label, "");
-                let status = site_phase_command(repo, &s, &ph.cmd, &rs).current_dir(repo).status().context("bash")?;
+                let status = site_phase_command(repo, &s, &ph.cmd, &rs).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 let secs = t0.elapsed().as_secs();
                 let rc_now = status.code().unwrap_or(1);
                 checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
@@ -1351,7 +1373,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the site is left partway through phase {}. Read the error above; docs/operations/goatnet-standup.md \"The run\" table has this phase's \"Worked when\" and the Troubleshooting table lists the common failures by symptom + fix.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}{prof}", ph.n)) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc} (GB-331). No later phase has run; the site is left partway through phase {}. Read the error above; docs/operations/goatnet-standup.md \"The run\" table has this phase's \"Worked when\" and the Troubleshooting table lists the common failures by symptom + fix.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}{prof}", ph.n)) });
                     // No row when standup's phase catalog has no such phase.
                     checks.extend(interpreted(&phase_id, log.as_deref()));
                     exit = EXIT_REFUSED;
@@ -1492,8 +1514,9 @@ pub fn class_scope(root: &Path) -> Option<BTreeMap<String, Vec<String>>> {
 /// the phase order the fixture states, converge each through the scripted
 /// converger, verify every record, and report declared → verified time.
 pub fn mock(fixture: &mut Fixture, env: &str, site: &str, actor: &str, run: MockRun) -> Result<Report> {
-    let text = std::fs::read_to_string(fixture.root.join("converger.yaml"))?;
-    let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section (goatbuilder-conformance.md §\"Rehearsing a standup on the fixture\")")?;
+    let text = std::fs::read_to_string(fixture.root.join("converger.yaml")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(fixture.root.join("converger.yaml"))).display())))?;
+    let script: MockScript = serde_yaml::from_str(&text)
+        .map_err(|e| goat_errors::coded("GB-024", format!("converger.yaml has no standup: section (goatbuilder-conformance.md §\"Rehearsing a standup on the fixture\"): {e}")))?;
     let m = script.standup;
     if m.env != env {
         return Err(goat_errors::coded("GB-249", format!("the fixture rehearses environment '{}', not '{env}'", m.env)).into());
@@ -1600,8 +1623,8 @@ pub fn mock(fixture: &mut Fixture, env: &str, site: &str, actor: &str, run: Mock
 /// its class. Nothing earlier in any record is removed (history is evidence),
 /// and `status` afterwards reads the site as torn down, not as pending.
 pub fn teardown_mock(fixture: &mut Fixture, env: &str, site: &str, run: MockRun) -> Result<Report> {
-    let text = std::fs::read_to_string(fixture.root.join("converger.yaml"))?;
-    let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section")?;
+    let text = std::fs::read_to_string(fixture.root.join("converger.yaml")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(fixture.root.join("converger.yaml"))).display())))?;
+    let script: MockScript = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("converger.yaml has no standup: section: {e}")))?;
     let m = script.standup;
     if m.env != env || m.site != site {
         return Err(goat_errors::coded("GB-249", format!("the fixture rehearses {}/{}, not {env}/{site}", m.env, m.site)).into());
@@ -1690,11 +1713,11 @@ fn teardown_cmd(s: &Site, d: &TeardownDecl) -> Result<Option<String>> {
     Ok(match d.action.as_str() {
         "compose-down" => {
             let dirs: Vec<TeardownDir> = d.dirs.iter().map(|x| TeardownDir { var: x.var.clone(), default: x.default.replace("<site>", &s.site) }).collect();
-            let dirs = serde_json::to_string(&dirs)?;
+            let dirs = serde_json::to_string(&dirs).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?;
             Some(format!("{pre} teardown-compose.yml -e target={group} -e teardown_component={} -e 'teardown_dirs={dirs}'", d.component))
         }
-        "service-stop" => Some(format!("{pre} teardown-service-stop.yml -e target={group} -e teardown_component={} -e teardown_project={} -e 'teardown_services={}'", d.component, d.project, serde_json::to_string(&d.services)?)),
-        "systemd-stop" => Some(format!("{pre} teardown-systemd.yml -e target={group} -e teardown_component={} -e 'teardown_units={}'", d.component, serde_json::to_string(&d.units)?)),
+        "service-stop" => Some(format!("{pre} teardown-service-stop.yml -e target={group} -e teardown_component={} -e teardown_project={} -e 'teardown_services={}'", d.component, d.project, serde_json::to_string(&d.services).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?)),
+        "systemd-stop" => Some(format!("{pre} teardown-systemd.yml -e target={group} -e teardown_component={} -e 'teardown_units={}'", d.component, serde_json::to_string(&d.units).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?)),
         "command" => Some(d.run.replace("{repo}", &s.repo).replace("{site}", &s.site)),
         _ => None,
     })
@@ -1722,8 +1745,9 @@ struct TeardownFile {
 }
 
 fn load_teardown(repo: &Path) -> Result<Vec<TeardownDecl>> {
-    let t = std::fs::read_to_string(repo.join("ops/goatbuilder/teardown.yaml")).context("ops/goatbuilder/teardown.yaml")?;
-    Ok(serde_yaml::from_str::<TeardownFile>(&t).context("teardown.yaml")?.steps)
+    let p = repo.join("ops/goatbuilder/teardown.yaml");
+    let t = std::fs::read_to_string(&p).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?;
+    Ok(serde_yaml::from_str::<TeardownFile>(&t).map_err(|e| goat_errors::coded("GB-326", format!("{} is not the teardown declaration: {e}", p.display())))?.steps)
 }
 
 fn teardown_decl<'d>(decls: &'d [TeardownDecl], label: &str) -> Option<&'d TeardownDecl> {
@@ -1814,7 +1838,7 @@ fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, st
     let mut ok = true;
     for (n, label, component, cmd) in steps {
         let t0 = std::time::Instant::now();
-        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
+        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
         let rc = status.code().unwrap_or(1);
         let secs = t0.elapsed().as_secs();
         checks.push(row("time", format!("teardown {component} took {secs}s (exit {rc})")));
@@ -1822,7 +1846,7 @@ fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, st
         let cause = if status.success() { "ok".to_string() } else { crate::explain_phase::cause("teardown", &n.to_string(), None) };
         record_timing(state_dir, &file, *n, label, secs, rc, &cause);
         if !status.success() {
-            checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc}; the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
+            checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc} (GB-335); the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
             ok = false;
             break;
         }
@@ -1838,8 +1862,24 @@ mod tests {
     use super::*;
     use std::process::Command;
 
+    /// Gate row C5: a teardown stop that fails prints its own code on its failed
+    /// row, so a drill log of it holds no uncoded error.
+    #[test]
+    fn a_failed_teardown_stop_prints_its_code() {
+        let t = crate::testdir::path("gb-teardown-fail-");
+        std::fs::create_dir_all(&t).unwrap();
+        let steps = vec![(7, "goat-zenoh".to_string(), "goat-zenoh".to_string(), "exit 3".to_string())];
+        let (rows, ok) = run_teardown_steps(&t, &t.display().to_string(), "zagros", "goatbuilder teardown zagros --site zagros", &steps).unwrap();
+        assert!(!ok);
+        let failed: Vec<&Check> = rows.iter().filter(|c| c.name == "failed").collect();
+        assert_eq!(failed.len(), 1, "{rows:?}");
+        assert!(failed[0].detail.contains("GB-335"), "{}", failed[0].detail);
+        assert!(failed[0].detail.contains("FAILED — exit 3"), "{}", failed[0].detail);
+    }
+
     /// Both drivers run a planned line through the one runner that refuses an empty
-    /// `$(printenv NAME)` (tests/test_standup_phase_run.py tests its refusal).
+    /// `$(printenv NAME)` or `lookup("env", "NAME")` (tests/test_standup_phase_run.py
+    /// tests its refusal).
     #[test]
     fn a_phase_runs_through_the_shared_runner() {
         let c = phase_command(Path::new("/r"), "true");
@@ -2152,6 +2192,62 @@ mod tests {
         let fl = phase_lines(&f, &o);
         assert!(fl.iter().any(|l| l.1 == "[internet] mesh CoreDNS (only if this site has a mesh zone)" && l.2.contains("goat-coredns.yml --limit zagros_hosts;")));
         assert!(!fl.iter().any(|l| l.2.contains("require-secret.sh")));
+    }
+
+    /// Six plays reach the founder alone through `-l 'mgmt-<site>-01*'`, the
+    /// declared naming rule (SPIRE, the LAN service surface, the LAN TLS
+    /// routes, the dashboard, the portal, grant-keyd). An inventory whose
+    /// founder is named otherwise, beside another host the pattern does match,
+    /// let ansible print "skipping: no hosts matched" and exit 0 having done
+    /// nothing. Each of those commands now runs its check first, in the same
+    /// command: no host of the site's group in the two management inventories
+    /// matches the limit, and the play is refused with GB-355, naming the
+    /// pattern, the group and the inventories.
+    #[test]
+    fn a_founder_limit_that_selects_no_host_of_the_group_is_refused() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let t = crate::testdir::path("goatbuilder-founder-limit-");
+        let root: &Path = t.as_ref();
+        std::fs::create_dir_all(root.join("ops/scripts")).unwrap();
+        std::fs::create_dir_all(root.join("ops/ansible/inventory")).unwrap();
+        std::fs::copy(repo_root().join("ops/scripts/inventory-hosts.py"), root.join("ops/scripts/inventory-hosts.py")).unwrap();
+        let limit = "-l 'mgmt-zagros-01*'";
+        let mut checks = Vec::new();
+        for (profile, plays) in [("lan", 6), ("internet", 4)] {
+            let mut s = test_site(false);
+            s.profile = profile.into();
+            s.repo = root.display().to_string();
+            let lines = phase_lines(&s, &o);
+            let limited: Vec<&(u32, String, String)> = lines.iter().filter(|l| l.2.contains(limit)).collect();
+            assert_eq!(limited.len(), plays, "{profile}: {limited:#?}");
+            for l in limited {
+                let (check, play) = l.2.split_once(" && PRE ").unwrap_or_else(|| panic!("{profile} phase {}: no play after a check: {}", l.0, l.2));
+                assert!(check.ends_with("--match 'mgmt-zagros-01*' --require GB-355 >/dev/null"), "{profile} phase {} {}: the check must come first: {}", l.0, l.1, l.2);
+                assert!(play.contains(limit));
+                checks.push(check.to_string());
+            }
+        }
+        let run = |c: &str| Command::new("sh").arg("-c").arg(c).output().unwrap();
+        // The founder named off the rule, and another host the pattern matches:
+        // the case ansible passes having done nothing.
+        std::fs::write(root.join("ops/ansible/inventory/mgmt-hosts.ini"), "[zagros_hosts]\ncore-1 ansible_host=192.0.2.10\n\n[zagros_obs_hosts]\nmgmt-zagros-01-obs ansible_host=192.0.2.11\n").unwrap();
+        for c in &checks {
+            let out = run(c);
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(out.status.code(), Some(1), "{c}\n{err}");
+            assert!(err.starts_with("GB-355: "), "{err}");
+            for word in ["'mgmt-zagros-01*'", "[zagros_hosts]", "inventory/mgmt-hosts.ini", "inventory/mgmt-hosts-mesh.ini"] {
+                assert!(err.contains(word), "{word} not in: {err}");
+            }
+        }
+        // The founder named by the rule, in the mesh inventory a later file
+        // adds: every check passes and prints nothing.
+        std::fs::write(root.join("ops/ansible/inventory/mgmt-hosts-mesh.ini"), "[zagros_hosts]\nmgmt-zagros-01 ansible_host=100.127.0.10\n").unwrap();
+        for c in &checks {
+            let out = run(c);
+            assert_eq!(out.status.code(), Some(0), "{c}\n{}", String::from_utf8_lossy(&out.stderr));
+            assert!(out.stdout.is_empty() && out.stderr.is_empty());
+        }
     }
 
     /// Phase 5 no longer stops on purpose and phase 6 no longer re-runs the whole
@@ -2557,6 +2653,36 @@ mod tests {
         ]
     }
 
+    /// Standup passes secrets through the environment, not the command line:
+    /// for every site shape the plan branches on (a goatlite included), no
+    /// planned line expands a secret-class variable's value into a command's
+    /// arguments (crate::argv_secrets), and the plays read the Postgres password
+    /// themselves.
+    #[test]
+    fn no_site_shape_puts_a_secret_value_on_a_command_line() {
+        let spec = crate::argv_secrets::spec_suffixes(&std::fs::read_to_string(repo_root().join("ops/scripts/newsite-secrets.sh")).unwrap());
+        for (shape, s, obs_only) in catalog_shapes() {
+            let o = Options { env: "dev", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only, dry_run: true, parallel: false, check: false };
+            let ev = plan(&repo_root(), &s, &o, "RESUME");
+            let mut lines: Vec<&str> = Vec::new();
+            for e in &ev {
+                match e {
+                    Event::Phase(p) => lines.push(&p.cmd),
+                    Event::LegStart { cmd, .. } | Event::PullStart { cmd, .. } => lines.push(cmd),
+                    _ => {}
+                }
+            }
+            for l in &lines {
+                let on = crate::argv_secrets::secret_values_on_argv(l, &spec);
+                assert!(on.is_empty(), "{shape}: {on:?} on the command line of: {l}");
+            }
+            if !obs_only {
+                let pg = format!("lookup(\"env\", \"{}_PG_PASS\")", s.upper);
+                assert!(lines.iter().any(|l| l.contains(&pg)), "{shape}: a play reads {pg}");
+            }
+        }
+    }
+
     /// A planned step's catalog key, as its dry-run banner names it: a phase by
     /// its number, every other step by the words of its banner
     /// (tests/legibility.rs, `step_id`, reads the printed banners the same way).
@@ -2601,6 +2727,54 @@ mod tests {
     /// `runs` names exactly the scripts and plays its steps run (each one in a
     /// planned command, or, for a step only a declared node plans, named by this
     /// file).
+    #[test]
+    /// The phase catalog describes teardown's steps (gate row F4): teardown
+    /// walks the standup's applied phases in reverse, a phase for each [A]
+    /// step and an observability leg as the phase it starts with (host 2,
+    /// stack 9), as `teardown` selects them. For every site shape, the
+    /// catalog's teardown entries are exactly those phase numbers, and each
+    /// entry's `runs` names only plays teardown starts.
+    fn the_phase_catalog_describes_teardowns_steps() {
+        let mut walked: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for (_, s, obs_only) in catalog_shapes() {
+            let o = Options {
+                env: "dev",
+                site: "zagros",
+                profile: None,
+                from: 1,
+                to: 14,
+                skip_obs: false,
+                obs_only,
+                dry_run: true,
+                parallel: false,
+                check: false,
+            };
+            for e in plan(&repo_root(), &s, &o, "RESUME") {
+                match e {
+                    Event::Phase(p) if p.kind == "A" => {
+                        walked.insert(p.n.to_string());
+                    }
+                    Event::LegStart { leg, .. } => {
+                        walked.insert(if leg == "stack" { "9" } else { "2" }.to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let entries = goat_errors::phases::phases().of("teardown");
+        let keys: std::collections::BTreeSet<String> = entries.iter().map(|e| e.phase.to_string()).collect();
+        assert_eq!(keys, walked, "the catalog's teardown entries are the phases teardown walks");
+        let decls = std::fs::read_to_string(repo_root().join("ops/goatbuilder/teardown.yaml")).unwrap();
+        let code = [include_str!("standup.rs"), decls.as_str()].concat();
+        for e in &entries {
+            for w in e.runs.split([',', ';', ' ']).filter(|w| w.contains('/')) {
+                let name = w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_' && c != '/');
+                let name = name.rsplit('/').next().unwrap_or(name);
+                assert!(code.contains(name), "teardown phase {}: `runs` names {w}, which teardown does not start", e.phase);
+            }
+        }
+    }
+
     #[test]
     fn the_phase_catalog_describes_standups_plan() {
         let cat = goat_errors::phases::phases();
@@ -2805,7 +2979,7 @@ mod tests {
         let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
         let owner_word = |cmd: &str| {
             let rest = cmd.split_once("-e bootstrap_owner_email=").expect("the bootstrap phase passes the owner").1;
-            rest.split_once(" -e postgres_superuser_password=").expect("the next argument").0.to_string()
+            rest.split_once(" -e 'postgres_superuser_password=").expect("the next argument").0.to_string()
         };
         let out = crate::testdir::path("gb-owner-word-");
         for raw in ["a.learner@example.org", "me@pasture", "o'brien@example.org", "a$b@example.org", "a$(x)@example.org", "a`b`c@example.org", "a\"b@example.org", "a\\b@example.org"] {
@@ -2907,7 +3081,7 @@ mod tests {
         let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
         let site = lan_site(true, false);
         let cmd = phases_of(&plan(Path::new("/r"), &site, &o, "R")).iter().find(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).unwrap();
-        let word = cmd.split_once("-e bootstrap_owner_email=").unwrap().1.split_once(" -e postgres_superuser_password=").unwrap().0.to_string();
+        let word = cmd.split_once("-e bootstrap_owner_email=").unwrap().1.split_once(" -e 'postgres_superuser_password=").unwrap().0.to_string();
         assert_eq!(word, "\"$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)\"");
         let out = phase_command(&repo, &format!("printf '%s' {word}")).current_dir(&repo).env_remove(OWNER_VAR).env("GOAT_SECRET_STORE", "env").output().unwrap();
         assert_eq!(out.status.code(), Some(3), "{}", String::from_utf8_lossy(&out.stderr));

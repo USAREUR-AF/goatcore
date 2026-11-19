@@ -1,0 +1,57 @@
+# promtool unit test for SpockSubscriptionForwardOriginsSet (rules/spock-forward-origins.yml).
+#
+# Run by .github/workflows/goat-obs-checks.yml; locally with
+#   promtool test rules ops/compose/mgmt-host/monitoring/tests/spock-forward-origins.test.yml
+#
+# spock_subscription_forward_origins is 1 for a subscription created with
+# non-empty forward_origins, 0 otherwise; the spock-forward-origins timer
+# writes it every minute for every subscription in every database
+# (ops/ansible/roles/spock-forward-origins-check). In a mesh such a
+# subscription replicates in a loop while it still reads `replicating`.
+rule_files:
+  - ../rules/spock-forward-origins.yml
+
+evaluation_interval: 1m
+
+tests:
+  # One subscription is created with forwarding at minute 10; another never has it.
+  - interval: 1m
+    input_series:
+      - series: 'spock_subscription_forward_origins{instance="node-exporter:9100",job="node-exporter",datname="netbird",subscription_name="sub_site_b_to_site_a"}'
+        values: '0x9 1x20'
+      - series: 'spock_subscription_forward_origins{instance="node-exporter:9100",job="node-exporter",datname="kratos",subscription_name="ory_sub_site_b_to_site_a"}'
+        values: '0x29'
+    external_labels:
+      site: zagros-a
+    alert_rule_test:
+      # Before the setting: silent.
+      - eval_time: 9m
+        alertname: SpockSubscriptionForwardOriginsSet
+        exp_alerts: []
+      # Set, but not yet for 2m: pending, not firing.
+      - eval_time: 11m
+        alertname: SpockSubscriptionForwardOriginsSet
+        exp_alerts: []
+      # Set for 2m: fires for that subscription only.
+      - eval_time: 13m
+        alertname: SpockSubscriptionForwardOriginsSet
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: spock
+              instance: "node-exporter:9100"
+              job: node-exporter
+              datname: netbird
+              subscription_name: sub_site_b_to_site_a
+            exp_annotations:
+              summary: "Spock subscription sub_site_b_to_site_a (netbird) at zagros-a has forward_origins set: it replicates in a loop"
+              description: "Subscription sub_site_b_to_site_a in database netbird was created with non-empty forward_origins. In a mesh of three or more sites it passes each change on to the next site, which passes it back, without end, while the subscription still reads replicating and nothing is logged. Recreate it with forward_origins empty (spock.sub_drop, then spock.sub_create with forward_origins := ARRAY[]::text[]); the spock-mesh-peering install refuses it until then (GB-351)."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/spock-mesh-peering.md"
+
+  # A site where the timer has written nothing has no series: the alert stays silent.
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SpockSubscriptionForwardOriginsSet
+        exp_alerts: []

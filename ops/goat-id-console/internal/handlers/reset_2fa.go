@@ -46,6 +46,11 @@ func (s *Server) handleUserReset2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromCtx(r.Context())
+	if targetOutranksActor(actor, target) {
+		s.emitAudit(r, actor, "reset_2fa", target, idp.Key, nil, nil, false, "refused", tierCeilingRefusal)
+		s.renderError(w, r, 403, tierCeilingRefusal)
+		return
+	}
 
 	// Unconditional step-up — no matrix lookup. See doc comment.
 	//

@@ -22,21 +22,24 @@
     argv:
       - docker
       - exec
+      - -i
       - -u
       - postgres
       - "{{ postgres_streaming_container }}"
       - psql
       - -U
       - postgres
-      - -c
-      - >-
-        DO $$ BEGIN
-          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'replicator') THEN
-            CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD '{{ postgres_replicator_password }}';
-          ELSE
-            ALTER ROLE replicator WITH PASSWORD '{{ postgres_replicator_password }}';
-          END IF;
-        END $$;
+      - -f
+      - "-"
+    # On stdin, so the replicator password is not on the host's command line.
+    stdin: >-
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'replicator') THEN
+          CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD '{{ postgres_replicator_password }}';
+        ELSE
+          ALTER ROLE replicator WITH PASSWORD '{{ postgres_replicator_password }}';
+        END IF;
+      END $$;
   no_log: true
   changed_when: true
   tags: [streaming-repl, primary]
@@ -292,22 +295,49 @@
       changed_when: true
       tags: [streaming-repl, standby]
 
-    - name: "Standby | run pg_basebackup A→B with -R (writes standby.signal + primary_conninfo)"
-      ansible.builtin.command:
-        cmd: >
-          docker run --rm --network=host
-          -e PGPASSWORD={{ postgres_replicator_password }}
-          -v {{ postgres_data_volume_path }}:/data
-          {{ postgres_basebackup_client_image }}
-          pg_basebackup
-          -h {{ postgres_primary_lan_ip }}
-          -p {{ postgres_primary_port }}
-          -U replicator
-          -D /data
-          -Fp -Xs -P -R
-      changed_when: true
-      no_log: true
+    # The replicator password reaches pg_basebackup through a 0600 env file that
+    # the always section removes, not the host's command line.
+    - name: "Standby | base backup, the replicator password from a 0600 env file"
       tags: [streaming-repl, standby]
+      block:
+        - name: "Standby | create the replication env file (0600)"
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pgenv
+          register: replication_pg_env
+          tags: [streaming-repl, standby]
+
+        - name: "Standby | write the replicator password to the env file"
+          ansible.builtin.copy:
+            dest: "{{ replication_pg_env.path }}"
+            content: "PGPASSWORD={{ postgres_replicator_password }}\n"
+            mode: "0600"
+          no_log: true
+          tags: [streaming-repl, standby]
+
+        - name: "Standby | run pg_basebackup A→B with -R (writes standby.signal + primary_conninfo)"
+          ansible.builtin.command:
+            cmd: >
+              docker run --rm --network=host
+              --env-file {{ replication_pg_env.path }}
+              -v {{ postgres_data_volume_path }}:/data
+              {{ postgres_basebackup_client_image }}
+              pg_basebackup
+              -h {{ postgres_primary_lan_ip }}
+              -p {{ postgres_primary_port }}
+              -U replicator
+              -D /data
+              -Fp -Xs -P -R
+          changed_when: true
+          no_log: true
+          tags: [streaming-repl, standby]
+      always:
+        - name: "Standby | remove the replication env file"
+          ansible.builtin.file:
+            path: "{{ replication_pg_env.path }}"
+            state: absent
+          when: replication_pg_env.path is defined
+          tags: [streaming-repl, standby]
 
     - name: "Standby | chown data dir to postgres-spock UID:GID (basebackup wrote as root via docker)"
       ansible.builtin.command:

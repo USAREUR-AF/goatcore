@@ -298,11 +298,11 @@
 # INITRAMFS. The only in-initramfs network precedent is dropbear-initramfs, and
 # its NIC handling is Tegra-specific. Prove the NIC comes up and Tang is
 # reachable in the initrd on ONE real Pi before trusting this.
-- name: "installer-luks | tang_initramfs | configure initramfs static networking (per partition initramfs_ip)"
+- name: "installer-luks | tang_initramfs | configure initramfs networking (per partition initramfs_ip; DHCP when unset)"
   ansible.builtin.lineinfile:
     path: /etc/initramfs-tools/initramfs.conf
     regexp: '^IP='
-    line: "IP={{ part.initramfs_ip }}"
+    line: "IP={{ part.initramfs_ip | default('dhcp', true) }}"
     create: true
     owner: root
     group: root
@@ -310,8 +310,7 @@
   loop: "{{ luks_installer_partitions | selectattr('unlock_class', 'equalto', 'tang_initramfs') | list }}"
   loop_control:
     loop_var: part
-    label: "{{ part.name }} (IP={{ part.initramfs_ip | default('UNSET') }})"
-  when: (part.initramfs_ip | default('')) | length > 0
+    label: "{{ part.name }} (IP={{ part.initramfs_ip | default('dhcp', true) }})"
   notify: regenerate initramfs
 
 - name: "installer-luks | tang_initramfs | seed NIC driver modules into the initramfs"
