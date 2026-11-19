@@ -21,6 +21,10 @@ pgbackrest_spool_dir: /var/spool/pgbackrest
 # tasks/repo-ownership.yml refuses a repository holding files it does not own.
 pgbackrest_repo_owner_uid: "26"
 
+# The retired sidecar container tasks/retire-runner.yml removes from a host
+# that still runs it. Only the test sets another name.
+pgbackrest_retired_runner_container: pgbackrest-runner
+
 # PGDATA path INSIDE the postgres container — matches Red Hat / pgedge
 # layout (NOT the Debian /var/lib/postgresql/data path). See
 # ops/compose/mgmt-host/docker-compose.yml volume comment.

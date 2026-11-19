@@ -137,30 +137,8 @@
 # the container. The repository, log and spool are host bind mounts and are
 # not touched.
 
-- name: Remove the retired docker-compose.pgbackrest.yml overlay
-  ansible.builtin.file:
-    path: "{{ compose_dir }}/docker-compose.pgbackrest.yml"
-    state: absent
-
-- name: Remove the retired pgbackrest-runner container, if a host still runs it
-  ansible.builtin.command:
-    argv: [docker, rm, --force, pgbackrest-runner]
-  register: _pgbr_runner_rm
-  changed_when: _pgbr_runner_rm.rc == 0 and 'pgbackrest-runner' in _pgbr_runner_rm.stdout
-  failed_when:
-    - _pgbr_runner_rm.rc != 0
-    - "'No such container' not in _pgbr_runner_rm.stderr"
-
-# ---------------------------------------------------------------------------
-# 5. Remove the sidecar's env block from /opt/mgmt-host/.env.
-# ---------------------------------------------------------------------------
-
-- name: Remove the retired pgbackrest env block from /opt/mgmt-host/.env
-  ansible.builtin.blockinfile:
-    path: "{{ compose_dir }}/.env"
-    marker: "# {mark} ANSIBLE MANAGED: pgbackrest"
-    state: absent
-    create: false
+- name: Remove the retired pgbackrest-runner sidecar, its overlay and its .env block
+  ansible.builtin.import_tasks: retire-runner.yml
 
 # ---------------------------------------------------------------------------
 # 6. Install pgbackrest binary inside {{ postgres_container_name }}.

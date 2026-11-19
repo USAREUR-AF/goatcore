@@ -95,7 +95,8 @@ Tunable defaults live in [`defaults/main.yml`](defaults/main.yml).
    (owner uid `26`, group `root`, mode `0640`; secrets redacted by
    `no_log`). The base compose bind-mounts `/etc/pgbackrest` read-only
    into the Postgres container, so the file survives every recreate.
-4. Remove the retired `pgbackrest-runner` sidecar from a host that still has it:
+4. Remove the retired `pgbackrest-runner` sidecar from a host that still has it
+   (`tasks/retire-runner.yml`; running or stopped):
    `/opt/mgmt-host/docker-compose.pgbackrest.yml`, the container, and the
    `PGBACKREST_IMAGE` block in `/opt/mgmt-host/.env`. The repository, log and
    spool directories are host bind mounts and are not touched. Before that, the

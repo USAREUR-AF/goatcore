@@ -11,3 +11,9 @@ Run: `./syntax-check.sh`.
 directory, locally and with no privilege: a clean repository passes, and a
 root-owned file (made through a container) stops the run with its path named.
 It needs `ansible-playbook` and `docker`.
+
+`./retire-runner-test.sh` runs `tasks/retire-runner.yml` against a fixture
+compose directory: a running sidecar container, then a stopped one, is removed
+with its overlay file and `.env` block, the repository is untouched, and a
+second run changes nothing. It needs `ansible-playbook` and `docker`, and names
+its container per run.

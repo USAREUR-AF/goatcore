@@ -104,6 +104,9 @@ jobs:
       - name: pgBackRest repository ownership guard (a root-owned file stops the role)
         run: bash ops/ansible/roles/pgbackrest/tests/repo-ownership-test.sh
 
+      - name: pgBackRest retires the runner sidecar (a running container, its overlay and .env block)
+        run: bash ops/ansible/roles/pgbackrest/tests/retire-runner-test.sh
+
       - name: External-service client and delegation lifecycle (loopback only)
         run: python3 ops/ansible/tests/test-external-service-lifecycle.py
 
