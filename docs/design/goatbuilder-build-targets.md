@@ -1,24 +1,24 @@
-# goatbuilder build targets: platforms, target types and payloads
+# goatbuilder build targets: platform families, target types and sensors
 
 | Field | Value |
 |---|---|
 | Status | Designed, not built ([ADR 1257](../adr/1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md), Proposed) |
-| Scope | What goatbuilder builds a machine into, for every kind of machine a goatnet runs; the hardware it prepares; the software it deploys onto a machine; how each is checked and proven |
+| Scope | What goatbuilder builds a machine into, for every kind of machine a goatnet runs; the hardware families it prepares; the per-sensor relays it turns on; how each is checked and proven |
 | Related | [goatbuilder-v1-gate.md](goatbuilder-v1-gate.md) group J; [deployment-e2e.md](deployment-e2e.md) ([ADR 1200](../adr/1200-deployment-e2e-three-tiers.md)); [ADR 1141](../adr/1141-four-node-host-site-baseline.md), [ADR 1183](../adr/1183-rescue-nodes-are-part-of-the-site-baseline.md), [ADR 1114](../adr/1114-breakglass-node-class-and-two-path-reach.md), [ADR 1131](../adr/1131-network-jump-class-and-herd-gear-scope.md); [`ops/bootstrap/README.md`](../../ops/bootstrap/README.md) |
 
 ## 1. What this is for
 
-A goatnet runs several kinds of machine: the core and observability nodes of a host site, a break-glass node, a network-jump host, a federation boundary node, a simple boundary node, a processing node, a pod, and small edge computers that front sensors. goatbuilder builds some of them, each by its own code path, and none from the bare machine.
+A goatnet runs several kinds of machine: the core and observability nodes of a host site, a break-glass node, a network jump box, boundary nodes, a processing node, and edge machines that front sensors. goatbuilder builds some of them, each by its own code path, and none from the bare machine.
 
-This design separates three things that today are mixed together:
+This design keeps two things apart, and treats sensors as a property of a machine:
 
 | Concept | What it is | Examples |
 |---|---|---|
-| **Platform** | The machine and its preparation: firmware, boot media, the OS image, disk encryption and how it unlocks. The golden path lives here. | x86 mini PC (Karbon), Jetson Orin and Thor, Raspberry Pi 5 (today; it needs its own preparation), a small OnLogic computer (future; it replaces the Pi), a cloud VM |
-| **Target type** | The role the machine plays in a goatnet: its plays, services and acceptance checks | core, obs, breakglass, network-jump, federation boundary node, simple boundary node, processing node, pod, small computer (an edge device), phone |
-| **Payload** | Software deployed onto a target type, with its own acceptance, onto any type that accepts it | the sensor kit (the KID gear class), deployable onto a small computer, a pod, a federation boundary node, a break-glass node or a network-jump host |
+| **Platform family** | Hardware that can play the same roles, and its preparation: firmware, boot media, the OS image, disk encryption and how it unlocks. The golden path lives here. A model joins a family; no target type names a model. | host-class (Karbon 801 and 802, Jetson Orin and Thor), cloud (AWS EC2; Azure VMs and Google Compute Engine), small computer (Raspberry Pi 5 today; a smaller OnLogic model later), ruggedized mobile edge (TSI V3 and TSI V3 mini) |
+| **Target type** | The role the machine plays in a goatnet: its plays, services and acceptance checks | host site: core, obs, break-glass, network jump box. Edge: octo-pod (the edge gateway appliance), sensor node, first-bite (the tap decoder). Boundary: federation boundary, simple boundary. Processing: goat-processors. Also phone |
+| **Wired sensors** | Declared per machine. For each one, the sensor kit's matching kid (a per-sensor relay process) is turned on, on any type whose file allows sensors | a radar wired to an octo-pod; a camera wired to a sensor node; no sensors, so no kids |
 
-goatbuilder builds a target type on a platform, and deploys payloads onto it. Each of the three is declared as data. A check confirms the end state of each, whatever path got the machine there.
+goatbuilder builds a target type on a machine of an accepted family, and turns on the kids for the sensors declared on that machine. Families and types are declared as data, and a check confirms the end state whatever path got the machine there.
 
 ## 2. What exists today (measured on `main`, 2026-11-19)
 
@@ -55,10 +55,11 @@ Today a person installs Ubuntu and sets up LUKS by hand, or runs these scripts, 
 | federation boundary node | Not built as a kind. `federate` configures hosts that already exist | `ops/federation-e2e`; gate row B1 measured |
 | simple boundary node | Not built. `ops/simple-bn/` is placed by hand ([simple-boundary-node.md](simple-boundary-node.md), WIP; ADR 1253, Proposed) | unit tests |
 | processing node (`goat-processors`) | Not built | none |
-| pod | Not built. A pull agent is refused (GB-307); the pull converger comes after 1.0 (gate group D) | none |
-| small computer (edge device) | Not built | none |
+| octo-pod (the edge gateway appliance) | Not built. A pull agent is refused (GB-307); the pull converger comes after 1.0 (gate group D) | none in goatcore |
+| sensor node (a small computer whose only job is sensors) | Not built | none |
+| first-bite (the tap decoder) | Not built | none in goatcore |
 | phone | Built: `join-node --class phone` ([phone-node.md](phone-node.md)) | gate group H |
-| sensor kit (payload) | Not built in goatcore. Built today from two repositories outside goatcore | none in goatcore |
+| sensor kit's kids (per-sensor relay processes) | Not built in goatcore. Built today from two repositories outside goatcore | none in goatcore |
 
 ## 3. The design
 
@@ -69,130 +70,152 @@ One file per role: `ops/goatbuilder/targets/<type>.yaml`. `standup`, `join-node`
 ```yaml
 # ops/goatbuilder/targets/breakglass.yaml (sketch; the schema is part of build step 1)
 type: breakglass
-platforms: [karbon-801, karbon-802]   # the platforms this role accepts
-encryption: root                      # the minimum scope this role requires (section 3.2)
+families: [host-class, cloud]          # the platform families this role accepts; never a model
+encryption: root                       # the minimum scope this role requires (section 3.2)
 os:
   - ubuntu: "24.04"
-plays:                                # in order; the same plays join-node and standup run today
+plays:                                 # in order; the same plays join-node and standup run today
   - play: mgmt-host-baseline.yml
   - play: breakglass-nodes.yml
     group: "{site}_breakglass_hosts"
 services: [netbird-client, oob-overlay]
-acceptance:                           # rows in the acceptance catalog, by token
+sensors: allowed                       # the machine's declaration may list wired sensors (section 3.3)
+acceptance:                            # rows in the acceptance catalog, by token
   requires: [breakglass]
 proof:
-  ci: vm                              # a VM from a fresh Ubuntu cloud image (section 3.6)
-  hardware: required                  # a recorded run on real equipment
+  ci: vm                               # a VM from a fresh Ubuntu cloud image (section 3.5)
+  hardware: required                   # a recorded run on real equipment
 ```
 
 - `join-node --class <type>` accepts any type that has a file. `standup` builds a site's declared machines from the files of their types.
 - The site still declares which machines it has, with ADR 1183's keys. A site's declaration says *whether*; the type file says *what*.
-- A new role is a new file, not new code. A role whose plays need logic of their own still gets a file, and the file names the verb that converges it.
-- **Nothing in a type may assume a platform.** A type names the platforms it accepts, and its plays work on each of them. In particular, no type assumes a Raspberry Pi.
+- A new role is a new file, not new code. A role whose plays need logic of their own still gets a file, and the file names the verb or built-in step that converges it.
+- **A type names families, never a model.** Its plays work on every model of each family it accepts. In particular, no type assumes a Raspberry Pi.
 
-### 3.2 A platform is data, and the golden path lives there
+The types, by group:
 
-`ops/bootstrap/hardware-classes.yaml` keeps its platforms axis and gains each platform's preparation: firmware, boot media, the OS image, the disk-encryption shape and how it unlocks. Its roles axis is replaced by the type files. Its aliases stay resolvable.
+| Group | Types |
+|---|---|
+| host site | core, obs, break-glass, network jump box |
+| edge | octo-pod (the edge gateway appliance), sensor node (a small computer whose only job is sensors), first-bite (the tap decoder) |
+| boundary | federation boundary, simple boundary |
+| processing | goat-processors |
+| (existing) | phone ([phone-node.md](phone-node.md)) |
 
-- **Adding hardware adds a platform, not a type.** The small OnLogic computer is a platform. It stays Designed until the hardware is in hand.
-- **Raspberry Pi preparation is platform data.** The Pi needs its own preparation (exposing and writing its drive, and its unlock). That preparation belongs to the `rpi5` platform, not to any type.
+### 3.2 A platform family is data, and the golden path lives there
+
+One data file per family. A model joins a family by an entry in that file: its firmware, boot media, OS image, its disk-encryption shape and how it unlocks, and its golden-path builder if it has one. `ops/bootstrap/hardware-classes.yaml`'s platforms become the models of these families. Its roles axis is superseded by the type files.
+
+| Family | Models | Status | Roles it suits |
+|---|---|---|---|
+| host-class | Karbon 801, Karbon 802, Jetson Orin, Jetson Thor | supported | core and obs, and the other host-site roles |
+| cloud | AWS EC2 | supported | as declared per type |
+| cloud | Azure VMs, Google Compute Engine | listed, not built | as declared per type |
+| small computer | Raspberry Pi 5 today; a smaller OnLogic model later | proposed | sensor node, octo-pod |
+| ruggedized mobile edge | TSI V3, TSI V3 mini | listed, not planned: they keep their own baseline, and goatbuilder only checks their end state | as declared per type |
+
+- **Adding hardware adds a model to a family**, or a family. The smaller OnLogic model joins the small-computer family when the hardware is in hand.
+- **Raspberry Pi preparation is golden-path data** of the Pi model in the small-computer family: exposing and writing its drive, and its unlock. It belongs to no type.
 - **Encryption scope.** This is decided as follows:
-  - **The platform declares the scope it can deliver** and how it unlocks. For example, a Karbon delivers `root` with TPM2 unlock in the initramfs (`hardware-classes.yaml:51`). A Pi, with no TPM, delivers either `data` (the data volume, with a hardware unlock token) or `root` with a network unlock.
-  - **The type declares the minimum scope its role requires.** For example, core requires `root`, and the small computer accepts `data`.
-  - **A type accepts only platforms that deliver its scope.** `doctor --target` checks the scope the platform actually delivered.
+  - **The family declares the scope each model can deliver**, and how it unlocks. For example, a Karbon delivers `root` with TPM2 unlock in the initramfs (`hardware-classes.yaml:51`). A Pi, with no TPM, delivers either `data` (the data volume, with a hardware unlock token) or `root` with a network unlock.
+  - **The type declares the minimum scope its role requires.** For example, core requires `root`, and a sensor node accepts `data`.
+  - **A type accepts only families whose models deliver its scope.** `doctor --target` checks the scope a machine actually delivered.
 
-  Why it is split: how a disk unlocks is a property of the hardware (TPM or not), which the file already records at `hardware-classes.yaml:46`. How much must be encrypted is a security property of the role, and it is checked on the end state whatever installed it. Putting both on the type would make every type know every platform. Putting both on the platform would let a weaker platform lower a role's requirement.
-- **One Pi image builder first.** Three image builders for the Pi exist today and differ. One is picked as the `rpi5` platform's golden path before goatbuilder wraps any of them. That choice is an open question (section 6). The `rpi5` entry today proposes installer full-disk encryption with a network unlock (`hardware-classes.yaml:92`, `:96`), while the existing Pi buildout encrypts the data volume. The choice of builder settles which one the platform delivers.
+  Why it is split: how a disk unlocks is a property of the hardware (TPM or not), which the file already records at `hardware-classes.yaml:46`. How much must be encrypted is a security property of the role, and it is checked on the end state whatever installed it. Putting both on the type would make every type know every model. Putting both on the family would let weaker hardware lower a role's requirement.
+- **One Pi image builder first.** Three image builders for the Pi exist today and differ. One is picked as the Pi's golden path before goatbuilder wraps any of them; that is an open question (section 6). The `rpi5` entry today proposes installer full-disk encryption with a network unlock (`hardware-classes.yaml:92`, `:96`), while the existing Pi buildout encrypts the data volume. The choice of builder settles which one the Pi delivers.
+- **The ruggedized mobile edge family is in the structure now** so that a machine of it can be declared and checked, but goatbuilder does not prepare it.
 
-### 3.3 A payload is data, with its host list as data
+### 3.3 Sensors are declared per machine; the kit's kids follow them
 
-A payload is software deployed onto a target type, declared once with its own acceptance, in `ops/goatbuilder/payloads/<payload>.yaml`. It names the target types that may host it. That list is data in the declaration, never a list in code.
+The sensor kit is one package, installed the same way on every edge machine. A **kid** is one small relay process for one sensor: it converts that sensor's native output to ASTERIX, CoT, ISA or SAPIENT, and forwards it to the fabric. A kid is not a machine and not the whole kit.
 
-**The sensor kit** is the first payload. Its host types are small computer, pod, federation boundary node, breakglass and network-jump. What it needs, from the survey of the existing buildout:
-
-- **Its host:**
-  - the type's Ubuntu Server 24.04 baseline, on a small arm64 or amd64 machine;
+- **A machine's declaration lists its wired sensors.** That is a fact about the machine, next to its type and its family.
+- **A type file says whether it allows sensors.** Today that is the sensor node, octo-pod, break-glass, network jump box, and both boundary types.
+- **goatbuilder installs the kit's package and turns on the kid for each declared sensor**, on any machine whose type allows sensors. A machine with no sensors runs no kids. Turning a sensor off is removing it from the declaration.
+- **The sensor node** is the target type for a small computer whose only job is sensors: the type's own plays and acceptance are those of an empty edge machine (mesh peer, name resolution, egress), and its purpose comes from its sensors.
+- **What the kit needs from its host**, from the survey of its existing buildout:
+  - the type's Ubuntu Server 24.04 baseline;
   - mesh enrolment under the KID gear class;
   - egress to fetch its release.
-- **What it installs:** the sensor platform's pinned, signed release, and that platform's local services:
+- **What it installs:** the sensor platform's pinned, signed release, and its local services:
   - a local island router that never federates;
   - a client-mode fabric session;
   - the shared translator;
   - a one-way bridge;
   - a health publisher.
-- **Its acceptance:**
+- **Its acceptance** runs after the host passes:
   - the sensor platform's own verification;
   - a round trip of its health sample through the site fabric;
   - the node's mesh peer in the right group;
-  - the mesh management name resolving on the node.
-- **Its updates:** a pin bump of the sensor platform's release, followed by the payload's acceptance. A release with a breaking contract change is refused until its upgrade notes are done.
+  - the mesh management name resolving on the node;
+  - for each declared sensor, its kid running.
+- **Its updates:** a pin bump of the sensor platform's release, followed by its acceptance. A release with a breaking contract change is refused until its upgrade notes are done.
 - **What stays outside the command line**, as written directions with the end state checked:
-  - Authoring and deploying the per-sensor packages, including their sensor-interface and identity settings. Those are owned by each sensor's owner and use the sensor platform's own tool.
-  - The physical work on a Pi: exposing and writing its drive, and enrolling its hardware unlock token. That is `rpi5` platform preparation (section 3.2), not part of the payload.
+  - The per-sensor packages, including their sensor-interface and identity settings. They are authored and deployed by each sensor's owner with the sensor platform's own tool.
+  - The physical work on a Pi (its drive and its unlock token). That is family preparation (section 3.2).
 
-### 3.4 The small computer is a target type
-
-The **small computer** is an edge device: what a Pi or a small OnLogic box is when it is not a pod. Its type file declares the Ubuntu Server 24.04 baseline, the platforms it accepts (`rpi5` today; the OnLogic platform when it exists), the `data` encryption scope, mesh enrolment, and the acceptance of an empty edge device: mesh peer, name resolution and egress. A payload, such as the sensor kit, gives it its purpose.
-
-### 3.5 Check the end state; guide the method; never put it on rails
+### 3.4 Check the end state; guide the method; never put it on rails
 
 The contract starts at **a reachable Ubuntu host with an SSH key**, however it was installed. Above that line, goatbuilder builds. Below it, goatbuilder guides, and it checks the result.
 
-- **`goatbuilder doctor --target <type>`** checks a host's end state against its type and platform, whatever path built it, and changes nothing. For example:
+- **`goatbuilder doctor --target <type>`** checks a host's end state against its type and family, whatever path built it, and changes nothing. For example:
   - the encryption scope the type requires is in place;
   - the OS version is one the type accepts;
   - chrony starts before docker;
   - the docker data root is on the tier the type declares;
   - the inotify floor is met;
   - for a small computer, first boot completed, the root filesystem grown and key-only SSH;
-  - for a break-glass node, ADR 1114 §5's dual-homing contract.
+  - for a break-glass node, ADR 1114 §5's dual-homing contract;
+  - for each declared sensor, its kid enabled.
 
-  Every refusal names what to fix on the machine, not which installer to use. A payload's acceptance runs after the host passes.
-- **The golden path, optional:** `goatbuilder image <platform>` wraps that platform's preparation in `ops/bootstrap`. It produces an install ready for the type's plays: unattended Ubuntu, the platform's encryption shape, first boot and enrolment.
+  Every refusal names what to fix on the machine, not which installer to use. For a family goatbuilder does not prepare, such as the ruggedized mobile edge, this check is the whole of goatbuilder's part below the line.
+- **The golden path, optional:** `goatbuilder image <model>` wraps that model's preparation in `ops/bootstrap`. It produces an install ready for a type's plays: unattended Ubuntu, the model's encryption shape, first boot and enrolment.
 - **The supported general path:** written directions for each type that state the intent and the end state, for a capable person to work through on hardware the golden path does not know. `doctor --target` is how that person knows they arrived.
-- **What goatbuilder does not do:** it is not an operating-system installer or configuration manager beyond the golden path. It does not partition disks, choose kernels or manage packages outside the type's plays.
+- **What goatbuilder does not do:** it is not an operating-system installer or configuration manager beyond the golden path. It does not partition disks, choose kernels or manage packages outside a type's plays.
 
-### 3.6 Proof tiers
+### 3.5 Proof tiers
 
 | Tier | What runs | Where |
 |---|---|---|
-| CI | A VM from a fresh Ubuntu cloud image, then `join-node` or `standup` for the type, then the type's acceptance and `doctor --target`, then each payload the type hosts and its acceptance | CI, extending ADR 1200's deployment-e2e harness from container hosts to VMs |
-| Hardware | The same steps on real equipment, from the platform's golden path, recorded as a run record | an existing site, for the types that site has |
+| CI | A VM from a fresh Ubuntu cloud image, then `join-node` or `standup` for the type, then the type's acceptance and `doctor --target`, then the kids for a declared test sensor where the type allows sensors | CI, extending ADR 1200's deployment-e2e harness from container hosts to VMs |
+| Hardware | The same steps on real equipment, from the model's golden path, recorded as a run record | an existing site, for the types that site has |
 
-Every type passes the CI tier. The hardware tier is required where equipment exists: core, obs, breakglass, network-jump and the federation boundary node (gate group J).
+Every type passes the CI tier. The hardware tier is required where equipment exists: core, obs, break-glass, network jump box and federation boundary (gate group J).
 
-### 3.7 Status
+### 3.6 Status
 
 | Item | Kind | Status | Today's converge path |
 |---|---|---|---|
 | core | type | Designed | Built (`standup`, `join-node`) |
 | obs | type | Designed | Built (`standup`, `join-node`) |
-| breakglass | type | Designed | Built (`standup` phase 14, `join-node`) |
-| network-jump | type | Designed | Built (`join-node`) |
+| break-glass | type | Designed | Built (`standup` phase 14, `join-node`) |
+| network jump box | type | Designed | Built (`join-node`) |
 | phone | type | Designed | Built (`join-node --class phone`) |
-| federation boundary node | type | Designed | Not built as a machine kind (`federate` configures an existing host) |
-| simple boundary node | type | Designed | Not built |
-| processing node | type | Designed | Not built |
-| pod | type | Designed (push-deployed) | Not built |
-| small computer | type | Designed | Not built |
-| sensor kit | payload | Designed | Not built in goatcore |
-| Karbon, Orin and Thor, cloud VM | platforms | Designed as golden-path data; builders built | `build-image-*.sh` (not called by goatbuilder) |
-| Raspberry Pi 5 | platform | Designed; builder not picked (section 6) | Not built in goatcore |
-| small OnLogic computer | platform | Designed until the hardware is in hand | Not built |
+| federation boundary | type | Designed | Not built as a machine kind (`federate` configures an existing host) |
+| simple boundary | type | Designed | Not built |
+| goat-processors | type | Designed | Not built |
+| octo-pod | type | Designed (push-deployed) | Not built in goatcore |
+| sensor node | type | Designed | Not built |
+| first-bite | type | Designed | Not built in goatcore |
+| wired sensors and the kit's kids | declaration | Designed | Not built in goatcore |
+| host-class | family | Designed as data; its models' builders are built | `build-image-*.sh` (not called by goatbuilder) |
+| cloud | family | Designed as data; AWS EC2's builder is built; Azure VMs and Google Compute Engine listed, not built | `build-image-ec2.sh` |
+| small computer | family | Proposed; the Pi's builder is not picked (section 6); the OnLogic model waits for the hardware | Not built in goatcore |
+| ruggedized mobile edge | family | Listed, not planned: end-state check only | Not built |
 
 ## 4. Build order
 
 One revertible pull request per step, on the program's normal path. Each step builds on the one before it. No dates.
 
 1. **The type definition.**
-   - The type and platform schemas and `ops/goatbuilder/targets/`, with core, obs, breakglass and network-jump moved onto them. `join-node` and `standup` read the files, and the compiled list at `joinnode.rs:90` goes.
+   - The type and family schemas and `ops/goatbuilder/targets/`, with core, obs, break-glass and network jump box moved onto them. `join-node` and `standup` read the files, and the compiled list at `joinnode.rs:90` goes.
    - Acceptance rows for breakglass and network-jump, which have none today.
    - `doctor --target` for these four types.
    - The CI tier's VM harness, for the first type that uses it.
    - **A pure refactor.** `join-node` and `standup` print the same plans before and after: the golden plans (`crates/goatbuilder/tests/full_plans_unchanged.rs`) stay byte-identical, and a per-type `join-node --dry-run` parity test is written first.
    - **Phase entries are of three kinds:** a play, run as today; a built-in step whose logic stays in Rust behind a name (a core joiner's seeding, replication wiring and certificates); or a declared skip with its reason.
    - **A play may live outside goatcore.** The type file names its source repository as data, and the loader does not require the play, so a public clone loads every type. At run time a missing play is refused with its own error code, naming what to assemble. The network-jump play is the first such case.
-   - **Platforms stay in `ops/bootstrap/hardware-classes.yaml`**, which gains what each platform delivers. Its roles axis is marked superseded by the type files; it is deleted in a later step, once first-boot role selection stops reading it.
+   - **Models stay in `ops/bootstrap/hardware-classes.yaml`** for step 1, grouped into families, and gain what each delivers. Its roles axis is marked superseded by the type files; it is deleted in a later step, once first-boot role selection stops reading it.
 
    Follow-ups to step 1, each its own pull request (Designed):
    - The `breakglass-node` role gains ADR 1114 §5's out-of-band route metric. The role does not set it today, so `doctor --target`'s route-metric check for a break-glass node fails until it does.
@@ -211,25 +234,21 @@ One revertible pull request per step, on the program's normal path. Each step bu
    - **Its refusals:** a version mismatch; a service user with no stored token; management unreachable; the store not writable; the `--live` authentication failing.
    - **Its CI-tier proof:** a founder standup through phase 13 with no MANUAL row. Then the service user and token are checked through the API, the token appears in no log, a re-run mints nothing, and each refusal case is exercised.
    - **Status:** Designed. It mints an admin credential for the mesh control plane, so its build is reviewed as a trust change before it starts.
-3. **The federation boundary node as a type.** The host `goatbuilder federate` configures becomes a machine `join-node` builds from a reachable Ubuntu host.
-4. **The simple boundary node and the processing node as new types.** The processing node's acceptance runs the engines of the public `goat-processors` repository on recorded data, and checks the output against its conformance vectors.
-5. **The edge device and the sensor kit**, in three parts:
-   1. Raspberry Pi platform preparation, as golden-path data, once one Pi image builder is picked (section 6);
-   2. the small-computer type;
-   3. the sensor-kit payload: first on a small computer, a pod and a federation boundary node, then on a break-glass node and a network-jump host, per its host list.
-
-   The OnLogic platform stays Designed until the hardware is in hand.
-6. **Pods, push-deployed.** A pod is built and updated like any other type: `join-node` reaches it and pushes. The pull converger comes after 1.0, as the operator decided on 15 November (gate group D). It arrives as a value of `converger:` and does not change the pod's type file.
+3. **The federation boundary as a type.** The host `goatbuilder federate` configures becomes a machine `join-node` builds from a reachable Ubuntu host.
+4. **The simple boundary and goat-processors as new types.** The processing node's acceptance runs the engines of the public `goat-processors` repository on recorded data, and checks the output against its conformance vectors.
+5. **The small-computer family**, with Raspberry Pi preparation first, as golden-path data, once one Pi image builder is picked (section 6). The OnLogic model joins when the hardware is in hand.
+6. **The edge types: octo-pod, sensor node and first-bite.** octo-pod is push-deployed: `join-node` reaches it and pushes, like any other type. The pull converger comes after 1.0, as the operator decided on 15 November (gate group D), and arrives as a value of `converger:` without changing any type file.
+7. **Sensors declared per machine**, with the kit's package installed and the matching kids turned on, on any type that allows sensors.
 
 ## 5. What does not change
 
 - The node classes, their ACL positions and their enrolment rules stay as ADRs 1114 and 1131 set them. A break-glass node's enrolment stays manual, by ADR 1114's reasoning.
 - A site still declares which rescue machines it has, or why it has none (ADR 1183).
-- Roles, not hardware (ADR 1141): a target type names a role. A platform names hardware, and covers only the hardware it knows.
+- Roles, not hardware (ADR 1141): a target type names a role. A family names hardware, and a model joins it.
 
 ## 6. Open questions for the operator
 
-1. **Multi-sensor gateways.** Is a gateway that fronts several sensors a variant of the sensor-kit payload, or a separate payload?
-2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of the payload's nodes?
+1. **Multi-sensor machines.** A machine with several wired sensors runs one kid per sensor. Is a gateway that fronts several sensors anything more than a machine with a longer sensor list?
+2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of the machines that run kids?
 3. **The Pi's OS baseline.** Ubuntu Server 24.04, as the existing buildout uses, or 26.04?
-4. **The Pi's golden path.** Which of the three existing Pi image builders becomes the `rpi5` platform's golden path? That choice also settles whether the platform delivers root or data-volume encryption (section 3.2).
+4. **The Pi's golden path.** Which of the three existing Pi image builders becomes the Pi's golden path? That choice also settles whether the Pi delivers root or data-volume encryption (section 3.2).
