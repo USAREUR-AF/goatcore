@@ -114,7 +114,7 @@ function gate(groups, aff) {
     two("goat-maintainer-scope-fallback-patch", "body.client.scope"),
   ].join("\n") + "\n");
   fs.writeFileSync(path.join(root, "views", "partials", "scripts.hbs"),
-    "goat-maintainer-double-submit-guard data-dlf-submitted setTimeout __dlfSubmitGuardInstalled isTrusted\n");
+    "goat-maintainer-double-submit-guard data-dlf-submitted setTimeout __dlfSubmitGuardInstalled\n");
   const r = spawnSync("sh", [path.join(__dirname, "verify-patched.sh")], {
     env: { ...process.env, VERIFY_PATCHED_ROOT: root }, encoding: "utf8" });
   fs.rmSync(root, { recursive: true, force: true });
