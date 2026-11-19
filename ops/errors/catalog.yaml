@@ -4201,6 +4201,22 @@ entries:
     read: docs/design/goatbuilder.md
     exit: 2
 
+  - code: GB-360
+    tool: goatbuilder
+    title: a machine's record was not read
+    what: "The converger asked one machine for its newest record of a component, and the machine was not read: it did not answer, the inventory names it and it was silent, or its read FAILED. Contract C7: such a machine is unknown, never done, and nothing about its record is assumed."
+    causes:
+      - "the host is down, or not reachable from this machine over the transport the environment uses"
+      - "the inventory names a host that gave no answer"
+      - "the read ran on the host and FAILED (become refused, no python)"
+    fixes:
+      - "goatbuilder status --env <environment>   (each machine's state, and why it was not read)"
+      - "goatbuilder doctor --env <environment>   (the transport and each host's reach)"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-360: "
+
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
   - code: GB-370

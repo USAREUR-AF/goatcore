@@ -1527,39 +1527,30 @@ fn main() {
         }),
         Cmd::Update { action: Some(UpdateAction::VerifyRelease { dir, signer, version, trusted_root }), .. } => update::verify_release(&update::VerifyRelease { dir, repo: signer, version, trusted_root: trusted_root.as_deref() }),
         Cmd::Update { action: None, site, check, force } => update::run(&repo, &update::Options { site: site.as_deref(), check: *check, force: *force, output: cli.output, timeout: cli.timeout }),
-        Cmd::Status { env, component } => match &cli.mock {
-            Some(dir) => verbs::Fixture::open(dir).and_then(|f| verbs::status(&f, env, component.as_deref())).map(|mut r| {
-                // The rows stay on the report for -o json and the tutor's log.
-                if matches!(cli.output, OutputFormat::Table) {
-                    println!("{}", verbs::status_page(&r, env, output::want_color(cli.color)));
-                    r.printed = true;
-                }
-                r
-            }),
-            // Real hosts, read as diff reads them and graded as verify grades them (gate row C3).
-            None => inspect::status(&repo, env, component.as_deref()),
-        },
-        Cmd::Deploy { env, component, ack, group, dry_run, verify_only } => match &cli.mock {
-            Some(dir) => {
-                if *dry_run {
-                    verbs::Fixture::open(dir).and_then(|f| verbs::deploy_plan(&f, env, component.as_deref()))
-                } else if !cli.yes && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                    Err(goat_errors::coded("GB-008", "deploy is a mutation: pass --yes without a terminal (C10)").into())
-                } else {
-                    verbs::Fixture::open(dir).and_then(|mut f| verbs::deploy(&mut f, env, component.as_deref(), ack, cli.frozen))
-                }
+        // Every converging verb goes through the one converger `select` gives
+        // (gate D): the fixture's under --mock, else the push converger.
+        Cmd::Status { env, component } => converger::select(&repo, cli.mock.as_deref()).and_then(|t| t.status(env, component.as_deref())).map(|mut r| {
+            // The rows stay on the report for -o json and the tutor's log. On real
+            // hosts the rows are the page (gate row C3).
+            if cli.mock.is_some() && matches!(cli.output, OutputFormat::Table) {
+                println!("{}", verbs::status_page(&r, env, output::want_color(cli.color)));
+                r.printed = true;
             }
-            None => match component.as_deref() {
-                None => Err(goat_errors::coded("GB-018", "deploy on real hosts takes one --component").into()),
-                Some(c) => {
-                    if !cli.yes && !*dry_run && !*verify_only && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                        Err(goat_errors::coded("GB-008", "deploy is a mutation: pass --yes without a terminal (C10)").into())
-                    } else {
-                        push::deploy(&repo, &push::Options { component: c, goatnet: env, only_group: group.as_deref(), dry_run: *dry_run, verify_only: *verify_only, ack })
-                    }
-                }
-            },
-        },
+            r
+        }),
+        Cmd::Deploy { env, component, ack, group, dry_run, verify_only } => {
+            // A mutation without a terminal needs --yes (C10); a fixture's deploy has
+            // no read-only form, so --verify-only does not lift that on --mock.
+            let unconfirmed = !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin());
+            if cli.mock.is_none() && component.is_none() {
+                Err(goat_errors::coded("GB-018", "deploy on real hosts takes one --component").into())
+            } else if unconfirmed && (cli.mock.is_some() || !*verify_only) {
+                Err(goat_errors::coded("GB-008", "deploy is a mutation: pass --yes without a terminal (C10)").into())
+            } else {
+                let req = converger::Converge { env, component: component.as_deref(), group: group.as_deref(), actor: ack, dry_run: *dry_run, verify_only: *verify_only, frozen: cli.frozen };
+                converger::select(&repo, cli.mock.as_deref()).and_then(|mut t| t.deploy(&req))
+            }
+        }
         Cmd::Preflight { component, env, site } => match &cli.mock {
             Some(dir) => verbs::Fixture::open(dir).and_then(|f| preflight::run_mock(f, env, component)),
             None => preflight::run(&repo, &preflight::Options { component, goatnet: env, site: site.as_deref() }),
@@ -1608,10 +1599,10 @@ fn main() {
                 rollback::roll(&repo, component, *n, *dry_run, site.as_deref())
             }
         }
-        Cmd::Verify { component, env, group, dry_run } => match &cli.mock {
-            Some(dir) => verbs::Fixture::open(dir).and_then(|f| inspect::verify_mock(&f, component, env)),
-            None => inspect::verify(&repo, component, env, group.as_deref(), *dry_run),
-        },
+        Cmd::Verify { component, env, group, dry_run } => {
+            let req = converger::Converge { env, component: Some(component), group: group.as_deref(), actor: "", dry_run: *dry_run, verify_only: true, frozen: false };
+            converger::select(&repo, cli.mock.as_deref()).and_then(|t| t.verify(&req))
+        }
         Cmd::Diff { component, env, all: _ } => match &cli.mock {
             Some(dir) => verbs::Fixture::open(dir).and_then(|f| inspect::diff_mock(&f, env, component.as_deref())),
             None => inspect::diff(&repo, env, component.as_deref()),

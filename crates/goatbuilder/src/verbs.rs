@@ -12,7 +12,7 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::config::{self, Config};
-use crate::converger::{Converger, Outcome, Scripted};
+use crate::converger::{Converge, Converger, Scripted};
 use crate::{Check, Report, EXIT_NOT_CONVERGED, EXIT_REFUSED};
 
 /// `declared/pins.yaml` in the fixture: component → environment → ref.
@@ -55,64 +55,128 @@ impl Fixture {
     /// or refused under `--frozen`. Ahead or diverged: refused — a declaration
     /// that is not in the source of record is never applied.
     fn freshen(&mut self, frozen: bool) -> Result<Option<Check>> {
-        let src = self.root.join("source/pins.yaml");
-        let Ok(text) = std::fs::read_to_string(&src) else { return Ok(None) };
-        let source: Declared = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("{}: record unreadable: {e}", src.display())))?;
-        let local = self.root.join("declared/pins.yaml");
-        let (have, want) = (self.declared.revision, source.revision);
-        if have == want {
-            if std::fs::read_to_string(&local).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&local)).display())))? == text {
-                return Ok(None);
-            }
-            return Err(goat_errors::coded("GB-046", format!("declared/pins.yaml and source/pins.yaml are both at revision {have} and differ; the local declaration is not the source of record's")).into());
-        }
-        if have > want {
-            return Err(goat_errors::coded("GB-046", format!("declared/pins.yaml is at revision {have}, ahead of the source of record at {want}; a declaration that is not in the source of record is never applied")).into());
-        }
-        if frozen {
-            return Err(goat_errors::coded("GB-046", format!("declared/pins.yaml is at revision {have}, behind the source of record at {want}, and --frozen refuses to fast-forward: cp source/pins.yaml declared/pins.yaml, or run without --frozen")).into());
-        }
-        std::fs::write(&local, &text).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", local.display())))?;
-        self.declared = source;
-        Ok(Some(ok("declaration/source", format!("fast-forwarded declared/pins.yaml from revision {have} to {want} (the source of record)"))))
+        freshen(&self.root, &mut self.declared, frozen)
     }
 
     fn environment(&self, env: &str) -> Result<()> {
-        if self.config.environments.iter().any(|e| e.name == env) {
-            Ok(())
-        } else {
-            Err(anyhow::Error::from(goat_errors::coded("GB-241", format!(
-                "environment '{env}' is not declared in {} (declared: {})",
-                self.root.join("goatbuilder.yaml").display(),
-                self.config.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>().join(", ")
-            ))))
-        }
+        environment(&self.root, &self.config, env)
     }
 
     /// The declared ref for a component on an environment (C1: digest-pinned).
     pub fn declared_ref(&self, env: &str, component: &str) -> Result<String> {
-        if !self.config.components.contains_key(component) {
-            return Err(goat_errors::coded("GB-001", format!("component '{component}' is not declared in goatbuilder.yaml")).into());
-        }
-        let r = self
-            .declared
-            .components
-            .get(component)
-            .and_then(|m| m.get(env))
-            .map(|p| p.reference.clone())
-            .ok_or_else(|| goat_errors::coded("GB-024", format!("{component} has no declaration for {env} in declared/pins.yaml")))?;
-        Ok(r)
+        declared_ref(&self.config, &self.declared, env, component)
     }
 
-    fn components_on(&self, env: &str, only: Option<&str>) -> Vec<String> {
-        self.config
-            .components
-            .keys()
-            .filter(|c| only.map(|o| o == c.as_str()).unwrap_or(true))
-            .filter(|c| self.declared.components.get(*c).map(|m| m.contains_key(env)).unwrap_or(false))
-            .cloned()
-            .collect()
+    /// The fixture's declarations, read only (`status`, `verify`, a plan).
+    fn view(&self) -> View<'_> {
+        View { root: &self.root, config: &self.config, declared: Decl::Read(&self.declared) }
     }
+}
+
+/// A fixture's declarations, as the converger's steps read them. A deploy holds
+/// them to write (it may fast-forward them, C3); every other step reads.
+enum Decl<'a> {
+    Read(&'a Declared),
+    Write(&'a mut Declared),
+}
+
+struct View<'a> {
+    root: &'a Path,
+    config: &'a Config,
+    declared: Decl<'a>,
+}
+
+impl View<'_> {
+    fn declared(&self) -> &Declared {
+        match &self.declared {
+            Decl::Read(d) => d,
+            Decl::Write(d) => d,
+        }
+    }
+}
+
+impl crate::converger::Declarations for View<'_> {
+    fn environment(&self, env: &str) -> Result<()> {
+        environment(self.root, self.config, env)
+    }
+    fn components_on(&self, env: &str, only: Option<&str>) -> Vec<String> {
+        components_on(self.config, self.declared(), env, only)
+    }
+    fn declared_ref(&self, env: &str, component: &str) -> Result<String> {
+        declared_ref(self.config, self.declared(), env, component)
+    }
+    fn scope(&self, component: &str) -> Option<Vec<String>> {
+        crate::standup::class_scope(self.root).and_then(|s| s.get(component).cloned())
+    }
+    fn prepare(&mut self, frozen: bool) -> Result<Option<Check>> {
+        match &mut self.declared {
+            Decl::Write(d) => freshen(self.root, d, frozen),
+            Decl::Read(_) => Ok(None),
+        }
+    }
+}
+
+/// C3: the local declaration against the fixture's source of record
+/// (`source/pins.yaml`, when the fixture has one). Behind: fast-forwarded,
+/// or refused under `--frozen`. Ahead or diverged: refused — a declaration
+/// that is not in the source of record is never applied.
+fn freshen(root: &Path, declared: &mut Declared, frozen: bool) -> Result<Option<Check>> {
+    let src = root.join("source/pins.yaml");
+    let Ok(text) = std::fs::read_to_string(&src) else { return Ok(None) };
+    let source: Declared = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("{}: record unreadable: {e}", src.display())))?;
+    let local = root.join("declared/pins.yaml");
+    let (have, want) = (declared.revision, source.revision);
+    if have == want {
+        if std::fs::read_to_string(&local).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&local)).display())))? == text {
+            return Ok(None);
+        }
+        return Err(goat_errors::coded("GB-046", format!("declared/pins.yaml and source/pins.yaml are both at revision {have} and differ; the local declaration is not the source of record's")).into());
+    }
+    if have > want {
+        return Err(goat_errors::coded("GB-046", format!("declared/pins.yaml is at revision {have}, ahead of the source of record at {want}; a declaration that is not in the source of record is never applied")).into());
+    }
+    if frozen {
+        return Err(goat_errors::coded("GB-046", format!("declared/pins.yaml is at revision {have}, behind the source of record at {want}, and --frozen refuses to fast-forward: cp source/pins.yaml declared/pins.yaml, or run without --frozen")).into());
+    }
+    std::fs::write(&local, &text).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", local.display())))?;
+    *declared = source;
+    Ok(Some(ok("declaration/source", format!("fast-forwarded declared/pins.yaml from revision {have} to {want} (the source of record)"))))
+}
+
+fn environment(root: &Path, config: &Config, env: &str) -> Result<()> {
+    if config.environments.iter().any(|e| e.name == env) {
+        Ok(())
+    } else {
+        Err(anyhow::Error::from(goat_errors::coded("GB-241", format!(
+            "environment '{env}' is not declared in {} (declared: {})",
+            root.join("goatbuilder.yaml").display(),
+            config.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>().join(", ")
+        ))))
+    }
+}
+
+/// The declared ref for a component on an environment (C1: digest-pinned).
+fn declared_ref(config: &Config, declared: &Declared, env: &str, component: &str) -> Result<String> {
+    if !config.components.contains_key(component) {
+        return Err(goat_errors::coded("GB-001", format!("component '{component}' is not declared in goatbuilder.yaml")).into());
+    }
+    let r = declared
+        .components
+        .get(component)
+        .and_then(|m| m.get(env))
+        .map(|p| p.reference.clone())
+        .ok_or_else(|| goat_errors::coded("GB-024", format!("{component} has no declaration for {env} in declared/pins.yaml")))?;
+    Ok(r)
+}
+
+fn components_on(config: &Config, declared: &Declared, env: &str, only: Option<&str>) -> Vec<String> {
+    config
+        .components
+        .keys()
+        .filter(|c| only.map(|o| o == c.as_str()).unwrap_or(true))
+        .filter(|c| declared.components.get(*c).map(|m| m.contains_key(env)).unwrap_or(false))
+        .cloned()
+        .collect()
 }
 
 /// C4: every declaration names who made it; refused before anything changes.
@@ -123,41 +187,10 @@ pub fn attributed(actor: &str) -> Result<()> {
     Ok(())
 }
 
-fn immutable(reference: &str) -> bool {
-    reference.contains("@sha256:")
-}
 
 /// `status`: declared against recorded, per machine, reading only (C8).
 pub fn status(fixture: &Fixture, env: &str, only: Option<&str>) -> Result<Report> {
-    fixture.environment(env)?;
-    let mut checks = Vec::new();
-    let mut graded = Vec::new();
-    // A sited fixture scopes each component to the class that carries it.
-    let scope = crate::standup::class_scope(&fixture.root);
-    for component in fixture.components_on(env, only) {
-        let declared = fixture.declared_ref(env, &component)?;
-        let machines: Vec<String> = match scope.as_ref().and_then(|s| s.get(&component)) {
-            Some(m) => m.clone(),
-            None => fixture.converger.machines(env),
-        };
-        for machine in machines {
-            let name = format!("{env}/{machine}/{component}");
-            let (check, state, reason) = match fixture.converger.read_record(env, &machine, &component) {
-                Ok(Some(r)) if r.reference == declared => (ok(&name, format!("converged on {}", short(&declared))), "converged", "declared"),
-                Ok(Some(r)) => (not_done(&name, format!("pending: record names {}, declared {}", short(&r.reference), short(&declared))), "pending", "other-ref"),
-                Ok(None) => (not_done(&name, format!("pending: no record yet; declared {}", short(&declared))), "pending", "no-record"),
-                Err(e) => (not_done(&name, format!("unknown: {e}")), "unknown", "unreadable"),
-            };
-            checks.push(check);
-            graded.push(crate::Machine::new(env, &machine, &component, state, reason, &name));
-        }
-    }
-    if checks.is_empty() {
-        return Err(anyhow::Error::from(goat_errors::coded("GB-255", format!("nothing declared for {env}{}", only.map(|o| format!(" and component {o}")).unwrap_or_default()))));
-    }
-    let mut r = Report::new("status", checks, EXIT_NOT_CONVERGED);
-    r.machines = Some(graded);
-    Ok(r)
+    fixture.converger.status(&fixture.view(), env, only)
 }
 
 /// A row the machines table owns: one component on one machine, in a state the
@@ -399,72 +432,16 @@ fn next_steps(rows: &[(&str, &str)], good: &str, env: &str) -> Vec<String> {
 /// Done means every machine's record names the ref (C7); a second run over a
 /// converged environment changes nothing (C5).
 pub fn deploy(fixture: &mut Fixture, env: &str, only: Option<&str>, actor: &str, frozen: bool) -> Result<Report> {
-    fixture.environment(env)?;
-    attributed(actor)?;
-    let mut checks: Vec<Check> = fixture.freshen(frozen)?.into_iter().collect();
-    // C2 before anything is published: the log is intact and in order.
-    fixture.converger.publications()?;
-    let components = fixture.components_on(env, only);
-    if components.is_empty() {
-        return Err(anyhow::Error::from(goat_errors::coded("GB-255", format!("nothing declared for {env}{}", only.map(|o| format!(" and component {o}")).unwrap_or_default()))));
-    }
-    for component in components {
-        let declared = fixture.declared_ref(env, &component)?;
-        if !immutable(&declared) {
-            checks.push(refused(
-                &format!("{env}/{component}/declaration"),
-                format!("{declared} is a mutable tag; a deploy declares a digest (C1)"),
-                "pin the declaration to <image>@sha256:<digest> in declared/pins.yaml",
-            ));
-            continue;
-        }
-        let serial = fixture.converger.publish(env, &component, &declared, actor)?;
-        checks.push(ok(&format!("{env}/{component}/publish"), format!("serial {serial}: {} by {actor}", short(&declared))));
-        let observed = fixture.converger.observe(env, &component, &declared)?;
-        for (machine, outcome) in observed {
-            let name = format!("{env}/{machine}/{component}");
-            // Done is what the RECORD says, never what the observation claimed (C7).
-            match fixture.converger.read_record(env, &machine, &component) {
-                Ok(Some(r)) if r.reference == declared => checks.push(ok(&name, format!("converged on {}", short(&declared)))),
-                Ok(_) => checks.push(not_done(&name, format!("pending ({})", match outcome { Outcome::Pending => "not yet converged", Outcome::Converged => "observation says converged but the record does not", Outcome::Unknown => "unknown" }))),
-                Err(e) => checks.push(not_done(&name, format!("unknown: {e}"))),
-            }
-        }
-    }
-    let exit = if checks.iter().any(|c| c.fix.is_some()) { EXIT_REFUSED } else { EXIT_NOT_CONVERGED };
-    Ok(Report::new("deploy", checks, exit))
+    let mut view = View { root: &fixture.root, config: &fixture.config, declared: Decl::Write(&mut fixture.declared) };
+    let req = Converge { env, component: only, group: None, actor, dry_run: false, verify_only: false, frozen };
+    fixture.converger.deploy(&mut view, &req)
 }
 
 /// `deploy --dry-run` on a fixture: what a deploy would publish, and to which
 /// machines, with nothing published and no record written.
 pub fn deploy_plan(fixture: &Fixture, env: &str, only: Option<&str>) -> Result<Report> {
-    fixture.environment(env)?;
-    let components = fixture.components_on(env, only);
-    if components.is_empty() {
-        return Err(anyhow::Error::from(goat_errors::coded("GB-255", format!("nothing declared for {env}{}", only.map(|o| format!(" and component {o}")).unwrap_or_default()))));
-    }
-    let machines = fixture.converger.machines(env);
-    let mut checks = Vec::new();
-    for component in components {
-        let declared = fixture.declared_ref(env, &component)?;
-        if !immutable(&declared) {
-            checks.push(refused(
-                &format!("{env}/{component}/declaration"),
-                format!("{declared} is a mutable tag; a deploy declares a digest (C1)"),
-                "pin the declaration to <image>@sha256:<digest> in declared/pins.yaml",
-            ));
-            continue;
-        }
-        checks.push(ok(
-            &format!("{env}/{component}/plan"),
-            format!("DRY: would publish {} as serial {} and observe {} machine(s): {}", short(&declared), fixture.converger.last_serial() + 1, machines.len(), machines.join(" ")),
-        ));
-    }
-    let exit = if checks.iter().any(|c| c.fix.is_some()) { EXIT_REFUSED } else { crate::EXIT_OK };
-    let mut r = Report::new("deploy", checks, exit);
-    r.exit = exit;
-    r.ok = exit == crate::EXIT_OK;
-    Ok(r)
+    let req = Converge { env, component: only, group: None, actor: "", dry_run: true, verify_only: false, frozen: false };
+    fixture.converger.plan(&fixture.view(), &req)
 }
 
 /// `declared/artifacts.yaml` in a fixture: what a component IS, which decides
@@ -602,13 +579,7 @@ fn ok(name: &str, detail: String) -> Check {
     Check { name: name.to_string(), ok: true, detail, fix: None }
 }
 
-fn not_done(name: &str, detail: String) -> Check {
-    Check { name: name.to_string(), ok: false, detail, fix: None }
-}
 
-fn refused(name: &str, detail: String, fix: &str) -> Check {
-    Check { name: name.to_string(), ok: false, detail, fix: Some(fix.to_string()) }
-}
 
 #[cfg(test)]
 mod tests {
