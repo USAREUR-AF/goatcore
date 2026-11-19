@@ -170,6 +170,8 @@ jobs:
           set -o pipefail
           fail() { echo "::error::$1"; exit 1; }
           python3 ops/ci/test_docker_apt_builds_take_ubuntu_mirror.py
+          # The probe against a stand-in mirror: a HEAD that answers is not enough.
+          python3 ops/ci/test_apt_failover_probe.py
           [ -n "${UBUNTU_MIRROR:-}" ] || fail "the action did not export UBUNTU_MIRROR though the mirror answered"
           case "$UBUNTU_MIRROR" in http://*|https://*) ;; *) fail "UBUNTU_MIRROR is not an http(s) URL: $UBUNTU_MIRROR" ;; esac
           # The same lines every such Dockerfile carries; --no-cache, so apt runs here.
