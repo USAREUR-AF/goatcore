@@ -70,3 +70,4 @@ fires while the subscription still reads `replicating`.
 | The timer running on a deployed mgmt host | built, not measured on a deployment |
 | An alert on the loop's apply rate, as a second signal | not built |
 | Demonstrating the loop itself in CI | not built: the test writes no rows, so no loop runs in CI |
+| `spock_mesh_expected_subscriptions{datname}` written to node-exporter's textfile directory by this role and `ory-narrow-repset`, one per declared peer site for each database each wires; `SpockMeshSubscriptionsMissing` fires when fewer replicate, including a subscription that never started | built; measured on a five-site Docker mesh and by promtool; the files by `roles/spock-mesh-peering/tests/test-expected-metrics.sh` |

@@ -157,3 +157,7 @@ spock_mesh_revocation_guard_sql:
 spock_mesh_hub_authority: true
 spock_mesh_hub_authority_sql:
   netbird: "{{ role_path }}/../../../postgres/spock/hub-authority/netbird.sql"
+
+# Where the expected-subscriptions metric goes (tasks/expected-metrics.yml):
+# node-exporter's textfile directory.
+spock_mesh_metrics_dir: "{{ node_exporter_textfile_host_dir | default('/var/lib/node_exporter/textfile') }}"
