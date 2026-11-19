@@ -29,7 +29,12 @@ Dockerfile can fail at `dnf install`:
 - PGDG publishes pgBackRest under the RHEL minor it was built for and removes older
   builds. pgBackRest 2.58.0 under `rhel9.8` is gone; the image now pins 2.60.1 under
   `rhel9.9`. From 2.60, PGDG links pgBackRest against its own libssh2, so
-  `pgdg-libssh2` 1.11.1 is installed by URL in the same transaction.
+  `pgdg-libssh2` 1.11.1 is installed from the same directory in the same transaction.
+  Both RPMs are fetched first and checked before `dnf` reads them; a failed check
+  fails the build. Each file must match its sha256 digest, pinned per architecture
+  in the Dockerfile. Each must also pass `rpm --checksig` against PGDG's signing key
+  for that architecture. The key is fetched, checked against its own pinned digest,
+  and imported into a throwaway rpm database, so the image's keyring does not change.
 - Once Rocky Linux ships a newer point release, its live mirror serves only that
   release's packages. The same-release fixes therefore come from Rocky's archive of
   the base's own release (`ROCKY_RELEASE`, 9.8), with signature checks against the

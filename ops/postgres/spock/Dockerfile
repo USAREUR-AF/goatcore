@@ -88,20 +88,49 @@ ARG PGBACKREST_VERSION=2.60.1
 ARG PGBACKREST_RHEL_SUFFIX=rhel9.9
 # From 2.60 PGDG builds pgBackRest against its own libssh2 (pgdg-libssh2),
 # published next to it in the same directory and not in any enabled repo,
-# so it is installed by URL in the same transaction, pinned the same way.
+# so it is installed from the same directory in the same transaction.
 ARG PGDG_LIBSSH2_VERSION=1.11.1
+# Both RPMs are fetched, then checked before dnf sees them, and a mismatch
+# fails the build:
+#   1. sha256sum -c against the digests pinned here, one per architecture;
+#   2. rpm --checksig against PGDG's signing key for that architecture,
+#      itself fetched and checked against its pinned digest, and imported
+#      into a throwaway rpm database (the image's keyring is not changed).
+# A bump updates the version ARGs above AND these digests: download each
+# RPM for both architectures and take its sha256sum. PGDG signs x86_64 with
+# key 08b40d20 (PGDG-RPM-GPG-KEY-RHEL) and aarch64 with key b9738825
+# (PGDG-RPM-GPG-KEY-AARCH64-RHEL).
+ARG PGBACKREST_SHA256_X86_64=dc3e6ef54c02f1bb8ceb0eacc4c3fa04312a000baf884fca585ef3a76955b500
+ARG PGBACKREST_SHA256_AARCH64=3d0350bee21b9b0149bac0f7cf82f0f40c66a842b46604cedfba0440ab3406f3
+ARG PGDG_LIBSSH2_SHA256_X86_64=14e53249dfd8f8fe82b9bd86695f78e707cc26a40b3d4926cb55f3e010db639d
+ARG PGDG_LIBSSH2_SHA256_AARCH64=1086f9514fd9257a57e96efd51f203b76e3f9981c6bdee330e16515688c3662a
+ARG PGDG_KEY_SHA256_X86_64=a70c9527426017d00fa4e6f9d2941d515357a27a7be82e155248ece53bbe5453
+ARG PGDG_KEY_SHA256_AARCH64=cc506fa92aa97e8e58f88551a2ec99a61d9d603f7f2c1ae0c06191f58c29979f
 ARG SOURCE_DATE_EPOCH
 RUN --mount=type=bind,source=build/pin-install-time.py,target=/tmp/pin-install-time.py \
     set -eu \
  && case "${TARGETARCH:-amd64}" in \
-      amd64) RPM_ARCH=x86_64 ;; \
-      arm64) RPM_ARCH=aarch64 ;; \
+      amd64) RPM_ARCH=x86_64; KEY=PGDG-RPM-GPG-KEY-RHEL; \
+             KEY_SHA=$PGDG_KEY_SHA256_X86_64; BR_SHA=$PGBACKREST_SHA256_X86_64; SSH_SHA=$PGDG_LIBSSH2_SHA256_X86_64 ;; \
+      arm64) RPM_ARCH=aarch64; KEY=PGDG-RPM-GPG-KEY-AARCH64-RHEL; \
+             KEY_SHA=$PGDG_KEY_SHA256_AARCH64; BR_SHA=$PGBACKREST_SHA256_AARCH64; SSH_SHA=$PGDG_LIBSSH2_SHA256_AARCH64 ;; \
       *) echo "Unsupported TARGETARCH: $TARGETARCH"; exit 1 ;; \
     esac \
+ && base="https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-${RPM_ARCH}" \
+ && ssh_rpm="pgdg-libssh2-${PGDG_LIBSSH2_VERSION}-1PGDG.${PGBACKREST_RHEL_SUFFIX}.${RPM_ARCH}.rpm" \
+ && br_rpm="pgbackrest-${PGBACKREST_VERSION}-1PGDG.${PGBACKREST_RHEL_SUFFIX}.${RPM_ARCH}.rpm" \
+ && mkdir /tmp/pgdg && cd /tmp/pgdg \
+ && curl -fsSL --proto '=https' -o "$KEY" "https://download.postgresql.org/pub/repos/yum/keys/$KEY" \
+ && curl -fsSL --proto '=https' -o "$ssh_rpm" "$base/$ssh_rpm" \
+ && curl -fsSL --proto '=https' -o "$br_rpm" "$base/$br_rpm" \
+ && printf '%s  %s\n' "$KEY_SHA" "$KEY" "$SSH_SHA" "$ssh_rpm" "$BR_SHA" "$br_rpm" | sha256sum -c - \
+ && rpm --dbpath /tmp/pgdg/db --initdb \
+ && rpm --dbpath /tmp/pgdg/db --import "$KEY" \
+ && rpm --dbpath /tmp/pgdg/db --checksig "$ssh_rpm" "$br_rpm" \
+ && cd / \
  && mark=$(python3 /tmp/pin-install-time.py mark) \
- && dnf install -y --setopt=logdir=/tmp/dnf-log --setopt=*.countme=0 \
-      "https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-${RPM_ARCH}/pgdg-libssh2-${PGDG_LIBSSH2_VERSION}-1PGDG.${PGBACKREST_RHEL_SUFFIX}.${RPM_ARCH}.rpm" \
-      "https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-${RPM_ARCH}/pgbackrest-${PGBACKREST_VERSION}-1PGDG.${PGBACKREST_RHEL_SUFFIX}.${RPM_ARCH}.rpm" \
+ && dnf install -y --setopt=logdir=/tmp/dnf-log --setopt=*.countme=0 "/tmp/pgdg/$ssh_rpm" "/tmp/pgdg/$br_rpm" \
+ && rm -rf /tmp/pgdg \
  && mkdir -p /etc/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest \
  && chown -R postgres:postgres /var/log/pgbackrest /var/spool/pgbackrest /etc/pgbackrest \
  && dnf clean all --setopt=logdir=/tmp/dnf-log \
