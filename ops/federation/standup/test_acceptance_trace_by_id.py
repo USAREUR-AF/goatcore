@@ -392,7 +392,7 @@ class TraceById(unittest.TestCase):
         launcher = os.path.join(self.tmp, "launcher-ours")
         with open(launcher, "w") as f:
             f.write("#!/bin/sh\necho \"$@\" >> '%s'\nexit 1\n" % calls)
-        os.chmod(launcher, 0o755)
+        os.chmod(launcher, 0o700)  # the owner runs it; nobody else needs to read it
         trace_file = os.path.join(self.tmp, "x.json")
         for extra, named in (
                 ({"FED_ACCEPTANCE_TRACE": "deferred", "FED_PROBE_LAUNCHER_OURS": launcher}, "FED_PROBE_LAUNCHER_OURS"),
