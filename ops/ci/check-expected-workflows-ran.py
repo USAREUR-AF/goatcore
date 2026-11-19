@@ -457,6 +457,7 @@ def self_test() -> int:
         event_runs({"paths": ["a"], "tags": ["v*"]}, "main", ["a"])
         failures.append("unknown filter key: no error")
     except ReadError:
+        # Refusing the unsupported filter is the expected outcome of this case.
         pass
 
     for f in failures:

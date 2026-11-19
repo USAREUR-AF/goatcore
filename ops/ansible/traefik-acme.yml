@@ -362,6 +362,10 @@
     # =====================================================================
     # 3. Render the dynamic config (router for the public mgmt FQDN)
     # =====================================================================
+    # mesh-source-allowlist admits the mgmt network's own subnet, read live.
+    - name: Read the mgmt Docker network's subnet
+      ansible.builtin.import_tasks: tasks/mgmt-network-subnet.yml
+
     - name: Render Traefik dynamic config for the mgmt routers
       ansible.builtin.template:
         src: traefik-acme/mgmt-dynamic.yml.j2

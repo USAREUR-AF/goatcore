@@ -18,6 +18,7 @@ name: test-coverage-wired
 # before its verdict on the real tree is trusted.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       # a new/changed module manifest can introduce an unwired suite

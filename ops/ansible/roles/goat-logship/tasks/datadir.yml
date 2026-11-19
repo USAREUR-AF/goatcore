@@ -1,0 +1,77 @@
+---
+# Directories the collector or the Docker API proxy use (GHSA-x44g). Included
+# from tasks/deploy.yml; tests/datadir.sh runs it against scratch dirs.
+#
+# The collector can write everything under logship_data_root, so a
+# compromised collector can plant symlinks there. Every task below runs as
+# root, so none of them follows a link (follow: false): with Ansible's default
+# follow: true, a recursive chown here would chown and chmod the target of a
+# planted link, for example /etc, on the next deploy.
+
+- name: goat-logship | the data dir as it is now
+  ansible.builtin.stat:
+    path: "{{ logship_data_root }}"
+    follow: false
+    get_checksum: false
+  register: _logship_data_stat
+
+# The hand-over walks the tree only when the dir is not yet the collector's
+# (a data dir an earlier, root-run collector wrote: checkpoints, disk buffer,
+# the mock tail), or when a collector still ran as root this run. Once handed
+# over, later deploys touch the top directory only.
+- name: goat-logship | does the data dir still need handing over
+  ansible.builtin.set_fact:
+    _logship_data_handover: >-
+      {{ (_logship_data_stat.stat.exists
+          and ((_logship_data_stat.stat.uid | string) != (_logship_uid | string)
+               or (_logship_data_stat.stat.gid | string) != (_logship_gid | string)))
+         or ((_logship_running_user | default({})).rc | default(1) == 0
+             and ((_logship_running_user.stdout | default('x') | trim) in ['', '0', 'root', '0:0', 'root:root'])) }}
+
+- name: Ensure Vector data dir exists (data_dir + disk buffer)
+  ansible.builtin.file:
+    path: "{{ logship_data_root }}"
+    state: directory
+    owner: "{{ _logship_uid }}"
+    group: "{{ _logship_gid }}"
+    mode: "0750"
+    follow: false
+
+- name: Hand the data dir written by a root-run collector over to the collector user
+  ansible.builtin.file:
+    path: "{{ logship_data_root }}"
+    state: directory
+    owner: "{{ _logship_uid }}"
+    group: "{{ _logship_gid }}"
+    recurse: true
+    follow: false
+  when: _logship_data_handover | bool
+
+- name: Ensure mock OCSF sink dir exists (mock mode)
+  ansible.builtin.file:
+    path: "{{ logship_mock_sink_dir }}"
+    state: directory
+    owner: "{{ _logship_uid }}"
+    group: "{{ _logship_gid }}"
+    mode: "0750"
+    follow: false
+  when: logship_durable_sink_mode == 'mock'
+
+# The proxy's unix socket lives here: owned by the proxy's user, group
+# Vector's, 0710, so only those two can reach the socket inside. Vector
+# mounts it read-only; nothing the collector can write.
+- name: Ensure the Docker API proxy's socket dir exists
+  ansible.builtin.file:
+    path: "{{ logship_docker_proxy_socket_dir }}"
+    state: directory
+    owner: "{{ _logship_dproxy_uid }}"
+    group: "{{ _logship_gid }}"
+    mode: "0710"
+    follow: false
+  when: logship_docker_sources_enabled | bool
+
+- name: No Docker API proxy socket dir when no source reads container stdout
+  ansible.builtin.file:
+    path: "{{ logship_docker_proxy_socket_dir }}"
+    state: absent
+  when: not (logship_docker_sources_enabled | bool)

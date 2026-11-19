@@ -17,7 +17,11 @@
 #                        its .sha256
 #   SHA256SUMS           every asset's digest, the book's included
 #   SHA256SUMS.cosign-bundle  a keyless cosign signature over SHA256SUMS, made
-#                        under this workflow's GitHub OIDC identity
+#                        under this workflow's GitHub OIDC identity (the legacy
+#                        cosign bundle, which every released client reads)
+#   SHA256SUMS.sigstore.json  the same signature in the Sigstore bundle format,
+#                        which cosign can verify offline against a pinned trust
+#                        root (goat update with GOAT_SIGSTORE_TRUSTED_ROOT)
 #
 # The names are the ones `goat update` and `goatbuilder update` fetch
 # (crates/goat-selfupdate: <bin>-<os>-<arch>, with .exe on Windows).
@@ -377,20 +381,41 @@ jobs:
           (cd artifacts && sha256sum -c ../SHA256SUMS)
           { echo '```'; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: sigstore/cosign-installer@v3
-      - name: Sign SHA256SUMS, then verify it the way goatbuilder update does
+      - name: Sign SHA256SUMS in both bundle formats, then verify each the way goat update does
+        # Two signatures over the same SHA256SUMS: the legacy cosign bundle
+        # (SHA256SUMS.cosign-bundle; every released goat and goatbuilder reads
+        # it) and the Sigstore bundle format (SHA256SUMS.sigstore.json; the only
+        # one cosign checks against a pinned trust root, offline). The legacy
+        # line is the command this step has always run, so the cosign the
+        # installer provides keeps writing the legacy format there.
+        # On a tag run each is checked against the exact identity `goat update`
+        # requires (this workflow at this tag, crates/goat-cli/src/cmd/update.rs),
+        # so a certificate SAN that clients would refuse fails the release here,
+        # before anything is published. Any other run (workflow_dispatch, which
+        # publishes nothing) keeps the repository-wide check.
         run: |
           set -euo pipefail
           cosign sign-blob --yes --bundle SHA256SUMS.cosign-bundle SHA256SUMS
-          cosign verify-blob --bundle SHA256SUMS.cosign-bundle \
-            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            SHA256SUMS
+          cosign sign-blob --yes --new-bundle-format --bundle SHA256SUMS.sigstore.json SHA256SUMS
+          grep -q '"base64Signature"' SHA256SUMS.cosign-bundle \
+            || { echo "::error::SHA256SUMS.cosign-bundle is not a legacy cosign bundle; released clients cannot read it"; exit 1; }
+          grep -q '"mediaType"' SHA256SUMS.sigstore.json \
+            || { echo "::error::SHA256SUMS.sigstore.json is not a Sigstore bundle"; exit 1; }
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            identity=(--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/_release-binary.yml@${GITHUB_REF}")
+          else
+            identity=(--certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/")
+          fi
+          issuer=(--certificate-oidc-issuer https://token.actions.githubusercontent.com)
+          cosign verify-blob --bundle SHA256SUMS.cosign-bundle "${identity[@]}" "${issuer[@]}" SHA256SUMS
+          cosign verify-blob --new-bundle-format --bundle SHA256SUMS.sigstore.json "${identity[@]}" "${issuer[@]}" SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.bin }}-checksums
           path: |
             SHA256SUMS
             SHA256SUMS.cosign-bundle
+            SHA256SUMS.sigstore.json
           if-no-files-found: error
           retention-days: 30
 

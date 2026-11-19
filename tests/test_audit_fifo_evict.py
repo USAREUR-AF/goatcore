@@ -234,5 +234,79 @@ class Eviction(unittest.TestCase):
         self.assertIs(defaults["audit_fifo_evict_enabled"], False)
 
 
+class StorageTLS(unittest.TestCase):
+    """GHSA-9qmp follow-up: the evictor reaches the object store over HTTPS and trusts the site CA."""
+
+    def argv_for(self, config):
+        seen = {}
+        def fake_popen(argv, **kwargs):
+            seen["argv"] = argv
+            raise OSError("stop after capturing argv")
+        with patch.object(engine.subprocess, "Popen", side_effect=fake_popen):
+            with self.assertRaises(engine.Failure):
+                engine.MC(config).command("du", "--versions", "evictor/audit-integrity")
+        return seen["argv"]
+
+    def base(self, **extra):
+        config = dict(env_file="/opt/audit-fifo-evict/evictor.env", mc_image="fixture/mc")
+        config.update(extra)
+        return config
+
+    def test_https_client_trusts_the_site_ca(self):
+        argv = self.argv_for(self.base(ca_path="/etc/goat/storage-ca/ca.crt"))
+        self.assertIn("/etc/goat/storage-ca/ca.crt:/mc-config/certs/CAs/storage-ca.crt:ro", argv)
+        # measured against a real TLS MinIO: without a writable config dir mc fails "Unable to save new mc config"
+        self.assertIn("/mc-config:rw,mode=1777", argv)
+        self.assertEqual(argv[argv.index("/mc-config:rw,mode=1777") - 1], "--tmpfs")
+        image = argv.index("fixture/mc")
+        self.assertEqual(argv[image + 1:image + 4], ["--config-dir", "/mc-config", "--json"])
+        self.assertNotIn("--insecure", argv)
+
+    def test_plain_http_client_mounts_no_ca(self):
+        argv = self.argv_for(self.base())
+        self.assertFalse(any("/mc-config" in a for a in argv))
+        self.assertNotIn("--insecure", argv)
+
+    def test_validate_refuses_a_relative_ca_path(self):
+        config = dict(bucket="audit-integrity", alias="evictor", quota_gib=1, high_pct=90, low_pct=80,
+                      batch_hours=6, max_pass_pct=25, trail_prefix="ops/eviction", ca_path="ca.crt")
+        with self.assertRaises(engine.Failure):
+            engine.validate(config)
+
+    def render(self, name, **values):
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(ROOT / "ops/ansible/roles/audit-fifo-evict/templates")),
+                                 undefined=jinja2.StrictUndefined)
+        return env.get_template(name).render(ansible_managed="managed", **values)
+
+    def test_credential_file_carries_the_https_endpoint(self):
+        out = self.render("evictor.env.j2", audit_fifo_evict_alias="evictor",
+                          audit_fifo_evict_endpoint="https://storage.example.test:9000",
+                          audit_fifo_evict_access_key="goat-audit-evictor", audit_fifo_evict_secret="s3cr3t")
+        self.assertIn("MC_HOST_evictor=https://goat-audit-evictor:s3cr3t@storage.example.test:9000", out)
+        self.assertNotIn("http://", out.split("MC_HOST_evictor=", 1)[1])
+
+    def test_credential_file_keeps_plain_http_when_tls_is_off(self):
+        out = self.render("evictor.env.j2", audit_fifo_evict_alias="evictor",
+                          audit_fifo_evict_endpoint="http://127.0.0.1:9000",
+                          audit_fifo_evict_access_key="goat-audit-evictor", audit_fifo_evict_secret="s3cr3t")
+        self.assertIn("MC_HOST_evictor=http://goat-audit-evictor:s3cr3t@127.0.0.1:9000", out)
+
+    def test_defaults_follow_minio_tls_enabled(self):
+        import jinja2
+        defaults = yaml.safe_load((ROOT / "ops/ansible/roles/audit-fifo-evict/defaults/main.yml").read_text())
+        env = jinja2.Environment()
+        env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).strip().lower() in ("true", "yes", "1")
+        def resolve(key, **facts):
+            return env.from_string(str(defaults[key])).render(**facts)
+        on = dict(minio_tls_enabled=True, minio_s3_endpoint="https://storage.example.test:9000",
+                  minio_client_ca_path="/etc/goat/storage-ca/ca.crt")
+        self.assertEqual(resolve("audit_fifo_evict_endpoint", **on), "https://storage.example.test:9000")
+        self.assertEqual(resolve("audit_fifo_evict_ca_path", **on), "/etc/goat/storage-ca/ca.crt")
+        off = dict(minio_tls_enabled=False, minio_s3_endpoint="https://storage.example.test:9000")
+        self.assertEqual(resolve("audit_fifo_evict_endpoint", **off), "http://127.0.0.1:9000")
+        self.assertEqual(resolve("audit_fifo_evict_ca_path", **off), "")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 package audittail
 
 import (
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -8,9 +9,11 @@ import (
 	"time"
 )
 
-func testPresigner() *Presigner {
+func testPresigner(t *testing.T) *Presigner {
+	srv := httptest.NewTLSServer(nil)
+	t.Cleanup(srv.Close)
 	return NewPresigner(Config{
-		Endpoint:     "http://198.18.0.5:9000",
+		Endpoint: "https://198.18.0.5:9000", CABundle: fixtureCA(t, srv),
 		Bucket:       "audit-integrity",
 		Region:       "us-east-1",
 		AccessKey:    "AKIATEST",
@@ -20,8 +23,8 @@ func testPresigner() *Presigner {
 }
 
 func TestPresignGetURLShape(t *testing.T) {
-	p := testPresigner()
-	raw, err := p.PresignGet("site-A/2026/06/11/13/000-1.ndjson", 5*time.Minute)
+	p := testPresigner(t)
+	raw, err := p.PresignGet("site-A/2026/06/11/13/1793000000000-1-v2-meta.ndjson", 5*time.Minute)
 	if err != nil {
 		t.Fatalf("PresignGet: %v", err)
 	}
@@ -29,11 +32,11 @@ func TestPresignGetURLShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse presigned url %q: %v", raw, err)
 	}
-	if u.Scheme != "http" || u.Host != "198.18.0.5:9000" {
+	if u.Scheme != "https" || u.Host != "198.18.0.5:9000" {
 		t.Errorf("unexpected scheme/host: %s://%s", u.Scheme, u.Host)
 	}
 	// Path-style: /<bucket>/<key>, slashes preserved (not %2F).
-	wantPath := "/audit-integrity/site-A/2026/06/11/13/000-1.ndjson"
+	wantPath := "/audit-integrity/site-A/2026/06/11/13/1793000000000-1-v2-meta.ndjson"
 	if u.Path != wantPath {
 		t.Errorf("path = %q, want %q", u.Path, wantPath)
 	}
@@ -66,12 +69,12 @@ func TestPresignGetIsDeterministicWithinASecond(t *testing.T) {
 	// Two signs in the same second produce the same signature (the date
 	// stamp is second-resolution). Guards against accidental nondeterminism
 	// like map iteration leaking into the canonical query.
-	p := testPresigner()
-	a, err := p.PresignGet("site-A/x.ndjson", time.Minute)
+	p := testPresigner(t)
+	a, err := p.PresignGet("site-A/2026/06/11/13/1793000000000-1-v2-meta.ndjson", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := p.PresignGet("site-A/x.ndjson", time.Minute)
+	b, err := p.PresignGet("site-A/2026/06/11/13/1793000000000-1-v2-meta.ndjson", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,9 +86,9 @@ func TestPresignGetIsDeterministicWithinASecond(t *testing.T) {
 }
 
 func TestPresignDifferentKeysDifferentSignatures(t *testing.T) {
-	p := testPresigner()
-	a, _ := p.PresignGet("site-A/a.ndjson", time.Minute)
-	b, _ := p.PresignGet("site-A/b.ndjson", time.Minute)
+	p := testPresigner(t)
+	a, _ := p.PresignGet("site-A/2026/06/11/13/1793000000001-1-v2-meta.ndjson", time.Minute)
+	b, _ := p.PresignGet("site-A/2026/06/11/13/1793000000002-1-v2-meta.ndjson", time.Minute)
 	if mustSig(t, a) == mustSig(t, b) {
 		t.Errorf("different keys produced the same signature")
 	}
@@ -101,8 +104,8 @@ func mustSig(t *testing.T, raw string) string {
 }
 
 func TestS3EscapePathKeepsSlashes(t *testing.T) {
-	got := s3EscapePath("site-A/2026/06/11/13/000-1.ndjson")
-	if got != "site-A/2026/06/11/13/000-1.ndjson" {
+	got := s3EscapePath("site-A/2026/06/11/13/1793000000000-1-v2-meta.ndjson")
+	if got != "site-A/2026/06/11/13/1793000000000-1-v2-meta.ndjson" {
 		t.Errorf("escape mangled a safe key: %q", got)
 	}
 	// A space in a segment is percent-encoded; slashes stay.
@@ -146,7 +149,7 @@ func TestPresignerEnabledGate(t *testing.T) {
 	if NewPresigner(Config{Endpoint: "http://x:9000", Bucket: "b"}).Enabled() {
 		t.Error("missing credentials should be disabled")
 	}
-	if !testPresigner().Enabled() {
+	if !testPresigner(t).Enabled() {
 		t.Error("fully configured presigner should be enabled")
 	}
 }

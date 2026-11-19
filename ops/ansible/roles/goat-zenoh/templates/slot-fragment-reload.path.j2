@@ -1,0 +1,11 @@
+# Rendered by ops/ansible/roles/goat-zenoh/. Do not edit on host.
+# GHSA-rr3p: run the slot-fragment reload when the portal rewrites the config.
+[Unit]
+Description=Watch {{ goat_zenoh_config_path }} for slot-fragment changes
+
+[Path]
+PathChanged={{ goat_zenoh_config_path }}
+Unit={{ zenoh_stack }}-slot-fragment-reload.service
+
+[Install]
+WantedBy=multi-user.target

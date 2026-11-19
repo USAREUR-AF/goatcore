@@ -28,6 +28,14 @@
 //   3. the submit control is NOT disabled synchronously (which would drop
 //      method=password from the form body and break every login)
 //   4. the control IS disabled after the macrotask
+//
+// And the cases where nothing was sent, which must never leave the page stuck
+// (a faded button and no POST leaving the browser):
+//   5. a script-dispatched submit event (isTrusted false: a password manager's
+//      auto-submit fires one before pressing the button) is neither blocked nor
+//      counted, so the real submit after it goes through
+//   6. a submit another handler cancelled releases the form
+//   7. a form still on screen after the release delay is released
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -45,29 +53,44 @@ const guard = m[1];
 function page(includes) {
   const listeners = [];
   const timers = [];
-  const button = { _a: {}, style: {}, setAttribute(n, v) { this._a[n] = v; } };
+  const button = {
+    _a: {}, style: {},
+    setAttribute(n, v) { this._a[n] = v; },
+    removeAttribute(n) { delete this._a[n]; },
+  };
   const form = {
     tagName: "FORM",
     _attrs: {},
     hasAttribute(n) { return n in this._attrs; },
     setAttribute(n, v) { this._attrs[n] = v; },
+    removeAttribute(n) { delete this._attrs[n]; },
     querySelectorAll() { return [button]; },
   };
-  const window = { setTimeout: (fn) => timers.push(fn) };
+  const window = { setTimeout: (fn, ms) => timers.push({ fn, ms: ms || 0 }) };
   const document = { addEventListener: (t, fn) => { if (t === "submit") listeners.push(fn); } };
   const ctx = vm.createContext({ window, document });
   for (let i = 0; i < includes; i++) vm.runInContext(guard, ctx);
 
-  const submit = () => {
+  // trusted: fired by the browser. cancelBy: another handler that cancels it.
+  const submit = ({ trusted = true, cancelledByPage = false } = {}) => {
     const ev = {
-      target: form, prevented: false, stopped: false,
-      preventDefault() { this.prevented = true; },
+      target: form, isTrusted: trusted, defaultPrevented: false, stopped: false,
+      get prevented() { return this.defaultPrevented; },
+      preventDefault() { this.defaultPrevented = true; },
       stopImmediatePropagation() { this.stopped = true; },
     };
     for (const fn of listeners) { if (ev.stopped) break; fn(ev); }
+    if (cancelledByPage && !ev.stopped) ev.preventDefault();
     return ev;
   };
-  return { submit, button, flush: () => timers.splice(0).forEach((fn) => fn()), listeners };
+  // Run the macrotasks: `immediate` only the 0 ms ones, otherwise all of them.
+  const flush = (immediate = true) => {
+    const due = timers.filter((t) => !immediate || t.ms === 0);
+    for (const t of due) timers.splice(timers.indexOf(t), 1);
+    due.sort((a, b) => a.ms - b.ms).forEach((t) => t.fn());
+  };
+  const disabled = () => button._a["aria-disabled"] === "true";
+  return { submit, button, form, flush, disabled, listeners };
 }
 
 let ok = true;
@@ -80,15 +103,48 @@ for (const [label, includes] of [
   console.log(label);
   const p = page(includes);
   const first = p.submit();
-  const disabledSync = p.button._a["aria-disabled"] === "true";
+  const disabledSync = p.disabled();
   const second = p.submit();
   p.flush();
-  const disabledAfter = p.button._a["aria-disabled"] === "true";
   check("one listener registered, however many includes", p.listeners.length === 1);
   check("first submit allowed through", first.prevented === false);
   check("second submit PREVENTED", second.prevented === true);
   check("control NOT disabled synchronously", disabledSync === false);
-  check("control disabled after the macrotask", disabledAfter === true);
+  check("control disabled after the macrotask", p.disabled() === true);
+}
+
+console.log("script-dispatched submit event, then the real submit (password manager auto-submit)");
+{
+  const p = page(1);
+  const synthetic = p.submit({ trusted: false });
+  p.flush();
+  check("script event not blocked", synthetic.prevented === false);
+  check("script event does not mark the form", !p.form.hasAttribute("data-dlf-submitted") && !p.disabled());
+  const real = p.submit();
+  check("real submit after it goes through", real.prevented === false);
+  check("a second real submit is still PREVENTED", p.submit().prevented === true);
+}
+
+console.log("first submit cancelled by another handler, then pressed again");
+{
+  const p = page(1);
+  p.submit({ cancelledByPage: true });
+  p.flush();
+  check("form released after a cancelled submit", !p.form.hasAttribute("data-dlf-submitted"));
+  check("control left enabled", !p.disabled());
+  check("next submit goes through", p.submit().prevented === false);
+}
+
+console.log("submit sent but the page never left (lost on the network)");
+{
+  const p = page(1);
+  p.submit();
+  p.flush();
+  check("control disabled while the response is awaited", p.disabled());
+  p.flush(false);
+  check("form released after the release delay", !p.form.hasAttribute("data-dlf-submitted"));
+  check("control re-enabled", !p.disabled() && p.button.style.pointerEvents === "" && p.button.style.opacity === "");
+  check("next submit goes through", p.submit().prevented === false);
 }
 
 console.log(ok ? "guard behaviour: OK" : "guard behaviour: BROKEN");
