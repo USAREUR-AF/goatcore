@@ -17,7 +17,7 @@ goat has to exchange tracks with two kinds of outside system. Systems that speak
 (Cursor on Target), a SAPIENT controller or an ASTERIX consumer, are reached through goat-transformers, the library that
 converts every message format. Systems built by a vendor, reached through that vendor's own software kit, are reached through
 one shared repository of vendor bridges, where each vendor's bridge is its own package. open-entity-gateway becomes that
-repository. Nothing relays tracks from one of these to another.
+repository. A receiver's format is written once, and nothing adds a hop that neither converts nor delivers.
 
 ## Context
 
@@ -43,9 +43,10 @@ vendor contributed a bridge; an engineer of one of the two vendors has since con
    keeps the separation ADR 0217 wanted.
 3. **A bridge reads goat's shared model.** When a bridge needs a data model, it takes the shared model from goat-transformers;
    the repository defines none of its own.
-4. **No relays.** A bridge connects one vendor system to the fabric. Nothing republishes another component's output so that a
-   third component can deliver it. An open-standard receiver off the mesh is reached through octo-pod's own release and egress,
-   from whatever publishes the data.
+4. **One conversion, one delivery.** A receiver's format is written once: by the producer (open-billie encodes at the
+   node; first-bite's transforms write CoT), or by goat-transformers converting tracks on the fabric (`goat-xf-pipe-zenoh`).
+   octo-pod delivers a key unchanged to a receiver off the mesh. No component adds a hop that neither converts nor delivers,
+   and no second conversion path is built beside goat-transformers.
 5. **Python by exception.** Both vendor SDKs are Python, so the bridges are Python, as an exception to ADR 0112, which gives
    long-running data-path programs to Rust. A bridge for a vendor whose SDK is in another language uses that language.
 6. **Nothing is removed before its replacement passes the same test.** The gateway's open-standard senders and encoders leave
@@ -54,7 +55,8 @@ vendor contributed a bridge; an engineer of one of the two vendors has since con
 
 ## Consequences
 
-- The gateway's `fabric` destination and its `docs/design/track-egress.md` are withdrawn. Documentation elsewhere that
+- The gateway's `fabric` destination, a second conversion path beside goat-transformers, and its
+  `docs/design/track-egress.md` are withdrawn. Documentation elsewhere that
   describes tracks leaving goat through the gateway is corrected.
 - goat-transformers gains the TLS, SAPIENT-session and presence-event transports. Until it has them, the gateway's own senders
   stay and keep working.
