@@ -115,7 +115,8 @@ export E2E_ORIGIN="$ORIGIN"; export E2E_GH_STATE="$WORK/gh-state"; rm -rf "$E2E_
 export PATH="$HERE/stubs:$PATH"
 export GOAT_RC_ROLE_CHECK=0 GOAT_MESH_PROBE=0 GOAT_SKIP_GHCR_PARITY=1 GOAT_ANSIBLE_TRUNK_REMOTE=origin
 export GOAT_DEPLOY_LOG_DIR="$RECORD"
-unset GCP_HEIMDALL_OP_ITEM 2>/dev/null || true
+# The run starts without any GCP_*OP_ITEM variable from the caller's shell.
+for var in $(compgen -v | grep -E '^GCP_([A-Z0-9_]+_)?OP_ITEM$' || true); do unset "$var"; done
 
 # --- hosts, registry, images --------------------------------------------------------
 declare -a HOST_ARGS=()

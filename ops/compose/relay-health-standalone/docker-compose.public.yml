@@ -108,7 +108,7 @@ services:
   #      open :8888 to the public internet, so mesh membership is the trust
   #      boundary (same as Phase 1, unauthenticated). Both serve the same www.
   relay-health:
-    image: ${RELAY_HEALTH_NGINX_IMAGE:-nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10}
+    image: ${RELAY_HEALTH_NGINX_IMAGE:-nginx:1.30.6-alpine@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311}
     container_name: relay-health
     restart: unless-stopped
     ports:

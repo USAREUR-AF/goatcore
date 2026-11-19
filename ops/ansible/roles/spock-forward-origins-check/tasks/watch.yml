@@ -1,0 +1,40 @@
+---
+# The spock-forward-origins timer: every spock_forward_origins_watch_interval
+# it writes spock_subscription_forward_origins{datname,subscription_name} 0|1
+# for every subscription on this host's Postgres to node-exporter's textfile
+# directory. The alert SpockSubscriptionForwardOriginsSet
+# (ops/compose/mgmt-host/monitoring/rules/spock-forward-origins.yml) reads it.
+
+- name: "spock-forward-origins | ensure node-exporter's textfile directory exists"
+  ansible.builtin.file:
+    path: "{{ spock_forward_origins_metrics_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "spock-forward-origins | install the script"
+  ansible.builtin.copy:
+    src: spock-forward-origins.sh
+    dest: /usr/local/sbin/spock-forward-origins.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "spock-forward-origins | install the service and timer units"
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - spock-forward-origins.service
+    - spock-forward-origins.timer
+
+- name: "spock-forward-origins | enable and start the timer"
+  ansible.builtin.systemd_service:
+    name: spock-forward-origins.timer
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -272,6 +272,20 @@ entries:
     read: docs/design/platform-admin-lifecycle.md
     exit: 4
 
+  - code: E_SLOT_SCOPE
+    tool: goat
+    title: the request names a slot this profile does not own
+    what: "the portal refused a write under a slot (HTTP 403 scope mismatch): the topic key's first segment is not this profile's slot, and this profile is not that machine's recorded custodian. Nothing changed."
+    causes:
+      - the topic key starts with a machine's slot and the command ran in the person's or org's own context
+      - the slot belongs to someone else
+    fixes:
+      - "goat profile show   (the publish anchor is this profile's slot)"
+      - "goat profile init <machine .cbor> --context <machine>, then goat --context <machine> topic create …"
+      - "ask the slot's owner or custodian; an operator key is not the fix"
+    read: docs/adr/1096-delegated-machine-enrollment.md
+    exit: 4
+
   - code: E_TOPIC_CONFLICT
     tool: goat
     title: the topic already exists
@@ -2537,7 +2551,7 @@ entries:
   - code: GB-239
     tool: goatbuilder
     title: a flag that does not apply to the federation verb it was given to
-    what: "The six federation verbs (init, lint, compose, diff, verify, apply) read only the files they are named and the party's context, and run for real. --mock, -C/--repo (except for init --over-ssh) and -o/--output choose things they do not read; --over-ssh and its host flags belong to init alone. A run with one where it does not apply is refused rather than the flag ignored."
+    what: "The six federation verbs (init, lint, compose, diff, verify, apply) read only the files they are named and the party's context, and run for real. --mock, -C/--repo (except for init --over-ssh) and -o/--output choose things they do not read; --over-ssh and its host flags belong to init alone. A run with one where it does not apply is refused rather than the flag ignored. A flag that belongs to the verb but needs another with it (a host flag on init without --over-ssh) is GB-325."
     causes:
       - "--mock, -C/--repo or -o/--output given to a federation verb"
       - "--over-ssh or its host flags given to a verb other than init, to a plan or to a peering run"
@@ -3650,6 +3664,122 @@ entries:
       - "^GB-307: "
       - "declares converger: pull-agent \\("
 
+  - code: GB-320
+    tool: goatbuilder
+    title: a program the run starts could not be started
+    what: "A goatbuilder verb runs its phases and helpers as programs: bash for a phase's command, python3 for a step written in Python (the preflight, the slot recheck), and the helpers a step names (the core's candidate planner). The operating system refused to start one: it is not installed, not on PATH, or not executable. Nothing of that step ran."
+    causes:
+      - "bash or python3 is not installed on the machine goatbuilder runs on, or not on PATH"
+      - "a helper the step names is missing from the checkout, or has lost its executable bit"
+    fixes:
+      - "command -v bash python3   (install what is missing, then run the same command again)"
+      - "git -C <checkout> status   (restore a helper the checkout is missing)"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-320: "
+      - "could not start (bash|python3)"
+
+  - code: GB-321
+    tool: goatbuilder
+    title: a file a step of this run wrote is missing or is not what it wrote
+    what: "A step of a federate run leaves its result in the working folder for the next one to read: phase 1's preflight result and the slot recheck's, the agreement, a back-out host record, the rotation id, an edge result on a two-driver peering. The file the next step read was not there, was not JSON, or did not hold what that step writes (another peering's name, a malformed id). Nothing after it ran."
+    causes:
+      - "the step that writes it stopped before writing it (its own failure is above, or in its log)"
+      - "the file was edited, replaced or removed by hand between the steps"
+      - "a different peering's working folder was named (--work, FED_WORK)"
+    fixes:
+      - "run the step that writes it again (the message names the file; its phase is the one before)"
+      - "remove a file the message says is malformed, then run the same command again"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-321: "
+
+  - code: GB-322
+    tool: goatbuilder
+    title: goatbuilder reached a state its own code rules out
+    what: "goatbuilder checked one of its own assumptions and found it broken: a plan whose shape the code that builds it no longer matches, a verb dispatched to a place that never takes it, a rotation marked built with no run. No input of yours can cause this; it is a defect in this build. Nothing after the check ran."
+    causes:
+      - "a defect in this goatbuilder build"
+    fixes:
+      - "report it with the run record the run printed (goatbuilder runs show <id>) and the exact command"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-322: "
+
+  - code: GB-323
+    tool: goatbuilder
+    title: a file the run writes outside the working folder cannot be written
+    what: "Some steps write outside the working folder: the back-out deletes the partner record it generated from the checkout, and init --side edge writes the edge half to the file --half-out names. That file could not be written or removed."
+    causes:
+      - "the checkout or the folder --half-out names is not writable by this user"
+      - "the disk is full, or the folder is on a read-only mount"
+    fixes:
+      - "check the folder the message names is writable, then run the same command again"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-323: "
+
+  - code: GB-324
+    tool: goatbuilder
+    title: a setting in the environment has a value goatbuilder does not take
+    what: "A goatbuilder setting read from the environment (a FED_* variable) has a value outside the ones it takes; the message names the variable and the values it takes. Nothing ran."
+    causes:
+      - "the variable was set by hand, or by an older script, to a value this build does not know"
+    fixes:
+      - "unset the variable, or set it to one of the values the message names"
+    read: docs/design/goatbuilder.md
+    exit: 2
+    matches:
+      - "^GB-324: "
+      - "FED_MEASURE is here or ssh"
+
+  - code: GB-325
+    tool: goatbuilder
+    title: flags given to a federate stage or verb do not go together, or one they need is missing
+    what: "A federate stage was given flags it cannot take together (--accept with --recheck, --recheck with --mock or --no-live, --side without the files that side reads or writes), a flag without the one it needs (--work for status without the partner, init --over-ssh without -C, a host flag such as --edge-host or --side on init without --over-ssh), or a flag naming something the saved plan does not hold (--accept <check>), or a value the saved plan was made with differently (--edge-group or --as on a recheck). Nothing ran."
+    causes:
+      - "a command line put together from two different runs' flags"
+    fixes:
+      - "run the stage with the flags the message names, apart where it says to run them apart"
+      - "goatbuilder federate <stage or verb> --help"
+    read: docs/design/goatbuilder.md
+    exit: 2
+    matches:
+      - "^GB-325: "
+
+  - code: GB-315
+    tool: goatbuilder
+    title: a program a step ran gave output or an exit goatbuilder cannot use
+    what: "A step of a federate run started a program and reads its answer: the core's candidate planner prints a plan on stdout, and phase 1's preflight exits and writes a result whose ready verdict must agree with its exit. The program ran, but what it gave cannot be used: no plan on stdout, or an exit and a result that disagree or cannot be read. Its own words are in the message. Nothing after it ran."
+    causes:
+      - "the program failed before it gave its answer (its stderr is in the message)"
+      - "the program is a different version from the one this goatbuilder expects"
+    fixes:
+      - "read the program's own words in the message, fix what it names, then run the same command again"
+      - "git -C <checkout> status   (a helper the checkout changed or is missing)"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-315: "
+
+  - code: GB-316
+    tool: goatbuilder
+    title: a confirmation could not be read from the terminal
+    what: "A federate stage asked a person to type a confirmation (the back-out asks for the partner id) and reading the answer from the terminal failed. Nothing was changed."
+    causes:
+      - "the terminal closed, or stdin is not readable"
+    fixes:
+      - "run the same command again at a terminal"
+      - "pass --yes where the stage takes it, for a run without a terminal"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-316: "
+
   - code: GB-278
     tool: goatbuilder
     title: the edge driver's checkout or carried files are not the controller's
@@ -3841,6 +3971,66 @@ entries:
     matches:
       - "goat-peering-edge refuses \\(GB-343\\)"
       - "goat-peering-edge \\(GB-343\\)"
+  - code: GB-351
+    tool: goatbuilder
+    title: a Spock subscription has forward_origins set, which in a mesh replicates in a loop
+    what: "A Spock subscription, or the setting that creates them, has forward_origins other than empty or 'none'. In a mesh of three or more sites such a subscription passes each change on to the next site, which passes it back, without end, while every subscription still reads replicating and nothing is logged. The spock-forward-origins-check role stopped the run before spock-mesh-peering or ory-narrow-repset changed anything. The message names the setting, or each subscription as <host> <database>.<subscription>."
+    causes:
+      - "a site's group_vars set spock_mesh_forward_origins or ory_spock_forward_origins"
+      - "a subscription was created by hand with forward_origins := '{all}'"
+    fixes:
+      - "remove spock_mesh_forward_origins and ory_spock_forward_origins from the site's group_vars (both default to [])"
+      - "on the host and database named, run SELECT spock.sub_drop('<subscription>'); then run the playbook again, which creates it with forward_origins empty"
+    read: docs/design/spock-mesh-peering.md
+    exit: 2
+    matches:
+      - "GB-351 refusing to wire Spock: "
+
+  # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
+  # the read-only verbs over the peering directory (saltlick).
+  - code: GB-370
+    tool: goatbuilder
+    title: no usable peering directory URL or id was given
+    what: "goatbuilder federate directory needs the directory's base URL, from --url or FED_DIRECTORY_URL, as an http(s) URL; and a party or counterparty id as the directory accepts it, 2 to 16 of a-z, 0-9 and -. Nothing was requested."
+    causes:
+      - "neither --url nor FED_DIRECTORY_URL is set in this shell"
+      - "the URL has no https:// in front of it"
+      - "the id was typed with capitals, a slash or a dot"
+    fixes:
+      - "goatbuilder federate directory --url https://<directory host> ls"
+      - "goatbuilder federate directory ls lists the ids the directory holds; copy one from there"
+    read: docs/design/peering-directory-service.md
+    exit: 2
+    matches:
+      - "^no directory URL: pass --url or set FED_DIRECTORY_URL"
+
+  - code: GB-371
+    tool: goatbuilder
+    title: the peering directory did not answer, or what answered is not a peering directory
+    what: "goatbuilder federate directory asked the directory for /v1/version (and, on a release older than saltlick v0.6.0, /healthz) and got no answer, or an answer that is not a saltlick directory."
+    causes:
+      - "the URL is wrong, or names a host that is not the directory"
+      - "the directory is down or restarting (a deploy replaces its instance, a few minutes)"
+      - "this machine has no route to the internet, or a proxy refuses the host"
+    fixes:
+      - "curl -sS <url>/healthz should print {\"status\":\"ok\"}"
+      - "if you run the directory: its runbook says how to check the host and bring it back"
+    read: docs/design/peering-directory-service.md
+    exit: 1
+
+  - code: GB-372
+    tool: goatbuilder
+    title: the peering directory lacks a file a peering reads
+    what: "goatbuilder federate directory check (or show) found an item that is not there. Each missing item is one of two kinds, and the view names which. NOT HOSTED: the directory serves the route, and the party has not uploaded the file. ROUTE MISSING: the directory's release does not serve the route at all (a plain-text 404, or a route absent from its /v1/version list)."
+    causes:
+      - "NOT HOSTED: the party has not run phase 5 of the peering, which uploads its entry, CA, SPIFFE bundle and its package for the counterparty"
+      - "NOT HOSTED: the party used another id, or uploaded to the single package slot instead of the one for this counterparty"
+      - "ROUTE MISSING: the directory runs a release older than the one that added the route (per-counterparty packages need saltlick v0.5.0)"
+    fixes:
+      - "NOT HOSTED: ask the party to run phase 5 (goatbuilder federate <peering> --from 5 --to 5), then check again"
+      - "ROUTE MISSING: the directory's operator moves it to a release that serves the route; check which release runs with goatbuilder federate directory ls"
+    read: docs/design/peering-directory-service.md
+    exit: 1
 
   - code: X-ANSIBLE-001
     tool: ansible
@@ -4154,8 +4344,9 @@ entries:
       - "gh auth refresh -s read:packages"
     read: CONTRIBUTING.md
     matches:
-      - "HTTP 403"
       - "API rate limit exceeded"
+      - "HTTP 403: Resource not accessible"
+      - "api.github.com"
 
   - code: X-COSIGN-001
     tool: cosign
