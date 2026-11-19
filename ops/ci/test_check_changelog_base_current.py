@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """ops/ci/check-changelog-base-current.py on a git history of its own.
 
-A branch cut before a goatbuilder release and merged after it carries its entry
-rendered in the old Unreleased section; a three-way merge then puts those lines
-inside the release and leaves the entry file behind (14 Nov, after 0.7.0's fold).
-So a pull request that touches goatbuilder's changelog is refused while its base
-has a release its own changelog lacks: it is rebased first, and `changelog.py
-write` renders its entry under the new Unreleased."""
+A pull request that changes goatbuilder's CHANGELOG.md (a release, release notes)
+is refused while its base has a release its own CHANGELOG.md lacks: it is rebased
+first. One that only adds an entry file passes at any base: the Unreleased section
+is a fixed pointer line, so nothing of the entry is in CHANGELOG.md to mix into a
+release, and its file goes into the next release."""
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -72,17 +72,19 @@ class BaseCurrent(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("2.0.0", r.stderr)
         self.assertIn("rebase", r.stderr)
-        self.assertIn("changelog.py write", r.stderr)
+        self.assertIn("changelog.d", r.stderr)
 
-    def test_a_new_entry_file_alone_on_a_stale_branch_is_refused_too(self):
+    def test_a_new_entry_file_alone_on_a_stale_branch_passes(self):
         head = self.branch("stale-entry", self.cut, {ENTRY: "---\nheading: For someone deploying\ntitle: Added: x\n---\n\nx\n"})
-        self.assertEqual(self.run_check(head).returncode, 1)
+        r = self.run_check(head)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("entry files alone", r.stdout)
 
     def test_a_stale_branch_that_does_not_touch_the_changelog_passes(self):
         head = self.branch("stale-other", self.cut, {"README.md": "a repository, edited\n"})
         r = self.run_check(head)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("does not touch", r.stdout)
+        self.assertIn("does not change", r.stdout)
 
     def test_a_stale_branch_that_edits_only_the_entries_readme_passes(self):
         # The entries directory's README is not an entry (changelog.py NOT_ENTRIES): a
@@ -91,16 +93,16 @@ class BaseCurrent(unittest.TestCase):
         head = self.branch("stale-readme", self.cut, {"crates/goatbuilder/changelog.d/README.md": "how to write one\n"})
         r = self.run_check(head)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("does not touch", r.stdout)
+        self.assertIn("does not change", r.stdout)
 
-    def test_a_stale_branch_that_edits_the_readme_and_adds_an_entry_is_refused(self):
-        head = self.branch("stale-readme-entry", self.cut,
-                           {"crates/goatbuilder/changelog.d/README.md": "how to write one\n",
-                            ENTRY: "---\nheading: For someone deploying\ntitle: Added: x\n---\n\nx\n"})
+    def test_a_stale_branch_that_adds_an_entry_and_changes_the_changelog_is_refused(self):
+        head = self.branch("stale-entry-and-changelog", self.cut,
+                           {ENTRY: "---\nheading: For someone deploying\ntitle: Added: x\n---\n\nx\n",
+                            CL: UNRELEASED.format(body="a hand line\n", released="")})
         r = self.run_check(head)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("an-entry.md", r.stderr)
-        self.assertNotIn("README.md", r.stderr)
+        self.assertIn("CHANGELOG.md", r.stderr)
+        self.assertNotIn("an-entry.md", r.stderr)
 
     def test_a_branch_on_the_current_base_that_touches_the_changelog_passes(self):
         head = self.branch("current", "main", {ENTRY: "---\nheading: For someone deploying\ntitle: Added: x\n---\n\nx\n"})
@@ -145,10 +147,10 @@ class EntryOnlyMergedAfterARelease(unittest.TestCase):
         git(self._tmp.name, "init", "-q", "-b", "main", str(self.r))
         text = self.CHANGELOG_PY.read_text(encoding="utf-8")
         write(self.r, "ops/release/changelog.py", text)
-        ns = {}
-        exec(compile("\n".join(l for l in text.split("\n") if l.startswith(("BEGIN", "END", "ENTRIES", "CHANGELOG ="))),
-                     "markers", "exec"), ns)
-        write(self.r, CL, self.START.format(begin=ns["BEGIN"], end=ns["END"]))
+        spec = importlib.util.spec_from_file_location("changelog", self.CHANGELOG_PY)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        write(self.r, CL, self.START.format(begin=mod.BEGIN, end=mod.END))
         write(self.r, "crates/goatbuilder/changelog.d/README.md", "how to write one\n")
         self.assertEqual(self.cl(self.r, "write").returncode, 0)
         git(self.r, "add", "-A")
