@@ -161,7 +161,7 @@ if [ "$HOSTS" = 1 ]; then
   HOT_DIGEST="$(build_push sha-$HOT1 hotfix)"
   HOT2_DIGEST="$(build_push sha-$HOT2 hotfix2)"
   say "hosts: three containers that look like management hosts"
-  docker build -q -f "$HERE/host/$HOST_DOCKERFILE" -t e2e-host "$HERE/host" >/dev/null
+  docker build -q --build-arg UBUNTU_MIRROR="${UBUNTU_MIRROR:-}" -f "$HERE/host/$HOST_DOCKERFILE" -t e2e-host "$HERE/host" >/dev/null
   for h in dev preprod prod; do
     docker run -d --name "e2e-$h-01" --hostname "e2e-$h-01" --network e2e-net --add-host ghcr.io:host-gateway \
       -v /var/run/docker.sock:/var/run/docker.sock -v "$SSH_KEY.pub:/pubkey:ro" e2e-host >/dev/null

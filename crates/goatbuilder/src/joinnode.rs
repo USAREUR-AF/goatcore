@@ -5,7 +5,7 @@
 //! docs/tutorials/02-first-federated-node.md walks through it. `--dry-run` prints every phase and
 //! command and runs nothing; `--from`/`--to` resume; every phase is idempotent.
 //!
-//!   1  MANUAL reach the box on the SITE LAN (not the USB bridge address)
+//!   1  GATE   the node answers (over SSH at --address, or a phone over USB); stops only when it does not (GB-314)
 //!   2  T      seed-ssh-key.sh — key auth + NOPASSWD sudo, password from an env var;
 //!             skipped when `ssh -o BatchMode=yes <user>@<addr> sudo -n true` already
 //!             passes (a box installed unattended with the key and NOPASSWD sudo)
@@ -165,6 +165,31 @@ fn gv_matches(file: &Path, key: &str, value: &str) -> bool {
     std::fs::read_to_string(file)
         .map(|t| t.lines().any(|l| l.trim_start().strip_prefix(key).and_then(|r| r.strip_prefix(':')).map(|v| v.trim_start().starts_with(value)).unwrap_or(false)))
         .unwrap_or(false)
+}
+
+/// Whether the group's vars.yml declares a joiner, as site-bootstrap reads it:
+/// `goatnet_founder | default(true) | bool`, from the top-level key only.
+/// Ansible's `bool` is true only for its true words (y, yes, on, 1, true, t,
+/// any case) and the number 1; anything else set is false. A file that does
+/// not parse, or no top-level key, is a founder, as the default is.
+fn declares_joiner(file: &Path) -> bool {
+    let Some(doc) = std::fs::read_to_string(file).ok().and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok()) else {
+        return false;
+    };
+    let Some(v) = doc.get("goatnet_founder") else {
+        return false;
+    };
+    !ansible_bool(v)
+}
+
+/// Ansible's `bool` filter on a YAML value.
+fn ansible_bool(v: &serde_yaml::Value) -> bool {
+    match v {
+        serde_yaml::Value::Bool(b) => *b,
+        serde_yaml::Value::Number(n) => n.as_f64() == Some(1.0),
+        serde_yaml::Value::String(s) => matches!(s.trim().to_ascii_lowercase().as_str(), "y" | "yes" | "on" | "1" | "true" | "t"),
+        _ => false,
+    }
 }
 
 fn gv_first(file: &Path, key: &str) -> String {
@@ -396,7 +421,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let inv_before = if usb { format!("{inv} -i {}", sh_quote(&format!("{base}.ini"))) } else { inv.to_string() };
     let pass_var = o.pass_var.map(String::from).unwrap_or_else(|| format!("{upper}_NODE_PASS"));
     let gv = repo.join("ops/ansible/group_vars").join(&site_group).join("vars.yml");
-    let joiner = gv_matches(&gv, "goatnet_founder", "false");
+    let joiner = declares_joiner(&gv);
     let founder_site = gv_first(&gv, "join_founder_site");
     let founder_group = if founder_site.is_empty() { String::new() } else { format!("{}_hosts", founder_site.replace('-', "_")) };
     let intra_pair = gv_matches(&gv, "intra_site_pair", "true");
@@ -423,12 +448,15 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         }
         Phase { n: 10, kind: "T", label: "record the node's mesh address in the checkout (group_vars, mesh inventory) for phase 12; the router certificate is left as it is".into(), cmd: format!("python3 '{r}/ops/scripts/standup-mesh-record.py' {site} --ips {}{group_arg} --no-mint", sh_quote(&mesh_ips)), writes }
     };
-    // Phase 1 is the one step for a person: reaching the node. A node on a
-    // USB cable is reached by attaching the phone.
+    // Phase 1 checks the node answers before anything is done on it, and goes
+    // on (gate row H1: one run from phase 1 to 15). It stops only when the node
+    // does not answer, with the step for a person (GB-314). It cannot prove a
+    // login: before phase 2 seeds this machine's key, a password-only node
+    // refuses every batch login (ops/scripts/join-node-reach.sh).
     let reach = if usb {
-        p(1, "MANUAL", "attach the phone by USB", "attach the phone to this machine by USB, allow USB debugging on it, accept this machine's key on its screen, and unlock it — `adb devices` then lists it as `device`. With more than one device attached, set ANDROID_SERIAL. A phone node has no LAN address: pass no --address.".to_string())
+        p(1, "GATE", "the phone answers over USB (`adb get-state`: device) — attached, USB debugging allowed from this machine, unlocked; ANDROID_SERIAL picks one of several", format!("'{r}/ops/scripts/join-node-reach.sh' usb"))
     } else {
-        p(1, "MANUAL", "reach the box on the SITE LAN", format!("ssh {user}@{addr} — find the box's real LAN address before anything else and pass it as --address. On a Jetson the address handed over may be 192.168.55.1: that is l4tbr0, the USB device-mode bridge on the box itself, reachable only over a direct USB-C cable."))
+        p(1, "GATE", "the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address", format!("'{r}/ops/scripts/join-node-reach.sh' ssh {user_w}@{addr}"))
     };
     // Phase 2 gives the plays key auth and NOPASSWD sudo. For a phone it
     // prepares the VM, which creates the deploy user with both, and refuses
@@ -463,8 +491,12 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         p(11, "A", "WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists", format!("cd '{r}/ops/ansible' && {pre} {inv_before} wireguard-kmod.yml -e target={group} -l {node}")),
         p(12, "GATE", "mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqn 'TBD_' '{r}/ops/ansible/group_vars/{group}/' && ! grep -n 'TBD_' '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw {node}")),
     ]);
-    let ev_secrets = format!("-e bootstrap_owner_email=\"$OWNER_EMAIL\" -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}' -e 'netbird_encryption_key={{{{ lookup(\"env\", \"{upper}_NB_ENCKEY\") }}}}' -e 'pgbackrest_cipher_pass={{{{ lookup(\"env\", \"{upper}_BKP_KEY\") }}}}'");
-    let ev_bootstrap = format!("-e site_id={site} {ev_secrets}");
+    // A joiner's account arrives from the founder (seed-from-peer, then
+    // Spock), and site-bootstrap mints an account, so needs an owner, only on
+    // a founder (goatnet_founder): the owner is a founder's word alone, and an
+    // unattended joiner run has no OWNER_EMAIL to set.
+    let ev_secrets = format!("-e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}' -e 'netbird_encryption_key={{{{ lookup(\"env\", \"{upper}_NB_ENCKEY\") }}}}' -e 'pgbackrest_cipher_pass={{{{ lookup(\"env\", \"{upper}_BKP_KEY\") }}}}'");
+    let ev_bootstrap = format!("-e site_id={site} -e bootstrap_owner_email=\"$OWNER_EMAIL\" {ev_secrets}");
     match converge {
         "core" if joiner => {
             if founder_site.is_empty() {
@@ -579,7 +611,9 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     } else {
         ev.push(p(14, "T", "unmask the apt timers now that the node is finished", format!("ssh {user_w}@{addr} {unmask}")));
     }
-    ev.push(p(15, "GATE", "done means proven: every applicable acceptance row PASS, never UNKNOWN (a joiner adds the replicating-both-ways evidence)", format!("python3 '{r}/ops/validation/generate-values.py' {site} && python3 '{r}/ops/validation/run-acceptance.py' --env {site} --values '{r}/ops/validation/values-{site}.yaml' --all-eligible --by-layer")));
+    // Standup's acceptance line: the site's end-state model first, so a row
+    // whose services the site declares absent reads N/A, not FAIL (ADR 1206).
+    ev.push(p(15, "GATE", "done means proven: every applicable acceptance row PASS, never UNKNOWN (a joiner adds the replicating-both-ways evidence)", crate::assay::phase13(repo, site, &crate::settings::state_dir_abs(repo)).phase_line()));
     Ok(ev)
 }
 
@@ -854,7 +888,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
     }
     if o.class == "phone" {
         let gv = repo.join("ops/ansible/group_vars").join(class_group(&o.site.replace('-', "_"), o.class)).join("vars.yml");
-        if !gv_matches(&gv, "goatnet_founder", "false") {
+        if !declares_joiner(&gv) {
             return Err(goat_errors::coded("GB-301", format!("--class phone at {}, which does not declare goatnet_founder: false: a phone node joins a goatnet. It takes no public ingress, so it is not the site other nodes enrol at (docs/design/phone-node.md)", o.site)).into());
         }
     }
@@ -952,7 +986,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         }
         if !status.success() {
             let rc = status.code().unwrap_or(1);
-            checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the node is left partway through phase {}. `--dry-run` prints this phase's command and the gate that proves it.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
+            checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc} (GB-332). No later phase has run; the node is left partway through phase {}. `--dry-run` prints this phase's command and the gate that proves it.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
             // F5: the phase's output, as the runner kept it, matched against
             // the error catalog (explain_phase::interpreted), as standup does.
             let id = ph.n.to_string();
@@ -1027,11 +1061,13 @@ mod tests {
     /// proves the kernel ACL plane, and records the mesh address, the core
     /// pair's for a core node and only the mesh inventory line for another class.
     #[test]
-    fn only_phase_1_is_manual_and_the_key_is_minted_where_it_is_used() {
+    fn no_phase_is_manual_and_the_key_is_minted_where_it_is_used() {
         let t = joiner_checkout();
         let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
         let manual: Vec<u32> = ph.iter().filter(|p| p.kind == "MANUAL").map(|p| p.n).collect();
-        assert_eq!(manual, vec![1]);
+        assert_eq!(manual, Vec::<u32>::new(), "phase 1 checks the node answers; no phase stops for a person");
+        assert_eq!((ph[0].n, ph[0].kind), (1, "GATE"));
+        assert!(ph[0].cmd.ends_with("/ops/scripts/join-node-reach.sh' ssh <deploy.ssh_user>@<the node's LAN address>"), "{}", ph[0].cmd);
         assert!(ph.iter().all(|p| !p.cmd.contains("NB_SETUP_KEY")), "no phase reads a setup key");
         let p9 = ph.iter().find(|p| p.n == 9).unwrap();
         assert!(p9.cmd.ends_with("'bash -s -- --key-at-enrolment'") && !p9.cmd.contains("SETUP_KEY"), "{}", p9.cmd);
@@ -1066,7 +1102,7 @@ mod tests {
         let r = join_node(&repo(), &opts("uk", "core", "zagros")).unwrap();
         assert_eq!(r.exit, EXIT_OK);
         let phases: Vec<&str> = r.checks.iter().filter(|c| c.name == "phase").map(|c| c.detail.as_str()).collect();
-        assert!(phases[0].starts_with("=== Phase 1 [MANUAL] reach the box"));
+        assert!(phases[0].starts_with("=== Phase 1 [GATE] the node answers over SSH"));
         let core: Vec<&&str> = phases.iter().filter(|p| p.contains("[core, joiner]")).collect();
         assert_eq!(core.len(), 6, "{phases:?}");
         assert!(core[0].contains("pass 1") && core[2].contains("pass 2") && core[3].contains("pass 3") && core[4].contains("founder-side mirror on zagros_hosts") && core[5].contains("Spock wiring again"));
@@ -1115,7 +1151,7 @@ mod tests {
         // ssh runs what it is piped (`... | ssh <node> 'bash -s'`) as the node would.
         let ssh = bin.join("ssh");
         crate::test_support::executable(&ssh, &format!("#!/bin/sh\nfor a; do printf '%s\\n' \"$a\"; done >> '{}'\nfor a; do [ \"$a\" = 'bash -s' ] && exec bash -s; done\nexit 0\n", log.display()));
-        for s in ["ops/scripts/with-aws", "ops/scripts/ansible-preflight.sh", "ops/scripts/seed-ssh-key.sh", "ops/scripts/door-open.sh", "ops/scripts/phone-node-provision.sh", "ops/scripts/phone-node-ssh.sh"] {
+        for s in ["ops/scripts/with-aws", "ops/scripts/ansible-preflight.sh", "ops/scripts/seed-ssh-key.sh", "ops/scripts/door-open.sh", "ops/scripts/phone-node-provision.sh", "ops/scripts/phone-node-ssh.sh", "ops/scripts/join-node-reach.sh"] {
             exe(&repo.join(s));
         }
         std::fs::write(repo.join("ops/preflight-enrollment.sh"), "true\n").unwrap();
@@ -1165,8 +1201,8 @@ mod tests {
         let o = Options { via: "usb", ..opts("zagros-b", "phone", "zagros") };
         let ph = plan(t.path(), &o).unwrap();
         let base = usb_base(t.path(), "zagros-b", "node-x");
-        assert_eq!(ph.iter().filter(|p| p.kind == "MANUAL").map(|p| p.n).collect::<Vec<_>>(), vec![1]);
-        assert!(ph[0].label.contains("attach the phone by USB") && ph[0].cmd.contains("pass no --address"), "{}", ph[0].cmd);
+        assert_eq!(ph.iter().filter(|p| p.kind == "MANUAL").count(), 0);
+        assert!(ph[0].kind == "GATE" && ph[0].label.contains("the phone answers over USB") && ph[0].cmd.ends_with("/ops/scripts/join-node-reach.sh' usb"), "{}", ph[0].cmd);
         let p2: Vec<&Phase> = ph.iter().filter(|p| p.n == 2).collect();
         assert_eq!(p2.iter().map(|p| p.kind).collect::<Vec<_>>(), vec!["T", "GATE"]);
         let script = format!("/ops/scripts/phone-node-provision.sh' --node node-x --user <deploy.ssh_user> --base '{base}' ");
@@ -1412,6 +1448,36 @@ mod tests {
         t
     }
 
+    /// `goatnet_founder` is read as site-bootstrap reads it
+    /// (`goatnet_founder | default(true) | bool`): only the top-level key, and
+    /// Ansible's booleans, so `False`, `"false"`, `no` and `off` declare a
+    /// joiner, and a nested or commented-out key, or none, a founder.
+    #[test]
+    fn goatnet_founder_is_read_as_ansible_reads_it() {
+        for (line, joiner) in [
+            ("goatnet_founder: false", true),
+            ("goatnet_founder: False", true),
+            ("goatnet_founder: \"false\"", true),
+            ("goatnet_founder: no", true),
+            ("goatnet_founder: 'no'", true),
+            ("goatnet_founder: off", true),
+            ("goatnet_founder: true", false),
+            ("goatnet_founder: yes", false),
+            ("goatnet_founder: \"True\"", false),
+            ("", false),
+            ("site:\n  goatnet_founder: false", false),
+            ("# goatnet_founder: false", false),
+        ] {
+            let t = joiner_checkout();
+            let vars = t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml");
+            let text = std::fs::read_to_string(&vars).unwrap().replacen("goatnet_founder: false\n", &format!("{line}\n"), 1);
+            std::fs::write(&vars, text).unwrap();
+            let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap_or_else(|e| panic!("{line:?}: {e:#}"));
+            let is_joiner = ph.iter().any(|p| p.label.contains("[core, joiner]"));
+            assert_eq!(is_joiner, joiner, "{line:?}");
+        }
+    }
+
     /// Gate row I3: a joiner's core node runs its own mesh DNS replica in
     /// phase 13, after Ory and signal federation (ADR 1235). A gate first
     /// refuses an unset or unresolved founder API token (GB-281); the play
@@ -1460,6 +1526,8 @@ mod tests {
             assert!(core[i].cmd.contains("-l node-x site-bootstrap-for.yml -e bootstrap_site=zagros-b "), "{}", core[i].cmd);
             assert!(!core[i].cmd.contains("-e site_id="), "{}", core[i].cmd);
             assert!(core[i].cmd.contains("_PG_PASS\")"), "secrets still reach the play: {}", core[i].cmd);
+            // A joiner mints no account: no bootstrap owner, so no OWNER_EMAIL to set.
+            assert!(!core[i].cmd.contains("bootstrap_owner_email") && !core[i].cmd.contains("OWNER_EMAIL"), "{}", core[i].cmd);
         }
         assert!(core[0].cmd.contains("-e participates_in_spock=false"), "{}", core[0].cmd);
         assert!(core[3].cmd.contains("-e ory_spock_wire_subscriptions=false"), "{}", core[3].cmd);
@@ -1471,7 +1539,20 @@ mod tests {
         std::fs::write(t.path().join("ops/ansible/zagros-b-bootstrap.yml"), "---\n").unwrap();
         let ph = plan(t.path(), &o).unwrap();
         let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
-        assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e bootstrap_owner_email"), "{}", core[0].cmd);
+        assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e 'postgres_superuser_password="), "{}", core[0].cmd);
+    }
+
+    /// Phase 15 is standup's acceptance line: the end-state model into the
+    /// state directory, the values, then the rows with `--endstate`.
+    #[test]
+    fn phase_15_derives_the_end_state_and_passes_it_to_the_rows() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let last = ph.last().unwrap();
+        assert_eq!(last.n, 15);
+        let model = format!("{}/endstate-zagros-b.json", crate::settings::state_dir_abs(t.path()));
+        assert!(last.cmd.contains(&format!("endstate.py' model zagros-b > '{model}' && ")), "{}", last.cmd);
+        assert!(last.cmd.contains(&format!("--endstate '{model}' --all-eligible --by-layer")), "{}", last.cmd);
     }
 
     /// Pass 1 runs site-bootstrap's `stack` plays only: the `after-ory` plays

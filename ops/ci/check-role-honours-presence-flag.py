@@ -34,7 +34,6 @@ usage: check-role-honours-presence-flag.py [--repo DIR] [--base REF] [--self-tes
 exit 0 every flag is read · 1 a flag no code reads, or the allowlist is wrong or grew · 2 cannot run
 """
 import argparse
-import os
 import re
 import subprocess
 import sys

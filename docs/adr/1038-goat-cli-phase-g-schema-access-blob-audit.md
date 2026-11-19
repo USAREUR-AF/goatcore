@@ -134,6 +134,30 @@ The audit-tail read shape is the one architectural choice here; the rest follow 
   token → no new presigns), and the bytes flow laptop→MinIO directly so the portal is not in the data path.
   It is the same "server authorizes, client fetches" shape as the rest of goat-cli.
 
+## Metadata-only audit read clarification (2026-11-06)
+
+Ordinary audit reads use the metadata projection defined by ADR 0811's fabric
+record scope and the [subscriber contract](../design/zenoh-audit-external-subscriber.md#metadata-and-replay-separation-2026-10-26).
+This supersedes the direct raw-audit-object download described in G.6 above.
+The operator-authenticated portal lists relative `/api/audit/object` references,
+reads its fixed storage bucket over verified HTTPS, and returns allowlisted
+metadata without message bodies. The laptop uses the portal's HTTPS endpoint;
+direct access to the storage service on port 9000 is not required. This applies
+the proxy fallback already allowed by this ADR to ordinary metadata reads.
+
+The existing `replay` and historical `sub` commands select this path with
+`--metadata`; standalone `narrate` and the audit tier of `flow` use metadata
+directly. Payload replay remains gated pending its separate governance design.
+Key filtering remains a client-side selection within operator-authorized audit
+history, not a pod-owner authorization boundary. A record establishes that the
+audit subscriber observed the sample; it does not establish processing by an
+application or authenticated publisher identity. The `volatile/**` exclusion and
+its lack of historical confirmation remain unchanged.
+
+This is branch implementation and local validation, not live release evidence.
+Compatible releases and the non-admin mesh acceptance check are documented in
+the [cutover procedure](../operations/audit-replay-cutover.md).
+
 ## Consequences
 
 - **The declare and diagnose halves of the lifecycle reach parity with the read/observe half.** Schema

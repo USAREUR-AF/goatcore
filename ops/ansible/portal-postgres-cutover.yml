@@ -191,6 +191,17 @@
         quiet: true
       tags: [phase0]
 
+    # Phase 6 deploys this pin through the role, whose storage-TLS gate would
+    # refuse it only after phase 2 has stopped the portal. Ask the same
+    # question here, while the portal still runs.
+    - name: "gate | the pinned image's audit reader can start with this storage TLS"
+      # `apply:` tags the included tasks too; a bare tag selects only the include.
+      ansible.builtin.include_tasks:
+        file: roles/goat-zenoh-portal/tasks/storage-tls-gate.yml
+        apply:
+          tags: [phase0]
+      tags: [phase0]
+
     # The SQLite path is read from what the running portal was started with,
     # not from a default: the compose command's --db= flag.
     - name: "gate | read the rendered compose file (for the SQLite path)"

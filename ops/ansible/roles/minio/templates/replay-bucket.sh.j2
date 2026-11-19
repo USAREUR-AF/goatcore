@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+# Replay payloads expire independently. Object Lock implies versioning; both
+# Enabled and Suspended are refused (suspension can retain old versions).
+mc mb --ignore-existing "local/{{ minio_replay_bucket }}"
+replay_version=$(mc --no-color version info "local/{{ minio_replay_bucket }}")
+case "$replay_version" in
+  "local/{{ minio_replay_bucket }} is un-versioned") ;;
+  *) echo "Replay bucket must be unversioned and unlocked; refusing migration" >&2; exit 1 ;;
+esac
+cat > /tmp/replay-lifecycle.json <<'REPLAY_POLICY'
+{"Rules":[{"ID":"replay-expiration","Status":"Enabled","Filter":{"Prefix":""},"Expiration":{"Days":{{ minio_replay_retention_days }}}}]}
+REPLAY_POLICY
+mc quota set "local/{{ minio_replay_bucket }}" --size "{{ minio_replay_bucket_quota_gib }}GiB"
+mc ilm rule import "local/{{ minio_replay_bucket }}" < /tmp/replay-lifecycle.json
+rm /tmp/replay-lifecycle.json
+echo "updated: separate replay bucket, unversioned, {{ minio_replay_retention_days }}d expiration"

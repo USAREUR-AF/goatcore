@@ -36,6 +36,8 @@ ev = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ev)
 
 SALT, POOL = "scoped-test", 40
+sys.path.insert(0, str(Path(__file__).resolve().parent / "slot-fragment"))
+import slotfragment  # noqa: E402  the portal's slot fragment format (GHSA-rr3p)
 CROSS = ["**/basemap_vendor/**", "**/airtracks/v1/*", "*/geo/track/v1/*"]
 BLOCKS = [{"lanes": ["REL-ALL"], "from": 30, "to": 32}]
 
@@ -61,6 +63,9 @@ def render(**overrides) -> str:
         zenoh_partner_read_partition=True, zenoh_partner_slot_blocks=BLOCKS,
         zenoh_partner_read_lanes={}, zenoh_universal_read_cns=["panoscope-trial-peer"],
         zenoh_peer_cross_tenant_read=CROSS,
+        # Every pool slot assigned at generation 1, as the portal renders it.
+        zenoh_slot_fragment_content=slotfragment.render(
+            [(anchor(k), anchor(k) + ".g1") for k in range(POOL)]),
     )
     base.update(overrides)
     return env.get_template("config.json5.j2").render(**base)
@@ -104,8 +109,10 @@ check('id: "peer-r-scoped"' in on and 'id: "peer-deliver-scoped"' in on,
       "the scoped read + delivery rules render")
 check('id: "fabric-wide-r"' in on and 'id: "fabric-wide-read"' in on,
       "the named grant renders as one rule and one subject")
-check(f'"{a_named_by_idx}",' in on,
-      "a slot_idx entry renders as the derived anchor CN (no anchor copied into git)")
+fw_subject = on.split('id: "fabric-wide-read"')[1].split("},")[0]
+check(f'"{a_named_by_idx}' not in fw_subject and
+      f'subjects: ["slot-{a_named_by_idx}"] }}' in on,
+      "a slot_idx entry binds the fabric-wide read to the slot's own subject, not to a pinned CN (GHSA-rr3p)")
 check("// platform — Data-COP (review 2026-12-17)" in on,
       "each named CN carries its owner, reason and review date in the config itself")
 
@@ -170,16 +177,26 @@ decides(acl, "fabric-wide-read", [
 ])
 check(acl.decide_cn("panoscope-trial-peer", "declare_subscriber", "ingress", "**") == "allow",
       "a named CN gets ** across subjects (first Allow wins)")
-check(acl.decide_cn(own, "declare_subscriber", "ingress", "**") == "deny",
+check(acl.decide_cn(own + ".g1", "declare_subscriber", "ingress", "**") == "deny",
       "an unnamed slot CN is refused ** through every subject it matches")
-check(acl.decide_cn(a_named_by_idx, "declare_subscriber", "ingress", "**") == "allow",
-      "a slot named by slot_idx gets ** through the derived CN")
+check(acl.decide_cn(own + ".g1", "declare_subscriber", "ingress", f"{other}/a/b") == "allow",
+      "a slot's current leaf keeps the scoped universal read through its own subject")
+check(acl.decide_cn(a_named_by_idx + ".g1", "declare_subscriber", "ingress", "**") == "allow",
+      "a slot named by slot_idx gets ** through its current leaf CN")
+check(acl.decide_cn(a_named_by_idx, "declare_subscriber", "ingress", "**") == "deny",
+      "the same slot's superseded generation-0 leaf (CN = bare anchor) gets nothing")
+for m, f, k in (("declare_subscriber", "ingress", f"{own}/**"), ("put", "ingress", f"{own}/x"),
+                ("declare_subscriber", "ingress", "ops/fabric/**")):
+    check(acl.decide_cn(own, m, f, k) == "deny",
+          f"a superseded leaf of slot 0 (CN = bare anchor) is refused {m} {f} {k}")
+check(acl.decide_cn(own + ".g1", "put", "ingress", f"{own}/x") == "allow",
+      "slot 0's current leaf writes its own namespace")
 
 print("== flag ON: infra and partners are unchanged ==")
 for sid in ("operator", "audit-subscriber", "infra-fabric-health", "infra-consistency-console"):
     check(acl.decide(sid, "declare_subscriber", "ingress", "**") == "allow",
           f"{sid} keeps its own fabric-wide read")
-decides(acl, f"partner-{partner}", [
+decides(acl, f"slot-{partner}", [
     ("declare_subscriber", "ingress", "**", "deny"),
     ("declare_subscriber", "ingress", f"{own}/**", "deny"),
     ("declare_subscriber", "ingress", f"{partner}/**", "allow"),

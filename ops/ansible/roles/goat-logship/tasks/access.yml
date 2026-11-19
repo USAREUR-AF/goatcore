@@ -1,0 +1,192 @@
+---
+# The collector's identity and read access (GHSA-x44g). Included from
+# tasks/deploy.yml before anything is rendered; tests/access.sh runs the
+# readability check against scratch files.
+#
+# Vector runs as logship_user, never root. It reads each log path through the
+# path's owning group, added to the container with group_add. A path readable
+# by root alone stops the play: running as root again is not the remedy.
+
+- name: goat-logship | collector system user
+  ansible.builtin.user:
+    name: "{{ logship_user }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+  when: logship_create_user | bool
+
+- name: goat-logship | look up the collector user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ logship_user }}"
+  check_mode: false
+
+- name: goat-logship | collector uid and gid
+  ansible.builtin.set_fact:
+    _logship_uid: "{{ ansible_facts.getent_passwd[logship_user][1] }}"
+    _logship_gid: "{{ ansible_facts.getent_passwd[logship_user][2] }}"
+
+- name: goat-logship | the collector is not root
+  ansible.builtin.assert:
+    that:
+      - _logship_uid | int != 0
+      - _logship_gid | int != 0
+    fail_msg: "goat-logship: {{ logship_user }} has uid or gid 0; the collector must not run as root (GHSA-x44g)."
+
+# auditd writes audit.log root:root 0600 unless auditd.conf names a group.
+- name: goat-logship | auditd log readable by its group
+  when:
+    - logship_source_auditd | bool
+    - logship_auditd_manage_log_group | bool
+  block:
+    - name: goat-logship | probe for auditd.conf
+      ansible.builtin.stat:
+        path: "{{ logship_auditd_conf_path }}"
+      register: _logship_auditd_conf
+
+    - name: goat-logship | auditd writes its log with a group
+      ansible.builtin.lineinfile:
+        path: "{{ logship_auditd_conf_path }}"
+        regexp: '^\s*log_group\s*='
+        line: "log_group = {{ logship_auditd_log_group }}"
+      register: _logship_auditd_group_conf
+      when: _logship_auditd_conf.stat.exists
+
+    # SIGHUP makes auditd re-read auditd.conf; the new group applies to the
+    # files it creates from now on. The current ones are regrouped below.
+    - name: goat-logship | auditd re-reads its config
+      ansible.builtin.command:
+        argv: [pkill, -HUP, -x, auditd]
+      register: _logship_auditd_hup
+      changed_when: _logship_auditd_hup.rc == 0
+      failed_when: _logship_auditd_hup.rc > 1
+      when:
+        - _logship_auditd_group_conf is changed
+        - logship_auditd_reload | bool
+
+    - name: goat-logship | probe the audit log
+      ansible.builtin.stat:
+        path: "{{ logship_auditd_log_path }}"
+      register: _logship_auditd_log
+
+    - name: goat-logship | audit log directory readable by its group
+      ansible.builtin.file:
+        path: "{{ logship_auditd_log_path | dirname }}"
+        group: "{{ logship_auditd_log_group }}"
+        mode: "0750"
+      when: _logship_auditd_log.stat.exists
+
+    - name: goat-logship | audit log readable by its group
+      ansible.builtin.file:
+        path: "{{ logship_auditd_log_path }}"
+        group: "{{ logship_auditd_log_group }}"
+        mode: "0640"
+      when: _logship_auditd_log.stat.exists
+
+# Every path an enabled source reads, and for a file its directory too.
+- name: goat-logship | paths the collector reads
+  ansible.builtin.set_fact:
+    _logship_read_paths: >-
+      {{ logship_journal_dirs
+         + ([logship_auditd_log_path | dirname, logship_auditd_log_path] if logship_source_auditd | bool else [])
+         + ([logship_egress_log_path | dirname, logship_egress_log_path] if logship_source_egress | bool else [])
+         + ([logship_zenoh_audit_glob | dirname] if logship_source_zenoh_audit | bool else [])
+         + ([logship_falco_events_path | dirname, logship_falco_events_path] if logship_source_falco | bool else [])
+         + ([logship_osquery_results_path | dirname, logship_osquery_results_path] if logship_source_osquery | bool else []) }}
+
+- name: goat-logship | stat the paths the collector reads
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: false
+  loop: "{{ _logship_read_paths }}"
+  register: _logship_read_stats
+
+# Readable means: a file other-readable, or group-readable by a group that is
+# not root; a directory the same with search (x) as well. A path that does not
+# exist yet is skipped: its producer is not running, and Vector waits for it.
+- name: goat-logship | classify read access to each path
+  ansible.builtin.set_fact:
+    _logship_access: >-
+      {%- set out = {'gids': [], 'unreadable': []} -%}
+      {%- for r in _logship_read_stats.results if r.stat.exists -%}
+      {%- set m = r.stat.mode | int(base=8) -%}
+      {%- set g = (m // 8) % 8 -%}
+      {%- set o = m % 8 -%}
+      {%- if r.stat.isdir -%}
+      {%- set by_group = r.stat.gid != 0 and (g // 4) % 2 == 1 and g % 2 == 1 -%}
+      {%- set by_other = (o // 4) % 2 == 1 and o % 2 == 1 -%}
+      {%- else -%}
+      {%- set by_group = r.stat.gid != 0 and (g // 4) % 2 == 1 -%}
+      {%- set by_other = (o // 4) % 2 == 1 -%}
+      {%- endif -%}
+      {%- if by_group and r.stat.gid not in out.gids -%}{%- set _ = out.gids.append(r.stat.gid) -%}{%- endif -%}
+      {%- if not by_group and not by_other -%}{%- set _ = out.unreadable.append(r.item ~ ' (' ~ (r.stat.pw_name | default(r.stat.uid)) ~ ':' ~ (r.stat.gr_name | default(r.stat.gid)) ~ ' ' ~ r.stat.mode ~ ')') -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: goat-logship | the collector can read every log path without root
+  ansible.builtin.assert:
+    that:
+      - _logship_access.unreadable | length == 0
+    fail_msg: >-
+      goat-logship: the collector runs as {{ logship_user }}, not root
+      (GHSA-x44g), and cannot read {{ _logship_access.unreadable | join(', ') }}.
+      Give each path a non-root group that may read it (and its directory
+      search), for example through the producer's log-group setting, or turn
+      that source off.
+
+- name: goat-logship | supplementary groups for the collector
+  ansible.builtin.set_fact:
+    _logship_read_gids: "{{ _logship_access.gids | map('string') | list }}"
+
+- name: goat-logship | Docker socket group for the API proxy
+  when: logship_docker_sources_enabled | bool
+  block:
+    - name: goat-logship | stat the Docker socket
+      ansible.builtin.stat:
+        path: "{{ logship_docker_socket }}"
+      register: _logship_docker_sock
+
+    - name: goat-logship | the Docker socket is there and not root-group
+      ansible.builtin.assert:
+        that:
+          - _logship_docker_sock.stat.exists
+          - _logship_docker_sock.stat.gid != 0
+        fail_msg: >-
+          goat-logship: {{ logship_docker_socket }} is missing or owned by
+          group root; the Docker API proxy reaches it through the socket's
+          group. Turn off the container-stdout sources
+          (logship_source_identity_enroll, logship_source_app_http,
+          logship_source_app_auth) on a host without one.
+
+    - name: goat-logship | Docker socket gid
+      ansible.builtin.set_fact:
+        _logship_docker_gid: "{{ _logship_docker_sock.stat.gid | string }}"
+
+    # Its own user, so no other host account (and not the collector) owns
+    # the proxy's socket directory. In the container its primary group is the
+    # collector's, so the socket it creates is the collector's to reach.
+    - name: goat-logship | Docker API proxy system user
+      ansible.builtin.user:
+        name: "{{ logship_docker_proxy_user }}"
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+      when: logship_create_user | bool
+
+    - name: goat-logship | look up the Docker API proxy user
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ logship_docker_proxy_user }}"
+      check_mode: false
+
+    - name: goat-logship | Docker API proxy uid
+      ansible.builtin.set_fact:
+        _logship_dproxy_uid: "{{ ansible_facts.getent_passwd[logship_docker_proxy_user][1] | string }}"
+
+    - name: goat-logship | the proxy user is neither root nor the collector
+      ansible.builtin.assert:
+        that:
+          - _logship_dproxy_uid | int != 0
+          - (_logship_dproxy_uid | string) != (_logship_uid | string)
+        fail_msg: "goat-logship: {{ logship_docker_proxy_user }} must have its own non-root uid (GHSA-x44g)."

@@ -1,0 +1,6 @@
+# Path-filtered workflows the weekly run (ops/ci/weekly-path-filtered.py) does not start
+# on main, each with its reason. tests/test_weekly_path_filtered.py fails for any other
+# path-filtered workflow without workflow_dispatch.
+docs-guards.yml       # reads the pull request number to compare the change with its base
+goatbuilder-pr.yml    # diffs the change against github.base_ref
+ansible-syntax-check.yml  # gains workflow_dispatch in a separate change

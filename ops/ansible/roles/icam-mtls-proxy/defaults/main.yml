@@ -43,8 +43,10 @@ icam_mtls_proxy_acme_json: /opt/mgmt-host/letsencrypt/acme.json
 icam_mtls_proxy_acme_resolver: le
 icam_mtls_proxy_traefik_dynamic_dir: /etc/traefik/dynamic
 icam_mtls_proxy_traefik_entrypoint: websecure
-# Who may reach the proxy through Traefik: mesh peers + on-host containers (Kratos).
-icam_mtls_proxy_allow_cidrs: ["100.64.0.0/10", "172.16.0.0/12"]
+# Who may reach the proxy through Traefik: mesh peers + on-host containers (Kratos),
+# which arrive from the mgmt Docker network only, never all of 172.16.0.0/12
+# (GHSA-p22f). The role reads that subnet first (tasks/mgmt-network-subnet.yml).
+icam_mtls_proxy_allow_cidrs: ["100.64.0.0/10", "{{ mgmt_docker_network_subnet }}"]
 
 # The OIDC issuer Kratos's icam_federation provider points at (mtls_proxy mode). Must
 # match the proxy's externally-reachable name (Dex issuer + server cert SAN).

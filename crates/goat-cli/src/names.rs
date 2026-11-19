@@ -583,7 +583,8 @@ pub(crate) fn verified_zone(profile: &Profile) -> Option<String> {
 }
 
 /// The leaf's goat identity, matching the certmint vocabulary: slot-mode
-/// CN (bare anchor) first, else the URI-SAN `org=`/`vendor=` value.
+/// CN first (`<anchor>` or `<anchor>.g<N>`, the generation stripped,
+/// GHSA-rr3p), else the URI-SAN `org=`/`vendor=` value.
 fn leaf_identity(leaf: &x509_parser::certificate::X509Certificate<'_>) -> Option<String> {
     if let Some(cn) = leaf
         .subject()
@@ -591,8 +592,8 @@ fn leaf_identity(leaf: &x509_parser::certificate::X509Certificate<'_>) -> Option
         .next()
         .and_then(|a| a.as_str().ok())
     {
-        if panoscope_core::alias::is_anchor_shaped(cn) {
-            return Some(cn.to_string());
+        if let Some(anchor) = panoscope_core::alias::anchor_of_leaf_cn(cn) {
+            return Some(anchor.to_string());
         }
     }
     for ext in leaf.extensions() {

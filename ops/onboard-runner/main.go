@@ -35,6 +35,7 @@ func main() {
 		repoRoot    = flag.String("repo-root", ".", "repo root holding ops/operators/ + the manifest schema")
 		goatBin     = flag.String("goat-bin", "goat", "path to the goat binary")
 		runnerID    = flag.String("runner-id", "onboard-runner", "GOAT_OPERATOR_HANDLE stamped into the mint audit event")
+		auditFB     = flag.String("audit-fallback", envOr("AUDIT_FALLBACK_PATH", ""), "where an operator-action record the audit fabric refused is appended (\"\" = <repo-root>/out/audit/operator-actions.log)")
 		onlyEnv     = flag.String("only-env", envOr("ONLY_ENV", ""), "only process proposals for this env (\"\"=all)")
 		interval    = flag.Duration("interval", 30*time.Second, "poll interval")
 		httpTimeout = flag.Duration("http-timeout", 25*time.Second, "per-request portal timeout (lossy-mesh tolerant)")
@@ -123,6 +124,8 @@ func main() {
 		goatBin:  *goatBin,
 		runnerID: *runnerID,
 		dryRun:   *dryRun,
+		// Offboard operator-action records the fabric refuses land here.
+		auditFallbackPath: *auditFB,
 		// Mint-on-collect, per goatnet. Off unless the deploy explicitly turns it
 		// on, so a goatnet whose console does not yet serve the collection page
 		// keeps minting at onboard rather than stranding its enrollees.

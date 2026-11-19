@@ -3223,9 +3223,11 @@ name = "panoscope-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "flate2",
  "futures",
+ "hex",
  "http",
  "quick-xml",
  "reqwest",
@@ -3234,6 +3236,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.10.9",
  "thiserror 1.0.69",
  "tokio",
  "tracing",

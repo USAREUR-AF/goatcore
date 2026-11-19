@@ -204,6 +204,9 @@ func (s *Server) onboardAPIGate(next http.HandlerFunc) http.HandlerFunc {
 			onboardError(w, http.StatusUnauthorized, "unauthorized", "invalid or missing onboard API key")
 			return
 		}
+		if s.operatorOwnerGate(w, r, p) {
+			return
+		}
 		ctx := context.WithValue(r.Context(), ctxKeyOnboardPrincipal, p)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
@@ -263,6 +266,7 @@ func (s *Server) apiListProposals(w http.ResponseWriter, r *http.Request) {
 			out = append(out, row)
 		}
 	}
+	s.redactAboveTierVr6w(r, out)
 	onboardJSON(w, http.StatusOK, out)
 }
 
@@ -282,7 +286,9 @@ func (s *Server) apiGetProposal(w http.ResponseWriter, r *http.Request) {
 		onboardError(w, http.StatusNotFound, "not_found", "proposal not found")
 		return
 	}
-	onboardJSON(w, http.StatusOK, p)
+	rows := []onboardstore.Proposal{*p}
+	s.redactAboveTierVr6w(r, rows)
+	onboardJSON(w, http.StatusOK, rows[0])
 }
 
 // --- proposals: approve / reject (two-gate) --------------------------
@@ -501,7 +507,11 @@ func (s *Server) apiClaimProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Onboard.ClaimProposal(r.Context(), id); err != nil {
+		rq, refused := asRunnerQueueRefusal7788(err)
 		switch {
+		case refused:
+			s.emitAudit(r, Actor{Email: onboardAPIActor(r)}, "onboard_claim_proposal", nil, "", nil, nil, false, "refused", rq.Msg)
+			onboardError(w, http.StatusForbidden, "forbidden", rq.Msg)
 		case errors.Is(err, onboardstore.ErrProposalNotApproved):
 			onboardError(w, http.StatusConflict, "not_approved",
 				"proposal is not in the approved state — already claimed, minted, or rejected")
@@ -585,6 +595,11 @@ type proposalResultRequest struct {
 	CollabAccount   string `json:"collab_account,omitempty"`
 	CollabSetupLink string `json:"collab_setup_link,omitempty"`
 	CollabActivated bool   `json:"collab_activated,omitempty"`
+	// OperatorAudit is the offboard leg's operator-action outcome: "recorded",
+	// or "failed" with OperatorAuditError saying why. Only on offboarded /
+	// offboard-failed results; "" from a runner that predates it.
+	OperatorAudit      string `json:"operator_audit,omitempty"`
+	OperatorAuditError string `json:"operator_audit_error,omitempty"`
 }
 
 // apiProposalResult records the terminal outcome of a claimed (onboarding)
@@ -607,6 +622,14 @@ func (s *Server) apiProposalResult(w http.ResponseWriter, r *http.Request) {
 		fromStatus = onboardstore.ProposalOnboarding
 	case onboardstore.ProposalOffboarded, onboardstore.ProposalOffboardFailed:
 		fromStatus = onboardstore.ProposalOffboarding
+		switch {
+		case req.OperatorAudit == "" || req.OperatorAudit == "recorded":
+		case req.OperatorAudit == "failed" && strings.TrimSpace(req.OperatorAuditError) != "":
+		default:
+			onboardError(w, http.StatusBadRequest, "bad_operator_audit",
+				`operator_audit must be "recorded", or "failed" with operator_audit_error`)
+			return
+		}
 	default:
 		onboardError(w, http.StatusBadRequest, "bad_status",
 			`status must be "onboarded", "failed", "offboarded" or "offboard-failed"`)
@@ -629,7 +652,15 @@ func (s *Server) apiProposalResult(w http.ResponseWriter, r *http.Request) {
 	// Persist the setup key/bundle path alongside the status, and the failure
 	// reason (req.Error) as the note on a `failed` result — so the admin queue
 	// shows WHY a mint failed instead of discarding it.
-	if err := s.Onboard.SetProposalResult(r.Context(), id, req.Status, req.SetupKey, req.HandsetKey, req.BundlePath, req.Error, req.CollabAccount, req.CollabActivated); err != nil {
+	var werr error
+	if fromStatus == onboardstore.ProposalOffboarding {
+		// The offboard leg: status, failure note and the runner's
+		// operator-action outcome land in one statement (GHSA-3m4r).
+		werr = s.Onboard.SetOffboardResult(r.Context(), id, req.Status, req.Error, offboardOperatorAuditMark(req))
+	} else {
+		werr = s.Onboard.SetProposalResult(r.Context(), id, req.Status, req.SetupKey, req.HandsetKey, req.BundlePath, req.Error, req.CollabAccount, req.CollabActivated)
+	}
+	if werr != nil {
 		onboardError(w, http.StatusInternalServerError, "status_error", "could not update status")
 		return
 	}
@@ -658,7 +689,43 @@ func (s *Server) apiProposalResult(w http.ResponseWriter, r *http.Request) {
 		s.stampSlotIdentity(r.Context(), p.Handle, p.Email, req.SlotAnchor, req.BundlePath)
 		s.sendWelcomeEmail(r, p, req.SetupKey, req.HandsetKey, req.CollabSetupLink, req.PortalAPIKey, req.CredentialDeferred)
 	}
+	if fromStatus == onboardstore.ProposalOffboarding {
+		s.recordOffboardResult(r, p, req)
+	}
 	onboardJSON(w, http.StatusOK, map[string]any{"id": id, "status": req.Status})
+}
+
+// offboardOperatorAuditMark is the stored form of the runner's
+// operator-action outcome: "recorded", "failed: <why>" (capped), or "" when
+// the runner reported none.
+func offboardOperatorAuditMark(req proposalResultRequest) string {
+	if req.OperatorAudit != "failed" {
+		return req.OperatorAudit
+	}
+	mark := "failed: " + strings.TrimSpace(req.OperatorAuditError)
+	if len(mark) > 600 {
+		mark = strings.ToValidUTF8(mark[:600], "")
+	}
+	return mark
+}
+
+// recordOffboardResult audits the terminal result of the cut, which the
+// console's own trail otherwise only saw queued. The operator-action outcome
+// itself is already on the row (SetOffboardResult). A cut is never refused or reversed here: the access change has
+// already happened.
+func (s *Server) recordOffboardResult(r *http.Request, p *onboardstore.Proposal, req proposalResultRequest) {
+	result, errMsg := "ok", ""
+	switch {
+	case req.Status == onboardstore.ProposalOffboardFailed:
+		result, errMsg = "error", req.Error
+	case req.OperatorAudit == "failed":
+		result, errMsg = "partial", "access cut; operator-action record not written: "+strings.TrimSpace(req.OperatorAuditError)
+	}
+	s.emitAuditWithInviteToken(r, Actor{Email: onboardAPIActor(r)}, "onboard_offboard_result", p.ID, "",
+		map[string]interface{}{"status": onboardstore.ProposalOffboarding},
+		map[string]interface{}{"status": req.Status, "handle": p.Handle, "approver": p.OffboardRequestedBy,
+			"approver_identity": p.OffboardRequestedByIdentity, "operator_audit": req.OperatorAudit},
+		false, result, errMsg)
 }
 
 // --- invites: list / get / revoke ------------------------------------
@@ -777,6 +844,17 @@ func (s *Server) apiMintInvite(w http.ResponseWriter, r *http.Request) {
 		Collab: req.Collab == nil || *req.Collab,
 	}
 
+	// Admin tier ceiling (GHSA-vr6w), the machine twin of the browser
+	// invite form: a per-person operator key may not pre-bind an invite to
+	// the platform tier (inviteTierCeilingVr6w). A service key is uncapped
+	// (ADR 1071).
+	if msg := inviteTierCeilingVr6w(r, prebound.Tier); msg != "" {
+		s.emitAudit(r, Actor{Email: p.Handle}, "onboard_mint_invite", nil, "", nil,
+			map[string]interface{}{"tier": prebound.Tier, "env": env}, false, "refused", msg)
+		onboardError(w, http.StatusForbidden, "forbidden", msg)
+		return
+	}
+
 	// ADR 1071 cap. Operators are unrestricted; a participant's ceiling was
 	// resolved from the portal at auth. The cap is server-set, never from the
 	// request, and stamped onto the invite so preview/submit bound the enrollee.
@@ -803,6 +881,15 @@ func (s *Server) apiMintInvite(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	prebound.SponsorMaxTier = maxTier
+	// ADR 1071 as amended (GHSA-7788): no operator key, service or
+	// per-person, mints an invite at the platform tier; a browser
+	// PLATFORM-ADMIN session does.
+	if p.IsOperator && platformTierInvite7788(prebound.Tier) {
+		s.emitAudit(r, Actor{Email: p.Handle}, "onboard_mint_invite", nil, "", nil,
+			map[string]interface{}{"tier": prebound.Tier, "env": env}, false, "refused", operatorKeyPlatformRefusal7788)
+		onboardError(w, http.StatusForbidden, "forbidden", operatorKeyPlatformRefusal7788)
+		return
+	}
 
 	preboundJSON, err := json.Marshal(prebound)
 	_ = err // Prebound is a plain struct; JSON encode cannot fail here in practice.
@@ -956,6 +1043,10 @@ func (s *Server) apiRevokeInvite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Audited like the browser button (handleOnboardInviteRevoke), with the
+	// operator or sponsor key's handle as the actor: this is the path
+	// `goat admin invites revoke` takes, and the CLI records nothing itself.
+	actor := Actor{Email: onboardAPIActor(r)}
 	err := s.Onboard.RevokeInvite(r.Context(), id)
 	switch {
 	case err == nil:
@@ -964,12 +1055,16 @@ func (s *Server) apiRevokeInvite(w http.ResponseWriter, r *http.Request) {
 		onboardError(w, http.StatusNotFound, "not_found", "invite not found")
 		return
 	case errors.Is(err, onboardstore.ErrInviteConsumed):
+		s.emitAuditWithInviteToken(r, actor, "onboard_revoke_invite", id, "", nil, nil, false, "error", "invite is no longer open")
 		onboardError(w, http.StatusConflict, "not_open", "invite is no longer open — cannot revoke")
 		return
 	default:
+		s.emitAuditWithInviteToken(r, actor, "onboard_revoke_invite", id, "", nil, nil, false, "error", err.Error())
 		onboardError(w, http.StatusInternalServerError, "revoke_error", "could not revoke invite")
 		return
 	}
+	s.emitAuditWithInviteToken(r, actor, "onboard_revoke_invite", id, "", nil,
+		map[string]interface{}{"status": onboardstore.InviteRevoked}, false, "ok", "")
 	onboardJSON(w, http.StatusOK, map[string]any{"id": id, "status": onboardstore.InviteRevoked})
 }
 
@@ -1026,6 +1121,13 @@ func (s *Server) apiOnboardIntake(w http.ResponseWriter, r *http.Request) {
 	handle, email := manifestHandleEmail(tree)
 	if handle == "" {
 		onboardError(w, http.StatusBadRequest, "no_handle", "manifest is missing identity.handle")
+		return
+	}
+	if held, herr := s.handleHeldByOther(r.Context(), handle, email); herr != nil {
+		onboardError(w, http.StatusInternalServerError, "store_error", "could not check the handle")
+		return
+	} else if held != nil {
+		onboardError(w, http.StatusConflict, "handle_taken", handleTakenMessage(handle, held))
 		return
 	}
 	lintJSON, err := json.Marshal(res)
@@ -1183,6 +1285,11 @@ func (s *Server) apiArchiveProposal(w http.ResponseWriter, r *http.Request) {
 		reason = "setup key never redeemed; revoked by the dormancy sweep"
 	}
 	ok, err := s.Onboard.ArchiveProposal(r.Context(), id, reason)
+	if rq, refused := asRunnerQueueRefusal7788(err); refused {
+		s.emitAudit(r, Actor{Email: onboardAPIActor(r)}, "onboard_archive_proposal", nil, "", nil, nil, false, "refused", rq.Msg)
+		onboardError(w, http.StatusForbidden, "forbidden", rq.Msg)
+		return
+	}
 	if err != nil {
 		onboardError(w, http.StatusInternalServerError, "archive_error", "could not archive proposal")
 		return
@@ -1213,6 +1320,11 @@ func (s *Server) apiRestoreProposal(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	ok, err := s.Onboard.RestoreProposal(r.Context(), id, onboardAPIActor(r))
+	if rq, refused := asRunnerQueueRefusal7788(err); refused {
+		s.emitAudit(r, Actor{Email: onboardAPIActor(r)}, "onboard_restore_proposal", nil, "", nil, nil, false, "refused", rq.Msg)
+		onboardError(w, http.StatusForbidden, "forbidden", rq.Msg)
+		return
+	}
 	if errors.Is(err, onboardstore.ErrInvalidManifest) {
 		onboardError(w, http.StatusConflict, "invalid_manifest", err.Error())
 		return
@@ -1241,7 +1353,12 @@ func (s *Server) apiRetryProposal(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	err := s.Onboard.RetryProposal(r.Context(), id)
+	rq, refused := asRunnerQueueRefusal7788(err)
 	switch {
+	case refused:
+		s.emitAudit(r, Actor{Email: onboardAPIActor(r)}, "onboard_retry_proposal", nil, "", nil, nil, false, "refused", rq.Msg)
+		onboardError(w, http.StatusForbidden, "forbidden", rq.Msg)
+		return
 	case errors.Is(err, onboardstore.ErrInvalidManifest):
 		onboardError(w, http.StatusConflict, "invalid_manifest", err.Error())
 		return

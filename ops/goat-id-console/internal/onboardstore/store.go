@@ -84,6 +84,8 @@ func Open(dsn string) (*Store, error) {
 		{"onboard_proposals", "restored_at", "BIGINT NOT NULL DEFAULT 0"},
 		{"onboard_proposals", "offboard_requested_by", `TEXT COLLATE "C" NOT NULL DEFAULT ''`},
 		{"onboard_proposals", "offboard_requested_at", "BIGINT NOT NULL DEFAULT 0"},
+		{"onboard_proposals", "offboard_requested_by_identity", `TEXT COLLATE "C" NOT NULL DEFAULT ''`},
+		{"onboard_proposals", "offboard_operator_audit", `TEXT COLLATE "C" NOT NULL DEFAULT ''`},
 		{"onboard_proposals", "claimed_at", "BIGINT NOT NULL DEFAULT 0"},
 		{"onboard_invites", "sponsor_name", `TEXT COLLATE "C" NOT NULL DEFAULT ''`},
 		{"onboard_invites", "candidate_email", `TEXT COLLATE "C" NOT NULL DEFAULT ''`},
@@ -92,6 +94,7 @@ func Open(dsn string) (*Store, error) {
 		{"onboard_invites", "revoked_at", "BIGINT"},
 		{"onboard_invites", "archived_at", "BIGINT"},
 		{"onboard_actions", "params", `TEXT COLLATE "C" NOT NULL DEFAULT '{}'`},
+		{"operator_keys", "holder_identity_id", `TEXT COLLATE "C" NOT NULL DEFAULT ''`}, // GHSA-mxf4
 		{"onboard_actions", "target_env", `TEXT COLLATE "C" NOT NULL DEFAULT ''`},
 		{"onboard_actions", "target_handle", `TEXT COLLATE "C" NOT NULL DEFAULT ''`},
 		{"onboard_actions", "claim_token", `TEXT COLLATE "C" NOT NULL DEFAULT ''`},
@@ -106,6 +109,18 @@ func Open(dsn string) (*Store, error) {
 			_ = db.Close()
 			return nil, fmt.Errorf("migrate %s.%s: %w", m.table, m.column, err)
 		}
+	}
+	// GHSA-2w7v: who filed each operator-key request. Its own table, created
+	// here for new and existing databases alike, and deliberately not one of
+	// the tables storemigrate copies: a request that arrives without a row
+	// here (filed before this existed, or imported from a SQLite checkpoint)
+	// has no recorded filer, and the two-person rule refuses to decide it.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS operator_key_requesters (
+		id           TEXT COLLATE "C" PRIMARY KEY,
+		requested_by TEXT COLLATE "C" NOT NULL
+	)`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("create operator_key_requesters: %w", err)
 	}
 	if err := backfillOrgSource(ctx, db); err != nil {
 		_ = db.Close()

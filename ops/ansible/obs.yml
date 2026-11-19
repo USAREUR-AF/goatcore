@@ -270,6 +270,28 @@
       # the script tree it installs the cron for.
       tags: [dormancy-report]
 
+    - name: Prepare public storage trust directory for observability
+      ansible.builtin.file:
+        path: "{{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') | dirname }}"
+        state: directory
+        mode: "0755"
+      when: minio_tls_enabled | default(false) | bool
+
+    - name: Install public storage trust for observability
+      ansible.builtin.copy:
+        src: "{{ minio_tls_ca_src }}"
+        dest: "{{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') }}"
+        mode: "0644"
+      when: minio_tls_enabled | default(false) | bool
+
+    - name: Render observability compose with storage trust mounts
+      ansible.builtin.template:
+        src: "{{ compose_src_dir }}/docker-compose.yml"
+        dest: "{{ compose_dest_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+
     - name: Registry WAL rules — not loaded on a Postgres-era portal
       ansible.builtin.file:
         path: "{{ compose_dest_dir }}/prometheus/rules/registry-wal.yml"

@@ -11,6 +11,7 @@ name: help-desk-card
 # else in the tree.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'ops/scripts/help-desk-qr.py'
