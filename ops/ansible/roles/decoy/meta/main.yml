@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: decoy
+  author: goat-maintainer
+  description: |
+    The decoy layer (ADR 1247): plants a goatnet's declared decoy files on a
+    host and, where enabled, runs the decoy responder behind the host's Traefik.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions: ["22.04", "24.04"]
+dependencies: []

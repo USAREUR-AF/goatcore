@@ -73,6 +73,10 @@ e-not-admin-title = an operator-only action without operator authority
 e-not-admin-what = a `goat admin` action was refused, client-side (no operator credentials in the profile) or by the portal/NetBird API (HTTP 403, nothing changed).
 e-not-admin-cause-1 = the profile is using the vp_ participant token, not the op_ operator key
 e-not-admin-cause-2 = the role is not authorized for this action
+e-slot-scope-title = the request names a slot this profile does not own
+e-slot-scope-what = the portal refused a write under a slot (HTTP 403 scope mismatch): the topic key's first segment is not this profile's slot, and this profile is not that machine's recorded custodian. Nothing changed.
+e-slot-scope-cause-1 = the topic key starts with a machine's slot and the command ran in the person's or org's own context
+e-slot-scope-cause-2 = the slot belongs to someone else
 e-topic-conflict-title = the topic already exists
 e-topic-conflict-what = `goat topic create` was asked for a name that is already registered.
 e-topic-conflict-cause-1 = someone created it first
@@ -1071,6 +1075,25 @@ gb-311-cause-2 = someone moved or edited the live or set-aside files by hand
 gb-328-title = a rotation's values reach no play in the phases this run built
 gb-328-what = A key rotation of `goatbuilder federate rotate` passes its values (the rotation id, and for an IPsec rotation its kind and read-back) to the plays of one phase: phase 11 for ipsec-leaf and ipsec-ca, phase 2 for the peering key. It puts them before each play's `-e fed_work=`. The phase this run built has no such play, so the values would reach nothing and the phase would run as a plain one and report the rotation done. Nothing ran. The phases are built from the agreement each run, and the rotation already checked that the agreement chose its transport, so this is goatbuilder's own fault, not the peering's.
 gb-328-cause-1 = the phase's command in this goatbuilder no longer runs its play with `-e fed_work=`
+gb-351-title = a Spock subscription has forward_origins set, which in a mesh replicates in a loop
+gb-351-what = A Spock subscription, or the setting that creates them, has forward_origins other than empty or 'none'. In a mesh of three or more sites such a subscription passes each change on to the next site, which passes it back, without end, while every subscription still reads replicating and nothing is logged. The spock-forward-origins-check role stopped the run before spock-mesh-peering or ory-narrow-repset changed anything. The message names the setting, or each subscription as <host> <database>.<subscription>.
+gb-351-cause-1 = a site's group_vars set spock_mesh_forward_origins or ory_spock_forward_origins
+gb-351-cause-2 = a subscription was created by hand with forward_origins := '{"{"}all{"}"}'
+gb-370-title = no usable peering directory URL or id was given
+gb-370-what = goatbuilder federate directory needs the directory's base URL, from --url or FED_DIRECTORY_URL, as an http(s) URL; and a party or counterparty id as the directory accepts it, 2 to 16 of a-z, 0-9 and -. Nothing was requested.
+gb-370-cause-1 = neither --url nor FED_DIRECTORY_URL is set in this shell
+gb-370-cause-2 = the URL has no https:// in front of it
+gb-370-cause-3 = the id was typed with capitals, a slash or a dot
+gb-371-title = the peering directory did not answer, or what answered is not a peering directory
+gb-371-what = goatbuilder federate directory asked the directory for /v1/version (and, on a release older than saltlick v0.6.0, /healthz) and got no answer, or an answer that is not a saltlick directory.
+gb-371-cause-1 = the URL is wrong, or names a host that is not the directory
+gb-371-cause-2 = the directory is down or restarting (a deploy replaces its instance, a few minutes)
+gb-371-cause-3 = this machine has no route to the internet, or a proxy refuses the host
+gb-372-title = the peering directory lacks a file a peering reads
+gb-372-what = goatbuilder federate directory check (or show) found an item that is not there. Each missing item is one of two kinds, and the view names which. NOT HOSTED: the directory serves the route, and the party has not uploaded the file. ROUTE MISSING: the directory's release does not serve the route at all (a plain-text 404, or a route absent from its /v1/version list).
+gb-372-cause-1 = NOT HOSTED: the party has not run phase 5 of the peering, which uploads its entry, CA, SPIFFE bundle and its package for the counterparty
+gb-372-cause-2 = NOT HOSTED: the party used another id, or uploaded to the single package slot instead of the one for this counterparty
+gb-372-cause-3 = ROUTE MISSING: the directory runs a release older than the one that added the route (per-counterparty packages need saltlick v0.5.0)
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened

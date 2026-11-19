@@ -27,6 +27,7 @@ error-portal-rate-limited-summary = the portal answered HTTP 429 for `{ $path }`
 error-portal-server-error-summary = the portal answered HTTP { $status } for `{ $path }`: a fault on the portal's side
 error-portal-refused-summary = the portal answered HTTP { $status } for `{ $path }`: request refused
 error-token-invalid-summary = portal rejected the Bearer token
+error-slot-scope-summary = this slot is not yours — use the slot's own context, or ask its custodian (an operator key is not the fix)
 error-not-admin-summary = operator-only action — you are not authorized (`goat admin` is inert for non-admins)
 error-topic-conflict-summary = topic `{ $topic }` already exists
 error-bundle-invalid-summary = bundle signature or expiry verification failed

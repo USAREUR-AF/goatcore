@@ -69,6 +69,7 @@ mod admit_role;
 mod confirm;
 pub mod acceptance;
 pub mod deploy;
+pub mod directory;
 pub mod handoff;
 pub mod site_values;
 pub mod switches;
