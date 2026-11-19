@@ -215,6 +215,16 @@ class CatalogNamesTheStrandedCase(unittest.TestCase):
         self.assertIn('Built before the repository move', fixes)
         self.assertIn('cosign verify-blob', fixes)
 
+    def test_gb074_what_names_the_in_binary_signature_check_in_every_locale(self):
+        # update checks the signature itself; no locale still says it needs cosign.
+        for ftl in sorted((ROOT / 'crates/goat-errors/i18n').glob('*/errors.ftl')):
+            what = [l for l in ftl.read_text().splitlines() if l.startswith('gb-074-what = ')]
+            if not what:
+                continue
+            with self.subTest(ftl.parent.name):
+                self.assertNotIn('cosign', what[0])
+                self.assertIn('GB-261', what[0])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -51,6 +51,38 @@ class Verdict(unittest.TestCase):
         self.assertEqual(ev.overall([check("a", "PASS"), check("b", "NOT APPLICABLE", required=False)])[:2], ("PASS", 0))
 
 
+class Pending(unittest.TestCase):
+    """PENDING: a required check whose evidence a later run decides. It is never a pass."""
+
+    def test_pending_beside_passes_is_incomplete_never_pass(self):
+        verdict = ev.overall([check("a", "PASS"), check("b", "PENDING", reason="pending: edge-trace")])
+        self.assertEqual(verdict[:2], ("INCOMPLETE", 3))
+        self.assertIn("pending", verdict[2])
+        self.assertIn("b", verdict[2])
+
+    def test_a_fail_beside_pending_is_fail(self):
+        self.assertEqual(ev.overall([check("a", "FAIL"), check("b", "PENDING")])[:2], ("FAIL", 1))
+
+    def test_the_why_names_pending_and_unrun_checks_apart(self):
+        why = ev.overall([check("a", "PASS"), check("b", "PENDING"), check("c", "BLOCKED")])[2]
+        self.assertIn("1 required check(s) did not run: c", why)
+        self.assertIn("1 check(s) pending a later run: b", why)
+
+    def test_pending_is_required_and_needs_a_reason(self):
+        with self.assertRaises(ev.Malformed):
+            check("a", "PENDING", required=False)
+        with self.assertRaises(ev.Malformed):
+            check("a", "PENDING", reason=" ")
+
+    def test_pending_is_counted_and_shown(self):
+        b = {"counts": ev.counts([check("a", "PASS"), check("b", "PENDING")]), "run": {"us": "xaa"},
+             "verdict": "INCOMPLETE"}
+        self.assertEqual((b["counts"]["PENDING"], b["counts"]["PASS"]), (1, 1))
+        text = ev.console(b)
+        self.assertIn("acceptance-counts: pass=1 fail=0 skip=0 as=xaa blocked=0 not_applicable=0 pending=1", text)
+        self.assertIn("1 PENDING", text)
+
+
 class Records(unittest.TestCase):
     def test_a_required_check_cannot_be_not_applicable(self):
         with self.assertRaises(ev.Malformed):
