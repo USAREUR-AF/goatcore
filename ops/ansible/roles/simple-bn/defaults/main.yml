@@ -1,0 +1,17 @@
+---
+# simple-bn — install a simple boundary node and its monitor from the goatnet's declaration
+# (ADR 1253, docs/design/simple-boundary-node.md). Driven by `simple_bn` in the boundary
+# host group's vars (the private overlay); nothing here names a goatnet or a receiver.
+#
+# The receiver's HOST:PORT is a secret-class value: it is read from the env var the
+# declaration names (`simple_bn.receiver.dest_env`, filled from the secret store by
+# with-secrets) and written only to /etc/simple-bn/receiver.env (mode 600).
+simple_bn: {}
+simple_bn_state: present            # present | absent
+simple_bn_root: /opt/simple-bn
+simple_bn_etc: /etc/simple-bn
+# goatcore's ops/simple-bn/ in the assembled tree, and the tree's root for the profiles path
+simple_bn_src: "{{ playbook_dir }}/../simple-bn"
+simple_bn_tree_root: "{{ playbook_dir }}/../.."
+simple_bn_monitor_port: 8740
+simple_bn_encryption_by_stage: {0: none, 1: wireguard, 2: receiver-transport}

@@ -1,0 +1,16 @@
+---
+# simple-bn.yml — install or remove a simple boundary node and its monitor (ADR 1253).
+#
+#   cd <assembled tree>/ops/ansible
+#   ../scripts/with-secrets <goatnet> -- ../scripts/ansible-preflight.sh \
+#       -i inventory/<boundary host inventory> -e target=<boundary host group> [-e state=absent] simple-bn.yml
+#
+# The group's vars carry the `simple_bn` declaration; the receiver's HOST:PORT comes from
+# the env var it names. Run it twice: the second run reports no changes.
+- name: simple boundary node
+  hosts: "{{ target | mandatory }}"
+  gather_facts: false
+  roles:
+    - role: simple-bn
+      vars:
+        simple_bn_state: "{{ state | default('present') }}"

@@ -120,3 +120,52 @@ class Tcp(unittest.TestCase):
         self.assertEqual(self._read_blocks(conn, 1)[0], 34)
         self.assertEqual(f.status(time.time())["state"], "sending")
         conn.close(); srv.close(); f.sock.close()
+
+
+class FixedSourcePort(unittest.TestCase):
+    def test_udp_feed_sends_from_its_declared_port(self):
+        rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); rx.bind(("127.0.0.1", 0)); rx.settimeout(5)
+        probe = socket.socket(); probe.bind(("127.0.0.1", 0)); port = probe.getsockname()[1]; probe.close()
+        prof = s.load_profiles(None)
+        prof["fixed"] = dict(prof["counterfire"], src_port=port)
+        f = s.Feed("fixed", 0, rx.getsockname(), random.Random(1), prof)
+        self.assertEqual(f.src_port, port)
+        f.scan()
+        _, addr = rx.recvfrom(65535)
+        self.assertEqual(addr[1], port)
+        f.sock.close(); rx.close()
+
+
+class FeedbackChannel(unittest.TestCase):
+    def test_parse(self):
+        self.assertEqual(s.parse_feedback(b'{"type":"ack","sic":42,"received":10,"window_s":60,"x":1}'),
+                         {"type": "ack", "sic": 42, "received": 10, "window_s": 60})
+        self.assertIsNone(s.parse_feedback(b'{"type":"ack","received":10}'))      # an ack names its SIC
+        self.assertIsNone(s.parse_feedback(b'{"type":"rm -rf"}'))
+        self.assertIsNone(s.parse_feedback(b"not json"))
+        self.assertIsNone(s.parse_feedback(b"x" * 5000))
+        m = s.parse_feedback(b'{"type":"status","receiving":true,"sics":[42,"a",53],"note":"' + b"n" * 500 + b'"}')
+        self.assertEqual(m["sics"], [42, 53]); self.assertEqual(len(m["note"]), 200)
+
+    def test_only_the_receiver_is_heard(self):
+        fb = s.Feedback(["127.0.0.1"])
+        self.assertIsNotNone(fb.take(b'{"type":"hello","system":"crc"}', ("127.0.0.1", 9), "port:1"))
+        self.assertIsNone(fb.take(b'{"type":"hello","system":"spoof"}', ("10.9.9.9", 9), "port:1"))
+        st = fb.status()
+        self.assertEqual(st["counts"], {"accepted": 1, "rejected": 1})
+        self.assertEqual(st["hello"]["msg"]["system"], "crc")
+
+    def test_reply_to_feed_source_port_is_heard(self):
+        rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); rx.bind(("127.0.0.1", 0)); rx.settimeout(5)
+        f = s.Feed("counterfire", 0, rx.getsockname(), random.Random(1), s.load_profiles(None))
+        fb = s.Feedback(["127.0.0.1"])
+        import threading
+        threading.Thread(target=fb.listen, args=(f.sock, "reply"), daemon=True).start()
+        f.scan()
+        _, addr = rx.recvfrom(65535)
+        rx.sendto(b'{"type":"ack","sic":2,"received":3,"window_s":60}', addr)
+        for _ in range(50):
+            if fb.status()["acks"]: break
+            time.sleep(0.05)
+        self.assertEqual(fb.status()["acks"]["2"]["received"], 3)
+        rx.close()

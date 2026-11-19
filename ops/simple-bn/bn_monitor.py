@@ -54,12 +54,16 @@ const dur=s=>{const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floo
 function spark(pm,col){if(!pm.length)return"";const v=pm.map(x=>x[1]),mx=Math.max(1,...v),w=300,h=40,bw=w/v.length;
  const bars=v.map((y,i)=>{const bh=y?Math.max(1.5,(y/mx)*(h-4)):0;return `<rect x="${(i*bw+0.5).toFixed(1)}" y="${(h-bh).toFixed(1)}" width="${(bw-1).toFixed(1)}" height="${bh.toFixed(1)}" fill="${col}"/>`}).join("");
  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="datagrams per minute, last 60 minutes"><title>datagrams per minute, last 60 minutes (peak ${mx})</title><line x1="0" y1="${h-0.5}" x2="${w}" y2="${h-0.5}" stroke="var(--line)"/>${bars}</svg><div class="ack" style="margin-top:2px">datagrams per minute · last 60 min · peak ${mx}</div>`}
+function fbpanel(fb){if(!fb)return"";const h=fb.hello&&fb.hello.msg,st=fb.status&&fb.status.msg,rq=fb.request&&fb.request.msg;
+ const kv=o=>o?Object.entries(o).filter(([k])=>k!=="type").map(([k,v])=>`${k}: ${Array.isArray(v)?v.join(", "):v}`).join(" · "):"–";
+ return `<div class="node"><div><b>Receiver feedback</b>${fb.last_heard?"last heard "+ago(fb.last_heard):"nothing received yet"}${fb.port?" · port "+fb.port:""} · ${fb.counts.accepted} accepted, ${fb.counts.rejected} rejected</div>
+ <div><b>Hello</b>${kv(h)}</div><div><b>Status</b>${kv(st)}</div><div><b>Request</b>${kv(rq)}</div></div>`}
 async function tick(){try{const r=await fetch("api/status",{cache:"no-store"});const docs=await r.json();
  document.getElementById("sub").textContent="Updated "+new Date().toLocaleTimeString()+" · "+docs.length+" boundary service(s) on this node";
  let html="";docs.forEach(d=>{
   html+=`<div class="node"><div><b>Node</b>${d.node} · ${d.kind}</div><div><b>Service</b>${d.service}</div><div><b>Uptime</b>${dur(d.uptime_s)}</div>
   <div><b>Receiver</b>${d.receiver.label}</div><div><b>Transport</b>${d.receiver.transport} · ${d.receiver.format}</div><div><b>Encryption</b>${d.receiver.encryption}</div>
-  ${d.stale?'<div class="err"><b>Status file</b>stale: service not writing</div>':""}</div><div class="grid">`;
+  ${d.stale?'<div class="err"><b>Status file</b>stale: service not writing</div>':""}</div>${fbpanel(d.feedback)}<div class="grid">`;
   d.feeds.forEach((f,i)=>{const col=`var(--f${i%4})`;
    const rows=[["Datagrams","datagrams"],["Detections","detections"],["Tracks","tracks"],["Service msgs","cat034"],["Bytes","bytes"],["Send errors","send_errors"],["Refused","refused"],["Dropped","dropped"]];
    html+=`<div class="card" style="--c:${col}"><div class="hd"><div><div class="name">${f.title}</div>
@@ -69,7 +73,7 @@ async function tick(){try{const r=await fetch("api/status",{cache:"no-store"});c
    ${rows.map(([l,k])=>`<tr><td>${l}</td>${W.map(w=>`<td>${fmt((f.windows[w]||{})[k]||0)}</td>`).join("")}<td>${fmt(f.totals[k]||0)}</td></tr>`).join("")}</table>
    ${spark(f.per_minute,col)}
    <div class="kinds">${Object.entries(f.live_targets_by_kind).map(([k,n])=>`<span class="k">${k}: ${n}</span>`).join("")||'<span class="k">no live targets</span>'}</div>
-   <div class="ack">Last send ${ago(f.last_send)} · Ack: ${f.ack.mode==="none"?f.ack.note:f.ack.mode}${f.ack.last_refused?" · last refused "+ago(f.ack.last_refused):""}
+   <div class="ack">Last send ${ago(f.last_send)} · Ack: ${f.ack.mode==="app"?`receiver got ${fmt(f.ack.receiver_received)} of ${fmt(f.ack.we_sent_in_window)} in ${f.ack.window_s}s (${ago(f.ack.at)})`:f.ack.mode==="none"?f.ack.note:f.ack.note}${f.ack.last_refused?" · last refused "+ago(f.ack.last_refused):""}
    ${f.last_error?`<br><span class="err">Last error: ${f.last_error}</span>`:""}</div></div>`});
   html+="</div>"});
  document.getElementById("nodes").innerHTML=html||"<p>No boundary service status found.</p>";
@@ -115,8 +119,21 @@ def main():
             path = self.path.split("?")[0]
             if path in ("/", "/index.html"):
                 self._send(200, "text/html; charset=utf-8", PAGE)
-            elif path == "/api/status":
+            elif path in ("/api/status", "/api/v1/status"):
                 self._send(200, "application/json", json.dumps(load(a.status_dir)))
+            elif path == "/api/v1/health":
+                # 200 when every feed of every service is sending and the status files are fresh; 503 otherwise.
+                docs = load(a.status_dir)
+                bad = [f"{d.get('node')}/{f['feed']}:{f['state']}" for d in docs for f in d.get("feeds", [])
+                       if f["state"] != "sending"] + [f"{d.get('node')}:stale" for d in docs if d.get("stale")]
+                ok = bool(docs) and not bad
+                self._send(200 if ok else 503, "application/json", json.dumps({"ok": ok, "problems": bad or ([] if docs else ["no status"])}))
+            elif path.startswith("/api/v1/feeds/"):
+                name = path.rsplit("/", 1)[1]
+                hit = [f for d in load(a.status_dir) for f in d.get("feeds", []) if f["feed"] == name]
+                self._send(200 if hit else 404, "application/json", json.dumps(hit[0] if hit else {"error": "no such feed"}))
+            elif path == "/api/v1/feedback":
+                self._send(200, "application/json", json.dumps([{"node": d.get("node"), **(d.get("feedback") or {})} for d in load(a.status_dir)]))
             elif path == "/favicon.ico":
                 self._send(204, "image/x-icon", b"")
             elif path == "/healthz":
