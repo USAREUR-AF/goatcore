@@ -231,7 +231,10 @@ than by people out of band. Anyone can read the same answers from a status API w
 | `GET /api/v1/feedback` | what each receiver has reported |
 | `GET /api/v1/health` | `200 {"ok": true}` when every feed is sending, otherwise `503` with the problems |
 
-`/api/status` remains as an alias of `/api/v1/status`.
+| `GET /api/v1/openapi.json` | the OpenAPI 3 description of the four routes above, with examples |
+| `GET /api/docs` | Swagger UI over that description, with "Try it out" on, so each call can be made from the page |
+
+`/api/status` remains as an alias of `/api/v1/status`. The Swagger page loads its script and stylesheet from a pinned `swagger-ui-dist` version with integrity hashes; the description and every call stay on the node.
 
 ## 7. Declaration
 
