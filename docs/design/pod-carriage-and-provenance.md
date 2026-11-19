@@ -106,11 +106,47 @@ not developers ([`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md)
 
 | Edge | Choice |
 |---|---|
-| Many live paths at once | Any allowed path is valid. Duplicate delivery over two paths is measured first; any remedy is session-side |
+| Many live paths at once | Any allowed path is valid. Measured: a client-mode session given two pods uses one at a time and every publication arrived once; a peer-mode session linked to two routers delivered every publication twice. Any remedy is session-side (options below) |
 | Pod behind a pod | Not supported; a pod forwards only sources it authenticated |
 | Across sovereigns | A rule never crosses a trust root ([ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md), [ADR 1020](../adr/1020-zenoh-federated-peering-trust-model.md)) |
 | Silent denial | A pod refuses an uncovered source at connect time and publishes per-source carriage health |
 | Scale | ACL size grows with covered slots per pod. zenohd 1.9 applies an ACL change only by restarting the router (F-156), so rendering follows the slot fragment's pattern (`ops/ansible/roles/goat-zenoh/files/slot-fragment-reload.py`): removals at once, additions batched |
+
+**Measured** 2026-11-19, zenohd 1.9.0 (`eclipse/zenoh:1.9.0` by digest), with
+`N=1000 RUNS=3 bash tests/duplicate-delivery-local.sh` in USAREUR-AF/zagros-moon-pod: a core router and two pod routers
+rendered from the pod template, each pod on its own Docker network and admitting one device certificate as the writer of
+its slot; a subscriber on the core counts arrivals of 1,000 sequence-numbered publications, three runs per case, on a
+GitHub-hosted runner (Intel Xeon Platinum 8370C, 4 vCPU). The same script with the routers run as zenoh 1.9.0 Python
+router sessions on an Apple M3 gave the same counts.
+
+| Publisher session | Connected to | Arrivals per publication (3 × 1,000) |
+|---|---|---|
+| client, one endpoint (control) | pod-a | 1 for all 3,000 |
+| client, endpoints pod-a and pod-b | pod-a only (a client holds one router link) | 1 for all 3,000 |
+| peer, endpoints pod-a and core | pod-a and core | 2 for all 3,000 |
+| peer, endpoints pod-a and pod-b | pod-a and pod-b | 2 for all 3,000 |
+
+Standard pattern: a device publishes in client mode and lists the pods it may use as router hints, so it holds one router link at a time. Peer mode to two routers delivers every publication twice and is not used for publishing through pods.
+
+A further session-side remedy, not built: the
+subscriber drops a sample whose `prov` (signer, `ts`, `sha256`) it has already accepted, which covers signed samples only.
+Whether zenoh's advanced publisher and subscriber sequence numbers drop such duplicates is unmeasured.
+
+**Measured** 2026-11-19, signature overhead per sample of the §7.2 attachment, with
+`cargo run --release -- 5000` in `ops/zenoh/prov-bench` (p256 0.14 and sha2 0.10, the crates goat-cli uses) on an Apple
+M3 laptop (8 cores) under a load average of 60 to 140 from other work. Sign = SHA-256 of the payload, canonical JSON,
+ECDSA P-256 sign, base64, attachment JSON; verify = parse, canonical JSON, ECDSA verify, SHA-256 compare. Certificate fetch
+and chain check are cached and not included. Medians of four runs of 5,000 samples each:
+
+| Payload | Sign, median (µs) | Verify, median (µs) | SHA-256 alone (µs) |
+|---|---|---|---|
+| 64 B | 149 to 154 | 508 to 697 | 0.7 to 0.8 |
+| 1 KiB | 154 to 159 | 513 to 714 | 5.3 to 6.2 |
+| 64 KiB | 547 to 602 | 1,096 to 2,056 | 377 |
+
+The attachment adds 413 bytes for `device-signed` and 476 bytes for `adapter-attested` (the DER signature base64-encodes to
+96 characters at every length P-256 produces). For reference, `openssl speed ecdsap256` on the same machine at the same time:
+25,247 signs and 8,490 verifies per second.
 
 ## 7. Interfaces
 
@@ -226,7 +262,7 @@ custodian org is that org, except sources that opted out. Machine enrollment (si
 | Phase | What | Status |
 |---|---|---|
 | 0 | Guidance: no hand-edited pod ACL entries; interim key convention `<pod-slot>/routed/<source-slot>/…`, documented as unverified | Can do now |
-| 1 | Measure: duplicate delivery over two live paths, signature overhead per sample (ACL reload is settled: restart, F-156) | First |
+| 1 | Measure: duplicate delivery over two live paths, signature overhead per sample (ACL reload is settled: restart, F-156) | Measured 2026-11-19 (§6) |
 | 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Designed |
 | 3 | Provenance: attachment signature, grades, keyless sources, ASTERIX ingress adapter, verification in the CLI | Designed |
 | 4 | Core ACL rendering, carriage health, drift check | Designed; after the current security fixes to the core template are disclosed |
