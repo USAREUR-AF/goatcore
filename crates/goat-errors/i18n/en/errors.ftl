@@ -451,6 +451,7 @@ gb-074-what = Before touching anything, update checks that the <asset>.sha256 th
 gb-074-cause-1 = the surface is mid-deploy and the binary, its checksum and SHA256SUMS are from different releases
 gb-074-cause-2 = the download was altered or truncated on the way
 gb-074-cause-3 = the signature over SHA256SUMS is not from the release workflow of the repository goatbuilder.yaml names
+gb-074-cause-4 = this goatbuilder was built before the repository move: it expects the signature of the previous release repository, releases are now signed by the current one, and the refusal's expected identity names a different repository from the one it got. Such a binary cannot update itself
 gb-075-title = goatbuilder could not replace its own binary
 gb-075-what = The download was verified, but writing it next to the running binary or renaming it into place failed. The rename is atomic, so the binary in place is either the old one, whole, or the new one, whole.
 gb-075-cause-1 = the install directory is not writable by this user (a binary under /usr/local/bin installed with sudo)

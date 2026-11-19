@@ -1677,8 +1677,10 @@ entries:
       - the surface is mid-deploy and the binary, its checksum and SHA256SUMS are from different releases
       - the download was altered or truncated on the way
       - the signature over SHA256SUMS is not from the release workflow of the repository goatbuilder.yaml names
+      - "this goatbuilder was built before the repository move: it expects the signature of the previous release repository, releases are now signed by the current one, and the refusal's expected identity names a different repository from the one it got. Such a binary cannot update itself"
     fixes:
       - "retry in a few minutes; the surface's files are written together"
+      - "built before the repository move: reinstall once with the line under \"Built before the repository move\" at get.<site>.<zone>/goatbuilder/. It downloads SHA256SUMS, its signature and this platform's binary, runs cosign verify-blob against the current release repository, checks the binary against SHA256SUMS, and only then replaces the installed goatbuilder; later updates then work"
       - "goatbuilder update --check   (what the surface serves now)"
       - "cosign verify-blob --bundle SHA256SUMS.cosign-bundle --certificate-identity-regexp '^https://github.com/<owner>/<repo>/' --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS   (the check by hand)"
     read: docs/design/goatbuilder-distribution.md
