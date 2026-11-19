@@ -1,0 +1,118 @@
+---
+# Exposure guard for the mesh-bound metrics port (GHSA-x44g). Included from
+# tasks/deploy.yml before the collector comes up; templates/
+# logship-expose-guard.nft.j2 says why binding alone is not enough. Same shape
+# as the obs-host role's guard for Grafana, Prometheus and Alertmanager.
+
+- name: goat-logship | exposure guard is in place (mesh-bound metrics port)
+  when: not (logship_bind_all | bool)
+  block:
+    - name: goat-logship | nftables is present (exposure guard)
+      ansible.builtin.apt:
+        name: nftables
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: goat-logship | exposure guard directory
+      ansible.builtin.file:
+        path: "{{ logship_expose_guard_nft_path | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Some kernels are built without nft counters (the Jetson Tegra kernel:
+    # CONFIG_NFT_COUNTER is not set), and a rule that uses one fails to load
+    # with "No such file or directory". nft -c only checks; it changes nothing.
+    - name: goat-logship | the kernel has nft counters (check only)
+      ansible.builtin.command:
+        argv: [/usr/sbin/nft, -c, -f, "-"]
+        stdin: |
+          table inet goat_logship_counter_check {
+          	chain c {
+          		counter
+          	}
+          }
+      register: _logship_counter_check
+      changed_when: false
+      failed_when: false
+      when: logship_expose_guard_counter | string == 'auto'
+
+    - name: goat-logship | exposure guard counts drops only where the kernel can
+      ansible.builtin.set_fact:
+        _logship_guard_counter: >-
+          {{ (_logship_counter_check.rc | default(1) == 0)
+             if (logship_expose_guard_counter | string == 'auto')
+             else (logship_expose_guard_counter | bool) }}
+
+    - name: goat-logship | exposure guard ruleset
+      ansible.builtin.template:
+        src: logship-expose-guard.nft.j2
+        dest: "{{ logship_expose_guard_nft_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        validate: /usr/sbin/nft -c -f %s
+      register: _logship_guard_rules
+
+    - name: goat-logship | exposure guard unit
+      ansible.builtin.template:
+        src: goat-logship-expose-guard.service.j2
+        dest: /etc/systemd/system/goat-logship-expose-guard.service
+        owner: root
+        group: root
+        mode: "0644"
+      register: _logship_guard_unit
+
+    - name: goat-logship | exposure guard enabled and loaded
+      ansible.builtin.systemd:
+        name: goat-logship-expose-guard.service
+        enabled: true
+        state: started
+        daemon_reload: "{{ _logship_guard_unit is changed }}"
+
+    # started does nothing to a oneshot that already ran; reload re-reads the
+    # file, which replaces the table atomically.
+    - name: goat-logship | exposure guard reloaded with the new ruleset
+      ansible.builtin.systemd:
+        name: goat-logship-expose-guard.service
+        state: reloaded
+      when: _logship_guard_rules is changed or _logship_guard_unit is changed
+
+    - name: goat-logship | exposure guard table is loaded
+      ansible.builtin.command:
+        argv: [/usr/sbin/nft, list, table, inet, goat_logship_expose]
+      register: _logship_guard_list
+      changed_when: false
+      failed_when: >-
+        _logship_guard_list.rc != 0
+        or (_logship_bind | trim) not in _logship_guard_list.stdout
+        or ((_logship_gw_bind | default('', true) | trim) | length > 0
+            and (_logship_gw_bind | trim) not in _logship_guard_list.stdout)
+
+# logship_bind_all publishes on every interface on purpose, so a guard would
+# only contradict it. Remove one left by an earlier deploy.
+- name: goat-logship | no exposure guard when publishing on every interface
+  when: logship_bind_all | bool
+  block:
+    - name: goat-logship | exposure guard stopped and disabled
+      ansible.builtin.systemd:
+        name: goat-logship-expose-guard.service
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: goat-logship | exposure guard files removed
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/goat-logship-expose-guard.service
+        - "{{ logship_expose_guard_nft_path }}"
+      register: _logship_guard_removed
+
+    - name: goat-logship | systemd forgets the removed guard unit
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: _logship_guard_removed is changed

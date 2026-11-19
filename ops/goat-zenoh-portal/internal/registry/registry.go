@@ -12,6 +12,7 @@ package registry
 
 import (
 	"context"
+	"database/sql"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -111,7 +112,8 @@ type Topic struct {
 
 // Registry wraps the Postgres connection pool.
 type Registry struct {
-	db *sqlx.DB
+	db        *sqlx.DB
+	bundleDir string // see SetBundleDir; empty = never remove tarballs
 }
 
 // migrationTimeout bounds connecting and applying the schema at startup.
@@ -125,7 +127,10 @@ func migrationCtx() (context.Context, context.CancelFunc) {
 // Migrations is the registry's versioned schema. Version 1 is the SQLite
 // schema with the tables and columns unchanged (ADR 1165 step A); later
 // versions are step B.
-var Migrations = []pgstore.Migration{{Version: 1, SQL: schemaSQL}}
+var Migrations = []pgstore.Migration{
+	{Version: 1, SQL: schemaSQL},
+	{Version: 2, SQL: slotLeavesSQL},
+}
 
 // Tables are the registry's tables in version 1, in foreign-key order: a table
 // comes after every table it references. store-migrate copies them in this
@@ -168,7 +173,7 @@ func Open(dsn string) (*Registry, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
-	if err := pgstore.RequireTables(ctx, db, Tables...); err != nil {
+	if err := pgstore.RequireTables(ctx, db, append(Tables, TablesSince1...)...); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -213,7 +218,7 @@ func OpenExisting(dsn string) (*Registry, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("registry schema is at version %d, this build expects %d: start the portal against this database first", v, want)
 	}
-	if err := pgstore.RequireTables(ctx, db, Tables...); err != nil {
+	if err := pgstore.RequireTables(ctx, db, append(Tables, TablesSince1...)...); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -555,14 +560,26 @@ func (r *Registry) ApproveVendor(ctx context.Context, prefix, approver string) e
 	return err
 }
 
-// MarkBundle stores the one-time bundle token + path. Token is consumed at
-// download (cleared in ConsumeBundleToken).
+// MarkBundle stores the bundle token + path and stamps the mint time, which
+// starts the link's lifetime (config BundleTTL).
+// The tarball the row named before, if no row names it any more, is removed
+// (SetBundleDir).
 func (r *Registry) MarkBundle(ctx context.Context, prefix, token, path string) error {
 	now := time.Now().Unix()
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE vendors SET bundle_token = $1, bundle_path = $2, bundle_minted_at = $3 WHERE prefix = $4`,
+	// The self-join returns the row's bundle_path as it was before this UPDATE.
+	var old []sql.NullString
+	err := r.db.SelectContext(ctx, &old,
+		`UPDATE vendors AS v SET bundle_token = $1, bundle_path = $2, bundle_minted_at = $3
+		   FROM vendors AS o WHERE v.prefix = $4 AND o.prefix = v.prefix
+		 RETURNING o.bundle_path`,
 		token, path, now, prefix)
-	return err
+	if err != nil {
+		return err
+	}
+	for _, o := range old {
+		r.dropBundleIfUnnamed(ctx, o.String, path)
+	}
+	return nil
 }
 
 // RecordBundleDownload stamps a successful bundle fetch: first-download time
@@ -595,22 +612,35 @@ func (r *Registry) RecordBundleDownload(ctx context.Context, prefix string) erro
 }
 
 // ConsumeBundleToken returns the bundle path for a matching token + vendor.
-// Returns ErrNotFound when the token doesn't match. The token is NOT cleared
-// on read — siblings at the same vendor share one cert+api_key by design
-// (see docs/design/operator-onboard-utilities.md §83E), so the bundle URL
-// must remain valid across multiple downloads. Token rotation happens at
-// operator discretion (an UPDATE) rather than implicitly on first read.
+// Returns ErrNotFound when the token doesn't match. It does not check the
+// link's age: the download handler uses LookupBundle for that.
 func (r *Registry) ConsumeBundleToken(ctx context.Context, prefix, token string) (string, error) {
-	var path string
-	err := r.reader().GetContext(ctx, &path,
-		`SELECT bundle_path FROM vendors WHERE prefix = $1 AND bundle_token = $2`, prefix, token)
+	path, _, err := r.LookupBundle(ctx, prefix, token)
+	return path, err
+}
+
+// LookupBundle returns the bundle path and its mint time (Unix seconds, 0 when
+// unrecorded) for a matching token + vendor, or ErrNotFound. The token is not
+// cleared on read: siblings at the same org share one bundle
+// (docs/design/operator-onboard-utilities.md §83E), so the link serves several
+// downloads. Its lifetime is bounded by the caller against bundle_minted_at.
+func (r *Registry) LookupBundle(ctx context.Context, prefix, token string) (string, int64, error) {
+	var row struct {
+		Path     sql.NullString `db:"bundle_path"`
+		MintedAt sql.NullInt64  `db:"bundle_minted_at"`
+	}
+	err := r.reader().GetContext(ctx, &row,
+		`SELECT bundle_path, bundle_minted_at FROM vendors WHERE prefix = $1 AND bundle_token = $2`, prefix, token)
 	if errors.Is(err, sqlErrNoRows()) {
-		return "", ErrNotFound
+		return "", 0, ErrNotFound
 	}
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return path, nil
+	if !row.Path.Valid || row.Path.String == "" {
+		return "", 0, ErrNotFound
+	}
+	return row.Path.String, row.MintedAt.Int64, nil
 }
 
 // CreateTopic inserts a new topic row. Returns ErrTopicExists when the
@@ -751,8 +781,15 @@ func (r *Registry) DeleteVendor(ctx context.Context, prefix string) error {
 	if n > 0 {
 		return fmt.Errorf("vendor %q has %d non-retired topic(s); retire them first", prefix, n)
 	}
-	_, err = r.db.ExecContext(ctx, `DELETE FROM vendors WHERE prefix = $1`, prefix)
-	return err
+	var old []sql.NullString
+	if err := r.db.SelectContext(ctx, &old,
+		`DELETE FROM vendors WHERE prefix = $1 RETURNING bundle_path`, prefix); err != nil {
+		return err
+	}
+	for _, o := range old {
+		r.dropBundleIfUnnamed(ctx, o.String, "")
+	}
+	return nil
 }
 
 // LogAuditEvent appends an audit row.

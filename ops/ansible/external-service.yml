@@ -85,11 +85,14 @@
     hydra_admin: "http://127.0.0.1:{{ hydra_admin_host_port | default(4445) }}"
     site_env_prefix: "{{ site_id | upper | replace('-', '_') }}"
     nb_token_envvar: "{{ site_env_prefix }}_NB_API_TOKEN"
-    door_values: [group-gated, authenticated, in-app, mesh-only]
+    door_values: [group-gated, authenticated, in-app, mesh-only, admit]
     # The tier an off-box service host holds: reachable by every role group
     # one-way, initiates only toward INFRA (mesh-and-ory-roles.md). Prefixed
-    # per goatnet like every other group name.
-    external_infra_group: "{{ site_env_prefix }}-EXTERNAL-INFRA"
+    # per goatnet like every other group name. A declaration may name
+    # `host_class: INFRA` instead, with a `host_class_reason`, for a service that
+    # runs on a goatnet's own substrate host (a boundary node's monitor, ADR 1254):
+    # the edge proxies to it INFRA to INFRA, and participants never reach it directly.
+    external_infra_group: "{{ site_env_prefix }}-{{ (lookup('vars', external_service_var, default={})).host_class | default('EXTERNAL-INFRA') }}"
 
   tasks:
     - name: The state is present or absent
@@ -158,6 +161,16 @@
           # would delegate nothing), and only a partner may name one.
           - ((ext.tls | default('edge')) == 'edge') or (ext.acme_delegate is defined and (ext.acme_delegate | string | lower is match('^([a-z0-9_]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\.?$')))
           - (ext.acme_delegate is not defined) or ((ext.tls | default('edge')) == 'partner')
+          # host_class: EXTERNAL-INFRA (default) or INFRA with a written reason (ADR 1254).
+          - (ext.host_class | default('EXTERNAL-INFRA')) in ['EXTERNAL-INFRA', 'INFRA']
+          - (ext.host_class | default('EXTERNAL-INFRA')) == 'EXTERNAL-INFRA' or (ext.host_class_reason | default('') | length > 0)
+          # door: admit — goat signs the person in at the edge and admits them by rule (ADR 1254).
+          # The door owns its Hydra client, so the declaration carries no `client:` block; it
+          # names the two env vars that hold the door's secrets, and at least one admission term.
+          - (ext.door | default('')) != 'admit' or (ext.tls | default('edge')) == 'edge'
+          - (ext.door | default('')) != 'admit' or ext.client is not defined
+          - (ext.door | default('')) != 'admit' or (ext.admit is mapping and ((ext.admit.orgs | default([])) + (ext.admit.nations | default([])) + (ext.admit.groups | default([])) + ([ext.admit.emails_env] if ext.admit.emails_env is defined else [])) | length > 0)
+          - (ext.door | default('')) != 'admit' or (ext.door_secrets is mapping and ext.door_secrets.client_secret_env is defined and ext.door_secrets.cookie_secret_env is defined)
           - (ext.acme_delegate is not defined) or not ((ext.acme_delegate | string | lower | regex_replace('\.$', '')) is match('^(.+\.)?' ~ (site_dns_zone | regex_escape) ~ '$'))
           - (ext.mesh_peer is not defined) or (ext.mesh_peer | string is match('^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$'))
           - ext.door is defined and (ext.door in door_values)
@@ -179,8 +192,26 @@
           {{ site_dns_zone }}; edge services name none); `mesh_peer`, when set, is
           a NetBird peer name; `door` is one of {{ door_values }};
           `owner` names who to call; a `client:` block needs `id` and
-          `secret_env`; `retire_after` is YYYY-MM-DD.
+          `secret_env`; `retire_after` is YYYY-MM-DD; `host_class` is
+          EXTERNAL-INFRA or INFRA, and INFRA needs `host_class_reason`;
+          `door: admit` is edge-only, carries no `client:` block, names
+          `door_secrets: {client_secret_env, cookie_secret_env}` and an `admit:`
+          block with at least one of orgs, nations, groups or emails_env.
       when: external_service_state == 'present'
+
+    # door: admit needs the mgmt-host Traefik router to point at the door. That
+    # switch is a separate change to the router template; until it lands the router
+    # would go straight to backend_url and the door would gate nothing, so the play
+    # refuses `admit` rather than publish an open service.
+    - name: The admit door's edge route is in this release
+      ansible.builtin.assert:
+        that: (ext.door | default('')) != 'admit' or (external_service_admit_route_ready | default(false) | bool)
+        fail_msg: >-
+          {{ external_service_var }}: door admit needs the router-to-door switch in
+          the mgmt-host Traefik template, which is not in this release yet. Until it is,
+          publish with another door value or wait for that change.
+      when: external_service_state == 'present'
+      run_once: true
 
     - name: The edge hostname and the mesh name agree on this goatnet
       # The Traefik loop builds the SAN and Host() rule from public_mgmt_fqdn,
@@ -607,6 +638,88 @@
           - "tls:          {{ ext.tls | default('edge') }}{{ ('   (you terminate TLS; validate with ACME DNS-01 answered at ' ~ ext.acme_delegate ~ ')') if ((ext.tls | default('edge')) == 'partner' and ext.acme_delegate is defined) else '' }}"
           - "delegation:   {{ (_cf_want | dict2items | map(attribute='key') | join(', ')) if (_cf_want | default({})) else '-' }}"
       run_once: true
+
+# ---- door: admit — goat signs the person in and admits them by rule (ADR 1254) ----
+# Present: expand the declaration's `admit:` rule from this goatnet's org registry,
+# stand up door-admit-<name> (the check) and oauth2-proxy-ext-<name> (the sign-in,
+# which provisions its own Hydra client `ext-<name>`), BEFORE the router below points
+# at them. Absent: take both down and delete the client. Nothing here runs for any
+# other door value.
+- name: External service — the admit door
+  hosts: "{{ target | mandatory }}"
+  become: true
+  gather_facts: false
+  vars:
+    external_service_state: "{{ state | default('present') }}"
+    external_service_var: "external_service_{{ service | mandatory | replace('-', '_') }}"
+    ext: "{{ lookup('vars', external_service_var, default={}) }}"
+    admit_door_on: "{{ (ext.door | default('')) == 'admit' }}"
+    admit_door_hostname: "{{ (ext.hostnames | default([ext.name | default('')])) | first }}.{{ site_id }}.{{ public_mgmt_fqdn | default(site_dns_zone) }}"
+    # The goatnet's org registry (ops/identity/orgs/<env>.yaml, synced from the console).
+    admit_registry_file: "{{ playbook_dir }}/../identity/orgs/{{ org_registry_env | default(site_id) }}.yaml"
+  tasks:
+    - name: Expand the admission rule from the org registry
+      ansible.builtin.command:
+        argv: "{{ ['python3', playbook_dir ~ '/../door-admit/expand_rule.py', '--registry', admit_registry_file,
+                   '--admit', (ext.admit | to_json), '--service', ext.name, '--contact', ext.owner | default('')]
+                  + (['--emails-file', '/dev/stdin'] if ext.admit.emails_env is defined else []) }}"
+        stdin: "{{ (lookup('env', ext.admit.emails_env) | default('')).split(',') | map('trim') | reject('equalto', '') | join('\n') if ext.admit.emails_env is defined else omit }}"
+      register: admit_rule_expanded
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+      no_log: "{{ ext.admit.emails_env is defined }}"
+      when: admit_door_on and external_service_state == 'present'
+
+    - name: Say who the rule admits
+      ansible.builtin.debug:
+        msg:
+          - "rule:     {{ (admit_rule_expanded.stdout | from_json).rule_text }}"
+          - "matched:  {{ (admit_rule_expanded.stdout | from_json).matched }}"
+          - "groups:   {{ (admit_rule_expanded.stdout | from_json).admit.groups }}"
+          - "e-mails:  {{ (admit_rule_expanded.stdout | from_json).admit.emails | length }} on the allowlist"
+      run_once: true
+      when: admit_door_on and external_service_state == 'present'
+
+    - name: The check (door-admit)
+      ansible.builtin.include_role:
+        name: door-admit
+      vars:
+        door_admit_name: "{{ ext.name }}"
+        door_admit_upstream: "{{ ext.backend_url | default('') }}"
+        door_admit_rules: "{{ (admit_rule_expanded.stdout | from_json) if external_service_state == 'present' else {} }}"
+        door_admit_state: "{{ external_service_state }}"
+      when: admit_door_on
+
+    - name: The sign-in (oauth2-proxy-surface, passing the ID token to the check)
+      ansible.builtin.include_role:
+        name: oauth2-proxy-surface
+      vars:
+        oauth2_proxy_surface_name: "ext-{{ ext.name }}"
+        oauth2_proxy_surface_hostname: "{{ admit_door_hostname }}"
+        oauth2_proxy_surface_upstream_host: "door-admit-{{ ext.name }}"
+        oauth2_proxy_surface_upstream_port: "8080"
+        oauth2_proxy_surface_pass_id_token: true
+        oauth2_proxy_surface_session_cookie_minimal: true
+        oauth2_proxy_surface_client_secret: "{{ lookup('env', ext.door_secrets.client_secret_env) }}"
+        oauth2_proxy_surface_cookie_secret: "{{ lookup('env', ext.door_secrets.cookie_secret_env) }}"
+      when: admit_door_on and external_service_state == 'present'
+
+    - name: Take the sign-in down (absent)
+      community.docker.docker_compose_v2:
+        project_src: "/opt/mgmt-host/oauth2-proxy-ext-{{ ext.name }}"
+        state: absent
+      failed_when: false
+      when: admit_door_on and external_service_state == 'absent'
+
+    - name: Delete the door's Hydra client (absent)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hydra_admin_host_port | default(4445) }}/admin/clients/ext-{{ ext.name }}"
+        method: DELETE
+        status_code: [204, 404]
+      become: false
+      when: admit_door_on and external_service_state == 'absent'
 
 # ---- the edge: router + mesh-only cert SAN, from the loop ------------------
 - name: Publish the mgmt-host Traefik edge for every enabled external service

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """The goatlite founder grant renders only where zenoh_founder_cn is set.
 
-Unset, the router config is byte-identical to main's, so no existing goatnet
-changes. Set, it carries exactly one rule (founder-w: put/delete on founder/**
+Unset, the router config matches main's apart from the changes GHSA-rr3p makes
+to every slot-pool render (slot-fragment/rr3p_render_diff.py), so no existing
+goatnet changes. Set, it carries exactly one rule (founder-w: put/delete on founder/**
 and hello/<site_id>), one subject (the CN), one policy binding them with the
 ordinary peer read, and one storage on founder/** so the founder's writes are
 retained and `goat pub --confirm` can read them back. Renders with the partner-partition test's renderer.
@@ -29,8 +30,15 @@ if main_src.returncode == 0:
     main_tpl = HERE / ".main-config.json5.j2"
     main_tpl.write_text(main_src.stdout)
     try:
-        if render(str(main_tpl), {}) != render(str(TPL), {}):
-            problems.append("unset: the render differs from main's; the founder grant must be inert where undeclared")
+        # GHSA-rr3p changes the default slot-pool render on purpose; the guard
+        # is that nothing else (in particular no founder grant) differs.
+        sys.path.insert(0, str(HERE.parent / "slot-fragment"))
+        import rr3p_render_diff
+        main_r, mine_r = render(str(main_tpl), {}), render(str(TPL), {})
+        if not rr3p_render_diff.equivalent(main_r, mine_r):
+            problems.append("unset: the render differs from main's beyond the rr3p-intended changes; the founder grant must be inert where undeclared: "
+                            + " | ".join(rr3p_render_diff.first_difference(main_r, mine_r)[:12]))
+        problems += ["unset: " + p for p in rr3p_render_diff.intended(mine_r)]
     finally:
         main_tpl.unlink()
 on = render(str(TPL), {"zenoh_founder_cn": "goat-founder-trial-peer", "site_id": "pasture"})
@@ -43,4 +51,4 @@ if on.count('key_expr: "founder/**"') != 1: problems.append("set: expected one s
 if on.count('/founder",') != 1: problems.append("set: expected the founder storage in its own rocksdb dir")
 if problems:
     print("FAIL:", *problems, sep="\n  "); sys.exit(1)
-print("[PASS] founder grant: inert when unset (byte-identical to main), exactly one rule, subject, policy and storage when set")
+print("[PASS] founder grant: inert when unset (identical to main apart from the rr3p changes), exactly one rule, subject, policy and storage when set")

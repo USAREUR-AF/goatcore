@@ -26,10 +26,12 @@ local mapped_groups = std.filter(
     traits: {
       email: c.email,
       name: if std.objectHas(c, 'name') then c.name else c.email,
-      groups: mapped_groups,
     },
     // Binding + assurance ride metadata_public (admin-managed, descriptor-side), never traits.
     metadata_public: {
+      // GHSA-9v3v: login groups live in admin-managed metadata_public (the
+      // migration marker); never in self-editable traits.
+      groups: mapped_groups,
       external_subjects: [{
         issuer: c.iss,
         client_id: client_id,

@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # B2.1 partner read-partition render guard (partner-read-partition.md).
 # Proves two invariants against config.json5.j2 without a live zenohd:
-#   1. partition OFF (default) renders BYTE-IDENTICAL to origin/main — the
-#      default-off safety guarantee (a partner carve can never be a silent
+#   1. partition OFF (default) renders identically to origin/main apart from
+#      the GHSA-rr3p-intended differences (slot subjects from the registry
+#      fragment, enumerated trial-peer-read, one slot-read policy), which
+#      tests/slot-fragment/rr3p_render_diff.py normalizes and checks; any
+#      other difference fails (a partner carve can never be a silent
 #      fabric-wide read change);
 #   2. partition ON produces the partner subject + key-scoped read/deliver
 #      rules, narrows trial-peer-read off link_protocols (partner excluded),
@@ -14,6 +17,6 @@ here="$(cd "$(dirname "$0")" && pwd)"
 tpl="$here/../../templates/config.json5.j2"
 main_tpl="$(mktemp)"; trap 'rm -f "$main_tpl"' EXIT
 git show origin/main:"ops/ansible/roles/goat-zenoh/templates/config.json5.j2" > "$main_tpl"
-python3 "$here/render.py" off-diff "$tpl" "$main_tpl" | tee /dev/stderr | grep -q "OFF byte-identical: True"
+python3 "$here/render.py" off-diff "$tpl" "$main_tpl" | tee /dev/stderr | grep -q "OFF identical apart from the rr3p-intended differences: True"
 python3 "$here/render.py" on "$tpl" "$main_tpl"
-echo "[PASS] partition off = byte-identical; on = scoped partner read, narrowed universal read, no write grant"
+echo "[PASS] partition off = identical to main apart from the rr3p changes; on = scoped partner read, narrowed universal read, no write grant"

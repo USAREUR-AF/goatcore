@@ -1,0 +1,6 @@
+---
+- name: restart door-admit
+  community.docker.docker_compose_v2:
+    project_src: "{{ door_admit_root }}/door-admit-{{ door_admit_name }}"
+    state: restarted
+  become: true

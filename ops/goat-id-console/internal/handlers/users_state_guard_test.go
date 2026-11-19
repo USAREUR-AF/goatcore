@@ -27,7 +27,7 @@ func (rt stateGuardTransport) RoundTrip(r *http.Request) (*http.Response, error)
 }
 
 func TestApiPatchUserStateGuardRefusalIsNotAuditedAsSuccess(t *testing.T) {
-	cli, read := fakeKratos(t, "fixture-identity", "returning@example.test", "Fixture", nil, "inactive")
+	cli, read := fakeKratosMigrated7788(t, "fixture-identity", "returning@example.test", "Fixture", nil, "inactive")
 	cli.HTTP.Transport = stateGuardTransport{base: cli.HTTP.Transport}
 	s := newUsersAPITestServer(t, cli)
 	s.Audit = audit.NewStderrEmitter(8)
@@ -60,7 +60,7 @@ func TestReinstatementCheckRequiresOperatorAndReasonWithoutMutating(t *testing.T
 		{"explicit operator request", "runner-key", "approved return", http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cli, read := fakeKratos(t, "fixture-identity", "returning@example.test", "Fixture", nil, "inactive")
+			cli, read := fakeKratosMigrated7788(t, "fixture-identity", "returning@example.test", "Fixture", nil, "inactive")
 			s := newUsersAPITestServer(t, cli)
 			s.Cfg.NotifyGoatnet = "fixture"
 			raw, _ := json.Marshal(map[string]string{"email": "returning@example.test", "reason": tc.reason, "actor": "forged", "env": "fixture"})
@@ -94,7 +94,7 @@ func TestReinstatementCheckRequiresOperatorAndReasonWithoutMutating(t *testing.T
 }
 
 func TestReinstatementCheckRefusesForeignEnvironment(t *testing.T) {
-	cli, read := fakeKratos(t, "fixture-identity", "returning@example.test", "Fixture", nil, "inactive")
+	cli, read := fakeKratosMigrated7788(t, "fixture-identity", "returning@example.test", "Fixture", nil, "inactive")
 	s := newUsersAPITestServer(t, cli)
 	s.Cfg.NotifyGoatnet = "fixture"
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/users/reinstatement-check", strings.NewReader(`{"env":"other","email":"returning@example.test","reason":"approved return"}`))

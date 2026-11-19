@@ -8,6 +8,7 @@ name: docs-picker-e2e
 # silently break it.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'docs/goat-cli-book/theme/**'

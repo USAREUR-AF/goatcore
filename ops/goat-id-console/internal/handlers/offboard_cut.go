@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/onboardstore"
 )
@@ -17,6 +18,14 @@ func (s *Server) handleOffboardCut(w http.ResponseWriter, r *http.Request, id st
 	var auditBefore map[string]interface{}
 	if p0, err := s.Onboard.GetProposal(r.Context(), id); err == nil {
 		auditBefore = map[string]interface{}{"status": p0.Status}
+		// Admin tier ceiling (GHSA-vr6w): nobody queues the access cut of a
+		// person above their own tier.
+		if s.personAboveTierVr6w(r, p0) {
+			s.emitAuditWithInviteToken(r, actor, "onboard_offboard_cut", id, "",
+				auditBefore, nil, false, "refused", tierCeilingRefusal)
+			s.renderError(w, r, 403, tierCeilingRefusal)
+			return
+		}
 	}
 
 	stepUpVerified := false
@@ -37,7 +46,15 @@ func (s *Server) handleOffboardCut(w http.ResponseWriter, r *http.Request, id st
 		http.Redirect(w, r, "/onboarding?"+q.Encode(), http.StatusSeeOther)
 	}
 
-	ok, err := s.Onboard.RequestOffboard(r.Context(), id, actor.Email)
+	// The approver's identity comes ONLY from the authenticated session (the
+	// OIDC sub, a Kratos identity id), never from a lookup by email: any
+	// onboarding record can carry an admin's email, so a lookup could be
+	// steered to another person's handle (GHSA-3m4r review). The runner names
+	// this identity in the admin.offboard operator-action record. A session
+	// with no identity id still cuts access; the runner then records the cut
+	// under its own name and says the approver identity is missing.
+	approverIdentity := strings.ToLower(actor.IdentityID)
+	ok, err := s.Onboard.RequestOffboardBy(r.Context(), id, actor.Email, approverIdentity)
 	if err != nil {
 		s.emitAuditWithInviteToken(r, actor, "onboard_offboard_cut", id, "",
 			auditBefore, nil, stepUpVerified, "error", err.Error())
@@ -53,7 +70,21 @@ func (s *Server) handleOffboardCut(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	s.emitAuditWithInviteToken(r, actor, "onboard_offboard_cut", id, "",
-		auditBefore, map[string]interface{}{"status": onboardstore.ProposalOffboardRequested},
+		auditBefore, map[string]interface{}{"status": onboardstore.ProposalOffboardRequested, "approver_identity": approverIdentity},
 		stepUpVerified, "ok", "")
 	redirect(flashOffboardCutQueued)
+}
+
+// sessionOperatorActor is the operator-action actor for the signed-in person,
+// "kratos-<identity id>", derived only from the authenticated session's
+// identity id (the OIDC sub that oauth2-proxy forwards). It is a kebab handle,
+// as `goat audit emit --actor` requires. "" when the session has no identity
+// id. Never derive it from an email lookup: any onboarding record can carry
+// an admin's email.
+func sessionOperatorActor(a Actor) string {
+	id := strings.TrimSpace(a.IdentityID)
+	if !identityUUIDRe.MatchString(id) {
+		return ""
+	}
+	return "kratos-" + strings.ToLower(id)
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/onboardstore"
+	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/selfcheck"
 )
 
 // SSH-key browser realm — the human half of "self-service submit, admin-gated
@@ -289,7 +290,16 @@ func flashes(f *flash) []flash {
 // belong to someone else; the install would then either land nowhere or land
 // under the wrong name.
 func (s *Server) sshKeyHandleFor(r *http.Request, email string) (string, error) {
-	handle, err := s.handleForLoginEmail(r.Context(), email)
+	// For the signed-in person's own address, bind through the session's
+	// identity (its current addresses), not the cookie email alone.
+	var handle string
+	var err error
+	if actor := actorFromCtx(r.Context()); strings.TrimSpace(actor.Email) != "" &&
+		(strings.EqualFold(strings.TrimSpace(actor.Email), strings.TrimSpace(email)) || selfcheck.Same(actor.Email, email)) {
+		handle, err = s.sessionRosterHandle(r.Context(), actor)
+	} else {
+		handle, err = s.handleForLoginEmail(r.Context(), email)
+	}
 	if errors.Is(err, onboardstore.ErrNotFound) {
 		return "", errors.New("no onboarding record is associated with " + email +
 			", so there is no handle to attach a key to. Ask an admin to finish your onboarding first.")
@@ -297,27 +307,59 @@ func (s *Server) sshKeyHandleFor(r *http.Request, email string) (string, error) 
 	return handle, err
 }
 
+// errAmbiguousRosterHandle refuses a person whose settled onboarding records
+// carry more than one handle: the console cannot say which is theirs.
+var errAmbiguousRosterHandle = errors.New("your settled onboarding records carry more than one handle; ask an admin to settle which one is yours")
+
 // handleForLoginEmail is the one login-email → handle binding every
-// self-service surface makes: the SSH-key and operator-key browser pages from
-// the session email, and the operator-key machine door from the login the
-// portal recorded on a participant's identity (#1373). One resolver, so two
-// doors cannot disagree about who a person is.
+// self-service surface makes: the SSH-key and operator-key browser pages
+// (through sessionRosterHandle), and the operator-key machine door from the
+// login the portal recorded on a participant's identity (#1373). One
+// resolver, so two doors cannot disagree about who a person is.
+//
+// It reads SETTLED records only (past the admin gate, not rejected, failed or
+// offboarded) for this console's goatnet, and the handle must be unique among
+// them. When the newest settled record belongs to another goatnet the answer
+// is not-found, as before. A pending record (proposed, sponsor-approved) never decides it: an
+// intake row can carry anyone's email with any handle, and the newest such
+// row used to steer that person's SSH-key or operator-key request to the
+// planted handle (GHSA-mxf4-8rv7-774w). More than one handle refuses.
 func (s *Server) handleForLoginEmail(ctx context.Context, email string) (string, error) {
-	p, ok, err := s.Onboard.ActiveProposalForEmail(ctx, email)
+	ps, err := s.Onboard.ProposalsForEmail(ctx, email)
 	if err != nil {
 		return "", errors.New("could not look up your onboarding record")
 	}
-	if ok {
-		goatnet := ""
-		if s.Cfg != nil {
-			goatnet = strings.TrimSpace(s.Cfg.NotifyGoatnet)
+	goatnet := ""
+	if s.Cfg != nil {
+		goatnet = strings.TrimSpace(s.Cfg.NotifyGoatnet)
+	}
+	settled, handles := 0, []string{}
+	for _, p := range ps {
+		if !onboardstore.ProposalNonTerminal(p.Status) || onboardstore.ProposalPending(p.Status) {
+			continue
 		}
+		settled++
 		if goatnet == "" || strings.TrimSpace(p.Env) != goatnet {
-			return "", onboardstore.ErrNotFound
+			if settled == 1 {
+				// The newest settled record is another goatnet's: fail closed
+				// as a missing mapping rather than fall back to an older one.
+				return "", onboardstore.ErrNotFound
+			}
+			continue
 		}
-		if strings.TrimSpace(p.Handle) != "" {
-			return p.Handle, nil
+		if strings.TrimSpace(p.Handle) == "" {
+			continue
 		}
+		handles = append(handles, p.Handle)
+	}
+	handles = uniqueFolded(handles)
+	switch {
+	case len(handles) == 1:
+		return handles[0], nil
+	case len(handles) > 1:
+		return "", errAmbiguousRosterHandle
+	case settled > 0:
+		return "", onboardstore.ErrNotFound
 	}
 	// Legacy backfill path: fall back to an installed ssh-key row keyed by this
 	// login email. The mapping is admin-confirmed when the backfill runs; we
@@ -330,6 +372,44 @@ func (s *Server) handleForLoginEmail(ctx context.Context, email string) (string,
 		return handle, nil
 	}
 	return "", onboardstore.ErrNotFound
+}
+
+// sessionRosterHandle is the signed-in person's roster handle, bound to the
+// session's Kratos identity: every address the identity is known by now
+// (actorAddresses: the session email plus the identity's current addresses)
+// resolves through handleForLoginEmail, and they must agree on exactly one
+// handle. None is ErrNotFound; two refuse. A session whose identity cannot be
+// read refuses.
+func (s *Server) sessionRosterHandle(ctx context.Context, actor Actor) (string, error) {
+	addrs, err := s.actorAddresses(ctx, actor)
+	if err != nil {
+		return "", err
+	}
+	var handles []string
+	seen := map[string]bool{}
+	for _, a := range addrs {
+		k := selfcheck.EmailKey(a)
+		if strings.TrimSpace(a) == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		h, herr := s.handleForLoginEmail(ctx, strings.TrimSpace(a))
+		switch {
+		case herr == nil:
+			handles = append(handles, h)
+		case errors.Is(herr, onboardstore.ErrNotFound):
+		default:
+			return "", herr
+		}
+	}
+	handles = uniqueFolded(handles)
+	switch len(handles) {
+	case 0:
+		return "", onboardstore.ErrNotFound
+	case 1:
+		return handles[0], nil
+	}
+	return "", errAmbiguousRosterHandle
 }
 
 func (s *Server) legacySSHKeyHandleForEmail(ctx context.Context, email string) (string, error) {

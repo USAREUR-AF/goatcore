@@ -85,7 +85,7 @@
 - name: audit-subscriber | lifecycle | stage the mc credential env file
   ansible.builtin.copy:
     content: |
-      MC_HOST_{{ audit_subscriber_minio_alias }}=http://{{ audit_subscriber_minio_root_user | urlencode }}:{{ audit_subscriber_minio_root_password | urlencode }}@{{ audit_subscriber_minio_admin_endpoint }}
+      MC_HOST_{{ audit_subscriber_minio_alias }}={{ 'https' if minio_tls_enabled | default(false) | bool else 'http' }}://{{ audit_subscriber_minio_root_user | urlencode | replace('/', '%2F') }}:{{ audit_subscriber_minio_root_password | urlencode | replace('/', '%2F') }}@{{ (minio_service_host ~ ':' ~ (minio_api_port | string)) if minio_tls_enabled | default(false) | bool else audit_subscriber_minio_admin_endpoint }}
     dest: "{{ audit_subscriber_lifecycle_mc_env_path }}"
     mode: "0600"
     owner: root

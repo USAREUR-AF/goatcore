@@ -338,6 +338,41 @@ zenoh_identity_model: "per-vendor"
 zenoh_slot_pool_size: 256
 zenoh_slot_pool_salt: ""
 
+# GHSA-rr3p — slot subjects from the registry. In per-uuid-slot-pool mode the
+# router's slot-<anchor> subjects are the slot fragment the portal renders
+# from its registry and writes here (beside config.json5, in the directory the
+# portal already mounts r/w). The role reads it on every render; a missing file
+# fails the play rather than render every slot with no CN, which would lock out
+# every holder. A fresh standup with no portal yet sets
+# zenoh_slot_fragment_bootstrap: true for its first run.
+goat_zenoh_slot_fragment_path: "{{ goat_zenoh_config_path | dirname }}/slot-fragment.json5"
+zenoh_slot_fragment_bootstrap: false
+# The host-side reload watcher (files/slot-fragment-reload.py, systemd .path +
+# .timer). zenohd 1.9 loads access_control only at start, so the watcher
+# recreates the router: within zenoh_slot_reload_min_gap_s of a change that
+# removes a slot CN (a revocation), and at most once per
+# zenoh_slot_reload_interval_s for a change that only adds CNs (onboarding).
+# It records what the router loaded beside the config
+# (slot-fragment.loaded.json5), which is how the portal tells a pending leaf
+# from a live one without a docker socket. Each recreate drops every session.
+#
+# Index-keyed grants follow the INDEX, not the person: zenoh_fabric_wide_read
+# entries by slot_idx, partner blocks and zenoh_partner_read_lanes, co-publish
+# writers and release lanes all bind to slot-<anchor>, so whoever holds the
+# slot next inherits them. When a slot is offboarded, review these for its
+# anchor/index before the quarantine lets the index out again.
+zenoh_slot_reload_enabled: true
+zenoh_slot_reload_interval_s: 300
+zenoh_slot_reload_min_gap_s: 15
+zenoh_slot_reload_check_s: 30
+# At most this many prompt (removal) recreates per interval; further removals
+# wait for the batch interval, so revoking cannot be used to keep the fabric
+# restarting.
+zenoh_slot_reload_prompt_burst: 4
+# A restart that takes longer than this fails the run (retried by the timer).
+zenoh_slot_reload_timeout_s: 300
+goat_zenoh_slot_reload_path: "/usr/local/sbin/{{ zenoh_stack }}-slot-fragment-reload"
+
 # Lazy slot-pool storage.
 # Default false = the historical pre-cut (one rocksdb store per POOL slot).
 # Set true to declare a store ONLY for the anchors in zenoh_active_slot_anchors
