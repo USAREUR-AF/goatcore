@@ -9,12 +9,17 @@
 compose_dir: /opt/mgmt-host
 
 # pgBackRest binary / config / log paths on the host (bind-mounted into
-# containers by docker-compose.pgbackrest.yml).
+# the database container by the base compose).
 pgbackrest_conf_dir: /etc/pgbackrest
 pgbackrest_conf_path: /etc/pgbackrest/pgbackrest.conf
 pgbackrest_repo1_dir: /opt/docker-data/pgbackrest
 pgbackrest_log_dir: /var/log/pgbackrest
 pgbackrest_spool_dir: /var/spool/pgbackrest
+
+# The uid pgbackrest runs as inside the database container (the image's
+# postgres user). The directories above are owned by it, and
+# tasks/repo-ownership.yml refuses a repository holding files it does not own.
+pgbackrest_repo_owner_uid: "26"
 
 # PGDATA path INSIDE the postgres container — matches Red Hat / pgedge
 # layout (NOT the Debian /var/lib/postgresql/data path). See
@@ -42,14 +47,6 @@ postgres_container_name: "postgres-a"
 # replica via `--backup-standby` on the backup command itself, not via
 # archive_mode. See design §4.1.
 pgbackrest_archive_mode: "on"
-
-# Container image pin for any future sidecar use. The pgBackRest project
-# itself does NOT publish a runtime docker image (only test/build images
-# under pgbackrest/test:*). woblerr/pgbackrest is the active community
-# runtime image; matches pgbackrest upstream version tags. Pinned by digest
-# per ADR 0703; bump tag + digest together. Index digest captured ;
-# matches the default in ops/compose/mgmt-host/docker-compose.pgbackrest.yml.
-pgbackrest_image: "woblerr/pgbackrest:2.53.1@sha256:6e79a47273146cdb4a4a60c7736664697c473aad25689c815071248a633ba622"
 
 # RPM spec for the in-container install. pgedge base is RHEL/UBI; pgbackrest
 # comes from the PGDG repo. Version wildcard pulls whatever's current —

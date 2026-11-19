@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 996 variables, 142 of them secret-bearing by name.
+# 995 variables, 142 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -460,7 +460,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 854 variables.
+# 853 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2253,9 +2253,6 @@ export PF_E2E_IMAGE=""
 
 # ops/federation-e2e/units/preflight.sh
 export PF_INNER_FOR=""
-
-# ops/compose/mgmt-host/docker-compose.pgbackrest.yml
-export PGBACKREST_IMAGE=""
 
 # ops/mgmt-host-bootstrap/main.go
 export PGDSN=""

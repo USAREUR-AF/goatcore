@@ -126,6 +126,22 @@ SSH:**
 3. **No cross-host trust edge.** No SSH keys to manage between Router-A
    and Router-B just for backup transport.
 
+**Where pgBackRest runs (built).** The binary ships in the postgres-spock image,
+and every command runs in the database container as its postgres user:
+`archive_command`, the role's tasks, and the cron backups
+(`docker exec postgres-a pgbackrest ...`). There is no pgBackRest sidecar. An
+earlier `pgbackrest-runner` container, from `docker-compose.pgbackrest.yml`, ran
+nothing. It was a hazard: run as root, which is what `docker exec` into it did, it
+left root-owned files in the repository that postgres cannot read, and then backups
+and restore fail. The pgbackrest role now removes that container and its overlay
+from a host that still has them; the bind-mounted repository is not touched. Before
+it does so, it refuses a repository, log or spool directory holding files not owned
+by the database user, and names them (`tasks/repo-ownership.yml`, read-only).
+`goatbuilder endstate` grades the service active from its acceptance rows (stanza
+`info`), not from a container. The role's rollback-ledger row is config, not an
+image. The restore in §7.1 uses the same image; it was measured on one local
+amd64 build: backup, then restore into a new data volume, WAL replayed.
+
 ### 2.1 Backup stream scope
 
 Three databases live in each mgmt-plane Postgres cluster (see
@@ -639,7 +655,6 @@ in `../project/roadmap.md` Phase 3.
   (defaults, tasks, template, README).
 - Config template: [`../../ops/ansible/roles/pgbackrest/templates/pgbackrest.conf.j2`](../../ops/ansible/roles/pgbackrest/templates/pgbackrest.conf.j2).
 - Reference config (kept in sync manually): `../../ops/pgbackrest/pgbackrest.conf`.
-- Compose overlay: [`../../ops/compose/mgmt-host/docker-compose.pgbackrest.yml`](../../ops/compose/mgmt-host/docker-compose.pgbackrest.yml).
 - Spock-enabled Postgres image (includes pgBackRest binary baked in): [`../../ops/postgres/spock/Dockerfile`](../../ops/postgres/spock/Dockerfile).
 - Monitoring rules (skeleton source of truth): [`../../ops/monitoring/prometheus/rules/pgbackrest.yml`](../../ops/monitoring/prometheus/rules/pgbackrest.yml). Per-site copy lands at `../../ops/compose/mgmt-host/monitoring/rules/pgbackrest.yml` when the `pgbackrest-exporter` sidecar is wired into mgmt-host compose (mirrors the spock.yml / ntp.yml / signal-server.yml pattern).
 - Wave 1.8 smoke-test checklist: [`../operations/goat-ha-dev-validation.md`](../operations/goat-ha-dev-validation.md).
