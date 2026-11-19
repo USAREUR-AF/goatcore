@@ -204,12 +204,12 @@ def session_block(manifest_path, us):
 def bundle(checks, agreement, us, them, run_id, started, inputs, ended=None, session=None, software=None,
            configuration=None):
     verdict, code, why = overall(checks)
-    ag = {}
     try:
         with open(agreement) as f:
             ag = json.load(f)
     except (OSError, ValueError):
-        pass
+        # Keep optional metadata absent; the checks determine the verdict.
+        ag = {}
     return {
         "schema": SCHEMA,
         "run": {"id": run_id, "started_at": started, "ended_at": ended or now(), "us": us, "them": them,
@@ -502,8 +502,10 @@ def main(argv=None):
     if a.cmd == "persistence-scope":
         # Prints one JSON line (outcome, reason, details); the exit status is the outcome.
         try:
-            router = rest_rows(open(a.router).read())
-            subs = rest_rows(open(a.subscribers).read())
+            with open(a.router) as f:
+                router = rest_rows(f.read())
+            with open(a.subscribers) as f:
+                subs = rest_rows(f.read())
         except (OSError, Unreadable) as e:
             print(json.dumps({"outcome": "unreadable", "reason": "the receiving core's admin space: %s" % e}))
             return 4

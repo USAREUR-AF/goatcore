@@ -149,14 +149,18 @@ def cmd_text_holds(text_path, a):
 
 def main(av):
     if len(av) >= 2 and av[0] == "next":
-        return cmd_next(av[1])
+        cmd_next(av[1])
+        return
     if len(av) >= 2 and av[0] == "wayback":
-        return cmd_wayback(av[1])
+        cmd_wayback(av[1])
+        return
     if len(av) >= 4 and av[0] == "fill" and av[2] == "--result":
         code = av[5] if len(av) >= 6 and av[4] == "--code" else None
-        return cmd_fill(av[1], av[3], code)
+        cmd_fill(av[1], av[3], code)
+        return
     if len(av) == 3 and av[0] == "text-holds":
-        return cmd_text_holds(av[1], av[2])
+        cmd_text_holds(av[1], av[2])
+        return
     die(__doc__.strip().splitlines()[0] + "; see the module text for the forms")
 
 

@@ -908,9 +908,11 @@ class RefreshRecordsOnlyThePublishedBinary(unittest.TestCase):
         self.assertEqual(pins[(b.release, b.meta["binary"])], b.meta["binary_sha256"])
 
     def test_refresh_never_writes_the_pin_list(self):
-        before = open(os.path.join(REPO, compat.PINS), "rb").read()
+        with open(os.path.join(REPO, compat.PINS), "rb") as f:
+            before = f.read()
         compat.refresh(REPO, self.root, "goatbuilder/v0.5.1", self.bin, sums=self.sums("f" * 64))
-        self.assertEqual(open(os.path.join(REPO, compat.PINS), "rb").read(), before)
+        with open(os.path.join(REPO, compat.PINS), "rb") as f:
+            self.assertEqual(f.read(), before)
 
 
 class OnePinList(unittest.TestCase):

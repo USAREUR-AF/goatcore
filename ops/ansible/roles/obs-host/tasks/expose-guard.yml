@@ -1,0 +1,171 @@
+---
+# Exposure guard for the mesh-bound ports. Included from tasks/main.yml before
+# the stack comes up; templates/obs-expose-guard.nft.j2 says why it exists.
+
+- name: obs-host | exposure guard is in place (mesh-bound ports)
+  when: not (obs_bind_all | bool)
+  block:
+    - name: obs-host | nftables is present (exposure guard)
+      ansible.builtin.apt:
+        name: nftables
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: obs-host | exposure guard directory
+      ansible.builtin.file:
+        path: "{{ obs_expose_guard_nft_path | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Some kernels are built without nft counters (the Jetson Tegra kernel:
+    # CONFIG_NFT_COUNTER is not set), and a rule that uses one fails to load
+    # with "No such file or directory". nft -c only checks; it changes nothing.
+    - name: obs-host | the kernel has nft counters (check only)
+      ansible.builtin.command:
+        argv: [/usr/sbin/nft, -c, -f, "-"]
+        stdin: |
+          table inet goat_obs_counter_check {
+          	chain c {
+          		counter
+          	}
+          }
+      register: _obs_counter_check
+      changed_when: false
+      failed_when: false
+      when: obs_expose_guard_counter | string == 'auto'
+
+    - name: obs-host | exposure guard counts drops only where the kernel can
+      ansible.builtin.set_fact:
+        _obs_guard_counter: >-
+          {{ (_obs_counter_check.rc | default(1) == 0)
+             if (obs_expose_guard_counter | string == 'auto')
+             else (obs_expose_guard_counter | bool) }}
+
+    - name: obs-host | exposure guard ruleset
+      ansible.builtin.template:
+        src: obs-expose-guard.nft.j2
+        dest: "{{ obs_expose_guard_nft_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        validate: /usr/sbin/nft -c -f %s
+      register: _obs_guard_rules
+
+    - name: obs-host | exposure guard unit
+      ansible.builtin.template:
+        src: goat-obs-expose-guard.service.j2
+        dest: /etc/systemd/system/goat-obs-expose-guard.service
+        owner: root
+        group: root
+        mode: "0644"
+      register: _obs_guard_unit
+
+    - name: obs-host | exposure guard enabled and loaded
+      ansible.builtin.systemd:
+        name: goat-obs-expose-guard.service
+        enabled: true
+        state: started
+        daemon_reload: "{{ _obs_guard_unit is changed }}"
+
+    # started does nothing to a oneshot that already ran; reload re-reads the
+    # file, which replaces the table atomically.
+    - name: obs-host | exposure guard reloaded with the new ruleset
+      ansible.builtin.systemd:
+        name: goat-obs-expose-guard.service
+        state: reloaded
+      when: _obs_guard_rules is changed or _obs_guard_unit is changed
+
+    - name: obs-host | exposure guard re-apply script
+      ansible.builtin.template:
+        src: goat-obs-expose-guard-check.sh.j2
+        dest: /usr/local/sbin/goat-obs-expose-guard-check
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: obs-host | exposure guard re-apply service and timer
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - goat-obs-expose-guard-check.service
+        - goat-obs-expose-guard-check.timer
+      register: _obs_guard_timer_units
+
+    - name: obs-host | exposure guard re-apply timer enabled
+      ansible.builtin.systemd:
+        name: goat-obs-expose-guard-check.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ _obs_guard_timer_units is changed }}"
+
+    # The stack binds the mesh address, so it cannot start before NetBird has
+    # given the interface that address. Enabled, not started: this run brings
+    # the stack up itself.
+    - name: obs-host | stack start-after-mesh script
+      ansible.builtin.template:
+        src: goat-obs-stack-up.sh.j2
+        dest: /usr/local/sbin/goat-obs-stack-up
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: obs-host | stack start-after-mesh unit
+      ansible.builtin.template:
+        src: goat-obs-stack.service.j2
+        dest: /etc/systemd/system/goat-obs-stack.service
+        owner: root
+        group: root
+        mode: "0644"
+      register: _obs_stack_unit
+
+    - name: obs-host | stack start-after-mesh unit enabled
+      ansible.builtin.systemd:
+        name: goat-obs-stack.service
+        enabled: true
+        daemon_reload: "{{ _obs_stack_unit is changed }}"
+
+    - name: obs-host | exposure guard table is loaded
+      ansible.builtin.command:
+        argv: [/usr/sbin/nft, list, table, inet, goat_obs_expose]
+      register: _obs_guard_list
+      changed_when: false
+      failed_when: >-
+        _obs_guard_list.rc != 0
+        or (_obs_bind | trim) not in _obs_guard_list.stdout
+
+# obs_bind_all publishes on every interface on purpose, so a guard would only
+# contradict it. Remove one left by an earlier deploy.
+- name: obs-host | no exposure guard when publishing on every interface
+  when: obs_bind_all | bool
+  block:
+    - name: obs-host | exposure guard, re-apply timer and start-after-mesh unit stopped and disabled
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      failed_when: false
+      loop:
+        - goat-obs-expose-guard-check.timer
+        - goat-obs-expose-guard.service
+        - goat-obs-stack.service
+
+    - name: obs-host | exposure guard files removed
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/goat-obs-expose-guard.service
+        - /etc/systemd/system/goat-obs-expose-guard-check.service
+        - /etc/systemd/system/goat-obs-expose-guard-check.timer
+        - /usr/local/sbin/goat-obs-expose-guard-check
+        - /etc/systemd/system/goat-obs-stack.service
+        - /usr/local/sbin/goat-obs-stack-up
+        - "{{ obs_expose_guard_nft_path }}"
+      notify: reload systemd

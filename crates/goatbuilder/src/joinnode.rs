@@ -479,6 +479,16 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         // Before phase 4 changes anything on the node: its clock, read-only
         // (ADR 1232). GB-297 refuses an unsynchronized node or one over budget.
         p(3, "GATE", "the node's clock, read-only, before anything on it changes: synchronized to an outside reference and within the offset budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router's 500 ms limit)", format!("python3 '{r}/ops/scripts/join-node-clock-check.py' {clock_to}")),
+    ]);
+    // A joining site's core node (and a phone, which converges as one): its
+    // secrets, before phase 4 changes the node. The values every site shares
+    // are taken from the founder, the site's own are minted, and each shared
+    // value is compared with the founder's; nothing is overwritten
+    // (docs/design/join-node-site-secrets.md).
+    if converge == "core" && joiner && !founder_site.is_empty() {
+        ev.push(p(3, "T", &format!("the site's secrets: the values every site shares (newsite-secrets.sh --cluster-json: NetBird's datastore key, the replicator, the relay secret, Ory's network id, the Kratos cipher, the Hydra system secret) are taken from {founder_site}'s, as references or under a value store; newsite-secrets.sh mints the site's own; each shared value is compared with the founder's, by digest. Nothing is overwritten: a joiner value that differs is refused (GB-353)"), format!("python3 '{r}/ops/scripts/join-site-secrets.py' {} --founder {}", sh_word(site), sh_word(&founder_site))));
+    }
+    ev.extend([
         p(4, "T", "quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14)", format!("{node_ssh} 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'")),
         p(5, "A", "host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves", format!("cd '{r}/ops/ansible' && {pre} {inv_before} mgmt-host-baseline.yml -e target={group} -e site_id={site} -l {node}")),
         p(6, "A", "WireGuard kernel modules, first pass — its wt0 check fails before enrolment (wt0 absent); expected, phase 11 re-runs it. Any other failure stops the run", format!("cd '{r}/ops/ansible' && log=$(mktemp) && if {pre} {inv_before} wireguard-kmod.yml -e target={group} -l {node} 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif {WT0_ABSENT_ONLY} \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi")),
@@ -1446,6 +1456,24 @@ mod tests {
         std::fs::create_dir_all(t.path().join("ops/dns/zagros")).unwrap();
         std::fs::write(t.path().join("ops/dns/zagros/mesh-hosts"), "# zagros mesh DNS\n100.127.0.1 isitup.zagros.zagros.example.org\n").unwrap();
         t
+    }
+
+    /// Gate row I3, a joining site's secrets: phase 3 of a joiner's core node
+    /// runs join-site-secrets.py with the site and its founder, after the
+    /// read-only checks and before phase 4 changes the node. An obs node and a
+    /// founder site run no such step.
+    #[test]
+    fn a_joiners_core_node_takes_its_shared_secrets_from_the_founder_in_phase_3() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let at = ph.iter().position(|p| p.cmd.contains("join-site-secrets.py")).expect("a secrets step");
+        assert_eq!((ph[at].n, ph[at].kind), (3, "T"));
+        assert!(ph[at].cmd.ends_with("/ops/scripts/join-site-secrets.py' zagros-b --founder zagros"), "{}", ph[at].cmd);
+        assert!(ph[at].label.contains("taken from zagros's") && ph[at].label.contains("GB-353"), "{}", ph[at].label);
+        assert!(ph[..at].iter().all(|p| p.n <= 3) && ph[at + 1].n == 4, "the last step of phase 3");
+        assert!(plan(t.path(), &opts("zagros-b", "obs", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("join-site-secrets.py")));
+        std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
+        assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("join-site-secrets.py")), "a founder's come from standup");
     }
 
     /// `goatnet_founder` is read as site-bootstrap reads it

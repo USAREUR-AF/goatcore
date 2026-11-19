@@ -154,7 +154,8 @@ def ladder_rung(goatnet):
     """The ladder rung whose goatnet is this one (fleet-pins keys use `_`,
     connection maps use `-`; both spellings match)."""
     try:
-        ladder = yaml.safe_load(open(graduate.LADDER)) or {}
+        with open(graduate.LADDER) as f:
+            ladder = yaml.safe_load(f) or {}
     except OSError:
         return None, {}
     for r in ladder.get("rungs") or []:
@@ -178,7 +179,8 @@ def gate_settings(ladder, rung):
 def connection_map(component, goatnet):
     path = REPO / "ops/ansible/roles" / component / "deploy-history.yml"
     try:
-        doc = yaml.safe_load(open(path)) or {}
+        with open(path) as f:
+            doc = yaml.safe_load(f) or {}
     except OSError:
         return None, f"no connection map at {path.relative_to(REPO)}"
     hosts = [h for h in (doc.get("hosts") or []) if isinstance(h, dict)
@@ -372,7 +374,8 @@ def main(argv=None):
         path = pathlib.Path(args.write_record)
         if not path.is_absolute():
             path = REPO / path
-        rec = yaml.safe_load(open(path)) or {}
+        with open(path) as f:
+            rec = yaml.safe_load(f) or {}
         candidate_ref = rec.get("candidate_ref")
     state, fails = verdict(block, rung, candidate_ref, settings)
     block["verdict"] = state

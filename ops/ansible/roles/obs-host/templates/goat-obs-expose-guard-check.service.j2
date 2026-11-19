@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+[Unit]
+Description=goat obs-host exposure guard: re-apply if flushed
+ConditionPathExists={{ obs_expose_guard_nft_path }}
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/goat-obs-expose-guard-check

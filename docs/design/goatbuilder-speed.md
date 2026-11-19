@@ -73,6 +73,22 @@ both avenues and as `goatbuilder doctor --site <s>`.
 | GB-062 | an input may be required: its condition cannot be decided before the run |
 | GB-063 | a play's `--limit` selects no host, so the play does nothing |
 
+GB-063 is a note at phase 1, where a new site may have no hosts in the
+inventory yet. The plays that run on the founder alone (SPIRE, the LAN service
+surface, the LAN TLS routes, the dashboard, the portal, grant-keyd) are limited
+with `-l 'mgmt-<site>-01*'`, the declared naming rule. When the play runs,
+its own command checks first that a host of `<site>_hosts` in
+`inventory/mgmt-hosts.ini` and `inventory/mgmt-hosts-mesh.ini` matches the
+limit (`ops/scripts/inventory-hosts.py --match <limit> --require GB-355`). It
+refuses the play with GB-355 when none does. Without the check, a founder named
+off the rule, beside another host the pattern matches, let ansible print
+"skipping: no hosts matched" and exit 0 having done nothing. Both avenues run
+it (`founder_check` in `crates/goatbuilder/src/standup.rs`, `FOUNDER_CHECK` in
+`ops/scripts/goat-standup.sh`). **Built**: tested by
+`standup::tests::a_founder_limit_that_selects_no_host_of_the_group_is_refused`,
+which runs each check against an off-pattern founder (refused) and a founder
+named by the rule (passes). **Not measured** on a running site.
+
 Measured on 2026-10-29, with the secrets check off:
 
 | Site | Requirements checked | Missing | Time |

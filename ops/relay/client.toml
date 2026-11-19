@@ -22,10 +22,12 @@ type = "noise"
 # Get this from the VPS after running: rathole --genkey
 remote_public_key = "CHANGEME_SERVER_PUBLIC_KEY_BASE64"
 
-# Netbird management — forward VPS:443 to local Traefik
+# Netbird management — forward VPS:443 to local Traefik's enrollment-only
+# entrypoint. Never 127.0.0.1:443: a host-local connection to websecure
+# arrives from the Docker bridge gateway and passes the mesh-only allowlist.
 [client.services.netbird-mgmt]
 type = "tcp"
-local_addr = "127.0.0.1:443"
+local_addr = "127.0.0.1:8443"
 
 # Netbird STUN/TURN — forward VPS:3478 to local coturn
 [client.services.netbird-stun]

@@ -799,7 +799,7 @@ class Sides(unittest.TestCase):
 
     def test_every_check_has_a_side(self):
         self.assertEqual({c for c, _, _ in live.CHECKS}, set(live.SIDES))
-        self.assertTrue(set(live.SIDES.values()) <= {"edge", "core", "both"})
+        self.assertLessEqual(set(live.SIDES.values()), {"edge", "core", "both"})
 
 
 class ClockRun(unittest.TestCase):

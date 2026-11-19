@@ -283,7 +283,7 @@ proposal):
      bundle template (`ops/ansible/templates/operator-onboard/bundle.md.j2`,
      "If you can't reach mesh services") — keep the two in sync.
    - explicitly NOT in the email: certs and their private keys — those stay on
-     the one-time mesh-only bundle URL (`/api/org-bundle/…`, 24 h), which the
+     the mesh-only bundle URL (`/api/org-bundle/…`, valid for `PORTAL_BUNDLE_TTL`, 24 h by default), which the
      email references as "fetch after you're on the mesh". Email is
      plaintext-hostile territory; the setup key is single-purpose, quota-capped
      (usage_limit), and revocable, so it is an acceptable email payload.

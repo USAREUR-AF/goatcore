@@ -30,6 +30,23 @@
 groups:
   - name: audit-subscriber.writes
     rules:
+      - alert: ReplayCaptureLoss
+        expr: increase(goat_replay_drop_total[5m]) > 0
+        labels:
+          severity: warning
+          component: audit-subscriber
+        annotations:
+          summary: "Replay capture lost records"
+          description: "Audit metadata may remain available; replay bodies were lost to an upload failure or a full queue."
+      - alert: AuditLocalTailWriteFailure
+        expr: increase(goat_audit_local_write_errors_total[5m]) > 0
+        labels:
+          severity: warning
+          component: audit-subscriber
+        annotations:
+          summary: "Local audit metadata tail could not be written"
+          description: "Check local storage and permissions; S3 audit upload is a separate path."
+
 
       # Any sustained put failures = data being dropped right now. The
       # audit-subscriber buffers in-memory and drops batches when S3
@@ -94,6 +111,82 @@ groups:
               - Cross-check with flashlight — if flashlight shows live
                 events on the fabric, the wire is OK and the gap is
                 audit-subscriber-side.
+
+      # A producer exceeded its per-producer audit rate budget (GHSA-hq6c).
+      # Observe-only by default: the samples were KEPT and only counted. With
+      # enforcement on (goat_audit_quota_limit{limit="enforce"} == 1) they were
+      # dropped, except ops/audit/**, which is never dropped. The budget is 10x
+      # the busiest measured fabric's TOTAL rate, so a legitimate producer
+      # reaching it is itself an anomaly. The bucket is a key prefix, not a
+      # credential: in a shared bucket (ops/names/claim, attest/schema, a
+      # multi-publisher topic) any writer may be the cause. The second arm
+      # catches a series first scraped already non-zero.
+      - alert: AuditProducerOverRate
+        expr: |
+          sum by (instance, vendor) (increase(goat_audit_producer_over_rate_total[10m])) > 0
+          or
+          sum by (instance, vendor) (goat_audit_producer_over_rate_total unless goat_audit_producer_over_rate_total offset 10m) > 0
+        labels:
+          severity: warning
+          component: audit-subscriber
+        annotations:
+          summary: "audit producer {{ $labels.vendor }} over its audit rate budget on {{ $labels.instance }}"
+          description: |
+            Producer bucket {{ $labels.vendor }} sent samples beyond its
+            per-producer audit budget (goat_audit_quota_limit) in the last 10
+            minutes. Observe-only (the default) kept them; with enforcement
+            on, goat_audit_quota_dropped_total counts those NOT persisted.
+            The bucket is a key prefix, not a credential. `docker logs
+            audit-subscriber | grep "audit producer"` gives per-window
+            totals. A sanctioned high-rate feed belongs in volatile/**
+            (ADR 1032) or needs audit_subscriber_producer_quota_* raised.
+
+      # A production audit-subscriber is running with per-producer metering
+      # switched off (both budget limits 0, GHSA-hq6c), so producer floods are
+      # neither counted nor alerted. The usual cause is a load-test override
+      # (ops/loadtest/README.md) that was never restored. The dedicated
+      # loadtest subscriber (audit_subscriber_id ending -loadtest) runs with
+      # metering off on purpose and is excluded. Enforcement off is the
+      # default and is not alerted.
+      - alert: AuditProducerMeteringOff
+        expr: |
+          max by (instance, audit_subscriber_id) (goat_audit_quota_limit{limit="records", audit_subscriber_id!~".*-loadtest"}) == 0
+          and on (instance, audit_subscriber_id)
+          max by (instance, audit_subscriber_id) (goat_audit_quota_limit{limit="bytes", audit_subscriber_id!~".*-loadtest"}) == 0
+        for: 2h
+        labels:
+          severity: warning
+          component: audit-subscriber
+        annotations:
+          summary: "audit producer metering is off on {{ $labels.instance }} ({{ $labels.audit_subscriber_id }})"
+          description: |
+            audit_subscriber_producer_quota_records and _bytes are both 0 on
+            this production audit-subscriber, so no producer's audit rate
+            is metered. If a load test zeroed them, restore the defaults
+            (30000 and 134217728) and re-apply the audit-subscriber role.
+
+      # Audit records were dropped before they could be written: audit lost
+      # right now. goat_audit_drop_total counts both drop points, a sample
+      # refused by the full writer queue and a whole batch refused by a full
+      # upload queue (the batching writer increments it by the batch size),
+      # so this one rule covers both. goat_audit_queue_dropped_total{vendor}
+      # says whose, for the sample-level drops only.
+      - alert: AuditSubscriberQueueDropping
+        expr: sum by (instance) (increase(goat_audit_drop_total[10m])) > 0
+        labels:
+          severity: critical
+          component: audit-subscriber
+        annotations:
+          summary: "audit-subscriber dropping audit records on {{ $labels.instance }}"
+          description: |
+            The audit-subscriber dropped audit records in the last 10
+            minutes; they have no audit record. A sample dropped at the
+            writer queue is also counted by producer in
+            goat_audit_queue_dropped_total{vendor}. A whole batch dropped at
+            the upload queue (a writer that batches before upload) counts
+            only here: the batch mixes producers. Common causes: a slow or
+            failing S3 upload (see AuditSubscriberPutsFailing), or a burst
+            larger than audit_subscriber_channel_depth.
 
   - name: audit-integrity.bucket
     rules:
