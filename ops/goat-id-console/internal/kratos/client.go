@@ -165,20 +165,13 @@ func (i Identity) Name() string {
 // authzVal returns an authorization field (groups/org/aff/vendor) from
 // admin-managed metadata_public, per F-572 / ADR 1188.
 //
-// An identity whose metadata_public carries a groups key has been migrated
-// (every mint and the backfill write that key, empty when none), and for it
-// traits are never consulted: a missing org or aff stays missing, so a user
-// cannot fill the gap by adding the field to their own traits through the
-// settings flow. Only an identity with no metadata_public groups (not yet
-// backfilled) falls back to traits, per key.
+// Fail-closed (GHSA-9v3v): traits are never consulted, migrated or not. While
+// ory_authz_in_metadata is false the holder can write traits through the
+// settings flow, so a traits value is a claim, not an assignment. A
+// not-yet-backfilled identity therefore reads as holding no groups, org or aff
+// until the backfill moves them (ops/identity/backfill-authz-traits-to-metadata.py).
 func (i Identity) authzVal(key string) interface{} {
-	if _, migrated := i.MetadataPublic["groups"]; migrated {
-		return i.MetadataPublic[key]
-	}
-	if v, ok := i.MetadataPublic[key]; ok {
-		return v
-	}
-	return i.Traits[key]
+	return i.MetadataPublic[key]
 }
 
 // Groups returns the identity's login groups — the array of strings that the
@@ -339,7 +332,7 @@ func (c *Client) ListIdentities(ctx context.Context) ([]Identity, error) {
 }
 
 // CountIdentitiesWithGroup returns the number of identities whose
-// traits.groups contains `group`. Used by the last-ADMIN guard.
+// metadata_public.groups contains `group`. Used by the last-ADMIN guard.
 func (c *Client) CountIdentitiesWithGroup(ctx context.Context, group string) (int, error) {
 	all, err := c.ListIdentities(ctx)
 	if err != nil {

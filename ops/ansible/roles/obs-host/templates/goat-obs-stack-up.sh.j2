@@ -1,0 +1,16 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# Starts the obs stack once {{ _obs_bind | trim }} exists on this host.
+# The stack publishes on that address, so docker-proxy cannot bind it before
+# NetBird gives {{ obs_mesh_iface }} its address, and Docker does not retry a
+# container start that failed. At boot Docker tries first and leaves the three
+# containers exited, and a container whose start failed this way has lost its
+# network attachment: a plain `docker start` later runs it with no network and
+# no published ports. So this waits for the address and then recreates the
+# stack (its state lives in the bind-mounted data directories). --pull never:
+# a boot must not depend on a registry; the role pulls on deploy.
+set -u
+while ! ip -4 -o addr show 2>/dev/null | grep -qF " inet {{ _obs_bind | trim }}/"; do
+  sleep 5
+done
+exec docker compose -f {{ obs_compose_dir }}/docker-compose.yml up -d --force-recreate --pull never

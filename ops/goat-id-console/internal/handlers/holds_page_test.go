@@ -60,9 +60,11 @@ func (holdsFailingRoundTripper) RoundTrip(*http.Request) (*http.Response, error)
 func holdsIdentity(id, email, name, orgTag, orgName string) map[string]any {
 	return map[string]any{
 		"id": id, "state": "active",
-		"traits": map[string]any{
-			"email": email, "name": name, "groups": []any{"MEMBERS"},
-			"org": map[string]any{"short_tag": orgTag, "display_name": orgName},
+		"traits": map[string]any{"email": email, "name": name},
+		// Authorization fields are admin-managed (GHSA-9v3v: traits never read).
+		"metadata_public": map[string]any{
+			"groups": []any{"MEMBERS"},
+			"org":    map[string]any{"short_tag": orgTag, "display_name": orgName},
 		},
 	}
 }

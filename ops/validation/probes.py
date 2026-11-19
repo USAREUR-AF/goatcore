@@ -88,6 +88,66 @@ def http_ok(params) -> Verdict:
                    f"{url} -> HTTP {code} (expected {expect})", "http-ok")
 
 
+# Relay ingress isolation, with a positive control on each destination.
+def relay_mesh_isolation(params) -> Verdict:
+    """Require a live enrollment route and explicit isolation on the SAME relay.
+
+    Keep TLS verification on the public enrollment hostname while changing the
+    HTTP Host header for protected routes. Force the relay IP and bypass local
+    HTTP proxies, so neither mesh DNS nor a proxy can accidentally prove this.
+    """
+    import ipaddress
+    import re
+    kind = "relay-mesh-isolation"
+    public = params.get("public_name", "")
+    protected = params.get("protected_targets", [])
+    def valid_name(name):
+        return isinstance(name, str) and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", name))
+
+    def valid_target(target):
+        return (isinstance(target, dict) and valid_name(target.get("name"))
+                and target["name"] != public and isinstance(target.get("path"), str)
+                and target["path"].startswith("/") and not target["path"].startswith("//"))
+
+    if (not valid_name(public) or not isinstance(protected, list)
+            or not protected or not all(valid_target(t) for t in protected)):
+        return Verdict(UNKNOWN, "public and protected hostnames are required", kind)
+    try:
+        address = ipaddress.ip_address(params.get("host", ""))
+    except ValueError:
+        return Verdict(UNKNOWN, "relay must be an IP address", kind)
+    if not shutil.which("curl"):
+        return Verdict(UNKNOWN, "curl not on PATH", kind)
+    relay_address = f"[{address}]" if address.version == 6 else str(address)
+    base = ["curl", "--silent", "--show-error", "--noproxy", "*", "--http1.1",
+            "--max-time", str(int(_timeout(params))), "--resolve", f"{public}:443:{relay_address}",
+            "--output", "/dev/null", "--write-out", "%{http_code}"]
+
+    def status(name, path):
+        try:
+            result = subprocess.run(base + ["--header", f"Host: {name}", f"https://{public}{path}"],
+                                    capture_output=True, text=True, timeout=_timeout(params) + 4)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0 or not result.stdout.strip().isdigit():
+            return None
+        code = int(result.stdout.strip())
+        return code if 100 <= code <= 599 else None
+
+    code = status(public, "/api/groups")
+    if code is None:
+        return Verdict(UNKNOWN, "enrollment control request could not complete", kind)
+    if code != 401:
+        return Verdict(FAIL, f"enrollment control expected 401, got {code}", kind)
+    for target in protected:
+        code = status(target["name"], target["path"])
+        if code is None:
+            return Verdict(UNKNOWN, "protected-route request could not complete", kind)
+        if code != 404:
+            return Verdict(FAIL, f"protected route expected routing refusal 404, got {code}", kind)
+    return Verdict(PASS, "enrollment responds; protected hosts have no relay route", kind)
+
+
 # --------------------------------------------------------------------------
 # dns_resolve — a name resolves (optionally to an expected answer) via a
 # specific resolver. Mesh CoreDNS check.
@@ -1309,6 +1369,7 @@ def _aslist(v):
 
 REGISTRY = {
     "http-ok": http_ok,
+    "relay-mesh-isolation": relay_mesh_isolation,
     "dns-resolve": dns_resolve,
     "tls-identity": tls_identity,
     "tls-alpn": tls_alpn,

@@ -6,10 +6,11 @@
   changed_when: true
 
 # Local handler — Prometheus is in obs-host's compose project, not ours.
-# The /-/reload endpoint picks up new rule files without restart.
+# A reload picks up new rule files without restart.
+# SIGHUP to the obs-host's Prometheus container: its HTTP /-/reload is off
+# by default (obs-host obs_prometheus_web_lifecycle).
 - name: prometheus reload from minio role
-  ansible.builtin.uri:
-    url: http://localhost:9090/-/reload
-    method: POST
-    status_code: 200
+  ansible.builtin.command:
+    argv: [docker, kill, --signal, HUP, prometheus]
+  changed_when: true
   failed_when: false

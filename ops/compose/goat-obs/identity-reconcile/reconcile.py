@@ -139,8 +139,8 @@ def degrading_notes(notes: list) -> list[str]:
 
 
 def fetch_offvocab(kratos_url: str, sot: set[str]) -> tuple[int, int, list[str]]:
-    """(check_up, count, emails) of identities carrying traits groups outside the
-    Ory SoT vocabulary. data.* grammar values (ADR 1074) ride the same claim by
+    """(check_up, count, emails) of identities whose login groups (admin-managed
+    metadata_public.groups) fall outside the Ory SoT vocabulary. data.* grammar values (ADR 1074) ride the same claim by
     design and are never off-vocab. Mesh-role names appearing here are the
     F-213 conflation this check exists to catch."""
     try:
@@ -152,11 +152,10 @@ def fetch_offvocab(kratos_url: str, sot: set[str]) -> tuple[int, int, list[str]]
         return 0, 0, []
     bad: list[str] = []
     for i in ids:
-        # Login groups live in admin-managed metadata_public.
-        # A groups key there, even null, marks the identity migrated: traits are
-        # never read for it. Only a not-yet-backfilled identity falls back.
-        meta = i.get("metadata_public") or {}
-        groups = (meta.get("groups") or []) if "groups" in meta else ((i.get("traits") or {}).get("groups") or [])
+        # Login groups live in admin-managed metadata_public, and only there:
+        # every authorization reader ignores self-editable traits (GHSA-9v3v),
+        # so this check reports what is actually granted, nothing else.
+        groups = (i.get("metadata_public") or {}).get("groups") or []
         if any(g not in sot and not str(g).startswith("data.") for g in groups):
             bad.append(str((i.get("traits") or {}).get("email") or i.get("id")))
     return 1, len(bad), bad
@@ -189,7 +188,7 @@ def render_prom(env: str, up: int, total: int, unallow: int, by_reason: dict[str
     lines.append("# HELP goat_identity_offvocab_check_up 1 if the Kratos off-vocab groups check ran, else 0.")
     lines.append("# TYPE goat_identity_offvocab_check_up gauge")
     lines.append(f'goat_identity_offvocab_check_up{{env="{env}"}} {offvocab_up}')
-    lines.append("# HELP goat_identity_offvocab_groups Identities whose Ory traits carry groups outside the group-permissions SoT vocabulary.")
+    lines.append("# HELP goat_identity_offvocab_groups Identities whose Ory metadata_public.groups carry groups outside the group-permissions SoT vocabulary.")
     lines.append("# TYPE goat_identity_offvocab_groups gauge")
     lines.append(f'goat_identity_offvocab_groups{{env="{env}"}} {offvocab}')
     lines.append("# HELP goat_identity_reconcile_last_run_timestamp_seconds Unix time of the last run.")

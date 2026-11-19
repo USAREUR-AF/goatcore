@@ -1,0 +1,22 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# Re-applies the obs-host exposure guard when its table is missing or not the
+# one {{ obs_expose_guard_nft_path }} defines. A ruleset flush other than a
+# restart of nftables.service (a start from inactive, a reload, a bare
+# `nft -f /etc/nftables.conf`) removes the table while
+# goat-obs-expose-guard.service still reads active. Run by
+# goat-obs-expose-guard-check.timer; idempotent, and does nothing when the
+# table is in place.
+set -u
+NFT=/usr/sbin/nft
+listing=$("$NFT" list table inet goat_obs_expose 2>/dev/null) || listing=""
+case "$listing" in
+  *'ct direction original iifname != "{{ obs_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _obs_bind | trim }} ct original proto-dst { {{ obs_expose_guard_ports | join(', ') }} } '*'drop'*)
+    case "$listing" in
+      *'iifname != "lo" iifname != "{{ obs_mesh_iface }}" ip daddr {{ _obs_bind | trim }} tcp dport { {{ obs_expose_guard_ports | join(', ') }} } '*'drop'*)
+        exit 0 ;;
+    esac ;;
+esac
+echo "goat-obs-expose-guard: table missing or changed; re-applying {{ obs_expose_guard_nft_path }}"
+logger -t goat-obs-expose-guard "guard table missing or changed; re-applying {{ obs_expose_guard_nft_path }}"
+exec "$NFT" -f {{ obs_expose_guard_nft_path }}

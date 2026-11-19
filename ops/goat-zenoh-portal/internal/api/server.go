@@ -433,7 +433,9 @@ func (s *Server) mux() *http.ServeMux {
 	// GET URLs for the audit objects covering a time window, so the operator
 	// reads the Object-Lock audit-tail without MinIO credentials. Operator-
 	// gated — the audit-tail is a fleet-wide history.
+	mux.HandleFunc("GET /api/audit/object", noStore(s.requireOperator(s.handleAuditObject)))
 	mux.HandleFunc("GET /api/audit/presign", noStore(s.requireOperator(s.handleAuditPresign)))
+	mux.HandleFunc("GET /api/replay/presign", noStore(s.requireOperator(s.handleReplayPresign)))
 	// Structured "Swagger for protobuf" view of a topic's uploaded
 	// descriptor — flat JSON tree of messages + enums consumed by the
 	// portal's /schema.html viewer. Registered BEFORE the catch-all
@@ -499,8 +501,9 @@ func (s *Server) mux() *http.ServeMux {
 	mux.HandleFunc("POST /api/admin/trashgoat/specs/{id}/retire", s.requireOperator(s.retireTrashgoatSpec))
 	mux.HandleFunc("POST /api/admin/trashgoat/specs/{id}/cleanse", s.requireOperator(s.cleanseTrashgoatSpec))
 
-	// One-time tarball download for newly-minted orgs (token gate, no
-	// bearer auth — token is bound to a single download). ADR 1052: this route
+	// Tarball download for newly-minted orgs (token gate, no bearer auth).
+	// The link works for config BundleTTL (24 h default) after it is minted,
+	// for every download in that window, then answers 410. ADR 1052: this route
 	// was registered with a plain HandleFunc and so was never given an
 	// /api/orgs* twin by dualRoute, nor counted toward legacyVendorHits (a
 	// Phase-1 coverage gap surfaced by the Phase-4 audit — F-233). It is now
@@ -541,7 +544,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			if rec := recover(); rec != nil {
 				slog.Error("handler panic",
 					"request_id", reqID,
-					"path", r.URL.Path,
+					"path", redactBundleToken(r.URL.Path),
 					"method", r.Method,
 					"panic", rec,
 				)
@@ -571,7 +574,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		slog.Log(r.Context(), level, "access",
 			"request_id", reqID,
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", redactBundleToken(r.URL.Path),
 			"status", ww.status,
 			"principal", ww.principal,
 			"latency_ms", time.Since(start).Milliseconds(),
@@ -760,3 +763,26 @@ var _ = embed.FS{}
 // ensure context import lives (Routes path values use it transitively).
 var _ context.Context
 var _ strings.Builder
+
+// redactBundleToken replaces the token segment of a bundle download path with
+// "REDACTED". The token is the only credential for a tarball that holds a
+// private key, so it never reaches a log line.
+// The match is on the bundle segment anywhere in the path, ignoring case, so
+// an unclean spelling the mux answers with a redirect (//api/org-bundle/...,
+// /x/../api/org-bundle/...) or a case variant (/API/org-bundle/..., the static
+// 404) is redacted too: everything after the org segment goes.
+func redactBundleToken(path string) string {
+	for _, m := range []string{"/org-bundle/", "/vendor-bundle/"} {
+		for i := 0; i+len(m) <= len(path); i++ {
+			if !strings.EqualFold(path[i:i+len(m)], m) {
+				continue
+			}
+			pre, rest := path[:i+len(m)], path[i+len(m):]
+			if j := strings.IndexByte(rest, '/'); j >= 0 {
+				return pre + rest[:j] + "/REDACTED"
+			}
+			return pre + "REDACTED"
+		}
+	}
+	return path
+}

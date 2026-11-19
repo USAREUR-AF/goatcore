@@ -1303,8 +1303,14 @@ async fn fetch_audit_tier(
         Err(e) => return TierResult::unreachable(Source::Audit, format!("{e}")),
     };
 
+    audit_tier_from_window(window, since)
+}
+
+fn audit_tier_from_window(window: super::replay::AuditWindow, since: &str) -> TierResult {
+
     let mut topics: BTreeMap<String, TierObservation> = BTreeMap::new();
     for ev in &window.events {
+        if ev.sample_kind != "put" { continue; }
         let row = topics.entry(ev.key_expr.clone()).or_default();
         if let Some(ms) = ev.ts_unix_ms() {
             row.last_ms = Some(row.last_ms.map_or(ms, |cur: i64| cur.max(ms)));
@@ -1354,6 +1360,16 @@ async fn fetch_audit_tier(
                 window.object_count,
                 window.events.len()
             )),
+            horizon_ms,
+            horizon_note: Some(note),
+            topics,
+        };
+    }
+
+    if window.events.iter().any(|event| !matches!(event.sample_kind.as_str(), "put" | "delete")) {
+        return TierResult {
+            source: Source::Audit,
+            state: TierState::Partial("history contains unknown operation kinds; cannot prove publication absence".into()),
             horizon_ms,
             horizon_note: Some(note),
             topics,
@@ -2013,6 +2029,29 @@ fn fmt_horizon(ms: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_audit_operations_cannot_prove_absence_or_count_as_puts() {
+        use panoscope_core::AuditEvent;
+        let put = AuditEvent { key_expr: "v/p".into(), sample_kind: "put".into(), ..Default::default() };
+        let delete = AuditEvent { key_expr: "v/d".into(), sample_kind: "delete".into(), ..Default::default() };
+        let legacy = AuditEvent { key_expr: "v/l".into(), ..Default::default() };
+        for events in [vec![legacy.clone()], vec![put.clone(), delete.clone(), legacy]] {
+            let tier = audit_tier_from_window(super::super::replay::AuditWindow {
+                events, truncated: false, object_count: 1, effective_since: "2026-11-01T10:00:00Z".into(), skipped: vec![],
+            }, "1h");
+            assert!(matches!(tier.state, TierState::Partial(_)));
+            assert!(!tier.proves_absence());
+            assert!(!tier.topics.contains_key("v/l"));
+            assert!(!tier.topics.contains_key("v/d"));
+        }
+        let tier = audit_tier_from_window(super::super::replay::AuditWindow {
+            events: vec![put, delete], truncated: false, object_count: 1, effective_since: "2026-11-01T10:00:00Z".into(), skipped: vec![],
+        }, "1h");
+        assert!(matches!(tier.state, TierState::Ok(_)));
+        assert!(tier.topics.contains_key("v/p"));
+        assert!(!tier.topics.contains_key("v/d"));
+    }
 
     fn obs_last(ms: i64) -> TierObservation {
         TierObservation {

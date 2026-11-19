@@ -161,6 +161,10 @@ pub struct SubArgs {
     #[arg(long)]
     pub since: Option<String>,
 
+    /// With --since, read audit metadata through the portal without payloads.
+    #[arg(long, requires = "since", conflicts_with_all = ["decode", "open", "tui"])]
+    pub metadata: bool,
+
     /// Decrypt each received sample with the grant-keyed DEK you hold
     /// (grant-keyed encryption, ADR 1094). Query-history-then-subscribe: you
     /// get retained samples plus the live tail. A sample you have no key for
@@ -403,12 +407,11 @@ pub async fn run_sub(ctx: &super::Ctx, args: SubArgs) -> anyhow::Result<()> {
         return crate::tui::tail::run(session, ctx.profile.router_endpoint_label(), decode, kp).await;
     }
     // --since: replay past events from the audit-tail instead of subscribing
-    // live (Phase G.6). Shares the portal-presign read path with `goat replay`
-    // and standalone `goat narrate`.
+    // live. --metadata uses the portal projection; payload replay stays gated.
     if let Some(since) = args.since.as_deref() {
         let reg = crate::alias::load_aliases(&ctx.profile).await;
         let pattern = sub_pattern(&reg, &args.key_pattern, args.literal)?;
-        let events = super::replay::fetch_events(ctx, Some(since), &pattern).await?;
+        let events = super::replay::fetch_events(ctx, Some(since), &pattern, args.metadata).await?;
         // `--take N` bounds a replay the same way it bounds a live tail, and
         // `--keys-only` reduces it to the prefix census the health runbooks
         // build with `| sort -u`.
@@ -427,6 +430,8 @@ pub async fn run_sub(ctx: &super::Ctx, args: SubArgs) -> anyhow::Result<()> {
                 "no audit events for `{}` since {since}",
                 crate::alias::display_key_volatile_aware(&reg, ctx.uuid, &pattern)
             );
+        } else if args.metadata {
+            eprintln!("{} audit metadata record(s)", events.len());
         } else {
             eprintln!("{} event(s) replayed", events.len());
         }
@@ -1293,8 +1298,10 @@ async fn open_zenoh_session_opts(
 }
 
 /// Extract this profile's slot anchor for ZID-pinning: the leaf cert's
-/// Subject CommonName, but ONLY when it is anchor-shaped (32 lowercase hex
-/// chars per `panoscope_core::alias::is_anchor_shaped`). Returns `None` for
+/// Subject CommonName, but ONLY when it is a slot leaf CN — the anchor (32
+/// lowercase hex chars per `panoscope_core::alias::is_anchor_shaped`), with
+/// the `.g<N>` generation suffix stripped when present (GHSA-rr3p; see
+/// `panoscope_core::alias::anchor_of_leaf_cn`). Returns `None` for
 /// a legacy/shared CN (`<vendor>-trial-peer`), a missing/unparseable cert,
 /// or no CN — in every such case the caller leaves the ZID random, which is
 /// the pre-4b behavior. Best-effort + fail-open by design: a cosmetic pin
@@ -1317,11 +1324,7 @@ fn slot_anchor_from_cert(profile: &Profile) -> Option<String> {
         .iter_common_name()
         .next()
         .and_then(|attr| attr.as_str().ok())?;
-    if panoscope_core::alias::is_anchor_shaped(cn) {
-        Some(cn.to_string())
-    } else {
-        None
-    }
+    panoscope_core::alias::anchor_of_leaf_cn(cn).map(str::to_string)
 }
 
 /// The zenoh-legal ZID string for a slot anchor: the anchor with any leading
@@ -1604,6 +1607,7 @@ mod tests {
             keys_only: false,
             for_: None,
             since: None,
+            metadata: false,
             open: false,
             key_service_bundle: None,
             trust_domain: None,
@@ -1627,6 +1631,7 @@ mod tests {
             keys_only: false,
             for_: None,
             since: None,
+            metadata: false,
             open: false,
             key_service_bundle: None,
             trust_domain: None,

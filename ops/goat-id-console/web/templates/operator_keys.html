@@ -144,6 +144,9 @@ refuse. Revoke and re-issue; the secret cannot be recovered.</p>
            Store.OperatorKeyDecisionCheck — the same call the decision handler
            makes — so the page never offers a button the store refuses (#210). */}}
       <span class="muted">Your request — another admin must decide.</span>
+      {{else if .LegacyRequest}}
+      <span class="muted">Filed before the upgrade that records who files a request, so a
+      two-person decision cannot be proven. Withdraw it (revoke) and request again.</span>
       {{else if .Unverifiable}}
       <span class="muted">Not decidable from this session — your login resolves to no handle and
       this request records no email, so a two-person decision cannot be proven. Use

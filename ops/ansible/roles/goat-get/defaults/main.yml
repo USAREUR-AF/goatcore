@@ -27,8 +27,12 @@ goat_get_hostname: "get.{{ site_id | mandatory }}.{{ site_dns_zone | mandatory }
 # surface before replacing the installed binary (crates/goat-cli/src/cmd/
 # update.rs). Omitting them 404s the checksum fetch and breaks `goat update`
 # for every installed client even though the manual-install path works
-# (which reads the binary directly, not the per-asset checksum). The
-# aggregate SHA256SUMS is served too, but the CLI does not read it.
+# (which reads the binary directly, not the per-asset checksum). `goat
+# update` also reads the aggregate SHA256SUMS (the .sha256 must agree with it)
+# and SHA256SUMS.cosign-bundle, the release workflow's signature over it, and
+# refuses to install without a verified signature unless the operator passes
+# --allow-unsigned. A goat-cli release cut before the release workflow signed
+# SHA256SUMS carries no bundle, so the set-equality assert refuses to serve it.
 # bump v0.5.5 -> v0.5.6. Release step 4, deliberately SEPARATE from
 # the version bump: check-release-asset-parity.sh refuses a pin naming a
 # release that does not exist yet ("the pin names nothing"), and the release is
@@ -104,6 +108,16 @@ goat_get_assets:
   - goat-windows-amd64.exe
   - goat-windows-amd64.exe.sha256
   - SHA256SUMS
+  - SHA256SUMS.cosign-bundle
+
+# Mirrored when the release carries them, and never required: releases cut
+# before the release workflow also signed in the Sigstore bundle format have only
+# the legacy SHA256SUMS.cosign-bundle above (which stays required, so a release
+# with no signature at all is still refused). `goat update` prefers
+# SHA256SUMS.sigstore.json and needs it to verify offline against a pinned trust
+# root; one left over from a previously served release is removed.
+goat_get_optional_assets:
+  - SHA256SUMS.sigstore.json
 
 # GitHub token for reading release assets at download time. Optional for a
 # public release repository: empty means every GitHub request goes without an

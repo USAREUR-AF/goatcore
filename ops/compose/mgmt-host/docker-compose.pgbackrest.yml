@@ -52,6 +52,10 @@ services:
     # tags. The Ansible role's pgbackrest_image default carries the same
     # ref; bump them together. Index digest captured 2026-04-27.
     image: ${PGBACKREST_IMAGE:-woblerr/pgbackrest:2.53.1@sha256:6e79a47273146cdb4a4a60c7736664697c473aad25689c815071248a633ba622}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: pgbackrest-runner
     restart: unless-stopped
     # Long-running idle — host cron does `docker exec` into this container

@@ -281,7 +281,9 @@ $env:GOAT_GET_ENDPOINT = "https://get.zagros.netbird.zagros.example"
 goat update
 ```
 
-That path verifies the published `.sha256` before replacing anything, keeps
+That path verifies the published `.sha256` against the release's signed
+`SHA256SUMS` (it needs `cosign` on PATH to check the signature; without it,
+`goat update` refuses unless you pass `--allow-unsigned`) before replacing anything, keeps
 the exec bit set, and handles the Windows rename-aside `goat update` already
 does for a locked, running `.exe` — none of which a bare download does for
 you. It does **not** run the macOS `codesign` re-sign the curl fallback
@@ -340,7 +342,7 @@ derives `get.<site>` from the profile's own `portal_endpoint` in that case.
 
 ## Updating
 
-`goat update` replaces the installed binary in place: it resolves `get.<site>` from the profile's `portal_endpoint` (or `GOAT_GET_ENDPOINT`), verifies the published `.sha256`, and handles the Windows rename-aside for a running `.exe`. The install one-liner from the get page does the same by hand. There's no auto-update — per ADR 1019 §"Patterns explicitly NOT adopted" — a person runs `goat update` when they want the new version; `goat doctor` says when one is waiting. Releases are tagged + the GH release page shows changelog notes.
+`goat update` replaces the installed binary in place: it resolves `get.<site>` from the profile's `portal_endpoint` (or `GOAT_GET_ENDPOINT`), verifies the published `.sha256` against the release's cosign-signed `SHA256SUMS` (cosign on PATH, or `--allow-unsigned` to accept the surface's checksum alone), and handles the Windows rename-aside for a running `.exe`. The install one-liner from the get page does the same by hand. There's no auto-update — per ADR 1019 §"Patterns explicitly NOT adopted" — a person runs `goat update` when they want the new version; `goat doctor` says when one is waiting. Releases are tagged + the GH release page shows changelog notes.
 
 **Installed via the mesh-download page or the Fallback block above (`/usr/local/bin`)? Update with `sudo /usr/local/bin/goat update --profile-dir "$HOME/.goat"`.** That directory is root-owned, and `goat update` writes its replacement binary beside the running one with no privilege-elevation of its own — a plain `goat update` fails there with a permission error. `--profile-dir` is not optional under `sudo`: `sudo` resets `HOME` to root's and drops `GOAT_GET_ENDPOINT`, so without it `goat` reads `/root/.goat`, finds no `portal_endpoint`, and exits with `cannot resolve this context's download surface (get.<site>)`. `~/.local/bin` installs (Quick install / Verified install / source-build) need neither.
 

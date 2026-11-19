@@ -26,6 +26,10 @@ services:
     # ops/ci/check-pin-compat.sh (digest-not-achievable-yet — confirm SPIRE
     # license + source before the real digest pin, ADR 0412).
     image: ${SPIRE_SERVER_IMAGE:-ghcr.io/spiffe/spire-server:1.11.2}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: spire-server
     restart: unless-stopped
     command: ["-config", "/run/spire/config/server.conf", "-expandEnv"]
@@ -64,6 +68,10 @@ services:
     # Tag-only dev default; deploy overrides SPIRE_AGENT_IMAGE with a digest
     # from group_vars (allowlisted in ops/ci/check-pin-compat.sh, ADR 0412).
     image: ${SPIRE_AGENT_IMAGE:-ghcr.io/spiffe/spire-agent:1.11.2}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: spire-agent
     restart: unless-stopped
     command: ["-config", "/run/spire/config/agent.conf", "-expandEnv"]

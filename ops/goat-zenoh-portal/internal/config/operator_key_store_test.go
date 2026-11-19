@@ -223,8 +223,10 @@ func TestOperatorKeyStore_reportsHandlesShadowedByEnv(t *testing.T) {
 	if _, err := s.Reload(); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if got := s.Shadowed(); len(got) != 0 {
-		t.Errorf("Shadowed() after removing the directory key = %v, want none", got)
+	// Deleting the file did not revoke ada (the env key still works), so the
+	// collision must still be reported (GHSA-2w7v).
+	if got := strings.Join(s.Shadowed(), ","); got != "ada" {
+		t.Errorf("Shadowed() after removing the directory key = %q, want ada (sticky)", got)
 	}
 }
 
@@ -272,5 +274,96 @@ func TestOperatorKeyStore_malformedLineErrorNeverQuotesTheKey(t *testing.T) {
 				t.Errorf("error does not locate the line: %v", err)
 			}
 		})
+	}
+}
+
+// GHSA-2w7v. A person holds a legacy env-pinned key for ada, is issued a
+// console key for the same handle, and is revoked in the console: the console
+// writes a tombstone and removes the file. The env key must stop working.
+func TestOperatorKeyStore_consoleRevokeRefusesEnvPinnedKey(t *testing.T) {
+	dir := t.TempDir()
+	writeKeyFile(t, dir, "ada.key", "ada:op_console_ada\n")
+	s := mustStore(t, map[string]string{"ada": "op_legacy_env_ada", "breakglass": "op_bg"}, dir)
+
+	writeKeyFile(t, dir, TombstoneFileName("ada"), "ada\n")
+	if err := os.Remove(filepath.Join(dir, "ada.key")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Match([]byte("op_legacy_env_ada")); got != "" {
+		t.Errorf("revoked handle ada still accepted via its env key: %q", got)
+	}
+	if got := strings.Join(s.EnvRevoked(), ","); got != "ada" {
+		t.Errorf("EnvRevoked() = %q, want ada", got)
+	}
+	if got := s.Shadowed(); len(got) != 0 {
+		t.Errorf("Shadowed() = %v, want none once the env key is refused", got)
+	}
+	if got := s.Match([]byte("op_bg")); got != "breakglass" {
+		t.Errorf("an untombstoned env key must keep working, got %q", got)
+	}
+
+	// Re-issuing through the console works; the legacy env key stays dead.
+	writeKeyFile(t, dir, "ada.key", "ada:op_console_ada_2\n")
+	if _, err := s.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Match([]byte("op_console_ada_2")); got != "ada" {
+		t.Errorf("re-issued directory key for a tombstoned handle refused: %q", got)
+	}
+	if got := s.Match([]byte("op_legacy_env_ada")); got != "" {
+		t.Errorf("legacy env key revived by a re-issue: %q", got)
+	}
+}
+
+// A tombstone being written (the console's ".tmp-revoked-" temp name) is not
+// read; a finished tombstone for a handle that itself ends in ".tmp" is.
+func TestOperatorKeyStore_tombstoneTempNameCannotCollide(t *testing.T) {
+	dir := t.TempDir()
+	writeKeyFile(t, dir, ".tmp-revoked-ada", "ada\n")
+	writeKeyFile(t, dir, TombstoneFileName("foo.tmp"), "foo.tmp\n")
+	s := mustStore(t, map[string]string{"ada": "op_env_ada", "foo.tmp": "op_env_foo"}, dir)
+	if got := s.Match([]byte("op_env_ada")); got != "ada" {
+		t.Errorf("an in-flight tombstone must not revoke, got %q", got)
+	}
+	if got := s.Match([]byte("op_env_foo")); got != "" {
+		t.Errorf("tombstone for handle foo.tmp ignored: %q", got)
+	}
+}
+
+// Tombstones and collisions found by Watch reach the notice callback once,
+// when they first appear, so a runtime change is logged.
+func TestOperatorKeyStore_watchNotifiesNewCollisionsAndRevocations(t *testing.T) {
+	dir := t.TempDir()
+	s := mustStore(t, map[string]string{"ada": "op_env_ada", "bob": "op_env_bob"}, dir)
+	type note struct{ shadowed, revoked string }
+	got := make(chan note, 8)
+	s.SetNotice(func(sh, rv []string) { got <- note{strings.Join(sh, ","), strings.Join(rv, ",")} })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Watch(ctx, 10*time.Millisecond, nil, nil)
+
+	writeKeyFile(t, dir, "ada.key", "ada:op_dir_ada\n")
+	select {
+	case n := <-got:
+		if n.shadowed != "ada" || n.revoked != "" {
+			t.Fatalf("first notice = %+v, want shadowed ada", n)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no notice for a runtime collision")
+	}
+	writeKeyFile(t, dir, TombstoneFileName("bob"), "bob\n")
+	select {
+	case n := <-got:
+		if n.revoked != "bob" || n.shadowed != "" {
+			t.Fatalf("second notice = %+v, want env-revoked bob", n)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no notice for a runtime tombstone")
+	}
+	if got := s.Match([]byte("op_env_bob")); got != "" {
+		t.Errorf("tombstoned env key still accepted: %q", got)
 	}
 }
