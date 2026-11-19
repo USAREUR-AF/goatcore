@@ -10,14 +10,14 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone contributing
 
-#### Changed: the compatibility check is held to goatbuilder/v0.7.2
+#### Changed: the compatibility check is held to goatbuilder/v0.7.3
 
 `ops/ci/check-goatbuilder-compat.sh` now compares each build with
-`goatbuilder/v0.7.2`, the last published release: its command surface and its
-kept `-o json` documents. The upgrade tests' list pins v0.7.2's four
-published binaries (`crates/goatbuilder/tests/upgrade/releases.sha256`), and
-v0.7.2's configuration files are kept for gate row A2 with the outcome its
-published binary gives each.
+`goatbuilder/v0.7.3`, the last published release: its command surface and its
+kept `-o json` documents. The upgrade tests' list pins the four published
+binaries of v0.7.2 and v0.7.3 (`crates/goatbuilder/tests/upgrade/releases.sha256`),
+and the configuration files of both are kept for gate row A2 with the outcome
+each release's published binary gives them.
 
 <!-- END generated: changelog unreleased -->
 
