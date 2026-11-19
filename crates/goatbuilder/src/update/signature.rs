@@ -969,6 +969,7 @@ mod tests {
             signer: "USAREUR-AF/goatcore",
             version: "0.5.1",
             workflow: RELEASE_WORKFLOW,
+            signing_workflow: SIGNING_WORKFLOW,
         }
     }
 
@@ -1070,6 +1071,32 @@ mod tests {
         let r = verify(SUMS, BUNDLE, &e, &root()).unwrap_err();
         assert_eq!(r.check, "identity", "{r}");
         assert!(r.detail.contains("Build Config URI"), "{r}");
+    }
+
+    /// The SAN, the reusable workflow that signed, must be the signer's
+    /// `_release-binary.yml` at the served version's tag: the same identity
+    /// the reinstall line gives cosign as --certificate-identity.
+    #[test]
+    fn a_san_that_is_not_the_signers_reusable_workflow_at_the_tag_is_refused() {
+        let leaf = leaf_der();
+        let (_, cert) = X509Certificate::from_der(&leaf).unwrap();
+        let ids = identity_of(&cert).unwrap();
+        assert_eq!(ids.san, "https://github.com/USAREUR-AF/goatcore/.github/workflows/_release-binary.yml@refs/tags/goatbuilder/v0.5.1");
+        assert!(check_identity(&ids, &release()).is_ok());
+        for san in [
+            "https://github.com/example-org/goatcore/.github/workflows/_release-binary.yml@refs/tags/goatbuilder/v0.5.1",
+            "https://github.com/USAREUR-AF/goatcore/.github/workflows/other-signing.yml@refs/tags/goatbuilder/v0.5.1",
+            "https://github.com/USAREUR-AF/goatcore/.github/workflows/_release-binary.yml@refs/heads/main",
+            "",
+        ] {
+            let mut i = ids.clone();
+            i.san = san.into();
+            let r = check_identity(&i, &release()).unwrap_err();
+            assert!(r.detail.contains("SAN"), "{san}: {r}");
+        }
+        let e = Expect { signing_workflow: "other-signing.yml", ..release() };
+        let r = check_identity(&ids, &e).unwrap_err();
+        assert!(r.detail.contains("SAN"), "{r}");
     }
 
     /// The signature is for the served version's tag, so an older release's
@@ -1263,6 +1290,7 @@ mod tests {
             signer: "example-org/releases",
             version: "9.9.9",
             workflow: RELEASE_WORKFLOW,
+            signing_workflow: SIGNING_WORKFLOW,
         };
         verify(SUMS, &bundle, &e, &root)
     }

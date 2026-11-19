@@ -631,7 +631,7 @@ mod tests {
     /// provenance is never consulted.
     #[test]
     fn the_declared_signers_are_always_trusted_and_a_configured_one_is_an_addition() {
-        let declared: Vec<&str> = RELEASE_SIGNERS.iter().map(|(r, _)| *r).collect();
+        let declared: Vec<&str> = RELEASE_SIGNERS.iter().map(|s| s.repo).collect();
         assert_eq!(repos(&release_signers(None)), declared);
         assert_eq!(repos(&release_signers(Some(" ".into()))), declared);
         let mut with = declared.clone();
@@ -641,6 +641,22 @@ mod tests {
         assert_eq!(repos(&release_signers(Some(same))), declared, "GitHub names match without case: no second copy");
         let added = release_signers(Some("example-org/releases".into()));
         assert_eq!(added.last().unwrap().workflow, signature::RELEASE_WORKFLOW);
+        assert_eq!(added.last().unwrap().signing_workflow, signature::SIGNING_WORKFLOW);
+    }
+
+    /// Only repo.release_source adds a signer: repo.source names where a
+    /// deployment's declarations live, not who publishes goatbuilder.
+    #[test]
+    fn repo_source_is_never_a_release_signer() {
+        let at = |yaml: &str| {
+            let t = tempfile::tempdir().unwrap();
+            write(t.path(), "ops/goatbuilder/goatbuilder.yaml", yaml);
+            configured_signer(t.path())
+        };
+        let yaml = |extra: &str| format!("schema: goatbuilder/v1\npreset: lite\nrepo:\n  source: example-org/declarations\n  image_namespace: ghcr.io/example-org\n{extra}components:\n  portal:\n    declared_in: declared/pins.yaml\nenvironments:\n  - name: dev\n    converger: push-ansible\npromotion:\n  path:\n    - name: dev\n      kind: rung\n      environment: dev\n");
+        assert_eq!(at(&yaml("")), None);
+        assert_eq!(at(&yaml("  release_source: example-org/releases\n")).as_deref(), Some("example-org/releases"));
+        assert_eq!(configured_signer(Path::new("/nonexistent")), None);
     }
 
     /// Each declared signer is `<owner>/<repo>` and a workflow file name; the
@@ -648,14 +664,20 @@ mod tests {
     #[test]
     fn the_first_declared_signer_signs_this_tree_and_its_workflow_is_in_it() {
         assert!(!RELEASE_SIGNERS.is_empty());
-        for (repo, workflow) in RELEASE_SIGNERS {
-            let parts: Vec<&str> = repo.split('/').collect();
-            assert!(parts.len() == 2 && parts.iter().all(|p| !p.is_empty() && !p.contains(char::is_whitespace)), "{repo}");
-            assert!(workflow.ends_with(".yml") && !workflow.contains('/'), "{workflow}");
+        for s in RELEASE_SIGNERS {
+            let parts: Vec<&str> = s.repo.split('/').collect();
+            assert!(parts.len() == 2 && parts.iter().all(|p| !p.is_empty() && !p.contains(char::is_whitespace)), "{}", s.repo);
+            for w in [s.release_workflow, s.signing_workflow] {
+                assert!(w.ends_with(".yml") && !w.contains('/'), "{w}");
+            }
         }
-        let tree = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let first = tree.join(".github/workflows").join(RELEASE_SIGNERS[0].1);
-        assert!(first.is_file(), "{} is not in this tree", first.display());
+        let workflows = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows");
+        let first = &RELEASE_SIGNERS[0];
+        for w in [first.release_workflow, first.signing_workflow] {
+            assert!(workflows.join(w).is_file(), "{w} is not in this tree");
+        }
+        let caller = std::fs::read_to_string(workflows.join(first.release_workflow)).unwrap();
+        assert!(caller.contains(&format!("./.github/workflows/{}", first.signing_workflow)), "{} calls {}", first.release_workflow, first.signing_workflow);
     }
 
     /// The overlap rule (ADR 1252): a binary accepts a release signed by any
@@ -664,7 +686,7 @@ mod tests {
     /// by the old signer, in a release that trusts both.
     #[test]
     fn a_signer_change_reaches_installs_only_through_a_release_that_trusts_both() {
-        let s = |r: &str| Signer { repo: r.into(), workflow: signature::RELEASE_WORKFLOW.into() };
+        let s = |r: &str| Signer { repo: r.into(), workflow: signature::RELEASE_WORKFLOW.into(), signing_workflow: signature::SIGNING_WORKFLOW.into() };
         let check = |trusts: &[Signer], signed_by: &str| first_verified(trusts, |t| if t.repo == signed_by { Ok(t.repo.clone()) } else { Err(format!("not {}", t.repo)) });
         let old_only = [s("example-org/old")];
         let both = [s("example-org/old"), s("example-org/new")];

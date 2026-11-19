@@ -369,6 +369,22 @@ fn a_configured_release_source_is_an_addition_never_the_only_anchor() {
     }
 }
 
+/// repo.source names where the deployment's declarations live; it is not a
+/// release signer, so a release signed there alone is refused.
+#[test]
+fn a_release_signed_by_the_checkouts_repo_source_alone_is_refused() {
+    let c = copy();
+    let before = bytes(&c.exe);
+    let yaml = c.home.join("ops/goatbuilder/goatbuilder.yaml");
+    let without = std::fs::read_to_string(&yaml).unwrap().replace(&format!("  release_source: {SIGNER}\n"), "");
+    std::fs::write(&yaml, without).unwrap();
+    let url = surface_signed("9.9.9", Body::Full(release()), &sha256(&release()), &sha256(&release()), Signed::As(sigstore::Workflow::release("example-org/declarations", "9.9.9")));
+    let o = run(&c, &url, &["update"], &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("GB-261") && text(&o).contains("any trusted signer (USAREUR-AF/goatcore)"), "{}", text(&o));
+    assert_eq!(bytes(&c.exe), before);
+}
+
 /// A release signed by none of them is refused, and the refusal names every
 /// signer it was checked against, each with its reason.
 #[test]
