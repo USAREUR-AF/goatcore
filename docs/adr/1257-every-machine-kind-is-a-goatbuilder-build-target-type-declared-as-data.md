@@ -40,7 +40,7 @@ Later the same evening the operator corrected the model again:
 11. "the karbon 801/802 and thor and orin all belong to a familly of platforms that are suitable for running core services and obs services"
 12. "I think you got the [kit] kid wrong unless it has changed a lot since I last looked at it you have it deploying like all the functionality -- is that actually true?"
 
-The operator agreed to the plan this ADR records, including two proof tiers. Statements 6 to 12 corrected the first model twice. The Pi is hardware that needs its own preparation, and a small computer is a family of hardware, not a role. The kit's kid is one relay process per sensor, not a whole stack, so a machine's wired sensors decide which kids run. The edge has two more roles, octo-pod and first-bite. Hardware comes in families, and the cloud family lists all three providers.
+The operator agreed to the plan this ADR records, including two proof tiers. Statements 6 to 12 corrected the first model twice. The Pi is hardware that needs its own preparation, and a small computer is a family of hardware, not a role. The kit's kids are per-sensor relay processes, not a whole stack, so a machine's wired sensors decide which of them run. The edge has two more roles, octo-pod and first-bite. Hardware comes in families, and the cloud family lists all three providers.
 
 What exists today is measured in the design document (§2). In short:
 
@@ -77,7 +77,13 @@ What exists today is measured in the design document (§2). In short:
      - and phone, which `join-node` builds today.
 
      **Nothing in a type may assume a model**, and in particular none may assume a Raspberry Pi. A small computer is a family, not a type.
-   - **Wired sensors, declared per machine.** The sensor kit is one package, installed the same way on every edge machine. A kid is one small relay process for one sensor: it converts that sensor's native output to ASTERIX, CoT, ISA or SAPIENT, and forwards it to the fabric. A machine's declaration lists its wired sensors. On any machine whose type allows sensors, goatbuilder installs the kit's package and turns on the kid for each declared sensor. A machine with no sensors runs no kids. The types that allow sensors today are sensor node, octo-pod, break-glass, network jump box and both boundary types. There is no separate payload tier.
+   - **Wired sensors, declared per machine.** Sensor support is a capability, not a machine: a machine's declaration lists its wired sensors, and goatbuilder installs the sensor platform and turns on the per-sensor relay processes for them, on any target type that allows sensors; the small-computer "sensor node" type is the one whose only job is sensors.
+     - The kit's relays (its kids) convert a sensor's native output to ASTERIX, CoT, ISA or SAPIENT, and forward it to the fabric.
+     - Declaring one sensor turns on that sensor's set of relay processes (tracks, status, events and so on), not a single process.
+     - A machine with no sensors runs none.
+     - The types that allow sensors today are sensor node, octo-pod, break-glass, network jump box and both boundary types.
+     - There is no separate payload tier.
+     - Which install model goatbuilder targets is open (question 5 below): one package with an activation list, or per-sensor bundles installed per machine.
 2. **Encryption scope is split between family and type.**
    - The family declares the scope each model can deliver and how it unlocks. For example, a Karbon delivers `root` with TPM2 unlock; a Pi, with no TPM, delivers `data` with a hardware token, or `root` with a network unlock.
    - The type declares the minimum scope its role requires.
@@ -85,14 +91,14 @@ What exists today is measured in the design document (§2). In short:
 
    Why: unlock depends on the hardware (the existing file already says so, `hardware-classes.yaml:46`). How much must be encrypted is a security property of the role, checked on the end state. Joining the two would either make every type know every model, or let weaker hardware lower a role's requirement.
 3. **The contract starts at a reachable Ubuntu host with an SSH key.** goatbuilder builds above that line, whatever got the machine there.
-4. **The end state is checked, whichever path was taken.** `goatbuilder doctor --target <type>` reads a host and reports each property its type and family require, for example the encryption scope, the OS version, chrony before docker, the docker data root, the inotify floor and a running kid for each declared sensor. It changes nothing, and every refusal says what to fix on the machine. For a family goatbuilder does not prepare, such as the ruggedized mobile edge, this check is goatbuilder's whole part below the line.
+4. **The end state is checked, whichever path was taken.** `goatbuilder doctor --target <type>` reads a host and reports each property its type and family require, for example the encryption scope, the OS version, chrony before docker, the docker data root, the inotify floor and each declared sensor's relay processes running. It changes nothing, and every refusal says what to fix on the machine. For a family goatbuilder does not prepare, such as the ruggedized mobile edge, this check is goatbuilder's whole part below the line.
 5. **Two install paths below the line, and goatbuilder stays thin there.**
    - **Golden path, optional:** `goatbuilder image <model>` wraps that model's preparation in `ops/bootstrap`. Raspberry Pi preparation is golden-path data of the Pi model in the small-computer family. Three Pi image builders exist today and differ, and one is picked before goatbuilder wraps any.
    - **General path, supported:** written directions per type that state the intent and the end state, for a capable person on any other hardware.
 
    Steps that stay outside the command line are given as written directions with the end state checked. One is the physical work on a Pi's drive and its unlock token. Another is the per-sensor packages, which each sensor's owner authors with the sensor platform's own tool. goatbuilder is not an operating-system installer or configuration manager beyond the golden path.
 6. **Two proof tiers.**
-   - **CI:** a VM from a fresh Ubuntu cloud image, through the build, to the type's acceptance, `doctor --target` and, where the type allows sensors, the kid for a declared test sensor. This extends ADR 1200's deployment-e2e harness from container hosts to VMs.
+   - **CI:** a VM from a fresh Ubuntu cloud image, through the build, to the type's acceptance, `doctor --target` and, where the type allows sensors, the relay processes of a declared test sensor. This extends ADR 1200's deployment-e2e harness from container hosts to VMs.
    - **Hardware:** a recorded run on real equipment, from the model's golden path.
 
    The 1.0 gate (`goatbuilder-v1-gate.md` group J) requires CI for every type, and hardware for core, obs, break-glass, network jump box and federation boundary.
@@ -103,7 +109,7 @@ What exists today is measured in the design document (§2). In short:
    4. Simple boundary and goat-processors.
    5. The small-computer family, Raspberry Pi preparation first.
    6. octo-pod, sensor node and first-bite, with octo-pod push-deployed.
-   7. Sensors declared per machine, with the kids turned on on any type that allows them.
+   7. Sensors declared per machine, with each declared sensor's relay processes turned on, on any type that allows them.
 8. **Where this amends earlier decisions:**
    - **ADR 1141** (Decision, point 1, "Roles, not hardware") stands, and is now explicit in the data: a role's machine contract is its target-type file, and hardware is a model in a platform family (host-class is the family ADR 1141's core and obs run on). `hardware-classes.yaml`'s roles axis is replaced by the type files.
    - **ADR 1183** (Decision: the two keys per class, and consequence 2, "`goat-standup.sh` phase 14 converges each declared node") stands for *whether* a site has each rescue node. *What* phase 14 converges is now the `breakglass` and `network-jump` type files, not plays named in the driver. Consequence 3, "a declared break-glass node is a graded peer", gains the type's acceptance rows, which do not exist today.
@@ -113,10 +119,11 @@ What exists today is measured in the design document (§2). In short:
 
 ### Open questions for the operator
 
-1. **Multi-sensor machines.** A machine with several wired sensors runs one kid per sensor. Is a gateway that fronts several sensors anything more than a machine with a longer sensor list?
-2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of the machines that run kids?
+1. **Multi-sensor machines.** A machine with several wired sensors runs each sensor's set of relay processes. Is a gateway that fronts several sensors anything more than a machine with a longer sensor list?
+2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of the machines that run sensor relay processes?
 3. **The Pi's OS baseline.** Ubuntu Server 24.04 or 26.04?
 4. **The Pi's golden path.** Which of the existing Pi image builders becomes the Pi's golden path? That choice also settles whether the Pi delivers root or data-volume encryption.
+5. **The sensor install model.** The sensor platform's design installs one package on every edge machine and activates only the relevant relay processes, from an activation list whose format is not fixed yet. Its current public release ships a sensor-neutral package, with each sensor's relay processes in a separate bundle installed and activated per machine. And one prototype starts a sensor's processes only when it is both declared and discovered live on the local network. Which of these does goatbuilder target?
 
 ## Alternatives considered
 

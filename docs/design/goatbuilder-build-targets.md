@@ -16,9 +16,9 @@ This design keeps two things apart, and treats sensors as a property of a machin
 |---|---|---|
 | **Platform family** | Hardware that can play the same roles, and its preparation: firmware, boot media, the OS image, disk encryption and how it unlocks. The golden path lives here. A model joins a family; no target type names a model. | host-class (Karbon 801 and 802, Jetson Orin and Thor), cloud (AWS EC2; Azure VMs and Google Compute Engine), small computer (Raspberry Pi 5 today; a smaller OnLogic model later), ruggedized mobile edge (TSI V3 and TSI V3 mini) |
 | **Target type** | The role the machine plays in a goatnet: its plays, services and acceptance checks | host site: core, obs, break-glass, network jump box. Edge: octo-pod (the edge gateway appliance), sensor node, first-bite (the tap decoder). Boundary: federation boundary, simple boundary. Processing: goat-processors. Also phone |
-| **Wired sensors** | Declared per machine. For each one, the sensor kit's matching kid (a per-sensor relay process) is turned on, on any type whose file allows sensors | a radar wired to an octo-pod; a camera wired to a sensor node; no sensors, so no kids |
+| **Wired sensors** | Declared per machine. For each one, that sensor's set of relay processes (the sensor kit's kids) is turned on, on any type whose file allows sensors | a radar wired to an octo-pod; a camera wired to a sensor node; no sensors, so no kids |
 
-goatbuilder builds a target type on a machine of an accepted family, and turns on the kids for the sensors declared on that machine. Families and types are declared as data, and a check confirms the end state whatever path got the machine there.
+goatbuilder builds a target type on a machine of an accepted family, and turns on the relay processes for the sensors declared on that machine. Families and types are declared as data, and a check confirms the end state whatever path got the machine there.
 
 ## 2. What exists today (measured on `main`, 2026-11-19)
 
@@ -127,12 +127,24 @@ One data file per family. A model joins a family by an entry in that file: its f
 
 ### 3.3 Sensors are declared per machine; the kit's kids follow them
 
-The sensor kit is one package, installed the same way on every edge machine. A **kid** is one small relay process for one sensor: it converts that sensor's native output to ASTERIX, CoT, ISA or SAPIENT, and forwards it to the fabric. A kid is not a machine and not the whole kit.
+Sensor support is a capability, not a machine: a machine's declaration lists its wired sensors, and goatbuilder installs the sensor platform and turns on the per-sensor relay processes for them, on any target type that allows sensors; the small-computer "sensor node" type is the one whose only job is sensors.
 
+- **A kid** is one of the kit's relay processes for one sensor: it converts that sensor's native output to ASTERIX, CoT, ISA or SAPIENT, and forwards it to the fabric. **Declaring one sensor turns on that sensor's set of relay processes** (tracks, status, events and so on), not a single process. A kid is not a machine and not the whole kit.
 - **A machine's declaration lists its wired sensors.** That is a fact about the machine, next to its type and its family.
 - **A type file says whether it allows sensors.** Today that is the sensor node, octo-pod, break-glass, network jump box, and both boundary types.
-- **goatbuilder installs the kit's package and turns on the kid for each declared sensor**, on any machine whose type allows sensors. A machine with no sensors runs no kids. Turning a sensor off is removing it from the declaration.
-- **The sensor node** is the target type for a small computer whose only job is sensors: the type's own plays and acceptance are those of an empty edge machine (mesh peer, name resolution, egress), and its purpose comes from its sensors.
+- **On any machine whose type allows sensors, goatbuilder installs the sensor platform and turns on each declared sensor's relay processes.** A machine with no sensors runs none. Turning a sensor off is removing it from the declaration.
+- **The sensor node** is the target type for a small computer whose only job is sensors. The type's own plays and acceptance are those of an empty edge machine (mesh peer, name resolution, egress), and its purpose comes from its sensors.
+- **The install model is open** (section 6, question 5). There are three today:
+  - the sensor platform's design installs one package on every edge machine and activates only the relevant relay processes, from an activation list whose format is not fixed yet;
+  - its current public release ships a sensor-neutral package, with each sensor's relay processes in a separate bundle, installed and activated per machine;
+  - one prototype starts a sensor's processes only when the sensor is both declared and discovered live on the local network.
+
+  goatbuilder's declaration is the same under all three. What it installs and how it activates follows the operator's choice.
+- **Open design items**, settled in build step 7:
+  - **A sensor declaration needs parameters, not just a name:** its transport and port, a bind address on a dedicated sensor interface, the source address range it accepts, and the sensor's identifiers.
+  - **Sensors on a host-site or boundary machine bring the sensor platform's own services onto that host:** its local router, its fabric client and a container runtime. On a break-glass node, a network jump box or a boundary machine, that can meet goat's own router: ports, and the platform's rule that its router never federates. The type file must say how they coexist before it allows sensors in practice.
+  - **The sensor platform supports Ubuntu 24.04 on amd64 and arm64 today**, not the Jetson operating system. So a host-class machine on Jetson cannot run sensors until that changes.
+  - **A machine that forwards sensor data keeps its own mesh class.** A break-glass node with a sensor stays `BREAKGLASS`. What it may reach to forward sensor data is an ACL question for later, not a reason to change its class.
 - **What the kit needs from its host**, from the survey of its existing buildout:
   - the type's Ubuntu Server 24.04 baseline;
   - mesh enrolment under the KID gear class;
@@ -148,7 +160,7 @@ The sensor kit is one package, installed the same way on every edge machine. A *
   - a round trip of its health sample through the site fabric;
   - the node's mesh peer in the right group;
   - the mesh management name resolving on the node;
-  - for each declared sensor, its kid running.
+  - for each declared sensor, its relay processes running.
 - **Its updates:** a pin bump of the sensor platform's release, followed by its acceptance. A release with a breaking contract change is refused until its upgrade notes are done.
 - **What stays outside the command line**, as written directions with the end state checked:
   - The per-sensor packages, including their sensor-interface and identity settings. They are authored and deployed by each sensor's owner with the sensor platform's own tool.
@@ -166,7 +178,7 @@ The contract starts at **a reachable Ubuntu host with an SSH key**, however it w
   - the inotify floor is met;
   - for a small computer, first boot completed, the root filesystem grown and key-only SSH;
   - for a break-glass node, ADR 1114 §5's dual-homing contract;
-  - for each declared sensor, its kid enabled.
+  - for each declared sensor, its relay processes enabled.
 
   Every refusal names what to fix on the machine, not which installer to use. For a family goatbuilder does not prepare, such as the ruggedized mobile edge, this check is the whole of goatbuilder's part below the line.
 - **The golden path, optional:** `goatbuilder image <model>` wraps that model's preparation in `ops/bootstrap`. It produces an install ready for a type's plays: unattended Ubuntu, the model's encryption shape, first boot and enrolment.
@@ -177,7 +189,7 @@ The contract starts at **a reachable Ubuntu host with an SSH key**, however it w
 
 | Tier | What runs | Where |
 |---|---|---|
-| CI | A VM from a fresh Ubuntu cloud image, then `join-node` or `standup` for the type, then the type's acceptance and `doctor --target`, then the kids for a declared test sensor where the type allows sensors | CI, extending ADR 1200's deployment-e2e harness from container hosts to VMs |
+| CI | A VM from a fresh Ubuntu cloud image, then `join-node` or `standup` for the type, then the type's acceptance and `doctor --target`, then the relay processes of a declared test sensor where the type allows sensors | CI, extending ADR 1200's deployment-e2e harness from container hosts to VMs |
 | Hardware | The same steps on real equipment, from the model's golden path, recorded as a run record | an existing site, for the types that site has |
 
 Every type passes the CI tier. The hardware tier is required where equipment exists: core, obs, break-glass, network jump box and federation boundary (gate group J).
@@ -238,7 +250,7 @@ One revertible pull request per step, on the program's normal path. Each step bu
 4. **The simple boundary and goat-processors as new types.** The processing node's acceptance runs the engines of the public `goat-processors` repository on recorded data, and checks the output against its conformance vectors.
 5. **The small-computer family**, with Raspberry Pi preparation first, as golden-path data, once one Pi image builder is picked (section 6). The OnLogic model joins when the hardware is in hand.
 6. **The edge types: octo-pod, sensor node and first-bite.** octo-pod is push-deployed: `join-node` reaches it and pushes, like any other type. The pull converger comes after 1.0, as the operator decided on 15 November (gate group D), and arrives as a value of `converger:` without changing any type file.
-7. **Sensors declared per machine**, with the kit's package installed and the matching kids turned on, on any type that allows sensors.
+7. **Sensors declared per machine**, with the sensor platform installed and each declared sensor's relay processes turned on, on any type that allows sensors.
 
 ## 5. What does not change
 
@@ -248,7 +260,8 @@ One revertible pull request per step, on the program's normal path. Each step bu
 
 ## 6. Open questions for the operator
 
-1. **Multi-sensor machines.** A machine with several wired sensors runs one kid per sensor. Is a gateway that fronts several sensors anything more than a machine with a longer sensor list?
-2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of the machines that run kids?
+1. **Multi-sensor machines.** A machine with several wired sensors runs each sensor's set of relay processes. Is a gateway that fronts several sensors anything more than a machine with a longer sensor list?
+2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of the machines that run sensor relay processes?
 3. **The Pi's OS baseline.** Ubuntu Server 24.04, as the existing buildout uses, or 26.04?
 4. **The Pi's golden path.** Which of the three existing Pi image builders becomes the Pi's golden path? That choice also settles whether the Pi delivers root or data-volume encryption (section 3.2).
+5. **The sensor install model.** One package with an activation list (the sensor platform's design), per-sensor bundles installed per machine (its current public release), or declared and discovered live (a prototype)? See section 3.3.
