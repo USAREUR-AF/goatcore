@@ -134,7 +134,7 @@ up() {
     PERMISSIONS_YAML_PATH="$REPO/ops/permissions/group-permissions.yml" \
     COALITION_FRAMEWORKS_PATH="$REPO/ops/identity/coalition-frameworks.yaml" \
     DEV_BYPASS_AUTH=1 STEP_UP_ENFORCED=false AUDIT_BACKEND=stderr \
-    ONBOARD_OPERATOR_API_KEYS="e2e-operator:$TOKEN" MEMBERSHIP_AUTHORITY=ungoverned \
+    ONBOARD_OPERATOR_API_KEYS="e2e-operator:$TOKEN" ONBOARD_SERVICE_OPERATOR_HANDLES=e2e-operator MEMBERSHIP_AUTHORITY=ungoverned \
     NOTIFY_MGMT_URL=http://127.0.0.1:18082/zagros ENROLL_WATCH_NB_TOKEN=e2e \
     ONBOARD_DB_DSN="$GOAT_STACK_PG/e2e_onboard?sslmode=disable" ORG_DB_DSN="$GOAT_STACK_PG/e2e_orgs?sslmode=disable" \
     PORTAL_INTERNAL_URL=http://127.0.0.1:18080 PORTAL_LOOKUP_TOKEN="$TOKEN" \

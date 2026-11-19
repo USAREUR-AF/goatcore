@@ -483,6 +483,27 @@ for path in $SAFETY_CRITICAL_PATHS; do
 "
   fi
 done
+# A pre-disclosure patch the marker records (embargo=) may change a SAFETY-CRITICAL
+# file. Such a file is not an overlay copy: source_of_record.py judges it against
+# goatcore.ref plus the recorded patches, and patched-paths names it only when the
+# tree holds exactly that. Any other difference is still refused below.
+if [ -n "$STALE_CRITICAL" ] && [ "$ASSEMBLED" = 1 ]; then
+  PATCHED_PATHS="$(python3 "$SCRIPT_DIR/lib/source_of_record.py" patched-paths --repo "$REPO_ROOT" 2>/dev/null || true)"
+  if [ -n "$PATCHED_PATHS" ]; then
+    STILL=""
+    while IFS= read -r line; do
+      p="${line#"${line%%[![:space:]]*}"}"
+      [ -n "$p" ] || continue
+      if printf '%s\n' "$PATCHED_PATHS" | grep -qxF -- "$p"; then
+        echo "ansible-preflight: $p differs from goatcore only by a recorded pre-disclosure patch (embargo=); judged as goatcore.ref plus that patch" >&2
+      else
+        STILL="$STILL  $p
+"
+      fi
+    done <<< "$STALE_CRITICAL"
+    STALE_CRITICAL="$STILL"
+  fi
+fi
 if [ -n "$STALE_CRITICAL" ] && [ "$ASSEMBLED" = 1 ]; then
   {
     echo "ansible-preflight: REFUSE — the overlay replaces a SAFETY-CRITICAL goatcore file:"

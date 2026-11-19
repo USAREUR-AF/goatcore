@@ -6,8 +6,9 @@
 //! A record holds the tool's version, the tree's commit, the verb and its
 //! arguments, each phase and each command (its line, argv, host, log, start, end,
 //! exit), and the run's inputs with their sources. It never holds a secret value:
-//! commands carry `$(printenv NAME)`, not values, and an input marked secret has no
-//! value. Records are kept until the operator removes them.
+//! commands carry a variable's name (`lookup("env", "NAME")` for a secret, read by
+//! the play itself), not values, and an input marked secret has no value. Records
+//! are kept until the operator removes them.
 
 use std::path::{Path, PathBuf};
 

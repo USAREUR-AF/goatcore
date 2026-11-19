@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net/mail"
 	"os"
 	"strconv"
@@ -77,6 +78,16 @@ type Config struct {
 	// because no AAL2 signal is wired. NOT the DevBypassAuth dev-only hack:
 	// this is a deliberate, documented deployment policy (env STEP_UP_ENFORCED).
 	StepUpEnforced bool
+	// TrustedProxyHosts are the hosts (names or addresses) whose requests may
+	// carry the X-Forwarded-* identity headers: the oauth2-proxy sidecar. A
+	// request from any other address is treated as carrying no identity.
+	// Empty trusts every caller, for tests and the dev bypass only; Load()
+	// defaults it to the sidecar's name (env TRUSTED_PROXY_HOSTS, comma list).
+	TrustedProxyHosts []string
+	// TrustNoProxy is set by Load() when TRUSTED_PROXY_HOSTS is set but names
+	// no host (for example " , "). The console then trusts no caller's
+	// identity headers, instead of reading the empty list as "trust everyone".
+	TrustNoProxy bool
 	// StepUpSSOIdP is the IdP realm the console's own oauth2-proxy SSO
 	// authenticates admins against — the only realm where the forwarded actor
 	// identity ID (the OIDC sub on X-Forwarded-User) resolves. The step-up gate
@@ -337,6 +348,24 @@ type Config struct {
 
 	// Dev-only flags. Refuse to start if any are true outside dev.
 	DevBypassAuth bool
+	// LiveIdentityCheck makes adminGate read the signed-in admin's identity
+	// from Kratos on every request (cached briefly) and refuse an inactive or
+	// missing identity, authorizing on its current groups rather than the
+	// groups the session cookie carried at sign-in. Default true (env
+	// ADMIN_LIVE_IDENTITY_CHECK); false only for a console without a Kratos
+	// SSO realm. It also makes the machine realm tie every per-person
+	// operator key to its holder's identity and refuse it once that identity
+	// is inactive, gone, or holds no admin group. A per-person key pinned in
+	// ONBOARD_OPERATOR_API_KEYS must therefore be filed under its holder's
+	// onboarding (roster) handle: one that names no person is refused, and
+	// the console lists such keys at startup and on /healthz/operator-keys.
+	LiveIdentityCheck bool
+	// ServiceOperatorHandles are the operator-key handles that belong to a
+	// service, not a person (env ONBOARD_SERVICE_OPERATOR_HANDLES, comma
+	// separated, on top of the built-in service labels and the
+	// onboard-runner keys). A key under one of these is not tied to an
+	// identity.
+	ServiceOperatorHandles []string
 }
 
 func Load() (*Config, error) {
@@ -358,6 +387,16 @@ func Load() (*Config, error) {
 		AuditBackend:       envOr("AUDIT_BACKEND", "stderr"),
 		AuditFilePath:      envOr("AUDIT_FILE_PATH", "/var/lib/goat-id-console/audit.jsonl"),
 		DevBypassAuth:      envBool("DEV_BYPASS_AUTH"),
+		LiveIdentityCheck:  envBoolDefault("ADMIN_LIVE_IDENTITY_CHECK", true),
+		ServiceOperatorHandles: func() []string {
+			var out []string
+			for _, h := range strings.Split(os.Getenv("ONBOARD_SERVICE_OPERATOR_HANDLES"), ",") {
+				if h = strings.TrimSpace(h); h != "" {
+					out = append(out, h)
+				}
+			}
+			return out
+		}(),
 	}
 
 	freshSec, err := strconv.Atoi(envOr("AAL2_FRESH_WINDOW_SEC", "300"))
@@ -495,7 +534,22 @@ func Load() (*Config, error) {
 	c.MTLSOnboardBundleFile = envOr("MTLS_ONBOARD_BUNDLE_FILE", "/svid/spire-bundle.pem")
 	c.MTLSOnboardAllowedClientIDs = parseCommaList(os.Getenv("MTLS_ONBOARD_ALLOWED_CLIENT_IDS"))
 
+	c.TrustedProxyHosts, c.TrustNoProxy = trustedProxyHosts()
 	return c, nil
+}
+
+// trustedProxyHosts reads TRUSTED_PROXY_HOSTS. Unset or empty gives the
+// sidecar's name. Set to something that names no host fails closed: no host
+// is trusted (the second result), and the misconfiguration is logged.
+func trustedProxyHosts() ([]string, bool) {
+	raw := envOr("TRUSTED_PROXY_HOSTS", "oauth2-proxy-id-console")
+	hosts := parseCommaList(raw)
+	if len(hosts) == 0 {
+		slog.Error("TRUSTED_PROXY_HOSTS names no host; identity headers from every caller are ignored",
+			slog.String("value", raw))
+		return nil, true
+	}
+	return hosts, false
 }
 
 func (c *Config) IdP(key string) (IdP, bool) {

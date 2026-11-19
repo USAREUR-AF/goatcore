@@ -1,0 +1,21 @@
+# Rendered by ops/ansible/roles/goat-zenoh/. Do not edit on host.
+#
+# GHSA-rr3p: load the portal's slot fragment into the router. zenohd 1.9 reads
+# access_control only at start (a live admin-space update is refused, SIGHUP is
+# a no-op), so a slot change reaches the wire when the router is recreated.
+# A change that removes a slot CN (revoke, rotate, reassignment) is loaded
+# within {{ zenoh_slot_reload_min_gap_s }} s; additions are batched to at most one
+# recreate per {{ zenoh_slot_reload_interval_s }} s. Triggered by
+# {{ zenoh_stack }}-slot-fragment-reload.path and .timer.
+[Unit]
+Description=Load the slot fragment into the {{ zenoh_stack }} router
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# A wedged docker would otherwise hold this oneshot in "activating" forever,
+# and neither the .path nor the .timer fires again (GHSA-rr3p review r2 F3).
+# On timeout the run fails, the load record is not advanced, the timer retries.
+TimeoutStartSec={{ zenoh_slot_reload_timeout_s }}
+ExecStart=/usr/bin/python3 {{ goat_zenoh_slot_reload_path }} --config {{ goat_zenoh_config_path }} --container {{ zenoh_stack }}-router --interval {{ zenoh_slot_reload_interval_s }} --min-gap {{ zenoh_slot_reload_min_gap_s }} --prompt-burst {{ zenoh_slot_reload_prompt_burst }} --restart "docker compose -f {{ goat_zenoh_compose_path }} up -d --force-recreate"

@@ -57,6 +57,7 @@ name: coupled-fact-guards
 # self-test step runs first, every time.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'ops/ansible/group_vars/**'
@@ -115,7 +116,9 @@ on:
       - 'ops/scripts/ansible-preflight.sh'
       - 'ops/scripts/newsite-secrets.sh'
       - 'ops/scripts/newsite-secret-store.py'
+      - 'ops/scripts/join-site-secrets.py'
       - 'tests/test_newsite_secrets.py'
+      - 'tests/test_join_site_secrets.py'
       - 'tests/test_scaffold_reference_address.py'
       - 'tests/test_traefik_acme_dns_resolvers.py'
       - 'tests/newsite-secrets.bats'
@@ -189,6 +192,7 @@ jobs:
       - name: Verify newsite credential persistence
         run: |
           python3 tests/test_newsite_secrets.py
+          python3 tests/test_join_site_secrets.py
           python3 tests/test_scaffold_reference_address.py
           python3 tests/test_traefik_acme_dns_resolvers.py
       - name: "self-test: every guard proves RED on a broken fixture first (P6)"

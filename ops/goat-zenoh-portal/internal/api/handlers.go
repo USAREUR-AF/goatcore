@@ -55,11 +55,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		// go. A climbing compare count with a 0 awaiting count would mean
 		// something is presenting keys for rows that no longer exist.
 		"api_key_bcrypt_compares": APIKeyBcryptCompares(),
+		// GHSA-fgm6. Legacy-key requests the bcrypt gate answered 503
+		// auth_busy without a compare (queue full). Nonzero means the
+		// fallback is being flooded; affected clients retry, not rotate.
+		"api_key_bcrypt_refused": APIKeyBcryptRefused(),
 		// #1351. Count of operator handles whose directory key is overridden
 		// by an env key. Console revocation of those handles has no effect
 		// until the env pin is removed. A count only: which handles is in the
 		// portal's startup log, not on an unauthenticated endpoint.
 		"operator_keys_shadowed": s.operatorKeysShadowed(),
+		// GHSA-2w7v. Count of env-pinned operator handles whose env key is
+		// refused because a console revocation tombstone names them.
+		"operator_keys_env_revoked": s.operatorKeysEnvRevoked(),
+		// GHSA-2w7v. Revocations the portal still enforces from its ledger
+		// whose tombstone is gone from the key directory (missing, emptied or
+		// rebuilt volume); and 1 while the ledger cannot be written.
+		"operator_keys_revoked_without_tombstone": s.operatorKeysRevokedWithoutTombstone(),
+		"operator_keys_revocation_ledger_failing": s.operatorKeysLedgerFailing(),
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), healthProbeTimeout)
 	defer cancel()
@@ -95,6 +107,28 @@ func (s *Server) operatorKeysShadowed() int {
 		return 0
 	}
 	return len(s.cfg.OperatorKeys.Shadowed())
+}
+
+func (s *Server) operatorKeysRevokedWithoutTombstone() int {
+	if s.cfg.OperatorKeys == nil {
+		return 0
+	}
+	return len(s.cfg.OperatorKeys.RevokedWithoutTombstone())
+}
+
+func (s *Server) operatorKeysLedgerFailing() int {
+	if s.cfg.OperatorKeys == nil || s.cfg.OperatorKeys.RevocationLedgerError() == nil {
+		return 0
+	}
+	return 1
+}
+
+// operatorKeysEnvRevoked is the /api/health gauge behind operator_keys_env_revoked.
+func (s *Server) operatorKeysEnvRevoked() int {
+	if s.cfg.OperatorKeys == nil {
+		return 0
+	}
+	return len(s.cfg.OperatorKeys.EnvRevoked())
 }
 
 // --- Vendors ---------------------------------------------------------
@@ -230,7 +264,7 @@ type createVendorRequest struct {
 type createVendorResponse struct {
 	Prefix      string `json:"prefix"`
 	APIKey      string `json:"api_key"`      // one-time return; bcrypt hash kept in DB
-	BundleURL   string `json:"bundle_url"`   // one-time tarball download URL
+	BundleURL   string `json:"bundle_url"`   // tarball download URL, valid for BundleTTL after mint
 	BundleToken string `json:"bundle_token"` // raw token so the operator can rebuild the URL if needed
 	URISAN      string `json:"uri_san"`      // per-vendor URI-SAN minted into the cert
 	Approved    bool   `json:"approved"`
@@ -248,6 +282,14 @@ type createVendorResponse struct {
 	// live slot and returned that slot instead of allocating one (#1576). The
 	// caller must not roll it back on a later failure: it existed before the call.
 	Reused bool `json:"reused,omitempty"`
+	// LeafCN is the Subject CN of the leaf this response carries, in slot
+	// mode: "<slot_id>.g<generation>" (GHSA-rr3p). The namespace stays
+	// slot_id; only the router's subject match uses the CN.
+	LeafCN string `json:"leaf_cn,omitempty"`
+	// LeafStatus says whether the router admits leaf_cn yet: live, pending
+	// (at its next reload of the slot subjects) or unknown (no reload record
+	// on this host). See note_to_share.
+	LeafStatus string `json:"leaf_status,omitempty"`
 }
 
 // reuseDeferredSlot answers a deferred onboard whose handle already holds a live
@@ -276,7 +318,7 @@ func (s *Server) reuseDeferredSlot(w http.ResponseWriter, r *http.Request, handl
 	if slot.IdentityID != nil {
 		current = *slot.IdentityID
 	}
-	if identityID != "" && current != "" && current != identityID {
+	if identityID != "" && current != "" && !strings.EqualFold(current, identityID) { // ids are case-insensitive (GHSA-rr3p r7 F3, r8 Info)
 		writeError(w, http.StatusConflict, "identity_mismatch",
 			fmt.Sprintf("alias %q holds slot %s linked to identity %s, not %s; refusing to hand one person's slot to another", handle, anchor, current, identityID))
 		return
@@ -432,7 +474,7 @@ func (s *Server) createVendor(w http.ResponseWriter, r *http.Request) {
 		BundleToken: res.BundleToken,
 		URISAN:      res.URISAN,
 		Approved:    approved,
-		NoteToShare: "Distribute the cert tarball to the vendor OOB. Share the api_key separately; the inspector portal authenticates with it as a Bearer token. The tarball URL is one-time — fetch within 24 h.",
+		NoteToShare: "Distribute the cert tarball to the vendor OOB. Share the api_key separately; the inspector portal authenticates with it as a Bearer token. The tarball URL works for 24 h after it is minted (PORTAL_BUNDLE_TTL), then answers 410; a rotate re-issues it.",
 	})
 }
 
@@ -457,7 +499,7 @@ func (s *Server) onboardSlotSystem(w http.ResponseWriter, r *http.Request, req c
 	}
 	// Validate the person linkage BEFORE claiming a slot, so a malformed UUID
 	// costs nothing rather than burning a slot on a request that must be re-sent.
-	identityID := strings.TrimSpace(req.IdentityID)
+	identityID := registry.NormalizeIdentityID(req.IdentityID)
 	if identityID != "" {
 		if err := registry.ValidIdentityID(identityID); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_identity_id", err.Error())
@@ -493,7 +535,7 @@ func (s *Server) onboardSlotSystem(w http.ResponseWriter, r *http.Request, req c
 					req.PartnerLanes, access.DeclaredLaneSets(blocks)))
 			return
 		}
-		slot, err = s.reg.AllocateSlotIn(r.Context(), handle, blk.From, blk.To)
+		slot, err = s.reg.AllocateSlotInAs(r.Context(), handle, identityID, blk.From, blk.To)
 		if errors.Is(err, registry.ErrPartnerBlockExhausted) {
 			writeError(w, http.StatusServiceUnavailable, "partner_block_exhausted",
 				fmt.Sprintf("every slot in the partner block [%s] (%d-%d) is taken. Widen the block in zenoh_partner_slot_blocks and take one planned router restart; do NOT issue an ordinary slot to a partner.",
@@ -501,7 +543,7 @@ func (s *Server) onboardSlotSystem(w http.ResponseWriter, r *http.Request, req c
 			return
 		}
 	} else {
-		slot, err = s.reg.AllocateSlot(r.Context(), handle)
+		slot, err = s.reg.AllocateSlotAs(r.Context(), handle, identityID)
 	}
 	if errors.Is(err, registry.ErrAliasTaken) {
 		// A partner slot is only reusable if it sits in the block for the lane-set
@@ -524,6 +566,10 @@ func (s *Server) onboardSlotSystem(w http.ResponseWriter, r *http.Request, req c
 		return
 	}
 	anchor := slot.SlotID
+	// The assignment moved the slot's generation; whatever happens below
+	// (success, or a rollback that frees it again), re-render the router's
+	// slot subjects from the registry once this request is done.
+	defer s.syncSlotFragment(r.Context())
 
 	// Record the person→slot linkage while we still hold it. Fatal on failure:
 	// the slot allocation was a write to this same registry, so a failure here is
@@ -647,10 +693,11 @@ func (s *Server) onboardSlotSystem(w http.ResponseWriter, r *http.Request, req c
 		return
 	}
 
-	// Mint the cert tarball with CN = the slot anchor so the leaf matches the
-	// router's pre-baked cert_common_names subject. prefix=anchor also makes the
-	// publisher namespace + tarball examples write under <anchor>/**.
-	res, err := s.minter.Mint(r.Context(), anchor, apiKey, certmint.MintOptions{CommonName: anchor})
+	// Mint the cert tarball with CN = the slot's leaf CN at the generation the
+	// assignment gave it (GHSA-rr3p), which is the one CN the slot fragment
+	// renders for this slot. prefix=anchor keeps the publisher namespace and
+	// the tarball examples under <anchor>/**.
+	res, err := s.mintSlotLeaf(r.Context(), anchor, apiKey, slot.Generation, false, identityID)
 	if err != nil {
 		_ = s.reg.DeleteVendor(r.Context(), anchor)
 		_ = s.reg.RevokeSlot(r.Context(), anchor)
@@ -661,8 +708,8 @@ func (s *Server) onboardSlotSystem(w http.ResponseWriter, r *http.Request, req c
 		writeError(w, http.StatusInternalServerError, "mark_bundle", err.Error())
 		return
 	}
-	if err := s.reg.StampSlotCert(r.Context(), anchor, res.BundleToken, res.TarballPath); err != nil {
-		writeError(w, http.StatusInternalServerError, "stamp_slot", err.Error())
+	if err := s.reg.StampSlotCertAt(r.Context(), anchor, res.BundleToken, res.TarballPath, slot.Generation, identityID); err != nil {
+		writeError(w, http.StatusConflict, "slot_changed_hands", err.Error())
 		return
 	}
 
@@ -702,8 +749,11 @@ func (s *Server) onboardSlotSystem(w http.ResponseWriter, r *http.Request, req c
 		SlotID:       anchor,
 		SystemHandle: handle,
 		IdentityID:   identityID,
-		NoteToShare: "Per-uuid slot onboarded. The system's write namespace, cert CN, and portal prefix are all the slot anchor (slot_id). " +
-			"Distribute the cert tarball OOB; share the api_key separately as the inspector Bearer token. No router restart was needed — the slot rule was pre-baked.",
+		LeafCN:       registry.LeafCN(anchor, slot.Generation),
+		LeafStatus:   s.leafStatus(anchor, slot.Generation),
+		NoteToShare: "Per-uuid slot onboarded. The system's write namespace and portal prefix are the slot anchor (slot_id); the cert CN is leaf_cn. " +
+			"Distribute the cert tarball OOB; share the api_key separately as the inspector Bearer token. " +
+			leafStatusNote(s.leafStatus(anchor, slot.Generation)),
 	})
 }
 
@@ -755,21 +805,41 @@ func (s *Server) rotateAnchor(w http.ResponseWriter, r *http.Request, prefix str
 		writeError(w, http.StatusInternalServerError, "hash", err.Error())
 		return
 	}
+	// Slot mode: a rotation advances the slot's generation before anything is
+	// re-issued (GHSA-rr3p), so the fresh leaf carries a CN the previous one
+	// does not, and the fragment rendered after it names only the fresh one.
+	// The previous leaf stops matching when the router loads that fragment.
+	slotMode := s.cfg.IdentityModel == config.IdentityModelPerUUID
+	var gen int64
+	rotIdentity := ""
+	if slotMode {
+		if sl, err := s.reg.SlotByID(r.Context(), prefix); err == nil && sl.IdentityID != nil {
+			rotIdentity = *sl.IdentityID
+		}
+		gen, err = s.reg.BumpSlotGeneration(r.Context(), prefix)
+		if errors.Is(err, registry.ErrNotFound) {
+			writeError(w, http.StatusConflict, "slot_not_assigned",
+				"this anchor has no assigned slot; a free slot has no holder to re-issue a leaf to")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "bump_generation", err.Error())
+			return
+		}
+		defer s.syncSlotFragment(r.Context())
+	}
+
 	if err := s.reg.UpdateVendorAPIKey(r.Context(), prefix, hash, digest); err != nil {
 		writeError(w, http.StatusInternalServerError, "update_key", err.Error())
 		return
 	}
 
 	// Mint a fresh leaf for the SAME anchor. In per-uuid-slot-pool mode the CN
-	// must be the bare anchor (matches the router's pre-baked cert_common_names);
+	// is the slot's leaf CN at the generation bumped above (mintSlotLeaf);
 	// per-vendor mode keeps the default "<prefix>-trial-peer" CN. Either way the
 	// URI-SAN is re-derived from the CURRENT minter config — that's what carries
 	// the new scheme onto the cert.
 	var mintOpts certmint.MintOptions
-	slotMode := s.cfg.IdentityModel == config.IdentityModelPerUUID
-	if slotMode {
-		mintOpts.CommonName = prefix
-	}
 	// A machine's leaf carries serverAuth (see machine enroll: it doubles as
 	// the pod router's listen cert). Rotation re-issues in place and must not
 	// narrow the EKU set, or the rotated pod stops handshaking.
@@ -779,7 +849,12 @@ func (s *Server) rotateAnchor(w http.ResponseWriter, r *http.Request, prefix str
 		writeError(w, http.StatusInternalServerError, "db", mErr.Error())
 		return
 	}
-	res, err := s.minter.Mint(r.Context(), prefix, apiKey, mintOpts)
+	var res *certmint.Result
+	if slotMode {
+		res, err = s.mintSlotLeaf(r.Context(), prefix, apiKey, gen, mintOpts.ServerAuth, rotIdentity)
+	} else {
+		res, err = s.minter.Mint(r.Context(), prefix, apiKey, mintOpts)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "mint", err.Error())
 		return
@@ -792,16 +867,17 @@ func (s *Server) rotateAnchor(w http.ResponseWriter, r *http.Request, prefix str
 	// StampSlotCert is re-mint-aware: it overwrites the bundle pointer +
 	// minted timestamps and leaves the assignment intact.
 	if slotMode {
-		if err := s.reg.StampSlotCert(r.Context(), prefix, res.BundleToken, res.TarballPath); err != nil {
-			writeError(w, http.StatusInternalServerError, "stamp_slot", err.Error())
+		if err := s.reg.StampSlotCertAt(r.Context(), prefix, res.BundleToken, res.TarballPath, gen, rotIdentity); err != nil {
+			writeError(w, http.StatusConflict, "slot_changed_hands", err.Error()+"; the rotated bundle is not handed out")
 			return
 		}
 	}
 
-	// No ACL render and no router restart: the anchor/CN the ACL keys on is
-	// unchanged, so the existing rule already admits the fresh leaf.
+	// Per-vendor mode: no ACL render and no router restart, since the CN the
+	// ACL keys on is unchanged. Slot mode: the deferred fragment sync above
+	// swaps the old CN for the new one in the same render.
 	_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "vendor-rotate", prefix,
-		fmt.Sprintf(`{"uri_san":%q,"slot_mode":%t}`, res.URISAN, slotMode))
+		fmt.Sprintf(`{"uri_san":%q,"slot_mode":%t,"generation":%d,"serial":%q}`, res.URISAN, slotMode, gen, res.Serial))
 	resp := &createVendorResponse{
 		Prefix:      prefix,
 		APIKey:      apiKey,
@@ -810,11 +886,16 @@ func (s *Server) rotateAnchor(w http.ResponseWriter, r *http.Request, prefix str
 		URISAN:      res.URISAN,
 		Approved:    v.ApprovedAt != nil,
 		NoteToShare: "Cert re-issued in place — same anchor, alias, write namespace, and ACL; only the leaf cert + portal api_key are new. " +
-			"Swap the tarball's cert+key on the peer and restart it. The tarball URL is one-time — fetch within 24 h.",
+			"Swap the tarball's cert+key on the peer and restart it. The tarball URL works for 24 h after it is minted (PORTAL_BUNDLE_TTL), then answers 410.",
 	}
 	if slotMode {
 		resp.SlotID = prefix
 		resp.SystemHandle = v.DisplayName
+		resp.LeafCN = registry.LeafCN(prefix, gen)
+		resp.LeafStatus = s.leafStatus(prefix, gen)
+		resp.NoteToShare = "Cert re-issued in place — same anchor, alias and write namespace; the leaf CN is now leaf_cn and the portal api_key is new. " +
+			"The router stops admitting the previous leaf at its next reload of the slot subjects, which a removal triggers promptly where the reload watcher runs. " +
+			leafStatusNote(resp.LeafStatus) + " Swap the tarball's cert+key on the peer and restart it."
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1249,17 +1330,46 @@ func (s *Server) deleteVendor(w http.ResponseWriter, r *http.Request) {
 	// slot still assigned) — so a DELETE on an absent vendor still 204s when it
 	// frees a slot, and 404s only when there was nothing to delete or free.
 	if s.cfg.IdentityModel == config.IdentityModelPerUUID {
-		slotFreed, slotErr := s.reg.RevokeAssignedSlot(r.Context(), prefix)
+		// The free advances the slot's generation; re-render the router's slot
+		// subjects so the freed slot names no CN (GHSA-rr3p), and report
+		// whether the router has stopped admitting the holder's leaf: freeing
+		// the slot in the registry is not, on its own, a revocation on the wire
+		// (a partial revocation must not read as complete).
+		revokedCN := ""
+		if sl, err := s.reg.SlotByID(r.Context(), prefix); err == nil && sl.AssignedTo != nil && sl.RevokedAt == nil {
+			revokedCN = registry.LeafCN(prefix, sl.Generation)
+		}
+		// Machines this anchor enrolled lose their custodian with the revoke but
+		// keep their own leaves: the revoke lists them (inside its transaction),
+		// so the offboard does not read as ending that access too.
+		slotFreed, machines, slotErr := s.reg.RevokeAssignedSlotListing(r.Context(), prefix)
 		if slotErr != nil {
 			slog.Error("slot revoke failed on vendor delete", "vendor", prefix, "err", slotErr)
 		}
 		if delErr == registry.ErrNotFound && !slotFreed {
+			s.syncSlotFragment(r.Context())
 			writeError(w, http.StatusNotFound, "notfound", "vendor not found")
 			return
 		}
+		s.syncSlotFragment(r.Context())
+		if !slotFreed {
+			revokedCN = ""
+		}
+		status, note := s.revocationStatus(revokedCN)
 		_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "vendor-delete", prefix,
-			fmt.Sprintf(`{"slot_freed":%t}`, slotFreed))
-		w.WriteHeader(http.StatusNoContent)
+			fmt.Sprintf(`{"slot_freed":%t,"revoked_cn":%q,"fabric_revocation":%q}`, slotFreed, revokedCN, status))
+		if len(machines) > 0 {
+			note += " Not ended: the fabric leaves of the machines this anchor enrolled (machines_still_live). They are device " +
+				"identities and stay valid, so whoever keeps such a device keeps its fabric access until an operator revokes the " +
+				"machine with DELETE /api/machines/{anchor}."
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"slot_freed":          slotFreed,
+			"revoked_cn":          revokedCN,
+			"fabric_revocation":   status,
+			"machines_still_live": machines,
+			"note":                note,
+		})
 		return
 	}
 
@@ -1418,9 +1528,17 @@ func (s *Server) handleVendorBundle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "decode", "missing vendor or token")
 		return
 	}
-	path, err := s.reg.ConsumeBundleToken(r.Context(), vendor, token)
+	path, mintedAt, err := s.reg.LookupBundle(r.Context(), vendor, token)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "notfound", "bundle token not found or already consumed")
+		writeError(w, http.StatusNotFound, "notfound", "bundle token not found or no longer valid")
+		return
+	}
+	// The tarball holds the org's private key and the link is its only
+	// credential, so the link works for BundleTTL after it is minted and not
+	// after. A link with no recorded mint time is treated as expired.
+	if bundleLinkExpired(mintedAt, s.cfg.BundleTTL, time.Now()) {
+		writeError(w, http.StatusGone, "bundle_expired",
+			"this bundle link has expired; ask an operator to re-issue the bundle (rotate)")
 		return
 	}
 	w.Header().Set("Content-Type", "application/gzip")
@@ -1441,6 +1559,19 @@ func (s *Server) handleVendorBundle(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf(`{"bundle":%q}`, filepath.Base(path))); err != nil {
 		slog.Warn("audit bundle download failed", "vendor", vendor, "err", err)
 	}
+}
+
+// bundleLinkExpired reports whether a bundle minted at mintedAt (Unix
+// seconds) is past ttl at now. A missing mint time counts as expired; an unset
+// ttl means config.DefaultBundleTTL.
+func bundleLinkExpired(mintedAt int64, ttl time.Duration, now time.Time) bool {
+	if mintedAt <= 0 {
+		return true
+	}
+	if ttl <= 0 {
+		ttl = config.DefaultBundleTTL
+	}
+	return now.Sub(time.Unix(mintedAt, 0)) > ttl
 }
 
 // --- helpers ----------------------------------------------------------

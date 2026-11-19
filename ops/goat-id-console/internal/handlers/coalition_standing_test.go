@@ -32,12 +32,11 @@ func identityWithAff(id, kind, nation string) kratos.Identity {
 	if nation != "" {
 		aff["nation"] = nation
 	}
+	// aff is admin-managed metadata_public (GHSA-9v3v: traits are never read).
 	return kratos.Identity{
-		ID: "identity-1",
-		Traits: map[string]interface{}{
-			"email": "someone@example.test",
-			"aff":   aff,
-		},
+		ID:             "identity-1",
+		Traits:         map[string]interface{}{"email": "someone@example.test"},
+		MetadataPublic: map[string]interface{}{"groups": []interface{}{}, "aff": aff},
 	}
 }
 
@@ -93,10 +92,11 @@ func TestResolveAffiliation_missingNationIsNamedNotGuessed(t *testing.T) {
 	s := &Server{Cfg: &config.Config{}, Coalition: testCoalitionRegistry(t)}
 
 	id := kratos.Identity{
-		ID: "identity-2",
-		Traits: map[string]interface{}{
-			"email": "someone@example.test",
-			"org":   map[string]interface{}{"short_tag": "acme", "display_name": "Acme"},
+		ID:     "identity-2",
+		Traits: map[string]interface{}{"email": "someone@example.test"},
+		MetadataPublic: map[string]interface{}{
+			"groups": []interface{}{},
+			"org":    map[string]interface{}{"short_tag": "acme", "display_name": "Acme"},
 		},
 	}
 	av := s.resolveAffiliation(id)

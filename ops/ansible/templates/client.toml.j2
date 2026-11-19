@@ -1,12 +1,11 @@
 # Rathole client — {{ relay_name }} relay
 # Managed by Ansible.
 #
-# `rathole_client_netbird_mgmt_local_addr` defaults to 127.0.0.1:443 in
-# ops/ansible/group_vars/all.yml. A site with a dedicated `enrollment` Traefik
-# entrypoint overrides it to 127.0.0.1:8443 in its group_vars, which closes the
-# mesh-only allowlist bypass that rathole's docker SNAT otherwise opens. Sites
-# whose Traefik doesn't define the enrollment entrypoint keep the default :443
-# forward; there is no allowlist bypass to close.
+# `rathole_client_netbird_mgmt_local_addr` defaults to 127.0.0.1:8443 below;
+# group_vars/all.yml does not set it, so every caller gets this default.
+# The management stack publishes its enrollment-only entrypoint there. Never
+# infer that :443 is safe: websecure also carries mesh-only routers. A custom
+# stack must explicitly configure its target and enforce equivalent isolation.
 
 [client]
 remote_addr = "{{ relay_ip }}:2333"
@@ -38,4 +37,4 @@ remote_public_key = "{{ relay_pubkey }}"
    — see docs/design/relay-ingress-dispatch.md. #}
 [client.services.{{ rathole_client_service_name | default('netbird-mgmt') }}]
 type = "tcp"
-local_addr = "{{ rathole_client_netbird_mgmt_local_addr | default('127.0.0.1:443') }}"
+local_addr = "{{ rathole_client_netbird_mgmt_local_addr | default('127.0.0.1:8443') }}"

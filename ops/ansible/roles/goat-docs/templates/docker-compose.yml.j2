@@ -6,6 +6,10 @@
 services:
   {{ goat_docs_container_name }}:
     image: "{{ goat_docs_image }}"
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: "{{ goat_docs_container_name }}"
     restart: unless-stopped
     networks:

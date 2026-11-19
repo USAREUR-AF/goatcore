@@ -381,6 +381,11 @@ mitigations) and the existing coordinated-upgrade playbook.
 
 ### 7.1 Single-node restore from pgBackRest
 
+Status: measured on one local amd64 build, not on a host. A full backup, a row
+written after it, the data volume removed, steps 4 and 5: both rows are back (the
+WAL was replayed) and every restored file belongs to the postgres user. The
+point-in-time variant is not measured.
+
 Use when: one host's Postgres data is corrupt, the NVMe failed, the
 host was reimaged, or logical corruption replicated via Spock and we
 need PITR to before the event.
@@ -389,7 +394,9 @@ need PITR to before the event.
 # On the affected host (Router-A shown; Router-B procedure is
 # symmetric — substitute postgres-b and <site>-b-netbird).
 
-# 1. Stop the management + PG containers on this host.
+# 1. Note the postgres-spock image this host runs (its pgBackRest wrote
+#    the repository), then stop the management + PG containers.
+IMG=$(docker inspect --format '{{.Config.Image}}' postgres-a)
 docker compose -f /opt/mgmt-host/docker-compose.yml stop management-a postgres-a
 
 # 2. Clear the corrupt data directory.
@@ -405,13 +412,18 @@ ssh router-b "docker exec postgres-b pgbackrest --stanza=<site>-b-netbird info"
 # Pick whichever has the most recent backup covering the target timestamp.
 
 # 4. Restore. Default = latest. Point-in-time = --type=time --target='...'.
+#    Run pgBackRest from that same image, as its postgres user, so the
+#    restored files belong to the database. The new data volume takes the
+#    image's ownership of the data directory when it is first mounted.
 #    If restoring from the local (Router-A) stanza:
-docker run --rm \
-  -v /opt/docker-data/pgbackrest:/var/lib/pgbackrest:ro \
+docker run --rm --user postgres --entrypoint pgbackrest \
+  -v /etc/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro \
+  -v /opt/docker-data/pgbackrest:/var/lib/pgbackrest \
+  -v /var/log/pgbackrest:/var/log/pgbackrest \
+  -v /var/spool/pgbackrest:/var/spool/pgbackrest \
   -v mgmt-host_pgdata-a:/var/lib/pgsql/16/data \
-  pgbackrest/pgbackrest:latest \
+  "$IMG" \
     --stanza=<site>-a-netbird \
-    --pg1-path=/var/lib/pgsql/16/data \
     restore
 
 #    If the local stanza is unavailable (NVMe died), scp the relevant
