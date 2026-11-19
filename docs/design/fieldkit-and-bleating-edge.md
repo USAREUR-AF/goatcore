@@ -79,9 +79,9 @@ What is built, and where:
 | Piece | Where | Status |
 |---|---|---|
 | Bleating Edge | `ops/fieldkit/bleating-edge/` (`bleating-edge.css`, `bleating-edge.js`, `starter.html`); `ops/fieldkit/inline.py` copies it into each tool | built |
-| Fieldkit Gatepost | `ops/fieldkit/gatepost/gatepost.html`; local mock `mock_pod_api.py`; browser checks `ops/fieldkit/e2e/` | built against the mock; served by the pod API (`ops/goat-pod-api`) |
+| Fieldkit Gatepost | `ops/fieldkit/gatepost/gatepost.html`; local mock `mock_pod_api.py`; browser checks `ops/goat-zenoh-portal/web/e2e/fieldkit/` (config `playwright.fieldkit.config.ts`, the portal's Playwright install) | built against the mock; served by the pod API (`ops/goat-pod-api`) |
 | Scope guard | `ops/ci/check-fieldkit-scope.py` with the allow list `ops/ci/fieldkit-cli-allowlist.txt`; runs in `docs-guards.yml` and `fieldkit.yml` | built |
-| Ratification queue | Portal page `ops/goat-zenoh-portal/web/static/carriage-pending.html` ("Pod rules waiting", linked from Data Access) | built |
+| Ratification queue | Portal page `ops/goat-zenoh-portal/web/static/carriage-pending.html` ("Pod rules waiting", linked from Data Access); each decision states its result and its `goat carriage` command in an in-page confirm sheet | built |
 | Field usability test with operators | — | unmeasured |
 
 The ratification queue is in the portal web UI, not the identity console, because org leads already decide their org's

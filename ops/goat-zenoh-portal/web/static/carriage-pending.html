@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>__LEX_PRODUCT_NAME__ — Pod Rules Waiting</title>
   <link rel="stylesheet" href="/styles.css">
+  <style>
+    .decide-sheet { max-width: min(560px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg-elev); color: var(--fg); padding: 16px 20px; }
+    .decide-sheet::backdrop { background: rgba(0, 0, 0, 0.5); }
+    .decide-buttons { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
+    .decide-buttons button { min-height: 44px; }
+    .decide-buttons button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+  </style>
   <script>
     (function () {
       try {
@@ -106,6 +114,18 @@
       <div id="pending"></div>
     </section>
   </main>
+
+  <!-- Confirm sheet: the result and the command it equals, said before anything runs
+       (the Bleating Edge confirm sheet's shape, in the portal's styles). -->
+  <dialog id="decide-sheet" class="decide-sheet" aria-labelledby="decide-title">
+    <h2 id="decide-title"></h2>
+    <p id="decide-result"></p>
+    <p class="hint">Same as <code id="decide-cli"></code></p>
+    <div class="decide-buttons">
+      <button type="button" id="decide-no">No, go back</button>
+      <button type="button" id="decide-yes" class="primary"></button>
+    </div>
+  </dialog>
 
   <script type="module" src="/carriage-pending.js"></script>
   <script src="/nav.js" defer></script>

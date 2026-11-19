@@ -100,17 +100,39 @@ async function load() {
     b.addEventListener("click", () => decide(rows.find((r) => r.id === b.getAttribute("data-lapse")), "lapse")));
 }
 
-// The result is said before it runs, with the command it equals.
-function preview(r, verb) {
+// The result is said before it runs, with the command it equals, in an in-page
+// sheet. Resolves true only when the person presses the yes button.
+function confirmSheet(r, verb) {
   const change = ACTION_WORDS[r.action] || r.action;
-  const result = verb === "ratify"
-    ? `Keep "${change}" for source ${r.source_slot} on pod ${r.pod_slot} as a goat rule, until ${when(r.until)}.`
-    : `End "${change}" for source ${r.source_slot} on pod ${r.pod_slot}. The pod drops it at its next rule update.`;
-  return `${result}\n\nSame as: goat carriage ${verb} ${r.id}`;
+  const ratify = verb === "ratify";
+  $("decide-title").textContent = ratify ? `Ratify ${r.id}?` : `Let ${r.id} lapse?`;
+  $("decide-result").textContent = ratify
+    ? `Result: "${change}" for source ${r.source_slot} on pod ${r.pod_slot} is kept as a goat rule, until ${when(r.until)}.`
+    : `Result: "${change}" for source ${r.source_slot} on pod ${r.pod_slot} ends. The pod drops it at its next rule update.`;
+  $("decide-cli").textContent = `goat carriage ${verb} ${r.id}`;
+  $("decide-yes").textContent = ratify ? "Yes, ratify" : "Yes, let lapse";
+  const sheet = $("decide-sheet");
+  return new Promise((resolve) => {
+    const finish = (v) => {
+      $("decide-yes").removeEventListener("click", yes);
+      $("decide-no").removeEventListener("click", no);
+      sheet.removeEventListener("cancel", cancel);
+      if (sheet.open) sheet.close();
+      resolve(v);
+    };
+    const yes = () => finish(true);
+    const no = () => finish(false);
+    const cancel = (ev) => { ev.preventDefault(); finish(false); };
+    $("decide-yes").addEventListener("click", yes);
+    $("decide-no").addEventListener("click", no);
+    sheet.addEventListener("cancel", cancel);
+    sheet.showModal();
+    $("decide-no").focus();
+  });
 }
 
 async function decide(r, verb) {
-  if (!r || !window.confirm(preview(r, verb))) return;
+  if (!r || !(await confirmSheet(r, verb))) return;
   const status = $("pending-status");
   try {
     await post(`/api/carriage/local-rules/${encodeURIComponent(r.id)}/${verb}`);

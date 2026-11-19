@@ -8,7 +8,7 @@ import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const starter = readFileSync(fileURLToPath(new URL("../../bleating-edge/starter.html", import.meta.url)), "utf8");
+const starter = readFileSync(fileURLToPath(new URL("../../../../fieldkit/bleating-edge/starter.html", import.meta.url)), "utf8");
 
 test("starter template renders against a pod status", async ({ page }) => {
   await page.route("**/starter.html", (route) => route.fulfill({ status: 200, contentType: "text/html", body: starter }));

@@ -3,8 +3,8 @@
 // Pod Rules Waiting (carriage-pending.html): the org lead's queue for local
 // rules a cut-off pod reported (ADR 1251, pod-carriage-and-provenance.md §7.5).
 // Pins: the list comes from GET /api/carriage/local-rules?state=pending; each
-// decision states its result and the `goat carriage` command first, does
-// nothing on cancel, and calls /ratify or /lapse on yes; a refusal is shown.
+// decision states its result and the `goat carriage` command first in an
+// in-page sheet, does nothing on No or Escape, and calls /ratify or /lapse on yes; a refusal is shown.
 // Backend mocked via page.route.
 
 import { test, expect, type Page, type Route } from "@playwright/test";
@@ -62,26 +62,31 @@ test("lists waiting local rules in plain words", async ({ page }) => {
   await expect(page.locator('header nav a[href="/carriage-pending.html"]')).toHaveCount(1);
 });
 
-test("ratify and let lapse say the result and command first; cancel does nothing", async ({ page }) => {
+test("ratify and let lapse say the result and command first; No does nothing", async ({ page }) => {
   const decided = await mock(page);
   await page.goto("/carriage-pending.html");
-  const messages: string[] = [];
-  page.once("dialog", (d) => { messages.push(d.message()); d.dismiss(); });
+  const sheet = page.locator("#decide-sheet");
   await page.locator('[data-ratify="lr-1"]').click();
-  await expect.poll(() => messages.length).toBe(1);
-  expect(messages[0]).toContain("as a goat rule");
-  expect(messages[0]).toContain("Same as: goat carriage ratify lr-1");
+  await expect(sheet).toBeVisible();
+  await expect(sheet).toContainText("is kept as a goat rule");
+  await expect(page.locator("#decide-cli")).toHaveText("goat carriage ratify lr-1");
+  await sheet.getByRole("button", { name: "No, go back" }).click();
+  await expect(sheet).toBeHidden();
   expect(decided).toEqual([]);
 
-  page.once("dialog", (d) => { messages.push(d.message()); d.accept(); });
   await page.locator('[data-ratify="lr-1"]').click();
+  await sheet.getByRole("button", { name: "Yes, ratify" }).click();
   await expect(page.locator('tr[data-id="lr-1"]')).toHaveCount(0);
   await expect(page.locator("#pending-status")).toContainText("Ratified: lr-1.");
 
-  page.once("dialog", (d) => { messages.push(d.message()); d.accept(); });
   await page.locator('[data-lapse="lr-2"]').click();
+  await expect(page.locator("#decide-cli")).toHaveText("goat carriage lapse lr-2");
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+  expect(decided).toEqual(["ratify lr-1"]);
+  await page.locator('[data-lapse="lr-2"]').click();
+  await sheet.getByRole("button", { name: "Yes, let lapse" }).click();
   await expect(page.locator("#pending-status")).toContainText("Nothing is waiting.");
-  expect(messages[2]).toContain("Same as: goat carriage lapse lr-2");
   expect(decided).toEqual(["ratify lr-1", "lapse lr-2"]);
 });
 
@@ -92,8 +97,8 @@ for (const [kind, words] of [
   test(`a ${kind} refusal is shown in plain words, and the row stays`, async ({ page }) => {
     await mock(page, kind);
     await page.goto("/carriage-pending.html");
-    page.once("dialog", (d) => d.accept());
     await page.locator('[data-ratify="lr-2"]').click();
+    await page.locator("#decide-sheet").getByRole("button", { name: "Yes, ratify" }).click();
     await expect(page.locator("#pending-status")).toContainText(words);
     await expect(page.locator('tr[data-id="lr-2"]')).toHaveCount(1);
   });

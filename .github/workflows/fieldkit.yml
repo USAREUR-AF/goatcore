@@ -4,6 +4,9 @@ name: fieldkit
 # docs/design/fieldkit-and-bleating-edge.md). One job: the scope guard, the
 # inlined design-system copy, the Gatepost mock's own tests, and a headless
 # browser run of every tool against its local mock. No pod or goatnet is needed.
+# The browser run uses the portal's Playwright install
+# (ops/goat-zenoh-portal/web/e2e, config playwright.fieldkit.config.ts), so
+# Fieldkit carries no package manifest of its own.
 # docs-guards.yml also runs the scope guard on docs and CI changes.
 
 on:
@@ -13,6 +16,9 @@ on:
       - 'ops/fieldkit/**'
       - 'ops/ci/check-fieldkit-scope.py'
       - 'ops/ci/fieldkit-cli-allowlist.txt'
+      - 'ops/goat-zenoh-portal/web/e2e/fieldkit/**'
+      - 'ops/goat-zenoh-portal/web/e2e/playwright.fieldkit.config.ts'
+      - 'ops/goat-zenoh-portal/web/e2e/package-lock.json'
       - '.github/workflows/fieldkit.yml'
 
 concurrency:
@@ -46,20 +52,20 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: ops/fieldkit/e2e/package-lock.json
+          cache-dependency-path: ops/goat-zenoh-portal/web/e2e/package-lock.json
       - name: Install dependencies
-        working-directory: ops/fieldkit/e2e
+        working-directory: ops/goat-zenoh-portal/web/e2e
         run: npm ci
       - name: Install Playwright browsers
-        working-directory: ops/fieldkit/e2e
+        working-directory: ops/goat-zenoh-portal/web/e2e
         run: npx playwright install --with-deps chromium
       - name: Tools in a browser against their mocks
-        working-directory: ops/fieldkit/e2e
-        run: npm test
+        working-directory: ops/goat-zenoh-portal/web/e2e
+        run: npx playwright test -c playwright.fieldkit.config.ts --reporter=list
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fieldkit-playwright-report
-          path: ops/fieldkit/e2e/test-results/
+          path: ops/goat-zenoh-portal/web/e2e/test-results/fieldkit/
           retention-days: 7
