@@ -69,6 +69,13 @@ FROM ${UPSTREAM_IMAGE}
 
 USER root
 
+# Same Alpine release and application; update only affected runtime libraries.
+RUN apk add --no-cache --upgrade \
+      libcrypto3=3.0.19-r0 \
+      libssl3=3.0.19-r0 \
+      musl=1.2.3-r6 \
+      musl-utils=1.2.3-r6
+
 COPY apply-patch.sh /usr/local/bin/apply-patch.sh
 COPY apply-view-patch.sh /usr/local/bin/apply-view-patch.sh
 RUN chmod +x /usr/local/bin/apply-patch.sh /usr/local/bin/apply-view-patch.sh \

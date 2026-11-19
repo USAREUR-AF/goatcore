@@ -272,6 +272,20 @@ entries:
     read: docs/design/platform-admin-lifecycle.md
     exit: 4
 
+  - code: E_SLOT_SCOPE
+    tool: goat
+    title: the request names a slot this profile does not own
+    what: "the portal refused a write under a slot (HTTP 403 scope mismatch): the topic key's first segment is not this profile's slot, and this profile is not that machine's recorded custodian. Nothing changed."
+    causes:
+      - the topic key starts with a machine's slot and the command ran in the person's or org's own context
+      - the slot belongs to someone else
+    fixes:
+      - "goat profile show   (the publish anchor is this profile's slot)"
+      - "goat profile init <machine .cbor> --context <machine>, then goat --context <machine> topic create …"
+      - "ask the slot's owner or custodian; an operator key is not the fix"
+    read: docs/adr/1096-delegated-machine-enrollment.md
+    exit: 4
+
   - code: E_TOPIC_CONFLICT
     tool: goat
     title: the topic already exists
@@ -3653,18 +3667,18 @@ entries:
   - code: GB-320
     tool: goatbuilder
     title: a program the run starts could not be started
-    what: "A goatbuilder verb runs its phases and helpers as programs: bash for a phase's command, python3 for a step written in Python (the preflight, the slot recheck), and the helpers a step names (the core's candidate planner). The operating system refused to start one: it is not installed, not on PATH, or not executable. Nothing of that step ran."
+    what: "A goatbuilder verb runs its phases and helpers as programs: bash for a phase's command, python3 for a step written in Python (the preflight, the slot recheck), the tools a verb drives (ansible, ssh, git, go) and the helpers a step names (the core's candidate planner, a script of the checkout such as ops/scripts/fresh-source.sh or an overlay's assemble.sh). The operating system refused to start one: it is not installed, not on PATH, or not executable. Nothing of that step ran."
     causes:
-      - "bash or python3 is not installed on the machine goatbuilder runs on, or not on PATH"
+      - "bash, python3, ansible, ssh, git or go is not installed on the machine goatbuilder runs on, or not on PATH"
       - "a helper the step names is missing from the checkout, or has lost its executable bit"
     fixes:
-      - "command -v bash python3   (install what is missing, then run the same command again)"
+      - "command -v bash python3 ansible ssh git go   (install what the message names, then run the same command again)"
       - "git -C <checkout> status   (restore a helper the checkout is missing)"
     read: docs/design/goatbuilder.md
     exit: 1
     matches:
       - "^GB-320: "
-      - "could not start (bash|python3)"
+      - "could not start (bash|python3|ansible|ssh|go run)"
 
   - code: GB-321
     tool: goatbuilder
@@ -3765,6 +3779,20 @@ entries:
     exit: 1
     matches:
       - "^GB-316: "
+  - code: GB-326
+    tool: goatbuilder
+    title: a file of the checkout goatbuilder reads is not the YAML it should be
+    what: "goatbuilder read a file of the checkout (fleet-pins.yaml, the inventory's doors.yaml, a role's deploy-history.yml, ops/goatbuilder/teardown.yaml) and it does not parse as YAML, or not in the shape that file has. The message names the file and the parser's line and column. Nothing that reads it ran."
+    causes:
+      - "a bracket, quote or indentation error near the line named"
+      - "the file was edited by hand into another shape"
+    fixes:
+      - "fix the line the message names, then run the same command again"
+      - "git -C <checkout> diff <the file>   (what changed since the last commit)"
+    read: docs/design/goatbuilder.md
+    exit: 2
+    matches:
+      - "^GB-326: "
 
   - code: GB-278
     tool: goatbuilder
@@ -3909,6 +3937,67 @@ entries:
     exit: 1
     matches:
       - "has no play to pass .* to \\(no `-e fed_work=` in its command\\)"
+
+  - code: GB-351
+    tool: goatbuilder
+    title: a Spock subscription has forward_origins set, which in a mesh replicates in a loop
+    what: "A Spock subscription, or the setting that creates them, has forward_origins other than empty or 'none'. In a mesh of three or more sites such a subscription passes each change on to the next site, which passes it back, without end, while every subscription still reads replicating and nothing is logged. The spock-forward-origins-check role stopped the run before spock-mesh-peering or ory-narrow-repset changed anything. The message names the setting, or each subscription as <host> <database>.<subscription>."
+    causes:
+      - "a site's group_vars set spock_mesh_forward_origins or ory_spock_forward_origins"
+      - "a subscription was created by hand with forward_origins := '{all}'"
+    fixes:
+      - "remove spock_mesh_forward_origins and ory_spock_forward_origins from the site's group_vars (both default to [])"
+      - "on the host and database named, run SELECT spock.sub_drop('<subscription>'); then run the playbook again, which creates it with forward_origins empty"
+    read: docs/design/spock-mesh-peering.md
+    exit: 2
+    matches:
+      - "GB-351 refusing to wire Spock: "
+
+  # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
+  # the read-only verbs over the peering directory (saltlick).
+  - code: GB-370
+    tool: goatbuilder
+    title: no usable peering directory URL or id was given
+    what: "goatbuilder federate directory needs the directory's base URL, from --url or FED_DIRECTORY_URL, as an http(s) URL; and a party or counterparty id as the directory accepts it, 2 to 16 of a-z, 0-9 and -. Nothing was requested."
+    causes:
+      - "neither --url nor FED_DIRECTORY_URL is set in this shell"
+      - "the URL has no https:// in front of it"
+      - "the id was typed with capitals, a slash or a dot"
+    fixes:
+      - "goatbuilder federate directory --url https://<directory host> ls"
+      - "goatbuilder federate directory ls lists the ids the directory holds; copy one from there"
+    read: docs/design/peering-directory-service.md
+    exit: 2
+    matches:
+      - "^no directory URL: pass --url or set FED_DIRECTORY_URL"
+
+  - code: GB-371
+    tool: goatbuilder
+    title: the peering directory did not answer, or what answered is not a peering directory
+    what: "goatbuilder federate directory asked the directory for /v1/version (and, on a release older than saltlick v0.6.0, /healthz) and got no answer, or an answer that is not a saltlick directory."
+    causes:
+      - "the URL is wrong, or names a host that is not the directory"
+      - "the directory is down or restarting (a deploy replaces its instance, a few minutes)"
+      - "this machine has no route to the internet, or a proxy refuses the host"
+    fixes:
+      - "curl -sS <url>/healthz should print {\"status\":\"ok\"}"
+      - "if you run the directory: its runbook says how to check the host and bring it back"
+    read: docs/design/peering-directory-service.md
+    exit: 1
+
+  - code: GB-372
+    tool: goatbuilder
+    title: the peering directory lacks a file a peering reads
+    what: "goatbuilder federate directory check (or show) found an item that is not there. Each missing item is one of two kinds, and the view names which. NOT HOSTED: the directory serves the route, and the party has not uploaded the file. ROUTE MISSING: the directory's release does not serve the route at all (a plain-text 404, or a route absent from its /v1/version list)."
+    causes:
+      - "NOT HOSTED: the party has not run phase 5 of the peering, which uploads its entry, CA, SPIFFE bundle and its package for the counterparty"
+      - "NOT HOSTED: the party used another id, or uploaded to the single package slot instead of the one for this counterparty"
+      - "ROUTE MISSING: the directory runs a release older than the one that added the route (per-counterparty packages need saltlick v0.5.0)"
+    fixes:
+      - "NOT HOSTED: ask the party to run phase 5 (goatbuilder federate <peering> --from 5 --to 5), then check again"
+      - "ROUTE MISSING: the directory's operator moves it to a release that serves the route; check which release runs with goatbuilder federate directory ls"
+    read: docs/design/peering-directory-service.md
+    exit: 1
 
   - code: X-ANSIBLE-001
     tool: ansible
@@ -4222,8 +4311,9 @@ entries:
       - "gh auth refresh -s read:packages"
     read: CONTRIBUTING.md
     matches:
-      - "HTTP 403"
       - "API rate limit exceeded"
+      - "HTTP 403: Resource not accessible"
+      - "api.github.com"
 
   - code: X-COSIGN-001
     tool: cosign

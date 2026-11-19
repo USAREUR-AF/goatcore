@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::process::Stdio;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::{Check, Report, EXIT_REFUSED};
 
@@ -189,7 +189,7 @@ pub fn run(repo: &Path, args: &[String]) -> Result<Report> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
-        .with_context(|| "ops/secrets/posture.py or ops/scripts/with-secrets")?;
+        .map_err(|e| goat_errors::coded("GB-320", format!("could not start ops/secrets/posture.py or ops/scripts/with-secrets: {e}")))?;
     let code = status.code().unwrap_or(2);
     let mut r = Report::new("secrets", Vec::new(), EXIT_REFUSED);
     r.exit = code;

@@ -44,6 +44,19 @@ pub fn run_verify(
     a: &VerifyArgs,
     out: &mut dyn Write,
 ) -> anyhow::Result<i32> {
+    run_verify_at(site, a, out, chrono::Utc::now().date_naive())
+}
+
+/// [`run_verify`] on a given date. The term is judged on `today`; every binary
+/// reaches this only through [`run_verify`], with today's UTC date, and the
+/// library's own tests pass the vectors' evaluation date
+/// (tests/acceptance_date_is_the_wall_clock.rs holds both).
+pub(crate) fn run_verify_at(
+    site: &dyn Fn() -> anyhow::Result<Site>,
+    a: &VerifyArgs,
+    out: &mut dyn Write,
+    today: chrono::NaiveDate,
+) -> anyhow::Result<i32> {
     let bytes = read_file(&a.agreement)?;
     let digest = digest_of(&bytes);
     let mut outcomes = Vec::new();
@@ -74,7 +87,6 @@ pub fn run_verify(
         }
     };
 
-    let today = chrono::Utc::now().date_naive();
     let mut failed = false;
     for c in render::verify_locally(&ag, &ours, today) {
         if c.ok {
@@ -175,4 +187,64 @@ pub(crate) fn resolve_party(
     let d: super::init::Declaration =
         toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(d.sovereign_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vectors() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors")
+    }
+
+    /// The date the normative vectors are evaluated on (their README,
+    /// "Evaluation date"); tests over them pass it, never the wall clock.
+    fn vectors_now() -> chrono::NaiveDate {
+        let s = std::fs::read_to_string(vectors().join("now.txt")).expect("now.txt");
+        chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").expect("YYYY-MM-DD")
+    }
+
+    /// Far past the vector agreement's term, which ends 2026-11-20.
+    fn far_past_the_term() -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2030, 1, 1).unwrap()
+    }
+
+    fn no_site() -> anyhow::Result<Site> {
+        anyhow::bail!("no site in this test")
+    }
+
+    fn args() -> VerifyArgs {
+        VerifyArgs {
+            agreement: vectors().join("compose-full/agreement.canonical.json"),
+            as_party: Some("xaa".into()),
+            signing_key: None,
+            json: false,
+        }
+    }
+
+    fn run_at(today: chrono::NaiveDate) -> (i32, String) {
+        let mut out = Vec::new();
+        let code = run_verify_at(&no_site, &args(), &mut out, today).expect("verify ran");
+        (code, String::from_utf8(out).expect("utf-8"))
+    }
+
+    #[test]
+    fn the_vector_agreement_attests_on_the_vectors_date() {
+        let (code, out) = run_at(vectors_now());
+        assert_eq!(code, EXIT_OK, "{out}");
+        assert!(
+            out.contains("would publish `conformance ok for sha256:"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn the_vector_agreement_is_not_attested_far_past_its_term() {
+        let (code, out) = run_at(far_past_the_term());
+        assert_eq!(code, EXIT_FED_NOT_CONFORMANT, "{out}");
+        assert!(
+            out.contains("expired on 2026-11-20; today is 2030-01-01"),
+            "{out}"
+        );
+    }
 }
