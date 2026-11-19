@@ -25,9 +25,13 @@ groups:
     interval: 30s
     rules:
 
-      # Replication lag — any subscription lagging > 60s. Metric
-      # produced by the spock_subscription_lag custom query in
-      # monitoring/postgres-exporter-queries.yml.
+      # Replication lag — any subscription lagging > 60s. NOT FED:
+      # nothing produces spock_subscription_lag_seconds. Spock 5's lag
+      # (spock.lag_tracker) is the time since the last change arrived and
+      # grows without end on an idle database, so it is not exported as this
+      # series; see spock_subscription_lag in
+      # monitoring/postgres-exporter-queries.yml. Provider-side backlog is
+      # SpockSlotWALSenderLag.
       - alert: SpockSubscriptionLag
         expr: spock_subscription_lag_seconds > 60
         for: 2m
@@ -35,7 +39,7 @@ groups:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock subscription {{ $labels.subscription_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} lagging >60s for 2m"
+          summary: "Spock subscription {{ $labels.subscription_name }} ({{ $labels.datname }}) at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} lagging >60s for 2m"
           description: "Replication replay lag exceeds 60s. Check network path to provider, provider WAL senders, and subscriber apply worker. Sustained lag past a few minutes can cascade into slot-retention issues."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
@@ -87,7 +91,8 @@ groups:
       # Lag-based alerts go quiet when status != 'replicating' (lag
       # column is 0 / NULL), so a silent halt won't fire SpockSubscriptionLag.
       # This alert closes that gap. spock_subscription_lag_replicating is
-      # the 0/1 gauge from the spock_subscription_lag custom query.
+      # the 0/1 gauge from the spock_subscription_lag custom query, one
+      # series per subscription in each replicated database (datname).
       - alert: SpockSubscriptionNotReplicating
         expr: spock_subscription_lag_replicating == 0
         for: 2m
@@ -95,8 +100,8 @@ groups:
           severity: critical
           component: spock
         annotations:
-          summary: "Spock subscription {{ $labels.subscription_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} not replicating for 2m"
-          description: "Subscription status is not 'replicating' (likely 'down' or 'initializing'). Lag metrics are unreliable in this state. Run `psql netbird -c 'SELECT * FROM spock.sub_show_status();'` on the subscribing node to see the exact status. Common causes: apply worker crashed (check Postgres logs), provider unreachable, or a replicated DDL replay error stopping the apply queue. See post-partition convergence runbook for rejoin scenarios."
+          summary: "Spock subscription {{ $labels.subscription_name }} ({{ $labels.datname }}) at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} not replicating for 2m"
+          description: "Subscription status is not 'replicating' (likely 'down' or 'initializing'). Lag metrics are unreliable in this state. Run `psql {{ $labels.datname }} -c 'SELECT * FROM spock.sub_show_status();'` on the subscribing node to see the exact status. Common causes: apply worker crashed (check Postgres logs), provider unreachable, or a replicated DDL replay error stopping the apply queue. See post-partition convergence runbook for rejoin scenarios."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
 
       # Block 52A.1 — replication slot reports inactive even though
@@ -231,3 +236,22 @@ groups:
           summary: "postgres-exporter at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} unreachable for 2m"
           description: "Prometheus cannot scrape postgres-exporter. Either the exporter is down, or postgres itself is down (exporter fails open on a dead DB). Check `docker compose ps postgres postgres-exporter` on the mgmt-host."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+
+  # The exporter itself. A query that fails on every scrape leaves its alert
+  # without a series, so the alert stays silent whatever happens: it is
+  # indistinguishable from a healthy one. The Spock subscription query once
+  # ran only in `postgres`, which has no spock schema, and
+  # SpockSubscriptionNotReplicating could not fire.
+  - name: postgres.exporter
+    interval: 30s
+    rules:
+      - alert: PostgresExporterScrapeFailing
+        expr: pg_exporter_last_scrape_error == 1
+        for: 15m
+        labels:
+          severity: warning
+          component: spock
+        annotations:
+          summary: "postgres-exporter at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} has failed a query on every scrape for 15m"
+          description: "pg_exporter_last_scrape_error is 1: at least one query in monitoring/postgres-exporter-queries.yml fails, and the alerts that read its metrics have no series and cannot fire. `docker logs postgres-exporter` names the query and the database (\"Error running query on database\"). Usual causes: a query run in a database without the spock schema, a missing grant for the monitoring role, or a database the exporter cannot reach."
+          runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/replication-consistency-observability.md"

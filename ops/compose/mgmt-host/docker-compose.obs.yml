@@ -175,8 +175,12 @@ services:
       # Connects to postgres-a via the compose-internal network as the
       # least-privilege 'monitoring' role (created by the observability
       # Ansible role before this stack is brought up). Role has
-      # pg_monitor membership + SELECT on spock.* views.
-      DATA_SOURCE_NAME: "postgresql://monitoring:${POSTGRES_EXPORTER_PASSWORD:?set POSTGRES_EXPORTER_PASSWORD in .env}@postgres-a:5432/postgres?sslmode=disable"
+      # pg_monitor membership + SELECT on spock.* views. The DSN names
+      # netbird, a replicated database, not `postgres`: `postgres` has no spock
+      # schema, so each Spock query failed there on every scrape
+      # (monitoring/postgres-exporter-queries.yml, "Which database a query
+      # runs in").
+      DATA_SOURCE_NAME: "postgresql://monitoring:${POSTGRES_EXPORTER_PASSWORD:?set POSTGRES_EXPORTER_PASSWORD in .env}@postgres-a:5432/netbird?sslmode=disable"
       PG_EXPORTER_EXTEND_QUERY_PATH: "/etc/postgres-exporter/queries.yml"
       # Spock replicates several databases (netbird, and kratos and hydra when
       # Ory replicates), each with its own spock schema. The exporter also
