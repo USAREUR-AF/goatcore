@@ -2,48 +2,6 @@
 # Download and verify the single Ubuntu image selected by 00-prerequisites.sh.
 # The caller supplies info(), ok(), and error() for consistent output.
 
-ubuntu_manifest_digest() {
-    local manifest="$1" image_name="$2" record matches valid digest
-
-    record="$(awk -v target="$image_name" '
-        {
-            filename = $2
-            if (substr(filename, 1, 1) == "*") {
-                filename = substr(filename, 2)
-            }
-            if (filename == target) {
-                matches++
-                if (NF == 2 && length($1) == 64 && $1 !~ /[^0-9A-Fa-f]/) {
-                    valid++
-                    digest = tolower($1)
-                }
-            }
-        }
-        END { printf "%d %d %s\n", matches, valid, digest }
-    ' "$manifest")" || {
-        error "Could not parse Ubuntu checksum data in $manifest"
-        return 1
-    }
-
-    read -r matches valid digest <<EOF
-$record
-EOF
-    if [ "$matches" -eq 0 ]; then
-        error "Ubuntu checksum data has no entry for the exact image $image_name"
-        return 1
-    fi
-    if [ "$matches" -gt 1 ]; then
-        error "Ubuntu checksum data has multiple entries for $image_name; refusing an ambiguous digest"
-        return 1
-    fi
-    if [ "$valid" -ne 1 ]; then
-        error "Ubuntu checksum entry for $image_name is malformed; expected one 64-digit SHA-256 digest"
-        return 1
-    fi
-
-    printf '%s\n' "$digest"
-}
-
 image_sha256() {
     local image="$1" output digest
 
@@ -86,32 +44,13 @@ verify_ubuntu_image() {
 }
 
 prepare_ubuntu_image() {
-    local download_dir="$1" fallback_dir="$2" release_url="$3" image_name="$4"
-    local manifest_url manifest_tmp manifest_record expected image_path image_url partial
+    local download_dir="$1" fallback_dir="$2" release_url="$3" image_name="$4" expected="$5"
+    local image_path image_url partial
 
-    manifest_url="${release_url}/SHA256SUMS"
-    image_url="${release_url}/${image_name}"
-
-    command -v curl >/dev/null 2>&1 || {
-        error "curl not found. Install curl, then re-run ./00-prerequisites.sh"
-        return 1
-    }
-    manifest_tmp="$(mktemp "${TMPDIR:-/tmp}/goat-ubuntu-sha256.XXXXXX")" || {
-        error "Could not create a temporary file for Ubuntu checksum data"
-        return 1
-    }
-    if ! curl --fail --location --silent --show-error --output "$manifest_tmp" "$manifest_url"; then
-        error "Failed to download Ubuntu checksum data: $manifest_url"
-        error "No cached image was changed. Check network access and re-run."
-        rm -f "$manifest_tmp"
+    if [ "${#expected}" -ne 64 ] || [[ "$expected" == *[!0123456789abcdef]* ]]; then
+        error "Invalid pinned SHA-256 for $image_name"
         return 1
     fi
-    if ! manifest_record="$(ubuntu_manifest_digest "$manifest_tmp" "$image_name")"; then
-        rm -f "$manifest_tmp"
-        return 1
-    fi
-    expected="$manifest_record"
-    rm -f "$manifest_tmp"
 
     if [ -f "$download_dir/$image_name" ]; then
         image_path="$download_dir/$image_name"
@@ -120,6 +59,11 @@ prepare_ubuntu_image() {
         image_path="$fallback_dir/$image_name"
         ok "Found image: $image_name"
     else
+        command -v curl >/dev/null 2>&1 || {
+            error "curl not found. Install curl, then re-run ./00-prerequisites.sh"
+            return 1
+        }
+        image_url="${release_url}/${image_name}"
         mkdir -p "$download_dir" || {
             error "Could not create image cache directory: $download_dir"
             return 1

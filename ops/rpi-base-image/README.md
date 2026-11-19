@@ -153,7 +153,8 @@ If checks 1, 2, and 3 come back with FIPS-approved values, the userspace chain i
 | `brew install nmap pv xz` | `sudo apt-get install -y nmap pv xz-utils curl` | `sudo dnf install -y nmap pv xz curl` | `sudo pacman -S --needed nmap pv xz curl` |
 
 Image verification also requires one SHA-256 implementation: `sha256sum`
-(coreutils), `shasum` (included with macOS), or `openssl`.
+(coreutils), `shasum` (included with macOS), or `openssl`. The image
+download needs `curl`.
 
 On Linux, `01-flash.sh` also uses `lsblk`, `findmnt` and `mount` (util-linux,
 always present) and `partprobe` (package `parted`; it falls back to `blockdev`).
@@ -180,16 +181,25 @@ On macOS it installs missing tools with Homebrew. On Linux it names the
 missing tools and the `apt-get` / `dnf` / `pacman` command that installs them,
 and runs that command only if you answer `y`.
 
-The script selects the exact Ubuntu image filename configured in
-`00-prerequisites.sh`, downloads the matching release `SHA256SUMS`, and requires
-one valid, unambiguous entry before accepting either a cached or newly
-downloaded image. A new image is moved into the cache only after its SHA-256
-matches. This detects corrupt or mismatched bytes against the downloaded
-manifest; it does **not** authenticate Ubuntu as the publisher because the
-manifest's digital signature is not verified.
+The exact Ubuntu image filename and its SHA-256 are pinned together in
+`00-prerequisites.sh`. The script verifies a cached image offline. If it needs
+to download the image, it moves the download into the cache only after its
+SHA-256 matches. Installing other prerequisites may still require network
+access.
 
-The script retrieves `SHA256SUMS` on every run, including when the exact image
-is already cached, so checksum verification requires network access.
+If the checksum check fails for a cached image, the script leaves it in place
+and prints its path. Move that exact file out of the cache, then rerun the
+script with network access to fetch a verified copy.
+
+The current pin uses the exact Ubuntu 24.04.4 Raspberry Pi server image entry
+from Canonical's [checksum list](https://cdimage.ubuntu.com/releases/24.04/release/SHA256SUMS).
+The [detached signature](https://cdimage.ubuntu.com/releases/24.04/release/SHA256SUMS.gpg)
+was verified with the Ubuntu CD Image Automatic Signing Key (2012), fingerprint
+`843938DF228D22F7B3742BC0D94AA3F0EFE21092`.
+
+When changing the image, update the filename and its SHA-256 together.
+[Verify Canonical's release checksum signature](https://documentation.ubuntu.com/security/software-integrity/image-verification/)
+and take the digest for the exact new filename.
 
 ### 2. Edit cloud-init configs
 

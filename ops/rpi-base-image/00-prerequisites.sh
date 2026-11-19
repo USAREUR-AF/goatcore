@@ -120,7 +120,7 @@ else
     step "Step 2: Checking required tools"
     MISSING=""
     MISSING_PKGS=""
-    for tool in xz pv nmap curl; do
+    for tool in xz pv nmap; do
         if command -v "$tool" &>/dev/null; then
             ok "$tool found"
         else
@@ -156,7 +156,7 @@ else
             info "Install with: $(linux_install_cmd "$PKG_MGR" ansible)"
         fi
     fi
-    TOOLS_SUMMARY="xz, pv, nmap, curl"
+    TOOLS_SUMMARY="xz, pv, nmap"
 fi
 
 # --- Ansible collections ---
@@ -189,10 +189,13 @@ ok "Image cache directory: $DOWNLOAD_DIR"
 
 UBUNTU_RELEASE_URL="https://cdimage.ubuntu.com/releases/24.04/release"
 UBUNTU_IMAGE_NAME="ubuntu-24.04.4-preinstalled-server-arm64+raspi.img.xz"
+# From Canonical's signed SHA256SUMS for the exact filename above.
+# See the README for the manifest, signature, and signing key.
+UBUNTU_IMAGE_SHA256="790652faeb4f61ce7bb12f5cb61734595c61d3cd882915b8b5f9918106c80d37"
 # shellcheck source=ops/rpi-base-image/lib/ubuntu-image.sh
 source "$(cd "$(dirname "$0")" && pwd)/lib/ubuntu-image.sh"
 prepare_ubuntu_image "$DOWNLOAD_DIR" "$HOME/Downloads" \
-    "$UBUNTU_RELEASE_URL" "$UBUNTU_IMAGE_NAME"
+    "$UBUNTU_RELEASE_URL" "$UBUNTU_IMAGE_NAME" "$UBUNTU_IMAGE_SHA256"
 
 # --- Check SSH key ---
 step "Step 5: SSH key"

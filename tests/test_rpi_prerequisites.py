@@ -31,8 +31,6 @@ class UbuntuImageVerification(unittest.TestCase):
         self.payload = self.tmp / "remote-image"
         self.payload.write_bytes(b"verified Ubuntu image fixture\n")
         self.digest = hashlib.sha256(self.payload.read_bytes()).hexdigest()
-        self.manifest = self.tmp / "SHA256SUMS"
-        self.manifest.write_text(f"{self.digest} *{IMAGE_NAME}\n")
         self.log = self.tmp / "curl.log"
         self.write_executable(
             "curl",
@@ -56,7 +54,6 @@ class UbuntuImageVerification(unittest.TestCase):
                 exit 22
             fi
             case "$url" in
-                */SHA256SUMS) /bin/cp "$STUB_MANIFEST" "$output" ;;
                 */"$STUB_IMAGE_NAME") /bin/cp "$STUB_IMAGE" "$output" ;;
                 *) printf 'unexpected URL: %s\n' "$url" >&2; exit 2 ;;
             esac
@@ -76,7 +73,6 @@ class UbuntuImageVerification(unittest.TestCase):
         env.update(
             PATH=f"{self.bin}{os.pathsep}{env['PATH']}",
             STUB_CURL_LOG=str(self.log),
-            STUB_MANIFEST=str(self.manifest),
             STUB_IMAGE=str(self.payload),
             STUB_IMAGE_NAME=IMAGE_NAME,
             TMPDIR=str(self.tmp),
@@ -84,14 +80,14 @@ class UbuntuImageVerification(unittest.TestCase):
         env.update(updates)
         return env
 
-    def run_prepare(self, **env_updates):
+    def run_prepare(self, expected=None, **env_updates):
         script = r'''
             set -euo pipefail
             info() { printf 'INFO %s\n' "$*"; }
             ok() { printf 'OK %s\n' "$*"; }
             error() { printf 'ERROR %s\n' "$*" >&2; }
             source "$1"
-            prepare_ubuntu_image "$2" "$3" "$4" "$5"
+            prepare_ubuntu_image "$2" "$3" "$4" "$5" "$6"
             printf 'NEXT %s\n' "$IMAGE_PATH"
         '''
         return subprocess.run(
@@ -105,6 +101,7 @@ class UbuntuImageVerification(unittest.TestCase):
                 str(self.fallback),
                 RELEASE_URL,
                 IMAGE_NAME,
+                self.digest if expected is None else expected,
             ],
             capture_output=True,
             text=True,
@@ -119,15 +116,28 @@ class UbuntuImageVerification(unittest.TestCase):
         self.assertEqual(final.read_bytes(), self.payload.read_bytes())
         self.assertIn(f"NEXT {final}", result.stdout)
         self.assertFalse(list(self.cache.glob("*.part.*")))
+        self.assertEqual(self.log.read_text().splitlines(), [f"{RELEASE_URL}/{IMAGE_NAME}"])
 
-    def test_exact_cached_image_is_verified_without_image_download(self):
+    def test_exact_cached_image_is_verified_without_network_access(self):
         cached = self.cache / IMAGE_NAME
         cached.write_bytes(self.payload.read_bytes())
         result = self.run_prepare()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"NEXT {cached}", result.stdout)
-        urls = self.log.read_text().splitlines()
-        self.assertEqual(urls, [f"{RELEASE_URL}/SHA256SUMS"])
+        self.assertFalse(self.log.exists(), "cache hit attempted a download")
+
+    def test_cached_image_can_be_verified_when_curl_is_unavailable(self):
+        cached = self.cache / IMAGE_NAME
+        cached.write_bytes(self.payload.read_bytes())
+        tools_dir = self.tmp / "verification-tools"
+        tools_dir.mkdir()
+        for tool in ("sha256sum", "shasum", "openssl", "tr", "grep", "basename"):
+            executable = shutil.which(tool)
+            if executable:
+                (tools_dir / tool).symlink_to(executable)
+        result = self.run_prepare(PATH=str(tools_dir))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"NEXT {cached}", result.stdout)
 
     def test_exact_image_in_legacy_fallback_cache_is_verified(self):
         cached = self.fallback / IMAGE_NAME
@@ -136,6 +146,7 @@ class UbuntuImageVerification(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"NEXT {cached}", result.stdout)
         self.assertFalse((self.cache / IMAGE_NAME).exists())
+        self.assertFalse(self.log.exists(), "fallback cache hit attempted a download")
 
     def test_arbitrary_cached_version_is_not_selected_for_the_pinned_release(self):
         other = self.cache / "ubuntu-24.04.3-preinstalled-server-arm64+raspi.img.xz"
@@ -153,43 +164,36 @@ class UbuntuImageVerification(unittest.TestCase):
         self.assertIn("SHA-256 mismatch", result.stderr)
         self.assertNotIn("NEXT ", result.stdout)
         self.assertEqual(cached.read_bytes(), b"wrong bytes")
+        self.assertFalse(self.log.exists(), "corrupt cache hit attempted a download")
+
+    def test_corrupt_fallback_cache_is_refused_and_preserved(self):
+        cached = self.fallback / IMAGE_NAME
+        cached.write_bytes(b"corrupt fallback")
+        result = self.run_prepare()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"SHA-256 mismatch for {cached}", result.stderr)
+        self.assertNotIn("NEXT ", result.stdout)
+        self.assertEqual(cached.read_bytes(), b"corrupt fallback")
+        self.assertFalse((self.cache / IMAGE_NAME).exists())
+        self.assertFalse(self.log.exists(), "corrupt fallback attempted a download")
 
     def test_downloaded_mismatch_is_removed_and_never_enters_the_cache(self):
-        self.manifest.write_text(f"{'0' * 64} *{IMAGE_NAME}\n")
-        result = self.run_prepare()
+        result = self.run_prepare(expected="0" * 64)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SHA-256 mismatch", result.stderr)
         self.assertNotIn("NEXT ", result.stdout)
         self.assertFalse((self.cache / IMAGE_NAME).exists())
         self.assertFalse(list(self.cache.glob("*.part.*")))
 
-    def test_missing_malformed_and_duplicate_exact_entries_are_refused(self):
-        cases = {
-            "missing": f"{self.digest} *unrelated.img.xz\n",
-            "malformed": f"not-a-digest *{IMAGE_NAME}\n",
-            "duplicate": (
-                f"{self.digest} *{IMAGE_NAME}\n"
-                f"{self.digest} *{IMAGE_NAME}\n"
-            ),
-        }
-        for label, content in cases.items():
-            with self.subTest(label=label):
-                self.manifest.write_text(content)
-                result = self.run_prepare()
+    def test_invalid_pin_is_refused_before_download(self):
+        for expected in ("", "f" * 63, "f" * 65, "x" * 64, "F" * 64, "f" * 63 + " "):
+            with self.subTest(expected=expected):
+                result = self.run_prepare(expected=expected)
                 self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Invalid pinned SHA-256", result.stderr)
                 self.assertNotIn("NEXT ", result.stdout)
+                self.assertFalse(self.log.exists())
                 self.assertFalse((self.cache / IMAGE_NAME).exists())
-
-    def test_unrelated_manifest_paths_are_ignored_and_contents_are_not_executed(self):
-        marker = self.tmp / "must-not-exist"
-        self.manifest.write_text(
-            f"{self.digest} *../../unrelated.img.xz\n"
-            f"$(touch {marker}) *another.img.xz\n"
-            f"{self.digest} *{IMAGE_NAME}\n"
-        )
-        result = self.run_prepare()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(marker.exists())
 
     def test_failed_image_download_removes_partial_and_blocks_next_step(self):
         result = self.run_prepare(STUB_FAIL_URL=f"{RELEASE_URL}/{IMAGE_NAME}")
@@ -197,14 +201,6 @@ class UbuntuImageVerification(unittest.TestCase):
         self.assertNotIn("NEXT ", result.stdout)
         self.assertFalse((self.cache / IMAGE_NAME).exists())
         self.assertFalse(list(self.cache.glob("*.part.*")))
-
-    def test_failed_manifest_download_preserves_cached_image_and_blocks_next_step(self):
-        cached = self.cache / IMAGE_NAME
-        cached.write_bytes(self.payload.read_bytes())
-        result = self.run_prepare(STUB_FAIL_URL=f"{RELEASE_URL}/SHA256SUMS")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("NEXT ", result.stdout)
-        self.assertEqual(cached.read_bytes(), self.payload.read_bytes())
 
     def test_sha256sum_shasum_and_openssl_branches(self):
         tools = ("sha256sum", "shasum", "openssl")
