@@ -189,7 +189,7 @@ Read-only verbs never mutate and are safe to run anywhere, including against a p
 
 ### `status` on real hosts (gate row C3)
 
-`status` answers, for each machine and component, one of three words (C7): **converged** (the machine's newest ledger row names the declared digest and records a finished deploy), **pending** (the machine was read and is not there: another ref, no record, a row the play left at `action: pending`, a rollback row, a shared ledger whose newest row is another image's, a served payload off the declaration) or **unknown** (the machine was not read: unreachable, its read FAILED, or named by the inventory and silent). Exit 3 while any machine is pending or unknown.
+`status` answers, for each machine and component, one of three words (C7): **converged** (the machine's newest ledger row names the declared digest and records a finished deploy), **pending** (the machine was read and is not there: another ref, no record, a row the play left at `action: pending`, a rollback row, a shared ledger whose newest row is another image's, a served payload off the declaration) or **unknown** (the machine was not read: unreachable, its read FAILED, or named by the inventory and silent). Exit 3 while any machine is pending or unknown. In `-o json` each graded row is also an entry of `machines`, with its state and a reason from a closed set (goatbuilder-output.md, rule 2), so a program reads the state rather than the words.
 
 On real hosts `status` takes the `diff` read and the `verify` rules, so the three verbs cannot disagree about a machine:
 

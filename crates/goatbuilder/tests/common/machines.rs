@@ -67,13 +67,17 @@ pub fn machines(
         let detail = rows
             .get(m["check"].as_str().unwrap())
             .unwrap_or_else(|| panic!("entry names no checks row: {m}\n{text}"));
-        let word = if state == "converged" {
-            "converged"
-        } else {
-            state
+        // The row's own first words: `status` and the fixture say converged,
+        // pending or unknown; a real `verify` says "NOT converged" for pending.
+        let agrees = match state {
+            "converged" => detail.starts_with("converged"),
+            "pending" => detail.starts_with("pending") || detail.starts_with("not converged"),
+            // A host the inventory names that gave no row: verify's words are
+            // "NOT converged — no ledger row came back", and C7 makes it unknown.
+            _ => detail.starts_with("unknown") || detail.contains("no ledger row came back"),
         };
         assert!(
-            detail.contains(word),
+            agrees,
             "the row {} reads {detail:?}, the entry says {state}",
             m["check"]
         );

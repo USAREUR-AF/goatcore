@@ -131,6 +131,7 @@ fn immutable(reference: &str) -> bool {
 pub fn status(fixture: &Fixture, env: &str, only: Option<&str>) -> Result<Report> {
     fixture.environment(env)?;
     let mut checks = Vec::new();
+    let mut graded = Vec::new();
     // A sited fixture scopes each component to the class that carries it.
     let scope = crate::standup::class_scope(&fixture.root);
     for component in fixture.components_on(env, only) {
@@ -141,18 +142,22 @@ pub fn status(fixture: &Fixture, env: &str, only: Option<&str>) -> Result<Report
         };
         for machine in machines {
             let name = format!("{env}/{machine}/{component}");
-            match fixture.converger.read_record(env, &machine, &component) {
-                Ok(Some(r)) if r.reference == declared => checks.push(ok(&name, format!("converged on {}", short(&declared)))),
-                Ok(Some(r)) => checks.push(not_done(&name, format!("pending: record names {}, declared {}", short(&r.reference), short(&declared)))),
-                Ok(None) => checks.push(not_done(&name, format!("pending: no record yet; declared {}", short(&declared)))),
-                Err(e) => checks.push(not_done(&name, format!("unknown: {e}"))),
-            }
+            let (check, state, reason) = match fixture.converger.read_record(env, &machine, &component) {
+                Ok(Some(r)) if r.reference == declared => (ok(&name, format!("converged on {}", short(&declared))), "converged", "declared"),
+                Ok(Some(r)) => (not_done(&name, format!("pending: record names {}, declared {}", short(&r.reference), short(&declared))), "pending", "other-ref"),
+                Ok(None) => (not_done(&name, format!("pending: no record yet; declared {}", short(&declared))), "pending", "no-record"),
+                Err(e) => (not_done(&name, format!("unknown: {e}")), "unknown", "unreadable"),
+            };
+            checks.push(check);
+            graded.push(crate::Machine::new(env, &machine, &component, state, reason, &name));
         }
     }
     if checks.is_empty() {
         return Err(anyhow::Error::from(goat_errors::coded("GB-255", format!("nothing declared for {env}{}", only.map(|o| format!(" and component {o}")).unwrap_or_default()))));
     }
-    Ok(Report::new("status", checks, EXIT_NOT_CONVERGED))
+    let mut r = Report::new("status", checks, EXIT_NOT_CONVERGED);
+    r.machines = Some(graded);
+    Ok(r)
 }
 
 /// A row the machines table owns: one component on one machine, in a state the

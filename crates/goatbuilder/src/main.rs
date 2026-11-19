@@ -928,6 +928,34 @@ impl Serialize for Check {
     }
 }
 
+/// One graded machine row of `status` or `verify` (contract C7, gate D): the
+/// state the row's first word says, as data. `check` is the name of the
+/// `checks` row it grades.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct Machine {
+    pub environment: String,
+    pub host: String,
+    pub component: String,
+    /// `converged`, `pending` (read, and not there) or `unknown` (not read).
+    pub state: &'static str,
+    /// Why, from a closed set (docs/design/goatbuilder-output.md, "Machines").
+    pub reason: &'static str,
+    pub check: String,
+}
+
+impl Machine {
+    pub fn new(environment: &str, host: &str, component: &str, state: &'static str, reason: &'static str, check: &str) -> Self {
+        Machine {
+            environment: environment.to_string(),
+            host: host.to_string(),
+            component: component.to_string(),
+            state,
+            reason,
+            check: check.to_string(),
+        }
+    }
+}
+
 /// The one shape every verb renders (C10): versioned, so a consumer can pin to it.
 #[derive(Serialize, Debug)]
 pub struct Report {
@@ -936,6 +964,11 @@ pub struct Report {
     pub ok: bool,
     pub exit: i32,
     pub checks: Vec<Check>,
+    /// `status` and `verify`: each graded machine's state, always present on
+    /// those two verbs (an empty list when nothing was graded) and absent on
+    /// every other verb.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machines: Option<Vec<Machine>>,
     /// A federate run that stopped to hand a phase to the other driver: the
     /// hand-off object (docs/design/federation-two-drivers.md).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -967,6 +1000,7 @@ impl Report {
             ok,
             exit: if ok { EXIT_OK } else { exit_when_refused },
             checks,
+            machines: None,
             handoff: None,
             printed: false,
             view_rows: None,

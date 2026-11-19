@@ -61,6 +61,8 @@ pub fn verify(repo: &Path, component: &str, env: &str, group: Option<&str>, dry_
     r.verb = "verify";
     // Reading the ledgers templates nothing: the secrets row belongs to a deploy.
     r.checks.retain(|c| !c.name.ends_with("/secrets"));
+    // Always present on verify: a run that graded nothing says so with an empty list.
+    r.machines.get_or_insert_with(Vec::new);
     Ok(r)
 }
 
@@ -561,7 +563,26 @@ pub fn status(repo: &Path, env: &str, only: Option<&str>) -> Result<Report> {
         checks.push(not_ok(&format!("{n}/status"), "nothing was read".into()));
     }
     checks.extend(rows.iter().map(|d| status_check(&n, d)));
-    Ok(Report::new("status", checks, EXIT_NOT_CONVERGED))
+    let mut r = Report::new("status", checks, EXIT_NOT_CONVERGED);
+    r.machines = Some(rows.iter().filter_map(|d| machine_of(&n, d)).collect());
+    Ok(r)
+}
+
+/// The `machines` entry of one `status` row (gate D): the state [`grade`]
+/// gives and its reason, from the closed set; `None` where `grade` names no
+/// machine, so the row is never counted.
+fn machine_of(n: &str, d: &Drift) -> Option<crate::Machine> {
+    let (state, reason) = match (grade(d)?, d.state.as_str()) {
+        (Verdict::Converged, _) => ("converged", "declared"),
+        (Verdict::Pending, "same") => ("pending", "unfinished"),
+        (Verdict::Pending, "drift") => ("pending", "other-ref"),
+        (Verdict::Pending, "no-ledger") => ("pending", "no-record"),
+        (Verdict::Pending, "other-image") => ("pending", "other-image"),
+        (Verdict::Pending, _) => ("pending", "served-off"),
+        (Verdict::Unknown, "no-answer") => ("unknown", "no-answer"),
+        (Verdict::Unknown, _) => ("unknown", "unreachable"),
+    };
+    Some(crate::Machine::new(n, &d.host, &d.component, state, reason, &format!("{n}/{}/{}", d.host, d.component)))
 }
 
 pub fn diff_mock(f: &Fixture, env: &str, only: Option<&str>) -> Result<Report> {
