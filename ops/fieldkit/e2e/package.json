@@ -1,0 +1,14 @@
+{
+  "name": "fieldkit-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Playwright checks for Fieldkit tools. Gatepost runs against the local mock of the pod API (ops/fieldkit/gatepost/mock_pod_api.py); no pod or goatnet is needed.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test --reporter=list"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0"
+  }
+}

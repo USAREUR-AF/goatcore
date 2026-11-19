@@ -1,0 +1,16 @@
+# Fieldkit scope guard allow list (ops/ci/check-fieldkit-scope.py).
+#
+# Every action a Fieldkit tool declares must be a row here: the tool, the goat
+# CLI verb it equals, and the API route it calls. A tool can do only what the
+# CLI can do (docs/design/fieldkit-and-bleating-edge.md §1, §5 "No new
+# authority"). This list is the platform team's: adding a row adds authority to
+# a tool, so it is reviewed with the CLI verb it names.
+#
+# tool      | goat verb             | method | route
+gatepost    | pod status            | GET    | /v1/status
+gatepost    | pod rules ls          | GET    | /v1/rules
+gatepost    | pod rules allow       | POST   | /v1/rules
+gatepost    | pod rules extend      | POST   | /v1/rules/{id}/extend
+gatepost    | pod rules revoke      | POST   | /v1/sources/{slot}/revoke
+gatepost    | pod rules reactivate  | POST   | /v1/rules/{id}/reactivate
+gatepost    | pod pending           | GET    | /v1/pending
