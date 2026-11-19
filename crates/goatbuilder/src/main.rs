@@ -1221,7 +1221,7 @@ fn writes_no_record(cmd: &Cmd) -> bool {
             // `federate plan` and the six federation verbs read packages, hosts or
             // the plan and write only their own output files; `federate backout`
             // and the whole peering change hosts and keep their record.
-            | Cmd::Federate { verb: Some(Stage::Plan { .. } | Stage::Verb(_)), .. }
+            | Cmd::Federate { verb: Some(Stage::Plan { .. } | Stage::Verb(_) | Stage::Directory(_)), .. }
     )
 }
 
@@ -1674,6 +1674,7 @@ fn main() {
                 grow::grow(&repo, *dry_run)
             }
         }
+        Cmd::Federate { verb: Some(federate::plan::Stage::Directory(d)), .. } => federate::directory::run(d, cli.output),
         Cmd::Federate { verb: Some(federate::plan::Stage::Backout(b)), .. } => {
             if !cli.yes && !b.dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "federate backout is a mutation: pass --yes without a terminal (C10)").into())

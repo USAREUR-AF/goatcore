@@ -361,7 +361,8 @@ def declared_absent(path):
 def declared_gaps(path):
     """The acceptance tokens owned only by services the site's end state declares
     here but that this site does not run yet, each with its gap: "declared, not
-    yet built at this site: <why> (gate row <row>)"."""
+    yet built at this site: <why> (gate row <row>)", or "(<decision>)" for a gap
+    that waits on a decision rather than a gate row."""
     if not path:
         return {}
     m = json.loads(Path(path).read_text())
@@ -370,7 +371,8 @@ def declared_gaps(path):
         g = s.get("gap")
         if g:
             for t in s.get("assay") or []:
-                gaps[t] = f"declared, not yet built at this site: {g['why']} (gate row {g['row']})"
+                closes = f"gate row {g['row']}" if g.get("row") else g.get("decision", "")
+                gaps[t] = f"declared, not yet built at this site: {g['why']} ({closes})"
         elif s.get("present") is not False:
             kept.update(s.get("assay") or [])
     return {t: why for t, why in gaps.items() if t not in kept}

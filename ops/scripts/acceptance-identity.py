@@ -26,7 +26,7 @@ identity's whoami (the proof the key works), which must read operator=false, spo
 Rotate: goat admin rotate goat-acceptance --key-only, then re-run the install
 half. Cut off at once: goat admin sponsorship goat-acceptance --revoke.
 """
-import importlib.util, json, os, shlex, subprocess, sys
+import importlib.util, json, os, re, shlex, subprocess, sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Examples for a tree whose group_vars declare no site_dns_zone.
@@ -114,7 +114,8 @@ tmpl = json.dumps({"title": f"{env}-acceptance-sponsor", "category": "API_CREDEN
                                         f"'acceptance' on the host the live rows run goat on."}]})
 rfd, wfd = os.pipe()
 os.write(wfd, tmpl.encode()); os.close(wfd)
-envp = {k: v for k, v in os.environ.items() if k != "GCP_HEIMDALL_OP_ITEM"}
+# op runs without any GCP_*OP_ITEM variable from the caller's shell.
+envp = {k: v for k, v in os.environ.items() if not re.fullmatch(r"GCP_([A-Z0-9_]+_)?OP_ITEM", k)}
 envp["OP_ACCOUNT"] = op_acct
 op = subprocess.run(["op", "item", "create", "--vault", "goat-site-services",
                      "--template", f"/dev/fd/{rfd}", "--format", "json"],

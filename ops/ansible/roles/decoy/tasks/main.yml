@@ -1,0 +1,24 @@
+---
+# ops/ansible/roles/decoy — the decoy layer. Canon: ADR 1247,
+# docs/design/deception-layer.md. Runbook: docs/operations/decoy-layer-runbook.md.
+
+- name: decoy | skip unless the goatnet enables the layer
+  ansible.builtin.meta: end_host
+  when: not (deception_enabled | default(false) | bool)
+
+- name: decoy | the declaration is complete
+  ansible.builtin.assert:
+    that:
+      - deception_seed | length >= 32
+      - deception_service_zone | length > 0
+    fail_msg: >-
+      deception_enabled is true but deception_seed (resolved from the secret
+      store, at least 32 characters) or deception_service_zone is missing.
+  no_log: true
+
+- name: decoy | plant entry points
+  ansible.builtin.import_tasks: plant.yml
+
+- name: decoy | responder
+  ansible.builtin.import_tasks: responder.yml
+  when: deception_responder_enabled | default(false) | bool

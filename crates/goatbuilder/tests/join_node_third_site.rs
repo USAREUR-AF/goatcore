@@ -916,3 +916,106 @@ fn the_joiners_gaps_are_the_admin_surfaces(env: &str, log: &str) {
         assert!(line.contains(row), "{row}: {line}");
     }
 }
+
+/// Gate row I3, the declared set on the fixture: every service the end-state
+/// model marks present on gamma's core node is either built by a play the
+/// run ran, or named under the run's not-run heading. The admin surfaces are
+/// the catalog's gaps (gate row I1, I4); gamma is a single-host site, so its
+/// obs stack is declared on the core node, where no verb builds it yet
+/// (`obs.yml` by hand), and each of the four is named with gate row I3. No
+/// service is left out in silence.
+#[test]
+fn every_service_gamma_declares_is_built_or_named() {
+    let s = site();
+    let (out, v) = join_node(&s, Some("2"));
+    assert!(out.status.success(), "{}", says(&out));
+    let model = Command::new("python3")
+        .arg(s.checkout.join("ops/goatbuilder/endstate/endstate.py"))
+        .args(["model", "gamma", "--root"])
+        .arg(&s.checkout)
+        .output()
+        .unwrap();
+    assert!(model.status.success(), "{}", says(&model));
+    let model: serde_json::Value = serde_json::from_slice(&model.stdout).unwrap();
+    let declared: Vec<&str> = model["services"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, sv)| {
+            sv["present"] == true
+                && sv["hosts"]
+                    .as_array()
+                    .is_some_and(|h| h.iter().any(|n| n == "gamma-core-1"))
+        })
+        .map(|(n, _)| n.as_str())
+        .collect();
+    let named: Vec<&str> = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"] == "not-run")
+        .filter_map(|c| c["detail"].as_str())
+        .collect();
+    let log = std::fs::read_to_string(&s.log).unwrap();
+    let ran = |play: &str| {
+        log.lines()
+            .any(|l| l.starts_with("play ") && l.contains(play) && l.contains("gamma-core-1"))
+    };
+    // What the run builds of the declared set, by the play that builds it.
+    let built = [
+        ("traefik", "lan-traefik-routes.yml"),
+        ("netbird-mgmt", "bootstrap"),
+        ("signal-server", "bootstrap"),
+        ("pgbackrest", "bootstrap"),
+        ("ory", "ory-deploy.yml"),
+        ("kratos-selfservice-ui", "ory-deploy.yml"),
+        ("mesh-coredns", "goat-coredns.yml"),
+        ("fabric-health", "fabric-health-deploy.yml"),
+        ("mesh-health", "mesh-health-deploy.yml"),
+        // Declared at every site since the catalog says so (#968).
+        ("zenoh-router", "zenoh-deploy.yml"),
+        ("admit-audit", "bootstrap"),
+    ];
+    let line = |svc: &str| {
+        named
+            .iter()
+            .find(|d| d.starts_with(&format!("{svc} \u{2014} ")))
+            .copied()
+    };
+    for svc in &declared {
+        match (built.iter().find(|(b, _)| b == svc), line(svc)) {
+            (Some((_, play)), None) => assert!(ran(play), "{svc}: {play} did not run\n{log}"),
+            (None, Some(_)) => {}
+            (Some(_), Some(d)) => panic!("{svc} is built and named: {d}"),
+            (None, None) => {
+                panic!("{svc} is declared at gamma-core-1, not built and not named: {named:#?}")
+            }
+        }
+    }
+    for svc in [
+        "netbird-dashboard",
+        "portal",
+        "id-admin-console",
+        "onboard-runner",
+    ] {
+        let d = line(svc).unwrap_or_else(|| panic!("{svc} not named: {named:#?}"));
+        assert!(d.ends_with("(gate row I1, I4)"), "{d}");
+    }
+    let obs = ["prometheus", "alertmanager", "grafana", "obs-exporters"];
+    for svc in obs {
+        assert_eq!(
+            line(svc),
+            Some(format!("{svc} \u{2014} declared at gamma-core-1, and no join-node step builds it yet (gate row I3)").as_str()),
+            "{named:#?}"
+        );
+    }
+    assert!(
+        !named.iter().any(|d| d.ends_with("(gate row I3)")
+            && !obs.iter().any(|o| d.starts_with(&format!("{o} \u{2014} ")))),
+        "gamma declares nothing else no step builds: {named:#?}"
+    );
+    assert!(
+        !named.iter().any(|d| d.contains("--class obs")),
+        "a single-host site is never sent to an obs run: {named:#?}"
+    );
+}

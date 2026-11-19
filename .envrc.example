@@ -826,6 +826,9 @@ export EVID=""
 # ops/bootstrap/drill/run-rapid-bringup-drill.sh, ops/observability/wide-events/spike/run-spike.sh
 export EVIDENCE=""
 
+# docs/design/deception-layer.md
+export EXAMPLE_DECEPTION_SEED=""
+
 # ops/relay/health/zenoh-fabric-sampler.sh
 export FABRIC_JSON=""
 
