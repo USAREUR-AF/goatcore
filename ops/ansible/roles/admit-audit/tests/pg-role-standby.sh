@@ -10,8 +10,10 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 mkdir "$TMP/bin"
 cat > "$TMP/bin/docker" <<'FAKE'
 #!/usr/bin/env bash
-# Answers pg_is_in_recovery() with $FAKE_RECOVERY; records every other statement.
+# Answers pg_is_in_recovery() with $FAKE_RECOVERY; records every other statement,
+# from the last argument or, with -i, from stdin.
 last="${*: -1}"
+for a in "$@"; do [ "$a" = -i ] && last="$(cat)"; done
 case "$last" in
   *pg_is_in_recovery*) echo "$FAKE_RECOVERY" ;;
   *) printf '%s\n' "$last" >> "$FAKE_LOG" ;;

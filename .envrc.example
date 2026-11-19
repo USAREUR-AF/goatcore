@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 989 variables, 138 of them secret-bearing by name.
+# 992 variables, 141 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 138 variables.
+# 141 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -383,8 +383,17 @@ export SAFE_BROWSING_API_KEY=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.yml, signal-server/cmd/signal-server/main.go
 export SIGNAL_FEDERATION_TOKEN=""  # SECRET
 
+# ops/ansible/site-bootstrap.yml
+export SITE_BKP_KEY=""  # SECRET
+
 # ops/ansible/site-oidc-clients.yml
 export SITE_COMPLIANCE_OIDC_CLIENT_SECRET=""  # SECRET
+
+# ops/ansible/site-bootstrap.yml
+export SITE_NB_ENCKEY=""  # SECRET
+
+# ops/ansible/site-bootstrap.yml
+export SITE_PG_PASS=""  # SECRET
 
 # ops/ci/check-group-vars-parity.sh
 export SITE_SLOT_POOL_SALT=""  # SECRET

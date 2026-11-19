@@ -88,7 +88,7 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
     ));
     v.push(Input::new(
         "first_mgmt_host",
-        format!("mgmt-{site}-01*"),
+        crate::standup::founder_limit(site),
         site_rule("mgmt-<site>-01*, the site's first management host"),
     ));
     for i in s.inv.split_whitespace().filter(|w| *w != "-i") {
