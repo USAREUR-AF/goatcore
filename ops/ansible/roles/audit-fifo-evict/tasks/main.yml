@@ -51,6 +51,53 @@
     quiet: true
   when: minio_audit_bucket_quota_gib is defined
 
+- name: With storage TLS on, the evictor uses the verified HTTPS endpoint (GHSA-9qmp)
+  ansible.builtin.assert:
+    that:
+      - audit_fifo_evict_endpoint is match('^https://')
+      - audit_fifo_evict_ca_path | length > 0
+    fail_msg: >-
+      minio_tls_enabled is true but the evictor endpoint is
+      {{ audit_fifo_evict_endpoint }}. The object store answers only HTTPS after
+      the storage TLS cutover, so an http:// evictor stops evicting and the audit
+      bucket fills to its quota. Leave audit_fifo_evict_endpoint at its default
+      (minio_s3_endpoint) or set an https:// endpoint, with
+      audit_fifo_evict_ca_path naming the site CA.
+    quiet: true
+  when: minio_tls_enabled | default(false) | bool
+
+- name: Prepare the storage trust directory for the evictor
+  ansible.builtin.file:
+    path: "{{ audit_fifo_evict_ca_path | dirname }}"
+    state: directory
+    mode: "0755"
+  when: minio_tls_enabled | default(false) | bool
+
+- name: Install the site CA the evictor verifies the object store against
+  ansible.builtin.copy:
+    src: "{{ minio_tls_ca_src }}"
+    dest: "{{ audit_fifo_evict_ca_path }}"
+    mode: "0644"
+  when:
+    - minio_tls_enabled | default(false) | bool
+    - minio_tls_ca_src | default('') | length > 0
+
+- name: The site CA the evictor trusts is present
+  ansible.builtin.stat:
+    path: "{{ audit_fifo_evict_ca_path }}"
+  register: audit_fifo_evict_ca_stat
+  when: minio_tls_enabled | default(false) | bool
+
+- name: Refuse to install an HTTPS evictor with no site CA to verify against
+  ansible.builtin.assert:
+    that:
+      - audit_fifo_evict_ca_stat.stat.exists
+    fail_msg: >-
+      {{ audit_fifo_evict_ca_path }} is missing. Set minio_tls_ca_src (the minio
+      role installs it there) or place the organization CA at that path.
+    quiet: true
+  when: minio_tls_enabled | default(false) | bool
+
 - name: Create the evictor directory
   ansible.builtin.file:
     path: "{{ audit_fifo_evict_dir }}"

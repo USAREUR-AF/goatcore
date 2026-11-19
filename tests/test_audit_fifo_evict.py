@@ -293,6 +293,7 @@ class StorageTLS(unittest.TestCase):
         import jinja2
         defaults = yaml.safe_load((ROOT / "ops/ansible/roles/audit-fifo-evict/defaults/main.yml").read_text())
         env = jinja2.Environment()
+        env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).strip().lower() in ("true", "yes", "1")
         def resolve(key, **facts):
             return env.from_string(str(defaults[key])).render(**facts)
         on = dict(minio_tls_enabled=True, minio_s3_endpoint="https://storage.example.test:9000",

@@ -53,7 +53,14 @@ class MC:
                 self.config["env_file"]]
         if source is not None:
             argv += ["-v", str(source) + ":/tmp/trail.json:ro"]
-        argv += ["--entrypoint", "mc", self.config["mc_image"], "--json", *args]
+        ca_path = self.config.get("ca_path") or ""
+        config_dir = []
+        if ca_path:
+            # HTTPS storage (GHSA-9qmp): mc verifies the server against the site CA
+            # it finds under <config-dir>/certs/CAs, plus the system roots. Never --insecure.
+            argv += ["-v", ca_path + ":/mc-config/certs/CAs/storage-ca.crt:ro"]
+            config_dir = ["--config-dir", "/mc-config"]
+        argv += ["--entrypoint", "mc", self.config["mc_image"], *config_dir, "--json", *args]
         process = None
         output = bytearray()
         selector = selectors.DefaultSelector()
@@ -126,6 +133,9 @@ def validate(config):
         raise Failure("invalid trail prefix")
     if any(part in (".", "..") for part in config["trail_prefix"].split("/")):
         raise Failure("unsafe trail prefix")
+    ca_path = config.get("ca_path") or ""
+    if ca_path and (not ca_path.startswith("/") or ".." in ca_path.split("/") or ":" in ca_path):
+        raise Failure("ca_path must be an absolute path")
 
 
 def oldest_groups(rows, trail_prefix):
