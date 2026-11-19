@@ -200,6 +200,27 @@ keys and must keep `prov` unchanged. Pods and routers forward the attachment as 
   rules for an org lead to ratify or let lapse.
 - `goat pod` calls this API; Fieldkit Gatepost is a page served by the same API.
 
+### 7.5 Portal API and CLI
+
+| Route | Who | CLI |
+|---|---|---|
+| `POST /api/carriage/pods` `{pod_slot, org}` | operator | `goat carriage pod add <pod-slot> --org <org>` |
+| `GET /api/carriage/pods` | signed in | `goat carriage pod ls` |
+| `POST /api/carriage/rules` `{source_slot or source_org, pod_slot or pod_org, kind, until, reason}` | the source's custodian; accepted by the pod's custodian | `goat carriage allow <source> --pod <pod> --until <time> --reason "…"` |
+| `GET /api/carriage/rules?pod=&source=&state=active\|archived` | signed in | `goat carriage ls` |
+| `POST /api/carriage/rules/{id}/extend` `{until}` | rule owner | `goat carriage extend <rule> --until <time>` |
+| `POST /api/carriage/rules/{id}/revoke` | rule owner, either custodian | `goat carriage revoke <rule>` |
+| `POST /api/carriage/rules/{id}/reactivate` | rule owner, inside the window | `goat carriage reactivate <rule>` |
+| `PUT /api/carriage/sources/{slot}/org-rule` `{opt_out}` | the source's custodian | `goat carriage opt-out <source>` |
+| `GET /api/carriage/pods/{pod_slot}/generation` | the pod's own certificate | — |
+| `POST /api/carriage/pods/{pod_slot}/ledger` | the pod's own certificate | — |
+| `GET /api/carriage/local-rules?state=pending` | org lead | `goat carriage pending` |
+| `POST /api/carriage/local-rules/{id}/ratify` and `/lapse` | org lead of the pod's org | `goat carriage ratify <id>` / `lapse <id>` |
+
+The org rule is created when a pod is registered for an org (`POST /api/carriage/pods`) and covers every source whose
+custodian org is that org, except sources that opted out. Machine enrollment (single and bulk) accepts `keyless: true`,
+`adapters` and `receive` for keyless sources, and `pods` to request named rules at enrollment.
+
 ## 8. Build order
 
 | Phase | What | Status |
