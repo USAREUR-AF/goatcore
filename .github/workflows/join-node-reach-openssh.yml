@@ -1,0 +1,34 @@
+name: join-node reach (real OpenSSH)
+
+# join-node's phase 1 check (ops/scripts/join-node-reach.sh) against real OpenSSH
+# clients and servers: each client image's own ssh, against password-only,
+# publickey-only, closed, non-SSH and jump-host cases on a disposable docker
+# network (tests/join-node-reach-openssh.sh). The fixture tests use a stand-in ssh.
+on:
+  pull_request:
+    paths:
+      - 'ops/scripts/join-node-reach.sh'
+      - 'tests/join-node-reach-openssh.sh'
+      - '.github/workflows/join-node-reach-openssh.yml'
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  openssh:
+    name: phase 1 reach, real OpenSSH clients and servers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Every case on every client
+        env:
+          REACH_PFX: jnr-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash tests/join-node-reach-openssh.sh

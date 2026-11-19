@@ -515,17 +515,17 @@ phases:
 - verb: join-node
   phase: 1
   id: reach
-  kind: MANUAL
-  title: reach the box on the site LAN
-  what: 'A person''s step: find the box''s real LAN address and reach it over ssh, then pass that address as --address. On a Jetson the address first handed over may be the USB device-mode bridge, not the LAN. A phone node (--class phone --via usb) has no LAN address: the step is attaching the phone by USB, allowing USB debugging on it and unlocking it, and no --address is passed.'
-  why: Every later phase reaches the node at this address; a wrong one makes the baseline and enrolment act on another machine or none.
-  changes: Nothing; a person reaches the box.
+  kind: GATE
+  title: the node answers
+  what: 'Before anything is done on the node, checks it answers: over SSH at --address (one batch-mode connection with this machine''s ssh, a 10 s connect timeout and no password prompt, the whole check bounded by JOIN_NODE_REACH_LIMIT, default 30 s; the node has answered when it logs in or when its own host key arrives, which ssh writes to a known_hosts file of the run''s own; a Jetson''s USB bridge address, 192.168.55.0/24, is refused), or for a phone node (--class phone --via usb) over the Android debug bridge (`adb get-state` says device). A login that the node refuses still counts as an answer: before phase 2 seeds this machine''s key, a node that takes only its first-login password refuses every batch login, so phase 1 cannot prove a login and phase 2 does. The run goes on to phase 2; it stops only when the node does not answer (GB-314), with the step for a person.'
+  why: Every later phase reaches the node at this address or over this cable; a wrong address makes the baseline and enrolment act on another machine or none, and a node that does not answer would fail later with less said.
+  changes: 'Nothing on the node, and nothing in this machine''s known_hosts: the node''s host key goes to a temporary file, removed when the check ends. Phase 2''s ssh records it.'
   verify: '`ssh <user>@<address>` reaches the box on the site LAN; for a phone node, `adb devices` lists the phone as `device`'
-  runs: 'nothing: a step for a person, with the instructions the run prints'
-  by_hand: ssh <user>@<the node's LAN address>, then run goatbuilder join-node again with --address <that address>
+  runs: ops/scripts/join-node-reach.sh
+  by_hand: ops/scripts/join-node-reach.sh ssh <user>@<address> (or usb), then run goatbuilder join-node again with --from 1
   read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
-  failed_because: the box is not reachable at the address given
-  then: find its LAN address on the site network, then pass it as --address
+  failed_because: the node does not answer at the address given, or no phone answers over USB
+  then: 'reach the box on the site LAN (ssh <user>@<address>) and pass its real LAN address as --address; for a phone, attach it by USB, allow USB debugging, accept this machine''s key on its screen and unlock it; then resume with --from 1'
 - verb: join-node
   phase: 2
   id: seed-key
@@ -713,11 +713,11 @@ phases:
   id: proven
   kind: GATE
   title: done means proven
-  what: Derives the acceptance values and runs every eligible acceptance row; every applicable row must PASS, never UNKNOWN. A joiner adds the replicating-both-ways evidence.
-  why: A node is joined when its acceptance rows are green, not when its plays exit 0.
-  changes: Nothing on a host; it writes the acceptance values.
+  what: Derives the site's end state and the acceptance values, then runs every eligible acceptance row against that end state; every applicable row must PASS, never UNKNOWN. A row whose services the site declares absent reads N/A. A joiner adds the replicating-both-ways evidence.
+  why: A node is joined when its acceptance rows are green, not when its plays exit 0. Without the end state, a row for a service the site declares absent reads FAIL and stops a run that has nothing to fix.
+  changes: Nothing on a host; it writes the end-state model in the state directory and the acceptance values.
   verify: '`run-acceptance.py` reports every applicable row PASS'
-  runs: ops/validation/generate-values.py, ops/validation/run-acceptance.py
+  runs: ops/goatbuilder/endstate/endstate.py, ops/validation/generate-values.py, ops/validation/run-acceptance.py
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 15 --to 15 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#done-means-proven-not-deployed
   failed_because: an applicable row is not PASS
@@ -1030,3 +1030,227 @@ phases:
   read: docs/design/fastlane.md#what-fastlane-is
   failed_because: a goatnet did not converge or is unreachable
   then: 'the pin is in main: re-run goatbuilder deploy for that goatnet once its hosts are reachable, or goatbuilder rollback <component>'
+- verb: teardown
+  phase: 2
+  id: baseline
+  kind: A
+  title: 'phase 2: the host baseline is kept; the observability host''s Forgejo comes down'
+  what: 'Takes down what standup''s phase 2 applied: the host baseline and LUKS are kept (the next standup reuses them), and on a site with an observability host its Forgejo comes down (compose-down, volumes kept). The observability host''s own baseline and utility steps are undeclared, so a full teardown that reaches them refuses.'
+  why: 'Teardown takes a site down in the reverse of standup''s order, and only as far as it can without destroying data: each applied step comes down as ops/goatbuilder/teardown.yaml declares, and a step that holds data is refused rather than removed.'
+  changes: 'On the observability host: Forgejo''s compose project stopped, volumes kept. Nothing on the core hosts.'
+  verify: Forgejo's project lists no container (`docker compose ps -q`); a record in /var/lib/goat/forgejo/teardown.jsonl
+  runs: ops/ansible/teardown-compose.yml
+  by_hand: goatbuilder teardown <env> --site <site> --from 2 --to 2 [--services]
+  read: docs/reference/goatbuilder/command-reference.md#goatbuilder-teardown
+  failed_because: the stop failed on the host, or a reached step is undeclared or refused
+  then: read the play's failed task; for an undeclared step, declare it in ops/goatbuilder/teardown.yaml or take it down by hand
+- verb: teardown
+  phase: 5
+  id: mgmt-stack
+  kind: A + GATE
+  title: 'phase 5: the mgmt stack is refused; the relay client stops'
+  what: 'Takes down what standup''s phase 5 applied: on an internet site the relay client (rathole-client) is stopped and disabled, its unit files kept; the mgmt stack itself is refused, because reversing it destroys the NetBird account and its database. A full teardown that reaches it refuses before touching anything; --services stops the relay client only.'
+  why: 'Teardown takes a site down in the reverse of standup''s order, and only as far as it can without destroying data: each applied step comes down as ops/goatbuilder/teardown.yaml declares, and a step that holds data is refused rather than removed.'
+  changes: 'On an internet site''s core host: the rathole-client unit stopped and disabled. Nothing else.'
+  verify: no rathole-client unit is active; the verdict names the mgmt stack as refused
+  runs: ops/ansible/teardown-systemd.yml
+  by_hand: goatbuilder teardown <env> --site <site> --from 5 --to 5 [--services]
+  read: docs/reference/goatbuilder/command-reference.md#goatbuilder-teardown
+  failed_because: the mgmt stack is refused (data), or the unit stop failed
+  then: take the mgmt stack down by hand, knowing it destroys the account; or run with --services to stop the services only
+- verb: teardown
+  phase: 6
+  id: ory
+  kind: GATE
+  title: 'phase 6: the identity stack and the account seed are refused'
+  what: Standup's phase 6 builds the identity store (Ory) and seeds the NetBird account (on a joiner, also the Spock wiring and the data-only copy from the founder). Reversing any of it destroys identities or replicated data, so teardown refuses each (and the joiner's wiring steps are undeclared). A full teardown that reaches phase 6 refuses before touching anything.
+  why: 'Teardown takes a site down in the reverse of standup''s order, and only as far as it can without destroying data: each applied step comes down as ops/goatbuilder/teardown.yaml declares, and a step that holds data is refused rather than removed.'
+  changes: Nothing.
+  verify: the verdict names each phase 6 step as refused or undeclared
+  runs: 'nothing it starts: it reads ops/goatbuilder/teardown.yaml'
+  by_hand: goatbuilder teardown <env> --site <site> --from 6 --to 6 [--services]
+  read: docs/reference/goatbuilder/command-reference.md#goatbuilder-teardown
+  failed_because: a reached step is refused (data) or undeclared
+  then: take the identity stack down by hand, knowing what it destroys; --services leaves it in place
+- verb: teardown
+  phase: 7
+  id: public-tls
+  kind: GATE
+  title: 'phase 7: the certificate is kept; the relay tier is refused'
+  what: 'Takes down what standup''s phase 7 applied on an internet site: the public TLS certificate is kept, and the relay tier (coturn, rathole, TLS renewal) is refused, because other sites'' links run through it; a joiner''s relay-ingress wiring is undeclared. A full teardown that reaches it refuses.'
+  why: 'Teardown takes a site down in the reverse of standup''s order, and only as far as it can without destroying data: each applied step comes down as ops/goatbuilder/teardown.yaml declares, and a step that holds data is refused rather than removed.'
+  changes: Nothing.
+  verify: the verdict names the relay tier as refused
+  runs: 'nothing it starts: it reads ops/goatbuilder/teardown.yaml'
+  by_hand: goatbuilder teardown <env> --site <site> --from 7 --to 7 [--services]
+  read: docs/reference/goatbuilder/command-reference.md#goatbuilder-teardown
+  failed_because: the relay tier is refused, or a joiner's step is undeclared
+  then: take the relay tier down by hand once no other site depends on it; --services leaves it in place
+- verb: teardown
+  phase: 8
+  id: mesh-enroll
+  kind: GATE
+  title: 'phase 8: the enrolment is kept'
+  what: 'Standup''s phase 8 enrols the hosts in the mesh with single-use keys. Teardown keeps the enrolment: the hosts stay peers, and the next standup reuses them.'
+  why: 'Teardown takes a site down in the reverse of standup''s order, and only as far as it can without destroying data: each applied step comes down as ops/goatbuilder/teardown.yaml declares, and a step that holds data is refused rather than removed.'
+  changes: Nothing.
+  verify: the step reads `keep`
+  runs: 'nothing it starts: it reads ops/goatbuilder/teardown.yaml'
+  by_hand: goatbuilder teardown <env> --site <site> --from 8 --to 8 [--services]
+  read: docs/reference/goatbuilder/command-reference.md#goatbuilder-teardown
+  failed_because: nothing fails here
+  then: remove a host from the mesh by hand in NetBird when it is retired
+- verb: teardown
+  phase: 9
+  id: router
+  kind: A + GATE
+  title: 'phase 9: the router and SPIRE stop; signal federation is refused'
+  what: 'Takes down what standup''s phase 9 applied: the zenoh router comes down (compose-down, volumes kept), the SPIRE server stops in its shared compose project, and on a site with an observability host its stack (Prometheus, Alertmanager, Grafana) comes down. Signal federation''s steps (tokens, proxies, relays, tunnels) are refused, because the other site''s half depends on them.'
+  why: 'Teardown takes a site down in the reverse of standup''s order, and only as far as it can without destroying data: each applied step comes down as ops/goatbuilder/teardown.yaml declares, and a step that holds data is refused rather than removed.'
+  changes: 'On the core hosts: the zenoh router''s project stopped and the SPIRE service stopped, containers and volumes kept. On the observability host: its stack stopped, volumes kept.'
+  verify: the router's and the obs stack's projects list no container; no SPIRE container runs; a record per component in teardown.jsonl
+  runs: ops/ansible/teardown-compose.yml, ops/ansible/teardown-service-stop.yml
+  by_hand: goatbuilder teardown <env> --site <site> --from 9 --to 9 [--services]
+  read: docs/reference/goatbuilder/command-reference.md#goatbuilder-teardown
+  failed_because: a stop failed, or signal federation is refused
+  then: read the play's failed task; take signal federation down by hand at both sites, together
+- verb: teardown
+  phase: 10
+  id: surfaces
+  kind: A + GATE
+  title: 'phase 10: the dashboard stops; the OIDC clients are refused'
+  what: 'Takes down what standup''s phase 10 applied: the NetBird dashboard stops in its shared compose project. The OIDC clients are refused (they are identity data), and a LAN site''s service surface and TLS routes are undeclared.'
+  why: 'Teardown takes a site down in the reverse of standup''s order, and only as far as it can without destroying data: each applied step comes down as ops/goatbuilder/teardown.yaml declares, and a step that holds data is refused rather than removed.'
+  changes: 'On the core host: the dashboard service stopped, container and volumes kept.'
+  verify: no dashboard container runs; a record in teardown.jsonl
+  runs: ops/ansible/teardown-service-stop.yml
+  by_hand: goatbuilder teardown <env> --site <site> --from 10 --to 10 [--services]
+  read: docs/reference/goatbuilder/command-reference.md#goatbuilder-teardown
+  failed_because: the stop failed, or a reached step is refused or undeclared
+  then: read the play's failed task; take the refused or undeclared step down by hand
+- verb: teardown
+  phase: 12
+  id: control-plane
+  kind: A + GATE
+  title: 'phase 12: the services stop; the declared ACL and the account baseline are refused'
+  what: 'Takes down what standup''s phase 12 applied, in reverse: the portal, onboard-runner, the onboarding intake, the notional pub/sub, mesh CoreDNS and grant-keyd come down (compose-down, volumes kept), and the pub/sub state mirror is kept (it stops with the portal). The declared NetBird ACL and the account baseline are refused: reversing them changes who can reach whom, for every site. A joiner''s mesh CoreDNS replica is undeclared, so a full teardown that reaches it refuses.'
+  why: 'Teardown takes a site down in the reverse of standup''s order, and only as far as it can without destroying data: each applied step comes down as ops/goatbuilder/teardown.yaml declares, and a step that holds data is refused rather than removed.'
+  changes: 'On the core hosts: each service''s compose project stopped, volumes kept.'
+  verify: each service's project lists no container; a record per component in teardown.jsonl
+  runs: ops/ansible/teardown-compose.yml
+  by_hand: goatbuilder teardown <env> --site <site> --from 12 --to 12 [--services]
+  read: docs/reference/goatbuilder/command-reference.md#goatbuilder-teardown
+  failed_because: a stop failed, or the ACL or the account baseline is refused
+  then: read the play's failed task; change the ACL through its declaration instead of tearing it down
+- verb: teardown
+  phase: 14
+  id: cross-goatnet
+  kind: T
+  title: 'phase 14: the cross-goatnet surfaces are taken out'
+  what: 'Runs ops/goatnets/cross-env-apply.sh --absent <site> on the operator machine, which redeploys every relay-health box without this site. It refuses while ops/goatnets/cross-env.yaml still lists the site: remove its row by pull request first. Not a service stop, so --services leaves it in place.'
+  why: 'Teardown takes a site down in the reverse of standup''s order, and only as far as it can without destroying data: each applied step comes down as ops/goatbuilder/teardown.yaml declares, and a step that holds data is refused rather than removed.'
+  changes: 'On every relay-health box: its overview, redeployed without this site.'
+  verify: the site is gone from every relay-health overview
+  runs: ops/goatnets/cross-env-apply.sh
+  by_hand: 'goatbuilder teardown <env> --site <site> --from 14 --to 14 [--services]; by hand: ops/goatnets/cross-env-apply.sh --absent <site>'
+  read: docs/reference/goatbuilder/command-reference.md#goatbuilder-teardown
+  failed_because: the site is still listed in ops/goatnets/cross-env.yaml, or a box could not be redeployed
+  then: remove the site's row from cross-env.yaml by pull request, then run it again
+- verb: federate-backout
+  phase: 1
+  id: survey
+  kind: GATE
+  title: 'read every host of this peering: what exists, and the core''s candidate'
+  what: 'Runs ops/ansible/peering-backout.yml read-only against every host of this peering: which of its resources exist on each, each found by the peering id and this peering''s own group values, and the core''s candidate configuration (the org fragment without this partner''s blocks, assembled by the core''s own assembler) with its digest. --dry-run stops after it and prints every resource it would remove, per host.'
+  why: A back-out removes ONE peering and leaves every other one and the core as they were, so it first finds exactly what is this peering's.
+  changes: Nothing; it only reads.
+  verify: a per-host list of present and absent resources, and the core's candidate digest
+  runs: ops/ansible/peering-backout.yml (ops/scripts/with-aws, ops/scripts/ansible-preflight.sh)
+  by_hand: goatbuilder federate backout <partner> [--env <env>] [--edge-group <edge-group>] [--work <work>] --dry-run
+  read: docs/operations/sovereign-federation-runbook.md#step-9-as-one-command
+  failed_because: a host is unreachable, or a resource cannot be told apart from another peering's
+  then: 'reach the host, or read the refusal: it names the resource and why it is not this peering''s'
+- verb: federate-backout
+  phase: 2
+  id: confirm
+  kind: CONFIRM
+  title: a person types the partner id
+  what: Asks a person to type the partner's id before anything changes; --yes answers it without a terminal, and without a terminal and without --yes the back-out is refused (C10).
+  why: Removing a peering cuts a partner off; it happens only on a person's word.
+  changes: Nothing.
+  verify: the typed id matches the partner; otherwise `not confirmed; nothing was changed`
+  runs: nothing it starts
+  by_hand: goatbuilder federate backout <partner> [--env <env>] [--edge-group <edge-group>] [--work <work>] (at a terminal), or the same with --yes
+  read: docs/operations/sovereign-federation-runbook.md#step-9-as-one-command
+  failed_because: the id typed is not the partner's
+  then: run it again and type the partner's id exactly
+- verb: federate-backout
+  phase: 3
+  id: remove
+  kind: A
+  title: remove the tunnel, SPIRE trust, edge router, republisher and forwarder mapping
+  what: 'Runs ops/ansible/peering-backout.yml with peering_backout_apply=true: each role''s own tasks/absent.yml removes this peering''s tunnel, its SPIRE trust domain and forwards, its edge router, its republisher and its forwarder mapping, and nothing of any other peering''s.'
+  why: 'The partner is cut off at our edge first: it takes effect at once and needs no cooperation from them (the runbook''s Step 9).'
+  changes: 'On this peering''s edge, core and forwarder hosts: this peering''s resources removed.'
+  verify: a second survey finds each of them absent
+  runs: ops/ansible/peering-backout.yml
+  by_hand: goatbuilder federate backout <partner> [--env <env>] [--edge-group <edge-group>] [--work <work>] --yes
+  read: docs/operations/sovereign-federation-runbook.md#step-9-as-one-command
+  failed_because: a role's absent task failed
+  then: read the play's failed task; running the back-out again is safe, it removes only what is still there
+- verb: federate-backout
+  phase: 4
+  id: recheck
+  kind: GATE
+  title: the slot list against the registry, before the core restarts
+  what: Immediately before the core router restarts, checks the slot list against the registry (ops/scripts/sync-slot-anchors.py), as the admission path does, and refuses the restart when they disagree (GB-223).
+  why: A core restart on a stale slot list would drop or mis-route another peering's slots.
+  changes: Nothing.
+  verify: the slot recheck passes
+  runs: ops/scripts/sync-slot-anchors.py
+  by_hand: python3 ops/scripts/sync-slot-anchors.py (as the back-out runs it, in check mode)
+  read: docs/operations/sovereign-federation-runbook.md#step-9-as-one-command
+  failed_because: the slot list and the registry disagree
+  then: regenerate and commit the slot list, then run the back-out again; the edge side is already removed
+- verb: federate-backout
+  phase: 5
+  id: core
+  kind: A
+  title: the reviewed core candidate, the restart, and the partner's store
+  what: Installs the reviewed core candidate and restarts the core router, refused when the core's digest changed since the survey. On a core configured from roles/goat-zenoh, it also takes the partner out of the role's list, restarts the router without the partner's store, and then drops that store whole (ADR 1234, ops/ansible/zenoh-drop-partner-store.yml).
+  why: The core must stop admitting the partner and stop holding its data; the digest check means the core changed only as reviewed.
+  changes: 'On the core host: the router''s configuration without this partner, the router restarted, the partner''s store directory deleted. In the checkout: the role''s peerings list without the partner, for review.'
+  verify: the core runs the candidate digest; a second survey finds the partner's store absent
+  runs: ops/ansible/peering-backout.yml (peering_backout_core_apply), ops/ansible/zenoh-drop-partner-store.yml
+  by_hand: goatbuilder federate backout <partner> [--env <env>] [--edge-group <edge-group>] [--work <work>] --yes
+  read: docs/operations/sovereign-federation-runbook.md#step-9-as-one-command
+  failed_because: the core's digest changed since the survey, or the restart failed
+  then: survey again (run the back-out again) and review the new candidate
+- verb: federate-backout
+  phase: 6
+  id: directory
+  kind: T
+  title: withdraw our package for this counterparty
+  what: Withdraws our package for this counterparty from the directory (/v1/parties/<us>/packages/<them>), with ops/federation/standup/directory_withdraw.py; our single entry and every other party's entry are never touched.
+  why: Our package for them is how they would find us again; it goes, and nothing else does.
+  changes: 'In the peering directory: our package for this counterparty removed.'
+  verify: the directory no longer serves our package for them
+  runs: ops/federation/standup/directory_withdraw.py
+  by_hand: python3 ops/federation/standup/directory_withdraw.py (with the directory URL and our signing key)
+  read: docs/operations/sovereign-federation-runbook.md#step-9-as-one-command
+  failed_because: the directory could not be reached or refused the withdrawal
+  then: run the back-out again once the directory answers; nothing else is redone
+- verb: federate-backout
+  phase: 7
+  id: record
+  kind: T
+  title: the partner record leaves the checkout; survey again; the result
+  what: Deletes the generated partner record (ops/federation/partners/<partner>.yaml) from the checkout, for review, then surveys again and writes <work>/backout/result.json with what was found before and after.
+  why: The checkout must stop declaring the partner, and the result is the proof of what the back-out removed.
+  changes: 'In the checkout: the partner record deleted (commit it through review). In the working directory: backout/result.json.'
+  verify: the second survey finds every resource absent; result.json is written
+  runs: ops/ansible/peering-backout.yml (the second survey)
+  by_hand: goatbuilder federate backout <partner> [--env <env>] [--edge-group <edge-group>] [--work <work>] --yes; then commit the deleted partner record
+  read: docs/operations/sovereign-federation-runbook.md#step-9-as-one-command
+  failed_because: the second survey still finds a resource
+  then: run the back-out again; it removes only what is still there
