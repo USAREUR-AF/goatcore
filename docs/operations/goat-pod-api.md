@@ -1,0 +1,76 @@
+# goat-pod-api: carriage on a pod
+
+| Field | Value |
+|---|---|
+| Status | Built (`ops/goat-pod-api`); runs on a pod host as `goat-pod-api.service`, installed by the pod's first-boot |
+| Canon | [ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md), [`pod-carriage-and-provenance.md`](../design/pod-carriage-and-provenance.md) §4 and §7.4 |
+
+goat-pod-api lets devices that hold their own goat certificate publish and read through a pod under their own slot. It pulls
+the pod's signed rule generation from the portal, adds the pod's local rules, renders the pod router's ACL, restarts the
+router, and rolls back to the last known good configuration if the router does not come up healthy. While the pod is cut
+off, the people named as its local authority change its rules through the local API; each change is signed into a ledger
+the portal receives on reconnection.
+
+## Install
+
+The pod repository's `host/first-boot.sh` installs it when `goat-pod-api` is on the host's `PATH` and the profile sets
+`POD_API_SIGNER_CERT`. Build the binary from this repository:
+
+```sh
+cd ops/goat-pod-api && CGO_ENABLED=0 go build -o goat-pod-api .
+```
+
+first-boot writes `<state>/pod-api/config.json` and the systemd unit. The configuration keys:
+
+| Key | Meaning |
+|---|---|
+| `pod_slot` | the pod's slot |
+| `state_dir` | holds `generation.json` (last good generation), `central-archive.json`, `ledger.jsonl` and `ledger.jsonl.ack` |
+| `portal_url`, `portal_ca` | portal base URL (empty: no pulls, no uploads) and the CA for its TLS certificate (empty: system roots) |
+| `portal_signer_cert` | certificate whose key signs generations; its CN must equal the generation's `signer` |
+| `pod_cert`, `pod_key`, `ca_roots` | the pod's leaf (client certificate toward the portal, server certificate for the local API) and the roots that verify sign-in certificates |
+| `listen` | local API addresses, for example `["127.0.0.1:8447", "<mesh address>:8447"]` |
+| `router.*` | `base_config` (first-boot's template rendering with the carriage markers), `config` (live), `last_good`, `applied_sha_file`, `container` |
+| `pull_interval_seconds`, `cutoff_after_seconds` | 60 and 300 by default; the pod reports itself cut off after the second without portal contact |
+| `max_rule_days`, `reactivation_days` | 90 and 183 by default; the longest local end date and the reactivation window |
+| `health_publish` | `{"enabled": true}` publishes carriage health on `ops/pod/health/<pod-slot>` with `goat pub` |
+| `gatepost_page` | the Gatepost page served at `/`; a page naming the `goat pod` commands is served when it is absent |
+
+## Commands
+
+| Command | Does |
+|---|---|
+| `goat-pod-api serve --config <file>` | runs the service: pull, upload, re-render on expiry, local API |
+| `goat-pod-api render --config <file> --out <file>` | renders the router configuration from saved state, restarts nothing (first-boot uses it) |
+| `goat-pod-api adopt --config <file> <generation.json>` | verifies and applies a generation file, for a pod with no portal link |
+| `goat-pod-api status --config <file>` | prints the status from saved state |
+
+## Local API
+
+HTTPS with client-certificate sign-in. Any certificate the pod's CA roots verify may read; only a certificate whose CN the
+held generation names in `local_authority` may change rules. Routes and bodies: design §7.4.
+
+| Question | Route |
+|---|---|
+| Is the pod connected, how old are its rules, what does it carry? | `GET /v1/status` |
+| Which rules, central and local, with end dates? | `GET /v1/rules` |
+| Let a device use this pod | `POST /v1/rules {"source": "<slot>.g<N>", "until": "...", "reason": "..."}` |
+| Extend or reactivate a rule | `POST /v1/rules/<id>/extend` or `/reactivate` with `{"until", "reason"}` |
+| Cut a device off this pod now | `POST /v1/sources/<slot>/revoke {"until", "reason"}` |
+| Local changes the portal has not received | `GET /v1/pending` |
+
+For example, from the pod host with the local authority's certificate:
+
+```sh
+curl --cacert ca-roots.pem --cert lead.pem --key lead.key https://127.0.0.1:8447/v1/status
+```
+
+## When something is wrong
+
+| Symptom | Meaning and action |
+|---|---|
+| `status.last_pull_error` names a signature | the generation does not verify against `portal_signer_cert`; confirm the signer certificate through the onboarding channel. The pod keeps the generation it holds |
+| `... is lower than the N this pod holds` | the portal served an older generation; the pod refuses it. A goat-side operator checks the portal |
+| `generation N was rejected by the router earlier` | the router did not come up with that generation; the previous configuration is running. The pod waits for a newer generation. Router log: `docker logs goat-moon-zenoh-router` |
+| `POST` answers `202` with `warning` | the change is in the ledger but the router refused the rendering and the previous configuration is running |
+| the service will not start: `ledger line N ...` | the ledger was edited or truncated; the pod refuses to run on it. Keep the file for the goat-side operator |

@@ -147,7 +147,10 @@ The portal renders one generation per pod. The pod pulls it, verifies it, render
   source the ingress adapters declared for it. `until` is null only for an org rule.
 - `read` is the goatnet's read set for carried sources, a portal setting. It never contains a bare `**`.
 - The signature covers the document without `signature`, serialized as JSON with sorted keys and no insignificant
-  whitespace, prefixed by the bytes `goat-carriage-v1\n`. The pod verifies it against the portal signer certificate in its
+  whitespace, prefixed by the bytes `goat-carriage-v1\n`. Exactly: numbers as written, strings as UTF-8 with `<`, `>`
+  and `&` not escaped, no trailing newline (Go `encoding/json` with `SetEscapeHTML(false)`; Python
+  `json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`). The signature is ASN.1 DER ECDSA
+  P-256 over the SHA-256 of those bytes, base64. The pod verifies it against the portal signer certificate in its
   bundle and refuses a generation lower than the one it holds.
 - Pull: `GET /api/carriage/pods/{pod_slot}/generation`, authenticated by the pod's own certificate.
 
@@ -200,6 +203,42 @@ keys and must keep `prov` unchanged. Pods and routers forward the attachment as 
   rules for an org lead to ratify or let lapse.
 - `goat pod` calls this API; Fieldkit Gatepost is a page served by the same API.
 
+Built in goatcore `ops/goat-pod-api` (pod side; operator page
+[`goat-pod-api.md`](../operations/goat-pod-api.md)). The details the routes and the ledger settle:
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET /v1/status` | — | `state` (`connected`, `cut off`, `no portal`), `generation`, `generation_age_seconds`, `last_contact`, `sources_carried`, `sources` (per source: `state` carried, revoked, expired, archived or settled; `origin`; `until`; `principals`), `pending`, `ledger_unsent`, `local_authority`, `max_rule_days`, `reactivation_days`, last pull, apply and upload errors. `sources_connected` is `null`: which carried devices hold a session now is not measured |
+| `GET /v1/rules` | — | `rules`: every rule the pod knows (central from the held generation, central rules seen in earlier generations as `archived`, local rules), each with `id`, `source`, `kind`, `origin`, `state`, `until`, `local_until`, `ended_at`, `principals`, `write`, `pending`; `revocations`: local revokes in force |
+| `POST /v1/rules` | `{source, until, reason, principals?}` | `201 {entry}`. `source` is a slot, or a certificate name `<slot>.g<N>` that becomes the principal; a bare slot is accepted only for a source the pod has carried before (its principals are reused) |
+| `POST /v1/rules/{id}/extend` | `{until, reason}` | `200 {entry}`; active named, temporary or local rules only (an org rule has no end date) |
+| `POST /v1/rules/{id}/reactivate` | `{until, reason}` | `200 {entry}`; an archived, expired or revoked rule that ended inside the reactivation window |
+| `POST /v1/sources/{slot}/revoke` | `{until, reason}` | `200 {entry}`; the source is cut off this pod until `until`, then its rules apply again |
+| `GET /v1/pending` | — | `{pending: [ledger lines the portal has not acknowledged]}` |
+
+- Errors are `{error, code}`: 400 `invalid`, 401 `no_client_certificate`, 403 `not_authorized`, 404 `not_found`, 409
+  `conflict`. A change the router refuses is still recorded: `202 {entry, warning}`, with the previous configuration
+  running again.
+- `until` must be in the future and no later than the longest rule length (90 days by default, the pod setting
+  `max_rule_days`); `reason` is required, at most 500 characters. A pod holding no generation names no local authority
+  and refuses every change.
+- Ledger line (`goat.pod.ledger/v1`): `{schema, pod_slot, seq, ts, action (allow|extend|revoke|reactivate), rule_id
+  ("lr_<16 hex>" for a local rule, or the central rule it extends or reactivates), source, principals, write, until,
+  reason, authority {identity, cert_cn}, generation (the central generation held), prev_sha256 (SHA-256 of the previous
+  line's bytes, empty for line 1), signer (pod certificate CN), sig}`. `sig` covers the line without `sig`, serialized
+  as in §7.1, prefixed by `goat-pod-ledger-v1\n`, signed with the pod's key. The pod refuses to start on a ledger
+  whose signatures or chain do not verify.
+- Upload: `POST /api/carriage/pods/{pod_slot}/ledger`, `Content-Type: application/x-ndjson`, the lines after the last
+  acknowledged one; the portal answers `{accepted, last_seq}` and deduplicates on `(pod_slot, seq)`.
+- Ratification reaches the pod through the generation. Once the portal has acknowledged a line and the pod receives a
+  generation with a higher number than the one it held at acknowledgment, the portal decides that local grant: a
+  ratified rule is in the generation, a lapsed one is absent, and the local rule shows as `settled`. The portal therefore
+  bumps a pod's generation on ratify and on lapse. Local revokes are not handed over; they hold until their `until`.
+- Carriage health: when the pod setting `health_publish` is on, the pod publishes the JSON form of `EnvHealthV1`
+  (`domain` `pod`, `scope` the pod slot, `detail.pod` the status above) on `ops/pod/health/<pod-slot>` each pull interval
+  with `goat pub`, and its rendering admits that one key from the pod's own identity toward the fabric. The core admits it
+  with phase 4. Off by default.
+
 ### 7.5 Portal API and CLI
 
 | Route | Who | CLI |
@@ -227,8 +266,8 @@ custodian org is that org, except sources that opted out. Machine enrollment (si
 |---|---|---|
 | 0 | Guidance: no hand-edited pod ACL entries; interim key convention `<pod-slot>/routed/<source-slot>/…`, documented as unverified | Can do now |
 | 1 | Measure: duplicate delivery over two live paths, signature overhead per sample (ACL reload is settled: restart, F-156) | First |
-| 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Designed |
+| 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Pod side built (`ops/goat-pod-api`: pull, verify, render, apply with rollback; tested against zenohd 1.9.0 in zagros-moon-pod `tests/pod-carriage-local.sh`); portal side, router hints and bulk file not built here |
 | 3 | Provenance: attachment signature, grades, keyless sources, ASTERIX ingress adapter, verification in the CLI | Designed |
 | 4 | Core ACL rendering, carriage health, drift check | Designed; after the current security fixes to the core template are disclosed |
-| 5 | Local authority: pod API and ledger, `goat pod`, ratification, then Gatepost | Designed |
+| 5 | Local authority: pod API and ledger, `goat pod`, ratification, then Gatepost | Pod API and ledger built (`ops/goat-pod-api`; serves Gatepost at `/` when the page is installed); `goat pod`, ratification and Gatepost not built here |
 | 6 | Move existing devices: route-only updates, enrollment of identity-less sources, retirement of interim `routed/` prefixes | Designed; per pod, after phase 2 |
