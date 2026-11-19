@@ -1,0 +1,29 @@
+---
+# spock-forward-origins-check — defaults.
+#
+# A subscription with forward_origins set in a mesh replicates in a loop; the
+# install refuses it (GB-351), and an alert fires if a subscription has it set.
+# Design: docs/design/spock-mesh-peering.md.
+
+# Settings that feed spock.sub_create()'s forward_origins. Each must be empty
+# or ['none']. A deployment's group_vars set them; the roles default both to [].
+spock_forward_origins_check_settings:
+  spock_mesh_forward_origins: "{{ spock_mesh_forward_origins | default([]) }}"
+  ory_spock_forward_origins: "{{ ory_spock_forward_origins | default([]) }}"
+
+# The Postgres container on this host, and the default for a peer that does not
+# set spock_mesh_postgres_container. The same convention as spock-mesh-peering.
+spock_forward_origins_check_container: "{{ spock_mesh_postgres_container | default('postgres-a') }}"
+
+# Also read every peer's subscriptions: the hosts in mgmt_hosts that set
+# participates_in_spock (router_role A, or no router_role), other than this one.
+spock_forward_origins_check_peers: true
+
+# Install the spock-forward-origins timer, which writes
+# spock_subscription_forward_origins for node-exporter's textfile collector
+# every minute (the alert SpockSubscriptionForwardOriginsSet reads it).
+spock_forward_origins_watch: false
+spock_forward_origins_watch_interval: 60s
+# node-exporter's textfile directory on this host (node-exporter role,
+# node_exporter_textfile_host_dir).
+spock_forward_origins_metrics_dir: "{{ node_exporter_textfile_host_dir | default('/var/lib/node_exporter/textfile') }}"
