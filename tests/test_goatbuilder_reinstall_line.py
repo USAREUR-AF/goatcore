@@ -152,9 +152,10 @@ class ReinstallLine(unittest.TestCase):
         self.assertIn(f"--certificate-identity 'https://github.com/{REPO}/.github/workflows/"
                       f"_release-binary.yml@refs/tags/{TAG}'", line)
         self.assertIn('--certificate-oidc-issuer https://token.actions.githubusercontent.com', line)
-        self.assertIn(f"--certificate-github-workflow-repository '{REPO}'", line)
-        self.assertIn(f"--certificate-github-workflow-ref 'refs/tags/{TAG}'", line)
-        self.assertIn('--certificate-github-workflow-name goatbuilder-release', line)
+        # The exact identity alone pins repository, workflow and tag; nothing reads
+        # Fulcio's deprecated GitHub workflow extensions.
+        self.assertNotIn('--certificate-github-workflow', line)
+        self.assertNotIn('--certificate-identity-regexp', line)
 
     def test_verified_release_replaces_the_installed_binary(self):
         for shell in ('bash', 'sh', 'zsh'):
@@ -165,7 +166,6 @@ class ReinstallLine(unittest.TestCase):
                 self.assertIn('goatbuilder 0.7.3 (fixture)', r.stdout)
                 self.assertIn(f"--certificate-identity https://github.com/{REPO}/.github/workflows/"
                               f"_release-binary.yml@refs/tags/{TAG}", events)
-                self.assertIn(f"--certificate-github-workflow-ref refs/tags/{TAG}", events)
                 self.assertEqual(left, [], 'the temporary directory was left behind')
 
     def test_without_sha256sum_it_uses_shasum(self):
