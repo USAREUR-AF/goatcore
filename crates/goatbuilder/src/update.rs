@@ -581,15 +581,64 @@ pub fn doctor_row(repo: &Path, site: Option<&str>) -> Option<Check> {
 #[cfg(test)]
 mod tests {
 
-    #[test]
-    fn the_signer_comes_from_config_then_provenance_never_a_name_in_the_code() {
-        assert_eq!(super::release_signer(Some("org/a".into()), Some("org/b")).as_deref(), Some("org/a"));
-        assert_eq!(super::release_signer(None, Some("org/b")).as_deref(), Some("org/b"));
-        assert_eq!(super::release_signer(Some(" ".into()), None), None);
-        assert_eq!(super::release_signer(None, None), None);
+    use super::*;
+
+    fn repos(s: &[Signer]) -> Vec<&str> {
+        s.iter().map(|s| s.repo.as_str()).collect()
     }
 
-    use super::*;
+    /// The declared signers are always trusted; a configured one is added
+    /// after them, once, and a blank one adds nothing. The binary's own build
+    /// provenance is never consulted.
+    #[test]
+    fn the_declared_signers_are_always_trusted_and_a_configured_one_is_an_addition() {
+        let declared: Vec<&str> = RELEASE_SIGNERS.iter().map(|(r, _)| *r).collect();
+        assert_eq!(repos(&release_signers(None)), declared);
+        assert_eq!(repos(&release_signers(Some(" ".into()))), declared);
+        let mut with = declared.clone();
+        with.push("example-org/releases");
+        assert_eq!(repos(&release_signers(Some("example-org/releases".into()))), with);
+        let same = declared[0].to_ascii_lowercase();
+        assert_eq!(repos(&release_signers(Some(same))), declared, "GitHub names match without case: no second copy");
+        let added = release_signers(Some("example-org/releases".into()));
+        assert_eq!(added.last().unwrap().workflow, signature::RELEASE_WORKFLOW);
+    }
+
+    /// Each declared signer is `<owner>/<repo>` and a workflow file name; the
+    /// first signs the releases built from this tree, so its workflow is here.
+    #[test]
+    fn the_first_declared_signer_signs_this_tree_and_its_workflow_is_in_it() {
+        assert!(!RELEASE_SIGNERS.is_empty());
+        for (repo, workflow) in RELEASE_SIGNERS {
+            let parts: Vec<&str> = repo.split('/').collect();
+            assert!(parts.len() == 2 && parts.iter().all(|p| !p.is_empty() && !p.contains(char::is_whitespace)), "{repo}");
+            assert!(workflow.ends_with(".yml") && !workflow.contains('/'), "{workflow}");
+        }
+        let tree = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let first = tree.join(".github/workflows").join(RELEASE_SIGNERS[0].1);
+        assert!(first.is_file(), "{} is not in this tree", first.display());
+    }
+
+    /// The overlap rule (ADR 1252): a binary accepts a release signed by any
+    /// signer it trusts. So a binary that trusts only the old signer refuses
+    /// a release by the new one, and a signer change must first ship, signed
+    /// by the old signer, in a release that trusts both.
+    #[test]
+    fn a_signer_change_reaches_installs_only_through_a_release_that_trusts_both() {
+        let s = |r: &str| Signer { repo: r.into(), workflow: signature::RELEASE_WORKFLOW.into() };
+        let check = |trusts: &[Signer], signed_by: &str| first_verified(trusts, |t| if t.repo == signed_by { Ok(t.repo.clone()) } else { Err(format!("not {}", t.repo)) });
+        let old_only = [s("example-org/old")];
+        let both = [s("example-org/old"), s("example-org/new")];
+        assert_eq!(check(&old_only, "example-org/old"), Ok("example-org/old".into()));
+        assert_eq!(check(&old_only, "example-org/new"), Err(vec![("example-org/old".into(), "not example-org/old".into())]), "skipping the overlap strands old_only");
+        assert_eq!(check(&both, "example-org/old"), Ok("example-org/old".into()), "the overlap release, signed by the old signer");
+        assert_eq!(check(&both, "example-org/new"), Ok("example-org/new".into()), "the next, signed by the new signer alone");
+        assert_eq!(
+            check(&both, "example-org/forks"),
+            Err(vec![("example-org/old".into(), "not example-org/old".into()), ("example-org/new".into(), "not example-org/new".into())]),
+            "a refusal keeps every signer's reason"
+        );
+    }
 
     fn write(root: &Path, rel: &str, body: &str) {
         let p = root.join(rel);
