@@ -671,19 +671,20 @@ mod tests {
         let added = release_signers(Some("example-org/releases".into()));
         assert_eq!(added.last().unwrap().workflow, signature::RELEASE_WORKFLOW);
         assert_eq!(added.last().unwrap().signing_workflow, signature::SIGNING_WORKFLOW);
+        assert_eq!(added.last().unwrap().workflow_name, signature::RELEASE_WORKFLOW_NAME);
     }
 
-    /// Only repo.release_source adds a signer: repo.source names where a
-    /// deployment's declarations live, not who publishes goatbuilder.
+    /// The configured addition is repo.release_source, else repo.source, as
+    /// an omitted release_source has always meant.
     #[test]
-    fn repo_source_is_never_a_release_signer() {
+    fn the_configured_signer_is_release_source_else_source() {
         let at = |yaml: &str| {
             let t = tempfile::tempdir().unwrap();
             write(t.path(), "ops/goatbuilder/goatbuilder.yaml", yaml);
             configured_signer(t.path())
         };
         let yaml = |extra: &str| format!("schema: goatbuilder/v1\npreset: lite\nrepo:\n  source: example-org/declarations\n  image_namespace: ghcr.io/example-org\n{extra}components:\n  portal:\n    declared_in: declared/pins.yaml\nenvironments:\n  - name: dev\n    converger: push-ansible\npromotion:\n  path:\n    - name: dev\n      kind: rung\n      environment: dev\n");
-        assert_eq!(at(&yaml("")), None);
+        assert_eq!(at(&yaml("")).as_deref(), Some("example-org/declarations"));
         assert_eq!(at(&yaml("  release_source: example-org/releases\n")).as_deref(), Some("example-org/releases"));
         assert_eq!(configured_signer(Path::new("/nonexistent")), None);
     }
@@ -706,6 +707,7 @@ mod tests {
             assert!(workflows.join(w).is_file(), "{w} is not in this tree");
         }
         let caller = std::fs::read_to_string(workflows.join(first.release_workflow)).unwrap();
+        assert!(caller.lines().any(|l| l == format!("name: {}", first.workflow_name)), "{} is named {}", first.release_workflow, first.workflow_name);
         assert!(caller.contains(&format!("./.github/workflows/{}", first.signing_workflow)), "{} calls {}", first.release_workflow, first.signing_workflow);
     }
 
@@ -715,7 +717,7 @@ mod tests {
     /// by the old signer, in a release that trusts both.
     #[test]
     fn a_signer_change_reaches_installs_only_through_a_release_that_trusts_both() {
-        let s = |r: &str| Signer { repo: r.into(), workflow: signature::RELEASE_WORKFLOW.into(), signing_workflow: signature::SIGNING_WORKFLOW.into() };
+        let s = |r: &str| Signer { repo: r.into(), workflow: signature::RELEASE_WORKFLOW.into(), signing_workflow: signature::SIGNING_WORKFLOW.into(), workflow_name: signature::RELEASE_WORKFLOW_NAME.into() };
         let check = |trusts: &[Signer], signed_by: &str| first_verified(trusts, |t| if t.repo == signed_by { Ok(t.repo.clone()) } else { Err(format!("not {}", t.repo)) });
         let old_only = [s("example-org/old")];
         let both = [s("example-org/old"), s("example-org/new")];

@@ -369,10 +369,10 @@ fn a_configured_release_source_is_an_addition_never_the_only_anchor() {
     }
 }
 
-/// repo.source names where the deployment's declarations live; it is not a
-/// release signer, so a release signed there alone is refused.
+/// With repo.release_source omitted, the checkout's repo.source is the
+/// configured addition, as an omitted release_source has always meant.
 #[test]
-fn a_release_signed_by_the_checkouts_repo_source_alone_is_refused() {
+fn with_release_source_omitted_repo_source_is_the_addition() {
     let c = copy();
     let before = bytes(&c.exe);
     let yaml = c.home.join("ops/goatbuilder/goatbuilder.yaml");
@@ -380,9 +380,9 @@ fn a_release_signed_by_the_checkouts_repo_source_alone_is_refused() {
     std::fs::write(&yaml, without).unwrap();
     let url = surface_signed("9.9.9", Body::Full(release()), &sha256(&release()), &sha256(&release()), Signed::As(sigstore::Workflow::release("example-org/declarations", "9.9.9")));
     let o = run(&c, &url, &["update"], &[]);
-    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
-    assert!(text(&o).contains("GB-261") && text(&o).contains("any trusted signer (USAREUR-AF/goatcore)"), "{}", text(&o));
-    assert_eq!(bytes(&c.exe), before);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert_ne!(bytes(&c.exe), before);
+    assert_eq!(bytes(&c.exe), release());
 }
 
 /// A release signed by none of them is refused, and the refusal names every

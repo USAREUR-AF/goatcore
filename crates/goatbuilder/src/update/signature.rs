@@ -989,6 +989,7 @@ mod tests {
             version: "0.5.1",
             workflow: RELEASE_WORKFLOW,
             signing_workflow: SIGNING_WORKFLOW,
+            workflow_name: RELEASE_WORKFLOW_NAME,
         }
     }
 
@@ -1048,6 +1049,7 @@ mod tests {
                 &include_bytes!("../../tests/fixtures/signature/v0.5.3/SHA256SUMS")[..],
                 include_str!("../../tests/fixtures/signature/v0.5.3/SHA256SUMS.cosign-bundle"),
             ),
+            ("0.7.3", SUMS_0_7_3, BUNDLE_0_7_3),
         ] {
             let e = Expect {
                 version: v,
@@ -1310,6 +1312,7 @@ mod tests {
             version: "9.9.9",
             workflow: RELEASE_WORKFLOW,
             signing_workflow: SIGNING_WORKFLOW,
+            workflow_name: RELEASE_WORKFLOW_NAME,
         };
         verify(SUMS, &bundle, &e, &root)
     }
@@ -1470,6 +1473,57 @@ mod tests {
         let mut v: serde_json::Value = serde_json::from_str(EMBEDDED_ROOT).unwrap();
         v["certificateAuthorities"][1]["validFor"]["end"] = 7.into();
         assert!(TrustRoot::parse(&v.to_string(), "operator").is_err());
+    }
+
+    const SUMS_0_7_3: &[u8] = include_bytes!("../../tests/fixtures/signature/v0.7.3/SHA256SUMS");
+    const BUNDLE_0_7_3: &str =
+        include_str!("../../tests/fixtures/signature/v0.7.3/SHA256SUMS.cosign-bundle");
+
+    /// The published 0.7.3's certificate, as its release serves it.
+    fn leaf_der_0_7_3() -> Vec<u8> {
+        let b = json(BUNDLE_0_7_3);
+        pem_to_der(&b64d(b["cert"].as_str().unwrap())).unwrap()
+    }
+
+    /// 0.7.3's real certificate carries the fields the reinstall line pins
+    /// with cosign: the SAN (--certificate-identity), the GitHub workflow
+    /// repository, ref and name. Each one is matched: changed, it is refused.
+    /// The legacy workflow extensions (1.3.6.1.4.1.57264.1.4 to 1.6) are
+    /// matched when the certificate carries them; Fulcio marks them
+    /// deprecated, and a certificate without them is judged on the rest.
+    #[test]
+    fn the_0_7_3_certificate_matches_the_fields_the_reinstall_line_pins() {
+        let leaf = leaf_der_0_7_3();
+        let (_, cert) = X509Certificate::from_der(&leaf).unwrap();
+        let ids = identity_of(&cert).unwrap();
+        let at = "refs/tags/goatbuilder/v0.7.3";
+        assert_eq!(ids.san, format!("https://github.com/USAREUR-AF/goatcore/.github/workflows/_release-binary.yml@{at}"));
+        assert_eq!(ids.build_config, format!("https://github.com/USAREUR-AF/goatcore/.github/workflows/goatbuilder-release.yml@{at}"));
+        assert_eq!(ids.source_repo, "https://github.com/USAREUR-AF/goatcore");
+        assert_eq!(ids.source_ref, at);
+        assert_eq!(ids.workflow_repo.as_deref(), Some("USAREUR-AF/goatcore"));
+        assert_eq!(ids.workflow_ref.as_deref(), Some(at));
+        assert_eq!(ids.workflow_name.as_deref(), Some("goatbuilder-release"));
+        let e = Expect { version: "0.7.3", ..release() };
+        assert!(check_identity(&ids, &e).is_ok());
+        assert!(verify(SUMS_0_7_3, BUNDLE_0_7_3, &e, &root()).is_ok());
+
+        let changed: [(&str, fn(&mut Identity)); 3] = [
+            ("workflow repository", |i| i.workflow_repo = Some("example-org/goatcore".into())),
+            ("workflow ref", |i| i.workflow_ref = Some("refs/heads/main".into())),
+            ("workflow name", |i| i.workflow_name = Some("goat-release".into())),
+        ];
+        for (field, change) in changed {
+            let mut i = identity_of(&cert).unwrap();
+            change(&mut i);
+            let r = check_identity(&i, &e).unwrap_err();
+            assert!(r.detail.contains(field), "{field}: {r}");
+        }
+        let mut i = identity_of(&cert).unwrap();
+        (i.workflow_repo, i.workflow_ref, i.workflow_name) = (None, None, None);
+        assert!(check_identity(&i, &e).is_ok(), "without the deprecated extensions, the rest decide");
+        let r = check_identity(&ids, &Expect { workflow_name: "goat-release", ..e }).unwrap_err();
+        assert!(r.detail.contains("workflow name"), "{r}");
     }
 
     fn leaf_der() -> Vec<u8> {
