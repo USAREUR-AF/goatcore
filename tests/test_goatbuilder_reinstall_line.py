@@ -32,6 +32,7 @@ ROLE = ROOT / 'ops/ansible/roles/goat-get'
 CATALOG = ROOT / 'ops/errors/catalog.yaml'
 HOST = 'get.zagros.example.org'
 REPO = 'example-org/goat-release'
+TAG = 'goatbuilder/v0.7.3'
 PLATFORM = 'linux-amd64'
 ASSET = 'goatbuilder-' + PLATFORM
 
@@ -72,7 +73,7 @@ def render_page():
     source = (ROLE / 'templates/goatbuilder-index.html.j2').read_text()
     return Environment(undefined=StrictUndefined).from_string(source).render(
         goat_get_hostname=HOST,
-        goat_get_goatbuilder_release_tag='goatbuilder/v0.7.3',
+        goat_get_goatbuilder_release_tag=TAG,
         goat_get_goatbuilder_www_subdir='goatbuilder',
         goat_get_goatbuilder_release_repo=REPO,
         goat_get_goatbuilder_assets=['SHA256SUMS', 'SHA256SUMS.cosign-bundle', ASSET],
@@ -148,8 +149,12 @@ class ReinstallLine(unittest.TestCase):
     def test_the_page_serves_one_line(self):
         line = reinstall_line(self.page)
         self.assertIn(f'https://{HOST}/goatbuilder', line)
-        self.assertIn(f"--certificate-identity-regexp '^https://github.com/{REPO}/'", line)
+        self.assertIn(f"--certificate-identity 'https://github.com/{REPO}/.github/workflows/"
+                      f"_release-binary.yml@refs/tags/{TAG}'", line)
         self.assertIn('--certificate-oidc-issuer https://token.actions.githubusercontent.com', line)
+        self.assertIn(f"--certificate-github-workflow-repository '{REPO}'", line)
+        self.assertIn(f"--certificate-github-workflow-ref 'refs/tags/{TAG}'", line)
+        self.assertIn('--certificate-github-workflow-name goatbuilder-release', line)
 
     def test_verified_release_replaces_the_installed_binary(self):
         for shell in ('bash', 'sh', 'zsh'):
@@ -158,7 +163,9 @@ class ReinstallLine(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
                 self.assertEqual(after, NEW)
                 self.assertIn('goatbuilder 0.7.3 (fixture)', r.stdout)
-                self.assertIn(f"--certificate-identity-regexp ^https://github.com/{REPO}/", events)
+                self.assertIn(f"--certificate-identity https://github.com/{REPO}/.github/workflows/"
+                              f"_release-binary.yml@refs/tags/{TAG}", events)
+                self.assertIn(f"--certificate-github-workflow-ref refs/tags/{TAG}", events)
                 self.assertEqual(left, [], 'the temporary directory was left behind')
 
     def test_without_sha256sum_it_uses_shasum(self):
