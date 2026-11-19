@@ -287,13 +287,10 @@ Net saving ~22 min per run.
 
 ## 9. Related artifacts
 
-- Terraform: `../../terraform/cgnat-validation.tf`
 - Orchestrator: [`../../ops/ansible/cgnat-validation.yml`](../../ops/ansible/cgnat-validation.yml)
-- Peer install script (Path C): `../../ops/cgnat-validation/peer-node/install-netbird.sh`
-- Inventory stub + generator: `../../ops/ansible/inventory/cgnat-validation.ini`, `../../ops/ansible/inventory/gen-cgnat-validation.sh`
-- Peer-swarm container (attempt-1, historical only): `../../ops/cgnat-validation/peer-swarm/`
-- Attempt-1 findings: `../reports/2026-04-24-cgnat-validation-attempt-1-findings.md`
 - Operator runbook: [`../operations/cgnat-validation-runbook.md`](../operations/cgnat-validation-runbook.md)
-- Lifecycle tracker: `../operations/cloud-env-lifecycle.md`
-- Implementation plan block: `../project/implementation-plan.md` Block 18
-- Priority-risk: `../project/roadmap.md` §7
+- Load generator: [`../../signal-server/cmd/federation-load/main.go`](../../signal-server/cmd/federation-load/main.go)
+- The Terraform root, the peers' cloud-init user_data, the inventory and any
+  script that writes it belong to the deployment and live in its overlay
+  repository; none of them is in this repository.
+- The attempt-1 peer swarm is retired and not in this repository; why is §2.1.
