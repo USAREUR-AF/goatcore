@@ -153,10 +153,12 @@ peerings:
 ```
 
 `goatbuilder.yaml` contains the generated copy consumed by goatbuilder; do not
-edit that copy. On migration, copy every operator-owned environment and peering
-field into `federation.yml`, and copy existing federation `signing_key`,
-`ca_cert` and `ca_key` paths from `secrets.federation` into the `federation:`
-block of `posture.yml`. The generator refuses content found only in the old
+edit that copy. On migration, including when `goatbuilder grow` created the
+file and called it yours, copy every site and other operator-owned environment
+field under the matching environment key in `federation.yml`, copy every
+peering unchanged into its `peerings:` list, and copy existing federation
+`signing_key`, `ca_cert` and `ca_key` paths from `secrets.federation` into the
+`federation:` block of `posture.yml`. The generator refuses content found only in the old
 output rather than silently deleting it. Once adopted, a type-sensitive digest
 covering both sources distinguishes later intentional source changes from
 output-only edits. Keep `federation.yml` when removing the last topology

@@ -46,6 +46,14 @@ change or remove fields; an output-only declaration edit makes the digest
 stale and restores the refusal on the next local generation or check. No
 public-core CI workflow currently runs that check.
 
+A full configuration written by `goatbuilder grow` has no declaration digest,
+because the learner owns it at hand-over. Before an overlay adopts generation,
+copy every site and other operator-owned environment field from that file under
+the matching environment key in `federation.yml`, copy every peering unchanged
+into its `peerings:` list, and copy any `secrets.federation` key/CA paths into
+`posture.yml`. The first regeneration refuses with GB-079 if any of that content
+exists only in the grown config; a successful regeneration records adoption.
+
 The public core ships the missing federation source state. Deleting an
 overlay's adopted `federation.yml` never removes declarations: removal of the
 last ones is the explicit overlay source `environments: {}` and `peerings: []`.

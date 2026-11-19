@@ -43,7 +43,8 @@ pub struct Rendered {
 pub(super) fn header(what: &str) -> String {
     format!(
         "{MARKER}: {what}\n\
-         # Do not edit. Pin a value under the peering's `values:` in goatbuilder.yaml and run\n\
+         # Do not edit. Pin a value under the peering's `values:` in the overlay's\n\
+         # ops/goatbuilder/federation.yml and run\n\
          # `goatbuilder federate allocate` again; the allocation record is\n\
          # ops/goatbuilder/peering-values.yaml.\n"
     )
@@ -1446,6 +1447,13 @@ mod tests {
             .body
     }
 
+    #[test]
+    fn generated_header_points_pins_to_the_federation_source() {
+        let text = header("test values.");
+        assert!(text.contains("ops/goatbuilder/federation.yml"), "{text}");
+        assert!(!text.contains("in goatbuilder.yaml"), "{text}");
+    }
+
     /// Two peerings on one edge and one core: each gets its own group_vars and
     /// its own inventory names for the same two machines.
     #[test]
@@ -2115,10 +2123,8 @@ mod tests {
         );
     }
 
-    /// With the role's install off, the deployment halves are what the release
-    /// before this change rendered, byte for byte: the two files under
-    /// src/federate/testdata were rendered by goatcore main 607a1244, from the
-    /// same declaration and site values, before our CA's install-mode path existed.
+    /// With the role's install off, the deployment halves match the committed
+    /// golden files, including the header that names the owning federation source.
     #[test]
     fn with_the_roles_install_off_the_deployment_halves_are_unchanged_byte_for_byte() {
         let mut a = p("xab", false);

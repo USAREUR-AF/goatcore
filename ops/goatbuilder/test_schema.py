@@ -781,6 +781,26 @@ class FederationValues(unittest.TestCase):
         )
         self.assertIn("peerings[dev/xab]", str(error))
 
+    def test_grown_config_refusal_explains_source_migration(self):
+        source = self._source()
+        wanted = self._generate(source)
+        grown = copy.deepcopy(wanted)
+        grown["peerings"] = [
+            {"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge"}
+        ]
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(
+                "# written by goatbuilder grow from goatlite.yaml\n"
+                + gen_config.yaml.safe_dump(
+                    grown, sort_keys=False, default_flow_style=False, width=100
+                )
+            )
+        error = self._assert_refused_unchanged(wanted, source, "peerings[dev/xab]")
+        message = str(error)
+        self.assertIn("goatbuilder grow", message)
+        self.assertIn("matching environment key in federation.yml", message)
+        self.assertIn("copy every peering unchanged", message)
+
     def test_legacy_migration_is_type_sensitive(self):
         for old, new in (("true", "1"), ("1", "1.0")):
             with self.subTest(old=old, new=new):

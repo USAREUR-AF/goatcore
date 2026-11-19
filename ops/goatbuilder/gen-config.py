@@ -642,7 +642,10 @@ def refuse_discarded_declarations(config: dict, out_path: str = OUT,
             out_path,
             f"refusing to discard declaration content: {', '.join(missing)}. Preserve "
             f"environment overlays and peerings in {federation_path}, and preserve "
-            f"`secrets.federation` key/CA paths in {posture_path}; regenerate once to record "
+            f"`secrets.federation` key/CA paths in {posture_path}. If `goatbuilder grow` "
+            "created this config, copy every site and other operator-owned environment field "
+            "under the matching environment key in federation.yml, and copy every peering "
+            "unchanged into its `peerings:` list before regenerating; regenerate once to record "
             "those sources, after which intentional source edits regenerate normally",
         )
 

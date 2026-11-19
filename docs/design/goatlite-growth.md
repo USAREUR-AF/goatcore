@@ -104,6 +104,15 @@ The design document this repository's Spock role points to for the multi-site de
 
 **The hand-over (step 3, gate row G1).** The full configuration is what `derive_lite` already computes from the four facts (`crates/goatbuilder/src/config.rs:411`): one environment, one founder site with class `core`, one promotion rung, the secrets store, and `repo` and `components` from the checkout. A unit test already shows that shape validating as a declaration in its own right (`crates/goatbuilder/src/config.rs:823`). `grow` writes it with `preset: full`, without the `lite:` block and with `lite.ssh_user` as `deploy.ssh_user`, to `ops/goatbuilder/goatbuilder.yaml`, where a full run reads it, shows the difference, and removes `goatlite.yaml`, so no later run takes the lite path. A four-fact file in a checkout with no config of its own has no `repo` or `components`; the lite preset takes them from the checkout's config, so `grow` asks for them then. The host, user, zone and administrator are not lost: the render already wrote them into the inventory and group_vars, and those files become the learner's. The renderer treats a file whose generated header is gone as the learner's and never overwrites it (`ops/scripts/goatlite-render.py:1844`), so the hand-over removes the headers. After the hand-over the renderer finds no lite file and refuses (`ops/scripts/goatlite-render.py:121`), which also stops `goatlite-render.py --remove` from deleting the CA material it would otherwise remove (`ops/scripts/goatlite-render.py:2176`).
 
+The grown `goatbuilder.yaml` is learner-owned and has no federation declaration
+digest. If the deployment later adopts `gen-config.py`, it must first copy every
+site and other operator-owned environment field into the matching environment
+in the overlay's `ops/goatbuilder/federation.yml`, copy every peering unchanged
+into that file's `peerings:` list, and copy any `secrets.federation` key/CA
+paths into `ops/goatbuilder/posture.yml`. GB-079 refuses the first regeneration
+without changing the grown file while any of that content exists only there;
+the successful first regeneration records the sources' digest.
+
 A standup plan from the grown configuration changes nothing that exists. Against the lite plan it loses exactly the two render gates (`crates/goatbuilder/src/standup.rs:375`) and the `--mint-ca-if-missing` flag (`crates/goatbuilder/src/standup.rs:414`), and it runs the acceptance gate (phase 13) that a goatlite skips by default; a gate reads and changes nothing. Its remaining steps, gates included, are the same commands, and each skips what already exists (a leaf certificate that exists is skipped, `ops/scripts/mint-site-certs.sh:243`). After the hand-over `--site` must be passed, because only a lite run derives it (`crates/goatbuilder/src/standup.rs:135`).
 
 Three behaviors of a lite plan were decided by the preset rather than by a declared value, so a plan from the grown configuration would have lost them. The grown configuration now declares each in three optional `deploy` fields, which `config::grow` writes and the standup reads only when they are declared (`crates/goatbuilder/src/config.rs:474`):

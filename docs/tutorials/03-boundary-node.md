@@ -224,9 +224,11 @@ is the sovereign-federation runbook
 
    `posture.yml` is the contents of the generated `secrets:` block, so its
    source has `store:` and `federation:` at the top level as shown. When
-   migrating an existing hand-edited `goatbuilder.yaml`, copy every site,
-   peering, directory and other operator-owned environment field into
-   `federation.yml`, and copy its `secrets.federation` signing key and CA paths
+   migrating an existing hand-edited `goatbuilder.yaml`, or one written by
+   `goatbuilder grow`, copy every site, directory and other operator-owned
+   environment field under the matching environment key in `federation.yml`,
+   copy every peering unchanged into its `peerings:` list, and copy its
+   `secrets.federation` signing key and CA paths
    into the `federation:` block of `posture.yml`, before the first regeneration.
    GB-079 refuses and leaves the output unchanged if any declaration is
    missing. After that adoption, intentional removal is an explicit edit to
