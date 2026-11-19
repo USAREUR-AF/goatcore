@@ -1,0 +1,35 @@
+---
+- name: Resolve canary pins without host writes or registry access
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - "{{ canary_defaults_file | default(playbook_dir ~ '/../defaults/main.yml') }}"
+  vars:
+    ghcr_org: deployment-example
+    fixture_digest: "{{ 'a' * 64 }}"
+    public_pin: "ghcr.io/upstream-example/e2e-canary:sha-example@sha256:{{ fixture_digest }}"
+  tasks:
+    - name: Record the actual role default before applying case overrides
+      ansible.builtin.set_fact:
+        _fixture_registry_default: "{{ e2e_canary_registry }}"
+
+    - name: Exercise the production reference tasks
+      ansible.builtin.include_tasks: check-ref.yml
+      loop:
+        - image: "{{ public_pin }}"
+          expected: "{{ public_pin }}"
+        - image: "{{ public_pin }}"
+          registry: registry.example.org/mirror
+          expected: "registry.example.org/mirror/e2e-canary:sha-example@sha256:{{ fixture_digest }}"
+        - image: "registry.example.org/source/canary@sha256:{{ fixture_digest }}"
+          expected: "registry.example.org/source/canary@sha256:{{ fixture_digest }}"
+      loop_control:
+        loop_var: fixture_case
+
+    - name: Exercise rejection in the reference-only fixture
+      ansible.builtin.include_tasks: reject-ref.yml
+      loop:
+        - ""
+        - ghcr.io/upstream-example/e2e-canary:latest
+      loop_control:
+        loop_var: fixture_bad_ref

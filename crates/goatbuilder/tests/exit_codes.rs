@@ -107,6 +107,20 @@ fn each_code_exits_by_the_contracts_meaning() {
         ("GB-242", 2),
         ("GB-324", 2),
         ("GB-325", 2),
+        // The rest of goatbuilder (gate row C5's last batch): each was an uncoded
+        // error, exit 2, on goatbuilder's own error path.
+        ("GB-020", 1),
+        ("GB-025", 1),
+        ("GB-258", 1),
+        ("GB-005", 2),
+        ("GB-008", 2),
+        ("GB-024", 2),
+        ("GB-052", 2),
+        ("GB-254", 2),
+        ("GB-257", 2),
+        ("GB-259", 2),
+        ("GB-326", 2),
+        ("GB-277", 1),
     ];
     let got: Vec<(&str, Option<i32>)> = want
         .iter()

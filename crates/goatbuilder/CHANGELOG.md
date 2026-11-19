@@ -7,6 +7,16 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+Changes since the last release are one file each in `crates/goatbuilder/changelog.d/`; `python3 ops/release/changelog.py show` prints them as the next release will.
+<!-- END generated: changelog unreleased -->
+
+## 0.7.3 — 2026-11-17
+
+What changed since 0.7.2, the previous release. `goatbuilder federate directory
+ls|show|check` reads the peering directory and says, for a file a peering
+cannot fetch, whether the party has not uploaded it or the directory's release
+lacks the route. Every error `goatbuilder federate` raises carries its catalog
+code, and `explain release` and `explain fastlane` answer for each step.
 
 ### For someone deploying
 
@@ -67,6 +77,17 @@ that stages no stamp; its result is still refused (GB-273), so the verdicts
 can differ until a rerun, but a stale result never passes. Tested on the
 in-process fabric only, not on hosts (#792).
 
+#### Added: `goatbuilder federate directory ls|show|check` reads the peering directory
+
+`goatbuilder federate directory` reads the peering directory (saltlick) and
+changes nothing. `ls` lists the directory's release and every party with the
+files it hosts; `show <party>` gives each hosted file's size and sha256;
+`check <party> --for <counterparty>` checks each file a peering reads and says,
+for a missing one, whether the party has not uploaded it (`NOT HOSTED`: the
+party runs phase 5) or the directory's release does not serve the route
+(`ROUTE MISSING`: its operator moves the directory to a newer release). The
+URL is `--url` or `FED_DIRECTORY_URL`. New codes GB-370, GB-371 and GB-372 (#1000).
+
 #### Fixed: every error `goatbuilder federate` raises carries its catalog code
 
 Fifty errors the federate stages and verbs raised had no catalog code, so a log
@@ -119,21 +140,13 @@ no step builds reads "no join-node step builds it yet (gate row I3)". The
 admin surfaces keep their gap line (gate rows I1 and I4). Nothing a run does
 changes (#953).
 
-#### Changed: standup passes secrets through the environment, not the command line
+### For someone contributing
 
-A standup phase that needs the Postgres superuser password, the NetBird
-datastore key, the pgBackRest cipher pass, the relay secret or the Cloudflare
-token now gives the play `-e 'name={{ lookup("env", "<SITE>_NAME") }}'`, as
-`join-node` already did. Before, the shell expanded `$(printenv <SITE>_NAME)`
-into the `ansible-playbook` command, and the phase-7 relay line wrote its
-secrets to a temporary vars file. The play now reads each value from its own
-environment, so the same variables must be set as before. A phase whose
-`lookup("env", ...)` names an empty variable is refused before it runs, naming
-the variable, as an empty `$(printenv ...)` was. `goat-standup.sh` prints the
-same lines. A dry run shows the new form, and the recorded fixture plans are
-regenerated.
+Nothing.
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.2 — 2026-11-15
 
