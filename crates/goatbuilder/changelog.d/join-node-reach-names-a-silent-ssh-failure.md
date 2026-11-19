@@ -9,4 +9,4 @@ printed nothing on stderr, or the file its stderr went to was gone before the
 check read it. Before, both read only `ssh exited <code>`. The check also reads
 ssh's stderr before it stops its own timeout, and the timeout can no longer
 remove the run's files. A node that answers, or that fails with ssh's own
-words, is reported as before.
+words, is reported as before (#1048).
