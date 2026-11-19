@@ -21,7 +21,7 @@
   gather_facts: "{{ (peering_prepare_half | default('both')) != 'core' }}"
   become: true
   tasks:
-    - name: The half of phase 2 to run is edge, core or both
+    - name: The half of the peering prepare to run is edge, core or both
       ansible.builtin.assert:
         that:
           - (peering_prepare_half | default('both')) in ['both', 'edge', 'core']
