@@ -1,0 +1,48 @@
+---
+# simple-bn-wg-prepare.yml: WireGuard stage 1, first step (docs/design/simple-boundary-node.md §4, §8).
+#
+# Makes the simple-bn's tunnel interface and its key pair with goat-peering-wg's prepare tasks:
+# no address and no peer, so it carries nothing yet. The private key is made on the host and
+# never leaves it. The run prints our public key for the receiver's key-exchange sheet.
+#
+#   ops/ansible/simple-bn-wg-prepare.yml -i inventory/<boundary host inventory> -e target=<group>
+#
+# Reads simple_bn.wireguard.{interface, listen_port} from the goatnet's declaration. The port
+# must differ from NetBird's own WireGuard port (51820 by default) on the same host.
+- name: simple-bn WireGuard prepare (interface and key, no peer)
+  hosts: "{{ target }}"
+  gather_facts: true
+  become: true
+  tasks:
+    - name: The declaration names an interface and a port that is not NetBird's
+      ansible.builtin.assert:
+        that:
+          - simple_bn.wireguard.interface is defined
+          - simple_bn.wireguard.interface is match('^sbn-[a-z0-9-]{1,11}$')
+          - (simple_bn.wireguard.listen_port | int) >= 1024 and (simple_bn.wireguard.listen_port | int) <= 65535
+          - (simple_bn.wireguard.listen_port | int) != 51820
+        fail_msg: >-
+          simple_bn.wireguard needs interface (sbn-<receiver>, at most 15 characters) and listen_port
+          (1024-65535, not 51820, which NetBird's wt0 holds on a mesh host).
+
+    - name: Interface and key
+      ansible.builtin.include_role:
+        name: goat-peering-wg
+        tasks_from: prepare
+      vars:
+        peering_wg_enabled: true
+        peering_wg_interface: "{{ simple_bn.wireguard.interface }}"
+        peering_wg_listen_port: "{{ simple_bn.wireguard.listen_port | int }}"
+
+    - name: Our public key
+      ansible.builtin.command: wg show {{ simple_bn.wireguard.interface }} public-key
+      register: _sbn_wg_pub
+      changed_when: false
+
+    - name: Facts for the receiver's key-exchange sheet
+      ansible.builtin.debug:
+        msg:
+          - "give {{ simple_bn.receiver.label }}:"
+          - "  our WireGuard public key: {{ _sbn_wg_pub.stdout }}"
+          - "  our endpoint: <our source address>:{{ simple_bn.wireguard.listen_port }}/udp"
+          - "  our firewall must admit UDP {{ simple_bn.wireguard.listen_port }} from the receiver's address only"

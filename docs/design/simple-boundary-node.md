@@ -95,7 +95,7 @@ A simple-bn sends in three stages. Synthetic data may use stage 0. Anything else
 | Stage | Transport | Use | Status |
 |---|---|---|---|
 | 0 | plain UDP to the receiver's public address | integration testing with synthetic data only (SIM bit set) | built |
-| 1 | a point-to-point WireGuard tunnel from the simple-bn to the receiver, separate from NetBird | any real data | designed |
+| 1 | a point-to-point WireGuard tunnel from the simple-bn to the receiver, separate from NetBird | any real data | interface and key step built (`simple-bn-wg-prepare.yml`); the peer step designed |
 | 2 | the receiver's own protected transport (for example their VPN or an IPsec gateway) | when the receiver mandates it | designed, per case |
 
 **Detail, stage 1.**
@@ -251,6 +251,7 @@ simple_bn:
     transport: udp                                  # udp | tcp
     format: ASTERIX CAT034/CAT048
   encryption: {stage: 0}                              # 1 = wireguard: our_pubkey, peer_pubkey, peer_endpoint, tunnel /30
+  wireguard: {interface: sbn-<receiver>, listen_port: <udp port, not 51820>}   # stage 1 tunnel, made by simple-bn-wg-prepare.yml
   feeds: [<name>, <name>]
   profiles: <path to the profiles JSON in the overlay>
   sac: <0-255>
@@ -282,7 +283,15 @@ one playbook run. The run ends by printing the facts the receiver needs.
    - for each feed, its SAC, SIC and source port.
 
    These are everything a receiver's firewall and decoder need. The receiver's own address is never printed.
-7. **Before real data,** do the WireGuard stage (§4) with the receiver.
+7. **Open the inbound ports**, each from the receiver's address only: the `feedback_port`, if declared, and the
+   WireGuard `listen_port`. Both are rules in the host's cloud security group, in the goatnet's Terraform tree. On a
+   relay-health host they go in the module's `extra_ingress`, because that group defines its rules inline and a
+   separate rule resource would be removed on the next apply.
+8. **Before real data,** do the WireGuard stage (§4) with the receiver:
+   - run `ops/ansible/simple-bn-wg-prepare.yml`, which makes the interface and key pair and prints our public key;
+   - the WireGuard port differs from NetBird's 51820, which `wt0` holds on every mesh host;
+   - send the receiver the key-exchange sheet, and take their public key and tunnel endpoint back;
+   - bring up the peer and change the sender's destination to the receiver's tunnel address.
 
 `-e state=absent` stops the services and removes the files.
 
