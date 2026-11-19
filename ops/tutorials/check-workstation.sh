@@ -170,10 +170,9 @@ export DEBIAN_FRONTEND=noninteractive
 command -v sudo >/dev/null || { printf '#!/bin/sh\nexec "$@"\n' > /usr/local/bin/sudo; chmod 0755 /usr/local/bin/sudo; }
 
 # ---- apt: the fresh image cannot install before an update ---------------------
-if apt-get install -y -qq git >/dev/null 2>&1; then
-  fail "apt installed a package before apt update: this image is not fresh, so the control proves nothing"
-fi
-pass "negative control: apt install before apt update fails on the fresh image"
+# shellcheck source=ops/tutorials/lib/apt-fresh-control.sh
+. "$ROOT/ops/tutorials/lib/apt-fresh-control.sh"
+apt_fresh_control
 
 # ---- the page, as written, then the checks in the same shell ------------------
 work="$(mktemp -d)"
