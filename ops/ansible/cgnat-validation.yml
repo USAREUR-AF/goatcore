@@ -222,12 +222,33 @@
           -- "can't scan NULL into *string". Clear them defensively.
           DELETE FROM users WHERE account_id = '{{ site_account_id }}'
             AND name = '' AND email = '';
-    - name: Apply seed SQL via psql
-      ansible.builtin.shell: |
-        docker cp /tmp/cgnat-a-seed.sql postgres-a:/tmp/seed.sql
-        docker exec -e PGPASSWORD='{{ postgres_superuser_password }}' postgres-a \
-          psql -U postgres -d netbird -f /tmp/seed.sql
-      changed_when: true
+    - name: Seed site α through psql, the password from a 0600 env file
+      block:
+        - name: Create the postgres env file (0600)
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pgenv
+          register: pg_env
+
+        - name: Write the superuser password to the postgres env file
+          ansible.builtin.copy:
+            dest: "{{ pg_env.path }}"
+            content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+            mode: "0600"
+          no_log: true
+
+        - name: Apply seed SQL via psql
+          ansible.builtin.shell: |
+            docker cp /tmp/cgnat-a-seed.sql postgres-a:/tmp/seed.sql
+            docker exec --env-file '{{ pg_env.path }}' postgres-a \
+              psql -U postgres -d netbird -f /tmp/seed.sql
+          changed_when: true
+      always:
+        - name: Remove the postgres env file
+          ansible.builtin.file:
+            path: "{{ pg_env.path }}"
+            state: absent
+          when: pg_env.path is defined
 
 - name: "cgnat-validation: seed account + setup-key + All group (site β)"
   hosts: cgnat_mgmt_b_hosts
@@ -310,14 +331,35 @@
 
           DELETE FROM users WHERE account_id = '{{ site_account_id }}'
             AND name = '' AND email = '';
-    - name: Apply seed SQL via psql
-      ansible.builtin.shell: |
-        docker cp /tmp/cgnat-b-seed.sql postgres-a:/tmp/seed.sql
-        docker exec -e PGPASSWORD='{{ postgres_superuser_password }}' postgres-a \
-          psql -U postgres -d netbird -f /tmp/seed.sql
-      changed_when: true
+    - name: Seed site β through psql, the password from a 0600 env file
+      block:
+        - name: Create the postgres env file (0600)
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pgenv
+          register: pg_env
 
-# =============================================================================
+        - name: Write the superuser password to the postgres env file
+          ansible.builtin.copy:
+            dest: "{{ pg_env.path }}"
+            content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+            mode: "0600"
+          no_log: true
+
+        - name: Apply seed SQL via psql
+          ansible.builtin.shell: |
+            docker cp /tmp/cgnat-b-seed.sql postgres-a:/tmp/seed.sql
+            docker exec --env-file '{{ pg_env.path }}' postgres-a \
+              psql -U postgres -d netbird -f /tmp/seed.sql
+          changed_when: true
+
+    # =============================================================================
+      always:
+        - name: Remove the postgres env file
+          ansible.builtin.file:
+            path: "{{ pg_env.path }}"
+            state: absent
+          when: pg_env.path is defined
 # Phase 4 — DELETED. Peer enrollment now happens at first-boot via cloud-init
 # user_data — see terraform/cgnat-peer-cloud-init.yaml.tpl. Each peer self-
 # enrolls with retry loop, so Ansible no longer fans out across 100 hosts.
@@ -352,23 +394,44 @@
       ansible.builtin.debug:
         msg: "{{ (signal_a_metrics.content.split('\n') | select('match', '^signal_server_(connected_peers|forward_sent_total).*') | list) }}"
 
-    - name: Query enrolled peer count (site α)
-      ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - -e
-          - "PGPASSWORD={{ postgres_superuser_password }}"
-          - postgres-a
-          - psql
-          - -U
-          - postgres
-          - -d
-          - netbird
-          - -tAc
-          - "SELECT COUNT(*) FROM peers;"
-      register: peers_a
-      changed_when: false
+    - name: Count site α's peers, the password from a 0600 env file
+      block:
+        - name: Create the postgres env file (0600)
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pgenv
+          register: pg_env
+
+        - name: Write the superuser password to the postgres env file
+          ansible.builtin.copy:
+            dest: "{{ pg_env.path }}"
+            content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+            mode: "0600"
+          no_log: true
+
+        - name: Query enrolled peer count (site α)
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - --env-file
+              - "{{ pg_env.path }}"
+              - postgres-a
+              - psql
+              - -U
+              - postgres
+              - -d
+              - netbird
+              - -tAc
+              - "SELECT COUNT(*) FROM peers;"
+          register: peers_a
+          changed_when: false
+      always:
+        - name: Remove the postgres env file
+          ansible.builtin.file:
+            path: "{{ pg_env.path }}"
+            state: absent
+          when: pg_env.path is defined
 
     - name: Report site-α peer count
       ansible.builtin.debug:
@@ -389,23 +452,44 @@
       ansible.builtin.debug:
         msg: "{{ (signal_b_metrics.content.split('\n') | select('match', '^signal_server_(connected_peers|forward_sent_total).*') | list) }}"
 
-    - name: Query enrolled peer count (site β)
-      ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - -e
-          - "PGPASSWORD={{ postgres_superuser_password }}"
-          - postgres-a
-          - psql
-          - -U
-          - postgres
-          - -d
-          - netbird
-          - -tAc
-          - "SELECT COUNT(*) FROM peers;"
-      register: peers_b
-      changed_when: false
+    - name: Count site β's peers, the password from a 0600 env file
+      block:
+        - name: Create the postgres env file (0600)
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pgenv
+          register: pg_env
+
+        - name: Write the superuser password to the postgres env file
+          ansible.builtin.copy:
+            dest: "{{ pg_env.path }}"
+            content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+            mode: "0600"
+          no_log: true
+
+        - name: Query enrolled peer count (site β)
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - --env-file
+              - "{{ pg_env.path }}"
+              - postgres-a
+              - psql
+              - -U
+              - postgres
+              - -d
+              - netbird
+              - -tAc
+              - "SELECT COUNT(*) FROM peers;"
+          register: peers_b
+          changed_when: false
+      always:
+        - name: Remove the postgres env file
+          ansible.builtin.file:
+            path: "{{ pg_env.path }}"
+            state: absent
+          when: pg_env.path is defined
 
     - name: Report site-β peer count
       ansible.builtin.debug:

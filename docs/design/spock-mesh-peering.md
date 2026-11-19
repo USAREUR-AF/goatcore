@@ -70,3 +70,4 @@ fires while the subscription still reads `replicating`.
 | The timer running on a deployed mgmt host | built, not measured on a deployment |
 | An alert on the loop's apply rate, as a second signal | not built |
 | Demonstrating the loop itself in CI | not built: the test writes no rows, so no loop runs in CI |
+| Room for the mesh's slots: 32 replication slots and 32 WAL senders per site in the postgres-spock image, one per other site for each replicated database and one for a streaming standby ([`ops/postgres/spock/README.md`](../../ops/postgres/spock/README.md), "Slot and sender capacity"); takes effect at a Postgres restart, a pair's standby first | built; not measured on a deployment |
