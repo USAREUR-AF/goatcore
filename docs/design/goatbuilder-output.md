@@ -78,9 +78,9 @@ command's `-o json` parses and carries a versioned `goatbuilder.*/vN` schema.
   | pending | `no-record` | no record yet |
   | pending | `other-image` | a shared ledger whose newest row is another image's |
   | pending | `served-off` | the image is the declared one; what it serves is not, or is unread |
-  | unknown | `unreachable` | the host did not answer the read |
+  | unknown | `unreachable` | the host did not answer the read at all (UNREACHABLE), or no host of its group answered |
   | unknown | `no-answer` | the inventory names the host, and no row came back |
-  | unknown | `unreadable` | `verify`'s read ran and FAILED on the host, or a fixture's record cannot be read (`status` on real hosts grades a FAILED read as `unreachable` today) |
+  | unknown | `unreadable` | the host answered, and its read FAILED (both verbs), or a fixture's record cannot be read |
 
   A row the grade names no machine for (a group never provisioned, a component
   with no ledger coverage) has no entry. The list is gate D's item, and A4 keeps

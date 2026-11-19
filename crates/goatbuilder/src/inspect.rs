@@ -79,8 +79,9 @@ pub fn verify_mock(f: &Fixture, component: &str, env: &str) -> Result<Report> {
 /// host → ledger component → newest row (raw JSON text).
 type Tails = BTreeMap<String, BTreeMap<String, String>>;
 
-/// One member group as read: its ledgers, its unreachable hosts, its hosts' own facts.
-type GroupRead = (Tails, Vec<String>, BTreeMap<String, HostFacts>);
+/// One member group as read: its ledgers, its unknown hosts (unreachable or with
+/// a read that FAILED), those of them whose read FAILED, and its hosts' own facts.
+type GroupRead = (Tails, Vec<String>, std::collections::BTreeSet<String>, BTreeMap<String, HostFacts>);
 
 /// What a host says about itself beside its ledgers, read in the same call:
 /// the goat CLI it runs and, where it serves goat-get, the release tags it serves
@@ -136,6 +137,9 @@ fn parse_hosts(text: &str, group: &str) -> GroupRead {
     let mut tails: Tails = BTreeMap::new();
     let mut facts: BTreeMap<String, HostFacts> = BTreeMap::new();
     let mut unreachable = Vec::new();
+    // The host answered and its read FAILED: unknown like an unreachable host, and
+    // `unreadable` in the machines list, as `verify` has it (gate D).
+    let mut failed = std::collections::BTreeSet::new();
     let mut host: Option<String> = None;
     // host → (image id, container); host → image id → registry digests
     let mut images: BTreeMap<String, Vec<(String, Container)>> = BTreeMap::new();
@@ -144,6 +148,9 @@ fn parse_hosts(text: &str, group: &str) -> GroupRead {
         if let Some(c) = head.captures(line) {
             let h = c[1].to_string();
             if c[2].starts_with("UNREACHABLE") || c[2].starts_with("FAILED") {
+                if c[2].starts_with("FAILED") {
+                    failed.insert(h.clone());
+                }
                 unreachable.push(h);
                 host = None;
             } else {
@@ -198,7 +205,7 @@ fn parse_hosts(text: &str, group: &str) -> GroupRead {
             cs.push(c);
         }
     }
-    (tails, unreachable, facts)
+    (tails, unreachable, failed, facts)
 }
 
 /// One `ansible` call per member group returns every ledger's newest row on every
@@ -248,6 +255,10 @@ pub struct Drift {
     pub state: String, // same | drift | served-drift | served-unknown | no-ledger | unreachable | other-image | no-coverage
     pub row_ts: String,
     pub action: String,
+    /// An `unreachable` row whose host answered with a read that FAILED: the
+    /// same row and words, and `unreadable` in the machines list (gate D).
+    #[serde(skip)]
+    pub read_failed: bool,
 }
 
 /// Declared against running for one component or every component of an environment.
@@ -292,7 +303,7 @@ fn read_rows(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>, 
             let Some(want) = push::want(repo, g, &r.var) else { continue };
             let declared = push::render_ref(&want);
             if ledger_null(repo, c) {
-                rows.push(Drift { component: c.clone(), group: g.clone(), host: "*".into(), declared, running: String::new(), state: "no-coverage".into(), row_ts: String::new(), action: String::new() });
+                rows.push(Drift { component: c.clone(), group: g.clone(), host: "*".into(), declared, running: String::new(), state: "no-coverage".into(), row_ts: String::new(), action: String::new(), read_failed: false });
                 continue;
             }
             if !by_group.contains_key(g) {
@@ -300,7 +311,7 @@ fn read_rows(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>, 
             }
             let role = single_homed_role(repo, c);
             let skip = not_writer.entry((g.clone(), role.clone())).or_insert_with(|| push::skip_hosts(repo, &t, g, &role)).clone();
-            let (tails, unreachable, _) = &by_group[g];
+            let (tails, unreachable, failed, _) = &by_group[g];
             if tails.is_empty() && unreachable.is_empty() {
                 // Ansible answered for no host at all. A group whose inventory still
                 // holds TBD_ placeholders was never provisioned: say so, by name, rather
@@ -310,10 +321,10 @@ fn read_rows(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>, 
                     Some(p) => ("not-provisioned", p),
                     None => ("unreachable", String::new()),
                 };
-                rows.push(Drift { component: c.clone(), group: g.clone(), host: format!("<{g}>"), declared: declared.clone(), running, state: state.into(), row_ts: String::new(), action: String::new() });
+                rows.push(Drift { component: c.clone(), group: g.clone(), host: format!("<{g}>"), declared: declared.clone(), running, state: state.into(), row_ts: String::new(), action: String::new(), read_failed: false });
             }
             for h in unreachable.iter().filter(|h| !skip.contains(h)) {
-                rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running: String::new(), state: "unreachable".into(), row_ts: String::new(), action: String::new() });
+                rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running: String::new(), state: "unreachable".into(), row_ts: String::new(), action: String::new(), read_failed: failed.contains(h) });
             }
             for (h, ledgers) in tails.iter().filter(|(h, _)| !skip.contains(h)) {
                 let (running, ts, action, state) = match ledgers.get(&r.ledger).and_then(|row| serde_json::from_str::<serde_json::Value>(row).ok()) {
@@ -350,11 +361,11 @@ fn read_rows(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>, 
                         (running, ts, action, state)
                     }
                 };
-                rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running, state, row_ts: ts, action });
+                rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running, state, row_ts: ts, action, read_failed: false });
             }
         }
     }
-    let facts = by_group.into_values().flat_map(|(_, _, f)| f).collect();
+    let facts = by_group.into_values().flat_map(|(_, _, _, f)| f).collect();
     Ok((rows, t, facts))
 }
 
@@ -406,7 +417,7 @@ fn read_expected(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drif
         rows.retain(|d| !(d.component == c && d.group == g && d.host == placeholder));
         let answered: std::collections::BTreeSet<String> = rows.iter().filter(|d| d.component == c && d.group == g).map(|d| d.host.clone()).collect();
         for h in hosts.iter().filter(|h| !answered.contains(*h)) {
-            rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running: String::new(), state: "no-answer".into(), row_ts: String::new(), action: String::new() });
+            rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running: String::new(), state: "no-answer".into(), row_ts: String::new(), action: String::new(), read_failed: false });
         }
     }
     // Keep the read's order: component, then group, then host as read.
@@ -580,6 +591,7 @@ fn machine_of(n: &str, d: &Drift) -> Option<crate::Machine> {
         (Verdict::Pending, "other-image") => ("pending", "other-image"),
         (Verdict::Pending, _) => ("pending", "served-off"),
         (Verdict::Unknown, "no-answer") => ("unknown", "no-answer"),
+        (Verdict::Unknown, _) if d.read_failed => ("unknown", "unreadable"),
         (Verdict::Unknown, _) => ("unknown", "unreachable"),
     };
     Some(crate::Machine::new(n, &d.host, &d.component, state, reason, &format!("{n}/{}/{}", d.host, d.component)))
@@ -938,9 +950,9 @@ pub fn adopt_mock(f: &Fixture, env: &str, yes: bool) -> Result<Report> {
             match f.converger.read_record(env, &m, c) {
                 Ok(Some(r)) => {
                     let state = if r.reference == declared { "same" } else { "drift" };
-                    rows.push(Drift { component: c.clone(), group: env.into(), host: m, declared: declared.clone(), running: r.reference, state: state.into(), row_ts: r.ts, action: r.action });
+                    rows.push(Drift { component: c.clone(), group: env.into(), host: m, declared: declared.clone(), running: r.reference, state: state.into(), row_ts: r.ts, action: r.action, read_failed: false });
                 }
-                _ => rows.push(Drift { component: c.clone(), group: env.into(), host: m, declared: declared.clone(), running: String::new(), state: "no-ledger".into(), row_ts: String::new(), action: String::new() }),
+                _ => rows.push(Drift { component: c.clone(), group: env.into(), host: m, declared: declared.clone(), running: String::new(), state: "no-ledger".into(), row_ts: String::new(), action: String::new(), read_failed: false }),
             }
         }
     }
@@ -1076,7 +1088,7 @@ mod tests {
 
     #[test]
     fn proposals_refuse_to_choose_between_disagreeing_hosts() {
-        let d = |h: &str, r: &str| Drift { component: "c".into(), group: "g".into(), host: h.into(), declared: "x@sha256:aaaa".into(), running: r.into(), state: "drift".into(), row_ts: String::new(), action: "deploy".into() };
+        let d = |h: &str, r: &str| Drift { component: "c".into(), group: "g".into(), host: h.into(), declared: "x@sha256:aaaa".into(), running: r.into(), state: "drift".into(), row_ts: String::new(), action: "deploy".into(), read_failed: false };
         let (p, c) = proposals("env", &[d("a", "x@sha256:bbbb"), d("b", "x@sha256:cccc")], None);
         assert!(p.is_empty());
         assert_eq!(c.len(), 1);
@@ -1105,7 +1117,7 @@ GBIMG sha256:img1 ghcr.io/o/herd@sha256:22\n\
 GBIMG sha256:img2\n\
 GBEND\n\
 mgmt-b | UNREACHABLE! => {}\n";
-        let (tails, unreachable, facts) = parse_hosts(text, "g_hosts");
+        let (tails, unreachable, _, facts) = parse_hosts(text, "g_hosts");
         assert_eq!(unreachable, vec!["mgmt-b".to_string()]);
         assert_eq!(tails["mgmt-a"].len(), 2);
         let h = &facts["mgmt-a"];
@@ -1122,7 +1134,7 @@ mgmt-b | UNREACHABLE! => {}\n";
 
     #[test]
     fn a_host_where_docker_cannot_be_read_has_no_container_list() {
-        let (_, _, facts) = parse_hosts("mgmt-a | CHANGED | rc=0 >>\nGBEND\n", "g");
+        let (_, _, _, facts) = parse_hosts("mgmt-a | CHANGED | rc=0 >>\nGBEND\n", "g");
         assert_eq!(facts["mgmt-a"].containers, None);
     }
 

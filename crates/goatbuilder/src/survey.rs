@@ -693,7 +693,7 @@ pub fn run_mock(f: &verbs::Fixture, o: &Options) -> Result<Report> {
                     Ok(None) => (String::new(), "no-ledger".to_string(), String::new(), String::new()),
                     Err(_) => (String::new(), "unreachable".to_string(), String::new(), String::new()),
                 };
-                r.rows.push(Drift { component: comp.clone(), group: env.clone(), host: m.clone(), declared: declared.clone(), running, state, row_ts: ts, action });
+                r.rows.push(Drift { component: comp.clone(), group: env.clone(), host: m.clone(), declared: declared.clone(), running, state, row_ts: ts, action, read_failed: false });
             }
         }
         reads.push(r);
@@ -1116,7 +1116,7 @@ mod tests {
     use super::*;
 
     fn d(c: &str, host: &str, declared: &str, running: &str, state: &str) -> Drift {
-        Drift { component: c.into(), group: "g_hosts".into(), host: host.into(), declared: declared.into(), running: running.into(), state: state.into(), row_ts: String::new(), action: "deploy".into() }
+        Drift { component: c.into(), group: "g_hosts".into(), host: host.into(), declared: declared.into(), running: running.into(), state: state.into(), row_ts: String::new(), action: "deploy".into(), read_failed: false }
     }
     const A: &str = "ghcr.io/o/portal:v2@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const B: &str = "ghcr.io/o/portal:v1@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
