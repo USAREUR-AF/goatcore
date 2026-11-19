@@ -57,6 +57,10 @@ for h in world["inventory"].get(group, {}).get("hosts", []):
         print(h + ' | UNREACHABLE! => {"changed": false, "unreachable": true}')
         rc = 4
         continue
+    if st.get("state") == "failed":
+        print(h + ' | FAILED! => {"changed": false, "msg": "the read failed on the host"}')
+        rc = 2
+        continue
     ledgers = st.get("ledgers", {})
     if cmd.startswith("tail -n 1"):
         ledger = cmd.split("/var/lib/goat/")[1].split("/")[0]
@@ -333,4 +337,38 @@ fn a_verify_that_reads_nothing_carries_an_empty_machines_list() {
         serde_json::json!([]),
         "a dry run reads no ledger, and says so with an empty list:\n{text}"
     );
+}
+
+/// The same condition gives the same reason on both verbs: a host that answered
+/// and whose read FAILED is `unknown/unreadable` in `status` as in `verify`,
+/// and a host that did not answer at all is `unknown/unreachable` in both.
+#[test]
+fn a_read_that_failed_is_unreadable_on_status_and_verify_alike() {
+    let w = world();
+    let repo = w.path();
+    let path = repo.join("hosts.json");
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    doc["hosts"]["core-x"] = serde_json::json!({"state": "failed"});
+    doc["inventory"]["zagros_hosts"]["hosts"]
+        .as_array_mut()
+        .unwrap()
+        .push("core-x".into());
+    std::fs::write(&path, doc.to_string()).unwrap();
+    let (_, status, stext) = run(repo, &["status", "--env", "zagros"]);
+    let (_, verify, vtext) = run(repo, &["verify", "portal", "--env", "zagros"]);
+    let by_status = shape::machines(&status, &stext);
+    let by_verify = shape::machines(&verify, &vtext);
+    for (host, want) in [("core-x", "unreadable"), ("core-c", "unreachable")] {
+        let k = (host.to_string(), "portal".to_string());
+        assert_eq!(
+            by_status[&k],
+            ("unknown".to_string(), want.to_string()),
+            "status, {host}:\n{stext}"
+        );
+        assert_eq!(
+            by_verify[&k], by_status[&k],
+            "verify and status disagree on {host}:\n{vtext}"
+        );
+    }
 }
