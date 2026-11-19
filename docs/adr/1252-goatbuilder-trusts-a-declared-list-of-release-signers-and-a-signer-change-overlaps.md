@@ -28,8 +28,8 @@ with a plain update.
 `SHA256SUMS` against an identity: the GitHub repository whose
 `goatbuilder-release.yml` signed it, at the release's tag
 (`crates/goatbuilder/src/update/signature.rs`). Which repository that is came
-from the checkout's `repo.release_source` (else `repo.source`) in
-`ops/goatbuilder/goatbuilder.yaml`, and, outside a checkout, from the binary's
+from the checkout's `repo.release_source` (else `repo.source`, where the
+deployment's declarations live) in `ops/goatbuilder/goatbuilder.yaml`, and, outside a checkout, from the binary's
 own build provenance: `GITHUB_REPOSITORY` at build time. A configured signer
 replaced the provenance rather than adding to it.
 
@@ -44,11 +44,16 @@ them. A second move would strand every 1.x the same way, which breaks the
 promise of ADR 1228 in the one place an operator cannot work around it by
 reading release notes.
 
+The operator ordered the fix on 19 November 2026: the trust is a declared,
+compiled-in list of release signers, not the binary's own provenance, and a
+checkout's `repo.release_source` stays an addition, never the only anchor.
+
 The rule "One build for every deployment" (AGENTS.md) keeps every
 deployment's values out of the binary, repositories included. The release
 signer is not a deployment's value: it is goatbuilder's own publisher, the
 same for every deployment that runs the binary. Naming it in the code is
-what makes the trust a decision someone reviews.
+what makes the trust a decision someone reviews. AGENTS.md states this
+exception beside the rule.
 
 ## Decision
 
@@ -56,9 +61,10 @@ what makes the trust a decision someone reviews.
 
 - goatbuilder carries a compiled-in list of release signers, `RELEASE_SIGNERS`
   in `crates/goatbuilder/src/update.rs`. Each entry is a repository
-  (`<owner>/<repo>`) and the file name of its release workflow under
-  `.github/workflows/`. Today the list is one entry: `USAREUR-AF/goatcore`,
-  `goatbuilder-release.yml`.
+  (`<owner>/<repo>`) and two workflow files under `.github/workflows/`: the
+  release workflow that is triggered, and the reusable workflow it calls,
+  which signs. Today the list is one entry: `USAREUR-AF/goatcore`,
+  `goatbuilder-release.yml`, `_release-binary.yml`.
 - The first entry signs the releases built from this tree. Any entry after it
   is a successor already decided, trusted before it signs anything.
 - `goatbuilder update` accepts a release whose signature verifies for any
@@ -66,14 +72,36 @@ what makes the trust a decision someone reviews.
   each signer it checked and why each one refused.
 - The binary's own build provenance is never a signer.
 
+### The certificate fields matched
+
+A signature verifies for a signer only when the Fulcio certificate carries
+all of these (sigstore/fulcio `docs/oid-info.md`):
+
+| Field | Must be |
+|---|---|
+| OIDC issuer (1.3.6.1.4.1.57264.1.8) | `https://token.actions.githubusercontent.com` |
+| Source repository URI (1.3.6.1.4.1.57264.1.12) | `https://github.com/<repo>` |
+| Source repository ref (1.3.6.1.4.1.57264.1.14) | `refs/tags/goatbuilder/v<version>`, the served version's tag |
+| Build Config URI (1.3.6.1.4.1.57264.1.18) | `https://github.com/<repo>/.github/workflows/<release workflow>@refs/tags/goatbuilder/v<version>` |
+| Subject alternative name | `https://github.com/<repo>/.github/workflows/<reusable workflow>@refs/tags/goatbuilder/v<version>` |
+
+Repository names match without case, as GitHub matches them. goat's release
+calls the same reusable workflow, so the SAN alone cannot tell the two
+releases apart; the Build Config URI does. A reinstall line that verifies
+with cosign pins the same definition: `--certificate-identity` is the SAN,
+and the GitHub workflow repository, ref and name options are the same
+repository, tag and release workflow. The binary and the page trust one
+definition.
+
 ### The configured signer is an addition
 
-A checkout's `repo.release_source` (else `repo.source`) is trusted beside the
-declared signers, never instead of them. A blank value adds nothing, and a
-value that names a declared signer adds no second entry. Its meaning in the
-configuration is unchanged: it names who signs the binaries the deployment
-installs. A deployment that installs goatbuilder from another publisher, a
-fork for example, names it there.
+A checkout's `repo.release_source` is trusted beside the declared signers,
+never instead of them, with the same workflow files as the declared ones. A
+blank value adds nothing, and a value that names a declared signer adds no
+second entry. A deployment that installs goatbuilder from another publisher,
+a fork for example, names it there. `repo.source` is no longer a signer: it
+names where a deployment's declarations live, not who publishes goatbuilder.
+With `repo.release_source` omitted, no signer is added.
 
 ### The overlap rule
 
@@ -142,7 +170,14 @@ in two releases, which the E3 release gate is to check before publish. Every rel
 built from this tree, from this change on, updates without a checkout.
 
 **Negative.** A move must be planned at least one release ahead, and a fork
-must name its own publisher in `repo.release_source`. Installs from before
+must name its own publisher in `repo.release_source`. A deployment that
+relied on `repo.source` as its signer, with `repo.release_source` omitted,
+now has its releases refused (GB-261) unless they are signed by a declared
+signer; it names the publisher in `repo.release_source` instead. No shipped
+example relies on it: every example `goatbuilder.yaml` in this repository
+and in the hello-galaxy-goatenv tutorial names a synthetic `example-org`
+repository as `repo.source`, which never signed a release, so with this
+change those checkouts trust the declared signer instead. Installs from before
 the move stay stranded and need the reinstall bridge. Removing an old signer
 needs care: an install that skipped the releases that trust its successor is
 stranded by that removal.
@@ -154,7 +189,7 @@ software integrity, and SR-4, provenance; SP 800-171 3.14). Trust in an
 update is a reviewed list in source control, changed only by a reviewed
 release, with the keyless signature checked in process against Sigstore's
 trusted root. The configured addition widens trust only to a repository the
-deployment's own reviewed configuration names. The residual risk is a
+deployment's own reviewed configuration names in `repo.release_source`. The residual risk is a
 compromise of a listed repository's release workflow, the same risk as
 before; the compensating control is the signature identity check (issuer,
 repository, tag and workflow), Rekor's log entry, and the release gate.

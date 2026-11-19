@@ -41,7 +41,7 @@ period on 2026-11-13 ([ADR 1228](../adr/1228-goatbuilder-keeps-its-four-surfaces
 `goatbuilder update`. The binary trusts a compiled-in list of release signers
 (`RELEASE_SIGNERS` in `crates/goatbuilder/src/update.rs`), with a checkout's
 `repo.release_source` trusted beside them, never instead of them; its own
-build provenance is never a signer. A signer change ships first in a release
+build provenance and `repo.source` are never signers. A signer change ships first in a release
 that trusts the old signer and the new one, signed by the old; only a later
 release is signed by the new one alone
 ([ADR 1252](../adr/1252-goatbuilder-trusts-a-declared-list-of-release-signers-and-a-signer-change-overlaps.md),
