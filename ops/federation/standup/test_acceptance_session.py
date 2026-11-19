@@ -313,7 +313,7 @@ class Publish(Fixture):
         with open(self.partner, "w") as f:
             f.write(text)
         proposed, _ = self.propose()
-        self.assertEqual(open(proposed).read().count("acceptance:"), 1)
+        self.assertEqual(Path(proposed).read_text().count("acceptance:"), 1)
 
     def test_proposal_uses_session_date_when_agreement_expiry_cannot_be_read(self):
         import yaml

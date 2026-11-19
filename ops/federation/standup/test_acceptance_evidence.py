@@ -8,7 +8,7 @@ from pathlib import Path
 import contextlib
 import tempfile
 import unittest
-from unittest import mock
+import unittest.mock
 
 _spec = importlib.util.spec_from_file_location("acceptance_evidence", Path(__file__).with_name("acceptance_evidence.py"))
 ev = importlib.util.module_from_spec(_spec)
@@ -166,7 +166,7 @@ class PersistenceInputs(unittest.TestCase):
 
             out = io.StringIO()
             try:
-                with mock.patch.object(ev, "open", tracked_open, create=True), contextlib.redirect_stdout(out):
+                with unittest.mock.patch.object(ev, "open", tracked_open, create=True), contextlib.redirect_stdout(out):
                     rc = ev.main(["persistence-scope", "--key", PersistenceScope.KEY,
                                   "--router", paths[0], "--subscribers", paths[1]])
                 for f in opened:
@@ -239,7 +239,7 @@ class Bundle(unittest.TestCase):
             rc, _ = self.run_cli("record", checks, "--name", "a", "--direction", "inbound", "--verdict", "FAIL",
                                  "--started", T)
             self.assertEqual(rc, 2)
-            self.assertFalse(os.path.exists(checks) and open(checks).read().strip())
+            self.assertFalse(os.path.exists(checks) and Path(checks).read_text().strip())
 
     def test_missing_or_invalid_agreement_metadata_keeps_the_check_verdict(self):
         with tempfile.TemporaryDirectory() as d:
