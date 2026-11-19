@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 980 variables, 135 of them secret-bearing by name.
+# 982 variables, 136 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 135 variables.
+# 136 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -178,6 +178,9 @@ export GOAT_RELAY_AUTH_SECRET=""  # SECRET
 
 # ops/scripts/secrets-session
 export GOAT_SECRETS_KEYSTORE=""  # SECRET
+
+# ops/scripts/with-secrets
+export GOAT_SECRETS_LOAD_REFS=""  # SECRET
 
 # ops/scripts/ansible-preflight.sh, ops/scripts/with-secrets
 export GOAT_SECRETS_RESOLVED=""  # SECRET
@@ -439,7 +442,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 845 variables.
+# 846 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1392,6 +1395,9 @@ export GOAT_RC_ROLE_CHECK=""
 
 # ops/goatbuilder/endstate/endstate.py, ops/scripts/ansible-preflight.sh
 export GOAT_REFERENCES_ONLY=""
+
+# ops/scripts/with-secrets
+export GOAT_REFS_DIR=""
 
 # ops/scripts/goat-image-import.sh
 export GOAT_REGISTRY=""
