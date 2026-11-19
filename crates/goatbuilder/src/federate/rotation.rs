@@ -377,8 +377,9 @@ fn ledger_write(work: &Path, rows: &[serde_json::Value]) -> Result<()> {
     std::fs::write(
         &tmp,
         format!("{}\n", serde_json::json!({ "rotations": rows })),
-    )?;
-    std::fs::rename(tmp, f)?;
+    )
+    .map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", tmp.display())))?;
+    std::fs::rename(&tmp, &f).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", f.display())))?;
     Ok(())
 }
 
@@ -595,8 +596,8 @@ pub fn ipsec_rotation(
     if let Some(r) = &readback {
         rec["readback"] = serde_json::json!(r);
     }
-    std::fs::create_dir_all(work)?;
-    std::fs::write(&file, format!("{rec}\n"))?;
+    std::fs::create_dir_all(work).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", work.display())))?;
+    std::fs::write(&file, format!("{rec}\n")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", file.display())))?;
     let mut rows = ledger;
     let mut row = serde_json::json!({
         "id": id,
