@@ -97,6 +97,34 @@ enrolls TPM2 and carves the `docker-data` LV) → `goat-standup.sh <site>` take 
 from. **Do not** enable TPM2 auto-unlock by hand here — the LUKS node class does
 it idempotently and records it.
 
+## 5. Standards for every node: it will move
+
+Nodes are built at one site and run at another. Each of these is checked before a node leaves the bench:
+
+| Standard | How |
+|---|---|
+| **Every wired port takes DHCP** | The installed netplan matches `en*` with `dhcp4: true` and cloud-init's network config is disabled (autoinstall `late-commands` do both). One port configured means a cable in any other port gives nothing. |
+| **The boot image takes DHCP too** | `dropbear-initramfs` and `luks-unlock` default to `IP=dhcp`. A static `ip=` string names one site's LAN: a moved node boots unreachable and keeps that route after boot. |
+| **The disk passphrase is in the team store before the disk is encrypted** | Put it in the store first, install second, then prove the stored value with `cryptsetup open --test-passphrase` before the node leaves the bench. Automatic unlock (TPM, Tang) hides a missing passphrase until the day it is needed. |
+| **No login lives only in a file** | Build and console logins go into the team store with the node's name; local env files hold references only. |
+| **Every MAC and the port map are recorded** | All NIC MACs (not just the cabled one), which interface is which case port, and which port is cabled, in the site inventory in the team store. |
+| **Labels survive handling** | Hostname and first MAC on the case, durable (engraved or laminated), and the same on the box. A hardware key (YubiKey) is labelled with the node it unlocks and its serial is recorded against that node. |
+| **Operator keys on every node** | Every platform admin's SSH key on the node and in its unlock shell, so any of them can reach it from a jump host on the same switch. |
+| **One setting per goatnet** | Mesh client settings such as quantum resistance match the goatnet's declared value on every node. |
+
+## 6. Moving nodes to another site
+
+A site's nodes travel as one set, arrive as one set, and come up one at a time against a written list.
+
+| Step | Rule |
+|---|---|
+| **Before packing** | Every node meets section 5. The site's manifest is in the team store: node name, hardware, every MAC and the port map, disk-unlock method, hardware-key serials, logins by reference. |
+| **One box per site** | Never mix two sites' nodes, or built and unbuilt machines, in one box. Label the box with the site and the node list. |
+| **Keys stay with their node** | A hardware key (YubiKey) travels in a labelled bag taped to its node, or stays in custody with the store recording which node it unlocks. A key is never pulled loose. |
+| **Borrowing a node** | A node taken for another use is recorded in the store (who, where, what changed) and is rebuilt before it rejoins its site. |
+| **On arrival** | Cable and power one node at a time; match each to the manifest by MAC and label before the next. Report each node as it comes up. |
+| **Unbuilt machines** | Do not image a machine on arrival. Imaging follows the documented build, on a plan agreed by the platform admins, once the site's assigned nodes are up. |
+
 ## Raspberry Pi (arm64, no TPM)
 
 The Pi path is not yet turnkey the way the x86 autoinstall is. Read this

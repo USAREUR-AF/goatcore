@@ -40,4 +40,24 @@ autoinstall:
     # NOPASSWD sudo for the day-1 account so ansible become works before FIDO2.
     - echo 'goat ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/goat
     - chmod 0440 /target/etc/sudoers.d/goat
+    # DHCP on EVERY wired port in the installed system, not only the port that had a
+    # link at install time (the installer writes 50-cloud-init.yaml for that one port).
+    # A node that moves, or is cabled to another port, must still come up on the LAN.
+    - rm -f /target/etc/netplan/50-cloud-init.yaml
+    - |
+      cat > /target/etc/netplan/60-goat-all-wired-dhcp.yaml <<'NETPLAN'
+      network:
+        version: 2
+        ethernets:
+          all-wired:
+            match:
+              name: "en*"
+            dhcp4: true
+            optional: true
+      NETPLAN
+    - chmod 0600 /target/etc/netplan/60-goat-all-wired-dhcp.yaml
+    # cloud-init must not rewrite the network config on a later boot.
+    - mkdir -p /target/etc/cloud/cloud.cfg.d
+    - |
+      echo 'network: {config: disabled}' > /target/etc/cloud/cloud.cfg.d/99-goat-disable-network-config.cfg
   shutdown: reboot

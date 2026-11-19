@@ -1,0 +1,106 @@
+---
+# spock-forward-origins-check — refuse forward_origins on Spock subscriptions.
+#
+# A subscription with forward_origins set in a mesh replicates in a loop: with
+# forward_origins '{all}' on three or more sites, each change goes on to the
+# next site and comes back, without end, while every subscription still reads
+# `replicating` and spock.exception_log stays empty, so nothing else alerts.
+# The install refuses it, and an alert fires if a subscription has it set.
+#
+# Run before spock-mesh-peering and ory-narrow-repset (site-bootstrap.yml
+# Phase 7B and 7D, spock-mesh-wire.yml). Refuses with GB-351:
+#   1. a forward_origins setting other than [] or ['none'];
+#   2. any subscription, in any database, on this host's Postgres or on a
+#      peer's, whose sub_forward_origins is set (anything but empty or 'none').
+# Then, with spock_forward_origins_watch, installs the timer that writes the
+# metric the alert reads (watch.yml).
+#
+# Design: docs/design/spock-mesh-peering.md.
+
+# Facts outlive the play, and this role runs twice in one site-bootstrap run
+# (before Phase 7B and before 7D): start every list empty.
+- name: "spock-forward-origins | start with nothing found"
+  ansible.builtin.set_fact:
+    spock_forward_origins_bad_settings: []
+    spock_forward_origins_found: []
+
+- name: "spock-forward-origins | find forward_origins settings other than [] or [none]"
+  ansible.builtin.set_fact:
+    spock_forward_origins_bad_settings: >-
+      {{ spock_forward_origins_bad_settings
+         + [item.key ~ '=' ~ (spock_forward_origins_values | join(','))] }}
+  vars:
+    spock_forward_origins_values: >-
+      {{ ([item.value] if item.value is string else (item.value | default([], true)))
+         | map('string') | map('trim') | reject('in', ['none', '']) | list }}
+  loop: "{{ spock_forward_origins_check_settings | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: spock_forward_origins_values | length > 0
+
+- name: "spock-forward-origins | refuse a forward_origins setting"
+  ansible.builtin.fail:
+    msg: >-
+      GB-351 refusing to wire Spock: {{ spock_forward_origins_bad_settings | join('; ') }}.
+      A subscription with forward_origins set in a mesh replicates in a loop:
+      each change goes on to the next site and comes back, without end, while
+      the subscriptions still read replicating. Remove the setting from the
+      site's group_vars (both default to []).
+  when: spock_forward_origins_bad_settings | default([]) | length > 0
+
+- name: "spock-forward-origins | start with this host"
+  ansible.builtin.set_fact:
+    spock_forward_origins_hosts: ["{{ inventory_hostname }}"]
+
+- name: "spock-forward-origins | add each peer that takes part in Spock"
+  ansible.builtin.set_fact:
+    spock_forward_origins_hosts: "{{ spock_forward_origins_hosts + [item] }}"
+  loop: "{{ groups['mgmt_hosts'] | default([]) }}"
+  when:
+    - spock_forward_origins_check_peers | bool
+    - item != inventory_hostname
+    - hostvars[item].participates_in_spock | default(false) | bool
+    - (hostvars[item].router_role | default('A')) == 'A'
+
+- name: "spock-forward-origins | read every subscription's forward_origins"
+  ansible.builtin.script:
+    cmd: >-
+      spock-forward-origins.sh list
+      {{ hostvars[item].spock_mesh_postgres_container | default(spock_forward_origins_check_container) }}
+  delegate_to: "{{ item }}"
+  register: spock_forward_origins_read
+  changed_when: false
+  loop: "{{ spock_forward_origins_hosts }}"
+
+- name: "spock-forward-origins | collect subscriptions with forward_origins set"
+  ansible.builtin.set_fact:
+    spock_forward_origins_found: >-
+      {{ spock_forward_origins_found
+         + [item.0.item ~ ' ' ~ spock_forward_origins_row[0] ~ '.' ~ spock_forward_origins_row[1]
+            ~ ' (forward_origins=' ~ spock_forward_origins_row[3] ~ ')'] }}
+  vars:
+    # <database> TAB <subscription> TAB <0|1> TAB <forward_origins>
+    spock_forward_origins_row: "{{ item.1.split('\t') }}"
+  loop: "{{ spock_forward_origins_read.results | subelements('stdout_lines') }}"
+  loop_control:
+    label: "{{ item.0.item }}: {{ item.1 }}"
+  when:
+    - spock_forward_origins_row | length == 4
+    - spock_forward_origins_row[2] | trim == '1'
+
+- name: "spock-forward-origins | refuse subscriptions with forward_origins set"
+  ansible.builtin.fail:
+    msg: >-
+      GB-351 refusing to wire Spock: {{ spock_forward_origins_found | length }}
+      subscription(s) with forward_origins set: {{ spock_forward_origins_found | join('; ') }}.
+      A subscription with forward_origins set in a mesh replicates in a loop:
+      each change goes on to the next site and comes back, without end, while
+      the subscription still reads replicating and nothing is logged. Recreate
+      each one with forward_origins empty: on that host and database,
+      SELECT spock.sub_drop('<subscription>'); then run this playbook again,
+      which creates it with forward_origins := ARRAY[]::text[].
+  when: spock_forward_origins_found | default([]) | length > 0
+
+- name: "spock-forward-origins | install the timer that writes the alert's metric"
+  ansible.builtin.include_tasks: watch.yml
+  when: spock_forward_origins_watch | bool

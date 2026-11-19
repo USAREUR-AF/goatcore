@@ -9,3 +9,6 @@ ansible-playbook --syntax-check e2e-canary-secret-deploy.yml -e target=localhost
 ansible-playbook --syntax-check e2e-canary-secret.yml -e target=localhost >/dev/null
 ansible-playbook --syntax-check "$HERE/playbook.yml" >/dev/null
 echo "e2e-canary: syntax ok"
+
+# The reference-only fixture executes production tasks without host writes.
+ansible-playbook -i localhost, -c local "$HERE/pull-ref.yml"
