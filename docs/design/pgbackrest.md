@@ -139,8 +139,7 @@ it does so, it refuses a repository, log or spool directory holding files not ow
 by the database user, and names them (`tasks/repo-ownership.yml`, read-only).
 `goatbuilder endstate` grades the service active from its acceptance rows (stanza
 `info`), not from a container. The role's rollback-ledger row is config, not an
-image. The restore in §7.1 uses the same image; it was measured on one local
-amd64 build: backup, then restore into a new data volume, WAL replayed.
+image.
 
 ### 2.1 Backup stream scope
 
@@ -410,9 +409,7 @@ need PITR to before the event.
 # On the affected host (Router-A shown; Router-B procedure is
 # symmetric — substitute postgres-b and <site>-b-netbird).
 
-# 1. Note the postgres-spock image this host runs (its pgBackRest wrote
-#    the repository), then stop the management + PG containers.
-IMG=$(docker inspect --format '{{.Config.Image}}' postgres-a)
+# 1. Stop the management + PG containers on this host.
 docker compose -f /opt/mgmt-host/docker-compose.yml stop management-a postgres-a
 
 # 2. Clear the corrupt data directory.
@@ -428,18 +425,13 @@ ssh router-b "docker exec postgres-b pgbackrest --stanza=<site>-b-netbird info"
 # Pick whichever has the most recent backup covering the target timestamp.
 
 # 4. Restore. Default = latest. Point-in-time = --type=time --target='...'.
-#    Run pgBackRest from that same image, as its postgres user, so the
-#    restored files belong to the database. The new data volume takes the
-#    image's ownership of the data directory when it is first mounted.
 #    If restoring from the local (Router-A) stanza:
-docker run --rm --user postgres --entrypoint pgbackrest \
-  -v /etc/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro \
-  -v /opt/docker-data/pgbackrest:/var/lib/pgbackrest \
-  -v /var/log/pgbackrest:/var/log/pgbackrest \
-  -v /var/spool/pgbackrest:/var/spool/pgbackrest \
+docker run --rm \
+  -v /opt/docker-data/pgbackrest:/var/lib/pgbackrest:ro \
   -v mgmt-host_pgdata-a:/var/lib/pgsql/16/data \
-  "$IMG" \
+  pgbackrest/pgbackrest:latest \
     --stanza=<site>-a-netbird \
+    --pg1-path=/var/lib/pgsql/16/data \
     restore
 
 #    If the local stanza is unavailable (NVMe died), scp the relevant
