@@ -37,6 +37,19 @@ later, and is removed only in the next major version. The operator chose this
 period on 2026-11-13 ([ADR 1228](../adr/1228-goatbuilder-keeps-its-four-surfaces-and-removes-only-in-a-major-release.md),
 "The deprecation period").
 
+**Updating.** An installed 1.x updates to every later 1.x release with a plain
+`goatbuilder update`. The binary trusts a compiled-in list of release signers
+(`RELEASE_SIGNERS` in `crates/goatbuilder/src/update.rs`), with a checkout's
+`repo.release_source` trusted beside them, never instead of them; its own
+build provenance is never a signer. A signer change ships first in a release
+that trusts the old signer and the new one, signed by the old; only a later
+release is signed by the new one alone
+([ADR 1252](../adr/1252-goatbuilder-trusts-a-declared-list-of-release-signers-and-a-signer-change-overlaps.md),
+"The overlap rule"). Built: the list and the addition, with unit and
+integration tests (`crates/goatbuilder/tests/update.rs`). Not built: the
+release gate that runs each supported install's `update` against a candidate
+(row E3).
+
 **What 1.0 does not promise.** The text of tables printed for a person. The
 shell scripts beside the binary, which stay documented and unsupported
 ([ADR 1201](../adr/1201-two-avenues-scripts-documented-cli-supported.md)).
