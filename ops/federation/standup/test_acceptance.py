@@ -858,12 +858,20 @@ class AcceptanceRun(unittest.TestCase):
     # --- one run's challenge per run: xaa alone reads what xab's runs left -----
     NEW_CHALLENGE = "fedcba9876543210fedcba9876543210"
 
-    def xab_keys(self, name, chal, started=None, sample=True, persist=True):
+    def xab_keys(self, name, chal, started=None, sample=True, persist=True, ago=None):
         """What one of xab's runs leaves on xaa's core for set `name`: its stamp
-        (when `started` is given), its sample and its second sample."""
+        (when `started` or `ago` is given), its sample and its second sample.
+
+        `ago` dates the stamp `ago` seconds before xaa first reads it, so it lies at
+        that distance from xaa's own start however long xaa took to start. A start
+        time taken before xaa ran (`started`) can fall outside twice the wait on a
+        loaded machine, and the stamp is then read as an earlier run's."""
+        import time
         wire = "from/xab/%s/acceptance/%s/xab" % (name, self.session_id())
         out = {}
-        if started is not None:
+        if ago is not None:
+            out[wire + "/run"] = lambda: ("xab-%s-%s@%d" % (chal, name, int(time.time()) - ago)).encode()
+        elif started is not None:
             out[wire + "/run"] = ("xab-%s-%s@%d" % (chal, name, started)).encode()
         if sample:
             out[wire] = ("xab-%s-%s" % (chal, name)).encode()
@@ -904,12 +912,10 @@ class AcceptanceRun(unittest.TestCase):
         # then stamped NEW and wrote NEW's sample. xaa reads OLD's stamp first. The
         # challenge is the one whose sample matched, so nothing FAILs on other bytes
         # and no row or result carries OLD.
-        import time
-        now = int(time.time())
         before, then = {}, {}
         for name in self.xab_names():
-            before.update(self.xab_keys(name, self.OLD_CHALLENGE, started=now - 5, sample=False, persist=False))
-            then.update(self.xab_keys(name, self.NEW_CHALLENGE, started=now - 2))
+            before.update(self.xab_keys(name, self.OLD_CHALLENGE, ago=5, sample=False, persist=False))
+            then.update(self.xab_keys(name, self.NEW_CHALLENGE, ago=2))
         rc, out, rows = self.lone_xaa(before, then)
         for name in self.xab_names():
             for row in ("delivery/inbound/release/" + name, "persistence/inbound/release/" + name):
@@ -923,11 +929,9 @@ class AcceptanceRun(unittest.TestCase):
         # first set cannot be told from this run's (§6.3); the second, carrying
         # another challenge than the first, is BLOCKED as two runs' stamps, never a
         # byte FAIL, and so is its second sample.
-        import time
-        now = int(time.time())
         first, second = self.xab_names()[0], self.xab_names()[1]
-        before = self.xab_keys(first, self.OLD_CHALLENGE, started=now - 5)
-        before.update(self.xab_keys(second, self.NEW_CHALLENGE, started=now - 2))
+        before = self.xab_keys(first, self.OLD_CHALLENGE, ago=5)
+        before.update(self.xab_keys(second, self.NEW_CHALLENGE, ago=2))
         rc, out, rows = self.lone_xaa(before, wait="4")
         self.assertEqual(rows["delivery/inbound/release/" + first]["verdict"], "PASS", out)
         for row in ("delivery/inbound/release/" + second, "persistence/inbound/release/" + second):
@@ -940,11 +944,9 @@ class AcceptanceRun(unittest.TestCase):
         # unstamped sample; this run's stamp arrives after xaa first reads. xaa waits
         # instead of learning the earlier sample's challenge, then judges this run's.
         before, then = {}, {}
-        import time
-        now = int(time.time())
         for name in self.xab_names():
             before.update(self.xab_keys(name, self.OLD_CHALLENGE))
-            then.update(self.xab_keys(name, self.NEW_CHALLENGE, started=now))
+            then.update(self.xab_keys(name, self.NEW_CHALLENGE, ago=0))
         rc, out, rows = self.lone_xaa(before, then)
         for name in self.xab_names():
             self.assertEqual(rows["delivery/inbound/release/" + name]["verdict"], "PASS", (name, out))
@@ -955,14 +957,10 @@ class AcceptanceRun(unittest.TestCase):
         # xab's first set carries this run's stamp and sample; the second holds only
         # an unstamped sample (an older runner's, left earlier). xab stamps its runs,
         # so the unstamped one is never learned: BLOCKED, not a FAIL on other bytes.
-        # The first set's stamp is dated when xaa first reads it: xaa has started by
-        # then, so the stamp is this run's however long xaa took to start. (A time
-        # taken before xaa ran fell outside twice the wait on a loaded machine.)
-        import time
+        # The first set's stamp is dated when xaa first reads it (`ago`): xaa has
+        # started by then, so the stamp is this run's however long xaa took to start.
         first, second = self.xab_names()[0], self.xab_names()[1]
-        before = self.xab_keys(first, self.NEW_CHALLENGE, started=0)
-        stamp = [k for k in before if k.endswith("/run")][0]
-        before[stamp] = lambda: self.xab_keys(first, self.NEW_CHALLENGE, started=int(time.time()))[stamp]
+        before = self.xab_keys(first, self.NEW_CHALLENGE, ago=0)
         before.update(self.xab_keys(second, self.OLD_CHALLENGE))
         rc, out, rows = self.lone_xaa(before, wait="4")
         self.assertEqual(rows["delivery/inbound/release/" + first]["verdict"], "PASS", out)
@@ -1000,11 +998,9 @@ class AcceptanceRun(unittest.TestCase):
         # xab's stamp is there from the start; every read of its sample inside the
         # loop fails, and the read at the end of the wait finds the stamp's own sample.
         # That is this run's sample, not "an earlier run's".
-        import time
-        now = int(time.time())
         before = {}
         for name in self.xab_names():
-            before.update(self.xab_keys(name, self.NEW_CHALLENGE, started=now))
+            before.update(self.xab_keys(name, self.NEW_CHALLENGE, ago=0))
         state = os.path.join(self.tmp, "last-read")
         real = shutil.which("curl")
         flaky = self.stand_in("curl", (
