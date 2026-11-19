@@ -520,7 +520,7 @@ export APPLY=""
 # ops/ansible/roles/isitup/files/check.sh
 export APP_SERVICES_FORMAT=""
 
-# .github/workflows/apt-failover-selftest.yml, .github/workflows/goat-cli-pr.yml
+# .github/workflows/apt-failover-selftest.yml, .github/workflows/goat-cli-pr.yml …
 export APT_FAILOVER=""
 
 # .github/workflows/apt-failover-selftest.yml
