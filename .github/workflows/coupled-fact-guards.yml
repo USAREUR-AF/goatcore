@@ -83,6 +83,10 @@ on:
       - 'ops/ansible/roles/*/tasks/**'
       - 'ops/ansible/roles/*/templates/**'
       - 'ops/ansible/roles/rollback-ledger/**'
+      - 'ops/ansible/roles/*/meta/**'
+      - 'ops/ansible/roles/*/handlers/**'
+      - 'ops/ci/check-rollback-coverage.sh'
+      - 'ops/ci/rollback-coverage-allowlist.txt'
       - 'ops/ansible/roles/goat-get/meta/**'
       - 'ops/ansible/roles/goat-docs/meta/**'
       - 'ops/scripts/served-payloads.py'
@@ -296,6 +300,13 @@ jobs:
       # deploy still reaches the handler at all.
       - name: deploy ledger promotes pending only on success
         run: python3 ops/ci/test-ledger-promote-pending.py
+
+      # Every deploying role (one whose tasks or handlers deploy a container)
+      # records its deploys in that ledger: it depends on rollback-ledger, or
+      # sits on the shrink-only allowlist (ADR 1060). A new deploying role
+      # without it fails here, on its own pull request.
+      - name: every deploying role carries the rollback ledger
+        run: bash ops/ci/check-rollback-coverage.sh
 
       # A serving surface (goat-get, goat-docs) is versioned by role vars, not by
       # its image: the ledger row records what the host serves, and both avenues
