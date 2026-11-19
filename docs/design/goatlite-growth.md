@@ -155,6 +155,6 @@ Everything on hardware. No step of `grow` has run on a machine: not the custody 
 | Steps | 36 | numbered phase rows in that plan |
 | Titled rows | 38: the 36 steps and the two image-pull rows, pinned by name | every `=== … ===` row in that plan |
 | Commands | 33 rows holding 65 shell command separators (59 until 2026-11-16, when each of the six plays limited to the founder gained one `&&` for its GB-355 check, which refuses a limit that selects no host instead of passing; no step, prompt or fact was added) | command rows in that plan, and the `&&`, `\|\|`, `;` and `\|` inside them, so work appended to an existing step counts |
-| Tutorial 00 before the goatnet works | 7 numbered sections, 18 headings, 36 command blocks with 75 lines, 159 inline code spans | `docs/tutorials/00-goatlite.md` before `## 8. Use it`: every heading at any level, numbered or not; fenced blocks, indented ones included |
+| Tutorial 00 before the goatnet works | 7 numbered sections, 18 headings, 36 command blocks with 75 lines, 158 inline code spans | `docs/tutorials/00-goatlite.md` before `## 8. Use it`: every heading at any level, numbered or not; fenced blocks, indented ones included |
 
 **What the budget cannot see.** A prompt a play or script asks during a real run is not in the dry run, which runs nothing; nor are the pages the tutorial links the learner to. Both are held by review until a run on a machine records them.

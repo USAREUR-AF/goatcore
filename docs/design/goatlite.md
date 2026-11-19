@@ -47,7 +47,7 @@ Each row is a value the full shape asks for and the lite preset supplies. The "t
 
 | Decision | goatlite default | Today |
 |---|---|---|
-| Topology | one environment, one founder site, one class `core`, no obs host, no core pair, no relays | the LAN profile skips phases 7, 8 and 11 and the relay-connect step ([goatnet-standup.md](../operations/goatnet-standup.md) line 276) |
+| Topology | one environment, one founder site, one class `core`, no obs host, no core pair, no relays | the LAN profile skips the internet-only phases 7 and 8 and the relay-connect step; phase 11, the first dashboard login, is its one stop ([goatnet-standup.md](../operations/goatnet-standup.md), "The run") |
 | Converger and transport | `push-ansible`, `direct` | the only converger goat's own config uses |
 | Cert mode | internal CA, file-delivered certs: `dashboard_cert_delivery_mode: file`, `mgmt_dynamic_cert_mode: file`, `has_acme: false`, `has_internal_ca: true` | `file` is the playbook default ([dashboard-deploy.yml](../../ops/ansible/dashboard-deploy.yml) line 109) |
 | CA | minted by the render step on the first run (`ca-init --mode dev`, the learner's own age key as the single recipient); root committed to the learner's repo at `ops/enrollment/ca/<name>/`, key under `~/.goat/state/<name>-ca/`; `mint-site-certs.sh --mint-ca-if-missing` is the safety net in phase 4 | built 2026-11-02 in `goatlite-render.py` and `mint-site-certs.sh`; `ca-init` is [ops/enrollment/cmd/ca-init](../../ops/enrollment/cmd/ca-init/main.go) |

@@ -1,0 +1,17 @@
+# A member deviation that pins what its goatnet already resolves to: a warning.
+# expect: 0 WARN
+goatnets:
+  zagros:
+    description: the synthetic example goatnet
+    members: [zagros_a_hosts, zagros_b_hosts]
+components:
+  signal-server:
+    owns_state: false
+    rollback: pin-revert
+    var: signal_server_image
+    fleet: ghcr.io/example/signal-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    deviations:
+      zagros_b_hosts:
+        value: ghcr.io/example/signal-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        over: ghcr.io/example/signal-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        reason: left over from an earlier test
