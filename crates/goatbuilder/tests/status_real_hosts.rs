@@ -382,6 +382,7 @@ fn the_real_host_documents_are_unchanged_by_the_converger_trait() {
     let w = world();
     let repo = w.path();
     let mut got = serde_json::Map::new();
+    let stamp = regex::Regex::new(r"\d{8}T\d{6}Z").unwrap();
     for (name, args) in [
         ("status", vec!["status", "--env", "zagros"]),
         ("verify-portal", vec!["verify", "portal", "--env", "zagros"]),
@@ -404,7 +405,6 @@ fn the_real_host_documents_are_unchanged_by_the_converger_trait() {
         let (code, doc, _) = run(repo, &args);
         // Paths and times differ per run; the document's shape and words do not.
         let text = doc.to_string().replace(repo.to_str().unwrap(), "<repo>");
-        let stamp = regex::Regex::new(r"\d{8}T\d{6}Z").unwrap();
         let text = stamp.replace_all(&text, "<stamp>").into_owned();
         got.insert(name.into(), serde_json::json!({"exit": code, "document": serde_json::from_str::<serde_json::Value>(&text).unwrap()}));
     }
