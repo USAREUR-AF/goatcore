@@ -101,6 +101,9 @@ jobs:
           echo "ansible-syntax-check: ran=$ran fails=$fails"
           [[ "$fails" -eq 0 ]] || exit 1
 
+      - name: pgBackRest repository ownership guard (a root-owned file stops the role)
+        run: bash ops/ansible/roles/pgbackrest/tests/repo-ownership-test.sh
+
       - name: External-service client and delegation lifecycle (loopback only)
         run: python3 ops/ansible/tests/test-external-service-lifecycle.py
 
