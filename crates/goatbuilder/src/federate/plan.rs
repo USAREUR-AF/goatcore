@@ -2037,10 +2037,17 @@ pub enum Stage {
     /// admission, and leave every other peering and the core as they were.
     #[command(name = super::backout::VERB)]
     Backout(super::backout::BackoutArgs),
+    /// Read the peering directory (saltlick): `ls`, `show <party>`, `check
+    /// <party> [--for <counterparty>]`. Reads only. `check` says, for each file
+    /// a peering reads, whether it is there, not uploaded by the party, or a
+    /// route the directory's release does not serve. URL from --url or
+    /// $FED_DIRECTORY_URL.
+    Directory(super::directory::DirectoryArgs),
     /// Replace one key of a running peering and run the command again from
-    /// the first phase it changes: `rotate <partner> leaves` (phases 8 to 14)
-    /// or `rotate <partner> carrier` (phases 2 to 14). The other keys are
-    /// refused, each saying why (docs/design/federation-key-rotation.md).
+    /// the first phase it changes: `rotate <partner> leaves` (phases 8 to 14),
+    /// `rotate <partner> carrier` (phases 2 to 14), or on an ipsec-fips peering
+    /// `rotate <partner> ipsec-leaf|ipsec-ca` (phases 11 to 14). The other keys
+    /// are refused, each saying why (docs/design/federation-key-rotation.md).
     #[command(name = super::rotation::VERB)]
     Rotate(super::rotation::RotateArgs),
     /// A two-driver peering's import of an edge result, as a hand-off object
@@ -2054,8 +2061,8 @@ pub enum Stage {
 pub fn run(repo: &Path, stage: &Stage, mock: Option<&Path>) -> Result<Report> {
     match stage {
         // main.rs runs the verbs before it reads a repository.
-        Stage::Verb(_) | Stage::Backout(_) | Stage::Rotate(_) => {
-            Err(goat_errors::coded("GB-322", "the federation verbs, backout and rotate are run before this point").into())
+        Stage::Verb(_) | Stage::Backout(_) | Stage::Rotate(_) | Stage::Directory(_) => {
+            Err(goat_errors::coded("GB-322", "the federation verbs, backout, rotate and directory are run before this point").into())
         }
         Stage::Import(a) => {
             let work = a.work.clone().unwrap_or_else(|| super::env_or("FED_WORK", format!("/var/lib/goat-federation/{}", a.with)));

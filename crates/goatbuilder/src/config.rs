@@ -476,14 +476,14 @@ pub fn derive_lite(value: &Value, checkout: Option<&Value>) -> Value {
 /// choices) are already in the file set the render wrote, which the learner
 /// keeps. Refused unless the result validates: a four-fact file with no checkout
 /// config has no `repo` or `components`, and growth asks for them then.
-#[allow(dead_code)] // the verb's wiring in main.rs is a separate change; the tests call this
-// grow's errors are left uncoded here: grow is the surface of the open goatlite
-// growth change, which codes them itself.
 pub fn grow(value: &Value, checkout: Option<&Value>) -> Result<Value> {
     if value.get("preset").and_then(Value::as_str) != Some("lite") {
-        return Err(anyhow::anyhow!("grow takes a goatlite config: this one does not declare preset: lite"));
+        return Err(goat_errors::coded(NOT_LITE_CODE, "grow takes a goatlite config: this one does not declare preset: lite").into());
     }
-    let lite = value.get("lite").and_then(Value::as_object).ok_or_else(|| anyhow::anyhow!("grow takes a goatlite config: this one has no lite: block"))?;
+    let lite = value
+        .get("lite")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow::Error::from(goat_errors::coded(NOT_LITE_CODE, "grow takes a goatlite config: this one has no lite: block")))?;
     let mut out = derive_lite(value, checkout);
     let obj = out.as_object_mut().expect("derive_lite keeps an object");
     obj.remove("lite");
@@ -517,7 +517,7 @@ pub fn grow(value: &Value, checkout: Option<&Value>) -> Result<Value> {
         } else {
             format!("\n\nA full configuration declares {} of its own; the lite preset took them from the checkout's config, and this checkout has none. Add them to goatlite.yaml, then grow again.", missing.join(" and "))
         };
-        return Err(anyhow::anyhow!("the grown configuration does not validate:\n  {}{ask}", problems.join("\n  ")));
+        return Err(goat_errors::coded(GROWN_INCOMPLETE_CODE, format!("the full configuration grown from this goatlite is incomplete:\n  {}{ask}", problems.join("\n  "))).into());
     }
     Ok(out)
 }
@@ -652,6 +652,12 @@ pub fn load(path: &Path) -> Result<Config> {
         .map_err(|e| goat_errors::coded(REFUSED_CODE, format!("{} does not match the typed model: {e}", path.display())).into())
 }
 
+/// `grow` was given a file that is not a goatlite (ops/errors/catalog.yaml).
+pub const NOT_LITE_CODE: &str = "GB-304";
+/// The full configuration a goatlite grows into does not pass the schema or the
+/// cross-field rules: a four-fact file names no `repo` or `components`.
+pub const GROWN_INCOMPLETE_CODE: &str = "GB-306";
+
 /// The catalog code of a config that does not validate (ops/errors/catalog.yaml).
 pub const REFUSED_CODE: &str = "GB-025";
 
@@ -682,7 +688,7 @@ pub fn validate_report(path: &Path) -> Result<Report> {
     Ok(Report::new("validate", checks, EXIT_REFUSED))
 }
 
-fn schema_version() -> String {
+pub fn schema_version() -> String {
     serde_json::from_str::<Value>(SCHEMA_JSON)
         .ok()
         .and_then(|s| {
@@ -1172,9 +1178,10 @@ mod tests {
     }
 
     /// G1's proof: a standup plan from the grown configuration runs nothing the lite
-    /// plan did not, with the same arguments. It may drop the two lite render
+    /// plan did not, with the same arguments. It drops exactly the two lite render
     /// gates (their files exist by then) and the CA mint-if-missing flag (the CA
-    /// exists), and a GATE may differ (a gate measures and changes nothing).
+    /// exists), and runs the acceptance gate a goatlite skips by default (a gate
+    /// measures and changes nothing). Every other step, gates included, is the same.
     #[test]
     fn a_standup_plan_from_the_grown_config_changes_nothing_that_exists() {
         let lite_dir = crate::testdir::path("gb-grow-lite-");
@@ -1184,19 +1191,32 @@ mod tests {
         let grown = grow(&lite_fixture(), None).unwrap();
         std::fs::write(full_dir.join("ops/goatbuilder/goatbuilder.yaml"), serde_yaml::to_string(&grown).unwrap()).unwrap();
 
-        let lite: Vec<_> = plan_steps(&lite_dir)
+        let lite_all = plan_steps(&lite_dir);
+        let full = plan_steps(&full_dir);
+        // What the grown plan loses is exactly the lite path's own steps: the two
+        // render gates (`[GATE] goatlite: `) and the one step that mints the CA if
+        // it is missing. Every other step, gates included, is the same.
+        let render_gates: Vec<&String> = lite_all.iter().map(|(l, _)| l).filter(|l| l.contains("[GATE] goatlite: ")).collect();
+        assert_eq!(render_gates.len(), 2, "the two render gates: {render_gates:?}");
+        let minting: Vec<&String> = lite_all.iter().filter(|(_, c)| c.contains(" --mint-ca-if-missing")).map(|(l, _)| l).collect();
+        assert_eq!(minting.len(), 1, "one step mints the CA if missing: {minting:?}");
+        assert!(full.iter().all(|(l, c)| !l.contains("[GATE] goatlite: ") && !c.contains("--mint-ca-if-missing")), "the grown plan has neither");
+        let lite: Vec<_> = lite_all
             .into_iter()
             .filter(|(label, _)| !label.contains("[GATE] goatlite: "))
             .map(|(l, c)| (l, c.replace(" --mint-ca-if-missing", "")))
             .collect();
-        let full = plan_steps(&full_dir);
-        let is_gate = |label: &str| label.contains(" [GATE] ");
-        let changing = |steps: &[(String, String)]| steps.iter().filter(|(l, _)| !is_gate(l)).cloned().collect::<Vec<_>>();
-        let (lite, full) = (changing(&lite), changing(&full));
+        // One gate differs by design: a goatlite skips the acceptance phase by
+        // default (goatlite.md §11, standup's phase 13), and the grown full plan
+        // runs it. A gate reads and changes nothing; no other step may differ.
+        let acceptance = "=== Phase 13 [GATE] acceptance suite";
         let differ: Vec<String> = lite
             .iter()
             .zip(full.iter())
-            .filter(|(a, b)| a != b)
+            .filter(|(a, b)| {
+                let skipped_on_lite = a.0 == b.0 && a.0.starts_with(acceptance) && a.1.is_empty() && b.1.contains("/ops/validation/run-acceptance.py' --env pasture");
+                a != b && !skipped_on_lite
+            })
             .map(|(a, b)| format!("lite:  {} :: {}\ngrown: {} :: {}", a.0, a.1, b.0, b.1))
             .collect();
         assert!(differ.is_empty() && lite.len() == full.len(), "{} step(s) differ ({} lite, {} grown):\n{}", differ.len(), lite.len(), full.len(), differ.join("\n\n"));

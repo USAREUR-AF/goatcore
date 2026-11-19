@@ -1,0 +1,14 @@
+# Rendered by ops/ansible/roles/decoy — do not edit on the host.
+[Unit]
+Description=goat decoy responder: forbid outbound connections from its user
+Before=goat-decoy-responder.service
+After=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/sbin/nft -f {{ decoy_config_dir }}/egress.nft
+ExecStop=/usr/sbin/nft delete table inet goat_decoy
+
+[Install]
+WantedBy=multi-user.target

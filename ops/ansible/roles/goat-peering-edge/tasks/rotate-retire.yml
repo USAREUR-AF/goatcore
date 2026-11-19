@@ -1,0 +1,134 @@
+---
+# The retire step of a credential rotation (K6, docs/design/federation-key-rotation.md
+# §8), included by rotate.yml with peering_edge_rotation_retire. It never moves the
+# live pair, the staged pair or our CA. It removes the set-aside key of rotation
+# <id>, and only when the new leaf is live: the confirm recorded it
+# (.previous-<id>/confirmed), the live pair is not the set-aside one, the live key is
+# the live certificate's, and the IKE SA the confirm recorded, or one established
+# since, is up with an installed CHILD SA. A rotation that was rolled back is refused with GB-302: its
+# set-aside pair is the live one's copy.
+
+- name: peering-edge | retire | where things stand
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: true
+    checksum_algorithm: sha256
+  loop:
+    - "{{ peering_edge_swanctl_dir }}/.previous-{{ peering_edge_rotation }}"
+    - "{{ peering_edge_swanctl_dir }}/.previous-{{ peering_edge_rotation }}/rolled-back"
+    - "{{ peering_edge_swanctl_dir }}/.previous-{{ peering_edge_rotation }}/{{ peering_edge_cert_path | basename }}"
+    - "{{ peering_edge_swanctl_dir }}/.previous-{{ peering_edge_rotation }}/{{ peering_edge_key_path | basename }}"
+    - "{{ peering_edge_cert_path }}"
+    - "{{ peering_edge_key_path }}"
+    - "{{ peering_edge_swanctl_dir }}/.previous-{{ peering_edge_rotation }}/confirmed"
+  register: _pe_ret_stat
+
+- name: peering-edge | retire | name what was found
+  ansible.builtin.set_fact:
+    _pe_ret_aside: "{{ peering_edge_swanctl_dir }}/.previous-{{ peering_edge_rotation }}"
+    _pe_ret_aside_exists: "{{ _pe_ret_stat.results[0].stat.isdir | default(false) }}"
+    _pe_ret_rolled_back: "{{ _pe_ret_stat.results[1].stat.exists }}"
+    _pe_ret_aside_cert: "{{ _pe_ret_stat.results[2].stat }}"
+    _pe_ret_aside_key: "{{ _pe_ret_stat.results[3].stat }}"
+    _pe_ret_live_cert: "{{ _pe_ret_stat.results[4].stat }}"
+    _pe_ret_live_key: "{{ _pe_ret_stat.results[5].stat }}"
+    _pe_ret_confirmed: "{{ _pe_ret_stat.results[6].stat.exists }}"
+
+- name: peering-edge | retire | refuse an id with no set-aside here (GB-309)
+  ansible.builtin.fail:
+    msg: >-
+      goat-peering-edge refuses (GB-309): there is no rotation {{ peering_edge_rotation }} to retire
+      on {{ inventory_hostname }}: {{ _pe_ret_aside }} does not exist. Check the id the rotation
+      printed. Nothing was moved or removed.
+  when: not (_pe_ret_aside_exists | bool)
+
+- name: peering-edge | retire | refuse a rotation that was rolled back (GB-302)
+  ansible.builtin.fail:
+    msg: >-
+      goat-peering-edge (GB-302): rotation {{ peering_edge_rotation }} of {{ peering_edge_name }} on
+      {{ inventory_hostname }} was rolled back, so the old leaf is live and {{ _pe_ret_aside }} holds
+      its copy. Nothing was removed.
+  when: _pe_ret_rolled_back | bool
+
+- name: peering-edge | retire | refuse a rotation whose confirm left no record (GB-309)
+  ansible.builtin.fail:
+    msg: >-
+      goat-peering-edge refuses (GB-309): rotation {{ peering_edge_rotation }} on {{ inventory_hostname }}
+      was not confirmed: {{ _pe_ret_aside }}/confirmed, which the confirm writes once an IKE SA the
+      re-authentication made is up on the new leaf, is not there. Run the rotation again with the same
+      id, then retire. Nothing was moved or removed.
+  when: not (_pe_ret_confirmed | bool)
+
+- name: peering-edge | retire | the confirm's record
+  ansible.builtin.slurp:
+    src: "{{ _pe_ret_aside }}/confirmed"
+  register: _pe_ret_marker
+
+- name: peering-edge | retire | the confirmed SA's id and time
+  ansible.builtin.set_fact:
+    _pe_ret_marker_id: "{{ _pe_ret_marker.content | b64decode | regex_search('(?m)^id=([0-9]+)$', '\\1') | default([''], true) | first }}"
+    _pe_ret_marker_at: "{{ _pe_ret_marker.content | b64decode | regex_search('(?m)^at=([0-9]+)$', '\\1') | default([''], true) | first }}"
+
+- name: peering-edge | retire | refuse a confirm record that cannot be read (GB-309)
+  ansible.builtin.fail:
+    msg: >-
+      goat-peering-edge refuses (GB-309): the confirm's record {{ _pe_ret_aside }}/confirmed on
+      {{ inventory_hostname }} is unreadable: it needs an id= and an at= line, as the confirm writes
+      them. Run the rotation again with the same id, then retire. Nothing was moved or removed.
+  when: (_pe_ret_marker_id | length == 0) or (_pe_ret_marker_at | length == 0)
+
+- name: peering-edge | retire | the live certificate is its key's
+  ansible.builtin.shell:
+    cmd: >-
+      [ "$(openssl x509 -noout -pubkey -in {{ peering_edge_cert_path | quote }} | openssl sha256)" =
+      "$(openssl pkey -pubout -in {{ peering_edge_key_path | quote }} | openssl sha256)" ]
+    executable: /bin/bash
+  register: _pe_ret_match
+  changed_when: false
+  failed_when: false
+
+# The SA the confirm recorded, or one established after the confirm's time
+# (a re-authentication or rekey since the confirm keeps the new leaf). Never the
+# set-aside's time: the rekey before the re-authentication makes an SA after it
+# that still runs on the old leaf. swanctl prints ages in whole seconds.
+- name: peering-edge | retire | the confirmed SA, or one established since the confirm
+  ansible.builtin.shell:
+    cmd: >-
+      lim=$(( $(date +%s) - {{ _pe_ret_marker_at | int }} ));
+      swanctl --list-sas --ike {{ peering_edge_name | quote }} |
+      awk -v n={{ peering_edge_name | quote }} -v lim="$lim" -v want={{ _pe_ret_marker_id | quote }}
+      'index($0, n ": #") == 1 { split(substr($0, length(n) + 4), a, ","); cur = a[1] + 0; est = ($0 ~ /ESTABLISHED/); age = -1; next }
+      match($0, /established [0-9]+s ago/) { age = substr($0, RSTART + 12, RLENGTH - 16) + 0 }
+      /INSTALLED/ && est && ((want != "" && cur == want + 0) || (age >= 0 && age < lim)) { ok = 1 }
+      END { exit ok ? 0 : 1 }'
+    executable: /bin/bash
+  register: _pe_ret_up
+  changed_when: false
+  failed_when: false
+
+- name: peering-edge | retire | refuse unless the new leaf is live (GB-309)
+  ansible.builtin.assert:
+    that:
+      - _pe_ret_aside_key.exists
+      - _pe_ret_live_cert.exists and _pe_ret_live_key.exists
+      - _pe_ret_live_cert.checksum | default('') != _pe_ret_aside_cert.checksum | default('')
+      - _pe_ret_live_key.checksum | default('') != _pe_ret_aside_key.checksum | default('')
+      - _pe_ret_match.rc == 0
+      - _pe_ret_up.rc == 0
+    fail_msg: >-
+      goat-peering-edge refuses (GB-309): rotation {{ peering_edge_rotation }} on {{ inventory_hostname }}
+      is not confirmed live, so its set-aside key is kept:
+      {{ 'its set-aside key is already gone; ' if not _pe_ret_aside_key.exists else '' }}{{
+      'the live pair is still the set-aside one, so the switch has not happened; '
+      if (_pe_ret_live_cert.checksum | default('') == _pe_ret_aside_cert.checksum | default('')
+          or _pe_ret_live_key.checksum | default('') == _pe_ret_aside_key.checksum | default('')) else '' }}{{
+      'the live key is not the live certificate\'s; ' if _pe_ret_match.rc != 0 else '' }}{{
+      'neither the IKE SA the confirm recorded (' ~ _pe_ret_marker_id ~ ') nor one of ' ~ peering_edge_name ~ ' established since is up with an installed CHILD SA; '
+      if _pe_ret_up.rc != 0 else '' }}finish the rotation (run it again with the same id) and retire
+      once both sides passed phase 14. Nothing was moved or removed.
+    quiet: true
+
+- name: peering-edge | retire | remove the set-aside key and keep its certificate
+  ansible.builtin.file:
+    path: "{{ _pe_ret_aside }}/{{ peering_edge_key_path | basename }}"
+    state: absent

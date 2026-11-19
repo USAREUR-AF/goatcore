@@ -51,26 +51,35 @@ def main():
         k, _, v = kv.partition("=")
         env[k] = v
     started = time.time()
-    p = subprocess.run(cmd, cwd=a.cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    # A command that cannot start (not found, not executable, a bad --cwd) is a failed step,
+    # recorded like any other, never a crash that leaves no row: a lost step can hide a check.
+    unstartable = ""
+    try:
+        p = subprocess.run(cmd, cwd=a.cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        rc, text = p.returncode, p.stdout or ""
+    except OSError as e:
+        unstartable = f"the command could not start: {cmd[0]}: {e.strerror or e}"
+        rc, text = 127, unstartable + "\n"
     dur = round(time.time() - started, 2)
-    text = p.stdout or ""
     log = os.path.join(rdir, f"{n:02d}-{a.name}.log")
     with open(log, "w", encoding="utf-8") as fh:
         fh.write(text)
     missing = [t for t in a.expect_in if t not in text]
     present = [t for t in a.expect_not_in if t in text]
-    ok = (p.returncode == a.expect_exit) and not missing and not present
+    ok = not unstartable and (rc == a.expect_exit) and not missing and not present
     if ok:
         status = "pass"
-    elif a.xfail:
+    elif a.xfail and not unstartable:
         status = "xfail"
     else:
         status = "fail"
     why = ""
     if not ok:
         parts = []
-        if p.returncode != a.expect_exit:
-            parts.append(f"exit {p.returncode}, expected {a.expect_exit}")
+        if unstartable:
+            parts.append(unstartable)
+        elif rc != a.expect_exit:
+            parts.append(f"exit {rc}, expected {a.expect_exit}")
         for t in missing:
             parts.append(f"missing text: {t!r}")
         for t in present:
@@ -78,7 +87,7 @@ def main():
         why = "; ".join(parts)
     row = {
         "n": n, "name": a.name, "status": status, "command": cmd, "cwd": a.cwd or os.getcwd(),
-        "exit": p.returncode, "expected_exit": a.expect_exit, "duration_s": dur,
+        "exit": rc, "expected_exit": a.expect_exit, "duration_s": dur,
         "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),
         "log": os.path.basename(log), "tail": text[-1500:], "why": why, "xfail": a.xfail, "note": a.note,
     }

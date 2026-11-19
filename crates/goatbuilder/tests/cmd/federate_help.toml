@@ -25,27 +25,33 @@ Usage: goatbuilder federate [OPTIONS] <WITH> [PARTNER]
        goatbuilder federate <COMMAND>
 
 Commands:
-  init     Generate our half of a federation, read from the running system
-  lint     Check one package: is it well-formed, and does it agree with itself?
-  compose  Combine two packages into one agreement and print its digest
-  diff     Two digests disagree? Run this. It names the field
-  verify   Could we actually deliver this agreement? Dry-run it here
-  apply    Render the access rules and configuration this agreement implies
-  plan     The bounded plan of one peering before anything changes: versions, agreement digest,
-           rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's
-           readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
-  backout  Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation,
-           edge router, republisher, forwarder mapping and core admission, and leave every other
-           peering and the core as they were
-  rotate   Replace one key of a running peering and run the command again from the first phase it
-           changes: `rotate <partner> leaves` (phases 8 to 14) or `rotate <partner> carrier` (phases
-           2 to 14). The other keys are refused, each saying why
-           (docs/design/federation-key-rotation.md)
-  import   A two-driver peering's import of an edge result, as a hand-off object names it: checked
-           against the edge driver's confirm code, placed under the working directory and journaled.
-           Built for phases 1 and 3; another phase's import refuses with GB-267
-           (docs/design/federation-two-drivers.md)
-  help     Print this message or the help of the given subcommand(s)
+  init       Generate our half of a federation, read from the running system
+  lint       Check one package: is it well-formed, and does it agree with itself?
+  compose    Combine two packages into one agreement and print its digest
+  diff       Two digests disagree? Run this. It names the field
+  verify     Could we actually deliver this agreement? Dry-run it here
+  apply      Render the access rules and configuration this agreement implies
+  plan       The bounded plan of one peering before anything changes: versions, agreement digest,
+             rendered-configuration hashes, owned resources, restarts, acceptance policy and phase
+             1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no
+             host
+  backout    Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation,
+             edge router, republisher, forwarder mapping and core admission, and leave every other
+             peering and the core as they were
+  directory  Read the peering directory (saltlick): `ls`, `show <party>`, `check <party> [--for
+             <counterparty>]`. Reads only. `check` says, for each file a peering reads, whether it
+             is there, not uploaded by the party, or a route the directory's release does not serve.
+             URL from --url or $FED_DIRECTORY_URL
+  rotate     Replace one key of a running peering and run the command again from the first phase it
+             changes: `rotate <partner> leaves` (phases 8 to 14), `rotate <partner> carrier` (phases
+             2 to 14), or on an ipsec-fips peering `rotate <partner> ipsec-leaf|ipsec-ca` (phases 11
+             to 14). The other keys are refused, each saying why
+             (docs/design/federation-key-rotation.md)
+  import     A two-driver peering's import of an edge result, as a hand-off object names it: checked
+             against the edge driver's confirm code, placed under the working directory and
+             journaled. Built for phases 1 and 3; another phase's import refuses with GB-267
+             (docs/design/federation-two-drivers.md)
+  help       Print this message or the help of the given subcommand(s)
 
 Arguments:
   <WITH>

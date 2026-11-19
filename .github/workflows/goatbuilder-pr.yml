@@ -146,7 +146,7 @@ jobs:
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 2
       - name: The pull request's changes, against the base it merges into
@@ -173,18 +173,18 @@ jobs:
     steps:
       # Depth 2: the pull request's merge commit and its parents, so row A1 reads
       # the base branch's crates/goatbuilder/Cargo.toml at the merge's first parent.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 2
       - uses: ./.github/actions/apt-failover
         if: env.FULL == 'true'
       - name: Install Rust toolchain (1.100.0 + clippy)
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0
         with:
           components: clippy
       - name: Cache cargo registry + git deps
         if: env.FULL == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index
@@ -195,7 +195,7 @@ jobs:
             cargo-goatbuilder-pr-
       - name: Cache cargo build target
         if: env.FULL == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: crates/target
           key: target-goatbuilder-pr-${{ hashFiles('crates/Cargo.lock') }}
@@ -205,7 +205,7 @@ jobs:
       # run never writes a partial build under the key the full run reads.
       - name: Restore the cargo registry (documents only)
         if: env.FULL != 'true'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index
@@ -216,7 +216,7 @@ jobs:
             cargo-goatbuilder-pr-
       - name: Restore the cargo build target (documents only)
         if: env.FULL != 'true'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: crates/target
           key: target-goatbuilder-pr-${{ hashFiles('crates/Cargo.lock') }}
@@ -268,7 +268,7 @@ jobs:
       # whose SHA-256 is not the pin. REQUIRED=1: a missing binary fails the job.
       - name: Cache the released goatbuilder binaries the upgrade test runs
         if: env.FULL == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/goatbuilder-upgrade
           key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
@@ -379,6 +379,10 @@ jobs:
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 ops/scripts/test_standup_required_inputs.py
+      - name: The standup pre-pull lists a member's image pins and pulls them N at once, on a fixture checkout of its own
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: python3 -W error::ResourceWarning ops/scripts/test_standup_image_pull.py
       - name: Each phase runs through the shared runner; a goatlite's phase 1 creates its own secrets store (LP-007)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
@@ -464,11 +468,11 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Rust toolchain (1.100.0)
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0
       - name: Cache cargo registry + git deps
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index
@@ -478,7 +482,7 @@ jobs:
           restore-keys: |
             cargo-goatbuilder-pr-macos-
       - name: Cache cargo build target
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: crates/target
           key: target-goatbuilder-pr-macos-${{ hashFiles('crates/Cargo.lock') }}
@@ -494,7 +498,7 @@ jobs:
       # linux-amd64: the released darwin-arm64 binaries, from a cache keyed on their
       # pinned checksums, checked by fetch.sh. REQUIRED=1: a missing binary fails the job.
       - name: Cache the released goatbuilder binaries the upgrade test runs
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/goatbuilder-upgrade
           key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
@@ -522,11 +526,11 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Rust toolchain (1.100.0)
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0
       - name: Cache cargo registry + git deps
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index
@@ -536,7 +540,7 @@ jobs:
           restore-keys: |
             cargo-goatbuilder-pr-arm64-
       - name: Cache cargo build target
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: crates/target
           key: target-goatbuilder-pr-arm64-${{ hashFiles('crates/Cargo.lock') }}
@@ -545,7 +549,7 @@ jobs:
       - name: Install the Python the pins and promote flows render with
         run: python3 -m pip install --quiet --break-system-packages pyyaml jsonschema || python3 -m pip install --quiet pyyaml jsonschema
       - name: Cache the released goatbuilder binaries the upgrade test runs
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/goatbuilder-upgrade
           key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}

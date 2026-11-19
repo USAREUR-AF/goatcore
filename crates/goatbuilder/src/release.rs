@@ -1100,6 +1100,53 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
 mod tests {
     use super::*;
 
+    /// Every step line release prints, by the format string it prints with,
+    /// and the numbered step of the module doc (and of the phase catalog) it
+    /// belongs to. A rung's deploy and live rows are told apart by the
+    /// variable each line names ({dev}, {pre}, {prod}).
+    const STEP_LINES: &[(&str, u32)] = &[
+        ("component {}", 1),
+        ("preflight", 1),
+        ("tag {}", 2),
+        ("dev rung: {} runs {}", 3),
+        ("deploy {} to {dev}", 4),
+        ("live rows on {dev}", 5),
+        ("preprod rung: {pre} already runs {}; resuming at its deploy check and live rows", 6),
+        ("preprod rung: open the candidate and put {} on {pre}", 6),
+        ("deploy {} to {pre}", 6),
+        ("live rows on {pre}", 6),
+        ("soak", 7),
+        ("prod rung: graduate {} and fold it into fleet:", 8),
+        ("deploy {} to {prod}", 8),
+        ("every rung reads {}", 8),
+    ];
+
+    /// The phase catalog describes release's steps (gate row F4): the step
+    /// lines this file prints are exactly the ones above, so a new step fails
+    /// here until it has a number, and the catalog's release entries are
+    /// exactly the numbers they make. Each entry's `runs` names only tools
+    /// release starts.
+    #[test]
+    fn the_phase_catalog_describes_releases_steps() {
+        let source = include_str!("release.rs");
+        let printed = regex::Regex::new(r#"run\.step\(\s*&?(?:format!\()?"([^"]+)""#).unwrap();
+        let found: std::collections::BTreeSet<String> = printed.captures_iter(source).map(|c| c[1].to_string()).collect();
+        let listed: std::collections::BTreeSet<String> = STEP_LINES.iter().map(|(l, _)| l.to_string()).collect();
+        assert_eq!(found, listed, "the step lines release.rs prints are the ones STEP_LINES numbers");
+        let numbers: std::collections::BTreeSet<String> = STEP_LINES.iter().map(|(_, n)| n.to_string()).collect();
+        let entries = goat_errors::phases::phases().of("release");
+        let keys: std::collections::BTreeSet<String> = entries.iter().map(|e| e.phase.to_string()).collect();
+        assert_eq!(keys, numbers, "the catalog's release entries are release's numbered steps");
+        let code = [source, include_str!("push.rs"), include_str!("pins.rs"), include_str!("promote.rs")].concat();
+        for e in &entries {
+            for w in e.runs.split([',', ';', ' ']).filter(|w| w.contains('/')) {
+                let name = w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_' && c != '/');
+                let name = name.rsplit('/').next().unwrap_or(name);
+                assert!(code.contains(name), "release step {}: `runs` names {w}, which release does not start", e.phase);
+            }
+        }
+    }
+
     /// The dev step re-run on a later day (a run that crosses midnight UTC)
     /// declares the same candidate with the next day's reason. The rung already
     /// declares it, so the pins table must not change, or the step lands a

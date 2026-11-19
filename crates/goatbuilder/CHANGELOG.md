@@ -24,8 +24,7 @@ GB-259, a release graduation that printed no record GB-020, a git command
 `doctor` runs that failed GB-258, an internal error GB-322, and a mutation
 without a terminal GB-008. One is new: GB-326, a file of the checkout that is
 not YAML (fleet-pins.yaml, doors.yaml, a role's deploy-history.yml,
-teardown.yaml). The errors of `grow`, which is not wired yet, are left to the
-change that wires it.
+teardown.yaml).
 
 Five checks inside `goatbuilder federate` now carry a code: phase 1's and the slot
 recheck's exit disagreeing with its result GB-315, phase 1 writing no results and
@@ -67,6 +66,86 @@ GB-331 for a `standup` phase, GB-332 for a `join-node` phase, GB-333 for
 standup's image pull, GB-334 for an observability leg and GB-335 for a
 `teardown` stop. No exit code changes.
 
+<!-- END generated: changelog unreleased -->
+
+## 0.7.3 — 2026-11-17
+
+What changed since 0.7.2, the previous release. `goatbuilder federate directory
+ls|show|check` reads the peering directory and says, for a file a peering
+cannot fetch, whether the party has not uploaded it or the directory's release
+lacks the route. Every error `goatbuilder federate` raises carries its catalog
+code, and `explain release` and `explain fastlane` answer for each step.
+
+### For someone deploying
+
+#### Changed: a joining site is declared to run the data router, admit-audit and SPIRE
+
+The end-state catalog declares the data router (zenoh-router) and admit-audit
+at every site that replicates, a founder and a joiner alike, since
+`goatbuilder join-node` builds both at a joining site's core node. A pin's
+`absent: true` or the site's own `admit_audit_enabled: false` still decides.
+SPIRE (spire, spire-agent) is declared at every site too. A joining site's own
+SPIRE server and trust domain (ADR 1164) is designed, not built, so at a joiner
+`goatbuilder endstate` grades it `GAP` and the `join-node` plan lists it under
+"does not run yet", each ending "(ADR 1164)" where the other gaps name their
+gate row.
+
+#### Added: `goatbuilder explain release` and `explain fastlane` answer for each of their steps
+
+The phase catalog now describes `release`'s eight numbered steps (preflight,
+tag, dev pin, dev deploy, dev rows, preprod, soak, prod) and `fastlane`'s
+eight (component, graduation set, digest, dry run, move fleet, record the
+debt, land, deploy). `goatbuilder explain release` lists them, and
+`goatbuilder explain release 6` (or `explain release preprod`) says what the
+step does, why, what it changes, how to tell it worked, the command by hand
+and what to do when it failed, as `explain` already did for `standup`,
+`join-node`, `deploy` and `federate`. A test holds each verb's entries to the
+step lines it prints, so a new step cannot ship without one. Nothing a run
+does changes.
+
+#### Fixed: acceptance on a derived session learns a partner's challenge from its run stamp
+
+Phase 14's acceptance script, run on a derived session
+(`ops/federation/standup/acceptance.sh` with `FED_ACCEPTANCE_ATTEMPT`),
+staged only its start time beside its samples, so a partner's rerun soon
+after a first run could be judged by the first run's challenge, giving a
+false FAIL. Each run now stages a run stamp beside its samples, holding its
+challenge and the time it started in one value. A reader learns the
+partner's challenge from the stamp and waits for the sample carrying it. It
+ignores a stamp that started more than twice `FED_SESSION_WAIT` before its
+own start, says so, and keeps waiting for this run's; a stamp it cannot read
+is waited for, never taken as missing. The challenge is the one of the stamp
+whose sample it found, so a rerun whose first run's sample never arrived is
+judged by the rerun's; two runs' stamps on two sets end BLOCKED, never FAIL.
+With only an earlier run's sample there, the delivery rows are BLOCKED, say
+that an earlier run's sample is what is there, and the run ends open
+(exit 3). A partner whose runner stages no stamp is read once a whole
+`FED_SESSION_WAIT` has passed with no stamp of its own, since this run's
+stamp may still be in flight; once a partner's stamp has been read (a
+garbled one included), a sample without one is never learned; an unstamped
+sample's row says its run identity is not proven, and a second unstamped
+challenge is BLOCKED as two runs.
+
+Limits: a partner's current run is kept when both sides start phase 14
+within `FED_SESSION_WAIT` of each other and their clocks agree within
+`FED_SESSION_WAIT`, which `goatbuilder federate test <partner> --bilateral`
+checks first (GB-268). An earlier run that started less than twice
+`FED_SESSION_WAIT` before ours is not told apart, nor is one from a runner
+that stages no stamp; its result is still refused (GB-273), so the verdicts
+can differ until a rerun, but a stale result never passes. Tested on the
+in-process fabric only, not on hosts (#792).
+
+#### Added: `goatbuilder federate directory ls|show|check` reads the peering directory
+
+`goatbuilder federate directory` reads the peering directory (saltlick) and
+changes nothing. `ls` lists the directory's release and every party with the
+files it hosts; `show <party>` gives each hosted file's size and sha256;
+`check <party> --for <counterparty>` checks each file a peering reads and says,
+for a missing one, whether the party has not uploaded it (`NOT HOSTED`: the
+party runs phase 5) or the directory's release does not serve the route
+(`ROUTE MISSING`: its operator moves the directory to a newer release). The
+URL is `--url` or `FED_DIRECTORY_URL`. New codes GB-370, GB-371 and GB-372 (#1000).
+
 #### Fixed: every error `goatbuilder federate` raises carries its catalog code
 
 Fifty errors the federate stages and verbs raised had no catalog code, so a log
@@ -106,7 +185,151 @@ usage: the command line was wrong). Each change is from the last release:
 `federate allocate <peering>` naming an undeclared peering is not coded yet and
 still exits 2. Every other exit is unchanged.
 
-<!-- END generated: changelog unreleased -->
+#### Changed: `goatbuilder join-node` names each declared service its run does not build
+
+At a joining site, the dry-run plan and the run's summary already listed the
+end-state model's gaps and the services the site turns off. They now also
+list each service the model marks present on the node that no step of the run
+builds. At a site with its own obs host, a service the node's other class
+builds names that run, for example `join-node --class obs`. At a single-host
+site, the observability stack the model places on the core node is not built
+by any verb yet, and reads as the gap it is. A service
+no step builds reads "no join-node step builds it yet (gate row I3)". The
+admin surfaces keep their gap line (gate rows I1 and I4). Nothing a run does
+changes (#953).
+
+### For someone contributing
+
+Nothing.
+
+### To be removed
+
+Nothing.
+
+## 0.7.2 — 2026-11-15
+
+What changed since 0.7.1, the previous release. `goatbuilder federate rotate
+<partner> ipsec-leaf` and `ipsec-ca` rotate an `ipsec-fips` peering's IPsec
+leaf: the edge role switches to the staged leaf and puts the old pair back if
+the link does not come up. `goatbuilder grow` hands a goatlite over to the full
+preset in the checkout, never on a host.
+
+One behaviour change: the edge role sets `make_before_break = yes` on every
+IPsec peering edge, so the first apply after this release restarts strongSwan
+once on each ipsec-fips edge and drops that peering's link briefly. Apply both
+sides of a peering in one window.
+
+### For someone deploying
+
+#### Fixed: a failed phase prints its fix once, and an incomplete acceptance names the command that resumes it
+
+A failed phase's `interpreted` row printed the error catalog's fix twice:
+inside the row's text, then again on its own `Fix:` line. It now prints
+it once, on the `Fix:` line, and `-o json` keeps it in the row's `fix`
+field. This applies to `standup`, `join-node`, `deploy` and `federate`.
+When phase 14 ends INCOMPLETE (X-ACCEPT-001), the fix now names
+`goatbuilder federate <peering> --from 14` and no longer names the scripts
+avenue's `ops/scripts/peering-standup.sh` (#911).
+
+#### Added: `goatbuilder federate rotate <partner> ipsec-leaf` and `ipsec-ca` rotate an ipsec-fips peering's leaf
+
+On a peering whose agreement chose ipsec-fips, `goatbuilder federate rotate
+<partner> ipsec-leaf` runs phases 11 to 14 and passes the rotation to
+goat-peering-edge, which checks the leaf an operator staged, sets the live
+pair aside once, switches and rolls back if the link does not come up.
+`rotate <partner> ipsec-ca` also needs `--partner-holds-ipsec-ca <sha256>`,
+the partner's attestation that it placed our new CA: the fingerprint it read
+back (GB-303).
+The rotation's record, `<work>/.rotation-ipsec`, lets a stopped run resume
+with the same id; a run of another kind is refused (GB-298). `--retire <id>`
+removes the set-aside key, only once phase 14 passed here after the switch
+(GB-309; the partner's phase 14 is theirs to confirm on the call), and never while another rotation is under way. A
+new rotation waits for the last one's retire (GB-298). A WireGuard
+peering's keys are rotated with `leaves`, `carrier` or `transport`.
+
+#### Added: goatbuilder grow hands a goatlite over to the full preset
+
+`goatbuilder grow` rewrites `goatlite.yaml` as a full configuration with the
+same values. Before it changes anything, it shows:
+- the difference, leaf by leaf;
+- the configuration file it writes;
+- each file whose generated header it takes off;
+- the removal of `goatlite.yaml`;
+- the renderer command it runs, exactly as it runs it.
+
+`--dry-run` stops there. At a terminal it then asks, and goes on only when
+you type yes. It asks only when stdin and stderr are both a terminal; otherwise,
+including `goatbuilder grow 2>file`, it needs `--yes`. With `--yes` it does not ask. A run writes
+`ops/goatbuilder/goatbuilder.yaml`, takes the generated header off every file
+the goatlite's render wrote, so each is yours, and removes `goatlite.yaml`.
+It changes files in the checkout only, never a host. Before you commit, git
+undoes it: restore `goatlite.yaml` and the files it handed over, and delete
+`ops/goatbuilder/goatbuilder.yaml`.
+It refuses, and changes nothing, when `goatlite.yaml` is not a goatlite
+(GB-304), when `ops/goatbuilder/goatbuilder.yaml` already holds another
+configuration (GB-305, which says so when the file is grow's own from an earlier run, since edited), or when the grown configuration is incomplete
+(GB-306: a four-fact file names no `repo` or `components`). A renderer that
+fails or refuses stops it with the renderer's own words (GB-258). Run again
+after it finished, it says the goatlite was already handed over. It is step 3 of
+the growth design; the other steps are not built, and it has not run on
+hardware.
+
+#### Added: goat-peering-edge rotates an IPsec peering's leaf from staged material, and puts the old one back if the link does not come up
+
+An `ipsec-fips` peering's edge role, `goat-peering-edge`, rotates its IPsec
+leaf when `peering_edge_rotation` names a rotation id. The role still writes
+no secret: the offline ceremony issues the new leaf, and an operator stages it
+beside the live files as `.next` files. The role checks the staged pair
+(GB-289, GB-290), sets the live pair aside once in `.previous-<id>/`, switches,
+re-authenticates the IKE SA, and puts the old pair back if the SA does not
+come up (GB-302); a rotation rolled back stays reported as rolled back on
+every later run of its id. An `ipsec-ca` rotation also needs the partner's
+read-back of our new CA's fingerprint (GB-303) before our new CA replaces the
+current one. `peering_edge_rotation_retire` removes the set-aside key only once
+the confirm recorded the new leaf live (`.previous-<id>/confirmed`, the IKE SA
+the re-authentication made), and never moves the live pair, the staged pair or
+our CA (GB-309 for an id with nothing to retire, or a rotation not confirmed
+or with an unreadable record; a re-run with the same id confirms it). The
+confirm is recorded only once the SA from before the re-authentication is gone,
+and a roll-back removes the record. A run killed during the set-aside or between
+the switch's two moves is finished by the next run, or refused with nothing
+moved (GB-311); the live pair is never left mixed. The confirm counts only an IKE SA the
+re-authentication made, not the old one still up beside it, and the role now
+sets `make_before_break = yes` in its charon drop-in on every IPsec peering
+edge, instead of leaving it to the packaged strongSwan's default
+(`peering_edge_make_before_break`). The first apply after this change restarts
+strongSwan once on each ipsec-fips edge, which drops that peering's link
+briefly: apply both sides of a peering in one window. The rotation always
+rekeys the IKE SA before the re-authentication, so no rekey of either side, which
+keeps the old authentication, can pass the confirm on the old leaf, and it refuses
+an IKE rekey interval too short to hold the confirm. `peering_edge_remote_ca_next_path` accepts a
+partner's new CA beside the current one during their rotation. It is opt-in,
+and without a rotation id nothing changes. `goatbuilder federate rotate
+<partner> ipsec-leaf` and `ipsec-ca` drive it.
+
+#### Changed: `federate rotate <partner> ca` says the CA rotation is decided, not built
+
+`goatbuilder federate rotate <partner> ca` is still refused with GB-282, and
+nothing runs. Its message used to say that the CA rotation needed a decision
+first. That decision is now made: ADR 1242 announces our next CA in package v2,
+so the partner trusts both CAs for an overlap. The message now says the
+rotation is decided and not yet built in this goatbuilder. Rotate the leaves
+under the same CA with `rotate <partner> leaves` meanwhile.
+
+### For someone contributing
+
+#### Changed: the compatibility check is held to goatbuilder/v0.7.1
+
+`ops/ci/check-goatbuilder-compat.sh` now compares each build with
+`goatbuilder/v0.7.1`, the last published release: its command surface and its
+kept `-o json` documents. The upgrade tests' list pins v0.7.1's four
+published binaries (`crates/goatbuilder/tests/upgrade/releases.sha256`), and
+v0.7.1's configuration files are kept for gate row A2 with the outcome its
+published binary gives each.
+
+### To be removed
+
+Nothing.
 
 ## 0.7.1 — 2026-11-15
 
