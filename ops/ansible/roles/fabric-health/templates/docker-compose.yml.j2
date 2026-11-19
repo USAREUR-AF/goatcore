@@ -53,6 +53,10 @@ services:
   # this service's docker compose label.
   fabric-health-spiffe-helper:
     image: {{ fabric_health_spiffe_helper_image | default('TODO_PIN_spiffe_helper_image') }}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: fabric-health-spiffe-helper
     # Memory ceiling: 4x the 7-day peak working set, floor 512M. An unbounded
     # leak on a shared host takes the identity plane down with it.

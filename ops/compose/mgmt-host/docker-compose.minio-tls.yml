@@ -1,0 +1,7 @@
+# Include during the coordinated native-MinIO TLS cutover.
+services:
+  prometheus:
+    volumes:
+      - {{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') }}:/storage-ca/ca.crt:ro
+# Traefik's base compose already mounts the TLS root (TRAEFIK_TLS_ROOT) read-only;
+# the minio TLS role installs its public CA under that existing mount.

@@ -1191,11 +1191,11 @@ async fn apply_identity_leg(
         .ok_or_else(|| anyhow::anyhow!("identity for {email} has no id"))?;
     let traits = ident.get("traits").cloned().unwrap_or_default();
     let meta = ident.get("metadata_public").and_then(|m| m.as_object());
-    // Login groups: admin-managed metadata_public first,
-    // traits only for an identity the backfill has not reached yet.
+    // Login groups: admin-managed metadata_public only (GHSA-9v3v).
+    // A not-yet-backfilled identity's traits.groups is self-editable and is
+    // never read, so an edit here never promotes a self-grant.
     let current_groups: Vec<String> = meta
         .and_then(|m| m.get("groups"))
-        .or_else(|| traits.get("groups"))
         .and_then(|g| g.as_array())
         .map(|a| {
             a.iter()

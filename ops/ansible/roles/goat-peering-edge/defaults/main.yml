@@ -192,6 +192,12 @@ peering_edge_make_before_break: true
 # A scheduled IKE rekey due within the confirm window plus this margin is done
 # before the rotation notes the SA ids, so it cannot pass the confirm on the old leaf.
 peering_edge_rotation_rekey_margin_seconds: 30
+# The strongSwan series (major.minor, as the daemon reports it) the rotation was
+# measured on: what the switch's `swanctl --load-creds` unloads, and what
+# `--load-creds --clear` and `--list-certs` show after it, on a real charon
+# (5.9.8 and 6.0.4). A rotation on another series is refused (GB-341) before
+# anything moves. Add a series here only after the rotation was run on it.
+peering_edge_rotation_strongswan_tested: ["5.9", "6.0"]
 peering_edge_cert_next_path: "{{ peering_edge_cert_path | regex_replace('\\.pem$', '.next.pem') }}"
 peering_edge_key_next_path: "{{ peering_edge_key_path | regex_replace('\\.pem$', '.next.pem') }}"
 peering_edge_local_ca_next_path: "{{ peering_edge_swanctl_dir }}/x509ca/{{ peering_edge_name }}-local-ca.next.pem"

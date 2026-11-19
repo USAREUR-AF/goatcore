@@ -32,12 +32,14 @@ services:
     env_file: [.env]
     environment:
       DSN: "{{ operator_idp_kratos_dsn }}"
-      # Kratos env-override: KRATOS_SECRETS_* arrays are read at parse
-      # time. The .env file (mode 0600) carries the comma-separated
-      # values; the empty `cookie: []` / `cipher: []` in kratos.yaml
-      # are placeholder-only.
-      KRATOS_SECRETS_COOKIE: "${KRATOS_SECRETS_COOKIE}"
-      KRATOS_SECRETS_CIPHER: "${KRATOS_SECRETS_CIPHER}"
+      # Kratos env-override: SECRETS_COOKIE / SECRETS_CIPHER (no KRATOS_
+      # prefix; Kratos v1.3.1 does not read KRATOS_SECRETS_*) are read at
+      # parse time. The .env file (mode 0600) carries the values under
+      # KRATOS_SECRETS_*, interpolated here; the empty `cookie: []` /
+      # `cipher: []` in kratos.yaml are placeholder-only, and without
+      # these the server refuses to start (secrets.cipher minItems 1).
+      SECRETS_COOKIE: "${KRATOS_SECRETS_COOKIE:?KRATOS_SECRETS_COOKIE missing from .env}"
+      SECRETS_CIPHER: "${KRATOS_SECRETS_CIPHER:?KRATOS_SECRETS_CIPHER missing from .env}"
     volumes:
       - {{ operator_idp_kratos_compose_dir }}/{{ operator_idp_kratos_config_subdir }}/kratos.yaml:/etc/config/kratos.yaml:ro
       - {{ operator_idp_kratos_compose_dir }}/{{ operator_idp_kratos_config_subdir }}/identity-schema.json:/etc/config/identity-schema.json:ro

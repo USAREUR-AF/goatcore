@@ -604,8 +604,7 @@ fn import_edge_half(a: &ImportArgs, work: &Path, repo: &Path) -> anyhow::Result<
     let sha = hex_sha256(&bytes);
     anyhow::ensure!(
         sha == half.sha256,
-        "import: {} changed while it was read",
-        a.result.display()
+        goat_errors::coded("GB-277", format!("import: {} changed while it was read", a.result.display()))
     );
     let mut checked = vec![Check {
         name: "edge-half".into(),
@@ -827,9 +826,7 @@ pub fn join_phase_1(work: &Path, edge: &serde_json::Value) -> anyhow::Result<boo
         .map_err(|e| goat_errors::coded("GB-321", format!("{} is not JSON ({e})", path.display())))?;
     anyhow::ensure!(
         core["side"] == "core",
-        "{} holds the {} side's result, not the core half's",
-        path.display(),
-        core["side"]
+        goat_errors::coded("GB-321", format!("{} holds the {} side's result, not the core half's", path.display(), core["side"]))
     );
     let ready = core["ready"] == true && edge["ready"] == true;
     let tag = |side: &'static str, v: &serde_json::Value| -> Vec<serde_json::Value> {
@@ -856,8 +853,8 @@ pub fn join_phase_1(work: &Path, edge: &serde_json::Value) -> anyhow::Result<boo
         "joined": {"edge": "imported (handoff/1/edge.json)", "core": "this run"},
     });
     let tmp = path.with_extension("json.joining");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&joined)? + "\n")?;
-    std::fs::rename(&tmp, &path)?;
+    std::fs::write(&tmp, serde_json::to_string_pretty(&joined).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))? + "\n").map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&tmp)).display())))?;
+    std::fs::rename(&tmp, &path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&tmp)).display())))?;
     Ok(ready)
 }
 

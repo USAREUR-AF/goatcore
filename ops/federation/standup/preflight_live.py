@@ -883,7 +883,7 @@ def check_signing_ca(ca_cert, ca_key, ca_key_age, age_identity, runner=None):
                           "Use the age identity the key was encrypted to.")
         # In memory only: the plaintext key is piped to openssl and dropped.
         key_pub = _pubkey_of_key(key_bytes, runner)
-        key_bytes = None
+        del key_bytes
         how = f"{ca_key_age} (age)"
     else:
         return Result("signing-ca", label, BLOCKED, "no CA signing key named", "GB-130",

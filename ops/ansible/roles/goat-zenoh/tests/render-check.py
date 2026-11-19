@@ -21,6 +21,8 @@ except ImportError:
     sys.exit(2)
 
 TPL_DIR = Path(__file__).resolve().parent.parent / "templates"
+sys.path.insert(0, str(Path(__file__).resolve().parent / "slot-fragment"))
+import slotfragment  # noqa: E402  the portal's fragment format (GHSA-rr3p)
 TPL = "config.json5.j2"
 
 # The SAME formula the router template + the portal must agree on.
@@ -108,7 +110,7 @@ check(len(set(anchors)) == N, f"{N} distinct deterministic anchors")
 for k, a in enumerate(anchors):
     check(f'"slot-{a}": {{' in sp and f'key_expr: "{a}/**"' in sp, f"slot {k}: storage anchor {a[:8]}…/**")
     check(f'id: "slot-w-{a}"' in sp and f'key_exprs: ["{a}/**", "volatile/{a}/**", "{a}/**/@adv/**"]' in sp, f"slot {k}: write rule grants {a[:8]}…/** only")
-    check(f'id: "slot-{a}"' in sp and f'cert_common_names: ["{a}"]' in sp, f"slot {k}: subject CN = anchor {a[:8]}…")
+    check(f'id: "slot-{a}",\n        cert_common_names: ["{a}.unassigned"],' in sp, f"slot {k}: with no slot fragment the subject names NO leaf CN {a[:8]}… (GHSA-rr3p)")
     check(f'rules: ["slot-w-{a}", "trial-peer-w-attest-schema"]' in sp and f'subjects: ["slot-{a}"]' in sp, f"slot {k}: policy binds subject→its own rule")
 # isolation property: slot 0's rule must NOT grant slot 1's anchor
 check(f'"slot-w-{anchors[0]}"' in sp and anchors[1] not in sp.split(f'slot-w-{anchors[0]}')[1].split("}")[0],
@@ -131,6 +133,45 @@ check("trial-peer-w-community" not in sp_noseed and "vendor-community" not in sp
       "no seeded vendors ⇒ no per-vendor entries in slot-pool mode")
 check(brace_balanced(sp_noseed), "brace/bracket balanced with no seeded vendors")
 check(brace_balanced(sp), "brace/bracket balanced")
+
+# GHSA-rr3p: the slot subjects come from the portal's registry fragment. An
+# assigned slot names exactly its current leaf CN; a free slot names none; no
+# slot anchor is a CN anywhere else (in particular not in trial-peer-read).
+print("== slot subjects from the registry fragment (GHSA-rr3p) ==")
+HEX32 = re.compile(r'"[0-9a-f]{32}(?:\.g[0-9]+)?"')
+def cn_lists(cfg):
+    return re.findall(r"cert_common_names\s*:\s*\[(.*?)\]", cfg, re.S)
+check(not any(HEX32.search(l) for l in cn_lists(sp)),
+      "no fragment ⇒ no slot anchor appears as a CN anywhere (fail closed)")
+frag = slotfragment.render([(anchors[0], anchors[0] + ".g2"), (anchors[1], anchors[1]), (anchors[2], ""), (anchors[3], "")])
+sf = render(zenoh_identity_model="per-uuid-slot-pool", zenoh_slot_pool_salt=SALT, zenoh_slot_pool_size=N,
+            zenoh_slot_fragment_content=frag)
+check(frag.rstrip("\n") in sf, "the fragment is included verbatim between the slot-subject markers")
+check(sf.count("// BEGIN: slot subjects") == 1 and sf.count("// END: slot subjects") == 1,
+      "exactly one slot-subject region")
+slot_cns = [m for l in cn_lists(sf) for m in HEX32.findall(l)]
+check(sorted(slot_cns) == sorted([f'"{anchors[0]}.g2"', f'"{anchors[1]}"']),
+      f"only the assigned slots' current CNs appear, once each: {slot_cns}")
+check(f'id: "slot-{anchors[0]}",\n        cert_common_names: ["{anchors[0]}.g2"],' in sf,
+      "an assigned slot's subject names its current generation CN")
+check(f'id: "slot-{anchors[2]}",\n        cert_common_names: ["{anchors[2]}.unassigned"],' in sf, "a free slot's subject names no leaf CN")
+for label, cfg in (("no fragment", sp), ("fragment", sf)):
+    check(not re.search(r"cert_common_names\s*:\s*\[\s*\]", cfg),
+          f"{label}: no empty cert_common_names list (zenoh 1.9 refuses to start on one)")
+check(f'cert_common_names: ["{anchors[0]}"]' not in sf, "a superseded generation-0 CN is not rendered")
+tpr_sp = sf.split('id: "trial-peer-read"')[1].split("},")[0]
+check("link_protocols" not in tpr_sp and not HEX32.search(tpr_sp),
+      "per-uuid trial-peer-read is enumerated and holds no slot CN (a stale leaf is not rescued by TLS alone)")
+for v in ("community", "caracal"):
+    check(f'"{v}-trial-peer"' in tpr_sp, f"seeded vendor {v} keeps the read it had via link_protocols")
+read_pol = [l for l in sf.splitlines() if '"audit-operator-read-deny"' in l and '"slot-' in l and "slot-w-" not in l]
+check(len(read_pol) == 1 and all(f'"slot-{a}"' in read_pol[0] for a in anchors),
+      "one slot-read policy binds the universal read to every slot subject")
+check(len(read_pol) == 1 and '"trial-peer-r-all"' in read_pol[0] and '"peer-w-name-claim"' in read_pol[0],
+      "the slot-read policy carries the trial-peer-read rules, F-207 deny included")
+check(brace_balanced(sf), "brace/bracket balanced with a fragment")
+pvf = render(zenoh_identity_model="per-vendor", zenoh_slot_fragment_content=frag)
+check("BEGIN: slot subjects" not in pvf and anchors[0] not in pvf, "per-vendor mode ignores the slot fragment")
 
 # F-207 operator-action-audit restricted-read carve-out — present in BOTH modes
 # (not inside the per-vendor/slot-pool conditional). Vendors/slots must be
@@ -182,10 +223,20 @@ no_root_target = all(f'["{a}/**", "volatile/{a}/**"' not in seg
                      for seg in copub_bodies for a in anchors)
 check(len(copub_bodies) > 0 and no_root_target,
       "NO single-owner <uuid>/** root is ever a co-publish target (roots inviolable)")
-check(f'rules: ["copub-w-{w}-0", "copub-w-{w}-1"],' in cp,
-      "co-publish policy binds BOTH the publisher's copub rules")
-check(cp.count(f'subjects: ["slot-{w}"]') >= 2,
-      "co-publish policy binds onto the publisher's EXISTING slot subject (2nd policy entry)")
+import hashlib as _h
+_k1, _k2 = _h.sha256(st1.encode()).hexdigest()[:16], _h.sha256(st2.encode()).hexdigest()[:16]
+check(f'rules: ["copub-w-{w}-0"],\n        subjects: ["copub-{w}-{_k1}-none"],' in cp
+      and f'rules: ["copub-w-{w}-1"],\n        subjects: ["copub-{w}-{_k2}-none"],' in cp,
+      "each co-publish rule binds to its own per-topic subject; with no fragment, to an inert -none subject (GHSA-rr3p)")
+check(f'id: "copub-{w}-{_k1}-none",\n        cert_common_names: ["{w}.unassigned"],' in cp,
+      "the -none subject names no leaf CN (fail closed)")
+cpf = render(zenoh_identity_model="per-uuid-slot-pool", zenoh_slot_pool_salt=SALT, zenoh_slot_pool_size=N,
+             zenoh_copublish_enabled=True, zenoh_multipub_topics=[st1, st2], zenoh_copublish_grants={w: [st1, st2]},
+             zenoh_slot_fragment_content=slotfragment.render([(w, w + ".g1", [(st1, True)])] +
+                                                              [(a, "") for a in anchors[1:]]))
+check(f'subjects: ["copub-{w}-{_k1}"],' in cpf and f'subjects: ["copub-{w}-{_k2}-none"],' in cpf
+      and f'id: "copub-{w}-{_k1}",\n        cert_common_names: ["{w}.g1"],' in cpf,
+      "with a fragment: the granted topic binds to the fragment's live subject, the other to -none")
 check(f'id: "slot-w-{w}"' in cp and f'key_exprs: ["{w}/**", "volatile/{w}/**", "{w}/**/@adv/**"]' in cp,
       "publisher's own slot-w rule is preserved unchanged (additive)")
 # The multi-publisher topics get their own rocksdb stores, distinct from every
@@ -302,7 +353,8 @@ ordinary = [anchor(SALT, k) for k in (0, 1, 29, 35)]
 
 for a in block_all + block_ukr:
     check(f'id: "partner-r-{a}"' in out, f"pre-cut block slot {a[:8]}… gets its partner read rule")
-    check(f'id: "partner-{a}"' in out, f"pre-cut block slot {a[:8]}… gets its partner subject")
+    check(f'"partner-deliver-{a}", "audit-operator-read-deny"],\n        subjects: ["slot-{a}"],' in out,
+          f"pre-cut block slot {a[:8]}… binds its partner lanes to its slot subject (GHSA-rr3p)")
 
 # The lane-set is what the block declares — and the UKR block must carry BOTH
 # lanes, since a bilateral partner reads the broad lane too.
@@ -317,10 +369,13 @@ check("release/REL-ALL/**" in all_rule and "release/REL-PARTNER/**" not in all_r
 # read. This is the assertion that matters: a partner still enumerated in
 # trial-peer-read reads everything and the whole partition is decorative.
 tpr = out.split('id: "trial-peer-read"')[1].split("},")[0]
+slot_read = [l for l in out.splitlines() if '"audit-operator-read-deny"' in l and '"slot-' in l and "slot-w-" not in l]
+check(len(slot_read) == 1, "one slot-read policy")
 for a in block_all + block_ukr:
-    check(f'"{a}"' not in tpr, f"pre-cut partner {a[:8]}… is EXCLUDED from the universal read")
+    check(f'"{a}"' not in tpr and f'"slot-{a}"' not in slot_read[0],
+          f"pre-cut partner {a[:8]}… is EXCLUDED from the universal read")
 for a in ordinary:
-    check(f'"{a}"' in tpr, f"ordinary slot {a[:8]}… keeps the universal read")
+    check(f'"slot-{a}"' in slot_read[0], f"ordinary slot {a[:8]}… keeps the universal read")
 
 # Explicit map and blocks compose, and the explicit entry WINS on collision —
 # an operator's deliberate line about one anchor beats the block it falls in.
@@ -338,8 +393,8 @@ check("release/ZAGROS/**" in crule and "release/REL-ALL/**" not in crule,
       "an explicit per-anchor entry OVERRIDES the block it falls in")
 check(out2.count(f'id: "partner-r-{collide}"') == 1,
       "a collision renders ONE rule, not two (duplicate ids would be a config error)")
-check(out2.count(f'id: "partner-{collide}"') == 1,
-      "a collision renders ONE subject, not two")
+check(out2.count(f'subjects: ["slot-{collide}"],') == 2,
+      "a collision renders ONE partner policy (plus the slot's own write policy), not two")
 
 # Default-off: no blocks declared renders exactly today's output.
 base = render(zenoh_identity_model="per-uuid-slot-pool", zenoh_slot_pool_salt=SALT,

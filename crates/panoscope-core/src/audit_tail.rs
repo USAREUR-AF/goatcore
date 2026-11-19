@@ -1,56 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Generic S3 NDJSON walker over the audit-subscriber's MinIO bucket
-// layout. Returns parsed AuditEvent values; consumers attach their
-// own apply-side semantics:
-//
-//   - panoscope: replay-into-topology (peer upsert + flow record_event)
-//   - stethoscope: flow-rate count by vendor/key, decode-sample fetch,
-//     audit-latency histogram
-//
-// Bucket layout (per ops/zenoh-trial-peers/audit-subscriber):
-//   <bucket>/<key_prefix><YYYY>/<MM>/<DD>/<HH>/<batch>.ndjson
-// where `key_prefix` typically scopes by site (e.g. "site-a/").
-//
-// Auth model: disabled-by-default. A disabled tail (the default) is a
-// no-op: the walker returns `Ok(empty)` for every call, so consumers get
-// a clean "no events" verdict rather than a fatal error, matching the
-// portal-disabled UX shape. An *enabled* tail with an empty endpoint or
-// credential is a configuration error, not a silent no-op; see
-// `AuditTailConfig` for the refusal.
+// Authenticated metadata history through the portal projection. An explicitly
+// disabled walker returns no events; enabled readers require HTTPS and an
+// operator token. Raw S3 reads are gated. Consumers attach their own semantics
+// to put/delete/unknown records and must preserve incomplete-read errors.
 
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
-use chrono::{Datelike, Timelike, Utc};
+use anyhow::{Context, Result};
 use futures::StreamExt;
-use rusty_s3::{actions::S3Action, Bucket, Credentials, UrlStyle};
-use serde::Deserialize;
-use tracing::{debug, warn};
+
+/// Default for [`AuditTailConfig::fetch_concurrency`].
+pub const DEFAULT_AUDIT_FETCH_CONCURRENCY: usize = 4;
+
+/// Concurrent fetches for [`fetch_presigned_events`]. Every URL in a presigned
+/// batch shares one short TTL; at most this many bodies are held at once.
+const PRESIGNED_FETCH_CONCURRENCY: usize = 16;
+use chrono::Utc;
+use tracing::warn;
 use url::Url;
 
 use crate::audit_event::AuditEvent;
 
-/// Default for [`AuditTailConfig::fetch_concurrency`]. Bounded rather than
-/// unbounded: this reads a shared MinIO other surfaces depend on, and a burst
-/// of parallel GETs would trade one surface's latency for everyone else's.
-/// Each in-flight fetch can hold a whole object body, so this number times the
-/// largest object is the walker's peak body memory.
-pub const DEFAULT_AUDIT_FETCH_CONCURRENCY: usize = 4;
-
-/// Concurrent fetches for [`fetch_presigned_events`]. Higher than the walker's
-/// default because every URL in a presigned batch shares one short TTL; at most
-/// this many bodies are held at once.
-const PRESIGNED_FETCH_CONCURRENCY: usize = 16;
-
-/// Operator-tunable config. `enabled` gates the real S3 calls; the
-/// defaults make the walker a no-op so a missing MinIO substrate doesn't
-/// crash startup. `enabled` with an empty endpoint or credential is a
-/// configuration error and [`AuditTail::new`] refuses it, so no service
-/// can report the tail as on while running without it.
+/// Enabled history requires portal authority and an operator token.
+/// Legacy S3 fields remain for config compatibility, but cannot enable reads.
 #[derive(Debug, Clone)]
 pub struct AuditTailConfig {
     pub enabled: bool,
+    pub portal_url: String,
+    pub portal_api_key: String,
     /// S3 endpoint URL (e.g. `http://198.18.0.X:9000` on-mesh).
     pub endpoint: String,
     /// AWS region label — MinIO ignores the value but the signer requires one.
@@ -66,10 +44,8 @@ pub struct AuditTailConfig {
     /// Hard ceiling on objects fetched per call. Defends against a
     /// runaway bucket growing the working set.
     pub max_objects: usize,
-    /// Objects fetched concurrently, in listing order. Each body is parsed
-    /// and dropped when its turn in listing order comes, so at most this many
-    /// object bodies are held at once: peak body memory is about
-    /// `fetch_concurrency` x the largest object. `0` is treated as `1`.
+    /// Kept for config compatibility. The portal walk reads one object at a
+    /// time, so this value does not change it.
     pub fetch_concurrency: usize,
 }
 
@@ -77,6 +53,8 @@ impl Default for AuditTailConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            portal_url: String::new(),
+            portal_api_key: String::new(),
             endpoint: String::new(),
             region: "us-east-1".into(),
             bucket: "audit-integrity".into(),
@@ -90,10 +68,6 @@ impl Default for AuditTailConfig {
     }
 }
 
-/// Presigned-URL lifetime — long enough for slow MinIO replies, short
-/// enough that a leaked URL ages out fast.
-const PRESIGN_TTL: Duration = Duration::from_secs(300);
-
 #[derive(Debug, Default)]
 pub struct AuditTailStats {
     pub objects_listed: usize,
@@ -101,39 +75,17 @@ pub struct AuditTailStats {
     pub events_parsed: usize,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct ListObjectsV2Response {
-    #[serde(default, rename = "Contents")]
-    contents: Vec<ListObjectsV2Content>,
-    #[serde(default, rename = "NextContinuationToken")]
-    next_continuation_token: Option<String>,
-    #[serde(default, rename = "IsTruncated")]
-    #[allow(dead_code)]
-    is_truncated: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct ListObjectsV2Content {
-    #[serde(rename = "Key")]
-    key: String,
-}
-
 pub struct AuditTail {
     cfg: AuditTailConfig,
-    http: reqwest::Client,
-    bucket: Option<Bucket>,
-    creds: Option<Credentials>,
+    portal: crate::PortalClient,
 }
 
 /// Names of the fields an enabled tail cannot run without, in the order
 /// an operator sets them.
 fn missing_required(cfg: &AuditTailConfig) -> Vec<&'static str> {
     [
-        ("endpoint", cfg.endpoint.is_empty()),
-        ("access_key", cfg.access_key.is_empty()),
-        ("secret_key", cfg.secret_key.is_empty()),
+        ("portal_url", cfg.portal_url.is_empty()),
+        ("portal_api_key", cfg.portal_api_key.is_empty()),
     ]
     .into_iter()
     .filter_map(|(name, empty)| empty.then_some(name))
@@ -142,185 +94,135 @@ fn missing_required(cfg: &AuditTailConfig) -> Vec<&'static str> {
 
 impl AuditTail {
     pub fn new(cfg: AuditTailConfig) -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .timeout(cfg.request_timeout)
-            .build()
-            .context("build reqwest client")?;
-        let (bucket, creds) = if cfg.enabled {
+        if cfg.enabled {
             let missing = missing_required(&cfg);
-            if !missing.is_empty() {
-                bail!(
-                    "audit tail enabled but {} empty: supply them or set enabled=false",
-                    missing.join(", ")
-                );
-            }
-            let endpoint = Url::parse(&cfg.endpoint)
-                .with_context(|| format!("parse endpoint url {}", cfg.endpoint))?;
-            let b = Bucket::new(endpoint, UrlStyle::Path, cfg.bucket.clone(), cfg.region.clone())
-                .map_err(|e| anyhow!("Bucket::new: {e}"))?;
-            (Some(b), Some(Credentials::new(&cfg.access_key, &cfg.secret_key)))
-        } else {
-            (None, None)
-        };
-        Ok(Self {
-            cfg,
-            http,
-            bucket,
-            creds,
-        })
+            anyhow::ensure!(
+                missing.is_empty(),
+                "audit metadata requires {}; direct S3 access is gated",
+                missing.join(", ")
+            );
+            let url = Url::parse(&cfg.portal_url)
+                .context("parse audit portal URL")?;
+            anyhow::ensure!(
+                url.scheme() == "https" || (cfg!(test) && url.host_str() == Some("127.0.0.1")),
+                "audit portal requires HTTPS"
+            );
+        }
+        let portal = crate::PortalClient::new(cfg.portal_url.clone(), cfg.portal_api_key.clone());
+        Ok(Self { cfg, portal })
     }
-
-    /// True iff this tail will hit the network when called.
     pub fn is_enabled(&self) -> bool {
-        self.bucket.is_some()
+        self.cfg.enabled
     }
-
-    /// Walk the last `window_hours` of audit objects and return every
-    /// parsed AuditEvent. Filters out events whose vendor doesn't
-    /// match `vendor_filter` (`None` = all vendors). Returns the raw
-    /// event list — caller decides what to aggregate (count, decode,
-    /// histogram, etc.).
-    ///
-    /// MATERIALIZES THE WHOLE WINDOW. That is fine for the short, filtered
-    /// windows most callers use (1 h, one vendor), and NOT fine for a wide
-    /// one: panoscope's 168 h unfiltered replay parsed 32,876,051 events to
-    /// derive 166 unique peers and peaked at 20 GiB doing it. If your
-    /// window is wide, or you only fold events into an accumulator and never
-    /// need them all at once, call [`Self::stream_recent_events`] instead —
-    /// it is the same walk with the same ordering and stats, minus the Vec.
-    pub async fn recent_events(
+    pub async fn recent_publications(
         &self,
-        window_hours: u32,
-        vendor_filter: Option<&str>,
+        hours: u32,
+        vendor: Option<&str>,
     ) -> Result<(Vec<AuditEvent>, AuditTailStats)> {
-        let mut events: Vec<AuditEvent> = Vec::new();
-        let stats = self
-            .stream_recent_events(window_hours, vendor_filter, |ev| events.push(ev))
-            .await?;
+        let (events, stats) = self.recent_events(hours, vendor).await?;
+        let events = publications_only(events)?;
         Ok((events, stats))
     }
-
-    /// The walk, streaming. Invokes `on_event` for each parsed AuditEvent as
-    /// it is decoded and keeps no events. Objects are fetched
-    /// `cfg.fetch_concurrency` at a time and each body is dropped once parsed,
-    /// so peak memory is about `fetch_concurrency` object bodies, independent
-    /// of the window or page size.
-    ///
-    /// Ordering, filtering, the max_objects ceiling and the returned stats are
-    /// IDENTICAL to [`Self::recent_events`] — that method is now a thin wrapper
-    /// around this one, so there is a single walk implementation and the two
-    /// cannot drift.
+    pub async fn recent_events(
+        &self,
+        hours: u32,
+        vendor: Option<&str>,
+    ) -> Result<(Vec<AuditEvent>, AuditTailStats)> {
+        let mut events = Vec::new();
+        let mut bytes = 0usize;
+        let mut overflow = false;
+        let stats = self
+            .stream_recent_events(hours, vendor, |e| {
+                if overflow {
+                    return;
+                }
+                match serde_json::to_vec(&e) {
+                    Ok(encoded)
+                        if bytes + encoded.len() <= 64 * 1024 * 1024 && events.len() < 100_000 =>
+                    {
+                        bytes += encoded.len();
+                        events.push(e);
+                    }
+                    _ => overflow = true,
+                }
+            })
+            .await?;
+        anyhow::ensure!(!overflow, "audit collection exceeds byte or row limit");
+        Ok((events, stats))
+    }
     pub async fn stream_recent_events<F>(
         &self,
-        window_hours: u32,
-        vendor_filter: Option<&str>,
-        mut on_event: F,
+        hours: u32,
+        vendor: Option<&str>,
+        mut emit: F,
     ) -> Result<AuditTailStats>
     where
         F: FnMut(AuditEvent),
     {
-        if !self.is_enabled() {
-            return Ok(AuditTailStats::default());
-        }
-        let bucket = self.bucket.as_ref().unwrap();
-        let creds = self.creds.as_ref().unwrap();
-
-        let prefixes = build_hour_prefixes(&self.cfg.key_prefix, window_hours);
         let mut stats = AuditTailStats::default();
-
-        'outer: for hour_prefix in prefixes {
-            let mut continuation: Option<String> = None;
-            loop {
-                let resp = list_objects(
-                    &self.http,
-                    bucket,
-                    creds,
-                    &hour_prefix,
-                    continuation.as_deref(),
-                )
-                .await
-                .with_context(|| format!("list_objects_v2 prefix={hour_prefix}"))?;
-
-                // Fetching objects ONE AT A TIME makes the wait the SUM of every round-trip,
-                // and a 24 h window can hold thousands of objects, even against a MinIO that
-                // answers a single request in milliseconds.
-                //
-                // Fetch a page's objects concurrently, bounded, and parse each
-                // as it comes off the stream. `buffered` (not
-                // `buffer_unordered`) keeps listing order, and it holds at most
-                // `fetch_concurrency` futures — in flight or finished — so no
-                // more than that many bodies are alive at once. Collecting the
-                // stream first would hold every body of the page (up to 1000).
-                let take = self
-                    .cfg
-                    .max_objects
-                    .saturating_sub(stats.objects_fetched)
-                    .min(resp.contents.len());
-                if take < resp.contents.len() {
-                    warn!(
-                        max_objects = self.cfg.max_objects,
-                        "audit_tail: hit max_objects ceiling — returning partial"
-                    );
-                }
-                stats.objects_listed += resp.contents.len();
-                let hit_ceiling = take < resp.contents.len();
-                let mut fetches = futures::stream::iter(
-                    resp.contents.into_iter().take(take).map(|o| {
-                        let http = &self.http;
-                        async move {
-                            let r = fetch_object(http, bucket, creds, &o.key).await;
-                            (o.key, r)
-                        }
-                    }),
-                )
-                .buffered(self.cfg.fetch_concurrency.max(1));
-
-                while let Some((key, res)) = fetches.next().await {
-                    match res {
-                        Ok(body) => {
-                            stats.objects_fetched += 1;
-                            for line in body.split(|b| *b == b'\n') {
-                                if line.is_empty() {
-                                    continue;
-                                }
-                                let Ok(ev) = serde_json::from_slice::<AuditEvent>(line) else {
-                                    continue;
-                                };
-                                stats.events_parsed += 1;
-                                // Anchor-aware vendor match: `ev.vendor` is the
-                                // raw first key segment (writer-side contract),
-                                // which on slot-pool goatnets is the UUID anchor,
-                                // not the vendor name — match the key's vendor
-                                // segment too or `vendor=tarsier` reads 0 events
-                                // while traffic flows.
-                                if let Some(v) = vendor_filter {
-                                    if ev.vendor != v
-                                        && crate::alias::vendor_segment(&ev.key_expr) != v
-                                    {
-                                        continue;
-                                    }
-                                }
-                                on_event(ev);
-                            }
-                        }
-                        Err(e) => {
-                            debug!(error = %e, key = %key, "audit_tail: skip object");
-                        }
+        if !self.is_enabled() {
+            return Ok(stats);
+        }
+        anyhow::ensure!(
+            hours > 0 && hours <= 168,
+            "audit metadata window must be 1–168 hours"
+        );
+        let since = (Utc::now() - chrono::Duration::hours(i64::from(hours))).to_rfc3339();
+        let mut after: Option<String> = None;
+        loop {
+            let page = self
+                .portal
+                .audit_history_page(&since, after.as_deref())
+                .await?;
+            stats.objects_listed += page.objects.len();
+            anyhow::ensure!(
+                stats.objects_listed <= self.cfg.max_objects,
+                "audit metadata object limit exceeded"
+            );
+            let next = page.objects.last().map(|o| o.key.clone());
+            if page.truncated {
+                anyhow::ensure!(
+                    next.is_some() && next > after,
+                    "audit pagination did not advance"
+                );
+            }
+            for object in &page.objects {
+                let fetched = self
+                    .portal
+                    .audit_metadata(std::slice::from_ref(object))
+                    .await?;
+                anyhow::ensure!(
+                    fetched.skipped.is_empty(),
+                    "audit metadata objects unavailable: {:?}",
+                    fetched.skipped
+                );
+                stats.objects_fetched += 1;
+                for event in fetched.events {
+                    if vendor.is_none_or(|v| event_vendor_matches(&event, v)) {
+                        stats.events_parsed += 1;
+                        emit(event);
                     }
                 }
-                if hit_ceiling {
-                    break 'outer;
-                }
-
-                match resp.next_continuation_token {
-                    Some(t) => continuation = Some(t),
-                    None => break,
-                }
             }
+            if !page.truncated {
+                break;
+            }
+            after = next;
         }
-
         Ok(stats)
     }
+}
+
+fn event_vendor_matches(event: &AuditEvent, vendor: &str) -> bool {
+    event.vendor == vendor || crate::alias::key_vendor_matches(&event.key_expr, vendor)
+}
+
+fn publications_only(events: Vec<AuditEvent>) -> Result<Vec<AuditEvent>> {
+    anyhow::ensure!(
+        events.iter().all(|event| matches!(event.sample_kind.as_str(), "put" | "delete")),
+        "audit history contains unknown operation kinds; publication history is incomplete"
+    );
+    Ok(events.into_iter().filter(|event| event.sample_kind == "put").collect())
 }
 
 /// One presigned object `fetch_presigned_events` could not read.
@@ -354,6 +256,10 @@ pub struct PresignedFetch {
 /// that fails comes back in `skipped` instead of only a log line. A line that
 /// fails to parse is still dropped: it is not a missing object.
 pub async fn fetch_presigned_events(urls: &[String]) -> Result<PresignedFetch> {
+    anyhow::ensure!(
+        cfg!(test),
+        "raw history reads are gated; use portal metadata projection"
+    );
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
         .build()
@@ -390,7 +296,7 @@ pub async fn fetch_presigned_events(urls: &[String]) -> Result<PresignedFetch> {
     Ok(out)
 }
 
-async fn fetch_presigned_object(
+pub(crate) async fn fetch_presigned_object(
     http: &reqwest::Client,
     url: &str,
 ) -> std::result::Result<Vec<u8>, String> {
@@ -410,7 +316,7 @@ async fn fetch_presigned_object(
 }
 
 /// `scheme://host/path` of a presigned URL, without the signing query.
-fn redact_presigned_url(u: &str) -> String {
+pub(crate) fn redact_presigned_url(u: &str) -> String {
     match url::Url::parse(u) {
         Ok(mut parsed) => {
             parsed.set_query(None);
@@ -469,96 +375,27 @@ fn parse_duration_secs(s: &str) -> Option<i64> {
     Some(total)
 }
 
-async fn list_objects(
-    http: &reqwest::Client,
-    bucket: &Bucket,
-    creds: &Credentials,
-    prefix: &str,
-    continuation: Option<&str>,
-) -> Result<ListObjectsV2Response> {
-    let mut action = bucket.list_objects_v2(Some(creds));
-    let q = action.query_mut();
-    q.insert("prefix", prefix.to_string());
-    q.insert("max-keys", "1000".to_string());
-    if let Some(token) = continuation {
-        q.insert("continuation-token", token.to_string());
-    }
-    let url = action.sign(PRESIGN_TTL);
-    let resp = http
-        .get(url)
-        .send()
-        .await
-        .context("list_objects_v2 GET")?;
-    let status = resp.status();
-    let body = resp.bytes().await.context("list_objects_v2 body read")?;
-    if !status.is_success() {
-        return Err(anyhow!(
-            "list_objects_v2 returned {} body={}",
-            status,
-            String::from_utf8_lossy(&body).chars().take(200).collect::<String>()
-        ));
-    }
-    quick_xml::de::from_reader(body.as_ref())
-        .context("parse ListObjectsV2 XML")
-}
-
-async fn fetch_object(
-    http: &reqwest::Client,
-    bucket: &Bucket,
-    creds: &Credentials,
-    key: &str,
-) -> Result<Vec<u8>> {
-    let action = bucket.get_object(Some(creds), key);
-    let url = action.sign(PRESIGN_TTL);
-    let resp = http
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("get_object {key}"))?;
-    if !resp.status().is_success() {
-        return Err(anyhow!("get_object {key} returned {}", resp.status()));
-    }
-    Ok(resp.bytes().await.context("get_object body read")?.to_vec())
-}
-
-/// Build the hour-level prefix list for a window, newest first.
-/// audit-subscriber path layout: `<key_prefix><YYYY>/<MM>/<DD>/<HH>/...`.
-fn build_hour_prefixes(root_prefix: &str, window_hours: u32) -> Vec<String> {
-    let now = Utc::now();
-    let mut out = Vec::with_capacity(window_hours as usize);
-    for h in 0..window_hours {
-        let t = now - chrono::Duration::hours(h as i64);
-        out.push(format!(
-            "{root_prefix}{:04}/{:02}/{:02}/{:02}/",
-            t.year_ce().1,
-            t.month(),
-            t.day(),
-            t.hour()
-        ));
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn upgraded_xml_parser_preserves_paginated_s3_listing() {
-        let xml = br#"<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-          <IsTruncated>true</IsTruncated><NextContinuationToken>a&amp;b</NextContinuationToken>
-          <Contents><Key>audit/one&amp;two.jsonl</Key></Contents>
-          <Contents><Key>audit/second.jsonl</Key></Contents>
-        </ListBucketResult>"#;
-        let listing: ListObjectsV2Response = quick_xml::de::from_reader(&xml[..]).unwrap();
-        assert!(listing.is_truncated);
-        assert_eq!(listing.next_continuation_token.as_deref(), Some("a&b"));
-        assert_eq!(listing.contents.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(),
-                   vec!["audit/one&two.jsonl", "audit/second.jsonl"]);
-        let empty: ListObjectsV2Response = quick_xml::de::from_reader(&b"<ListBucketResult/>"[..]).unwrap();
-        assert!(empty.contents.is_empty());
-        assert!(empty.next_continuation_token.is_none());
-        assert!(quick_xml::de::from_reader::<_, ListObjectsV2Response>(&b"<ListBucketResult><Contents></ListBucketResult>"[..]).is_err());
+    fn publication_history_excludes_deletes_and_refuses_unknown_kinds() {
+        let put = AuditEvent { sample_kind: "put".into(), ..Default::default() };
+        let delete = AuditEvent { sample_kind: "delete".into(), ..Default::default() };
+        assert_eq!(publications_only(vec![put.clone(), delete]).unwrap(), vec![put.clone()]);
+        assert!(publications_only(vec![put, AuditEvent::default()]).is_err());
+        assert!(publications_only(vec![AuditEvent::default()]).is_err());
+        assert!(publications_only(vec![]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn vendor_filter_keeps_slot_pool_keys() {
+        let anchor = "0123456789abcdef0123456789abcdef";
+        let event = AuditEvent { vendor: anchor.into(), key_expr: format!("{anchor}/vendor/topic"), ..Default::default() };
+        assert!(event_vendor_matches(&event, "vendor"));
+        assert!(event_vendor_matches(&event, anchor));
+        assert!(!event_vendor_matches(&event, "foreign"));
     }
 
     /// Serve `/ok` with one NDJSON event and anything else with 403, the
@@ -621,7 +458,11 @@ mod tests {
         assert_eq!(got.events.len(), 1);
         assert_eq!(got.skipped.len(), 1);
         assert_eq!(got.skipped[0].object, format!("{base}/expired.ndjson"));
-        assert!(got.skipped[0].reason.contains("403"), "{}", got.skipped[0].reason);
+        assert!(
+            got.skipped[0].reason.contains("403"),
+            "{}",
+            got.skipped[0].reason
+        );
         assert!(!got.skipped[0].object.contains("secret"));
     }
 
@@ -642,7 +483,10 @@ mod tests {
             ),
             "http://minio:9000/audit/2026/09/21/12/b.ndjson"
         );
-        assert_eq!(redact_presigned_url("not a url"), "<unparseable presigned url>");
+        assert_eq!(
+            redact_presigned_url("not a url"),
+            "<unparseable presigned url>"
+        );
     }
 
     #[test]
@@ -650,16 +494,13 @@ mod tests {
         let cfg = AuditTailConfig::default();
         let tail = AuditTail::new(cfg).unwrap();
         assert!(!tail.is_enabled());
-        // Smoke: hour-prefix builder produces window_hours entries.
-        assert_eq!(build_hour_prefixes("nova-a/", 3).len(), 3);
     }
 
     fn live_cfg() -> AuditTailConfig {
         AuditTailConfig {
             enabled: true,
-            endpoint: "http://127.0.0.1:9000".into(),
-            access_key: "reader".into(),
-            secret_key: "reader-secret".into(),
+            portal_url: "https://portal.invalid".into(),
+            portal_api_key: "fixture-operator".into(),
             ..AuditTailConfig::default()
         }
     }
@@ -672,16 +513,15 @@ mod tests {
     #[test]
     fn enabled_without_a_secret_is_refused_and_names_the_gap() {
         let cfg = AuditTailConfig {
-            secret_key: String::new(),
+            portal_api_key: String::new(),
             ..live_cfg()
         };
         let msg = AuditTail::new(cfg)
             .err()
             .expect("an enabled tail with no secret must not build")
             .to_string();
-        assert!(msg.contains("secret_key"), "{msg}");
-        assert!(!msg.contains("access_key"), "{msg}");
-        assert!(!msg.contains("endpoint"), "{msg}");
+        assert!(msg.contains("portal_api_key"), "{msg}");
+        assert!(!msg.contains("portal_url"), "{msg}");
     }
 
     #[test]
@@ -691,116 +531,7 @@ mod tests {
             ..AuditTailConfig::default()
         };
         let msg = AuditTail::new(cfg).err().unwrap().to_string();
-        assert!(msg.contains("endpoint, access_key, secret_key"), "{msg}");
-    }
-
-    /// A minimal path-style S3 stand-in for the walker: one bucket, `objects`
-    /// keys `obj-000.ndjson`, `obj-001.ndjson`, ... listed `page_size` per
-    /// ListObjectsV2 page with a numeric continuation token. Object `i` holds
-    /// one event whose `key_expr` is `v/obj/<i>`. `object_gets` counts object
-    /// GETs the server has received, so a test can see how far ahead of the
-    /// parser the fetcher has run.
-    struct S3Stub {
-        endpoint: String,
-        object_gets: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    }
-
-    fn stub_event(i: usize) -> String {
-        format!(
-            concat!(
-                r#"{{"vendor":"v","key_expr":"v/obj/{}","ts":"2026-09-21T12:00:00.000Z","#,
-                r#""payload_hash":"sha256:00","payload_len":0}}"#,
-                "\n"
-            ),
-            i
-        )
-    }
-
-    #[allow(clippy::disallowed_methods)] // test-only server; dies with the test runtime
-    async fn s3_stub(objects: usize, page_size: usize) -> S3Stub {
-        use std::sync::atomic::Ordering;
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let object_gets = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let gets = object_gets.clone();
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
-                let gets = gets.clone();
-                tokio::spawn(async move {
-                    let mut raw = Vec::new();
-                    let mut buf = [0u8; 4096];
-                    loop {
-                        match sock.read(&mut buf).await {
-                            Ok(0) | Err(_) => break,
-                            Ok(n) => {
-                                raw.extend_from_slice(&buf[..n]);
-                                if raw.windows(4).any(|w| w == b"\r\n\r\n") {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    let req = String::from_utf8_lossy(&raw);
-                    let target = req.split_whitespace().nth(1).unwrap_or("/").to_string();
-                    let url = Url::parse(&format!("http://stub{target}")).unwrap();
-                    let (status, body) = if url.path() == "/audit-integrity"
-                        || url.path() == "/audit-integrity/"
-                    {
-                        let start: usize = url
-                            .query_pairs()
-                            .find(|(k, _)| k == "continuation-token")
-                            .and_then(|(_, v)| v.parse().ok())
-                            .unwrap_or(0);
-                        let end = (start + page_size).min(objects);
-                        let mut xml = String::from("<ListBucketResult>");
-                        for i in start..end {
-                            xml.push_str(&format!(
-                                "<Contents><Key>obj-{i:03}.ndjson</Key></Contents>"
-                            ));
-                        }
-                        if end < objects {
-                            xml.push_str(&format!(
-                                "<IsTruncated>true</IsTruncated>\
-                                 <NextContinuationToken>{end}</NextContinuationToken>"
-                            ));
-                        }
-                        xml.push_str("</ListBucketResult>");
-                        ("200 OK", xml)
-                    } else if let Some(i) = url
-                        .path()
-                        .strip_prefix("/audit-integrity/obj-")
-                        .and_then(|r| r.strip_suffix(".ndjson"))
-                        .and_then(|n| n.parse::<usize>().ok())
-                    {
-                        gets.fetch_add(1, Ordering::SeqCst);
-                        ("200 OK", stub_event(i))
-                    } else {
-                        ("404 Not Found", String::new())
-                    };
-                    let resp = format!(
-                        "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    let _ = sock.write_all(resp.as_bytes()).await;
-                });
-            }
-        });
-        S3Stub {
-            endpoint: format!("http://{addr}"),
-            object_gets,
-        }
-    }
-
-    fn stub_cfg(stub: &S3Stub) -> AuditTailConfig {
-        AuditTailConfig {
-            endpoint: stub.endpoint.clone(),
-            ..live_cfg()
-        }
-    }
-
-    fn object_index(ev: &AuditEvent) -> usize {
-        ev.key_expr.rsplit('/').next().unwrap().parse().unwrap()
+        assert!(msg.contains("portal_url, portal_api_key"), "{msg}");
     }
 
     #[test]
@@ -810,130 +541,6 @@ mod tests {
             DEFAULT_AUDIT_FETCH_CONCURRENCY
         );
         assert_eq!(DEFAULT_AUDIT_FETCH_CONCURRENCY, 4);
-    }
-
-    /// The walker must parse each object as it arrives, not fetch the whole
-    /// page first: when the event from object `i` is handed to `on_event`,
-    /// the server has seen at most `i + 1 + fetch_concurrency` object GETs.
-    /// Collecting the page before parsing has fetched all 40 by the time the
-    /// first event is seen.
-    #[tokio::test]
-    async fn stream_parses_each_object_before_fetching_past_the_concurrency_window() {
-        use std::sync::atomic::Ordering;
-        let stub = s3_stub(40, 1000).await;
-        let concurrency = 3;
-        let tail = AuditTail::new(AuditTailConfig {
-            fetch_concurrency: concurrency,
-            ..stub_cfg(&stub)
-        })
-        .unwrap();
-        let mut seen: Vec<(usize, usize)> = Vec::new();
-        let gets = stub.object_gets.clone();
-        let stats = tail
-            .stream_recent_events(1, None, |ev| {
-                seen.push((object_index(&ev), gets.load(Ordering::SeqCst)));
-            })
-            .await
-            .unwrap();
-        assert_eq!(stats.objects_fetched, 40);
-        assert_eq!(seen.len(), 40);
-        assert!(
-            seen[0].1 <= concurrency,
-            "first event parsed only after {} of 40 objects were requested",
-            seen[0].1
-        );
-        for (i, gets_then) in &seen {
-            assert!(
-                *gets_then <= i + 1 + concurrency,
-                "event from object {i} parsed after {gets_then} GETs (concurrency {concurrency})"
-            );
-        }
-    }
-
-    /// A `fetch_concurrency` of 0 must not stall the walk.
-    #[tokio::test]
-    async fn zero_fetch_concurrency_still_reads_every_object() {
-        let stub = s3_stub(5, 1000).await;
-        let tail = AuditTail::new(AuditTailConfig {
-            fetch_concurrency: 0,
-            ..stub_cfg(&stub)
-        })
-        .unwrap();
-        let (events, stats) = tail.recent_events(1, None).await.unwrap();
-        assert_eq!(events.len(), 5);
-        assert_eq!(stats.objects_fetched, 5);
-    }
-
-    /// Listing order is kept across pages, whatever the concurrency.
-    #[tokio::test]
-    async fn stream_keeps_listing_order_across_pages() {
-        let stub = s3_stub(23, 7).await;
-        let tail = AuditTail::new(AuditTailConfig {
-            fetch_concurrency: 5,
-            ..stub_cfg(&stub)
-        })
-        .unwrap();
-        let mut order = Vec::new();
-        let stats = tail
-            .stream_recent_events(1, None, |ev| order.push(object_index(&ev)))
-            .await
-            .unwrap();
-        assert_eq!(order, (0..23).collect::<Vec<_>>());
-        assert_eq!(stats.objects_listed, 23);
-        assert_eq!(stats.objects_fetched, 23);
-        assert_eq!(stats.events_parsed, 23);
-    }
-
-    /// The max_objects ceiling stops mid-page and the stats say so: page one
-    /// (4 objects) is read whole, page two is listed (4 more) but only one
-    /// object of it is fetched.
-    #[tokio::test]
-    async fn stream_honours_the_max_objects_ceiling() {
-        let stub = s3_stub(12, 4).await;
-        let tail = AuditTail::new(AuditTailConfig {
-            max_objects: 5,
-            fetch_concurrency: 2,
-            ..stub_cfg(&stub)
-        })
-        .unwrap();
-        let mut order = Vec::new();
-        let stats = tail
-            .stream_recent_events(1, None, |ev| order.push(object_index(&ev)))
-            .await
-            .unwrap();
-        assert_eq!(order, vec![0, 1, 2, 3, 4]);
-        assert_eq!(stats.objects_listed, 8);
-        assert_eq!(stats.objects_fetched, 5);
-        assert_eq!(stats.events_parsed, 5);
-    }
-
-    /// `recent_events` and `stream_recent_events` return the same events in
-    /// the same order with the same stats, filtered or not.
-    #[tokio::test]
-    async fn recent_and_stream_agree_on_events_and_stats() {
-        let stub = s3_stub(17, 6).await;
-        let tail = AuditTail::new(AuditTailConfig {
-            max_objects: 15,
-            ..stub_cfg(&stub)
-        })
-        .unwrap();
-        for filter in [None, Some("v"), Some("other")] {
-            let (events, a) = tail.recent_events(1, filter).await.unwrap();
-            let mut streamed = Vec::new();
-            let b = tail
-                .stream_recent_events(1, filter, |ev| streamed.push(ev.key_expr))
-                .await
-                .unwrap();
-            let listed: Vec<String> = events.into_iter().map(|e| e.key_expr).collect();
-            assert_eq!(listed, streamed, "filter {filter:?}");
-            assert_eq!(
-                (a.objects_listed, a.objects_fetched, a.events_parsed),
-                (b.objects_listed, b.objects_fetched, b.events_parsed),
-                "filter {filter:?}"
-            );
-            assert_eq!(a.objects_fetched, 15);
-            assert_eq!(listed.len(), if filter == Some("other") { 0 } else { 15 });
-        }
     }
 
     #[test]
@@ -968,14 +575,14 @@ mod tests {
     }
 
     #[test]
-    fn hour_prefixes_are_newest_first() {
-        let prefixes = build_hour_prefixes("nova-a/", 3);
-        assert_eq!(prefixes.len(), 3);
-        // Each prefix should start with the configured root.
-        for p in &prefixes {
-            assert!(p.starts_with("nova-a/"));
-            // and end with `/` after the hour segment.
-            assert!(p.ends_with('/'));
-        }
+    fn configured_walker_refuses_raw_storage_credentials() {
+        let cfg = AuditTailConfig {
+            enabled: true,
+            endpoint: "https://storage.invalid".into(),
+            access_key: "fixture".into(),
+            secret_key: "fixture".into(),
+            ..Default::default()
+        };
+        assert!(AuditTail::new(cfg).is_err());
     }
 }

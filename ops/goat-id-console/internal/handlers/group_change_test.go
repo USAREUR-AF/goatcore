@@ -119,13 +119,16 @@ func fakeKratosWithRevoke(t *testing.T, id, email, name string, groups []string,
 func TestApplyGroupChange_revokeFailureIsNotOk(t *testing.T) {
 	kc, readGroups, revokeCalls := fakeKratosWithRevoke(t, "id-1", "w@example.org", "Casey", nil, true)
 	srv := newUsersAPITestServer(t, kc)
+	// A service key: an admin-bearing grant from a per-person key needs a
+	// resolved owner (GHSA-7788), which this fixture does not model.
+	srv.Cfg.OnboardOperatorAPIKeys["svc-key"] = "operator"
 	h := srv.Routes()
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"email": "w@example.org", "groups": []string{"IAM-ADMIN"}, "revoke_sessions": true,
 	})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/users/groups", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer runner-key")
+	req.Header.Set("Authorization", "Bearer svc-key")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -174,13 +177,16 @@ func TestApplyGroupChange_revokeFailureIsNotOk(t *testing.T) {
 func TestApplyGroupChange_revokeSuccess_AuditOk(t *testing.T) {
 	kc, _, revokeCalls := fakeKratosWithRevoke(t, "id-1", "w@example.org", "Casey", nil, false)
 	srv := newUsersAPITestServer(t, kc)
+	// A service key: an admin-bearing grant from a per-person key needs a
+	// resolved owner (GHSA-7788), which this fixture does not model.
+	srv.Cfg.OnboardOperatorAPIKeys["svc-key"] = "operator"
 	h := srv.Routes()
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"email": "w@example.org", "groups": []string{"IAM-ADMIN"}, "revoke_sessions": true,
 	})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/users/groups", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer runner-key")
+	req.Header.Set("Authorization", "Bearer svc-key")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 

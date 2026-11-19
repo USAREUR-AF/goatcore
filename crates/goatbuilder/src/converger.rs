@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// The code a real-host verb and `doctor` refuse `converger: pull-agent` with:
@@ -173,8 +173,8 @@ pub struct Scripted {
 impl Scripted {
     pub fn open(root: &Path) -> Result<Self> {
         let p = root.join("converger.yaml");
-        let text = std::fs::read_to_string(&p).with_context(|| format!("{}", p.display()))?;
-        let script: Script = serde_yaml::from_str(&text).with_context(|| format!("{}", p.display()))?;
+        let text = std::fs::read_to_string(&p).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?;
+        let script: Script = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("{}: {e}", p.display())))?;
         let ticks = match std::fs::read_to_string(root.join("state/ticks.json")) {
             Ok(t) => serde_json::from_str(&t).unwrap_or_default(),
             Err(_) => BTreeMap::new(),
@@ -195,12 +195,12 @@ impl Scripted {
         if kind == "pull-agent" {
             return Ok(());
         }
-        std::fs::create_dir_all(self.root.join("state"))?;
+        std::fs::create_dir_all(self.root.join("state")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(self.root.join("state"))).display())))?;
         let p = self.root.join("state/transports.jsonl");
         let mut text = std::fs::read_to_string(&p).unwrap_or_default();
-        text.push_str(&serde_json::to_string(&serde_json::json!({ "env": env, "transport": kind }))?);
+        text.push_str(&serde_json::to_string(&serde_json::json!({ "env": env, "transport": kind })).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?);
         text.push('\n');
-        std::fs::write(&p, text).with_context(|| format!("{}", p.display()))
+        std::fs::write(&p, text).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())).into())
     }
 
     /// Every publication, checked (C2): each row's seal matches its content and
@@ -210,7 +210,7 @@ impl Scripted {
         let text = match std::fs::read_to_string(&p) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(anyhow!("{}: {e}", p.display())),
+            Err(e) => return Err(goat_errors::coded("GB-254", format!("{}: {e}", p.display())).into()),
         };
         let mut out: Vec<Publication> = Vec::new();
         for (i, line) in text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
@@ -241,12 +241,12 @@ impl Scripted {
     fn append_record(&self, env: &str, machine: &str, rec: &Record) -> Result<()> {
         let p = self.record_path(env, machine);
         if let Some(d) = p.parent() {
-            std::fs::create_dir_all(d)?;
+            std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
         }
         let mut text = std::fs::read_to_string(&p).unwrap_or_default();
-        text.push_str(&serde_json::to_string(rec)?);
+        text.push_str(&serde_json::to_string(rec).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?);
         text.push('\n');
-        std::fs::write(&p, text).with_context(|| format!("{}", p.display()))
+        std::fs::write(&p, text).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())).into())
     }
 
     /// A teardown: append an `action: teardown` row with an empty ref. History
@@ -257,8 +257,8 @@ impl Scripted {
     }
 
     fn save_ticks(&self) -> Result<()> {
-        std::fs::create_dir_all(self.root.join("state"))?;
-        std::fs::write(self.root.join("state/ticks.json"), serde_json::to_string(&self.ticks)?)?;
+        std::fs::create_dir_all(self.root.join("state")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(self.root.join("state"))).display())))?;
+        std::fs::write(self.root.join("state/ticks.json"), serde_json::to_string(&self.ticks).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(self.root.join("state/ticks.json"))).display())))?;
         Ok(())
     }
 
@@ -324,7 +324,7 @@ impl Converger for Scripted {
         let serial = self.publications()?.iter().map(|p| p.serial).max().unwrap_or(0) + 1;
         let p = self.root.join("declared/publications.jsonl");
         if let Some(d) = p.parent() {
-            std::fs::create_dir_all(d)?;
+            std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
         }
         let pubn = Publication {
             serial,
@@ -337,9 +337,9 @@ impl Converger for Scripted {
         }
         .sealed();
         let mut text = std::fs::read_to_string(&p).unwrap_or_default();
-        text.push_str(&serde_json::to_string(&pubn)?);
+        text.push_str(&serde_json::to_string(&pubn).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?);
         text.push('\n');
-        std::fs::write(&p, text)?;
+        std::fs::write(&p, text).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&p)).display())))?;
         Ok(serial)
     }
 

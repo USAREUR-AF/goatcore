@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+[Unit]
+Description=goat obs-host stack: start once the mesh address exists
+After=docker.service netbird.service network-online.target
+Wants=docker.service network-online.target
+ConditionPathExists={{ obs_compose_dir }}/docker-compose.yml
+# Each attempt force-recreates the whole stack, and compose exits non-zero if
+# any one container cannot start (a port held by something else, an image
+# missing under --pull never). Without a limit that restarts Grafana and
+# Prometheus every 30 s for as long as the fault lasts. Three failed attempts
+# in 10 minutes and the unit stays failed; after fixing the cause:
+#   systemctl reset-failed goat-obs-stack && systemctl start goat-obs-stack
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+# simple, not oneshot: the wait can be long and must not hold up boot.
+Type=simple
+ExecStart=/usr/local/sbin/goat-obs-stack-up
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

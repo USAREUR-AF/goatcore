@@ -25,23 +25,24 @@
 #                           Per ADR 0827 §"Mgmt-stack scope expansion"
 #                           decision (a).
 #
-# Operator contract (unchanged from prior site-bootstrap.yml shim — same
-# command line still works):
+# Operator contract. Each secret is read from the operator's environment by
+# the play (lookup("env", ...) inside single quotes), so no value is on the
+# command line; the -e name="$VALUE" form still works but puts the value there:
 #
 #   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES \
 #     ansible-playbook -i inventory/hosts.ini -i inventory/mgmt-hosts.ini \
 #       site-bootstrap.yml \
 #       -e site_id=<site> \
-#       -e postgres_superuser_password="$SITE_PG_PASS" \
-#       -e netbird_encryption_key="$SITE_NB_ENCKEY" \
-#       -e pgbackrest_cipher_pass="$SITE_BKP_KEY" \
+#       -e 'postgres_superuser_password={{ lookup("env", "SITE_PG_PASS") }}' \
+#       -e 'netbird_encryption_key={{ lookup("env", "SITE_NB_ENCKEY") }}' \
+#       -e 'pgbackrest_cipher_pass={{ lookup("env", "SITE_BKP_KEY") }}' \
 #       -e bootstrap_owner_email="ops@example.net"
 #
 #   For postgres-spock-only sites, the secret surface is smaller:
 #
 #     site-bootstrap.yml \
 #       -e site_id=<site> \
-#       -e postgres_superuser_password="$SITE_PG_PASS"
+#       -e 'postgres_superuser_password={{ lookup("env", "SITE_PG_PASS") }}'
 #
 # Each phase is idempotent on its own; safe to re-run.
 #
@@ -458,8 +459,9 @@
               - postgres_superuser_password is defined
               - postgres_superuser_password | length > 0
             fail_msg: >-
-              Pass -e postgres_superuser_password="${{ site_id_upper }}_PG_PASS"
-              (sourced from .envrc.local; do NOT hardcode or check in).
+              Pass -e 'postgres_superuser_password={{ "{{" }} lookup("env",
+              "{{ site_id_upper }}_PG_PASS") {{ "}}" }}' (the variable sourced from
+              .envrc.local; do NOT hardcode or check in).
           vars:
             site_id_upper: "{{ site_id | upper | replace('-', '_') }}"
 
@@ -486,6 +488,8 @@
             mode: "0644"
 
         - name: render minimal .env for postgres-spock-only
+          # The content carries the superuser password.
+          no_log: true
           ansible.builtin.copy:
             dest: "{{ compose_dir }}/.env"
             mode: "0600"
@@ -548,42 +552,71 @@
         # F-044 preflight — same shape as mgmt-host.yml. Catches the pgEdge-
         # baked-data-dir case (POSTGRES_PASSWORD env silently ignored) at
         # compose-up time instead of at first Spock subscription attempt.
-        - name: F-044 preflight — postgres password auth round-trip
+        - name: F-044 preflight — the password from a 0600 env file
           block:
-            - name: F-044 — psql connect via TCP with env-derived password
-              ansible.builtin.command:
-                argv:
-                  - docker
-                  - exec
-                  - postgres-a
-                  - sh
-                  - -c
-                  - "PGPASSWORD={{ postgres_superuser_password | quote }} psql -h 127.0.0.1 -U postgres -d postgres -tAc 'SELECT 1'"
-              register: pg_pwcheck
-              changed_when: false
-              # A freshly-basebackup'd streaming standby refuses connections with
-              # "the database system is in recovery mode" until it reaches a
-              # consistent state — not an auth failure, not F-044. Retry so a
-              # healthy standby passes on its own (mirrors the mgmt-host.yml fix,
-              # F-538).
-              retries: 12
-              delay: 5
-              until: pg_pwcheck.rc == 0
-          rescue:
-            - name: F-044 — a standby still in recovery is not an auth failure (tolerate)
-              ansible.builtin.debug:
-                msg: >-
-                  postgres-a reports "in recovery mode" — a streaming standby that
-                  has not yet reached consistency. Not F-044; convergence is
-                  verified by the postgres-streaming-replication role.
-              when: "'in recovery mode' in (pg_pwcheck.stderr | default(''))"
-            - name: F-044 — postgres password mismatch; fail loud with operator path
-              when: "'in recovery mode' not in (pg_pwcheck.stderr | default(''))"
-              ansible.builtin.fail:
-                msg: |
-                  POSTGRES PASSWORD AUTH FAILED — F-044 likely cause.
-                  See docs/findings/F-044-pgedge-postgres-baked-data-dir.md
-                  for the fix path.
+            - name: F-044 preflight — create the postgres env file (0600)
+              ansible.builtin.tempfile:
+                state: file
+                suffix: .pgenv
+              register: pg_env
+
+            - name: F-044 preflight — write the superuser password to the postgres env file
+              ansible.builtin.copy:
+                dest: "{{ pg_env.path }}"
+                content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+                mode: "0600"
+              no_log: true
+
+            - name: F-044 preflight — postgres password auth round-trip
+              block:
+                - name: F-044 — psql connect via TCP with env-derived password
+                  ansible.builtin.command:
+                    argv:
+                      - docker
+                      - exec
+                      - --env-file
+                      - "{{ pg_env.path }}"
+                      - postgres-a
+                      - psql
+                      - -h
+                      - 127.0.0.1
+                      - -U
+                      - postgres
+                      - -d
+                      - postgres
+                      - -tAc
+                      - "SELECT 1"
+                  register: pg_pwcheck
+                  changed_when: false
+                  # A freshly-basebackup'd streaming standby refuses connections with
+                  # "the database system is in recovery mode" until it reaches a
+                  # consistent state — not an auth failure, not F-044. Retry so a
+                  # healthy standby passes on its own (mirrors the mgmt-host.yml fix,
+                  # F-538).
+                  retries: 12
+                  delay: 5
+                  until: pg_pwcheck.rc == 0
+              rescue:
+                - name: F-044 — a standby still in recovery is not an auth failure (tolerate)
+                  ansible.builtin.debug:
+                    msg: >-
+                      postgres-a reports "in recovery mode" — a streaming standby that
+                      has not yet reached consistency. Not F-044; convergence is
+                      verified by the postgres-streaming-replication role.
+                  when: "'in recovery mode' in (pg_pwcheck.stderr | default(''))"
+                - name: F-044 — postgres password mismatch; fail loud with operator path
+                  when: "'in recovery mode' not in (pg_pwcheck.stderr | default(''))"
+                  ansible.builtin.fail:
+                    msg: |
+                      POSTGRES PASSWORD AUTH FAILED — F-044 likely cause.
+                      See docs/findings/F-044-pgedge-postgres-baked-data-dir.md
+                      for the fix path.
+          always:
+            - name: F-044 preflight — remove the postgres env file
+              ansible.builtin.file:
+                path: "{{ pg_env.path }}"
+                state: absent
+              when: pg_env.path is defined
 
         - name: confirm signal-a / management-a / traefik are NOT running
           # If any of these come back non-empty, someone has expanded the

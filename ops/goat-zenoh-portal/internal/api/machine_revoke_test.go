@@ -171,11 +171,17 @@ func TestMachineRevoke_DeletesUnconsumedKeyAndReturnsQuota(t *testing.T) {
 		t.Fatalf("mgmt server left with %d keys / %d peers, want 0/0", k, p)
 	}
 
-	// Quota returns BY CONSTRUCTION — nothing incremented a counter, the
-	// derived count simply stopped seeing a live enrolled slot.
+	// The live count drops BY CONSTRUCTION — nothing incremented a counter,
+	// the derived count simply stopped seeing a live enrolled slot. The quota
+	// itself returns when the revoked leaf leaves reuse quarantine: until then
+	// the quarantined slot is still the custodian's (GHSA-rr3p r3 F4).
 	q, _ = reg.MachineQuotaFor(ctx, "alice")
-	if q.Used != 0 || q.Remaining != 1 {
-		t.Fatalf("quota after revoke = %+v, want 0 used / 1 remaining", q)
+	if q.Used != 0 || q.Quarantined != 1 || q.Remaining != 0 {
+		t.Fatalf("quota after revoke = %+v, want 0 used / 1 quarantined / 0 remaining", q)
+	}
+	pastReuseQuarantine(t)
+	if q, _ = reg.MachineQuotaFor(ctx, "alice"); q.Remaining != 1 {
+		t.Fatalf("quota after the quarantine = %+v, want 1 remaining", q)
 	}
 	if _, err := reg.MachineByAnchor(ctx, anchor); err == nil {
 		t.Fatal("machine still readable after revoke")
@@ -287,6 +293,7 @@ func TestMachineRevoke_NoMgmtCredentialSaysSoAndStillRetires(t *testing.T) {
 	if _, err := reg.MachineByAnchor(ctx, anchor); err == nil {
 		t.Fatal("registry row survived a revoke on a mint-off portal")
 	}
+	pastReuseQuarantine(t) // the revoked leaf has expired (GHSA-rr3p r3 F4)
 	q, _ := reg.MachineQuotaFor(ctx, "alice")
 	if q.Remaining != 1 {
 		t.Fatalf("quota after mint-off revoke = %+v, want 1 remaining", q)
