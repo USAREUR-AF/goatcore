@@ -3795,6 +3795,62 @@ entries:
     matches:
       - "^GB-326: "
 
+  - code: GB-331
+    tool: goatbuilder
+    title: a standup phase failed
+    what: "A phase of goatbuilder standup exited non-zero. The row prints the phase, its label and its exit code; the run stopped there, and no later phase ran. The site is left partway through that phase."
+    causes:
+      - "the phase's own error, printed above the row (a play's failed task, a refused gate, a host that did not answer); the interpreted row under it names a catalog code when the output carries one"
+    fixes:
+      - "fix the cause, then resume: goatbuilder standup <environment> --site <site> --from <phase>   (every phase is idempotent)"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-332
+    tool: goatbuilder
+    title: a join-node phase failed
+    what: "A phase of goatbuilder join-node exited non-zero. The row prints the phase, its label and its exit code; the run stopped there, and no later phase ran. The node is left partway through that phase."
+    causes:
+      - "the phase's own error, printed above the row (a play's failed task, a node that refused our key, a refused gate); the interpreted row under it names a catalog code when the output carries one"
+    fixes:
+      - "fix the cause, then resume: goatbuilder join-node <environment> --site <site> --node <node> --from <phase>   (--dry-run prints the phase's command and the gate that proves it)"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-333
+    tool: goatbuilder
+    title: an image pull failed
+    what: "goatbuilder standup pulls the pinned images beside phases 3 and 4, and the pull exited non-zero. The row prints its exit code and its log, which names each image that could not be pulled. The phase that first runs those images, and every phase after it, did not run."
+    causes:
+      - "a private package and no GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it)"
+      - "a pin that names an image the registry no longer has"
+    fixes:
+      - "set GHCR_READ_TOKEN, or pin an image the registry has in ops/pins/, then resume from the phase the row names"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-334
+    tool: goatbuilder
+    title: an observability leg failed
+    what: "A site that declares has_obs_host: true stands up its observability host in a leg beside the core phases, and that leg exited non-zero. The row prints the leg, its exit code and its log. The core phases before the one that needs the leg have run; that phase and the later ones did not."
+    causes:
+      - "the leg's own error, in its log (obs_scrape_targets unset is the usual one for the stack leg)"
+    fixes:
+      - "fix the cause, then: goatbuilder standup <environment> --site <site> --obs-only, and resume from the phase the row names"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-335
+    tool: goatbuilder
+    title: a teardown failed
+    what: "goatbuilder teardown stops a site's services in reverse order, and one stop exited non-zero. The row names the component and the exit code. The services before it are down; nothing after it ran."
+    causes:
+      - "the stop's own error, printed above the row (a compose project or unit that did not stop, a host that did not answer)"
+    fixes:
+      - "fix the cause, then run the teardown again: goatbuilder teardown <environment> --site <site> --services   (every stop is idempotent)"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
   - code: GB-278
     tool: goatbuilder
     title: the edge driver's checkout or carried files are not the controller's
@@ -3830,11 +3886,12 @@ entries:
   - code: GB-290
     tool: goatbuilder
     title: the staged IPsec certificate is not right for this link
-    what: "Before an IPsec credential rotation moves anything, goat-peering-edge checks the staged certificate: its key is the staged key, it chains to the CA it must chain to (our current CA for ipsec-leaf, the staged new CA for ipsec-ca), its subject CN is peering_edge_local_id, its key is ECDSA P-384 (secp384r1) as the proposals require, it is valid now, and it stays valid for peering_edge_min_valid_days more days (default 30). The message names each check that failed. Nothing was moved."
+    what: "Before an IPsec credential rotation moves anything, goat-peering-edge checks the staged certificate: its key is the staged key, it chains to the CA it must chain to (our current CA for ipsec-leaf, the staged new CA for ipsec-ca), its subject CN is peering_edge_local_id, its key is ECDSA P-384 (secp384r1) as the proposals require, it is valid now, it stays valid for peering_edge_min_valid_days more days (default 30), and its key is not the live leaf's (the confirm tells the two leaves apart only by their keys, so a leaf re-certified on the old key is refused). The message names each check that failed. Nothing was moved."
     causes:
       - the leaf was issued for another peering or another identity
       - the leaf was issued by another CA, or the staged key belongs to another certificate
       - the leaf uses another key type, or expires too soon
+      - "the leaf was re-certified on the live leaf's key instead of a new one"
     fixes:
       - "have the ceremony issue the leaf again with Subject CN = peering_edge_local_id and an ECDSA P-384 key, from the right CA, then stage it and run the rotation again"
     read: docs/design/federation-key-rotation.md
@@ -3939,6 +3996,52 @@ entries:
     matches:
       - "has no play to pass .* to \\(no `-e fed_work=` in its command\\)"
 
+  - code: GB-341
+    tool: goatbuilder
+    title: the IPsec rotation was not tested with this strongSwan
+    what: "An IPsec credential rotation (goat-peering-edge) relies on what strongSwan does when the switch loads the credentials: that swanctl --load-creds unloads the old leaf's key, and what --load-creds --clear and --list-certs show after it. That was measured on a real charon of the series in peering_edge_rotation_strongswan_tested (5.9 and 6.0 by default: 5.9.8 and 6.0.4). Before anything moves, the rotation reads the running charon's version (swanctl --version --daemon --raw). It reported a series not in the list, or no version at all, so nothing was moved."
+    causes:
+      - "the edge runs a strongSwan release of another series than the rotation was measured on"
+      - "charon is not running, or swanctl cannot reach it over vici"
+    fixes:
+      - "run the rotation on an edge whose charon is of a tested series"
+      - "or run the rotation on this series in a lab first, then add the series (major.minor) to peering_edge_rotation_strongswan_tested in the deployment's group_vars"
+      - "when no version was read, start charon (or fix the vici socket) and run the rotation again with the same id"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-341\\)"
+
+  - code: GB-342
+    tool: goatbuilder
+    title: the IPsec rotation's new SA could not be shown to run on the new leaf; the old pair was put back
+    what: "swanctl --list-sas names only the identities, which an old and a new leaf share, so goat-peering-edge proves the leaf another way. Once the new IKE SA is up and the SAs from before the re-authentication are gone, it reloads the credentials from the files alone (swanctl --load-creds --clear) and reads swanctl --list-certs. charon signs only with a private key it holds, and the partner checks the signature against the certificate we send, so the new SA ran on the live leaf when charon lists exactly one end-entity certificate of our id (peering_edge_local_id): the live leaf's serial, holding its private key, on a key other than the set-aside leaf's. Here it did not: charon lists another certificate of our id, does not hold the live leaf with its key, or the live leaf has the set-aside leaf's key. The message says which and names the serials. The old pair was put back and loaded, the old leaf is live, nothing was recorded, and the rotation is marked rolled back, so every later run of its id reports GB-302."
+    causes:
+      - "another certificate and key of our id are still in the swanctl directory under other file names"
+      - "charon did not load the new pair"
+      - "the live leaf was re-certified on the old key, and a resume found it switched in"
+    fixes:
+      - "read swanctl --list-certs on the edge; remove every certificate and key of our id but the ones the rotation stages, then stage the new pair again and start a rotation with a new id"
+      - "have the ceremony issue the leaf on a new key"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge \\(GB-342\\)"
+
+  - code: GB-343
+    tool: goatbuilder
+    title: another peering's credentials on the edge are missing, so the IPsec rotation does not reload them
+    what: "Once the new IKE SA is up, an IPsec credential rotation (goat-peering-edge) reloads every credential in the edge's swanctl directory from the files alone (swanctl --load-creds --clear), which unloads any key whose file is gone. So before anything moves, and again just before that reload, it checks every other peering on the edge (each conf.d/<name>.conf the role wrote): its certs file in x509/ is present and readable, a readable key in private/ is that certificate's key, and its cacerts files in x509ca/ are present and readable. One was not; the message names the peering and the file. Before anything moves, nothing was moved. Just before the reload, the reload was not run, the old pair was put back and the rotation is marked rolled back."
+    causes:
+      - "another peering's certificate, key or CA file was removed or made unreadable"
+      - "a peering was removed by hand, leaving its conf.d file behind"
+    fixes:
+      - "run that peering's role again so its files are written, or remove the peering, then run the rotation (a new id after a roll-back)"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-343\\)"
+      - "goat-peering-edge \\(GB-343\\)"
   - code: GB-351
     tool: goatbuilder
     title: a Spock subscription has forward_origins set, which in a mesh replicates in a loop

@@ -1283,7 +1283,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Image pull FAILED — exit {rc} (full log: {log}). Phase {at} and every later phase run these images, so the run stops here; the log names each image that could not be pulled."), fix: Some(format!("a private package needs GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it); a pin naming an image the registry no longer has needs a new pin in ops/pins/. Then resume: {resume} --from {at}{prof}")) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Image pull FAILED — exit {rc} (GB-333; full log: {log}). Phase {at} and every later phase run these images, so the run stops here; the log names each image that could not be pulled."), fix: Some(format!("a private package needs GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it); a pin naming an image the registry no longer has needs a new pin in ops/pins/. Then resume: {resume} --from {at}{prof}")) });
                     checks.extend(interpreted("image-pull", Some(&log)));
                     exit = EXIT_REFUSED;
                     break 'run;
@@ -1303,7 +1303,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Observability leg \"{leg}\" FAILED — exit {rc} (full log: {log}). The core phases up to {at} have run; phase {at} needs this leg, so the run stops here."), fix: Some(format!("fix the cause (the log names it; obs_scrape_targets unset is the usual one for the stack leg), then: {resume} --obs-only && {resume} --from {at}")) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Observability leg \"{leg}\" FAILED — exit {rc} (GB-334; full log: {log}). The core phases up to {at} have run; phase {at} needs this leg, so the run stops here."), fix: Some(format!("fix the cause (the log names it; obs_scrape_targets unset is the usual one for the stack leg), then: {resume} --obs-only && {resume} --from {at}")) });
                     checks.extend(interpreted(&format!("observability-leg-{leg}"), Some(&log)));
                     exit = EXIT_REFUSED;
                     break 'run;
@@ -1351,7 +1351,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the site is left partway through phase {}. Read the error above; docs/operations/goatnet-standup.md \"The run\" table has this phase's \"Worked when\" and the Troubleshooting table lists the common failures by symptom + fix.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}{prof}", ph.n)) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc} (GB-331). No later phase has run; the site is left partway through phase {}. Read the error above; docs/operations/goatnet-standup.md \"The run\" table has this phase's \"Worked when\" and the Troubleshooting table lists the common failures by symptom + fix.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}{prof}", ph.n)) });
                     // No row when standup's phase catalog has no such phase.
                     checks.extend(interpreted(&phase_id, log.as_deref()));
                     exit = EXIT_REFUSED;
@@ -1873,8 +1873,8 @@ fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, st
         let (cause, interpreted) = if status.success() { ("ok".to_string(), None) } else { teardown_failure(crate::explain_phase::runner_log(&key).as_deref()) };
         record_timing(state_dir, &file, *n, label, secs, rc, &cause);
         if !status.success() {
-            let named = if cause == "uncatalogued" { String::new() } else { format!(" ({cause})") };
-            checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc}{named}; the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
+            let named = if cause == "uncatalogued" { String::new() } else { format!("; its output names {cause}") };
+            checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc} (GB-335{named}); the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
             checks.extend(interpreted);
             ok = false;
             break;
@@ -1902,6 +1902,21 @@ fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, st
 mod tests {
     use super::*;
     use std::process::Command;
+
+    /// Gate row C5: a teardown stop that fails prints its own code on its failed
+    /// row, so a drill log of it holds no uncoded error.
+    #[test]
+    fn a_failed_teardown_stop_prints_its_code() {
+        let t = crate::testdir::path("gb-teardown-fail-");
+        std::fs::create_dir_all(&t).unwrap();
+        let steps = vec![(7, "goat-zenoh".to_string(), "goat-zenoh".to_string(), "exit 3".to_string())];
+        let (rows, ok) = run_teardown_steps(&t, &t.display().to_string(), "zagros", "goatbuilder teardown zagros --site zagros", &steps).unwrap();
+        assert!(!ok);
+        let failed: Vec<&Check> = rows.iter().filter(|c| c.name == "failed").collect();
+        assert_eq!(failed.len(), 1, "{rows:?}");
+        assert!(failed[0].detail.contains("GB-335"), "{}", failed[0].detail);
+        assert!(failed[0].detail.contains("FAILED — exit 3"), "{}", failed[0].detail);
+    }
 
     /// Both drivers run a planned line through the one runner that refuses an empty
     /// `$(printenv NAME)` (tests/test_standup_phase_run.py tests its refusal).
@@ -2734,6 +2749,54 @@ mod tests {
     /// `runs` names exactly the scripts and plays its steps run (each one in a
     /// planned command, or, for a step only a declared node plans, named by this
     /// file).
+    #[test]
+    /// The phase catalog describes teardown's steps (gate row F4): teardown
+    /// walks the standup's applied phases in reverse, a phase for each [A]
+    /// step and an observability leg as the phase it starts with (host 2,
+    /// stack 9), as `teardown` selects them. For every site shape, the
+    /// catalog's teardown entries are exactly those phase numbers, and each
+    /// entry's `runs` names only plays teardown starts.
+    fn the_phase_catalog_describes_teardowns_steps() {
+        let mut walked: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for (_, s, obs_only) in catalog_shapes() {
+            let o = Options {
+                env: "dev",
+                site: "zagros",
+                profile: None,
+                from: 1,
+                to: 14,
+                skip_obs: false,
+                obs_only,
+                dry_run: true,
+                parallel: false,
+                check: false,
+            };
+            for e in plan(&repo_root(), &s, &o, "RESUME") {
+                match e {
+                    Event::Phase(p) if p.kind == "A" => {
+                        walked.insert(p.n.to_string());
+                    }
+                    Event::LegStart { leg, .. } => {
+                        walked.insert(if leg == "stack" { "9" } else { "2" }.to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let entries = goat_errors::phases::phases().of("teardown");
+        let keys: std::collections::BTreeSet<String> = entries.iter().map(|e| e.phase.to_string()).collect();
+        assert_eq!(keys, walked, "the catalog's teardown entries are the phases teardown walks");
+        let decls = std::fs::read_to_string(repo_root().join("ops/goatbuilder/teardown.yaml")).unwrap();
+        let code = [include_str!("standup.rs"), decls.as_str()].concat();
+        for e in &entries {
+            for w in e.runs.split([',', ';', ' ']).filter(|w| w.contains('/')) {
+                let name = w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_' && c != '/');
+                let name = name.rsplit('/').next().unwrap_or(name);
+                assert!(code.contains(name), "teardown phase {}: `runs` names {w}, which teardown does not start", e.phase);
+            }
+        }
+    }
+
     #[test]
     fn the_phase_catalog_describes_standups_plan() {
         let cat = goat_errors::phases::phases();

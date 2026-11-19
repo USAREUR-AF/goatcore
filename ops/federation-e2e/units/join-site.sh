@@ -21,24 +21,15 @@ JS_SITE=gamma; JS_NODE=gamma-core-1; JS_ADDR=192.0.2.30
 # Stand-in secret values: the plan must print none of them.
 JS_PG="js-stand-in-pg-$$"; JS_NBK="js-stand-in-enckey-$$"; JS_BKP="js-stand-in-bkp-$$"
 
+# shellcheck source=../lib/joinsite-tree.sh
+. "$HERE/lib/joinsite-tree.sh"
+
 js_tree() { # $1 destination: the fixture with the tree's real model, gates and plays
-  local d="$1" s
+  local d="$1"
   rm -rf "$d"
   cp -a "$SRC/ops/goatbuilder/fixtures/join-node-third-site" "$d"
   rm -f "$d/README.md"
-  mkdir -p "$d/ops/scripts" "$d/ops/secrets" "$d/ops/federation/standup" "$d/ops/goatbuilder"
-  cp -a "$SRC/ops/goatbuilder/endstate" "$d/ops/goatbuilder/"
-  for s in ops/scripts/standup-config-preflight.py ops/scripts/join-node-clock-check.py \
-           ops/federation/standup/preflight_live.py ops/scripts/signal-federation-check.py \
-           ops/scripts/standup-mesh-record.py ops/scripts/inventory-hosts.py \
-           ops/scripts/with-secrets ops/scripts/seed-ssh-key.sh ops/secrets/posture.py \
-           ops/scripts/require-secret.sh ops/ansible/fabric-health-deploy.yml \
-           ops/ansible/mesh-health-deploy.yml ops/ansible/presence-health-deploy.yml \
-           ops/ansible/time-health-deploy.yml ops/ansible/consistency-health-deploy.yml \
-           ops/ansible/fabric-crawler-deploy.yml; do
-    [ -e "$SRC/$s" ] || { echo "join-site: the tree under test has no $s" >&2; return 1; }
-    cp "$SRC/$s" "$d/$s"
-  done
+  js_real_files "$d" || return 1
   echo "join-site: tree for $JS_SITE at $d"
 }
 
@@ -51,7 +42,7 @@ js_plan() { # $1 tree, $2 plan.json: join-node's dry-run plan, as JSON, printed 
   cat "$2"
   return "$rc"
 }
-export -f js_tree js_plan
+export -f js_tree js_plan js_real_files
 export JS_SITE JS_NODE JS_ADDR JS_PG JS_NBK JS_BKP
 
 unit_main() {
