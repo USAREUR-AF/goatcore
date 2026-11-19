@@ -1,8 +1,8 @@
 # Simple boundary node, pseudo boundary node, and the boundary monitor
 
-**Status: WIP.** The sender and the monitor are built and run on one goatnet with synthetic data only. The fabric
-subscription, the WireGuard stage, the TCP transport, the ansible role and the pseudo boundary node are designed, not
-built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
+**Status: WIP.** The sender and the monitor are built and run on one goatnet with synthetic data only. The TCP transport and the
+synthetic-only guard are built. The fabric subscription, the WireGuard stage, the ansible role and the pseudo boundary
+node are designed, not built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
 seven days without a gap. Decision record: [ADR 1253](../adr/1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md).
 
 ## 1. Three kinds of boundary
@@ -65,8 +65,14 @@ encodes each sample. Only released keys leave, for the same reason the canonical
 boundary is a deliberate act of the data's owner, not a property of where the boundary host sits. Until it is built, the
 notional feeds are the only input, and the notional feeds are synthetic.
 
-**TCP (designed, not built).** A TCP receiver gets the same encoder output over one long-lived connection. Its state
-(connected, reconnecting, bytes accepted by the kernel) is reported in the same status fields.
+**TCP (built).** `--transport tcp` sends the same encoder output over one long-lived connection per feed. ASTERIX blocks
+carry their own length, so the stream needs no extra framing. A lost connection is retried with backoff from 1 s up to
+30 s. Blocks generated while it is down are counted as `dropped`, never queued. The status fields report `transport`,
+`connected`, `reconnecting`, and the bytes the receiver's kernel accepted.
+
+**Synthetic-only guard (built).** The sender refuses to start when `--encryption none` (stage 0) is combined with any
+input other than `notional`. It also refuses `--input fabric` until the fabric input is built. The monitor's encryption
+field shows `--encryption`.
 
 ## 3. Where a simple-bn runs
 
@@ -185,7 +191,7 @@ The same page then shows a canonical boundary node and a simple-bn side by side.
 | Mode | What the monitor can say | Status |
 |---|---|---|
 | UDP, no reply channel | "no acknowledgement", plus `receiver-refusing` when the receiver host rejects the port | built |
-| TCP | connected or reconnecting, bytes the kernel accepted | designed |
+| TCP | connected or reconnecting, bytes the kernel accepted, blocks dropped while down | built |
 | application acknowledgement | the receiver returns the last sequence number it processed; the monitor shows the gap | designed, needs the receiver's agreement |
 
 ## 7. Declaration
@@ -200,13 +206,13 @@ simple_bn:
   receiver:
     label: <receiver name shown in the monitor>
     ref: op://<vault>/<item>                          # host, port, protocol, format live in the store
-    transport: udp
+    transport: udp                                  # udp | tcp
     format: ASTERIX CAT034/CAT048
   encryption: {stage: 0}                              # 1 = wireguard: our_pubkey, peer_pubkey, peer_endpoint, tunnel /30
   feeds: [<name>, <name>]
   profiles: <path to the profiles JSON in the overlay>
   sac: <0-255>
-  synthetic_only: true                                # stage 0 refuses to start when false
+  input: notional                                     # stage 0 (encryption none) refuses anything else
 ```
 
 ## 8. Install by hand (until the role exists)

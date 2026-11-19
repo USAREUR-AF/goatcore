@@ -21,6 +21,7 @@ import os
 import random
 import socket
 import struct
+import sys
 import tempfile
 import threading
 import time
@@ -187,12 +188,15 @@ WINDOWS = {"1m": 60, "15m": 900, "1h": 3600, "24h": 86400}
 
 
 class Feed:
-    def __init__(self, name, sac, dest, rnd, profiles):
+    def __init__(self, name, sac, dest, rnd, profiles, transport="udp"):
         p = profiles[name]
         self.name, self.p, self.sac, self.sic, self.rnd = name, p, sac, p["sic"], rnd
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.connect(dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
-        self.src_port = self.sock.getsockname()[1]
+        self.dest, self.transport = dest, transport
+        self.sock, self.src_port, self.backoff, self.next_retry = None, None, 1.0, 0.0
+        if transport == "udp":
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.connect(dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
+            self.src_port = self.sock.getsockname()[1]
         self.next_tn = 1
         self.targets = []
         for kind, n in p["mix"].items():
@@ -201,7 +205,7 @@ class Feed:
         self.next_salvo = time.time() + rnd.uniform(5, 20) if p["salvo"] else None
         self.lock = threading.Lock()
         self.total = {"datagrams": 0, "bytes": 0, "cat034": 0, "detections": 0, "tracks": 0,
-                      "send_errors": 0, "refused": 0}
+                      "send_errors": 0, "refused": 0, "dropped": 0}
         self.by_kind = {}
         self.minutes = {}   # epoch-minute -> counts
         self.state = "starting"
@@ -220,7 +224,54 @@ class Feed:
         b[key] = b.get(key, 0) + n
         self.total[key] = self.total.get(key, 0) + n
 
+    def _tcp_connect(self):
+        """One TCP connection per feed, so each feed keeps its own source port. Returns True when connected."""
+        if self.sock is not None:
+            return True
+        if time.time() < self.next_retry:
+            return False
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5)
+        try:
+            s.connect(self.dest)
+        except OSError as e:
+            s.close()
+            with self.lock:
+                self.state, self.last_error = "reconnecting", f"connect: {e}"
+                if isinstance(e, ConnectionRefusedError):
+                    self._count("refused")
+                    self.last_refused = time.time()
+            self.next_retry = time.time() + self.backoff
+            self.backoff = min(self.backoff * 2, 30.0)
+            return False
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.sock, self.src_port, self.backoff = s, s.getsockname()[1], 1.0
+        with self.lock:
+            self.last_refused = None   # connected: the receiver is no longer refusing
+        return True
+
     def send(self, data, kind_counts=None):
+        if self.transport == "tcp":
+            if not self._tcp_connect():
+                with self.lock:
+                    self._count("dropped")
+                return
+            try:
+                self.sock.sendall(data)   # ASTERIX blocks carry their own length, so the stream needs no framing
+            except OSError as e:
+                self.sock.close()
+                self.sock = None
+                with self.lock:
+                    self._count("send_errors")
+                    self._count("dropped")
+                    self.state, self.last_error = "reconnecting", f"send: {e}"
+                return
+            with self.lock:
+                self._count("datagrams")
+                self._count("bytes", len(data))
+                self.last_send = time.time()
+                self.state = "sending"
+            return
         try:
             self.sock.send(data)
             with self.lock:
@@ -313,13 +364,33 @@ class Feed:
                 "src_port": self.src_port, "update_period_s": self.p["period"],
                 "state": state,
                 "last_send": self.last_send, "last_error": self.last_error,
-                "ack": {"mode": "none", "note": "UDP one-way; receiver sends no acknowledgement",
-                        "last_refused": self.last_refused},
+                "transport": self.transport, "connected": self.sock is not None,
+                "ack": ({"mode": "none", "note": "UDP one-way; receiver sends no acknowledgement",
+                         "last_refused": self.last_refused} if self.transport == "udp" else
+                        {"mode": "tcp", "note": "TCP: the receiver's kernel accepted the bytes; no application acknowledgement",
+                         "last_refused": self.last_refused}),
                 "live_targets_by_kind": dict(self.by_kind),
                 "totals": dict(self.total), "windows": win,
                 "per_minute": [[m, self.minutes.get(m, {}).get("datagrams", 0)]
                                for m in range(int(now // 60) - 59, int(now // 60) + 1)],
             }
+
+
+ENCRYPTION = ("none", "wireguard", "receiver-transport")
+INPUTS = ("notional", "fabric")
+
+
+def guard(input_kind, encryption):
+    """Stage 0 (plain, encryption none) carries synthetic data only (ADR 1253). Returns an error string or None."""
+    if input_kind not in INPUTS:
+        return f"unknown input {input_kind!r}"
+    if encryption not in ENCRYPTION:
+        return f"unknown encryption {encryption!r}"
+    if input_kind == "fabric":
+        return "the fabric input is designed, not built"
+    if encryption == "none" and input_kind != "notional":
+        return "plain sending (encryption none) carries notional data only"
+    return None
 
 
 def write_status(path, doc):
@@ -342,13 +413,19 @@ def main():
     ap.add_argument("--status", default="/run/simple-bn/status.json")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--duration", type=float, default=0, help="seconds to run, 0 = forever")
+    ap.add_argument("--transport", choices=["udp", "tcp"], default="udp")
+    ap.add_argument("--input", default="notional", help="notional (built) or fabric (designed)")
+    ap.add_argument("--encryption", default="none", help="none | wireguard | receiver-transport (what protects the path)")
     a = ap.parse_args()
 
+    err = guard(a.input, a.encryption)
+    if err:
+        sys.exit(f"simple-bn: refusing to start: {err}")
     host, port = a.dest.rsplit(":", 1)
     dest = (socket.gethostbyname(host), int(port))
     rnd = random.Random(a.seed)
     profiles = load_profiles(a.profiles)
-    feeds = [Feed(n.strip(), a.sac, dest, random.Random(rnd.random()), profiles)
+    feeds = [Feed(n.strip(), a.sac, dest, random.Random(rnd.random()), profiles, transport=a.transport)
              for n in a.feeds.split(",") if n.strip()]
     started = time.time()
     for f in feeds:
@@ -362,9 +439,9 @@ def main():
         time.sleep(5)
         now = time.time()
         doc = {"schema": "goat.boundary-status/v1", "kind": "simple-bn", "node": a.node,
-               "service": "simple-bn-sender", "receiver": {"label": a.label, "transport": "udp",
+               "service": "simple-bn-sender", "receiver": {"label": a.label, "transport": a.transport,
                                                          "format": "ASTERIX CAT034/CAT048",
-                                                         "encryption": "none"},
+                                                         "encryption": a.encryption},
                "started": started, "now": now, "uptime_s": round(now - started),
                "feeds": [f.status(now) for f in feeds]}
         write_status(a.status, doc)

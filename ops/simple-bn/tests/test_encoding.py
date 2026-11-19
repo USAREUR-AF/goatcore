@@ -2,6 +2,8 @@
 """Encoding checks that need only the standard library: python3 -m unittest discover ops/simple-bn/tests"""
 import os
 import random
+import socket
+import time
 import struct
 import sys
 import unittest
@@ -52,3 +54,69 @@ class Encoding(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Guard(unittest.TestCase):
+    def test_plain_needs_notional(self):
+        self.assertIsNone(s.guard("notional", "none"))
+        self.assertIsNone(s.guard("notional", "wireguard"))
+        self.assertIn("not built", s.guard("fabric", "wireguard"))
+        self.assertIsNotNone(s.guard("fabric", "none"))
+        self.assertIsNotNone(s.guard("notional", "rot13"))
+
+    def test_cli_refuses(self):
+        import subprocess
+        r = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "..", "simple_bn_sender.py"),
+                            "--dest", "127.0.0.1:9", "--label", "t", "--input", "fabric", "--status", "/tmp/x.json"],
+                           capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("refusing to start", r.stderr)
+
+
+class Tcp(unittest.TestCase):
+    """TCP: whole ASTERIX blocks arrive on one connection per feed, and the feed reconnects after the receiver returns."""
+
+    def _server(self, port=0):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", port)); srv.listen(8); srv.settimeout(10)
+        return srv
+
+    def _read_blocks(self, conn, n):
+        buf, cats = b"", []
+        conn.settimeout(10)
+        while len(cats) < n:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+            while len(buf) >= 3:
+                ln = struct.unpack(">H", buf[1:3])[0]
+                if len(buf) < ln:
+                    break
+                cats.append(buf[0]); buf = buf[ln:]
+        return cats
+
+    def test_blocks_and_reconnect(self):
+        srv = self._server(); port = srv.getsockname()[1]
+        prof = s.load_profiles(None)
+        f = s.Feed("counterfire", 0, ("127.0.0.1", port), random.Random(3), prof, transport="tcp")
+        f.scan()
+        conn, _ = srv.accept()
+        cats = self._read_blocks(conn, 1)
+        self.assertEqual(cats[0], 34)
+        self.assertTrue(set(cats) <= {34, 48})
+        self.assertEqual(f.status(time.time())["transport"], "tcp")
+        conn.close(); srv.close()
+        for _ in range(5):            # the receiver is gone: sends fail, the feed backs off and drops
+            f.scan(); time.sleep(0.05)
+        st = f.status(time.time())
+        self.assertIn(st["state"], ("reconnecting", "receiver-refusing"))   # a refused connect is the receiver refusing
+        self.assertGreater(st["totals"]["dropped"], 0)
+        srv = self._server(port)       # the receiver returns on the same port
+        f.next_retry = 0
+        f.scan()
+        conn, _ = srv.accept()
+        self.assertEqual(self._read_blocks(conn, 1)[0], 34)
+        self.assertEqual(f.status(time.time())["state"], "sending")
+        conn.close(); srv.close(); f.sock.close()

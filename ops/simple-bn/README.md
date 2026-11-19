@@ -4,7 +4,7 @@ A simple boundary node and the boundary monitor. Design and status: [`docs/desig
 
 | File | What it is |
 |---|---|
-| `simple_bn_sender.py` | sends feeds as ASTERIX CAT034/CAT048 over UDP to one receiver; writes `/run/simple-bn/status.json` |
+| `simple_bn_sender.py` | sends feeds as ASTERIX CAT034/CAT048 over UDP or TCP (`--transport`) to one receiver; refuses plain sending of anything but notional data; writes `/run/simple-bn/status.json` |
 | `bn_monitor.py` | read-only status page and `/api/status` for this node's boundary services, mesh address only |
 | `systemd/` | the two units; the receiver lives in `/etc/simple-bn/receiver.env` (mode 600) |
 | `tests/` | `python3 -m unittest discover ops/simple-bn/tests` |
