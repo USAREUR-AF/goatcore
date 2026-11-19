@@ -175,25 +175,34 @@ A site added with `join-node` is a whole site: it runs every service it declares
 
 ### J. Every machine kind is a build target
 
-Every kind of machine a goatnet runs is a goatbuilder build target type: one file under `ops/goatbuilder/targets/` declaring its OS baselines, plays, services, acceptance and proof tiers, read by `standup`, `join-node` and the image tooling ([ADR 1257](../adr/1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md), Proposed; [goatbuilder-build-targets.md](goatbuilder-build-targets.md)). goatbuilder builds from a reachable Ubuntu host with an SSH key. `goatbuilder doctor --target <type>` checks the end state whichever path installed the machine; `goatbuilder image <type>` is the optional golden path on known hardware. Each type passes the CI tier (a VM from a fresh Ubuntu cloud image, through the build, to the type's acceptance and `doctor --target`; extending [ADR 1200](../adr/1200-deployment-e2e-three-tiers.md)). The hardware tier (a recorded run on real equipment) is required for the five types we have equipment for. This group was added at the operator's direction (19 Nov) and is under the operator's review.
+goatbuilder keeps three things apart, each declared as data ([ADR 1257](../adr/1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md), Proposed; [goatbuilder-build-targets.md](goatbuilder-build-targets.md)):
+
+- **Platforms** are hardware and its preparation, and the golden path lives there.
+- **Target types** are a machine's role, with its plays and acceptance, read by `standup`, `join-node` and the image tooling.
+- **Payloads** are software deployed onto the types that accept them.
+
+goatbuilder builds from a reachable Ubuntu host with an SSH key. `goatbuilder doctor --target <type>` checks the end state whichever path installed the machine. Each type and payload passes the CI tier: a VM from a fresh Ubuntu cloud image, through the build, to its acceptance and `doctor --target`, extending [ADR 1200](../adr/1200-deployment-e2e-three-tiers.md). The hardware tier, a recorded run on real equipment, is required for the five types we have equipment for.
+
+The rows follow the build order. Each depends on the one before, and the exact 1.0 cut line of each is not set row by row. This group was added at the operator's direction (19 Nov) and is under the operator's review.
 
 | # | Requirement | Status | Proven by |
 |---|---|---|---|
-| J1 | core, CI tier | not built: `standup` and `join-node --class core` converge it, and there is no type file, no `doctor --target` and no hermetic founder standup (`deployment-e2e.md:182`) | A CI run from a fresh Ubuntu cloud image VM to the core type's acceptance and `doctor --target` |
+| J1 | core, CI tier, with no manual phase: standup phase 11 is an applied step | not built: `standup` and `join-node --class core` converge core. There is no type file, no `doctor --target` and no hermetic founder standup (`deployment-e2e.md:182`), and phase 11 is manual (`standup.rs:611`, `standup.rs:617`). Phase 11's automation is designed (build step 2) | A CI run from a fresh Ubuntu cloud image VM to the core type's acceptance and `doctor --target`, with no MANUAL row. The phase 11 service user's token is in no log, and a re-run mints nothing |
 | J2 | core, hardware tier | not measured: never run on hardware with goatbuilder | A recorded run on a site's core machine |
 | J3 | obs, CI tier | not built: `standup`'s obs leg and `join-node --class obs` converge it; one acceptance row (`prom-up`) | As J1, for obs |
 | J4 | obs, hardware tier | not measured | A recorded run on a site's obs machine |
-| J5 | breakglass, CI tier | not built: `standup` phase 14 and `join-node --class breakglass` converge it, and it has no acceptance row | As J1, for breakglass; its acceptance includes ADR 1114 §5's dual-homing contract |
+| J5 | breakglass, CI tier | not built: `standup` phase 14 and `join-node --class breakglass` converge it, and it has no acceptance row | As J1, for breakglass. Its checks include ADR 1114 §5's dual-homing contract |
 | J6 | breakglass, hardware tier | not measured | A recorded run on a site's break-glass machine |
 | J7 | network-jump, CI tier | not built: `join-node --class network-jump` converges it, and it has no acceptance row | As J1, for network-jump |
 | J8 | network-jump, hardware tier | not measured | A recorded run on a site's network-jump machine |
 | J9 | federation boundary node, CI tier | not built as a type: `federate` configures an existing host | As J1, for the boundary node, then a peering's acceptance over it |
 | J10 | federation boundary node, hardware tier | not measured | A recorded run on a site's boundary machine |
 | J11 | simple boundary node, CI tier | not built: `ops/simple-bn/` is placed by hand (ADR 1253, Proposed) | As J1, for the simple boundary node |
-| J12 | processing node, CI tier | not built | As J1, for the processing node; its acceptance runs the `goat-processors` engines on recorded data against their conformance vectors |
-| J13 | phone, CI tier | not built as a type file: `join-node --class phone` converges it (group H) | As J1, for the phone type's Linux VM; its hardware runs are H7 and H8 |
-| J14 | pod, CI tier | not built; open question to the operator: push-deployed only for 1.0, or later with the pull converger ([goatbuilder-build-targets.md](goatbuilder-build-targets.md) §5) | As J1, for a push-deployed pod, if the operator keeps pods in 1.0 |
-| J15 | sensor nodes and gateways, CI tier | not built; what fits is being surveyed ([goatbuilder-build-targets.md](goatbuilder-build-targets.md) §6) | As J1, for the parts the survey brings in; the parts left out are named with their reasons |
+| J12 | processing node, CI tier | not built | As J1, for the processing node. Its acceptance runs the `goat-processors` engines on recorded data against their conformance vectors |
+| J13 | small computer (edge device), CI tier, on the platforms it accepts | not built: designed; the Raspberry Pi platform's golden path waits for one of the existing Pi image builders to be picked (open question in ADR 1257) | As J1, for the small-computer type, then `doctor --target`'s edge checks: first boot completed, root filesystem grown, key-only SSH, the declared encryption scope, egress |
+| J14 | the sensor-kit payload, CI tier, on each host type in its declaration: small computer, pod and federation boundary node, then breakglass and network-jump | not built in goatcore: designed as a payload, built today outside goatcore | On each host type's J row, the payload deployed from its pinned, signed release, then its acceptance: the sensor platform's own verification, a health-sample round trip through the site fabric, the mesh peer in its group, the mesh management name resolving on the node |
+| J15 | pod, push-deployed, CI tier | not built: designed. The pull converger comes after 1.0 (D, decided 15 Nov) | As J1, for a pod built and updated by push |
+| J16 | phone, CI tier | not built as a type file: `join-node --class phone` converges it (group H) | As J1, for the phone type's Linux VM. Its hardware runs are H7 and H8 |
 
 ## Order of work
 
@@ -206,7 +215,7 @@ The requirements depend on one another in this order. No dates are set here.
 5. **The tool shows its work.** F1 to F6, in 0.x releases, beside the steps above.
    **A node on a phone.** H1, H2 and H6 first, because they are faults on every new node; then H3 to H5.
    **A joined site runs cut off.** I3 beside H1 and H2, in `join-node`. I1, I2 and I6 before I4; I4 before I5.
-   **Every machine kind is a build target.** J in the order of [goatbuilder-build-targets.md](goatbuilder-build-targets.md) §4: the type definition with core, obs, breakglass and network-jump (J1, J3, J5, J7); standup phase 11 automated; the federation boundary node (J9); the simple boundary node and the processing node (J11, J12); the sensor nodes and gateways (J15); pods (J14). The hardware rows J2, J4, J6, J8 and J10 with C1 and C2.
+   **Every machine kind is a build target.** J in the order of [goatbuilder-build-targets.md](goatbuilder-build-targets.md) §4, each step on the one before: the type and platform definitions with core, obs, breakglass and network-jump (J3, J5, J7); standup phase 11 automated (J1); the federation boundary node (J9); the simple boundary node and the processing node (J11, J12); the Raspberry Pi platform's preparation, then the small computer (J13), then the sensor-kit payload (J14); pods, push-deployed (J15); the phone's type file beside step 1 (J16). The hardware rows J2, J4, J6, J8 and J10 with C1 and C2.
 6. **The promise.** A1 to A5, and the items the pull decision in D leaves before 1.0 (push behind the converger trait; per-machine pending and unknown in the `-o json` documents). From this point the surfaces are frozen.
 7. **Upgrade tests.** E1 to E3, against the release that froze the surfaces.
 8. **The cold-read drill.** C4 and C5, on a release candidate `goatbuilder/v1.0.0-rc.N`.
