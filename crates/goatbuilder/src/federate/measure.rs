@@ -840,7 +840,7 @@ pub fn write_edge_half(
         "public_key": half.public_key.as_ref().map(derived_json),
         "interface_mtu": half.interface_mtu,
     });
-    let text = serde_json::to_string_pretty(&v)? + "\n";
+    let text = serde_json::to_string_pretty(&v).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))? + "\n";
     std::fs::write(path, &text)
         .map_err(|e| goat_errors::coded("GB-323", format!("could not write the edge half to {}: {e}", path.display())))?;
     Ok(sha256_hex(text.as_bytes()))
