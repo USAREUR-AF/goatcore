@@ -11,6 +11,7 @@ name: goat-zenoh-portal-spec
 # here.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   # Guard, not a publisher: no push on main (see goat-zenoh-portal-test.yml).
   pull_request:
     paths:
