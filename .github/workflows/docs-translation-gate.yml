@@ -61,7 +61,7 @@ jobs:
     outputs:
       bump: ${{ steps.bump.outputs.bump }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -94,7 +94,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: check every locale covers the English arbiter
         run: |
           python3 ops/scripts/translate-ftl.py --check --catalog all
@@ -108,7 +108,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: key
         name: is the translation API key configured
         env:
@@ -127,7 +127,7 @@ jobs:
         run: python3 ops/scripts/translate-ftl.py --apply --catalog all
       - name: open a PR with the refreshed catalogs
         if: steps.key.outputs.present == 'true'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
           branch: chore/i18n-ftl-fill
           commit-message: "chore(i18n): fill machine-translated .ftl drift via translate-ftl.py"

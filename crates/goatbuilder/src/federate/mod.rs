@@ -45,7 +45,7 @@ use std::path::Path;
 pub mod backout;
 pub mod rotation;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 
 use crate::config;
 
@@ -69,6 +69,7 @@ mod admit_role;
 mod confirm;
 pub mod acceptance;
 pub mod deploy;
+pub mod directory;
 pub mod handoff;
 pub mod site_values;
 pub mod switches;
@@ -673,15 +674,28 @@ fn config_path(repo: &Path, o: &Options) -> std::path::PathBuf {
 }
 
 /// GB-267 for a two-driver peering whose run (`runs(n)`) would reach a phase
-/// after 2 that needs the edge (federate/handoff.rs). A peering that is not
-/// declared is left to C1.
+/// after 3 that needs the edge (federate/handoff.rs), or would run phase 3
+/// measured on this machine (FED_MEASURE=here), which has no halves. A
+/// peering that is not declared is left to C1.
 fn refuse_two_drivers(cfg: &config::Config, o: &Options, runs: impl Fn(u32) -> bool) -> Result<()> {
     let two = cfg
         .peerings
         .iter()
         .find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true))
         .is_some_and(|p| handoff::two(p.drivers.as_deref()));
-    match two.then(|| handoff::refused_before_running(runs)).flatten() {
+    if !two {
+        return Ok(());
+    }
+    // A run whose first phase that needs the edge is 3; a run from 1 or 2
+    // stops at that phase's hand-off before it reaches 3.
+    if handoff::first_edge_phase(&runs) == Some(3) && !measure::driver_measures_over_ssh() {
+        return Err(goat_errors::coded(
+            handoff::NOT_BUILT,
+            format!("{}. Refused before this run acted: nothing of phase 3 ran, and no phase before it in this run. {}", handoff::MEASURED_HERE, handoff::MEASURED_HERE_FIX),
+        )
+        .into());
+    }
+    match handoff::refused_before_running(runs) {
         Some(e) => Err(e),
         None => Ok(()),
     }
@@ -713,7 +727,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     measure::check_driver_measure()?;
     if let Some(env) = o.env {
         if !cfg.environments.iter().any(|e| e.name == env) {
-            return Err(anyhow!("unknown environment \"{env}\"; declared: {:?}", cfg.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>()));
+            return Err(goat_errors::coded("GB-241", format!("unknown environment \"{env}\"; declared: {:?}", cfg.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>())).into());
         }
     }
     // C1: an empty list declares nothing, so it refuses every name. It used to pass
@@ -780,6 +794,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     }
     // `drivers: two`: an edge driver and a controller (federate/handoff.rs).
     let two_drivers = handoff::two(peering.drivers.as_deref());
+    if s.edge.is_some() && !two_drivers {
+        return Err(goat_errors::coded("GB-189", format!("--side edge is the edge driver's run of a peering declared with two drivers (drivers: two); peering {} declares one, so run it without --side edge", o.with)).into());
+    }
     let mut handed: Option<serde_json::Value> = None;
     if executes {
         preflight::export(&inputs);
@@ -798,7 +815,10 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         rotation::carrier(&mut phases, c, o.with);
     }
     if let Some(t) = &s.rotate_transport {
-        rotation::transport(&mut phases, t);
+        rotation::transport(&mut phases, t)?;
+    }
+    if let Some(i) = &s.rotate_ipsec {
+        rotation::ipsec(&mut phases, i)?;
     }
     let banner_mode = if o.dry_run {
         "(DRY RUN — nothing executes)"
@@ -873,9 +893,21 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         // half here, against that result (federate/handoff.rs).
         let mut core_cmd: Option<String> = None;
         let mut edge_result: Option<serde_json::Value> = None;
-        if two_drivers && handoff::core_half_built(ph.n) {
+        // Phase 3's halves run in process with their own words (`init
+        // --over-ssh ... --side core|edge`), their report on stderr.
+        let mut half: Option<HalfWords> = None;
+        if two_drivers && s.edge.is_none() && handoff::core_half_built(ph.n) {
             if let Some((file, bound)) = run.as_ref().and_then(|r| handoff::imported(&r.state, ph.n)) {
                 match handoff::check_imported(Path::new(&work), ph.n, &file, &bound) {
+                    // Measured here, phase 3 has no core half: refused below.
+                    Ok(_) if ph.n == 3 && ph.verb.is_none() => {}
+                    Ok(_) if ph.n == 3 => {
+                        let Some((env, words)) = &ph.verb else { unreachable!("checked above") };
+                        let mut words = words.clone();
+                        words.extend(["--side".to_string(), "core".into(), "--edge-half".into(), Path::new(&work).join(&file).display().to_string(), "--edge-half-sha256".into(), bound.trim_start_matches("sha256:").to_string()]);
+                        checks.push(row("handoff", format!("phase 3's edge half, imported at {bound}: its core half runs here")));
+                        half = Some((env.clone(), words));
+                    }
                     Ok(edge) => {
                         let problems = handoff::phase_1_edge_problems(&edge);
                         if !problems.is_empty() {
@@ -905,7 +937,36 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         }
         // Two drivers: a phase that needs the edge stops here, before acting,
         // and hands it to the edge driver (docs/design/federation-two-drivers.md).
-        if core_cmd.is_none() && two_drivers && matches!(handoff::side_of(ph.n), handoff::Side::Edge | handoff::Side::Both) {
+        // The edge driver's run: its phase's edge half, writing the result
+        // the way back names (federate/handoff.rs).
+        let mut edge_cmd: Option<String> = None;
+        if let Some(e) = &s.edge {
+            if let Some(dir) = e.result.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| goat_errors::coded("GB-184", format!("cannot create the working folder {} for the edge result: {e}", dir.display())))?;
+            }
+            let _ = std::fs::remove_file(&e.result);
+            match &ph.verb {
+                Some((env, words)) if ph.n == 3 => {
+                    let mut env = env.clone();
+                    env.push((measure::PHASE3_IN_RUN.to_string(), "1".to_string()));
+                    let mut words = words.clone();
+                    words.extend(["--side".to_string(), "edge".into(), "--half-out".into(), e.result.display().to_string()]);
+                    half = Some((env, words));
+                }
+                _ => edge_cmd = Some(format!("{} --side edge --result '{}'", ph.cmd, e.result.display())),
+            }
+        }
+        if two_drivers && ph.n == 3 && ph.verb.is_none() {
+            let refusal = handoff::measured_here();
+            let d = refusal.detail.clone();
+            checks.push(refusal);
+            if let Some(r) = run.as_mut() {
+                r.end(ph, state::Outcome::Failed, &d);
+            }
+            exit = EXIT_REFUSED;
+            break;
+        }
+        if core_cmd.is_none() && edge_cmd.is_none() && half.is_none() && two_drivers && matches!(handoff::side_of(ph.n), handoff::Side::Edge | handoff::Side::Both) {
             if !handoff::hands_off(ph.n) {
                 let refusal = handoff::later_phase_not_built(ph.n);
                 let d = refusal.detail.clone();
@@ -1053,14 +1114,16 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             stopped = true;
             break;
         }
-        let rc = match &ph.verb {
+        let rc = match (&half, &ph.verb) {
+            // One of phase 3's halves, in process, its report on stderr.
+            (Some((env, words)), _) => run_half_in_process(repo, env, words),
             // A federation verb, in process: the same words the plan printed.
-            Some((env, words)) => run_verb_in_process(repo, env, words),
-            None => {
+            (None, Some((env, words))) => run_verb_in_process(repo, env, words),
+            (None, None) => {
                 // -e, like standup and join-node: a phase that is several statements
                 // stops at the first failure instead of running on past it.
-                let cmd = core_cmd.as_deref().unwrap_or(&ph.cmd);
-                let status = runenv::command("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
+                let cmd = core_cmd.as_deref().or(edge_cmd.as_deref()).unwrap_or(&ph.cmd);
+                let status = runenv::command("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 if status.success() { 0 } else { status.code().unwrap_or(1) }
             }
         };
@@ -1085,6 +1148,17 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 r.end(ph, state::Outcome::Failed, &format!("GB-183: phase {} failed with exit {rc}", ph.n));
             }
             exit = EXIT_REFUSED;
+            break;
+        }
+        // The edge driver's way back: the run waits on the controller's import.
+        if let Some(e) = &s.edge {
+            let back = handoff::way_back(o.with, ph.n, e)?;
+            checks.extend(back.rows);
+            handed = Some(back.object);
+            if let Some(r) = run.as_mut() {
+                r.end(ph, state::Outcome::Stopped, &format!("{}: waiting on the controller's import", handoff::WAITING));
+            }
+            stopped = true;
             break;
         }
         // Phase 1's two sides, joined into the one result the later phases read.
@@ -1122,7 +1196,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 }
             }
             r.end(ph, state::Outcome::Passed, "");
-            rotation::after_phase(s, ph.n);
+            for w in rotation::after_phase(s, ph.n, Path::new(&work)) {
+                checks.push(row("warning", w));
+            }
         }
     }
     if let Some(r) = run.as_mut() {
@@ -1179,6 +1255,32 @@ fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -
     }
     let here = std::env::current_dir().ok();
     let rc = guarded(|| std::env::set_current_dir(dir).map_err(anyhow::Error::from).and_then(|_| verbs::run_argv(words)));
+    if let Some(h) = here {
+        let _ = std::env::set_current_dir(h);
+    }
+    for (k, v) in saved_run {
+        match v {
+            Some(v) => runenv::set(&k, v),
+            None => runenv::unset(&k),
+        }
+    }
+    rc
+}
+
+/// One of phase 3's halves to run in process: the run's values for it, and
+/// the words after `goatbuilder federate`.
+type HalfWords = (Vec<(String, String)>, Vec<String>);
+
+/// One of phase 3's halves for a two-driver peering (`init --over-ssh ...
+/// --side edge|core`), in process as [`run_verb_in_process`] runs a verb,
+/// with its report on stderr: stdout carries the run's own report.
+fn run_half_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -> i32 {
+    let saved_run: Vec<(String, Option<String>)> = env.iter().map(|(k, _)| (k.clone(), runenv::recorded(k))).collect();
+    for (k, v) in env {
+        runenv::set(k, v.clone());
+    }
+    let here = std::env::current_dir().ok();
+    let rc = guarded(|| std::env::set_current_dir(dir).map_err(anyhow::Error::from).and_then(|_| verbs::run_argv_to(words, &mut std::io::stderr())));
     if let Some(h) = here {
         let _ = std::env::set_current_dir(h);
     }
@@ -1308,9 +1410,9 @@ mod tests {
         // Once phase 8 has passed, the command that carries on is the plain
         // resume, so following a stop or a failure never mints another set.
         let mut s4 = rotation::leaves_run(&o).1;
-        rotation::after_phase(&mut s4, 7);
+        rotation::after_phase(&mut s4, 7, Path::new("/nonexistent/w"));
         assert!(s4.again.is_some());
-        rotation::after_phase(&mut s4, 8);
+        rotation::after_phase(&mut s4, 8, Path::new("/nonexistent/w"));
         assert!(s4.again.is_none() && !s4.rotate_leaves);
     }
 
@@ -1325,7 +1427,7 @@ mod tests {
         let before = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
         let mut after = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
         let t = rotation::Pending { id: "transport-1".into(), file: work.path().join(rotation::TRANSPORT_FILE) };
-        rotation::transport(&mut after, &t);
+        rotation::transport(&mut after, &t).unwrap();
         for (a, b) in before.iter().zip(after.iter()) {
             if a.n == 2 {
                 assert_eq!(b.cmd, a.cmd.replace(" -e fed_work='", " -e peering_wg_transport_rotation='transport-1' -e fed_work='"));
@@ -1630,7 +1732,7 @@ mod tests {
         assert_eq!(guarded(|| panic!("a verb panicked")), 101);
         assert_eq!(guarded(|| Ok(23)), 23);
         assert_eq!(guarded(|| verbs::run_argv(&["lint".into(), "--no-such-flag".into()])), 2);
-        assert_eq!(guarded(|| Err(anyhow!("a fault"))), 1);
+        assert_eq!(guarded(|| Err(anyhow::anyhow!("a fault"))), 1);
     }
 
     /// Each of federate's fourteen phases has a purpose, for the runner's frame.

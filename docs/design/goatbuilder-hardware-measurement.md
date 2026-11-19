@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed.** The per-step timing file and its summary line are built for `standup`, `join-node` and `teardown`, each row with its cause; standup records phase 11 as a row of its own and its summary reads the founder run's numbers from the file (below). The row C3 procedure ("`status` on a standing goatnet", below) uses only built verbs and a built script. Everything else on this page is designed and not built. No run on hardware has been measured against it |
-| Proves | Gate rows C1 (a founder site in 60 minutes or less, a node in 15, a burn-down in 15) C2 (tutorials 2 and 3 on real machines) and C3 (`status` agrees with `verify` and `diff` on a standing goatnet) of the goatbuilder 1.0 gate |
+| Status | **Designed.** The per-step timing file and its summary line are built for `standup`, `join-node` and `teardown`, each row with its cause; both standup drivers record phase 11 as a row of its own, and `goatbuilder standup`'s summary reads the founder run's numbers, the slowest phases across resumes among them, from the file (below). The row C3 procedure ("`status` on a standing goatnet", below) and the phone procedures for rows H7 and H8 ("A phone node on hardware", below) use only built verbs and scripts. Everything else on this page is designed and not built. No run on hardware has been measured against it |
+| Proves | Gate rows C1 (a founder site in 60 minutes or less, a node in 15, a burn-down in 15) C2 (tutorials 2 and 3 on real machines), C3 (`status` agrees with `verify` and `diff` on a standing goatnet), H7 (a phone built by one command) and H8 (a phone node for seven days) of the goatbuilder 1.0 gate |
 | Design | [goatbuilder-speed.md](goatbuilder-speed.md) (the targets and the modelled budget) · [goatnet-tutorials.md](goatnet-tutorials.md) (the tutorials and their checkpoints) · [goatnet-standup.md](../operations/goatnet-standup.md) (the prerequisites and the phases) |
 
 A timed run is worth something only if a second person can repeat it and get a
@@ -75,8 +75,11 @@ writes a second phase-11 row whose seconds are the wall time from the stop to
 the resume, exit code 0, cause `operator`, and prints
 `phase 11 (the operator step) took <s>s`. Phase 11's wall time is read from
 the record, not derived. It includes any time between the person finishing
-and the resume being started. `ops/scripts/goat-standup.sh` writes no
-phase-11 row.
+and the resume being started. `ops/scripts/goat-standup.sh` writes the same
+open row at the operator step, and a resumed run of the script closes it with
+`ops/scripts/standup-timings-close.py` (the same rule, tested by
+`tests/test_standup_timings_close.py`), so a run driven by either, or by both
+in turn, reads back the same way. The script prints no summary line.
 
 ## What the binary prints and keeps
 
@@ -93,7 +96,7 @@ same file):
 |---|---|
 | A line per foreground step, and per phase-12 step run in `--parallel` waves | `phase <n> took <s>s (exit <rc>)`; a wave step prints `phase 12 <step id> took <s>s (exit <rc>)` |
 | A row per such step in `<state_dir>/standup-<site>-timings.tsv` | time written, phase, step label, seconds, exit code, cause |
-| A summary at the end of the process | `total <s>s (<m> min) over <k> phases; slowest: ...`, the five slowest steps of this process, then the founder run's numbers read from the file: `since phase 1: <s>s (<m> min), phase 11 <s>s, without phase 11 <s>s (<m> min); <k> stops (...)` |
+| A summary at the end of the process | `total <s>s (<m> min) over <k> phases; slowest: ...`, the five slowest steps of this process, then the founder run's numbers read from the file: `since phase 1: <s>s (<m> min), phase 11 <s>s, without phase 11 <s>s (<m> min); <k> stops (...); slowest phases: ...` |
 | A failure | `!! Phase <n> ("<label>") FAILED — exit <rc>` and the resume command |
 
 The rows are per step, not per phase: a phase of several steps writes several
@@ -112,8 +115,13 @@ began (that row's time less its seconds), across every resume; phase 11's
 closed row; the total without it; and the stops. A stop is an open row (the
 operator step, or a stop on purpose) or a failed step; each failed step is a
 defect stop, named by its cause. A run with no phase-1 row in the file prints
-only the process summary. The three slowest phases across resumes are not
-built: the slowest list covers one process.
+only the process summary. The founder numbers end with the three slowest
+phases across every resume, phase 11 left out because it is reported on its
+own: `slowest phases: <n> <s>s, ...`. A phase's time is the wall time of each
+stretch of its consecutive rows, from the earliest step's start to the latest
+row, summed over its stretches. Steps run side by side in phase 12's waves
+count once. A failed step or an open row ends a stretch, so the time until the
+resume is no phase's.
 
 Two kinds of work are not timed on their own. The image pull and the
 observability host's legs run in the background (`Event::PullStart` and
@@ -144,8 +152,7 @@ its exit code. No script avenue writes these two files.
    `phase 7/14 public TLS and relay  10:21:04Z → 10:25:40Z  4m36s  ok`.
 2. **At the end of the run**, one summary line: the total since phase 1 began,
    across every resume; phase 11's wall time; the number of stops; and the
-   three slowest phases with their durations. Built for `standup` except the
-   slowest phases across resumes (above).
+   three slowest phases with their durations. Built for `standup` (above).
 3. **The run record** keeps the same rows per phase and the summary row, in
    the timing file both drivers write, so a run driven by either reads back
    the same way. The step rows stay, and the image pull, each observability
@@ -191,6 +198,72 @@ both. The run is done when the tutorial's checkpoints 2 to 4 hold on hardware
 the joiner's network, every subscription replicating both ways, and `status`
 across both sites.
 
+**Before the run.** Everything is in the tutorial's "Before the real run":
+- a founder whose `goatbuilder assay <founder-site>` is green;
+- the joiner's group_vars, with `goatnet_founder: false` and `join_founder_site`;
+- both sites' groups under `[mgmt_hosts:children]`;
+- the joiner's member group in `ops/pins/fleet-pins.yaml`;
+- signal federation declared on both sides, passing
+  `ops/scripts/signal-federation-check.py <joiner-site> --resolve`;
+- reach to both sites.
+
+The machine that runs the assay holds a goat context named after each site:
+`<joiner-site>` and `<founder-site>`. The cross-site round trip runs `goat`
+under those two names; other names are passed with
+`--var goat_context=<name> --var goat_context_peer=<name>`. You also need a
+release binary and the goatnet's checkout at the commit it deploys from.
+
+**The run.** From the root of the checkout:
+
+```text
+goatbuilder --version
+goatbuilder doctor --env <env> --credentials
+goatbuilder standup <env> --site <joiner-site> --dry-run
+ops/scripts/with-secrets goatbuilder standup <env> --site <joiner-site> --ack "<your name>" --yes
+goatbuilder assay <joiner-site>
+goatbuilder assay <founder-site>
+goatbuilder status --env <env>
+```
+
+`standup --site <joiner-site>` runs the signal federation steps in its phase
+9, the same rows `join-node` runs in its phase 13
+([signal-federation-pair.md](signal-federation-pair.md)). Each further machine
+of the joiner runs
+`goatbuilder join-node <env> --site <joiner-site> --node <name> --class <class> --address <LAN address> --yes`,
+after its `--dry-run`. Compare every command's output with the tutorial's
+text as you go. A difference is a finding even when the command exits 0.
+
+| The run ends with | It means |
+|---|---|
+| `standup` exit 0, with phase 9's `[signal federation] proven from both nodes` row passing | The joiner's three passes, the founder-side mirror and the federation proof ran: the federation half of checkpoint 3 holds |
+| `standup` exit 0, with phase 9's `[signal federation]` gate passing and its SKIP line (`declared off at <joiner-site>`) | The joiner declares `signal_federation_absent_reason` and the gate proved no side expects federation. Checkpoint 3's federation half does not apply; record the declared reason |
+| `assay <joiner-site>` exit 0, every row of the `federation` layer PASS, including `goat-xsite-roundtrip` (`xsite: PASS …`) | Checkpoint 2 holds, and the joiner's half of checkpoint 3 |
+| `assay <founder-site>` exit 0, with `fed-founder-netbird-subscriptions-replicating` (and, with Ory on both sites, `fed-founder-kratos-subscriptions-replicating` and `fed-founder-hydra-subscriptions-replicating`) PASS | The founder's half of checkpoint 3: each subscription it must hold from the joiner exists by name and replicates |
+| `status --env <env>` lists both sites' machines, every one `converged` | Checkpoint 4 holds |
+| a phase fails, or `assay` exits 3 | Not yet a measurement. Note the phase, the code and the output. Fix the tool or the text, then resume with `--from <phase>` |
+
+Checkpoint 3 is not fully covered by a command today. `assay` at the joiner
+reads the joiner's inbound subscriptions (netbird, kratos and hydra) and the
+founder's rows present on the joiner. `assay` at the founder reads the
+founder's subscriptions from the joiner. Nothing yet writes a row at the
+founder and deletes it at the joiner. Until a command does, the run records
+that leg as not measured.
+
+**What to keep.**
+
+| Field | Content |
+|---|---|
+| Build | the goatcore commit and the `goatbuilder --version` output |
+| Hardware | each joiner machine's node class and model |
+| Result | the exit code of `standup`, of `assay <joiner-site>` and of `status` |
+| Findings | each command whose output differed from the text, with the phase, the code and the difference |
+| Times | `standup`'s summary line, and each `join-node` run's total |
+| Reports | `assay`'s rows (`--rows-out`), `status -o json`, the timings file |
+
+The reports name a real deployment's hosts, so they go to the operator's
+private record. The gate row records the version, the commit, the number of
+machines per site, the exit codes and the number of findings.
+
 ### Tutorial 3, a boundary node
 
 Tutorial 3 peers a goatnet with a counterparty that runs its own goatnet under
@@ -202,12 +275,70 @@ acceptance. The run is done when phase 14's acceptance is green on both sides:
 a sample carries in the agreed direction, a write outside the agreed prefix is
 refused, and a nonce round-trips through the counterparty's own router.
 
+That run cannot pass yet. Each side holds only its own surfaces. The refusal
+rows need probe sessions holding the partner's identity, and
+`spire/svid-chains` needs the partner's SPIRE server. So phase 14 at each side
+ends INCOMPLETE, exit 3, with those rows BLOCKED or SKIPPED. The fix is
+[federation-acceptance.md](federation-acceptance.md) §6.4, which moves each
+row to the side that owns its surface; it is designed, not built. Until §6.4 is
+built, a two-party run is a rehearsal of every phase but the last.
+
 A peering between two goatnets that one party runs is a weaker run. It shows
 that the phases work on real machines. It does not show the exchange between
 two people, or that the counterparty's side works from the published text
-alone. Accepting it for row C2 is an operator decision, recorded in the gate
-row as "both goatnets run by one party". Without that decision, it is a
+alone. It can pass today, because that party can give each side the other's
+probe launcher and SPIRE command; [tutorial 4](../tutorials/04-two-sovereigns.md)
+runs it that way. Accepting it for row C2 is an operator decision, recorded in
+the gate row as "both goatnets run by one party". Without that decision, it is a
 rehearsal.
+
+**Before the run.** Everything in the tutorial's "Before the real run":
+- a goatnet whose gate is green;
+- an edge host in node class `PEERING-EDGE`;
+- the peering declared under `peerings:`, its files written by
+  `goatbuilder federate allocate <peering>`, reviewed and committed;
+- a peering directory both sides reach;
+- the signing key and CA declared under `secrets.federation`;
+- a FIPS-mode fabric image on both edge routers, or the waiver recorded.
+
+You also need the counterparty on a call for phases 5, 6 and 10, a release
+binary on each side, and each side's checkout at the commit it deploys from.
+
+**The run.** Each side, from the root of its own checkout:
+
+```text
+goatbuilder --version
+goatbuilder federate <peering> --env <env> --as <ours> --dry-run
+ops/scripts/with-secrets goatbuilder federate <peering> --env <env> --as <ours>
+goatbuilder federate status <peering> --env <env>
+```
+
+The run asks at phases 5, 6 and 10. It stops at phase 5 until the
+counterparty's package is in the directory; run the same command again to
+resume. Without a terminal, run the four stage commands of the tutorial's "Run
+it on your hardware" instead. Phase 14 alone runs again with
+`goatbuilder federate test <peering> --env <env>`.
+
+| Phase 14, at each side, ends with | It means |
+|---|---|
+| exit 0, verdict PASS: carries, refuses and round-trips all PASS | Checkpoint 2 holds at this side. Row C2 needs it at both sides |
+| exit 3, INCOMPLETE, with only the `refusal/*` and `spire/svid-chains` rows open | Expected until §6.4 is built. Every other phase is measured, phase 14 is not |
+| exit 3, INCOMPLETE, with any other row open | Not yet a measurement. Fix the surface the row names, then run `federate test` again |
+| exit 1, FAIL | A defect. File the row with both sides' result bundles |
+
+**What to keep.**
+
+| Field | Content |
+|---|---|
+| Build | each side's goatcore commit and `goatbuilder --version` output |
+| Parties | one party or two, and the transport the agreement chose |
+| Result | each side's phase 14 exit code and verdict, and every row not PASS |
+| Findings | each command whose output differed from the text, with the phase and the difference |
+| Reports | each side's acceptance result bundle and the agreement digest |
+
+The bundles and the agreement name both goatnets, so they go to each party's
+private record. The gate row records the versions, one party or two, the
+transport, and each side's verdict.
 
 ## `status` on a standing goatnet (row C3)
 
@@ -259,6 +390,153 @@ The same three verbs run through the binary on a stand-in transport in
 `crates/goatbuilder/tests/status_real_hosts.rs`, so the procedure can be
 rehearsed without a goatnet.
 
+## A phone node on hardware (rows H7 and H8)
+
+Row H7 is one phone built from a reset VM to a verified node by one command,
+with the released binary, in one run that is not resumed. Row H8 is that node
+still a node seven days later, with a phone reboot during the week that it
+comes back from without a person. The phone, the VM and what the tool does to
+them are in [phone-node.md](phone-node.md).
+
+### Before the clock (H7)
+
+- **The phone.** An Android phone whose Linux Terminal app runs a Debian VM
+  (Android 16 on a recent Pixel), with USB debugging allowed. Allowing USB
+  debugging is done by hand on each phone. Switch off the app store's
+  automatic updates: an update of Android's WebView stops the VM.
+- **A reset VM.** In the Terminal app: settings, Recovery, "Reset to
+  initial version". The tool installs the image again if the app asks for
+  it, inside the clock.
+- **The computer.** The released `goatbuilder`, `adb` on the `PATH`, the
+  phone on a USB cable and unlocked. With more than one device attached, set
+  `ANDROID_SERIAL`.
+- **The site.** The phone node declared in the site's inventory with no
+  address, under class `phone`, as site `delta` of
+  `ops/goatbuilder/fixtures/join-node-third-site` declares its phone. The site
+  states none of the values the class carries (gate row H5).
+- **A clean record.** Move aside any earlier
+  `<state_dir>/join-node-<site>-<node>-timings.tsv` and the node's SSH files
+  `<state_dir>/join-node-<site>-<node>-usb.*` (a reset VM has new host keys). `state_dir` is `deploy.state_dir` of
+  `goatbuilder.yaml`, `~/.goat/state` when unset.
+- **A rehearsal.** `--dry-run` prints every phase and runs nothing.
+
+### The run (H7)
+
+```bash
+goatbuilder --version
+goatbuilder join-node <environment> --site <site> --node <node> --class phone --via usb --dry-run
+time goatbuilder join-node <environment> --site <site> --node <node> --class phone --via usb --yes
+```
+
+`--yes` answers the run's confirmations, so no prompt waits inside the clock.
+The clock starts when the command starts and stops when it exits. Phase 2
+prepares the VM and runs its integrity checks, and phases 3 to 15 join the
+node as any `join-node` does.
+
+**It passes** when the command exits 0 after phase 15, and the timing file
+shows one run. That cannot be met yet: phase 1 of a phone run is a person's
+step (`crates/goatbuilder/src/joinnode.rs:429`). The run stops after it with
+`^ OPERATOR STEP — do the above, then re-run with --from 2`
+(`joinnode.rs:839`) and writes no row for it, so a run today needs a second
+command and its file has no phase-1 row. A run is a rehearsal until phase 1
+runs as a check that is recorded. The file holds exactly one phase-1 row, every row exits 0, and
+no step label appears twice. A `--from` resume, or a step run again after a
+failure, adds a second row for a step, and that run is not H7: fix the cause
+and start again from a reset VM.
+
+### What to keep (H7)
+
+| Field | Content |
+|---|---|
+| Build | the goatcore commit and the `goatbuilder --version` output |
+| Phone | the model, the Android version, and the VM's kernel after the run (`uname -r` in the VM) |
+| Result | the exit code, the wall time from `time`, and the process summary line `join-node` prints at the end |
+| Phases | the timing file, with phase 2's rows (the VM's preparation and checks) named |
+| Before the clock | whether the Terminal app had to install its image again, and how long the reset took |
+
+The timing file and the run's output name the site, the node and the goatnet's
+hosts, so they go to the operator's private record. The gate row records only
+the version, the commit, the phone model and Android version, the total time,
+phase 2's time and "one run, no resume".
+
+### The seven days (H8)
+
+H8 starts when H7's run ends, with the phone on power, the screen off and the
+launcher installed (`ops/phone/vm-launcher/README.md`). Once a day, from the
+operator's computer:
+
+```bash
+# 1. the H4 checks, in the VM, over the mesh (no USB cable needed after enrolment)
+ssh <deploy user>@<node mesh address> 'bash -s' < ops/scripts/phone-node-integrity.sh
+# 2. the node as goatbuilder reads it
+goatbuilder status --env <environment> -o json > status-day<N>.json
+```
+
+Check 1 writes 512 MiB and drops the page cache, a few seconds of load on a
+running node. Each day keeps the check's exit code (0, or its one
+`integrity: <what>` line), the node's `status` rows, and the time.
+
+**The reboot.** Once during the week, reboot the phone and record three
+times: the reboot, the VM running again (`adb shell` finds the VM's address,
+or the node answers on the mesh), and the node's rows converged in `status`
+again. "Without a person" is met only when nobody touches the phone. The
+launcher starts the VM at the first unlock, and Android delivers its start
+signal at boot only on a phone with no lock screen. A node phone with no lock
+screen is a decision about the phone's own security. Operator decision,
+2026-11-15: the phone of the seven-day record may run with no lock screen, and
+only a dedicated test phone may. With a lock screen, the run records the one
+unlock, and H8 is not met as written.
+
+**It passes** when every day's integrity check exits 0, the node's `status`
+rows are converged on every day, and the node came back after the reboot.
+
+### How long a phone may be off
+
+A phone node is a full replication member (the class's `converges_as: core`).
+Every site that replicates with it keeps a replication slot for it, and
+Postgres invalidates a slot that holds more WAL than `max_slot_wal_keep_size`.
+After that the phone must be seeded again
+([post-partition-convergence-runbook.md](../operations/post-partition-convergence-runbook.md),
+"A. Slot rebuild — the destructive path"); `goatbuilder` has no path for the re-seed yet. The cap is
+1 GB in the image's `postgresql.conf` and 6 GB where the
+`postgres-streaming-replication` role sets it. Read the live value; never
+assume either one.
+
+H8 measures the budget. On each site that replicates, twice a day during the
+week, in the convergence runbook's way (`psql -h 127.0.0.1 -p 5432 -U postgres
+-d postgres` on the site's management host):
+
+```sql
+SELECT now(), pg_current_wal_lsn(), current_setting('max_slot_wal_keep_size');
+SELECT slot_name, active, wal_status, safe_wal_size,
+       pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) AS retained
+  FROM pg_replication_slots ORDER BY slot_name;
+```
+
+The site's WAL rate is the difference of two `pg_current_wal_lsn()` readings
+(`pg_wal_lsn_diff`) divided by the time between them. During the reboot, the
+slots that read `active = f` while every other site is up are the phone's.
+A slot can be off for about `safe_wal_size` divided by the WAL rate before it
+is invalidated, and the phone's budget is the smallest such time over its
+slots. For example, a 1 GiB cap and a rate of 2 MiB an hour allow about
+21 days. That is arithmetic for the reader, not a measurement. The H8 record
+keeps the readings, each site's rate, and the budget computed from them.
+
+### What to keep (H8)
+
+| Field | Content |
+|---|---|
+| Days | each day's integrity exit code or line, and the node's `status` rows |
+| Reboot | the three times, and whether a person touched the phone |
+| Slots | each reading of the two queries, per site |
+| Budget | each site's WAL rate and live cap, and the phone's off-time budget |
+| Unmeasured | anything not watched: battery, Doze, heat, a mobile-data uplink (phone-node.md, "Staying up") |
+
+The readings name slots, sites and hosts, so they go to the operator's private
+record. The gate row records the seven daily verdicts, the reboot's recovery
+time, whether a person acted, and the off-time budget with the cap and rate
+it was computed from.
+
 ## What a measurement records
 
 Each run kept as a measurement records:
@@ -283,13 +561,17 @@ phases are the next three levers.
 
 | Item | Status |
 |---|---|
-| Per-phase lines, the run summary and the run record as described above | designed |
-| Cause codes on every stop, and the stop count | designed |
-| Phase 11 recorded as a row | designed |
+| The per-phase line of the designed form (`phase 7/14 <name>  <start> → <end>  <duration>  <outcome>`) | designed |
+| A `took` line and a timing-file row per step, for `standup`, `join-node` and `teardown` | built (`record_timing`, `crates/goatbuilder/src/standup.rs:729`; `join-node` at `crates/goatbuilder/src/joinnode.rs:851`; `teardown` at `standup.rs:1823`) |
+| The process summary line, for all three | built (`timing_summary`, `standup.rs:868`; `join-node` at `joinnode.rs:872`; `teardown` at `standup.rs:1831`) |
+| The founder run's numbers across resumes: total since phase 1, phase 11, total without it, the stops and the slowest phases | built for `standup` (`run_evidence`, `standup.rs:777`) |
+| Phase 11 recorded as a row | built (`record_stop`, `standup.rs:736`, and `close_operator_stop`, `standup.rs:759`) |
+| A cause code on every stop | built for a failed step of all three verbs; a refusal before the first step writes no row |
 | The image pull, the observability legs and their joins as rows | designed |
-| A timing file and summary for `teardown` | not built |
-| Timing for `join-node` | not built |
 | A generator for a full goatnet's cloud tree | not built |
 
 None of the three clocks has been measured on hardware, and neither tutorial
-has been followed on hardware.
+has been followed on hardware. Two parts of the tutorial runs are not built:
+- a command for tutorial 2's checkpoint 3 write and deletion across the sites;
+- federation-acceptance.md §6.4, which a two-party tutorial 3 run needs for a
+  PASS.

@@ -1,0 +1,179 @@
+---
+# Back out ONE peering's entry in the host firewall baseline (ops/ansible/peering-backout.yml).
+# Included by path on the edge after the tunnel, SPIRE and edge-router tasks, which removed
+# the peering's services first.
+#
+# The baseline stores each peering's entry in goat_host_firewall_dir/peerings/<name>.json,
+# and the edge's ruleset admits every stored peering (docs/design/peering-host-firewall.md,
+# "Several peerings on one edge"). This peering's entry is the one named by its tunnel
+# interface (WireGuard) or its link (IPsec), and it is this peering's only when the entry's
+# own `name` says so: an entry under this name that names another peering is "not-ours",
+# nothing is removed and the play refuses. No other entry is named in a row or touched.
+#
+# With apply, the entry is removed. Then, when another peering's entry stays, the ruleset is
+# loaded again through the role itself (its lockout check and timed rollback), run for one of
+# the peerings that stay: the role puts each stored entry in place, so the ruleset admits
+# exactly the peerings that stay. When none stays, the host is no longer a peering edge: the
+# baseline is unloaded and its directory removed (`systemctl disable --now`, whose stop removes
+# the table), as the host was before its first peering. An edge baseline cannot be loaded with
+# no peering (the role refuses, GB-210, and so does the renderer), and a requirement of the
+# baseline on an edge is checked by the standup plays, not the back-out. Design: peering-host-firewall.md §6.
+- name: host-firewall | absent | this peering's entry names
+  ansible.builtin.set_fact:
+    _pbf_dir: "{{ goat_host_firewall_dir | default('/etc/goat-host-firewall') }}"
+    _pbf_service: "{{ goat_host_firewall_service | default('goat-host-firewall.service') }}"
+    _pbf_unit_dir: "{{ goat_host_firewall_unit_dir | default('/etc/systemd/system') }}"
+    _pbf_rollback: "{{ goat_host_firewall_rollback_unit | default('goat-host-firewall-rollback') }}"
+    _pbf_names: >-
+      {{ ([_pb_names.wg.interface] if (_pb_names.wg.enabled and _pb_names.wg.interface) else [])
+         + ([_pb_names.ipsec.ifname] if _pb_names.ipsec.ifname else []) }}
+
+- name: host-firewall | absent | the baseline on this host
+  ansible.builtin.stat:
+    path: "{{ _pbf_dir }}/profile"
+  register: _pbf_profile
+
+# A rollback an earlier run armed puts the last confirmed ruleset back when it fires; nothing
+# is changed under it (the role refuses the same way, GB-214).
+- name: host-firewall | absent | no rollback of an earlier run is pending
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ _pbf_rollback }}.timer"]
+  register: _pbf_pending
+  changed_when: false
+  failed_when: false
+
+- name: host-firewall | absent | the stored entries
+  ansible.builtin.find:
+    paths: "{{ _pbf_dir }}/peerings"
+    patterns: "*.json"
+  register: _pbf_found
+
+- name: host-firewall | absent | read them
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ _pbf_found.files | sort(attribute='path') }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  register: _pbf_stored
+
+- name: host-firewall | absent | whose each entry is
+  ansible.builtin.set_fact:
+    # [file stem, the name the entry holds, the entry]
+    _pbf_entries: >-
+      {%- set out = [] -%}
+      {%- for r in _pbf_stored.results | default([]) -%}
+      {%-   set doc = (r.content | b64decode | from_json) if r.content is defined else {} -%}
+      {%-   set _ = out.append([r.item.path | basename | regex_replace('\.json$', ''), doc.name | default(''), doc]) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: host-firewall | absent | record what is there
+  ansible.builtin.set_fact:
+    _pbf_ours: "{{ _pbf_entries | selectattr('0', 'in', _pbf_names) | selectattr('1', 'in', _pbf_names) | map(attribute='0') | list }}"
+    _pbf_bad: "{{ _pbf_entries | selectattr('0', 'in', _pbf_names) | rejectattr('1', 'in', _pbf_names) | map(attribute='0') | list }}"
+    _pbf_others: "{{ _pbf_entries | rejectattr('0', 'in', _pbf_names) | list | length }}"
+    # One peering that stays: the role is run for it, and puts every stored entry in place.
+    _pbf_stay: "{{ (_pbf_entries | rejectattr('0', 'in', _pbf_names) | map(attribute='2') | list + [{}]) | first }}"
+    _pbf_held: "{{ (_pbf_pending.stdout | default('') | trim) == 'active' }}"
+
+- name: host-firewall | absent | the rows
+  ansible.builtin.set_fact:
+    _pb_rows: >-
+      {%- set out = _pb_rows -%}
+      {%- for n in _pbf_names -%}
+      {%-   if n in _pbf_bad -%}
+      {%-     set _ = out.append({'component': 'host-firewall', 'resource': 'peering ' ~ n, 'state': 'not-ours', 'action': 'kept', 'note': 'the stored entry under this name names another peering'}) -%}
+      {%-   elif n in _pbf_ours -%}
+      {%-     set _ = out.append({'component': 'host-firewall', 'resource': 'peering ' ~ n, 'state': 'present', 'action': ('removed' if _pb_apply else 'remove'), 'note': ''}) -%}
+      {%-   else -%}
+      {%-     set _ = out.append({'component': 'host-firewall', 'resource': 'peering ' ~ n, 'state': 'absent', 'action': 'none', 'note': ''}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- if _pbf_held | bool -%}
+      {%-   set _ = out.append({'component': 'host-firewall', 'resource': 'baseline', 'state': 'refused', 'action': 'kept', 'note': 'the rollback an earlier run armed (' ~ _pbf_rollback ~ '.timer) is still pending; wait for it, then back out again (GB-214)'}) -%}
+      {%- elif not _pbf_profile.stat.exists -%}
+      {%-   set _ = out.append({'component': 'host-firewall', 'resource': 'baseline', 'state': 'absent', 'action': 'none', 'note': ''}) -%}
+      {%- elif _pbf_bad | length > 0 or _pbf_ours | length == 0 -%}
+      {%-   set _ = out.append({'component': 'host-firewall', 'resource': 'baseline', 'state': 'present', 'action': 'none', 'note': 'this peering has no entry of its own here'}) -%}
+      {%- elif (_pbf_others | int) > 0 -%}
+      {%-   set _ = out.append({'component': 'host-firewall', 'resource': 'baseline', 'state': 'present', 'action': ('reloaded' if _pb_apply else 'reload'), 'note': '%d other peering(s) stay' % (_pbf_others | int)}) -%}
+      {%- else -%}
+      {%-   set _ = out.append({'component': 'host-firewall', 'resource': 'baseline', 'state': 'present', 'action': ('unloaded' if _pb_apply else 'unload'), 'note': 'no other peering stays: the edge goes back to no baseline'}) -%}
+      {%- endif -%}
+      {{ out }}
+    _pbf_act: "{{ _pb_apply and not (_pbf_held | bool) and _pbf_bad | length == 0 and _pbf_ours | length > 0 }}"
+
+# The entry is removed first, because the role puts every stored entry in place. When the
+# reload or the unload then fails, the entry is put back as it was, so the host's stored
+# entries again match the ruleset it carries (the role refuses before loading, or its armed
+# rollback puts the last confirmed ruleset back), and the back-out can be run again.
+- name: host-firewall | absent | take this peering's entry out of the baseline
+  when: _pbf_act | bool
+  block:
+    - name: host-firewall | absent | remove this peering's entry
+      ansible.builtin.file:
+        path: "{{ _pbf_dir }}/peerings/{{ item }}.json"
+        state: absent
+      loop: "{{ _pbf_ours }}"
+
+    - name: host-firewall | absent | load the ruleset again for the peerings that stay
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+      vars:
+        goat_host_firewall_profile: edge
+        goat_host_firewall_dir: "{{ _pbf_dir }}"
+        goat_host_firewall_peering: "{{ _pbf_stay }}"
+      when: (_pbf_others | int) > 0
+
+    # No other peering stays: the host is no longer a peering edge, and goes back to how it
+    # was before its first peering, with no baseline (docs/design/peering-host-firewall.md §6).
+    - name: host-firewall | absent | stop and disable the baseline (its stop removes the table)
+      ansible.builtin.command:
+        argv: [systemctl, disable, --now, "{{ _pbf_service }}"]
+      changed_when: true
+      when: (_pbf_others | int) == 0
+
+    - name: host-firewall | absent | remove the baseline's unit file
+      ansible.builtin.file:
+        path: "{{ _pbf_unit_dir }}/{{ _pbf_service }}"
+        state: absent
+      when: (_pbf_others | int) == 0
+
+    - name: host-firewall | absent | systemd forgets the unit
+      ansible.builtin.command:
+        argv: [systemctl, daemon-reload]
+      changed_when: true
+      when: (_pbf_others | int) == 0
+
+    - name: host-firewall | absent | remove the baseline's directory
+      ansible.builtin.file:
+        path: "{{ _pbf_dir }}"
+        state: absent
+      when: (_pbf_others | int) == 0
+  rescue:
+    - name: host-firewall | absent | is the baseline's directory still there
+      ansible.builtin.stat:
+        path: "{{ _pbf_dir }}/peerings"
+      register: _pbf_dir_left
+
+    - name: host-firewall | absent | put this peering's entry back as it was
+      ansible.builtin.copy:
+        content: "{{ item.content | b64decode }}"
+        dest: "{{ item.item.path }}"
+        mode: "0600"
+      loop: "{{ _pbf_stored.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.path | basename }}"
+      when:
+        - _pbf_dir_left.stat.exists
+        - item.content is defined
+        - (item.item.path | basename | regex_replace('\\.json$', '')) in _pbf_ours
+
+    - name: host-firewall | absent | not backed out
+      ansible.builtin.fail:
+        msg: >-
+          The back-out of this peering's host firewall entry failed at
+          '{{ ansible_failed_task.name | default('a step') }}':
+          {{ ansible_failed_result.msg | default(ansible_failed_result.stderr | default('')) }}.
+          {{ 'Its entry was put back, so the stored entries match the ruleset this host carries. '
+             if _pbf_dir_left.stat.exists else '' }}Fix the cause, then run the back-out again.

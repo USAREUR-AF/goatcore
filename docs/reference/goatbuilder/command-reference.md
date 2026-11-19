@@ -34,6 +34,7 @@ Build and ship a goat environment: declare, converge, verify — under one deplo
 - [`goatbuilder standup`](#goatbuilder-standup) — A site from nothing to verified: the standup's phases in the doctrine's order with a fail-closed gate at each end, the observability host as a parallel leg, the rescue classes and the cross-goatnet surfaces last (ADR 1183). Replaces ops/scripts/goat-standup.sh step for step. On a fixture (`--mock`) every component of every class is converged by the scripted converger and the declared → verified time is the one-hour goatnet's measure
 - [`goatbuilder teardown`](#goatbuilder-teardown) — A site from verified to nothing — standup's mirror, records kept (a burn-down appends teardown rows, never erases). On a fixture (`--mock`) it rehearses the burn-down in reverse phase order; on real hosts it prints the order and refuses to execute until each phase declares its teardown play (docs/design/goatbuilder-speed.md)
 - [`goatbuilder join-node`](#goatbuilder-join-node) — One more machine of a class at a live site, declared → converged → verified: the node-addition sequence of docs/tutorials/02-first-federated-node.md as numbered phases with its gates (reach, key, repo work first, baseline, kernel WireGuard before and after enrolment, the kernel ACL plane as the enrolment gate, the class's converge, acceptance)
+- [`goatbuilder grow`](#goatbuilder-grow) — Hand a goatlite over to the full preset (gate row G1): goatlite.yaml grown into ops/goatbuilder/goatbuilder.yaml with the same values, the generated headers taken off the files its render wrote, and goatlite.yaml removed. Shows the difference first; --dry-run stops there
 - [`goatbuilder federate`](#goatbuilder-federate) — A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step
 - [`goatbuilder pins`](#goatbuilder-pins) — ONE resolution pass with TWO renderings: every listed member's group_vars pins.yml and every listed goatnet's IntentV1 artifact, from ops/pins/fleet-pins.yaml. Replaces ops/pins/generate-pins.py byte for byte. `--check` validates, regenerates and refuses drift, an unsigned or tampered intent, and a governed pin defined outside pins.yml (exit 1)
 - [`goatbuilder promote`](#goatbuilder-promote) — Guide and observe release graduation across the goatnet ladder (ADR 1120, 1125): status, open a candidate, graduate, graduate a set, the hotfix path, review, readiness, abandon, check. Replaces ops/release/graduate.py step for step. Nothing here graduates by itself: a mutation runs only when invoked, prints what it did, and asks for --yes without a terminal (C10, ADR 1177)
@@ -254,13 +255,23 @@ One more machine of a class at a live site, declared → converged → verified:
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |
 
+## `goatbuilder grow`
+
+Hand a goatlite over to the full preset (gate row G1): goatlite.yaml grown into ops/goatbuilder/goatbuilder.yaml with the same values, the generated headers taken off the files its render wrote, and goatlite.yaml removed. Shows the difference first; --dry-run stops there
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--dry-run` | Show the full configuration's difference from goatlite.yaml and what would change; write nothing |  |
+
 ## `goatbuilder federate`
 
 A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step.
 
 At a terminal, `goatbuilder federate <partner>` is the whole procedure: it asks for the partner's key and CA fingerprint and the agreement digest, makes the plan and asks to approve it, shows what our core will admit and asks again, then carries on through acceptance. A run that stops resumes where it stopped. Values come from the deployment's declarations; a FED_* variable set in the environment overrides one.
 
-Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner>`, `status [<partner>]`. `allocate [<peering>]` writes a peering's values and files for review; `backout <partner>` backs one peering out and leaves the others as they were. `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`.
+Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner>`, `status [<partner>]`. `allocate [<peering>]` writes a peering's values and files for review; `backout <partner>` backs one peering out and leaves the others as they were; `rotate <partner> <key>` replaces one key of a running peering. `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`.
 
 **Arguments**
 
@@ -284,11 +295,12 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 | `--edge-host <EDGE_HOST>` | init --over-ssh: the edge host to measure, when its group has several |  |
 | `--core-host <CORE_HOST>` | init --over-ssh: the core host to measure, when its group has several |  |
 | `--router-container <ROUTER_CONTAINER>` | init --over-ssh: the core router container, by hand (default: the name the core host's variables give, else the one discovery finds there) |  |
-| `--side <SIDE>` | init --over-ssh: measure one half of phase 3 on this machine, for a peering no one machine reaches both hosts of (docs/design/federation-router-discovery.md): `edge` measures only the edge and writes the result to --half-out; `core` measures only the core, joins the edge half read from --edge-half, and builds the package. Without it, both hosts are measured here, as always. On a peering run, `--side edge` is the edge driver's run of a two-driver peering (`drivers: two`): not built yet, and refused with GB-267 (docs/design/federation-two-drivers.md) |  |
+| `--side <SIDE>` | init --over-ssh: measure one half of phase 3 on this machine, for a peering no one machine reaches both hosts of (docs/design/federation-router-discovery.md): `edge` measures only the edge and writes the result to --half-out; `core` measures only the core, joins the edge half read from --edge-half, and builds the package. Without it, both hosts are measured here, as always. On a peering run, `--side edge` is the edge driver's run of a two-driver peering (`drivers: two`): built for phases 1 and 3, refused with GB-267 for another phase (docs/design/federation-two-drivers.md) |  |
 | `--half-out <HALF_OUT>` | init --over-ssh --side edge: the file the edge half is written to |  |
 | `--edge-half <EDGE_HALF>` | init --over-ssh --side core: the edge half the edge driver wrote |  |
 | `--edge-half-sha256 <EDGE_HALF_SHA256>` | init --over-ssh --side core: the edge half's sha256 as the edge driver printed it, read from there and confirmed here (the full digest, or its first 32 hex digits; spaces and dashes are ignored) |  |
-| `--expect-commit <EXPECT_COMMIT>` | With --side edge: the commit the edge driver's checkout must be at, as a hand-off object names it. The edge driver's run is not built yet: refused with GB-267 (docs/design/federation-two-drivers.md) |  |
+| `--expect-commit <EXPECT_COMMIT>` | With --side edge: the commit the edge driver's checkout must be at, as a hand-off object names it. The run refuses a checkout at another commit or with changes (GB-278) |  |
+| `--expect <EXPECT>` | With --side edge: a file the controller produced, under the edge driver's <work> or its checkout, and the sha256 the hand-off names. The run refuses a file that is not there or has another digest (GB-278) |  |
 | `--plan <PLAN>` | deploy: the plan to execute (default <work>/plan.json) |  |
 | `--approve-plan <APPROVE_PLAN>` | deploy: approve exactly this plan hash, after reading the plan. --yes never approves a plan |  |
 | `--confirm` | Phases 5, 6 and 10: confirm the keys, the agreement digest and the admission here, at this terminal, instead of stopping for them by hand. The default when both stdin and stderr are a terminal |  |
@@ -320,7 +332,9 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 - [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
 - [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
 - [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
-- [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phase 1; a later phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
+- [`goatbuilder federate directory`](#goatbuilder-federate-directory) — Read the peering directory (saltlick): `ls`, `show <party>`, `check <party> [--for <counterparty>]`. Reads only. `check` says, for each file a peering reads, whether it is there, not uploaded by the party, or a route the directory's release does not serve. URL from --url or $FED_DIRECTORY_URL
+- [`goatbuilder federate rotate`](#goatbuilder-federate-rotate) — Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14), `rotate <partner> carrier` (phases 2 to 14), or on an ipsec-fips peering `rotate <partner> ipsec-leaf\|ipsec-ca` (phases 11 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
+- [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phases 1 and 3; another phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
 
 ## `goatbuilder federate init`
 
@@ -507,9 +521,79 @@ Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federa
 | `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<partner>) |  |
 | `--dry-run` | Survey the peering's hosts read-only and print every resource the back-out would remove, per host; change nothing |  |
 
+## `goatbuilder federate directory`
+
+Read the peering directory (saltlick): `ls`, `show <party>`, `check <party> [--for <counterparty>]`. Reads only. `check` says, for each file a peering reads, whether it is there, not uploaded by the party, or a route the directory's release does not serve. URL from --url or $FED_DIRECTORY_URL
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--url <URL>` | The directory's base URL, e.g. https://directory.example. Default $FED_DIRECTORY_URL |  |
+
+**Subcommands**
+
+- [`goatbuilder federate directory ls`](#goatbuilder-federate-directory-ls) — Every party listed, with its expiry and the files it hosts, and the directory's release
+- [`goatbuilder federate directory show`](#goatbuilder-federate-directory-show) — One party's entry, and each file it hosts with its size and sha256
+- [`goatbuilder federate directory check`](#goatbuilder-federate-directory-check) — Whether a peering can be exchanged through the directory: the party's entry, its CA and SPIFFE bundle, and its package for one counterparty. Each missing item says whether the directory lacks the route (move the directory's pin) or the party has not uploaded the file (ask them to run phase 5). Exit 0 when everything is there, 1 (GB-372) otherwise
+
+## `goatbuilder federate directory ls`
+
+Every party listed, with its expiry and the files it hosts, and the directory's release
+
+## `goatbuilder federate directory show`
+
+One party's entry, and each file it hosts with its size and sha256
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<PARTY>` | The party's sovereign id, as listed by `ls` |
+
+## `goatbuilder federate directory check`
+
+Whether a peering can be exchanged through the directory: the party's entry, its CA and SPIFFE bundle, and its package for one counterparty. Each missing item says whether the directory lacks the route (move the directory's pin) or the party has not uploaded the file (ask them to run phase 5). Exit 0 when everything is there, 1 (GB-372) otherwise
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<PARTY>` | The party whose files are checked |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--for <COUNTERPARTY>` | The counterparty: check the package the party signed for it |  |
+
+## `goatbuilder federate rotate`
+
+Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14), `rotate <partner> carrier` (phases 2 to 14), or on an ipsec-fips peering `rotate <partner> ipsec-leaf|ipsec-ca` (phases 11 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<PARTNER>` | The partner whose peering's key is replaced (the peering name, as declared) |
+| `<KEY>` | The key: leaves, carrier, ipsec-leaf, ipsec-ca, transport, signing or ca. This build rotates leaves, carrier, ipsec-leaf and ipsec-ca |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--partner-holds-ipsec-ca <PARTNER_HOLDS_IPSEC_CA>` | ipsec-ca only: the partner's attestation that it placed our new IPsec CA beside its current one: the sha256 fingerprint it read back from the file it placed. goatbuilder checks the fingerprint is our staged CA's; it cannot check the partner's edge |  |
+| `--retire <RETIRE>` | ipsec-leaf or ipsec-ca: run the retire step of this rotation id, which removes the set-aside key. Only once phase 14 passed here after the switch (check the partner's on the call), and only while no other rotation is under way |  |
+| `--env <ENV>` | The environment the peering is declared on |  |
+| `--as <AS_PARTY>` | Which party we are |  |
+| `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |
+| `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<partner>) |  |
+| `--from <FROM>` | Start at this phase instead of the key's first; a start after that phase replaces nothing | `1` |
+| `--dry-run` | Print the phases and commands; change nothing |  |
+
 ## `goatbuilder federate import`
 
-A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phase 1; a later phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
+A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phases 1 and 3; another phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
 
 **Arguments**
 
@@ -525,6 +609,7 @@ A two-driver peering's import of an edge result, as a hand-off object names it: 
 |---|---|---|
 | `--sha256 <SHA256>` | The confirm code the edge driver printed (the result's sha256, or its first digits) |  |
 | `--work <WORK>` | The working directory (default `$FED_WORK`, else /var/lib/goat-federation/<peering>) |  |
+| `--edge-group <EDGE_GROUP>` | Phase 3: the edge's inventory group whose host the edge half must have been measured on (default <peering>_edge) |  |
 
 ## `goatbuilder pins`
 

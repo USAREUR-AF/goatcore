@@ -66,6 +66,9 @@
       ansible.builtin.include_tasks: roles/goat-peering-spire/tasks/absent.yml
     - name: The edge router
       ansible.builtin.include_tasks: roles/goat-zenoh-edge/tasks/absent.yml
+    # Last on the edge: the host firewall's entry for this peering, once its services are gone.
+    - name: The host firewall baseline's entry for this peering
+      ansible.builtin.include_tasks: roles/goat-host-firewall/tasks/absent.yml
   post_tasks:
     - name: Write this host's record
       ansible.builtin.include_tasks: tasks/peering-backout-end.yml

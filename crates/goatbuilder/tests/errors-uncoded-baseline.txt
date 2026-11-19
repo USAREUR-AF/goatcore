@@ -1,0 +1,12 @@
+# Places in crates/goatbuilder/src that make an error with no catalog code
+# (gate row C5; tests/errors_coded_in_source.rs). One line per place:
+# <file> :: <kind> :: <message>. The list only shrinks: code a place and
+# remove its line; never add one.
+src/federate/peering_files.rs :: anyhow :: peering '{name}' is not declared in {} peerings: (C1); `goatbuilder federate allocate <peering>` allocates one declared peering
+src/federate/rotation.rs :: question :: <std::fs::create_dir_all(work)>
+src/federate/rotation.rs :: question :: <std::fs::rename(tmp, f)>
+src/federate/rotation.rs :: question :: <std::fs::write(&file, format!("{rec}\n"))>
+src/grow.rs :: question :: <serde_yaml::to_string(&grown)>
+src/main.rs :: anyhow :: --context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run
+src/main.rs :: anyhow :: --context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to goatbuilder federate plan
+src/main.rs :: anyhow :: --over-ssh and its host flags apply to `goatbuilder federate init`, not to goatbuilder federate plan

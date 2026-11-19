@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::rc::Rc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 
 use crate::pins::read_yaml;
 use crate::{pins, promote, push};
@@ -154,7 +154,7 @@ fn short_rev(repo: &str, rev: &str) -> Result<String> {
 fn sh(cmd: &str, args: &[&str]) -> Result<String> {
     let mut c = Cmd::new(cmd);
     c.args(args);
-    let out = c.output().with_context(|| format!("{cmd} {}", args.join(" ")))?;
+    let out = c.output().map_err(|e| goat_errors::coded("GB-320", format!("could not start {cmd} {}: {e}", args.join(" "))))?;
     if !out.status.success() {
         return Err(anyhow::Error::from(goat_errors::coded("GB-258", String::from_utf8_lossy(&out.stderr).trim().to_string())));
     }
@@ -245,7 +245,7 @@ impl<'a> Run<'a> {
         }
         let mut c = Cmd::new(cmd);
         c.args(args);
-        let st = c.status().with_context(|| cmd.to_string())?;
+        let st = c.status().map_err(|e| goat_errors::coded("GB-320", format!("could not start {cmd}: {e}")))?;
         if !st.success() {
             return Err(goat_errors::coded("GB-028", format!("{cmd} {} failed", args.join(" "))).into());
         }
@@ -299,7 +299,7 @@ impl<'a> Run<'a> {
         let Some(ov) = self.overlay.as_mut() else { return Ok(()) };
         let wt = self.wt.clone();
         let _ = std::fs::remove_dir_all(&wt);
-        let out = Cmd::new(ov.owt.join("assemble.sh")).arg(&wt).output().with_context(|| format!("{}/assemble.sh", ov.owt.display()))?;
+        let out = Cmd::new(ov.owt.join("assemble.sh")).arg(&wt).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start {}/assemble.sh: {e}", ov.owt.display())))?;
         if !out.status.success() {
             eprint!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
             return Err(goat_errors::coded("GB-028", format!("{}/assemble.sh could not build the scratch tree {}", ov.owt.display(), wt.display())).into());
@@ -339,14 +339,14 @@ impl<'a> Run<'a> {
             } else {
                 let dst = owt.join(p);
                 if let Some(d) = dst.parent() {
-                    std::fs::create_dir_all(d)?;
+                    std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
                 }
-                std::fs::copy(self.wt.join(p), &dst).with_context(|| format!("copy {p} to the overlay worktree"))?;
+                std::fs::copy(self.wt.join(p), &dst).map_err(|e| goat_errors::coded("GB-254", format!("copy {p} to the overlay worktree, {}: {e}", dst.display())))?;
             }
             self.note(format!("lands {st} {p}"));
         }
         let b = std::env::temp_dir().join(format!("goatbuilder-pr-body-{}", std::process::id()));
-        std::fs::write(&b, format!("{body}\n"))?;
+        std::fs::write(&b, format!("{body}\n")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&b)).display())))?;
         let branch = sh("git", &["-C", &owt_s, "rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|_| "rc".into());
         let land = self.repo.join("ops/scripts/pr-land.sh").display().to_string();
         self.run(&land, &["--worktree".into(), owt_s.clone(), "--branch".into(), branch, "--title".into(), title.into(), "--body-file".into(), b.display().to_string()])?;
@@ -455,7 +455,7 @@ impl<'a> Run<'a> {
             }
         }
         let b = std::env::temp_dir().join(format!("goatbuilder-pr-body-{}", std::process::id()));
-        std::fs::write(&b, format!("{body}\n"))?;
+        std::fs::write(&b, format!("{body}\n")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&b)).display())))?;
         let branch = sh("git", &["-C", self.wt.to_str().unwrap_or("."), "rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|_| "rc".into());
         let mut args: Vec<String> = vec![
             "--worktree".into(), self.wt.display().to_string(), "--branch".into(), branch, "--title".into(), title.into(), "--body-file".into(), b.display().to_string(),
@@ -526,7 +526,7 @@ impl<'a> Run<'a> {
         reqs.dedup();
         let req = reqs.join(",");
         let evid = self.repo.join("ops/validation/evidence").join(format!("{}-{}-{name}.jsonl", self.image, self.tag.split('/').nth(1).unwrap_or(&self.tag)));
-        std::fs::create_dir_all(evid.parent().unwrap())?;
+        std::fs::create_dir_all(evid.parent().unwrap()).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(evid.parent().unwrap())).display())))?;
         self.evid = evid.display().to_string();
         self.note(format!("rows on {name}: {rows} (requires {req})"));
         // A browser row needs the console's Playwright toolchain on this machine;
@@ -590,7 +590,7 @@ impl<'a> Run<'a> {
             self.note(format!("DRY: env {}", args.join(" ")));
             return Ok(true);
         }
-        let st = Cmd::new("env").args(&args).status()?;
+        let st = Cmd::new("env").args(&args).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start env {}: {e}", args.join(" "))))?;
         // exit 2 from the runner is an environment problem (a tool missing, a
         // context not configured): the rows did not run. UNTESTED, never FAIL.
         if st.code() == Some(2) {
@@ -1030,7 +1030,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
         } else {
             run.rec = out.iter().find_map(|l| l.strip_prefix("record graduated: ")).unwrap_or("").trim().to_string();
             if run.rec.is_empty() {
-                return Err(anyhow!("{}", out.join("\n")));
+                return Err(goat_errors::coded("GB-020", format!("graduate printed no `record graduated:` line:\n{}", out.join("\n"))).into());
             }
             run.note(format!("graduated: {}", run.rec));
             let text = std::fs::read_to_string(run.wt.join(&run.rec)).unwrap_or_default();
@@ -1099,6 +1099,53 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every step line release prints, by the format string it prints with,
+    /// and the numbered step of the module doc (and of the phase catalog) it
+    /// belongs to. A rung's deploy and live rows are told apart by the
+    /// variable each line names ({dev}, {pre}, {prod}).
+    const STEP_LINES: &[(&str, u32)] = &[
+        ("component {}", 1),
+        ("preflight", 1),
+        ("tag {}", 2),
+        ("dev rung: {} runs {}", 3),
+        ("deploy {} to {dev}", 4),
+        ("live rows on {dev}", 5),
+        ("preprod rung: {pre} already runs {}; resuming at its deploy check and live rows", 6),
+        ("preprod rung: open the candidate and put {} on {pre}", 6),
+        ("deploy {} to {pre}", 6),
+        ("live rows on {pre}", 6),
+        ("soak", 7),
+        ("prod rung: graduate {} and fold it into fleet:", 8),
+        ("deploy {} to {prod}", 8),
+        ("every rung reads {}", 8),
+    ];
+
+    /// The phase catalog describes release's steps (gate row F4): the step
+    /// lines this file prints are exactly the ones above, so a new step fails
+    /// here until it has a number, and the catalog's release entries are
+    /// exactly the numbers they make. Each entry's `runs` names only tools
+    /// release starts.
+    #[test]
+    fn the_phase_catalog_describes_releases_steps() {
+        let source = include_str!("release.rs");
+        let printed = regex::Regex::new(r#"run\.step\(\s*&?(?:format!\()?"([^"]+)""#).unwrap();
+        let found: std::collections::BTreeSet<String> = printed.captures_iter(source).map(|c| c[1].to_string()).collect();
+        let listed: std::collections::BTreeSet<String> = STEP_LINES.iter().map(|(l, _)| l.to_string()).collect();
+        assert_eq!(found, listed, "the step lines release.rs prints are the ones STEP_LINES numbers");
+        let numbers: std::collections::BTreeSet<String> = STEP_LINES.iter().map(|(_, n)| n.to_string()).collect();
+        let entries = goat_errors::phases::phases().of("release");
+        let keys: std::collections::BTreeSet<String> = entries.iter().map(|e| e.phase.to_string()).collect();
+        assert_eq!(keys, numbers, "the catalog's release entries are release's numbered steps");
+        let code = [source, include_str!("push.rs"), include_str!("pins.rs"), include_str!("promote.rs")].concat();
+        for e in &entries {
+            for w in e.runs.split([',', ';', ' ']).filter(|w| w.contains('/')) {
+                let name = w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_' && c != '/');
+                let name = name.rsplit('/').next().unwrap_or(name);
+                assert!(code.contains(name), "release step {}: `runs` names {w}, which release does not start", e.phase);
+            }
+        }
+    }
 
     /// The dev step re-run on a later day (a run that crosses midnight UTC)
     /// declares the same candidate with the next day's reason. The rung already

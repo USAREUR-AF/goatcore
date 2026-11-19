@@ -48,7 +48,7 @@ groups:
           severity: critical
           component: admit-audit
         annotations:
-          summary: "admit-audit sidecar at {{ $labels.site }}:{{ $labels.instance }} unreachable for 2m"
+          summary: "admit-audit sidecar at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} unreachable for 2m"
           description: "Prometheus cannot scrape admit-audit /metrics. Audit log visibility into new peer admits is lost — an adversary could enroll peers with no alert coverage until the sidecar returns. Check `docker compose ps admit-audit` on the mgmt-host and inspect `docker logs admit-audit` for DB/auth failures."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/ops/admit-audit/README.md"
 
@@ -76,7 +76,7 @@ groups:
           component: admit-audit
           ioc: rate_spike
         annotations:
-          summary: "Admit rate at {{ $labels.site }} is >3x its 24h baseline for 5m"
+          summary: "Admit rate at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} is >3x its 24h baseline for 5m"
           description: "Sustained burst of peer admits relative to this site's own 24h average. Possible indicators: bulk-enroll event (benign if announced), automated churn from a test harness, or coincident-infiltration. Cross-check operator activity + review admit-audit JSON log for source_user clustering."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/ops/admit-audit/README.md"
 
@@ -92,18 +92,22 @@ groups:
       # subscription is detached. We take min() over subscriptions so
       # any detached subscription (not requiring all) triggers the
       # partition condition.
+      #
+      # The join is on nothing: admit-audit's series carry their own `site`,
+      # and this host's Spock series do not (site is an external label only on
+      # the mgmt host), and the Spock series are this host's own.
       - alert: AdmitBurstDuringPartition
         expr: |
           sum by (site) (increase(admit_audit_admits_total[5m])) > 5
-          and on (site)
-          min by (site) (spock_subscription_lag_replicating) == 0
+          and on ()
+          (min(spock_subscription_lag_replicating) == 0)
         for: 0m
         labels:
           severity: critical
           component: admit-audit
           ioc: partition_burst
         annotations:
-          summary: "Admit burst during partition at {{ $labels.site }} — coincident-infiltration signature"
+          summary: "Admit burst during partition at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} — coincident-infiltration signature"
           description: "More than 5 peer admits in 5m while this site's Spock subscription is NOT replicating (partition active). This is the direct signature described in docs/design/mgmt-plane-threat-mitigations.md §2.1. Investigate immediately: who is the source_user of the most recent admit-audit JSON events, and was the admission authorized during the partition window? Consider Primary Ops revoke-and-review per C4 (deferred in MVP)."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/ops/admit-audit/README.md"
 
@@ -121,7 +125,7 @@ groups:
           component: admit-audit
           ioc: same_source_user
         annotations:
-          summary: "Source user has admitted >=5 peers in 5m at {{ $labels.site }}"
+          summary: "Source user has admitted >=5 peers in 5m at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}"
           description: "One source_user account has issued 5+ admits within the sidecar's 5m rolling window. Cross-check identity vs known operators + whether a bulk-enroll was scheduled. If unknown source_user, treat as potential credential compromise — disable account + review admit-audit JSON log for peer_ids."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/ops/admit-audit/README.md"
 
@@ -138,6 +142,6 @@ groups:
           component: admit-audit
           ioc: distinct_keys_spike
         annotations:
-          summary: ">=10 distinct WireGuard keys enrolled at {{ $labels.site }} in 5m"
+          summary: ">=10 distinct WireGuard keys enrolled at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} in 5m"
           description: "Ten or more distinct WG pubkeys in the 5m rolling window. Catches multi-source-user mass-enroll that would evade the per-source-user IOC. Legitimate only during a planned batch deployment — cross-check the change calendar."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/ops/admit-audit/README.md"

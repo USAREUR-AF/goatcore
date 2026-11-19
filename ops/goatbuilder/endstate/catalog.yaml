@@ -29,9 +29,10 @@
 #                                        # that disagree are reported as a contradiction.
 #       gap:                             # a service the end state declares at every site
 #         row: <gate rows>               # that a joining site does not run yet: there it is
-#         why: <text>                    # graded "declared, not yet built at this site",
+#         decision: <ADR n>              # (or, when no gate row closes it, the decision that
+#         why: <text>                    # does) graded "declared, not yet built at this site",
 #                                        # with these gate rows (goatbuilder-v1-gate.md,
-#                                        # group I), never as absent. The site's own flag
+#                                        # group I) or that decision, never as absent. The site's own flag
 #                                        # turning it on closes the gap; a pin, which only
 #                                        # names a version, does not
 #       containers: [<name or glob>]     # every one must be running; {site} and
@@ -61,6 +62,11 @@
 #       role: <role>                     # the role that deploys it, when not named for it
 #       guard: [<file>]                  # files that must each read the presence flag
 #                                        # (ops/ci/check-role-honours-presence-flag.py)
+#       home: goatstuff | goatrodeo      # the repository its deploying code lives in, when
+#                                        # not goatcore: that check skips the row in a tree
+#                                        # without the code and judges it in an assembled one;
+#                                        # each is listed, with a reason, in
+#                                        # ops/ci/presence-flag-allowlist.txt (shrink-only)
 schema: goatnet-endstate-catalog/v1
 
 services:
@@ -144,9 +150,11 @@ services:
     ledger: null
     assay: [pgbackrest]
     guard: [ops/ansible/site-bootstrap.yml]
+  # join-node builds the data router at every joining site's core node (phase
+  # 13, zenoh-deploy.yml; gate row I3). A pin's `absent: true` still decides.
   zenoh-router:
     class: mgmt
-    present: {pin: zenoh-router}
+    present: {every_site: true, pin: zenoh-router}
     containers: ["{zenoh_stack}-router"]
     ledger: null
     mesh: {reach: [tcp/7447, udp/7448], from: [PLATFORM-ADMIN, OBSERVER]}
@@ -171,14 +179,23 @@ services:
     present: {var: lan_coredns_enabled}
     containers: [lan-dns]
     ledger: lan-coredns
+  # A site's own SPIRE server and trust domain (ADR 1164) is designed, not
+  # built: a joining site is declared to run it and does not yet. Its gap waits
+  # on that decision's build, not on join-node.
   spire:
     class: mgmt
-    present: {pin: spire}
+    present: {every_site: true, pin: spire}
+    gap:
+      decision: ADR 1164
+      why: a site's own SPIRE server and trust domain (ADR 1164) is designed, not built
     containers: [spire-server]
     ledger: spire
   spire-agent:
     class: mgmt
-    present: {pin: spire-agent}
+    present: {every_site: true, pin: spire-agent}
+    gap:
+      decision: ADR 1164
+      why: a site's own SPIRE server and trust domain (ADR 1164) is designed, not built, and its agents need that server
     containers: [spire-agent]
     ledger: null
   portal:
@@ -385,9 +402,11 @@ services:
     containers: [audit-subscriber]
     ledger: audit-subscriber
     zenoh: {sub: ["**"]}
+  # Built at every joining site with its bootstrap play (site-bootstrap.yml,
+  # role admit-audit). The site's own flag still decides.
   admit-audit:
     class: mgmt
-    present: {var: admit_audit_enabled}
+    present: {every_site: true, var: admit_audit_enabled}
     containers: [admit-audit]
     ledger: admit-audit
   minio:
@@ -406,6 +425,7 @@ services:
     ledger: compliance-proxy
     surfaces: [compliance]
   herd:
+    home: goatstuff
     class: mgmt
     present: {pin: herd, var: herd_enabled}
     containers: [herd, herd-guacd, herd-postgres, oauth2-proxy-herd]
@@ -413,6 +433,7 @@ services:
     surfaces: [herd]
     oidc_clients: [herd]
   herd-connector:
+    home: goatstuff
     class: mgmt
     present: {pin: herd-connector, var: herd_connector_enabled}
     containers: [herd-connector]
@@ -440,6 +461,7 @@ services:
     ledger: goat-docs
     surfaces: [goat-docs]
   gym:
+    home: goatstuff
     class: mgmt
     present: {var: gym_enabled}
     containers: [gym]
@@ -453,6 +475,7 @@ services:
     surfaces: [brief]
     oidc_clients: [brief]
   dataflows:
+    home: goatstuff
     class: mgmt
     present: {var: dataflows_enabled}
     containers: [dataflows, oauth2-proxy-dataflows]
@@ -460,6 +483,7 @@ services:
     surfaces: [dataflows]
     oidc_clients: [dataflows]
   airdefenders:
+    home: goatrodeo
     class: mgmt
     present: {var: airdefenders_enabled}
     containers: [airdefenders, airdefenders-zenoh-sidecar, oauth2-proxy-airdefenders]
@@ -467,12 +491,14 @@ services:
     surfaces: [airdefenders]
     oidc_clients: [airdefenders]
   zenoh-sandbox:
+    home: goatstuff
     class: mgmt
     present: {var: zenoh_sandbox_enabled}
     containers: [zenoh-sandbox-router, zenoh-sandbox-web]
     ledger: zenoh-sandbox
     surfaces: [zenoh-sandbox]
   synth-vendors:
+    home: goatstuff
     class: mgmt
     play: zenoh-synth-vendors-deploy.yml
     present: {var: synth_vendors_enabled}
@@ -480,6 +506,7 @@ services:
     containers: ["synth-*"]
     ledger: null
   goat-trashgoat:
+    home: goatstuff
     class: mgmt
     present: {var: goat_trashgoat_enabled}
     containers: [goat-trashgoat]

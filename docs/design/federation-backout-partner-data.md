@@ -58,6 +58,14 @@ design to get somewhere working for now".
   identical on b97071b9): the core's `acl-org-fragment.json5` and `config.json5` were byte
   for byte the files before the peering, with no grant and no
   `sovereign_from_<partner>` store, and the store drop ran as its own step.
+  Backing out one of two peerings restarts the shared core router, which briefly
+  interrupts the other peering: measured in two runs: 2 of 132 values lost (longest gap 1.0 s) and 6 of 165 (3.1 s), each loss at one of the two router restarts. Measured in the test environment's
+  `back-out-one-peering` scenario, run `8c6c054c2841-20261115T014642-2624675` (goatbuilder at main 8c6c054c, the unit
+  before its merge) and run `23b8b4bef548-20261115T022840-576158` (on 23b8b4be, the head of #812, whose federation-e2e, federate and goat-zenoh role files are identical on main dd549fb5): each loss fell at the end
+  of the back-out's core step or of the role's play, the two steps that restart the router;
+  the backed-out peering's resources were all removed and the other peering was unchanged
+  and passed strict acceptance after. A back-out that leaves the shared router running is
+  not built (#811).
 - **A store directory nothing declares** (an entry removed by hand, outside a
   back-out) has no retention. The role reports it, as it does today
   (`.undeclared-stores`); no automatic deletion is added for it.

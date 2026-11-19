@@ -15,6 +15,8 @@ The federation e2e environment runs synthetic sovereign environments on one Linu
 | Running the same scenarios on real hosts through `live-host.sh` | Designed, not built (§Real hosts) |
 | `goatbuilder-only-both-sides` and `nothing-hand-written`, the one command on a terminal (`units/onecmd.sh`, `units/nohand.sh`) | Built and measured (§The one command, and nothing hand-written) |
 | `bilateral-acceptance`, each side's acceptance holding the partner's signed result (`units/bilateral.sh`, gate row B2) | Built, not run (§The partner's half of acceptance) |
+| `back-out-one-peering`, one of two peerings on one edge and core backed out while the other carries traffic (`units/backout-one.sh`, gate row B7) | Built and measured (§Backing out one of two peerings) |
+| `forwarder-by-goatbuilder`, the forwarder brought up by `goatbuilder federate` from the peering's `forwarder:` declaration (`units/forwarder-gb.sh`) | Built, not run (§The forwarder applied by the command) |
 
 ## Run one scenario on your own machine
 
@@ -40,7 +42,8 @@ Each sovereign is generated fresh for a run and shares nothing with another sove
 | Piece | How it is made |
 |---|---|
 | Certificate authority, signing key, operator profile | `gen_sovereign` in `lib/engine.sh`, new per run, P-256 and Ed25519 |
-| Its own repository | a clone of the ref under test, with `overlay.py` writing that sovereign's `goatbuilder.yaml`, inventory and group_vars |
+| Its own repository | a clone of the ref under test, with `overlay.py` writing that sovereign's `goatbuilder.yaml`, inventory and group_vars. An edge on the driver mounts phase 8's files from `<work>/pki`; an edge on a machine of its own (`--edge-addr`, the operator-workspace driver) has `goat_zenoh_edge_install_certs` on, so the role installs them, as `goatbuilder federate allocate` renders it |
+| Edge host firewall | the edges' parent group `peering_edges` switches the goat-host-firewall baseline on from the first commit (`group_vars/peering_edges/host-firewall.yml`, written by `edge_fw_declare` in `lib/hostfw.sh`, called by `gen_sovereign`), so a tree with no peering yet has no peering's group directory, which `goatbuilder federate allocate` would read as a peering already running (GB-230), with the management sources the lab's sessions come from, including the play's own SSH session at 127.0.0.1, and one reasoned override for the probe sessions' REST ports, those of the drill's own probes and those of the probes a partner's phase 14 starts through `lib/probe-launcher.sh` (`PL_PORT`, the one value the launcher's units read too). A partner's driver host joins this network for phase 14's drill reach at a fixed address, one per partner (`drill_reach_ip`), which the edge admits for SSH and those ports. The ops host is admitted to those ports too: with `FE2E_DRIVER=workspace` it is the driver, whose own probe launcher in a bilateral run starts its sessions on its edge (a driver on the edge reaches them over loopback; `hostfw_checks` in `tests/test_harness.py`). A tree without the role is left as it is. `units/nodesec.sh` turns it back to the role's default to measure that default's refusal (scenario `node-ports-declared`). Built |
 | Core host | a privileged container running systemd and its own dockerd: the core router (`<id>-zenoh-router`, label `org.goat.component=zenoh-core`), `spire-server`, and from phase 12 the republisher |
 | Edge host | a second privileged container: the edge router, the WireGuard interface, the driver |
 | Release producers | samples written under `release/<set>/` on the core, as a producer would write them |
@@ -70,7 +73,7 @@ The engine reads these names from `FE2E_*` variables (header of `lib/engine.sh`)
 | Profile | Built how | Status |
 |---|---|---|
 | Listening edge, direct path | the listener's boundary address is reachable on the tunnel port | Built (unit `pair`) |
-| Edge behind NAT, no inbound; forwarder path | a NAT router holds the edge's boundary address (outbound masquerade, nothing inbound); the party's forwarder host on the boundary, applied by `goat-peering-forwarder` and `peering_wg_via_forwarder` | Built (unit `forwarder`); the drivers do not apply the forwarder, so the unit runs the operator's three plays |
+| Edge behind NAT, no inbound; forwarder path | a NAT router holds the edge's boundary address (outbound masquerade, nothing inbound); the party's forwarder host on the boundary, applied by `goat-peering-forwarder` and `peering_wg_via_forwarder` | Built (unit `forwarder`). The unit brings the forwarder up by running the operator's three plays by hand, on either avenue. `goatbuilder federate` applies a forwarder from the peering's `forwarder:` declaration in phase 2 (`crates/goatbuilder/src/federate/forwarder.rs`, `splice`; built, unit tests only, [peering-forwarder.md](peering-forwarder.md) §7), but the unit does not use that path yet; `peering-standup.sh` does not apply one |
 | UDP 51820 already held on an edge | a process holding the port before phase 1; the peering on a free inner port | Built (unit `preflight`, scenarios `preflight-port-in-use`, `port-51820-held`) |
 | WireGuard transport | `goat-peering-wg` | Built |
 | IPsec transport | `goat-peering-edge` (strongSwan, XFRM) under a waiver | Built (unit `ipsec`): IKE and the child SA between two edge hosts are measured here; the federation path is BLOCKED on a ref whose init offers `ipsec-fips` only on a FIPS kernel and whose phase 11 cannot apply `goat-peering-edge` |
@@ -165,6 +168,18 @@ The checks read each side's evidence directory afterwards (`/var/lib/goat-federa
 
 A combined PASS is not required because the refusal rows need probes that hold the partner's agreed identity, and the SPIRE rows need the partner's `spire-server` command. The unit gives neither, so with `FED_ACCEPTANCE_STRICT=1` those rows cannot pass, and a combined PASS is not expected from it. A tree without `federate test --bilateral` marks every check BLOCKED, and so does a run in which phase 13 did not pass on both sides.
 
+## Backing out one of two peerings
+
+`back-out-one-peering` (`units/backout-one.sh`) peers {A} with {B} and with {C} on one edge host and one core host deployed by the `goat-zenoh` role (`FE2E_CORE=role`), then runs `goatbuilder federate backout {C}` on {A} while a flow runs from {A} to {B}. {A} declares its peering with {C} only when that peering starts (`FE2E_LATER_<sovereign>` and `declare_later` in `lib/engine.sh`), as a deployment adds a second peering: {A}-{B} comes up whole first. Declared from the start, {A}-{C} would have no agreement while {A}-{B} is admitted, and admission's host-allocation check reads SKIP, which deploy refuses; or its tunnel would already be on the shared edge when {A}-{B}'s phase 11 loads the host firewall baseline, which refuses to drop a tunnel it has not recorded (GB-210). {A}'s core admits each peering through goatbuilder's own phase 10, after phase 6 has compared the agreement digest (`--agreement-digest`, read from the partner's copy); the lab's own route to a role core is withheld from the back-out, as in `nothing-hand-written`. The goat-zenoh play pins the core's REST surface to 127.0.0.1, so after goatbuilder's role runs the unit reads {A}'s REST surface through a relay on the core host; it is lab-only and changes nothing in the deployment.
+
+Measured twice: run `8c6c054c2841-20261115T014642-2624675`, goatbuilder at main 8c6c054c with the unit before its merge, and run `23b8b4bef548-20261115T022840-576158`, on 23b8b4be, the head of #812, whose federation-e2e, federate and goat-zenoh role files are identical on main dd549fb5: 88 of 89 checks pass in each. Every resource of {A}-{C} is removed, {A}-{B} is unchanged and passes strict acceptance from both sides before and after. The flow across the back-out lost 2 of 132 values (longest gap 1.0 s) in the first run and 6 of 165 (3.1 s) in the second, each loss at one of the two restarts of the shared core router; that check is recorded, not required (`known_failure` in the catalog, #811).
+
+## The forwarder applied by the command
+
+`forwarder-by-goatbuilder` (`units/forwarder-gb.sh`) is `nothing-hand-written` with {B} behind a NAT router that forwards nothing inbound, listening through a peering forwarder it operates, on the network of `units/forwarder.sh`. {B}'s operator input is `nothing-hand-written`'s plus two parts: `forwarder: {endpoint, ansible_host}` on its peering entry (`NH_FORWARDER_<side>` in `units/nohand.sh`), and the forwarder machine's own values in `ops/ansible/group_vars/peering_forwarders/forwarder-host.yml`: the user it is reached as, its public interface, and the address it admits SSH from (`nh_operator_more`). Its offer's MTU is 1300 (`NH_MTU_<side>`), the carrier's. The unit runs no play. `goatbuilder federate allocate` renders the forwarder's inventory group, its group_vars and the offer of its public port, and phase 2 of `goatbuilder federate {A}` on {B} runs the forwarder plays ([peering-forwarder.md](peering-forwarder.md) §7). The checks are `forwarder-path`'s, read the same way, plus what allocate rendered and the phase 2 transcript. Not run yet.
+
+It relays one peering. Two peerings relayed by one forwarder, §7's full gate, need `nh_side_from_nothing` to declare a second peering of one side from nothing (it writes exactly one `peerings:` entry today), and a third sovereign driven by the one command beside the first.
+
 ## Solo party (an outside partner)
 
 **Built** (unit `solo`, scenario `solo-external-partner`, `runs_where: local`). One lab sovereign federates with a partner that is not in the lab, so that an operator's laptop can drive the partner's side against an environment the lab never touches. `FE2E_PARTNER=external` (`lib/engine.sh`) makes `setup_hosts` create only the lab sovereign's core and edge, with no peering directory: phase 5 runs by hand (`FED_NO_DIRECTORY=1`). Nothing in the lab logs in to the partner's hosts. Only the WireGuard tunnel crosses, with SPIRE's bundle forward and the samples inside it. Everything else crosses as files through two folders that the operator carries.
@@ -225,6 +240,7 @@ The checks on the lab side are local observations. What the partner reports read
 | `ops/federation-e2e/env` | entry point |
 | `ops/federation-e2e/run.sh` | CI's two- and three-party run, on the same engine |
 | `ops/federation-e2e/lib/engine.sh` | hosts, sovereigns, phases, probes, snapshots |
+| `ops/federation-e2e/lib/hostfw.sh` | the goat-host-firewall baseline's values for a sovereign's edge and core |
 | `ops/federation-e2e/lib/unit.sh` | runs one unit in one lab |
 | `ops/federation-e2e/lib/verdict.py`, `lib/matrix.py`, `lib/watch.sh` | outcomes, the matrix page, the watcher |
 | `ops/federation-e2e/units/` | the units |

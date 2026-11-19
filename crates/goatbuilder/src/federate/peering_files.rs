@@ -1132,6 +1132,10 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
     let mut others: Vec<String> = Vec::new();
     if let Some(name) = only {
         let Some(named) = super::declaration::peering(&full, name, o.env)? else {
+            // Uncoded on purpose, so it keeps exit 2, the contract's "names something
+            // the config does not declare". GB-149 exits 1; whether it moves to 2
+            // everywhere, or the contract takes an exception, is GB-149's own issue.
+            // This place takes GB-149 once that is decided.
             return Err(anyhow::anyhow!(
                 "peering '{name}' is not declared in {} peerings: (C1); `goatbuilder federate allocate <peering>` allocates one declared peering",
                 cfg_path.display()
@@ -1365,12 +1369,12 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
             "would write"
         } else {
             if let Some(parent) = t.parent() {
-                std::fs::create_dir_all(parent)?;
+                std::fs::create_dir_all(parent).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(parent)).display())))?;
             }
             // Whole or not at all: a reader never sees half a record.
             let tmp = t.with_extension("goatbuilder-tmp");
-            std::fs::write(&tmp, &r.body)?;
-            std::fs::rename(&tmp, &t)?;
+            std::fs::write(&tmp, &r.body).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&tmp)).display())))?;
+            std::fs::rename(&tmp, &t).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&tmp)).display())))?;
             "written"
         };
         let detail = if writes || same {

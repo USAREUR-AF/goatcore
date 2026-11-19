@@ -3,14 +3,22 @@
 # Format: https://github.com/prometheus-community/postgres_exporter#custom-queries
 #
 # The 'monitoring' PG role (created by ops/ansible/roles/observability/)
-# has pg_monitor + SELECT on spock.* views and pg_replication_slots.
-# Queries run against the `postgres` database (default DATA_SOURCE_NAME
-# in docker-compose.obs.yml). Spock views live in the `spock` schema
-# of whatever DB is the replicated one; we query the `netbird` DB for
-# those via a schema-qualified, cross-database-tolerant pattern where
-# needed. For Phase 2 MVP we scope queries to views visible from any
-# database, which keeps this config simple and avoids per-database
-# connection duplication.
+# has pg_monitor, and USAGE + SELECT on the spock schema of every
+# replicated database.
+#
+# Which database a query runs in:
+#   master: true   only in the database DATA_SOURCE_NAME names (`postgres`,
+#                  docker-compose.obs.yml): cluster-wide views such as
+#                  pg_replication_slots, pg_stat_replication, pg_settings.
+#   master: false  in that database and in every database the exporter
+#                  discovers (PG_EXPORTER_INCLUDE_DATABASES: the replicated
+#                  ones, which the observability role lists). Spock's tables
+#                  live in the spock schema of each replicated database
+#                  (netbird, kratos, hydra, ...), so a Spock count is one of
+#                  these, with a `datname` label: without it two databases'
+#                  rows would be the same series and the scrape would fail.
+#                  In `postgres`, which has no spock schema, it errors and
+#                  yields no row.
 
 pg_replication_slot:
   query: |
@@ -77,11 +85,16 @@ spock_resolutions:
   # in spock.resolutions. Needs spock.save_resolutions = on (image conf). There
   # is no spock.conflict_log table in Spock 5: the query this replaces failed
   # every scrape, so the conflict alert could never fire.
+  # One series per replicated database (datname): conflicts happen in kratos
+  # and hydra as well as netbird.
   query: |
-    SELECT COALESCE(COUNT(*), 0)::bigint AS total
+    SELECT current_database() AS datname, COALESCE(COUNT(*), 0)::bigint AS total
     FROM spock.resolutions
-  master: true
+  master: false
   metrics:
+    - datname:
+        usage: "LABEL"
+        description: "The replicated database whose spock.resolutions this counts"
     - total:
         usage: "COUNTER"
         description: "Rows in spock.resolutions (conflicts resolved by last-writer-wins)"
@@ -90,11 +103,15 @@ spock_exceptions:
   # Remote changes the apply worker could not apply and skipped
   # (spock.exception_behaviour = discard), e.g. an update to a row the other
   # site deleted. Each one is a change that did not land here.
+  # One series per replicated database (datname), as spock_resolutions.
   query: |
-    SELECT COALESCE(COUNT(*), 0)::bigint AS total
+    SELECT current_database() AS datname, COALESCE(COUNT(*), 0)::bigint AS total
     FROM spock.exception_log
-  master: true
+  master: false
   metrics:
+    - datname:
+        usage: "LABEL"
+        description: "The replicated database whose spock.exception_log this counts"
     - total:
         usage: "COUNTER"
         description: "Rows in spock.exception_log (remote changes skipped on apply)"
@@ -150,14 +167,16 @@ pg_stat_replication:
 
 spock_config:
   # Reads the LIVE configured value from pg_settings (NOT a hardcoded
-  # constant). The postgres-streaming-replication role sets
-  # max_slot_wal_keep_size = 6GB via ALTER SYSTEM; a hardcoded constant
-  # makes the SpockSlotWALNearLimit alert fire at the wrong threshold.
+  # constant). The Spock image sets the cap and, on a pair's primary,
+  # the postgres-streaming-replication role raises it via ALTER SYSTEM
+  # (ops/postgres/spock/README.md, The slot WAL cap), so sites differ and
+  # a hardcoded constant makes SpockSlotWALNearLimit fire at the wrong
+  # threshold.
   #
   # `setting` is the postgres-internal stored value; `unit` tells us
   # the unit it's measured in. For max_slot_wal_keep_size, postgres
-  # stores the value with unit '8kB' (PostgreSQL's standard WAL block
-  # accounting unit). Multiply by 8192 to get bytes. `setting='-1'`
+  # stores the value in WAL blocks (unit 8 kilobytes, PostgreSQL's
+  # standard accounting unit). Multiply by 8192 to get bytes. `setting='-1'`
   # means unlimited; we emit a sentinel 2^63-1 so the rule's >0.8
   # ratio comparison never fires (no false positive even if the cap is dropped
   # to unlimited).
@@ -214,7 +233,7 @@ pg_stat_wal_extended:
         description: "Total full-page-image WAL records (FPI). Spike → checkpoint storm or massive UPDATE."
     - wal_bytes:
         usage: "COUNTER"
-        description: "Total WAL bytes generated. Rate-of-change × 6GB / max_slot_wal_keep_size = how long an offline subscriber's slot can hold before invalidation."
+        description: "Total WAL bytes generated. max_slot_wal_keep_size_bytes / rate-of-change = about how long an offline subscriber's slot can hold before invalidation."
     - wal_buffers_full:
         usage: "COUNTER"
         description: "Number of times WAL buffers were full and forced to disk (wal_buffers tuning indicator)"

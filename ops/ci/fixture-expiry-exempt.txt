@@ -1,0 +1,9 @@
+# Vector sets exempt BY NAME from ops/ci/check-fixture-expiry.py.
+#
+# Each entry is a directory of normative vectors that every reader evaluates
+# on the date in its own now.txt, never on the wall clock; its dates are fixed
+# by design and are never renewed. The gate refuses an entry that is not a
+# tracked directory holding a tracked now.txt. Fixtures read on the wall clock
+# are never listed here: they are renewed from their generator.
+
+ops/federation/vectors  # federation conformance vectors, evaluated on ops/federation/vectors/now.txt

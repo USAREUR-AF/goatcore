@@ -89,6 +89,13 @@ pub struct Surface {
     /// `rotate <partner> transport`: phase 2 sets the peering key aside once,
     /// makes a new one and restarts the link onto it (rotation.rs).
     pub rotate_transport: Option<super::rotation::Pending>,
+    /// `--side edge`: the edge driver's run of a two-driver peering
+    /// (handoff.rs), which runs its phase's edge half and ends with the way back.
+    pub edge: Option<super::handoff::EdgeRun>,
+    /// `rotate <partner> ipsec-leaf|ipsec-ca`: phase 11 passes the rotation to
+    /// goat-peering-edge, which checks the staged leaf, sets the live pair aside
+    /// once, switches and rolls back (rotation.rs, [`super::rotation::Ipsec`]).
+    pub rotate_ipsec: Option<super::rotation::Ipsec>,
 }
 
 impl Surface {

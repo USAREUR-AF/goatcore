@@ -7,7 +7,9 @@ goatbuilder to two of them, against the baseline kept beside it
 files are crates/goatbuilder/tests/config_compat.rs, and A5's error codes are
 ops/ci/check-error-codes-kept.py:
 
-  surface    A3  every command and flag of the last release is still there
+  surface    A1  from a 1.0 baseline, an entry excuses a removal only after
+                 its deprecation period (ADR 1228)
+             A3  every command and flag of the last release is still there
                  (and still takes a value if it took one, and no optional
                  argument became required), unless deprecations.yaml names it
   documents  A4  every kept `-o json` / `-o yaml` document of the last release
@@ -216,6 +218,188 @@ def deprecation_problems(deps: list) -> list:
     return out
 
 
+# ---------------------------------------------------------------- A1: the deprecation period
+
+PERIOD_DAYS = 90
+PERIOD_MINORS = 2
+_RELEASE = re.compile(r"^goatbuilder/v(\d+)\.(\d+)\.(\d+)$")
+
+
+def _removed(base: dict, new: dict, d: dict) -> bool:
+    """Whether the build no longer has what entry `d` deprecates, and the last release had it."""
+    cmd, flag, value = d.get("command"), d.get("flag"), d.get("value")
+    if cmd not in base:
+        return False
+    if not flag:
+        return cmd not in new
+    if cmd not in new:
+        return True
+    if value is not None:
+        had = (base[cmd].get("values") or {}).get(flag) or []
+        has = (new[cmd].get("values") or {}).get(flag) or []
+        return value in had and value not in has
+    return flag in base[cmd]["flags"] and flag not in new[cmd]["flags"]
+
+
+def release_tag_dates(repo: str) -> dict:
+    """{goatbuilder/vX.Y.Z: the date it was tagged (UTC)}, from the annotated release tags."""
+    r = subprocess.run(
+        ["git", "-C", repo, "for-each-ref", "refs/tags/goatbuilder/", "--format=%(refname:short) %(creatordate:iso-strict)"],
+        capture_output=True, text=True,
+    )
+    out = {}
+    for line in r.stdout.splitlines():
+        tag, _, when = line.partition(" ")
+        if _RELEASE.match(tag) and when:
+            stamp = datetime.datetime.fromisoformat(when)
+            out[tag] = stamp.astimezone(datetime.timezone.utc).date()
+    return out
+
+
+DEPRECATIONS_PATH = "ops/goatbuilder/compat/deprecations.yaml"
+
+
+def _same_item(a: dict, b: dict) -> bool:
+    return all(a.get(k) == b.get(k) for k in ("command", "flag", "value"))
+
+
+def _version_key(t: str):
+    m = _RELEASE.match(t)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def shipped_deprecations(repo: str, tag: str):
+    """The deprecation list release `tag` shipped (its binary compiles it in and
+    warned for each entry), read with `git show <tag>:<path>`; None when the tag,
+    the file or its YAML cannot be read. goatbuilder-pr's tag fetch is a partial
+    fetch, so git fetches that one file's objects here on demand."""
+    r = subprocess.run(["git", "-C", repo, "show", f"{tag}:{DEPRECATIONS_PATH}"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    try:
+        data = yaml.safe_load(r.stdout) or {}
+    except yaml.YAMLError:
+        return None
+    items = data.get("deprecations") if isinstance(data, dict) else None
+    return [d for d in items if isinstance(d, dict)] if isinstance(items, list) else None
+
+
+def period_problems(base: dict, new: dict, deps: list, base_release: str, version: str, tags: dict, today, shipped: dict, base_version: str) -> list:
+    """From a 1.0 baseline, each entry that excuses a removal must have served its
+    period (ADR 1228): the build is a later major whose release is not yet tagged;
+    the release the entry names shipped a list that names the item, so a binary of
+    it warned (`shipped`: {tag: that list, or None}); two minor releases (x.y.0,
+    y > 0, of any major) followed it before the build's version; and 90 days have
+    passed since it was tagged. On 0.x an entry excuses a removal at once ("When
+    it starts"). `base_version` is the base branch's version: a removal lands only
+    in the pull request that moves it to the build's major, because the release
+    tag goes on that pull request's merge and anything merged after it ships in
+    a minor release."""
+    m = _RELEASE.match(base_release)
+    if not m or int(m.group(1)) < 1:
+        return []
+    base_major = int(m.group(1))
+    out = []
+    for d in deps:
+        if not _removed(base, new, d):
+            continue
+        what = " ".join(str(x) for x in (d.get("command"), d.get("flag"), d.get("value")) if x)
+        since = str(d.get("deprecated_in", ""))
+        build_major = _major(version)  # one reading with the A4 exit rule: not <x.y.z> is the same major
+        if build_major is None or build_major <= base_major:
+            built = version or "a build of an unreadable version"
+            out.append(f"{what}: removed in {built}, but a deprecated item is removed only in a major release; "
+                       f"keep it, with its warning, until goatbuilder {base_major + 1}.0.0")
+            continue
+        bm = re.match(r"^(\d+)\.\d+\.\d+", base_version or "")
+        if not bm:
+            out.append(f"{what}: removed in {version}, but the check cannot read the base branch's version "
+                       "(crates/goatbuilder/Cargo.toml at the merge's first parent, or at origin/main), so it cannot "
+                       f"tell whether this is the pull request that sets the version to {build_major}.0.0")
+            continue
+        if int(bm.group(1)) >= build_major:
+            out.append(f"{what}: removed in {version}, but the base branch is already at {base_version}: the version "
+                       f"pull request has merged, and its tag goes on that merge, so this change would ship in a later "
+                       f"release of {build_major}.x; a deprecated item is removed in the pull request that sets the "
+                       f"version to {build_major}.0.0")
+            continue
+        if f"goatbuilder/v{version}" in tags:
+            out.append(f"{what}: removed in {version}, but goatbuilder/v{version} is already tagged, so this change would "
+                       f"ship in a later release of {build_major}.x; a deprecated item is removed in the pull request that "
+                       f"sets the version to {build_major}.0.0, before its tag")
+            continue
+        dm = _RELEASE.match(since)
+        if not dm or since not in tags:
+            out.append(f"{what}: deprecations.yaml names no tag {since} on this history, so its period cannot be read; "
+                       "name the release that first warned (fetch its tag)")
+            continue
+        listed = shipped.get(since)
+        if listed is None:
+            out.append(f"{what}: the list {since} shipped cannot be read ({since}:{DEPRECATIONS_PATH}), so whether it "
+                       "warned cannot be known; fetch that tag's file")
+            continue
+        if not any(_same_item(d, x) for x in listed):
+            out.append(f"{what}: deprecations.yaml says it was deprecated in {since}, but the list {since} shipped did not "
+                       "name it, so no binary of that release warned; name the first release whose shipped list names it")
+            continue
+        vm = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        build_key = tuple(int(x) for x in vm.groups()) if vm else (build_major, 0, 0)
+        since_key = _version_key(since)
+        later = sorted(
+            (t for t in tags
+             if (k := _version_key(t)) and k[1] > 0 and k[2] == 0 and k > since_key and k < build_key),
+            key=_version_key,
+        )
+        ends = tags[since] + datetime.timedelta(days=PERIOD_DAYS)
+        if len(later) < PERIOD_MINORS:
+            out.append(f"{what}: deprecated in {since}, followed by {len(later)} minor release(s) before {version} "
+                       f"({', '.join(later) or 'none'}); it is removed only after two minor releases and 90 days "
+                       f"(compared against {today.isoformat()} (UTC); the 90 days end on {ends.isoformat()})")
+            continue
+        if today < ends:
+            out.append(f"{what}: deprecated in {since}; compared against {today.isoformat()} (UTC), "
+                       f"the 90 days from {since} (tagged {tags[since].isoformat()}) end on {ends.isoformat()}; "
+                       "keep it, with its warning, until then")
+    return out
+
+
+def period_rows(repo: str, b, new: dict, deps: list, today=None) -> list:
+    """The A1 problems of this build: its version from crates/goatbuilder/Cargo.toml,
+    the release tags' dates from git, each named release's shipped list from its
+    tag, today's date in UTC. The tags are read from the checkout, never fetched
+    here: goatbuilder-pr fetches them before the check, as a partial fetch, so
+    `git show` brings in the one file it reads from a tag on demand."""
+    today = today or datetime.datetime.now(datetime.timezone.utc).date()
+    base = b.surface()
+    if not any(_removed(base, new, d) for d in deps):
+        return []
+    tags = release_tag_dates(repo)
+    named = {str(d.get("deprecated_in", "")) for d in deps if _removed(base, new, d)}
+    shipped = {t: shipped_deprecations(repo, t) for t in sorted(named) if t in tags}
+    return period_problems(base, new, deps, b.release, goatbuilder_version(repo), tags, today, shipped, base_branch_version(repo))
+
+
+def _git_out(repo: str, *args: str):
+    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def base_branch_version(repo: str) -> str:
+    """The version the pull request's base carries in crates/goatbuilder/Cargo.toml:
+    at the first parent of HEAD when HEAD is a merge (how CI checks a pull request
+    out), else at the merge base with origin/main. Empty when neither can be read."""
+    parents = (_git_out(repo, "rev-list", "--parents", "-n", "1", "HEAD") or "").split()
+    if len(parents) >= 3:
+        base = parents[1]
+    else:
+        base = _git_out(repo, "merge-base", "HEAD", "origin/main")
+    if not base:
+        return ""
+    text = _git_out(repo, "show", f"{base}:crates/goatbuilder/Cargo.toml") or ""
+    m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
+    return m.group(1) if m else ""
+
+
 # ---------------------------------------------------------------- A4: the documents
 
 
@@ -368,16 +552,53 @@ def document_problems(base, new, conditional=()) -> list:
     return out + held + _shape_problems(shape(base), shape(new), "")
 
 
-def exit_problems(d: dict) -> list:
+RELEASE_TAG = re.compile(r"^goatbuilder/v(\d+)\.\d+\.\d+$")
+
+
+def _major(version) -> int | None:
+    """The major number of `1.2.3` (or `1.2.3-rc.1`), or None when it is not one."""
+    m = re.match(r"^(\d+)\.\d+\.\d+", str(version or ""))
+    return int(m.group(1)) if m else None
+
+
+def goatbuilder_version(repo: str) -> str:
+    """The build's version, from crates/goatbuilder/Cargo.toml; empty when it cannot be read."""
+    try:
+        with open(os.path.join(repo, "crates", "goatbuilder", "Cargo.toml")) as f:
+            m = re.search(r'^version\s*=\s*"([^"]+)"', f.read(), re.M)
+    except OSError:
+        return ""
+    return m.group(1) if m else ""
+
+
+def exit_problems(d: dict, base_release: str | None = None, version: str | None = None) -> list:
     """A kept invocation's `exit` is its release's (`release_exit`), or moved with a reason.
 
     Exit codes are a promised surface: a pull request that changes one edits
-    `exit` and says why in `exit_changed`, so the change is reviewed.
+    `exit` and says why in `exit_changed`, so the change is reviewed. From a 1.0
+    baseline (`base_release` goatbuilder/v1.0.0 or later) that is not enough: a
+    kept exit code changes only in a major release (ADR 1228), so `exit_changed`
+    is refused unless the build (`version`, from the crate) is a later major
+    than the baseline. An unreadable build version counts as the same major; an
+    unreadable baseline release, with `exit_changed`, is refused. With no
+    `base_release`, only the reason is checked (the rule before 1.0).
     """
     name = d.get("name", "?")
     if "release_exit" not in d:
         return [f"{name}: no `release_exit`; rerun compat.py refresh to record the release's exit code"]
     reason = d.get("exit_changed")
+    if base_release is not None and "exit_changed" in d:
+        m = RELEASE_TAG.match(str(base_release))
+        if not m:
+            return [f"{name}: the baseline release {base_release!r} is not goatbuilder/v<x.y.z>, so whether "
+                    f"`exit_changed:` may move an exit code cannot be decided; rerun compat.py refresh"]
+        base_major, build_major = int(m.group(1)), _major(version)
+        if base_major >= 1 and (build_major is None or build_major <= base_major):
+            moved = d.get("exit") != d["release_exit"]
+            return [f"{name}: from goatbuilder 1.0 a kept exit code is part of the promise and changes only in a "
+                    f"major release (ADR 1228); {base_release} exited {d['release_exit']} and this build is "
+                    f"{version or 'of an unreadable version'}, so `exit_changed:` cannot move it: "
+                    + (f"restore {d['release_exit']}" if moved else "remove the `exit_changed:` left on it")]
     if d.get("exit") != d["release_exit"] and not (isinstance(reason, str) and reason.strip()):
         return [f"{name}: `exit` is {d.get('exit')} but the release exited {d['release_exit']}; "
                 f"give the reason in `exit_changed:`, or restore {d['release_exit']}"]
@@ -547,19 +768,21 @@ def check_all(repo: str, root: str, binary: str, only=("surface", "documents")) 
         else:
             new = surface_values(binary, parse_reference(r.stdout))
             problems = surface_problems(b.surface(), new, deps)
+            problems += period_rows(repo, b, new, deps)
             for p in problems:
                 rows.append((False, "surface", p.split(":", 1)[0], p.split(":", 1)[1].strip()))
             if not problems:
                 rows.append((True, "surface", f"{len(b.surface())} commands", f"every command and flag of {b.release} is here"))
 
     if "documents" in only:
+        build_version = goatbuilder_version(repo)
         for d in b.documents():
             rc, doc, err = run_document(binary, repo, d)
             item = f"{d['name']}.{d['format']}"
             if err:
                 rows.append((False, "documents", item, err))
                 continue
-            p = exit_problems(d) + document_problems(b.document(d), doc, cond)
+            p = exit_problems(d, b.release, build_version) + document_problems(b.document(d), doc, cond)
             if rc != d["exit"]:
                 p.append(f"exit {d['exit']} in {b.release}, {rc} now")
             rows.append((not p, "documents", item, "; ".join(p) if p else "a superset of the release's document"))

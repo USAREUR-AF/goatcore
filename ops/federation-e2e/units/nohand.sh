@@ -333,14 +333,20 @@ nh_side_from_nothing() { # $1 us, $2 them, $3 "true" when this side listens
   # NH_OFFER_<side> (comma-separated release sets): this side's peering offers only those,
   # narrowing its environment's release (the peering entry's `offer:`; units/offer.sh, B5).
   local offer=""; eval "offer=\${NH_OFFER_$A:-}"
-  python3 - "$c/ops/goatbuilder/goatbuilder.yaml" "$B" "$A" "$declares" "https://$DIRECTORY_IP:8443" "$offer" <<'PY'
+  # NH_FORWARDER_<side> (an address): this side's peering is relayed by the forwarder there,
+  # the peering entry's `forwarder: {endpoint, ansible_host}` (units/forwarder-gb.sh), and
+  # NH_MTU_<side> its offer's measured MTU (default 1380; 1300 inside a forwarder's carrier).
+  local fwd="" mtu=""; eval "fwd=\${NH_FORWARDER_$A:-}"; eval "mtu=\${NH_MTU_$A:-1380}"
+  python3 - "$c/ops/goatbuilder/goatbuilder.yaml" "$B" "$A" "$declares" "https://$DIRECTORY_IP:8443" "$offer" "$fwd" <<'PY'
 import sys, yaml
-p, them, env, declares, url, offer = sys.argv[1:7]
+p, them, env, declares, url, offer, fwd = sys.argv[1:8]
 text = open(p).read()
 cfg = yaml.safe_load(text)
 cfg["peerings"] = [{"with": them, "environment": env, "site": "home", "edge_class": "edge"}]
 if offer:
     cfg["peerings"][0]["offer"] = [o for o in offer.split(",") if o]
+if fwd:
+    cfg["peerings"][0]["forwarder"] = {"endpoint": fwd, "ansible_host": fwd}
 if declares == "1":
     cfg.setdefault("secrets", {})["federation"] = {
         "signing_key": "/etc/fed-e2e/signing.key", "ca_cert": "/etc/fed-e2e/ca.pem", "ca_key": "/etc/fed-e2e/ca-key.pem"}
@@ -359,7 +365,7 @@ cut_contact  = "fed-ops@$A.test"
 [transport]
 endpoint     = "$(boundary_ip "$A")"
 listener     = $listener
-measured_mtu = 1380
+measured_mtu = $mtu
 
 [data]
 release                  = ["release/all/**", "release/$B/**"]
@@ -373,6 +379,9 @@ TOML
   git -C "$c" add -A && git -C "$c" commit -q -m "$A: declare the peering with $B"
   git -C "$c" push -q origin HEAD:main
   host_exec "$h" git -C /opt/goat pull -q --ff-only origin main
+  # A unit may add more of the operator's own input before allocate runs (units/forwarder-gb.sh:
+  # the forwarder machine's own values). It is the operator's, recorded under operator-input/.
+  if declare -F nh_operator_more >/dev/null; then nh_operator_more "$A" "$B"; fi
 
   # EVERYTHING THE PRODUCT IS SUPPOSED TO DERIVE IS LEFT OUT FIRST: peerings[].hosts, the
   # deployment and federation_toml switches, the site values. A dry run of allocate shows

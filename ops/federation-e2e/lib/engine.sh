@@ -58,6 +58,9 @@ FE2E_PARTNER="${FE2E_PARTNER:-lab}"
 case "$FE2E_PARTNER" in lab|external) ;; *) echo "engine: FE2E_PARTNER must be lab or external, not '$FE2E_PARTNER'" >&2; exit 2 ;; esac
 case "$FE2E_CORE" in hand|role) ;; *) echo "engine: FE2E_CORE must be hand or role, not '$FE2E_CORE'" >&2; exit 2 ;; esac
 export SRC A B C D PARTIES HP NP NB LAB FE2E_CORE FE2E_DRIVER FE2E_PARTNER
+# The host firewall baseline's values (gen_sovereign, units/nodesec.sh).
+# shellcheck source=lib/hostfw.sh
+. "$HERE/lib/hostfw.sh"
 # The fleet image, by digest, and the SPIRE release the fleet pins: the `spire`
 # component's value of record in ops/pins/fleet-pins.yaml, which every checkout carries
 # (a public one declares no goatnet there, but keeps every component). Both pull
@@ -181,6 +184,42 @@ final() { [ "$KEEP" = 1 ] || teardown; }
 host_exec() { local h="$1"; shift; docker exec -i "$h" "$@"; }
 
 # --- the sovereign, generated fresh ---------------------------------------------------
+# One sovereign's declarations in its clone (overlay.py): a peering entry, inventory and
+# group_vars for each partner, except those named in FE2E_LATER_<sovereign>, whose peering is
+# declared only when it starts (declare_later), as a deployment adds a second peering.
+overlay_declare() { # $1 sovereign, $2 its clone
+  local s="$1" c="$2" also=() first later t
+  first="$(partners "$s" | awk '{print $1}')"; eval "later=\${FE2E_LATER_$s:-}"
+  for t in $(partners "$s"); do
+    [ "$t" = "$first" ] && continue
+    case " $later " in *" $t "*) continue ;; esac
+    also+=(--also "$t:$(iface "$s" "$t"):$(wgport "$s" "$t"):$(spire_out "$s" "$t"):$(rp_metrics "$s" "$t")")
+  done
+  # FE2E_OVERLAY_ARGS_<sovereign>: more overlay.py arguments for one sovereign only (a unit
+  # sets --no-peering for a sovereign whose peering must come from its operator and the
+  # command, units/nohand.sh).
+  local more=""; eval "more=\${FE2E_OVERLAY_ARGS_$s:-}"
+  # shellcheck disable=SC2086,SC2046 # the optional flags are meant to split into words
+  python3 "$HERE/overlay.py" "$c" "$s" "$first" "$(octet "$s")" "$ZENOH_IMAGE" --republisher-image "$RP_IMAGE" \
+    --core-addr "$(core_ip "$s")" --spire-listen "$(edge_ip "$s")" ${also[@]+"${also[@]}"} \
+    $([ "$FE2E_DRIVER" = workspace ] && echo "--edge-addr $(edge_ip "$s")") $more
+  if [ "$FE2E_CORE" = role ]; then core_role_overlay "$s" "$c"; fi
+}
+
+# Declare a peering of $1's that FE2E_LATER_<$1> held back, now that it starts: the same
+# overlay with $2 included, committed and pulled onto the driver as any change to the
+# deployment's repository (core_declare).
+declare_later() { # $1 sovereign, $2 the partner
+  local s="$1" t="$2" c="$WORK/$1/clone" v="FE2E_LATER_$1" rest="" x
+  for x in ${!v:-}; do [ "$x" = "$t" ] || rest="$rest${rest:+ }$x"; done
+  printf -v "$v" '%s' "$rest"
+  overlay_declare "$s" "$c"
+  git -C "$c" add -A
+  git -C "$c" diff --cached --quiet || git -C "$c" commit -q -m "$s: declare the peering with $t"
+  git -C "$c" push -q origin HEAD:main
+  host_exec "$(drv_host "$s")" git -C /opt/goat pull -q --ff-only origin main
+}
+
 gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identity
   local s="$1" d
   d="$WORK/$s"
@@ -224,20 +263,9 @@ gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identi
   git clone -q --depth 1 --single-branch "file://$SRC" "$d/clone"
   git -C "$d/clone" checkout -q -B main
   git -C "$d/clone" config user.name "$s operator"; git -C "$d/clone" config user.email "ops@$s.test"
-  local also=() first; first="$(partners "$s" | awk '{print $1}')"
-  for t in $(partners "$s"); do
-    [ "$t" = "$first" ] && continue
-    also+=(--also "$t:$(iface "$s" "$t"):$(wgport "$s" "$t"):$(spire_out "$s" "$t"):$(rp_metrics "$s" "$t")")
-  done
-  # FE2E_OVERLAY_ARGS_<sovereign>: more overlay.py arguments for one sovereign only (a unit
-  # sets --no-peering for a sovereign whose peering must come from its operator and the
-  # command, units/nohand.sh).
-  local more=""; eval "more=\${FE2E_OVERLAY_ARGS_$s:-}"
-  # shellcheck disable=SC2086,SC2046 # the optional flags are meant to split into words
-  python3 "$HERE/overlay.py" "$d/clone" "$s" "$first" "$(octet "$s")" "$ZENOH_IMAGE" --republisher-image "$RP_IMAGE" \
-    --core-addr "$(core_ip "$s")" --spire-listen "$(edge_ip "$s")" ${also[@]+"${also[@]}"} \
-    $([ "$FE2E_DRIVER" = workspace ] && echo "--edge-addr $(edge_ip "$s")") $more
-  if [ "$FE2E_CORE" = role ]; then core_role_overlay "$s" "$d/clone"; fi
+  overlay_declare "$s" "$d/clone"
+  # Each edge with the host firewall baseline on (lib/hostfw.sh).
+  edge_fw_declare "$s" "$d/clone"
   git -C "$d/clone" add -A
   git -C "$d/clone" commit -q -m "$s: this sovereign's declarations for the peering"
   git clone -q --bare "$d/clone" "$d/origin.git"
@@ -470,6 +498,14 @@ solo_edge_args() { # $1 sovereign: docker run arguments of its edge host
 core_ca() { # $1 sovereign: the trust roots its core router loads
   if [ "$FE2E_CORE" = role ]; then echo "/etc/$1-zenoh/tls/ca-root-cert.pem"; else echo /etc/goat-core/ca.pem; fi
 }
+# The core router's configuration file as the router container sees it, which preflight's core
+# receive stores check reads with `docker exec <router> cat` (FED_CORE_CONFIG_PATH). The role's
+# container mounts it at /etc/zenoh/config.json5, preflight's default; the hand-run router reads
+# /etc/goat-core/config.json5, so without this the check read SKIP with GB-137 on every
+# hand-core scenario. $1 sovereign (unused: the path is the same for each).
+core_config() {
+  if [ "$FE2E_CORE" = role ]; then echo /etc/zenoh/config.json5; else echo /etc/goat-core/config.json5; fi
+}
 
 # The deployment's declarations for its core router, in its own repository: one inventory
 # group naming the core host, and the role's values. The image is the digest-pinned one
@@ -611,6 +647,8 @@ TOML
 # ONE invocation shape per avenue. The environment is what an operator's would be; the
 # only thing specific to a hermetic host is GOAT_AWS_MODE=none, the mode ADR 1204
 # declares for a deploy needing no cloud credential.
+# The environment must not depend on from/to: units/rotation.sh copies this function
+# (make_drive_rotate) with only the goatbuilder command line swapped.
 drive() { # $1 sovereign, $2 them, $3 avenue, $4 from, $5 to
   local s="$1" them="$2" avenue="$3" from="$4" to="$5" h; h="$(drv_host "$1")"
   local env=(
@@ -620,6 +658,7 @@ drive() { # $1 sovereign, $2 them, $3 avenue, $4 from, $5 to
     -e "FED_CA_CERT=/etc/fed-e2e/ca.pem" -e "FED_CA_KEY=/etc/fed-e2e/ca-key.pem"
     -e "FED_CORE_CN=core-$s" -e "FED_CORE_SAN=$(core_ip "$s")"
     -e "FED_ROUTER_DOCKER_HOST=ssh://goat@$(core_ip "$s")"
+    -e "FED_CORE_CONFIG_PATH=$(core_config "$s")"
     -e GOAT_AWS_MODE=none -e GOAT_BIN=/usr/local/bin/goat -e HOME=/root -e GOAT_ANSIBLE_TRUNK_REMOTE=origin
     # The directory on the boundary network (start_directory), trusted through its TLS
     # front's local CA.
@@ -819,7 +858,7 @@ accept_as() { # $1 sovereign, $2 them, $3 avenue
 export_helpers() {
   export -f drive host_exec other party_pos octet core_ip edge_ip boundary_ip die partners pidx iface wgport \
     spire_out rp_metrics probe_port ctx_of pair_subnet nodir percp partner_list accept_as probe_zid td round_trip round_trip_eventually \
-    core_deploy core_ca drv_host ops_ip link_state
+    core_deploy core_ca core_config drv_host ops_ip link_state
   for _p in $PARTIES; do export "P_$_p"; done
   export NODIR PERCP WORK GB REPO HERE SRC RECORD DIRECTORY_IP FE2E_DRIVER
 }
@@ -868,9 +907,13 @@ side_avenue() { if [ "$1" != "$2" ] && [ -n "${4:-}" ]; then echo "$4"; else ech
 
 # One peering, phases 1-14 from both sides. $1 scenario, $2 the side that listens and goes
 # first, $3 the other side, $4 avenue, [$5 the other side's avenue, default $4].
-peer_up() {
-  local n="$1" first="$2" second="$3" avenue="$4" avenue2="${5:-}" s them i
-  i="$(iface "$first" "$second")"
+peer_up() { peer_agree "$@"; peer_finish "$@"; }
+
+# peer_up's first half: phases 1-10 from both sides, up to one agreement each side holds and
+# the review. A unit that needs two peerings agreed before either is admitted (a shared edge,
+# where admitting one checks the other's agreement) calls the halves itself. Same arguments.
+peer_agree() {
+  local n="$1" first="$2" second="$3" avenue="$4" avenue2="${5:-}" s them
   prepare_edge "$first" "$second" true
   prepare_edge "$second" "$first" false
   local want5="exchange through the directory"; nodir "$first" "$second" && want5="exchange packages by hand"
@@ -890,6 +933,12 @@ peer_up() {
   rec "s$n-$first-$second-both-sides-hold-one-agreement" -- bash -c \
     "a=\$(docker exec $(drv_host "$first") sha256sum /var/lib/goat-federation/$second/agreement.json | cut -d' ' -f1); b=\$(docker exec $(drv_host "$second") sha256sum /var/lib/goat-federation/$first/agreement.json | cut -d' ' -f1); echo \"\$a \$b\"; [ -n \"\$a\" ] && [ \"\$a\" = \"\$b\" ]"
   rec "s$n-$first-$second-the-agreement-selected-wireguard" --expect-in '"kind":"wireguard"' -- docker exec "$(drv_host "$first")" cat "/var/lib/goat-federation/$second/agreement.json"
+}
+
+# peer_up's second half: each side's review and admission, phases 11-14 and acceptance.
+peer_finish() {
+  local n="$1" first="$2" second="$3" avenue="$4" avenue2="${5:-}" s them i
+  i="$(iface "$first" "$second")"
   review_and_admit "$first" "$second" "$n"
   review_and_admit "$second" "$first" "$n"
 

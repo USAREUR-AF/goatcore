@@ -50,6 +50,19 @@
           topology={{ inter_site_spock_topology | default('none') }}
           peers={{ inter_site_spock_peers | default([]) | join(',') or '(none)' }}
 
+    - name: Refuse Spock subscriptions with forward_origins set (GB-351)
+      # A subscription with forward_origins set in a mesh replicates in a loop.
+      # Reads every subscription here and at each peer, and installs the timer
+      # behind the SpockSubscriptionForwardOriginsSet alert.
+      ansible.builtin.include_role:
+        name: spock-forward-origins-check
+      vars:
+        spock_forward_origins_watch: true
+      when:
+        - participates_in_spock | default(false) | bool
+        - (inter_site_spock_topology | default('none')) != 'none'
+        - (router_role | default('A')) == 'A'
+
     - name: Apply spock-mesh-peering role
       # include_role, not import_role — same reason Phase 7B uses it: with
       # import_role the gate propagates to every task, the role's short-circuit
@@ -69,6 +82,16 @@
   gather_facts: false
   become: true
   tasks:
+    - name: Refuse Spock subscriptions with forward_origins set (GB-351)
+      # A subscription with forward_origins set in a mesh replicates in a loop.
+      ansible.builtin.include_role:
+        name: spock-forward-origins-check
+      when:
+        - participates_in_spock | default(false) | bool
+        - (inter_site_spock_topology | default('none')) != 'none'
+        - ory_spock_enabled | default(false) | bool
+        - (router_role | default('A')) == 'A'
+
     - name: Apply ory-narrow-repset role
       ansible.builtin.include_role:
         name: ory-narrow-repset

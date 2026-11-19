@@ -19,7 +19,7 @@ IMAGE="${IMAGE:?set IMAGE to a postgres-spock image}"
 C="${UNIT_CONTAINER:-hub-authority-unit-$$}"
 GUARD="${GUARD_SQL:-$REPO/ops/postgres/spock/hub-authority/kratos.sql}"
 
-cleanup() { docker rm -f "$C" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -fv "$C" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 cleanup
 

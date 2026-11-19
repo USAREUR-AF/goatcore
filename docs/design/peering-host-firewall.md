@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built, opt-in, off by default.** Role `roles/goat-host-firewall`, included by `ops/ansible/peering-wg.yml` and `peering-edge.yml` (profile edge, phase 11) and `peering-republisher.yml` (profile core, phase 12) when `goat_host_firewall_baseline` is true. Renderer `roles/goat-host-firewall/files/goat-host-firewall-render.py`. **Measured** in network namespaces (`tests/netns-behavior.sh`) and over SSH in containers (`ops/ci/test-host-firewall-role.sh`). Not yet run on two real environments. The planner's report of the ruleset (§7): not built in this branch; the planner records the render command as its plan stage 6.4 |
+| Status | **Built, opt-in, off by default.** Role `roles/goat-host-firewall`, included by `ops/ansible/peering-wg.yml` and `peering-edge.yml` (profile edge, phase 11) and `peering-republisher.yml` (profile core, phase 12) when `goat_host_firewall_baseline` is true. Renderer `roles/goat-host-firewall/files/goat-host-firewall-render.py`. **Measured** in network namespaces (`tests/netns-behavior.sh`) and over SSH in containers (`ops/ci/test-host-firewall-role.sh`). Not yet run on two real environments. The back-out removes a peering's entry and, with no peering left, unloads the baseline (§3, "Taking a peering out"): built, unit-tested, not yet measured. The planner's report of the ruleset (§7): not built in this branch; the planner records the render command as its plan stage 6.4 |
 | Decision | [ADR 1219](../adr/1219-peering-edge-on-the-mesh-reaches-only-the-core-router.md) (what the edge may reach on the mesh), [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md) (the edge and its tunnel), [ADR 1218](../adr/1218-peering-forwarder-when-neither-edge-accepts-inbound.md) (the forwarder carrier) |
 | Companions | [`peering-forwarder.md`](peering-forwarder.md), [`goatbuilder.md`](goatbuilder.md) §"Founders, joiners, host-site nodes and sovereign peering", `roles/goat-peering-wg`, `roles/goat-peering-edge` |
 | Audience | Operators of a peering, and whoever accredits the edge and core hosts |
 
-Status: WIP — gate: the port-scan scenario (§8) passes with the baseline on, and with one tightening override, from the partner side and the mesh side on two environments, and the three-party case still passes with it on.
+Not measured: the port-scan scenario (§8) with the baseline on, and with one tightening override, from the partner side and the mesh side on two environments, and the three-party case with it on. The federation test environment's scenarios `node-firewall-profile` and `node-firewall-three-party` (unit `ops/federation-e2e/units/nodesec.sh`) are built, and no run of them is recorded.
 
 ## 1. What it is
 
@@ -93,8 +93,30 @@ while any of them has no stored entry; the refused run first checks its own entr
 (`--peering-only`, which leaves out override entries naming another peering's rules) and stores
 it, creating `/etc/goat-host-firewall` (0700) on a fresh host. So switching
 the baseline on for an edge that already carries several peerings means running each peering's
-play once, and the last of those runs loads the ruleset for all of them. Taking a peering out has
-to remove its file as well, or its rules stay: not built.
+play once, and the last of those runs loads the ruleset for all of them.
+
+**Taking a peering out** (`peering-backout.yml`, the edge's last step,
+`roles/goat-host-firewall/tasks/absent.yml`) removes its entry and no other: the entry whose file
+is named by the peering's tunnel interface (WireGuard) or link (IPsec) and whose own `name` says
+the same. An entry under that file name that names another peering is reported `not-ours`, kept,
+and the back-out refuses. With another peering's entry left, the ruleset is loaded again through
+the role itself (its lockout check and timed rollback), so it admits exactly the peerings that
+stay. With none left, the host is no longer a peering edge: the baseline is unloaded
+(`systemctl disable --now goat-host-firewall`, whose stop removes the table), its unit file and
+`/etc/goat-host-firewall` are removed, and the host is as it was before its first peering. An edge
+ruleset cannot be loaded with no peering (the renderer and the role refuse it, GB-210), and what
+an edge requires is checked by the standup plays, which the back-out is not; the switch in
+group_vars is left as it is, so the next peering's run applies the baseline again. When the
+reload or the unload fails, the entry is put back as it was, so the stored entries match the
+ruleset the host carries and the back-out can run again. A pending rollback of an earlier run
+refuses (GB-214) before anything changes. A survey (`--dry-run`) only reports the rows. Built,
+unit-tested by running the play with stand-in tools and a temporary directory
+(`ops/ansible/tests/peering-backout/test_peering_backout.py`, `EdgeFirewallEntry`). Measured
+for the last peering on an edge (the unload) in the federation test environment: scenario
+`back-out-to-before`, run `12c522afbd8c-20261115T074028-2401953` on main 12c522af, passed 58 of 58
+checks, its edge check `edge-as-before` included: after the back-out the edge host equals its
+snapshot from before the first phase, which the baseline's table and unit were not part of. The
+reload, with another peering left on the edge, is not yet measured.
 
 **Services sharing the host.** A core router host often runs more (a management server, a
 portal). Before loading, the role reads the host's listening sockets (`ss -Hlntup`) and refuses
@@ -218,4 +240,4 @@ records it as its plan stage 6.4, and that call is not built in this branch.
 | `roles/goat-host-firewall/tests/test_play_vars.py` | the core play puts `spire-bundle` only on the SPIRE server host and never sources it from the edge's inventory address | measured |
 | `roles/goat-host-firewall/tests/netns-behavior.sh` | the rendered rulesets loaded into throwaway network namespaces and scanned from the management source, an outsider, the partner endpoint, the tunnel and the mesh; a tightening override; a loosening through a published (DNAT) port | measured |
 | `ops/ci/test-host-firewall-role.sh` | the role over SSH into a systemd container: converge, second run changes nothing, check mode loads nothing, scans, each refusal (GB-210..215) leaves the loaded table unchanged, tightening and loosening, the boot unit running the host's own `nft`, a non-bridge link named `br-*` refused, a confirm timeout that does not fit twice before the rollback refused, a password-managed host loading and confirming with multiplexing off; from a host with no `/etc/goat-host-firewall`, a peering the host carries without an entry refused while the refused run stores its own (even with an override naming the other peering), the other peering's run then loading both; the rollback timer restoring SSH after a cutting ruleset armed by the same commands the role runs; the switch turned off refused while the baseline is loaded. The role's own failed-confirm path is not exercised | measured |
-| port-scan scenario in the federation test environment | from the partner side and the mesh side, the edge and core answer on exactly the declared ports; baseline and one tightening override; the three-party case with the baseline on | requested, not run |
+| port-scan scenario in the federation test environment | from the partner side and the mesh side, the edge and core answer on exactly the declared ports; baseline and one tightening override; the three-party case with the baseline on | built (scenarios `node-firewall-profile` and `node-firewall-three-party`, unit `ops/federation-e2e/units/nodesec.sh`), not run |

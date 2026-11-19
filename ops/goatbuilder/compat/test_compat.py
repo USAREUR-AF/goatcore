@@ -17,6 +17,7 @@ Needs PyYAML (pip install pyyaml).
 from __future__ import annotations
 
 import copy
+import datetime
 import importlib.util
 import json
 import re
@@ -155,6 +156,275 @@ class A3CommandSurface(unittest.TestCase):
     def test_a_deprecation_entry_without_its_replacement_is_refused(self):
         deps = [{"command": "goatbuilder deploy", "flag": "--env", "deprecated_in": "goatbuilder/v0.6.0"}]
         self.assertTrue(compat.deprecation_problems(deps))
+
+
+class A1DeprecationPeriod(unittest.TestCase):
+    """From 1.0, an entry excuses a removal only after its period (ADR 1228,
+    "The deprecation period"): a major release, two later minor releases (of
+    any major) and 90 days from the release that first warned. The release that
+    first warned is the one whose shipped deprecations.yaml names the item: a
+    binary of it printed the warning."""
+
+    ENV = {"command": "goatbuilder deploy", "flag": "--env", "replacement": "--environment", "deprecated_in": "goatbuilder/v1.2.0"}
+    TAGS = {
+        "goatbuilder/v1.2.0": datetime.date(2027, 1, 10),
+        "goatbuilder/v1.3.0": datetime.date(2027, 1, 20),
+        "goatbuilder/v1.4.0": datetime.date(2027, 2, 1),
+    }
+
+    def removed(self):
+        new = surface()
+        del new["goatbuilder deploy"]["flags"]["--env"]
+        return new
+
+    SHIPPED = {"goatbuilder/v1.2.0": [ENV], "goatbuilder/v1.3.0": [ENV], "goatbuilder/v1.4.0": [ENV]}
+
+    def problems(self, base_release="goatbuilder/v1.4.0", version="2.0.0", deps=None, tags=None, today=datetime.date(2027, 4, 10), shipped=None, base_version="1.4.0"):
+        return compat.period_problems(
+            surface(), self.removed(), [self.ENV] if deps is None else deps,
+            base_release, version, self.TAGS if tags is None else tags, today,
+            self.SHIPPED if shipped is None else shipped, base_version,
+        )
+
+    def test_a_removal_lands_only_in_the_pull_request_that_sets_the_major_version(self):
+        """The base branch already at 2.0.0 means the version pull request has
+        merged; its tag goes on that merge, so a removal merged after it ships
+        in 2.1.0, a minor release. Only the pull request that moves the
+        version from 1.x to 2.0.0 may carry it."""
+        self.assertEqual(self.problems(base_version="1.4.0"), [])
+        p = self.problems(base_version="2.0.0")
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("the base branch is already at 2.0.0", p[0])
+        self.assertIn("the pull request that sets the version to 2.0.0", p[0])
+
+    def test_a_base_version_that_cannot_be_read_is_refused(self):
+        p = self.problems(base_version="")
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("cannot read the base branch's version", p[0])
+
+    def test_a_backdated_entry_is_refused(self):
+        """An entry that names a release whose shipped list did not carry it: no
+        binary of that release warned, so its period has not begun."""
+        p = self.problems(shipped={"goatbuilder/v1.2.0": [], "goatbuilder/v1.3.0": [], "goatbuilder/v1.4.0": []})
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("goatbuilder deploy --env", p[0])
+        self.assertIn("goatbuilder/v1.2.0", p[0])
+        self.assertIn("did not name it", p[0])
+
+    def test_an_entry_present_in_the_list_its_release_shipped_passes(self):
+        other = {"command": "goatbuilder deploy", "flag": "--dry-run", "replacement": "--plan", "deprecated_in": "goatbuilder/v1.2.0"}
+        self.assertEqual(self.problems(shipped={"goatbuilder/v1.2.0": [other, dict(self.ENV, replacement="--environment (reworded later)")]}), [])
+
+    def test_a_release_whose_shipped_list_cannot_be_read_is_refused(self):
+        p = self.problems(shipped={})
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("goatbuilder/v1.2.0:ops/goatbuilder/compat/deprecations.yaml", p[0])
+
+    def test_later_minor_releases_of_a_later_major_count(self):
+        """Deprecated in the last minor of a major: the minors of the next major
+        count, and a x.0.0 release is not a minor release."""
+        env = dict(self.ENV, deprecated_in="goatbuilder/v1.9.0")
+        tags = {"goatbuilder/v1.9.0": datetime.date(2027, 1, 10), "goatbuilder/v2.0.0": datetime.date(2027, 2, 1),
+                "goatbuilder/v2.1.0": datetime.date(2027, 3, 1), "goatbuilder/v2.2.0": datetime.date(2027, 4, 1)}
+        shipped = {"goatbuilder/v1.9.0": [env]}
+        args = dict(base_release="goatbuilder/v2.2.0", version="3.0.0", deps=[env], tags=tags, today=datetime.date(2027, 4, 10), shipped=shipped)
+        self.assertEqual(self.problems(**args), [])
+        tags_one = {k: v for k, v in tags.items() if k != "goatbuilder/v2.2.0"}
+        p = self.problems(**dict(args, base_release="goatbuilder/v2.1.0", tags=tags_one))
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("1 minor release(s)", p[0])
+        self.assertIn("goatbuilder/v2.1.0", p[0])
+
+    def test_a_minor_release_tagged_after_the_build_s_version_does_not_count(self):
+        tags = dict(self.TAGS)
+        del tags["goatbuilder/v1.4.0"]
+        tags["goatbuilder/v2.1.0"] = datetime.date(2027, 3, 1)
+        p = self.problems(base_release="goatbuilder/v1.3.0", tags=tags)
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("1 minor release(s)", p[0])
+
+    def test_a_build_whose_version_is_already_tagged_is_past_its_release(self):
+        """The version comes from crates/goatbuilder/Cargo.toml, so main carries
+        X.0.0 from its version pull request until the next one. Once X.0.0 is
+        tagged, a removal on main would ship in a later minor: refused."""
+        tags = dict(self.TAGS, **{"goatbuilder/v2.0.0": datetime.date(2027, 4, 9)})
+        p = self.problems(tags=tags)
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("goatbuilder/v2.0.0 is already tagged", p[0])
+
+    def test_a_removal_after_the_whole_period_passes(self):
+        self.assertEqual(self.problems(), [])
+
+    def test_on_a_0_x_baseline_an_entry_excuses_a_removal_at_once(self):
+        self.assertEqual(self.problems(base_release="goatbuilder/v0.7.0", version="0.8.0", tags={}), [])
+
+    def test_a_removal_before_the_next_major_is_refused(self):
+        p = self.problems(version="1.5.0")
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("goatbuilder deploy --env", p[0])
+        self.assertIn("2.0.0", p[0])
+
+    def test_an_unreadable_build_version_is_the_same_major(self):
+        # One reading for both checks (goatbuilder_version, _major): a version that is
+        # not <x.y.z>, or none at all, never counts as a later major.
+        for version in ("", "x.y.z", "2", "2.0"):
+            p = self.problems(version=version)
+            self.assertEqual(len(p), 1, (version, p))
+            self.assertIn("major release", p[0])
+
+    def test_an_unreadable_build_version_is_named_as_such(self):
+        p = self.problems(version="")
+        self.assertIn("a build of an unreadable version", p[0])
+
+    def test_one_helper_reads_the_build_version(self):
+        self.assertFalse(hasattr(compat, "_build_version"))
+
+    def test_a_checkout_without_the_crate_reads_as_no_version(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as repo:
+            self.assertEqual(compat.goatbuilder_version(repo), "")
+
+    def test_a_removal_with_fewer_than_two_later_minor_releases_is_refused(self):
+        tags = {k: v for k, v in self.TAGS.items() if k != "goatbuilder/v1.4.0"}
+        p = self.problems(tags=tags)
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("goatbuilder deploy --env", p[0])
+        self.assertIn("two minor releases", p[0])
+        self.assertIn("goatbuilder/v1.3.0", p[0])
+
+    def test_a_removal_inside_the_90_days_names_the_date_compared_and_the_end(self):
+        p = self.problems(today=datetime.date(2027, 4, 9))
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("goatbuilder deploy --env", p[0])
+        self.assertIn("compared against 2027-04-09 (UTC)", p[0])
+        self.assertIn("the 90 days from goatbuilder/v1.2.0 (tagged 2027-01-10) end on 2027-04-10", p[0])
+
+    def test_an_entry_whose_release_is_not_tagged_is_refused(self):
+        tags = {k: v for k, v in self.TAGS.items() if k != "goatbuilder/v1.2.0"}
+        p = self.problems(tags=tags)
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("no tag goatbuilder/v1.2.0", p[0])
+
+    def test_an_entry_whose_item_is_still_there_is_not_held_to_the_period(self):
+        new = surface()
+        self.assertEqual(compat.period_problems(surface(), new, [self.ENV], "goatbuilder/v1.2.0", "1.3.0", {}, datetime.date(2027, 1, 11), {}, "1.2.0"), [])
+
+    def test_a_removed_command_and_a_removed_value_are_held_to_it_too(self):
+        new = surface()
+        del new["goatbuilder promote graduate"]
+        cmd = {"command": "goatbuilder promote graduate", "replacement": "goatbuilder promote hop", "deprecated_in": "goatbuilder/v1.2.0"}
+        p = compat.period_problems(surface(), new, [cmd], "goatbuilder/v1.4.0", "1.5.0", self.TAGS, datetime.date(2027, 4, 10), {"goatbuilder/v1.2.0": [cmd]}, "1.4.0")
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("goatbuilder promote graduate", p[0])
+        base = surface()
+        base["goatbuilder deploy"]["values"] = {"--env": ["door", "hall"]}
+        new = surface()
+        new["goatbuilder deploy"]["values"] = {"--env": ["hall"]}
+        val = {"command": "goatbuilder deploy", "flag": "--env", "value": "door", "replacement": "--env hall", "deprecated_in": "goatbuilder/v1.2.0"}
+        p = compat.period_problems(base, new, [val], "goatbuilder/v1.4.0", "2.0.0", self.TAGS, datetime.date(2027, 4, 9), {"goatbuilder/v1.2.0": [val]}, "1.4.0")
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("goatbuilder deploy --env door", p[0])
+
+    def test_the_check_reads_the_build_version_and_the_tag_dates_from_the_checkout(self):
+        import subprocess
+        import tempfile
+
+        class Base:
+            release = "goatbuilder/v1.4.0"
+
+            def surface(self):
+                return surface()
+
+        with tempfile.TemporaryDirectory() as repo:
+            def git(*a, when="2027-01-10T12:00:00+00:00"):
+                env = dict(os.environ, GIT_COMMITTER_DATE=when, GIT_AUTHOR_DATE=when,
+                           GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+                subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.org",
+                                "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *a],
+                               check=True, capture_output=True, env=env)
+            os.makedirs(os.path.join(repo, "crates", "goatbuilder"))
+            with open(os.path.join(repo, "crates", "goatbuilder", "Cargo.toml"), "w") as f:
+                f.write('[package]\nname = "goatbuilder"\nversion = "1.5.0"\n')
+            git("init", "-q")
+            git("add", ".")
+            git("commit", "-q", "-m", "x")
+            for tag, when in (("v1.2.0", "2027-01-10T23:30:00-05:00"), ("v1.3.0", "2027-01-20T12:00:00+00:00"), ("v1.4.0", "2027-02-01T12:00:00+00:00")):
+                git("tag", "-a", "-m", tag, f"goatbuilder/{tag}", when=when)
+            self.assertEqual(compat.release_tag_dates(repo)["goatbuilder/v1.2.0"], datetime.date(2027, 1, 11), "the date in UTC")
+            p = compat.period_rows(repo, Base(), self.removed(), [self.ENV], today=datetime.date(2027, 5, 1))
+            self.assertEqual(len(p), 1, p)
+            self.assertIn("removed in 1.5.0", p[0])
+
+    def _tagged_repo(self, repo, version, listed_at_v120, base="1.4.0"):
+        """A checkout at `version` with the three releases tagged, and v1.2.0's
+        deprecations.yaml naming ENV or not."""
+        import subprocess
+
+        def git(*a, when="2027-01-10T12:00:00+00:00"):
+            env = dict(os.environ, GIT_COMMITTER_DATE=when, GIT_AUTHOR_DATE=when,
+                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+            subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.org",
+                            "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *a],
+                           check=True, capture_output=True, env=env)
+
+        def write(rel, text):
+            os.makedirs(os.path.dirname(os.path.join(repo, rel)), exist_ok=True)
+            with open(os.path.join(repo, rel), "w") as f:
+                f.write(text)
+
+        listed = "deprecations:\n  - {command: goatbuilder deploy, flag: --env, replacement: --environment, deprecated_in: goatbuilder/v1.2.0}\n"
+        git("init", "-q")
+        write("ops/goatbuilder/compat/deprecations.yaml", listed if listed_at_v120 else "deprecations: []\n")
+        write("crates/goatbuilder/Cargo.toml", '[package]\nname = "goatbuilder"\nversion = "1.2.0"\n')
+        git("add", ".")
+        git("commit", "-q", "-m", "1.2.0")
+        git("tag", "-a", "-m", "v1.2.0", "goatbuilder/v1.2.0")
+        write("ops/goatbuilder/compat/deprecations.yaml", listed)
+        git("commit", "-q", "--allow-empty", "-am", "list", when="2027-01-15T12:00:00+00:00")
+        for tag, when in (("v1.3.0", "2027-01-20T12:00:00+00:00"), ("v1.4.0", "2027-02-01T12:00:00+00:00")):
+            git("tag", "-a", "-m", tag, f"goatbuilder/{tag}", when=when)
+        # As CI checks a pull request out: the merge of the pull request's commit
+        # into its base, so the base is the merge's first parent.
+        write("crates/goatbuilder/Cargo.toml", f'[package]\nname = "goatbuilder"\nversion = "{base}"\n')
+        git("commit", "-q", "--allow-empty", "-am", f"base {base}", when="2027-04-19T12:00:00+00:00")
+        git("branch", "-q", "base")
+        git("checkout", "-q", "-b", "pr")
+        write("crates/goatbuilder/Cargo.toml", f'[package]\nname = "goatbuilder"\nversion = "{version}"\n')
+        git("commit", "-q", "--allow-empty", "-am", version, when="2027-04-20T12:00:00+00:00")
+        git("checkout", "-q", "base")
+        git("merge", "-q", "--no-ff", "-m", "merge", "pr", when="2027-04-20T13:00:00+00:00")
+
+    def test_the_check_reads_the_list_each_release_shipped_from_its_tag(self):
+        import tempfile
+
+        class Base:
+            release = "goatbuilder/v1.4.0"
+
+            def surface(self):
+                return surface()
+
+        with tempfile.TemporaryDirectory() as repo:
+            self._tagged_repo(repo, "2.0.0", listed_at_v120=True)
+            self.assertEqual(compat.shipped_deprecations(repo, "goatbuilder/v1.2.0"), [self.ENV])
+            self.assertIsNone(compat.shipped_deprecations(repo, "goatbuilder/v9.9.9"))
+            self.assertEqual(compat.period_rows(repo, Base(), self.removed(), [self.ENV], today=datetime.date(2027, 5, 1)), [])
+        with tempfile.TemporaryDirectory() as repo:
+            self._tagged_repo(repo, "2.0.0", listed_at_v120=False)
+            p = compat.period_rows(repo, Base(), self.removed(), [self.ENV], today=datetime.date(2027, 5, 1))
+            self.assertEqual(len(p), 1, p)
+            self.assertIn("did not name it", p[0])
+        with tempfile.TemporaryDirectory() as repo:
+            self._tagged_repo(repo, "2.0.0", listed_at_v120=True, base="2.0.0")
+            self.assertEqual(compat.base_branch_version(repo), "2.0.0")
+            p = compat.period_rows(repo, Base(), self.removed(), [self.ENV], today=datetime.date(2027, 5, 1))
+            self.assertEqual(len(p), 1, p)
+            self.assertIn("the base branch is already at 2.0.0", p[0])
+
+    def test_tag_dates_are_read_from_the_annotated_tags(self):
+        tags = compat.release_tag_dates(REPO)
+        if "goatbuilder/v0.7.0" not in tags:
+            self.skipTest("this checkout has no goatbuilder release tags")
+        self.assertEqual(tags["goatbuilder/v0.7.0"], datetime.date(2026, 11, 14))
 
 
 HELP = """Print a shell completion script
@@ -415,6 +685,58 @@ class A4ExitCodes(unittest.TestCase):
     def test_every_kept_document_records_the_release_s_exit(self):
         for d in compat.Baseline(HERE).documents():
             self.assertEqual(compat.exit_problems(d), [], d)
+
+
+class A4ExitCodesFrozenFrom10(unittest.TestCase):
+    """From a 1.0 baseline a kept exit code is promised (ADR 1228): `exit_changed:`
+    moves it only in a later major release. Before 1.0 the reason is enough."""
+
+    MOVED = {"name": "validate-not-yaml", "exit": 1, "release_exit": 2, "exit_changed": "a config that is not YAML is GB-025"}
+
+    def problems(self, d, base="goatbuilder/v1.0.0", version="1.1.0"):
+        return compat.exit_problems(d, base, version)
+
+    def test_a_0x_baseline_still_takes_a_reason(self):
+        self.assertEqual(self.problems(self.MOVED, "goatbuilder/v0.7.0", "0.7.1"), [])
+
+    def test_a_1x_baseline_refuses_a_moved_exit_with_its_reason(self):
+        p = self.problems(self.MOVED)
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("validate-not-yaml", p[0])
+        self.assertIn("ADR 1228", p[0])
+        self.assertIn("major release", p[0])
+        self.assertIn("restore 2", p[0])
+
+    def test_a_1x_baseline_refuses_a_reason_left_on_an_unmoved_exit(self):
+        d = {"name": "d", "exit": 2, "release_exit": 2, "exit_changed": "left over"}
+        p = self.problems(d)
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("exit_changed", p[0])
+
+    def test_a_1x_baseline_passes_the_release_s_exit(self):
+        self.assertEqual(self.problems({"name": "d", "exit": 2, "release_exit": 2}), [])
+
+    def test_a_later_major_build_moves_an_exit_with_its_reason(self):
+        self.assertEqual(self.problems(self.MOVED, "goatbuilder/v1.4.0", "2.0.0"), [])
+
+    def test_a_later_major_build_still_needs_the_reason(self):
+        d = {"name": "d", "exit": 1, "release_exit": 2}
+        self.assertTrue(self.problems(d, "goatbuilder/v1.4.0", "2.0.0"))
+
+    def test_an_unreadable_build_version_is_the_same_major(self):
+        for version in ("", "x.y.z", None):
+            self.assertTrue(self.problems(self.MOVED, "goatbuilder/v1.0.0", version), version)
+
+    def test_an_unreadable_baseline_release_is_refused(self):
+        self.assertTrue(self.problems(self.MOVED, "goatbuilder/latest", "1.0.0"))
+
+    def test_the_message_names_no_date(self):
+        p = self.problems(self.MOVED)
+        self.assertNotRegex(p[0], r"\d{4}-\d{2}-\d{2}")
+
+    def test_the_build_version_is_the_crate_s(self):
+        v = compat.goatbuilder_version(os.path.join(HERE, "..", "..", ".."))
+        self.assertRegex(v, r"^\d+\.\d+\.\d+")
 
 
 class A4EveryVerbIsKept(unittest.TestCase):

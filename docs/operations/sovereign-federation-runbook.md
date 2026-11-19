@@ -340,9 +340,15 @@ deployment's own file, and refuses unless the combined result passed
 ([§7](../design/federation-acceptance.md#7-publishing-exchanging)).
 
 A sample the partner's earlier run left on your core is ignored, and the run says so, so its
-challenge is never echoed. It is told apart by the time each run stages beside its samples, which
-rests on both sides' clocks agreeing within `FED_SESSION_WAIT`: keep each host's clock
-synchronized (NTP).
+challenge is never echoed. It is told apart by the run stamp each run stages beside its samples
+(its challenge and start time in one value). A run that started more than twice
+`FED_SESSION_WAIT` before yours is an earlier run's; a partner's current run is kept as long as
+both sides start within `FED_SESSION_WAIT` of each other and their clocks agree within
+`FED_SESSION_WAIT` ([§6.3](../design/federation-acceptance.md#63-phase-14-on-a-derived-session)
+states the exact bound). Keep each host's clock synchronized (NTP). When only an earlier run's
+sample is there, the delivery row is BLOCKED and says so: run phase 14 again on both sides. The
+same holds when two of the partner's runs left stamps on different sets. A partner on a runner
+that stages no stamp is read once a whole `FED_SESSION_WAIT` has passed with no stamp from it.
 
 | Check | Required evidence |
 |---|---|
@@ -602,17 +608,20 @@ file, from the deployment's age-encrypted key (`FED_CA_KEY_AGE` with
 `FED_AGE_IDENTITY`), which the script opens for this run only when the
 deployment opts in (`FED_CA_KEY_FROM_AGE=1`). Rotation
 replaces every requested pair with a new key; keep that action separate from an
-ordinary phase rerun. Previous material is retained in a private `.previous-*`
-directory under the output directory. Protect and retire it through the local key
-retention policy. This command prepares files; it does not deploy them or restart
-services. Plan and review the corresponding deployment separately.
+ordinary phase rerun. `goatbuilder federate rotate <partner> leaves` runs it as
+phase 8 and carries on through phases 9 to 14. The replaced pairs are kept, at mode
+0600, only while the rotation is under way, and removed when it commits. This
+command prepares files; it does not deploy them or restart services. Plan and
+review the corresponding deployment separately.
 
 Operations on one output directory are locked. All candidates are staged and
-validated before installation, with rollback on ordinary installation errors.
-Installation across several files is not crash-atomic: after abrupt interruption,
-an outstanding `.rotation-pending` marker blocks further operations. Restore or
-complete the reviewed set, verify it, and only then remove the marker. Incomplete
-or mismatched pairs are also refused. See [Federation certificate lifecycle](../design/federation-certificate-lifecycle.md).
+validated before installation. After an abrupt interruption, run the same command
+again: a rotation that was committed (`<out>/.rotation-pending` is a directory) is
+finished from the pairs it had minted, or rolled back to the previous pairs if they
+do not validate, and nothing more is minted. A `.rotation-pending` file left by an
+earlier release still blocks further operations: restore or complete the reviewed
+set from its `.previous-*` backup, verify it, and only then remove the marker.
+Incomplete or mismatched pairs are also refused. See [Federation certificate lifecycle](../design/federation-certificate-lifecycle.md).
 
 ### The republisher, on your core host
 

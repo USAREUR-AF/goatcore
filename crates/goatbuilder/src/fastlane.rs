@@ -23,7 +23,7 @@ use crate::runner::Cmd;
 use std::path::Path;
 use std::process::Stdio;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::pins::read_yaml;
 use crate::{pins, promote, push};
@@ -62,7 +62,7 @@ pub fn not_a_pin_revert(comp: &serde_json::Value) -> Option<String> {
 }
 
 fn sh(cmd: &str, args: &[&str]) -> Result<String> {
-    let out = Cmd::new(cmd).args(args).output().with_context(|| cmd.to_string())?;
+    let out = Cmd::new(cmd).args(args).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start {cmd}: {e}")))?;
     if !out.status.success() {
         return Err(anyhow::Error::from(goat_errors::coded("GB-258", String::from_utf8_lossy(&out.stderr).trim().to_string())));
     }
@@ -337,7 +337,7 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     let br = format!("chore/fastlane-{}-{tag}", o.component);
     let _ = sh("git", &["-C", &repo_s, "checkout", "-q", "-B", &br]);
     let body = std::env::temp_dir().join(format!("goatbuilder-fastlane-body-{}", std::process::id()));
-    std::fs::write(&body, format!("chore(pins): fastlane {} to {tag} (ADR 1127)\n\nFASTLANE, ack {}. {}\nRollback: pin revert to {current_fleet}. Backfill owed until this ref graduates normally.\n", o.component, o.ack, o.reason))?;
+    std::fs::write(&body, format!("chore(pins): fastlane {} to {tag} (ADR 1127)\n\nFASTLANE, ack {}. {}\nRollback: pin revert to {current_fleet}. Backfill owed until this ref graduates normally.\n", o.component, o.ack, o.reason)).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&body)).display())))?;
     let landed = Cmd::new(repo.join("ops/scripts/pr-land.sh"))
         .args(["--worktree", &repo_s, "--branch", &br, "--title", &format!("chore(pins): fastlane {} to {tag} (ADR 1127)", o.component), "--body-file", body.to_str().unwrap_or(""), "--paths", "ops/pins/fleet-pins.yaml", "ops/ansible/group_vars", "ops/consistency/intent", "ops/release/records"])
         .stdout(Stdio::null())
@@ -437,6 +437,55 @@ mod tests {
         assert_eq!(r.checks[0].detail, "==> component no-such");
         let e = r.checks.last().unwrap().detail.clone();
         assert!(e.starts_with("REFUSE — unknown component; known: ["), "{e}");
+    }
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    /// Every step line fastlane prints, by the format string it prints with,
+    /// and the numbered step of this file's comments (and of the phase
+    /// catalog) it belongs to.
+    const STEP_LINES: &[(&str, u32)] = &[
+        ("component {}", 1),
+        ("graduation-set membership", 2),
+        ("resolving image digest", 3),
+        ("dry run — stopping before any mutation", 4),
+        ("moving the value of record", 5),
+        ("regenerating pins + intents", 5),
+        ("re-signing every goatnet intent whose body changed", 5),
+        ("recording the debt", 6),
+        ("abandoning records this fastlane superseded", 6),
+        ("gates that still apply", 7),
+        ("landing the pin", 7),
+        ("deploying to every goatnet the component belongs on", 8),
+        ("result", 8),
+        ("next", 8),
+    ];
+
+    /// The phase catalog describes fastlane's steps (gate row F4): the step
+    /// lines this file prints are exactly the ones above, so a new step fails
+    /// here until it has a number, and the catalog's fastlane entries are
+    /// exactly the numbers they make. Each entry's `runs` names only tools
+    /// fastlane starts.
+    #[test]
+    fn the_phase_catalog_describes_fastlanes_steps() {
+        let source = include_str!("fastlane.rs");
+        let printed = regex::Regex::new(r#"step\(checks,\s*&?(?:format!\()?"([^"]+)""#).unwrap();
+        let found: std::collections::BTreeSet<String> = printed.captures_iter(source).map(|c| c[1].to_string()).collect();
+        let listed: std::collections::BTreeSet<String> = STEP_LINES.iter().map(|(l, _)| l.to_string()).collect();
+        assert_eq!(found, listed, "the step lines fastlane.rs prints are the ones STEP_LINES numbers");
+        let numbers: std::collections::BTreeSet<String> = STEP_LINES.iter().map(|(_, n)| n.to_string()).collect();
+        let entries = goat_errors::phases::phases().of("fastlane");
+        let keys: std::collections::BTreeSet<String> = entries.iter().map(|e| e.phase.to_string()).collect();
+        assert_eq!(keys, numbers, "the catalog's fastlane entries are fastlane's numbered steps");
+        let code = [source, include_str!("push.rs"), include_str!("pins.rs"), include_str!("promote.rs")].concat();
+        for e in &entries {
+            for w in e.runs.split([',', ';', ' ']).filter(|w| w.contains('/')) {
+                let name = w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_' && c != '/');
+                let name = name.rsplit('/').next().unwrap_or(name);
+                assert!(code.contains(name), "fastlane step {}: `runs` names {w}, which fastlane does not start", e.phase);
+            }
+        }
     }
 }
 

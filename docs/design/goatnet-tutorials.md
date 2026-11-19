@@ -34,7 +34,7 @@ that is proven e2e will live in a hello galaxy repo".
 | Tutorial text | `docs/tutorials/` in this repository; served in the goatbuilder book at `docs.<site>/goatbuilder/`; cited from the gym's platform-operator lane | It teaches the tool this repository ships and versions with it |
 | The fixtures' shape and the rehearsal semantics | `goatbuilder standup --mock` (`crates/goatbuilder/src/standup.rs`) | The tool's own conformance surface |
 | The checks that keep the text true | `ops/tutorials/check.sh` and the `goatnet_from_scratch_*` tests | They gate this repository's pull requests |
-| The worked example | the Hello Galaxy series: `USAREUR-AF/hello-galaxy-goatenv` (`./run` rehearses the three tutorials against its checkpoints). This repository keeps the same directories at `ops/goatbuilder/fixtures/goatnet-from-scratch/` for its own checks; `ops/tutorials/sync-goatnet-from-scratch.sh` keeps the two equal | The series is where every runnable, end-to-end proven example lives; a reader clones one example without the whole platform |
+| The worked example | the Hello Galaxy series: `USAREUR-AF/hello-galaxy-goatenv` (`./run` rehearses the three tutorials against its checkpoints). This repository keeps the same directories at `ops/goatbuilder/fixtures/goatnet-from-scratch/` for its own checks; `ops/tutorials/sync-goatnet-from-scratch.sh` keeps the step directories equal (only the files this repository holds; the clone's own files are kept) and has the clone's `./run` re-record its checkpoints, which name the clone's own fixture paths | The series is where every runnable, end-to-end proven example lives; a reader clones one example without the whole platform |
 
 The worked example holds the goatnet's declaration (`goatbuilder.yaml`), its
 digest-pinned refs, the scripted converger, the records each step starts from,
@@ -91,7 +91,7 @@ F-424).
 |---|---|
 | Audience | A platform admin who has finished tutorial 2, with a counterparty ready to peer |
 | Prerequisites | A goatnet whose gate is green; an edge host in a `--edge-group`; the peering declared when `goatbuilder.yaml` keeps peerings; a peering directory both sides reach (`FED_DIRECTORY_URL`); a FIPS-mode fabric image on both edge routers |
-| Commands | `federate <peering> --env <env> --as <ours> --dry-run` then without `--dry-run`; it stops at phases 5 and 10 (the exchange through the peering directory with the key read-back, and the review of what was rendered) and resumes with `--from 6` and `--from 11`. Scripts: `peering-standup.sh <peering> --plan`, then without `--plan` |
+| Commands | `federate <peering> --env <env> --as <ours> --dry-run` then without `--dry-run`; at a terminal it asks at phases 5, 6 and 10 (the exchange through the peering directory with the key read-back, the agreement digest, and the review of what was rendered); without a terminal, or with `--no-confirm`, it stops at 5 and 10 and resumes with `--from 6` and `--from 11`. Scripts: `peering-standup.sh <peering> --plan`, then without `--plan` |
 | Checkpoints | (1) the rehearsal matches `checkpoints/03-boundary-node.txt` — the plan of all fourteen phases; (2) phase 14 acceptance green: a sample **carries** in the agreed direction, a write outside the agreed prefix is **refused** (live fire, not by reading config — F-177), and a nonce **round-trips** through the counterparty's own router |
 | Done | Checkpoint 2 on a live peering |
 | Undo | Cut the peering on your own edge host; the partner's certificate-authority file is the revocation instrument (`cross-sovereign-federation.md` §7) |

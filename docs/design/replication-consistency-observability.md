@@ -35,6 +35,8 @@ Each layer has independent failure modes. **An observability story that only wat
 
 Three classes — keep them disjoint, name them so operators know what changed:
 
+Every summary names its site. The mgmt host's Prometheus sets `site` as an external label ([`prometheus.yml`](../../ops/compose/mgmt-host/monitoring/prometheus.yml), `global.external_labels`), not on the series. A rule template's `$labels` does not hold external labels, so a summary names the site from the series' own `site` label when it has one, else from `$externalLabels.site`. Before this, every summary in the mgmt-host rules rendered an empty site on the mgmt host. Built; promtool renders one summary from `spock.yml` and one from `ntp.yml` both ways ([`alert-summaries-name-the-site.test.yml`](../../ops/compose/mgmt-host/monitoring/tests/alert-summaries-name-the-site.test.yml)).
+
 ### 3.1 Liveness (already covered)
 
 `PostgresDown`, `SignalServerDown` — exporter unscrape-able. Lives in [`spock.yml`](../../ops/compose/mgmt-host/monitoring/rules/spock.yml) `postgres.availability` group + [`signal-server.yml`](../../ops/compose/mgmt-host/monitoring/rules/signal-server.yml).
@@ -45,9 +47,9 @@ Three classes — keep them disjoint, name them so operators know what changed:
 |---|---|---|---|
 | `SpockSubscriptionLag` | warning | `spock_subscription_lag_seconds > 60` for 2m | shipped |
 | `SpockSlotInvalidated` | critical | `pg_replication_slot_wal_status_lost == 1` for 1m | shipped |
-| `SpockSlotWALNearLimit` | critical | retained_wal > 80% of `max_slot_wal_keep_size` for 5m | shipped |
-| `SpockConflictLogged` | warning | `increase(spock_resolutions_total[5m]) > 0` (was `spock_conflict_log_total`, a metric that never existed: F-574) | shipped, fixed by ADR 1193 |
-| `SpockApplyExceptionLogged` | warning | `increase(spock_exceptions_total[5m]) > 0` | ADR 1193 |
+| `SpockSlotWALNearLimit` | critical | `pg_replication_slot_retained_wal_bytes` > 80% of its own Postgres's `spock_config_max_slot_wal_keep_size_bytes` (the live cap, matched on `instance`) for 5m (was divided by `spock_max_slot_wal_keep_size_bytes`, a series the exporter never emitted, so it never fired) | shipped, fixed; measured by its promtool unit test (`monitoring/tests/spock-slot-wal-near-limit.test.yml`) |
+| `SpockConflictLogged` | warning | `increase(spock_resolutions_total[5m]) > 0`, one series per replicated database (`datname`) (was `spock_conflict_log_total`, a metric that never existed: F-574) | built: the mgmt host's postgres-exporter counts `spock.resolutions` in every database Spock replicates (the observability role's `pg_monitoring_spock_databases`: the Spock mesh's databases, and Ory's when Ory replicates). Until 2026-11-14 it read only the `postgres` database, which has no spock schema, so the metric was never exported there. Proven by `ops/postgres/spock/tests/exporter-every-database/run.sh` (a real conflict in kratos counted, CI `postgres-spock.yml`) and `ops/compose/goat-obs/prometheus/tests/spock-every-database.test.yml` (promtool) |
+| `SpockApplyExceptionLogged` | warning | `increase(spock_exceptions_total[5m]) > 0`, one series per replicated database (`datname`) | built, read in every replicated database as `SpockConflictLogged` is; its promtool case is in the same test file (ADR 1193) |
 | **`SpockSubscriptionNotReplicating`** | **critical** | `spock_subscription_replicating == 0` for 2m | **52A new** |
 | **`SpockSlotInactive`** | **critical** | `pg_replication_slot_active == 0` for 2m | **52A new** |
 | **`SpockSlotWALSenderLag`** | **warning** | per-subscriber WAL sender backlog > 100 MB for 5m | **52A new** |
@@ -72,7 +74,11 @@ Mode is **advisory-only** at v1: drift-watch *reports*, never *corrects*. Per [A
 
 ### 3.4 Federation health (signal-server)
 
-Already shipped in [`signal-server.yml`](../../ops/compose/mgmt-host/monitoring/rules/signal-server.yml) — `SignalServerForwardRPCErrors`, `SignalServerRelayMissSpike`, `SignalServerDown`. Two gaps closed by the tactical pack:
+Already shipped in [`signal-server.yml`](../../ops/compose/mgmt-host/monitoring/rules/signal-server.yml) — `SignalServerForwardRPCErrors`, `SignalServerRelayMissSpike`, `SignalServerDown`.
+
+The rate alerts (`SignalServerForwardRPCErrors`, `SignalServerRelayMissSpike`, `SignalServerOutboundFull`) judge each scraped signal server on its own. The mgmt host scrapes its own server and its peer site's ([`prometheus.yml`](../../ops/compose/mgmt-host/monitoring/prometheus.yml), jobs `signal-server` and `signal-server-peer`), and neither series carries `site`, which is an external label only. So they group by `(job, instance, node)`, plus `peer` for forward errors, and name the server's node and instance. Before, the alerts summed both scraped signal servers into one series. Built; promtool cases in [`signal-server-per-server.test.yml`](../../ops/compose/mgmt-host/monitoring/tests/signal-server-per-server.test.yml).
+
+Two gaps closed by the tactical pack:
 
 - **Forward RPC deadline** tightened in code from 5s → **200ms per peer with a 500ms total broadcast budget**, matching `ha-multi-site-validation.md` §5.5. Wave 3.4 probe prereq.
 - A peer-reachability *liveness* probe (separate from error-rate) folds into Block 38 chaos catalog — explicitly not in the tactical pack so we don't fork another framework.

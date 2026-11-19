@@ -16,31 +16,42 @@ environment overrides one.
 
 Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner>`, `status
 [<partner>]`. `allocate [<peering>]` writes a peering's values and files for review; `backout
-<partner>` backs one peering out and leaves the others as they were. `goatbuilder federate
-init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags
-and exit codes of `goat federate <verb>`.
+<partner>` backs one peering out and leaves the others as they were; `rotate <partner> <key>`
+replaces one key of a running peering. `goatbuilder federate init|lint|compose|diff|verify|apply`
+runs one of the six federation verbs in process, with the flags and exit codes of `goat federate
+<verb>`.
 
 Usage: goatbuilder federate [OPTIONS] <WITH> [PARTNER]
        goatbuilder federate <COMMAND>
 
 Commands:
-  init     Generate our half of a federation, read from the running system
-  lint     Check one package: is it well-formed, and does it agree with itself?
-  compose  Combine two packages into one agreement and print its digest
-  diff     Two digests disagree? Run this. It names the field
-  verify   Could we actually deliver this agreement? Dry-run it here
-  apply    Render the access rules and configuration this agreement implies
-  plan     The bounded plan of one peering before anything changes: versions, agreement digest,
-           rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's
-           readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
-  backout  Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation,
-           edge router, republisher, forwarder mapping and core admission, and leave every other
-           peering and the core as they were
-  import   A two-driver peering's import of an edge result, as a hand-off object names it: checked
-           against the edge driver's confirm code, placed under the working directory and journaled.
-           Built for phase 1; a later phase's import refuses with GB-267
-           (docs/design/federation-two-drivers.md)
-  help     Print this message or the help of the given subcommand(s)
+  init       Generate our half of a federation, read from the running system
+  lint       Check one package: is it well-formed, and does it agree with itself?
+  compose    Combine two packages into one agreement and print its digest
+  diff       Two digests disagree? Run this. It names the field
+  verify     Could we actually deliver this agreement? Dry-run it here
+  apply      Render the access rules and configuration this agreement implies
+  plan       The bounded plan of one peering before anything changes: versions, agreement digest,
+             rendered-configuration hashes, owned resources, restarts, acceptance policy and phase
+             1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no
+             host
+  backout    Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation,
+             edge router, republisher, forwarder mapping and core admission, and leave every other
+             peering and the core as they were
+  directory  Read the peering directory (saltlick): `ls`, `show <party>`, `check <party> [--for
+             <counterparty>]`. Reads only. `check` says, for each file a peering reads, whether it
+             is there, not uploaded by the party, or a route the directory's release does not serve.
+             URL from --url or $FED_DIRECTORY_URL
+  rotate     Replace one key of a running peering and run the command again from the first phase it
+             changes: `rotate <partner> leaves` (phases 8 to 14), `rotate <partner> carrier` (phases
+             2 to 14), or on an ipsec-fips peering `rotate <partner> ipsec-leaf|ipsec-ca` (phases 11
+             to 14). The other keys are refused, each saying why
+             (docs/design/federation-key-rotation.md)
+  import     A two-driver peering's import of an edge result, as a hand-off object names it: checked
+             against the edge driver's confirm code, placed under the working directory and
+             journaled. Built for phases 1 and 3; another phase's import refuses with GB-267
+             (docs/design/federation-two-drivers.md)
+  help       Print this message or the help of the given subcommand(s)
 
 Arguments:
   <WITH>
@@ -93,16 +104,16 @@ Options:
           `update` — to stderr, so `-o json|yaml` stays a clean document. Or set
           RUST_LOG=goatbuilder=debug
 
-      --context-dir <DIR>
-          The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem
-          (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it)
-
       --timeout <SECS>
           Seconds to bound the connect/reach phase before failing fast — the one phase that can
           block on an unreachable host (`update`'s fetch of the served version). Does NOT cap a
           play's own run or the binary download (stall-bounded). Also reads GOATBUILDER_TIMEOUT
           
           [env: GOATBUILDER_TIMEOUT=]
+
+      --context-dir <DIR>
+          The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem
+          (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it)
 
       --cert <FILE>
           The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory)
@@ -146,8 +157,8 @@ Options:
           the edge and writes the result to --half-out; `core` measures only the core, joins the
           edge half read from --edge-half, and builds the package. Without it, both hosts are
           measured here, as always. On a peering run, `--side edge` is the edge driver's run of a
-          two-driver peering (`drivers: two`): not built yet, and refused with GB-267
-          (docs/design/federation-two-drivers.md)
+          two-driver peering (`drivers: two`): built for phases 1 and 3, refused with GB-267 for
+          another phase (docs/design/federation-two-drivers.md)
           
           [possible values: edge, core]
 
@@ -164,8 +175,12 @@ Options:
 
       --expect-commit <COMMIT>
           With --side edge: the commit the edge driver's checkout must be at, as a hand-off object
-          names it. The edge driver's run is not built yet: refused with GB-267
-          (docs/design/federation-two-drivers.md)
+          names it. The run refuses a checkout at another commit or with changes (GB-278)
+
+      --expect <FILE=SHA256>
+          With --side edge: a file the controller produced, under the edge driver's <work> or its
+          checkout, and the sha256 the hand-off names. The run refuses a file that is not there or
+          has another digest (GB-278)
 
       --plan <FILE>
           deploy: the plan to execute (default <work>/plan.json)

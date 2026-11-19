@@ -24,14 +24,15 @@ crate, the schema, the catalog or this directory.
 
 ## The last release
 
-`baseline.yaml` names it: `goatbuilder/v0.7.0`, commit `9a35afb5`, with the
+`baseline.yaml` names it: `goatbuilder/v0.7.1`, commit `56d0f650`, with the
 SHA-256 of the released `goatbuilder-linux-amd64` binary the baseline was
 recorded from and of the `SHA256SUMS` that listed it. That binary's SHA-256 must
 also be its line in `crates/goatbuilder/tests/upgrade/releases.sha256`, the one
 list of published release checksums, which the upgrade tests (gates E1 to E3)
 own and compat only reads. Nothing here is read from the network at check time: the
 baseline is committed, so a check's result depends only on the tree and the
-build.
+build, and, for row A1 from a 1.0 baseline, on the release tags in the checkout
+and today's date.
 
 | Row | Rule | Kept here | Recorded from |
 |---|---|---|---|
@@ -83,8 +84,30 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
 
 - **A command or flag to be removed or renamed.** Add an entry to
   `deprecations.yaml` naming the command (and flag), its replacement and the
-  release that first warns. The deprecation period itself is a decision that is
-  not yet taken (row A1).
+  release that first warns. Until the baseline is 1.0 or later, the entry
+  excuses the removal at once. From a 1.0 baseline it excuses it only after
+  the deprecation period (ADR 1228, row A1). All of these must hold:
+  - the build is a later major release, and its version is not yet tagged;
+  - the release the entry names shipped a `deprecations.yaml` that names the
+    item, so a binary of that release warned (read with
+    `git show <tag>:ops/goatbuilder/compat/deprecations.yaml`). An entry that
+    names an earlier release than the first that shipped it is refused;
+  - two minor releases (x.y.0 with y > 0, of any major) were tagged after
+    it and before the build's version;
+  - 90 days have passed since it was tagged.
+  The check reads the tags' dates from the checkout and today's date in UTC,
+  and a refusal names the date it compared against and the date the period
+  ends. The build's version is read from `crates/goatbuilder/Cargo.toml`, which
+  main carries at the last release's version until a version pull request
+  changes it, and the release tag goes on that pull request's merge. So a
+  removal lands only in the pull request that sets the version to X.0.0: the
+  check reads the base branch's version (the merge's first parent in CI, else
+  the merge base with origin/main) and refuses a removal once the base already
+  carries X.0.0, since anything merged after the version pull request ships in
+  a later minor release.
+  A release's shipped list names an item only from the first release that
+  carries the warning (#798, after v0.7.0); every list shipped from 0.4.1 to
+  0.7.0 is empty, so no entry can pass this condition with an earlier release.
 - **An error code no longer printed, or whose fault is renamed.** Keep the
   entry in the catalog and mark it `retired: "<tag>: <why>"`, such as
   `retired: "goatbuilder/v0.6.0: standup reads the site from the plan"`
@@ -95,7 +118,13 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
   `documents/manifest.yaml` in the same pull request and give the reason in
   `exit_changed:`. `release_exit` keeps what the release did, and `check`
   refuses an `exit` that differs from it without a reason. The next refresh
-  records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.7.0's exit 2 for this purpose.
+  records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.7.1's exit 2 for this purpose.
+  From a 1.0 baseline (`baseline.yaml` names `goatbuilder/v1.0.0` or later),
+  `check` refuses `exit_changed:` on any kept invocation, with or without a
+  changed `exit`: a kept exit code changes only in a major release (ADR 1228).
+  It is accepted again only when the build's version in
+  `crates/goatbuilder/Cargo.toml` is a later major than the baseline's; an
+  unreadable version counts as the same major.
 - **A kept document whose shape must change.** It cannot within one version:
   add the new field beside the old one, or publish a new document version.
 - **A field a format carries only on some entries** (conditional fields). The

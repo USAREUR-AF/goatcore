@@ -161,6 +161,13 @@ services:
       # pg_monitor membership + SELECT on spock.* views.
       DATA_SOURCE_NAME: "postgresql://monitoring:${POSTGRES_EXPORTER_PASSWORD:?set POSTGRES_EXPORTER_PASSWORD in .env}@postgres-a:5432/postgres?sslmode=disable"
       PG_EXPORTER_EXTEND_QUERY_PATH: "/etc/postgres-exporter/queries.yml"
+      # Spock replicates several databases (netbird, and kratos and hydra when
+      # Ory replicates), each with its own spock schema. The exporter also
+      # connects to each one the observability role lists in .env, and runs
+      # the queries marked `master: false` there (the Spock counts, one series
+      # per database). The default is goatcore's own replicated database.
+      PG_EXPORTER_AUTO_DISCOVER_DATABASES: "true"
+      PG_EXPORTER_INCLUDE_DATABASES: "${POSTGRES_EXPORTER_SPOCK_DATABASES:-netbird}"
     volumes:
       - ./monitoring/postgres-exporter-queries.yml:/etc/postgres-exporter/queries.yml:ro
     ports:

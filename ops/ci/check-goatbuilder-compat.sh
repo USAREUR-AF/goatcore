@@ -10,6 +10,8 @@
 #
 #   A3  no command or flag of the last release is gone or renamed without an
 #       entry in ops/goatbuilder/compat/deprecations.yaml
+#   A1  from a 1.0 baseline, that entry excuses the removal only after its
+#       deprecation period (the release tags' dates and today's date, UTC)
 #   A4  every kept -o json / -o yaml document is still produced as a superset
 #
 # First the check's own tests (each rule refuses a violation of it), then the

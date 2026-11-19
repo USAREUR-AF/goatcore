@@ -1,0 +1,103 @@
+# promtool unit test: a dev sandbox alert summary names the site.
+#
+# Locally, from ops/monitoring/prometheus:
+#   promtool test rules tests/alert-summaries-name-the-site.test.yml
+# No CI job runs it: nothing in CI loads these rules (the dev sandbox's own
+# docker-compose.yml does).
+#
+# The dev sandbox's Prometheus sets `site` as an external label
+# (prometheus.yml, global.external_labels), not on the series, and a rule
+# template's $labels does not hold external labels. So every summary in these
+# rules names the site from the series' own `site` label when it has one, else
+# from $externalLabels.site. Each case renders one summary both ways: the site
+# as the sandbox sets it (external label only), and on the series (which wins).
+rule_files:
+  - ../rules/spock.yml
+  - ../rules/signal-server.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    external_labels:
+      site: zagros-a
+    input_series:
+      - series: 'spock_resolutions_total{job="postgres",instance="postgres-a",datname="netbird"}'
+        values: '0 1 2 3 4 5'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SpockConflictLogged
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: spock
+              job: postgres
+              instance: postgres-a
+              datname: netbird
+            exp_annotations:
+              summary: "Spock conflict(s) logged at zagros-a in last 5m"
+              description: "New rows in spock.resolutions (needs spock.save_resolutions=on; Spock 5 has no spock.conflict_log). LWW resolved it automatically, but at our single-digit TPS write rate a conflict means two admins simultaneously changed the same row from two sites. Review the conflict contents, confirm LWW picked the correct winner, and consider operational-discipline adjustments (primary-admin designation per docs/design/ha-multi-site.md §7.4)."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+
+  - interval: 1m
+    external_labels:
+      site: zagros-a
+    input_series:
+      - series: 'spock_resolutions_total{job="postgres",instance="postgres-a",site="zagros-b",datname="netbird"}'
+        values: '0 1 2 3 4 5'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SpockConflictLogged
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: spock
+              job: postgres
+              instance: postgres-a
+              datname: netbird
+              site: zagros-b
+            exp_annotations:
+              summary: "Spock conflict(s) logged at zagros-b in last 5m"
+              description: "New rows in spock.resolutions (needs spock.save_resolutions=on; Spock 5 has no spock.conflict_log). LWW resolved it automatically, but at our single-digit TPS write rate a conflict means two admins simultaneously changed the same row from two sites. Review the conflict contents, confirm LWW picked the correct winner, and consider operational-discipline adjustments (primary-admin designation per docs/design/ha-multi-site.md §7.4)."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+
+  - interval: 1m
+    external_labels:
+      site: zagros-a
+    input_series:
+      - series: 'up{job="signal-server",instance="signal-a"}'
+        values: '0x5'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: SignalServerDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: signal-server
+              job: signal-server
+              instance: signal-a
+            exp_annotations:
+              summary: "signal-server zagros-a:signal-a /metrics unscrape-able for 2m"
+              description: "Prometheus cannot reach signal-server at its /metrics endpoint. Container may have crashed, or network path to the metrics port is broken. Signal handling is likely also broken — check compose / docker logs first."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/signal-server-runbook.md"
+
+  - interval: 1m
+    external_labels:
+      site: zagros-a
+    input_series:
+      - series: 'up{job="signal-server",instance="signal-a",site="zagros-b"}'
+        values: '0x5'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: SignalServerDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: signal-server
+              job: signal-server
+              instance: signal-a
+              site: zagros-b
+            exp_annotations:
+              summary: "signal-server zagros-b:signal-a /metrics unscrape-able for 2m"
+              description: "Prometheus cannot reach signal-server at its /metrics endpoint. Container may have crashed, or network path to the metrics port is broken. Signal handling is likely also broken — check compose / docker logs first."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/signal-server-runbook.md"

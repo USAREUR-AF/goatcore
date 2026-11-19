@@ -511,6 +511,44 @@ else
 fi
 rm -rf "$T/stack"
 
+# --- the whole role: bridge mode and the core subject (F-601) ----------------------
+# The our-core subject is bound to the core link's interface, which a bridge
+# network cannot give it: bridge mode with goat_zenoh_edge_core_cn set is refused
+# before anything renders. Bridge without it, and host mode with it, go on as
+# before, to the same deliberate later refusal.
+BRIDGE="goat_zenoh_edge_network_mode is bridge while goat_zenoh_edge_core_cn is set"
+D="$T/edge/role-d/tls"
+if role_play "$GOOD" "$D" -e goat_zenoh_edge_install_certs=true -e goat_zenoh_edge_core_cn=core-xaa; then
+  fail "whole role, bridge with core_cn: the play passed"
+elif grep -qF "$BRIDGE" "$LOG" && [ ! -e "/etc/$STACK/config.json5" ] && [ ! -e "$T/stack" ] && [ ! -e "$D" ]; then
+  pass "whole role, bridge with core_cn: refused before anything renders"
+else
+  fail "whole role, bridge with core_cn: wrong stop, or something was rendered"; grep -E 'fatal|FAILED' -A2 "$LOG" | head -6
+fi
+rm -rf "$T/stack"
+
+D="$T/edge/role-e/tls"
+if role_play "$GOOD" "$D" -e goat_zenoh_edge_install_certs=true; then
+  fail "whole role, bridge without core_cn: the deliberate later refusal did not happen"
+elif grep -qF "$LATE" "$LOG" && ! grep -qF "$BRIDGE" "$LOG" && [ -e "/etc/$STACK/config.json5" ]; then
+  pass "whole role, bridge without core_cn: renders as before"
+else
+  fail "whole role, bridge without core_cn: refused, or nothing rendered"; grep -E 'fatal|FAILED' -A2 "$LOG" | head -6
+fi
+rm -rf "$T/stack"
+
+D="$T/edge/role-f/tls"
+if role_play "$GOOD" "$D" -e goat_zenoh_edge_install_certs=true -e goat_zenoh_edge_core_cn=core-xaa \
+     -e goat_zenoh_edge_network_mode=host -e goat_zenoh_edge_core_interface=eth-core -e goat_zenoh_edge_partner_interface=wg-fed0; then
+  fail "whole role, host with core_cn: the deliberate later refusal did not happen"
+elif grep -qF "$LATE" "$LOG" && ! grep -qF "$BRIDGE" "$LOG" && [ -e "/etc/$STACK/config.json5" ] \
+     && grep -qF 'interfaces: ["eth-core"]' "/etc/$STACK/config.json5"; then
+  pass "whole role, host with core_cn: renders as before, our-core bound to the core interface"
+else
+  fail "whole role, host with core_cn: refused, or the binding is missing"; grep -E 'fatal|FAILED' -A2 "$LOG" | head -6
+fi
+rm -rf "$T/stack"
+
 if [ "$FAILS" -eq 0 ]; then
   echo "goat-zenoh-edge test-certificates: PASS"
 else

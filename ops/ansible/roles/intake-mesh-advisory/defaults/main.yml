@@ -39,9 +39,8 @@ intake_mesh_advisory_hostnames: []
 intake_mesh_advisory_compose_dir: "/opt/intake-mesh-advisory"
 intake_mesh_advisory_container_name: "intake-mesh-advisory"
 
-# Image  —  digest-pinned nginx per ADR 0859 (easy rollback). Same
-# upstream pin as onboard-intake-collector (public intake front desk).
-intake_mesh_advisory_image: "nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+# Image — digest-pinned public Nginx multi-architecture index per ADR 0859.
+intake_mesh_advisory_image: "nginx:1.30.6-alpine@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311"
 intake_mesh_advisory_internal_port: 80
 
 # Traefik wiring  —  file-provider config in /etc/traefik/dynamic,

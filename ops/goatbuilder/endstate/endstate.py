@@ -325,9 +325,14 @@ def deploy_play(root, name, spec, pins):
 GAP_PREFIX = "declared, not yet built at this site: "
 
 
+def gap_closes(gap):
+    """What closes a gap, as printed: its gate rows, or the decision it waits on."""
+    return f"gate row {gap['row']}" if gap.get("row") else str(gap.get("decision") or "")
+
+
 def gap_text(gap):
     """A gap as the grade, acceptance and the join-node plan print it."""
-    return f"{GAP_PREFIX}{gap['why']} (gate row {gap['row']})"
+    return f"{GAP_PREFIX}{gap['why']} ({gap_closes(gap)})"
 
 
 def gap_at(spec, decls, joiner):
@@ -338,6 +343,8 @@ def gap_at(spec, decls, joiner):
         return None
     if any(d["kind"] == "var" and d["says"] is True for d in decls):
         return None
+    if g.get("decision") and not g.get("row"):
+        return {"row": "", "why": str(g["why"]), "decision": str(g["decision"])}
     return {"row": str(g["row"]), "why": str(g["why"])}
 
 
@@ -1136,8 +1143,8 @@ def check(root=REPO):
         if "founder" in p or "replication_core" in p or "admin_surface" in spec:
             errs.append(f"catalog: {name} declares a founder-only or admin-surface rule; every site runs every service (ADR 1165, gate group I), and a joining site's absence is a `gap`")
         g = spec.get("gap")
-        if g is not None and not (isinstance(g, dict) and g.get("row") and g.get("why")):
-            errs.append(f"catalog: {name}'s gap needs a row (the gate row that closes it) and a why")
+        if g is not None and not (isinstance(g, dict) and (g.get("row") or g.get("decision")) and g.get("why")):
+            errs.append(f"catalog: {name}'s gap needs a row (the gate row that closes it) or a decision (the ADR it waits on), and a why")
         if p.get("pin") and p["pin"] not in comps:
             errs.append(f"catalog: {name} names pin `{p['pin']}`, which is not a component in ops/pins/fleet-pins.yaml")
         if spec.get("class", "mgmt") not in ("mgmt", "obs"):

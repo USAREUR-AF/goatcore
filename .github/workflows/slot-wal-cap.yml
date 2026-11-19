@@ -1,0 +1,34 @@
+name: slot-wal-cap
+
+# Postgres's slot WAL cap (max_slot_wal_keep_size) is set by the Spock image and
+# raised by the streaming-replication role on a pair's primary; the Spock README
+# states the rule and both values once (ops/postgres/spock/README.md, "The slot
+# WAL cap"). ops/ci/check-slot-wal-cap-agrees.py holds the README to the two
+# values and refuses a size written beside the setting in any other tracked file.
+#
+# No path filter: the check reads every tracked file, so a mention can land
+# anywhere. Filtered, a violation in a path the filter missed would merge and
+# turn a later, unrelated pull request red. It takes a second.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: the slot WAL cap is stated once, with the values the image and the role set
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: the check's own tests, then the check (with its planted violations)
+        run: |
+          python3 ops/ci/test_check_slot_wal_cap_agrees.py
+          python3 ops/ci/check-slot-wal-cap-agrees.py --self-test

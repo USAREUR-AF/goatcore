@@ -789,5 +789,155 @@ class DropPartnerStore(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
         self.assertTrue(os.path.exists(f"{self.store}/sovereign_from_xac/CURRENT"))
 
+
+@unittest.skipUnless(shutil.which("ansible-playbook"), "ansible-playbook not on PATH")
+class EdgeFirewallEntry(unittest.TestCase):
+    """The host firewall baseline stores each peering's entry on the edge
+    (goat_host_firewall_dir/peerings/<if>.json, docs/design/peering-host-firewall.md). Backing
+    a peering out removes its entry and nothing of another's: with another peering left, the
+    edge's ruleset is reloaded without it; with none left, the baseline is unloaded, as the
+    edge was before its first peering. A survey changes nothing."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="peering-backout-fw-")
+        self.inv = build(self.tmp)
+        self.fw = f"{self.tmp}/goat-host-firewall"
+        self.bindir = f"{self.tmp}/fake-net"
+        self.log = f"{self.tmp}/calls.log"
+        os.makedirs(self.bindir)
+        tools = dict(NETWORK_NOT_FOUND)
+        # systemctl records each call; `show` answers as a unit that is not there.
+        tools["systemctl"] = ('echo "systemctl $*" >> %s\n' % self.log + NETWORK_NOT_FOUND["systemctl"])
+        for name, body in tools.items():
+            with open(f"{self.bindir}/{name}", "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\n" + body + "\n")
+            os.chmod(f"{self.bindir}/{name}", 0o700)
+
+    def store(self, *names, file_as=None):
+        os.makedirs(f"{self.fw}/peerings", exist_ok=True)
+        dump(f"{self.fw}/profile", "edge\n")
+        for n in names:
+            dump(f"{self.fw}/peerings/{file_as or n}.json",
+                 json.dumps({"name": n, "transport": "wireguard", "listen_port": 51820}))
+
+    def backout(self, apply=False):
+        work = f"{self.tmp}/work/xac"
+        argv = ["ansible-playbook", "-i", self.inv, "--limit", "xac_edge", str(ANSIBLE / "peering-backout.yml"),
+                "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                "-e", "ansible_become=false", "-e", f"goat_host_firewall_dir={self.fw}"]
+        if apply:
+            argv += ["-e", "peering_backout_apply=true"]
+        r = run(argv, self.tmp, path_prefix=self.bindir)
+        stage = "apply" if apply else "survey"
+        path = f"{work}/backout/{stage}/edge-xac.json"
+        rows = jload(path)["rows"] if os.path.exists(path) else []
+        return r, [x for x in rows if x["component"] == "host-firewall"]
+
+    def row(self, rows, resource):
+        found = [x for x in rows if x["resource"] == resource]
+        self.assertEqual(len(found), 1, rows)
+        return found[0]
+
+    def test_a_survey_of_one_peering_of_two_removes_its_entry_and_reloads(self):
+        self.store("wg-fed0", "wg-fed1")
+        r, rows = self.backout()
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        self.assertEqual((self.row(rows, "peering wg-fed1")["state"], self.row(rows, "peering wg-fed1")["action"]),
+                         ("present", "remove"))
+        self.assertEqual(self.row(rows, "baseline")["action"], "reload")
+        for x in rows:
+            self.assertNotIn("wg-fed0", x["resource"], "nothing of the other peering is named")
+        self.assertTrue(os.path.exists(f"{self.fw}/peerings/wg-fed1.json"), "a survey changes nothing")
+
+    def test_a_survey_of_the_last_peering_unloads_the_baseline(self):
+        self.store("wg-fed1")
+        r, rows = self.backout()
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        self.assertEqual(self.row(rows, "peering wg-fed1")["action"], "remove")
+        self.assertEqual(self.row(rows, "baseline")["action"], "unload")
+
+    def test_no_baseline_on_the_edge_is_absent_and_nothing(self):
+        r, rows = self.backout()
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        self.assertEqual((self.row(rows, "baseline")["state"], self.row(rows, "baseline")["action"]), ("absent", "none"))
+
+    def test_an_entry_under_our_name_that_names_another_peering_is_kept_and_refused(self):
+        self.store("wg-fed0", file_as="wg-fed1")
+        r, rows = self.backout(apply=True)
+        self.assertNotEqual(r.returncode, 0, "the back-out refuses")
+        self.assertEqual(self.row(rows, "peering wg-fed1")["state"], "not-ours")
+        self.assertTrue(os.path.exists(f"{self.fw}/peerings/wg-fed1.json"), "it is left untouched")
+
+    def test_the_last_peering_backed_out_unloads_the_baseline_and_removes_its_directory(self):
+        self.store("wg-fed1")
+        r, rows = self.backout(apply=True)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        self.assertEqual(self.row(rows, "baseline")["action"], "unloaded")
+        self.assertFalse(os.path.exists(self.fw), "the baseline's directory is gone")
+        with open(self.log, encoding="utf-8") as f:
+            self.assertIn("systemctl disable --now goat-host-firewall.service", f.read())
+
+    def test_the_defaults_it_repeats_are_the_roles(self):
+        text = (ANSIBLE / "roles/goat-host-firewall/tasks/absent.yml").read_text()
+        role = yaml.safe_load((ANSIBLE / "roles/goat-host-firewall/defaults/main.yml").read_text())
+        for var in ("goat_host_firewall_dir", "goat_host_firewall_service", "goat_host_firewall_rollback_unit"):
+            m = re.search(r"\{\{ %s \| default\('([^']*)'\) \}\}" % var, text)
+            self.assertIsNotNone(m, var)
+            self.assertEqual(m.group(1), role[var], var)
+
+    def entry(self, name, port, link):
+        return {"name": name, "transport": "wireguard", "listen_port": port, "peer_addr": "192.0.2.10",
+                "tunnel_interface": name, "remote_link_ip": link, "edge_port": 7448,
+                "extra_tcp_ports": [], "via_forwarder": False}
+
+    def test_a_pending_rollback_refuses_and_nothing_is_removed(self):
+        self.store("wg-fed1")
+        with open(f"{self.bindir}/systemctl", "w", encoding="utf-8") as f:
+            f.write('#!/bin/sh\necho "systemctl $*" >> %s\n' % self.log
+                    + 'case "$1" in is-active) echo active; exit 0 ;; esac\n'
+                    + NETWORK_NOT_FOUND["systemctl"] + "\n")
+        r, rows = self.backout(apply=True)
+        self.assertNotEqual(r.returncode, 0, "the back-out refuses")
+        self.assertIn("GB-214", self.row(rows, "baseline")["note"])
+        self.assertEqual(self.row(rows, "baseline")["state"], "refused")
+        self.assertTrue(os.path.exists(f"{self.fw}/peerings/wg-fed1.json"), "nothing is removed")
+        with open(self.log, encoding="utf-8") as f:
+            self.assertNotIn("disable", f.read())
+
+    def test_with_another_peering_left_the_role_reloads_without_this_one(self):
+        """The reload runs the role itself, for the peering that stays. Unprivileged, the role
+        renders, then cannot write its root-owned files; the entry is then put back, so the
+        stored entries match the ruleset the host still carries, and the back-out can run again."""
+        os.makedirs(f"{self.fw}/peerings")
+        dump(f"{self.fw}/profile", "edge\n")
+        for name, port, link in (("wg-fed0", 51820, "169.254.77.1"), ("wg-fed1", 51821, "169.254.78.1")):
+            dump(f"{self.fw}/peerings/{name}.json", json.dumps(self.entry(name, port, link)))
+        with open(f"{self.fw}/peerings/wg-fed1.json", encoding="utf-8") as f:
+            before = f.read()
+        with open(f"{self.bindir}/systemctl", "w", encoding="utf-8") as f:
+            f.write('#!/bin/sh\necho "systemctl $*" >> %s\n' % self.log
+                    + 'case "$1" in is-active) exit 3 ;; list-units) exit 0 ;; esac\n'
+                    + NETWORK_NOT_FOUND["systemctl"] + "\n")
+        with open(f"{self.bindir}/ss", "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(f"{self.bindir}/ss", 0o700)
+        work = f"{self.tmp}/work/xac"
+        argv = ["ansible-playbook", "-i", self.inv, "--limit", "xac_edge", str(ANSIBLE / "peering-backout.yml"),
+                "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                "-e", "ansible_become=false", "-e", f"goat_host_firewall_dir={self.fw}",
+                "-e", "peering_backout_apply=true",
+                "-e", '{"goat_host_firewall_management_sources": ["198.51.100.10/32"]}']
+        r = run(argv, self.tmp, path_prefix=self.bindir)
+        out = r.stdout
+        self.assertIn("rules: ", out, out[-6000:])
+        rules = out.split("rules: ", 1)[1].split('"', 1)[0]
+        self.assertIn("wg-fed0/tunnel", rules, "the peering that stays keeps its rules")
+        self.assertNotIn("wg-fed1", rules, "the backed-out peering's rules are gone from the ruleset")
+        self.assertNotEqual(r.returncode, 0, "unprivileged, the role cannot load")
+        self.assertIn("Its entry was put back", out, out[-6000:])
+        with open(f"{self.fw}/peerings/wg-fed1.json", encoding="utf-8") as f:
+            self.assertEqual(f.read(), before, "the entry is back as it was")
+        self.assertTrue(os.path.exists(f"{self.fw}/peerings/wg-fed0.json"))
+
 if __name__ == "__main__":
     unittest.main()

@@ -666,9 +666,11 @@ pub fn status(
 ) -> Result<Report> {
     let cfg = config::load(cfg_path)?;
     if partner.is_none() && work.is_some() {
-        return Err(anyhow::anyhow!(
-            "--work names one peering's folder: give the partner (goatbuilder federate status <partner> --work <dir>), or set FED_WORK_ROOT for every peering"
-        ));
+        return Err(goat_errors::coded(
+            "GB-325",
+            "--work names one peering's folder: give the partner (goatbuilder federate status <partner> --work <dir>), or set FED_WORK_ROOT for every peering",
+        )
+        .into());
     }
     let on_env = |e: &str| env.map(|x| x == e).unwrap_or(true);
     if let Some(p) = partner {
@@ -715,8 +717,8 @@ pub fn status(
         peerings,
     };
     match format {
-        Format::Json => println!("{}", serde_json::to_string_pretty(&doc)?),
-        Format::Yaml => print!("{}", serde_yaml::to_string(&doc)?),
+        Format::Json => println!("{}", serde_json::to_string_pretty(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?),
+        Format::Yaml => print!("{}", serde_yaml::to_string(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?),
         Format::Table => print!("{}", table(&doc)),
     }
     let mut r = Report::new("federate", Vec::new(), EXIT_OK);

@@ -13,7 +13,7 @@ use crate::runner::Cmd;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::json;
 
 use crate::converger::Converger;
@@ -206,13 +206,15 @@ fn read_all_tails(repo: &Path, inv: &[String], group: &str) -> Result<GroupRead>
     let mut args = inv.to_vec();
     args.push(group.to_string());
     args.extend(["-m".into(), "shell".into(), "-a".into(), READ_HOST.into()]);
-    let out = push::ansible_cmd(repo, "ansible", &args).output().with_context(|| "ansible")?;
+    let out = push::ansible_cmd(repo, "ansible", &args).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ansible: {e}")))?;
     Ok(parse_hosts(&String::from_utf8_lossy(&out.stdout), group))
 }
 
 /// Every fleet-pins component on this goatnet with a ledger to read.
 fn components_of(repo: &Path, env: &str) -> Result<Vec<String>> {
-    let pins: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(repo.join("ops/pins/fleet-pins.yaml"))?)?;
+    let path = repo.join("ops/pins/fleet-pins.yaml");
+    let text = std::fs::read_to_string(&path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
+    let pins: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-326", format!("{} is not YAML: {e}", path.display())))?;
     let comps = pins.get("components").and_then(|c| c.as_mapping()).ok_or_else(|| anyhow::Error::from(goat_errors::coded("GB-257", "fleet-pins.yaml has no components".to_string())))?;
     // A component is read wherever the pins put it, whether or not it has a
     // deploy play of its own: the comparison needs the ledger, not the play.
@@ -610,7 +612,7 @@ pub fn history(repo: &Path, component: &str, env: &str) -> Result<Report> {
         for g in &r.members {
             let mut args = push::inventory_args(&t);
             args.extend([g.clone(), "-m".into(), "shell".into(), "-a".into(), format!("tac /var/lib/goat/{ledger}/deploy-history.jsonl 2>/dev/null; echo GBEND")]);
-            let o = push::ansible_cmd(repo, "ansible", &args).output().with_context(|| "ansible")?;
+            let o = push::ansible_cmd(repo, "ansible", &args).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ansible: {e}")))?;
             let text = String::from_utf8_lossy(&o.stdout).to_string();
             let mut host: Option<String> = None;
             for l in text.lines() {
@@ -730,7 +732,7 @@ pub fn plan(repo: &Path, mock: Option<&Path>, o: &PlanOpts) -> Result<Report> {
         "schema": "goatbuilder.plan/v1", "verb": o.verb, "component": o.component, "env": o.env, "group": o.group, "n": o.n, "site": o.site,
         "main_commit": git(repo, &["rev-parse", "HEAD"]), "written_by": std::env::var("USER").unwrap_or_default(), "facts": facts,
     });
-    std::fs::write(o.out, serde_json::to_string_pretty(&doc)? + "\n").with_context(|| o.out.display().to_string())?;
+    std::fs::write(o.out, serde_json::to_string_pretty(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))? + "\n").map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", o.out.display())))?;
     let mut checks = vec![ok("plan/written", format!("{} — review it, then: goatbuilder apply {}", o.out.display(), o.out.display()))];
     if let Some(m) = doc["facts"].as_object() {
         for (k, v) in m {
@@ -743,7 +745,9 @@ pub fn plan(repo: &Path, mock: Option<&Path>, o: &PlanOpts) -> Result<Report> {
 /// `apply`: run exactly the reviewed plan, refusing (exit 1, naming what moved) when
 /// the declaration or the target moved since it was written.
 pub fn apply(repo: &Path, mock: Option<&Path>, file: &Path) -> Result<Report> {
-    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file).with_context(|| file.display().to_string())?)?;
+    let text = std::fs::read_to_string(file).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", file.display())))?;
+    let doc: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| goat_errors::coded("GB-052", format!("{} is not a goatbuilder plan: it is not JSON ({e})", file.display())))?;
     if doc["schema"] != "goatbuilder.plan/v1" {
         return Err(goat_errors::coded("GB-052", format!("{} is not a goatbuilder plan (schema goatbuilder.plan/v1)", file.display())).into());
     }
@@ -880,7 +884,7 @@ pub fn adopt(repo: &Path, env: &str, yes: bool) -> Result<Report> {
     let base = repo.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "goat".into());
     let wt: PathBuf = repo.join("..").join(format!("{base}-wt-adopt-{stamp}"));
     let branch = format!("chore/adopt-{}-{}", env.replace('_', "-"), stamp.to_lowercase());
-    let st = Cmd::new("git").arg("-C").arg(repo).args(["worktree", "add", "-q", "-b", &branch]).arg(&wt).arg("origin/main").status()?;
+    let st = Cmd::new("git").arg("-C").arg(repo).args(["worktree", "add", "-q", "-b", &branch]).arg(&wt).arg("origin/main").status().map_err(|e| goat_errors::coded("GB-320", format!("could not start git: {e}")))?;
     if !st.success() {
         return Err(goat_errors::coded("GB-054", format!("git worktree add {} failed", wt.display())).into());
     }
@@ -928,11 +932,12 @@ pub fn adopt_mock(f: &Fixture, env: &str, yes: bool) -> Result<Report> {
         checks.push(ok(&format!("{env}/adopt"), "the declaration already names what every machine with a record runs".into()));
     } else if yes {
         let path = f.root.join("declared/pins.yaml");
-        let mut doc: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&path)?)?;
+        let text = std::fs::read_to_string(&path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
+        let mut doc: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("{}: record unreadable: {e}", path.display())))?;
         for p in &props {
             doc["components"][p.component.as_str()][env]["ref"] = serde_yaml::Value::String(p.running.clone());
         }
-        std::fs::write(&path, serde_yaml::to_string(&doc)?)?;
+        std::fs::write(&path, serde_yaml::to_string(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&path)).display())))?;
         checks.push(ok(&format!("{env}/adopt"), format!("{} declaration(s) written to {}", props.len(), path.display())));
     }
     Ok(Report::new("adopt", checks, EXIT_REFUSED))
@@ -1010,6 +1015,11 @@ mod tests {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let file = dir.join("deploy.plan.json");
         plan(&repo, Some(&dir), &PlanOpts { verb: "deploy", component: "portal", env: Some("preprod"), group: None, n: 1, site: None, out: &file }).unwrap();
+        // The plan records its writer from $USER, and apply declares under that name (C4).
+        // Name the writer here, so the test does not depend on the caller's environment.
+        let mut doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        doc["written_by"] = json!("A Person");
+        std::fs::write(&file, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
         let r = apply(&repo, Some(&dir), &file).unwrap();
         assert_eq!(r.exit, EXIT_OK, "{:?}", r.checks);
         // A newer publication since the plan: the plan is stale.

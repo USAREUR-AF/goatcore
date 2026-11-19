@@ -165,7 +165,8 @@
                   - (_me_groups.stdout_lines | select | list | length) > 0
                 fail_msg: >-
                   The peer of {{ _me_first_host }} ({{ _me_mint_ip }}) holds no group but All,
-                  so a key minted from it would give the node no peers. No key was minted.
+                  or no peer row matched this address, so a key minted from it would give
+                  the node no peers. No key was minted.
                 quiet: true
 
         - name: mesh-enroll | mint a single-use setup key (one use, one hour)
