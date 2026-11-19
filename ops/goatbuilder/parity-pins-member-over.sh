@@ -60,4 +60,46 @@ for case in "$CASES"/*.yaml; do
   fi
 done
 [ "$n" -gt 0 ] || { echo "FAIL: no case under $CASES"; exit 1; }
+
+# The ladder names the members a hotfix would miss: `graduate.py hotfix` and
+# `goatbuilder promote hotfix` print the same advice, and both `status` views list
+# the member deviation off its rung's value. A two-rung ladder over zagros.
+# shellcheck disable=SC2016  # the backticks are literal text in the tools' output
+norm() { sed -E 's#python3 ops/release/graduate.py#TOOL#g; s#goatbuilder promote#TOOL#g; s#graduate\.py (graduate|check|abandon)#TOOL \1#g; s#`promote (check|graduate|abandon)`#`TOOL \1`#g; s#[0-9]{8}-hotfix-#DATE-hotfix-#g; s#HOTFIX \([0-9-]+,#HOTFIX (DATE,#g'; }
+rows() { sed -E 's/^(ok    note|FAIL  refused)  //' | grep -v '^promote: '; }
+ladder_tree() { # $1 destination
+  tree "$1" "$CASES/02-hotfix-shadowed-stale-over.yaml"
+  mkdir -p "$1/ops/ansible/group_vars/zagros_pre_hosts"
+  python3 - "$1" <<'PY'
+import sys, yaml
+root = sys.argv[1]
+p = root + "/ops/pins/fleet-pins.yaml"
+t = yaml.safe_load(open(p))
+t["goatnets"]["zagros_pre"] = {"description": "the synthetic example goatnet's preprod", "members": ["zagros_pre_hosts"]}
+# Before the hotfix: the member deviation was written over the fleet value.
+del t["components"]["signal-server"]["deviations"]["zagros"]
+yaml.safe_dump(t, open(p, "w"), sort_keys=False)
+yaml.safe_dump({"rungs": [{"name": "preprod", "goatnet": "zagros_pre", "status": "live"},
+                          {"name": "prod", "goatnet": "zagros", "status": "live"}],
+                "hops": [{"from": "preprod", "to": "prod", "status": "live", "gates": []}],
+                "class_overrides": {}, "legacy_skew_allowlist": {}},
+               open(root + "/ops/release/ladder.yaml", "w"), sort_keys=False)
+PY
+}
+ladder_tree "$SCRATCH/ladder/py"; ladder_tree "$SCRATCH/ladder/rs"
+HOT="ghcr.io/example/signal-server@sha256:$(printf 'b%.0s' $(seq 64))"
+for verb in status hotfix; do
+  if [ "$verb" = status ]; then args=(status); else args=(hotfix signal-server --ref "$HOT" --reason "example fix" --ack "Parity Gate"); fi
+  py="$( ( cd "$SCRATCH/ladder/py" && python3 ops/release/graduate.py "${args[@]}" 2>&1 ) | norm || true )"
+  rs="$( "$BIN" -C "$SCRATCH/ladder/rs" --yes promote "${args[@]}" 2>&1 | rows | norm || true )"
+  if [ "$py" != "$rs" ]; then
+    fail=1; echo "FAIL promote $verb: the two avenues differ"
+    { diff <(printf '%s\n' "$py") <(printf '%s\n' "$rs") || true; } | sed 's/^/    /' | head -20
+  elif ! printf '%s\n' "$py" | grep -q 'zagros_b_hosts'; then
+    fail=1; echo "FAIL promote $verb: the member that shadows the goatnet is not named"
+    printf '%s\n' "$py" | sed 's/^/    /' | tail -8
+  else
+    echo "ok   promote $verb names zagros_b_hosts on both avenues"
+  fi
+done
 exit $fail
