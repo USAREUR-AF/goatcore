@@ -11,4 +11,4 @@ pull request no longer makes every other open one with an entry conflict.
 release will, and the `docs-guards` run puts that in its summary. A pull
 request that only adds entry files merges at any base; one that changes
 `CHANGELOG.md` itself (a release, or release notes) still has to be on a base
-that holds every release.
+that holds every release (#1033).
