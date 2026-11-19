@@ -44,6 +44,8 @@
   import_playbook: mgmt-host.yml
   vars:
     phase2: true
+    # mgmt-host.yml's play has no default target: the wave 18 host.
+    mgmt_host_target: pgbackrest_wave18_hosts
     site_name: wave18
     signal_uri: "127.0.0.1:10000"
 
