@@ -1,0 +1,34 @@
+---
+# The credentials of every OTHER peering on this edge, included by rotate-switch.yml
+# before anything moves and again just before `swanctl --load-creds --clear`. The clear
+# reloads every credential in the swanctl directory from the files alone, so a peering
+# whose files are gone would lose its key from charon. Each other peering is a
+# conf.d/<name>.conf the role wrote: its `certs` file in x509/, a private key in
+# private/ that is that certificate's key, and its `cacerts` files in x509ca/, each
+# present and readable. Prints one "<peering>:<what>" per problem, nothing when all hold.
+- name: peering-edge | rotation | the other peerings' credentials on this edge
+  ansible.builtin.shell:
+    cmd: |
+      d={{ peering_edge_swanctl_dir | quote }}; me={{ peering_edge_name | quote }}
+      for f in "$d"/conf.d/*.conf; do
+        [ -e "$f" ] || continue
+        n=$(basename "$f" .conf); [ "$n" = "$me" ] && continue
+        for c in $(sed -n 's/^[[:space:]]*certs[[:space:]]*=[[:space:]]*//p' "$f" | tr ',' ' '); do
+          if ! pub=$(openssl x509 -noout -pubkey -in "$d/x509/$c" 2>/dev/null); then
+            echo "$n:x509/$c is missing or unreadable"; continue
+          fi
+          found=no
+          for k in "$d"/private/*; do
+            [ -f "$k" ] && [ -r "$k" ] || continue
+            [ "$(openssl pkey -pubout -in "$k" 2>/dev/null)" = "$pub" ] && { found=yes; break; }
+          done
+          [ "$found" = yes ] || echo "$n:no readable key in private/ for x509/$c"
+        done
+        for c in $(sed -n 's/^[[:space:]]*cacerts[[:space:]]*=[[:space:]]*//p' "$f" | tr ',' ' '); do
+          openssl x509 -noout -in "$d/x509ca/$c" >/dev/null 2>&1 || echo "$n:x509ca/$c is missing or unreadable"
+        done
+      done
+      exit 0
+    executable: /bin/bash
+  register: _pe_rot_others
+  changed_when: false

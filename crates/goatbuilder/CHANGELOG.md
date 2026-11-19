@@ -7,6 +7,16 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+Changes since the last release are one file each in `crates/goatbuilder/changelog.d/`; `python3 ops/release/changelog.py show` prints them as the next release will.
+<!-- END generated: changelog unreleased -->
+
+## 0.7.3 — 2026-11-17
+
+What changed since 0.7.2, the previous release. `goatbuilder federate directory
+ls|show|check` reads the peering directory and says, for a file a peering
+cannot fetch, whether the party has not uploaded it or the directory's release
+lacks the route. Every error `goatbuilder federate` raises carries its catalog
+code, and `explain release` and `explain fastlane` answer for each step.
 
 ### For someone deploying
 
@@ -67,6 +77,17 @@ that stages no stamp; its result is still refused (GB-273), so the verdicts
 can differ until a rerun, but a stale result never passes. Tested on the
 in-process fabric only, not on hosts (#792).
 
+#### Added: `goatbuilder federate directory ls|show|check` reads the peering directory
+
+`goatbuilder federate directory` reads the peering directory (saltlick) and
+changes nothing. `ls` lists the directory's release and every party with the
+files it hosts; `show <party>` gives each hosted file's size and sha256;
+`check <party> --for <counterparty>` checks each file a peering reads and says,
+for a missing one, whether the party has not uploaded it (`NOT HOSTED`: the
+party runs phase 5) or the directory's release does not serve the route
+(`ROUTE MISSING`: its operator moves the directory to a newer release). The
+URL is `--url` or `FED_DIRECTORY_URL`. New codes GB-370, GB-371 and GB-372 (#1000).
+
 #### Fixed: every error `goatbuilder federate` raises carries its catalog code
 
 Fifty errors the federate stages and verbs raised had no catalog code, so a log
@@ -119,23 +140,13 @@ no step builds reads "no join-node step builds it yet (gate row I3)". The
 admin surfaces keep their gap line (gate rows I1 and I4). Nothing a run does
 changes (#953).
 
-#### Added: `goatbuilder join-node` gives a joining site its secrets in phase 3
+### For someone contributing
 
-A joining site's core node used to need its secrets written by hand before
-phase 13. Phase 3 now runs `ops/scripts/join-site-secrets.py`. The values
-every site of a goatnet shares (NetBird's datastore key, the replicator, the
-relay secret, Ory's network id, the Kratos cipher and the Hydra system secret,
-the lines of `newsite-secrets.sh` marked `cluster`) are taken from the
-founder's: as a reference to the founder's entry under a store of references,
-or as the founder's value under a store of values. `newsite-secrets.sh` then
-mints the site's own values, and each shared value is compared with the
-founder's by digest, printing names only. Nothing is overwritten: a joiner
-value that differs is refused and kept (GB-353), a founder value that is
-missing or does not resolve is refused (GB-352), and under the `env` store a
-joiner name that is not exported is refused (GB-354). `newsite-secrets.sh
---cluster-json` lists the shared names.
+Nothing.
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.2 — 2026-11-15
 

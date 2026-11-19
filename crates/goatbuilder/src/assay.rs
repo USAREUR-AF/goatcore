@@ -13,7 +13,7 @@
 
 use crate::runner::Cmd;
 use crate::{Check, Report, EXIT_NOT_CONVERGED, EXIT_OK};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -145,8 +145,8 @@ fn derive(argv: &[String], repo: &Path, stem: &str, ext: &str, what: &str) -> Re
             let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!("goatbuilder-assay-{stem}-{}-{n}.{ext}", std::process::id()));
             let _ = std::fs::remove_file(&path);
-            let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path).with_context(|| format!("the temporary file for {what}"))?;
-            f.write_all(&out.stdout).with_context(|| format!("the temporary file for {what}"))?;
+            let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path).map_err(|e| goat_errors::coded("GB-254", format!("the temporary file for {what}, {}: {e}", path.display())))?;
+            f.write_all(&out.stdout).map_err(|e| goat_errors::coded("GB-254", format!("the temporary file for {what}, {}: {e}", path.display())))?;
             Ok(path)
         }
         Ok(out) => Err(goat_errors::coded("GB-049", format!("{what} could not be derived: {}", String::from_utf8_lossy(&out.stderr).trim())).into()),

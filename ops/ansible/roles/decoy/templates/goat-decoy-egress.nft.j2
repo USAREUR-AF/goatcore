@@ -1,0 +1,10 @@
+# Rendered by ops/ansible/roles/decoy. The responder answers; it never calls.
+# A new connection from its user is dropped; replies on accepted connections pass.
+table inet goat_decoy
+delete table inet goat_decoy
+table inet goat_decoy {
+    chain output {
+        type filter hook output priority 0; policy accept;
+        meta skuid {{ _decoy_account.uid }} ct state new counter drop
+    }
+}

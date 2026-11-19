@@ -10,7 +10,7 @@ Given an Orin (or any Linux mgmt host with `dropbear-initramfs` packaged):
 2. **L4T NIC kmod inclusion** (Orin only) — for AGX Orin on JetPack 6.1 the Tegra Ethernet driver is `nvethernet` (NOT `tegra_eqos`; verified on an AGX Orin running kernel 5.15.148-tegra). It is an out-of-tree NVIDIA module shipped at `/lib/modules/$KVER/updates/drivers/net/ethernet/nvidia/nvethernet/nvethernet.ko` and **`MODULES=most` in `/etc/initramfs-tools/initramfs.conf` correctly includes it in the initramfs by default** — no entry in `/etc/initramfs-tools/modules` is required for the LAN NIC. `dropbear_initramfs_extra_kmods` is therefore left empty for AGX Orin on JetPack 6.x; verify via `lsmod | grep -i ether` + `lsinitramfs /boot/initrd | grep nvethernet` on the running kernel before deploying to a new L4T release.
 3. Renders `/etc/dropbear/initramfs/authorized_keys` from the `dropbear_authorized_keys` variable (operator pubkeys delivered via the offline-enrollment bundle per Block 65B.2 in the future; explicit variable today).
 4. Renders `/etc/dropbear/initramfs/dropbear.conf` with `DROPBEAR_OPTIONS` constrained to the underlay LAN interface only (no public bind).
-5. Configures `/etc/initramfs-tools/initramfs.conf` `IP=` setting to use the underlay LAN's static address from `dropbear_initramfs_ip_config` (DHCP is rejected because a CGNAT uplink can't be relied on for a stable initramfs IP).
+5. Configures `/etc/initramfs-tools/initramfs.conf` `IP=` from `dropbear_initramfs_ip_config`: `dhcp` by default (every wired port), or a static kernel `ip=` string where a site has no DHCP. Either way the kernel also assigns the port's IPv6 link-local address, which is derived from the MAC and is the same at every site, so any machine on the same switch can reach the unlock shell at `fe80::<from MAC>%<its interface>`.
 6. Triggers `update-initramfs -u` to bake the changes into the initramfs. **L4T-specific note:** the bootloader is U-Boot extlinux and reads `/boot/initrd` (no `-$KVER` suffix; configured by `INITRD /boot/initrd` in `/boot/extlinux/extlinux.conf`). The Tegra `flash-kernel` post-update hook at `/etc/initramfs/post-update.d/flash-kernel` handles the copy from initramfs-tools' default output to `/boot/initrd` automatically — no manual copy step is required.
 
 ## What it deliberately does NOT do
@@ -30,7 +30,7 @@ Given an Orin (or any Linux mgmt host with `dropbear-initramfs` packaged):
 | Variable | Default | Description |
 |---|---|---|
 | `dropbear_authorized_keys` | `[]` | List of operator SSH pubkey strings authorized to unlock this host via initramfs. Per the offline-enrollment bundle path (Block 65B.2), this will be populated from the bundle's `dropbear_authorized_keys` CBOR field at first-boot. Today: explicit variable in group_vars. |
-| `dropbear_initramfs_ip_config` | `""` (empty — operator must set) | initramfs `IP=` config line. Format: `<client-ip>::<gateway-ip>:<netmask>:<hostname>:<device>:<autoconf>` per [`linux/Documentation/admin-guide/nfs/nfsroot.rst`](https://docs.kernel.org/admin-guide/nfs/nfsroot.html). Example: `192.168.1.10::192.168.1.1:255.255.255.0:vega-A:eth0:off`. DHCP is intentionally not the default. |
+| `dropbear_initramfs_ip_config` | `"dhcp"` | initramfs `IP=` config line. Format: `<client-ip>::<gateway-ip>:<netmask>:<hostname>:<device>:<autoconf>` per [`linux/Documentation/admin-guide/nfs/nfsroot.rst`](https://docs.kernel.org/admin-guide/nfs/nfsroot.html). Static example: `192.168.1.10::192.168.1.1:255.255.255.0:vega-A:eth0:off`. A static string names one site's LAN: see "Moving a node". |
 | `dropbear_initramfs_ssh_port` | `22` | Port for dropbear in initramfs. Distinct from the running-OS sshd port (which can be different). |
 | `dropbear_initramfs_extra_kmods` | `[]` | Extra kernel modules to include in initramfs. **Empty by default for AGX Orin on JetPack 6.x** — `MODULES=most` already includes `nvethernet` (verified 65B.0). Use only when adding hardware whose driver is excluded by the `MODULES=most` heuristic. Verify with `lsinitramfs /boot/initrd \| grep <module>` after `update-initramfs -u`. |
 | `dropbear_options` | `-s -g -j -k -I 300 -p {{ dropbear_initramfs_ssh_port }}` | Dropbear options rendered unchanged. The default disables password and empty-password root login, but does not force `cryptroot-unlock`. |
@@ -99,3 +99,16 @@ Full recovery walkthrough:
 - Block 65B — dropbear-initramfs implementation tracking
 - [`dropbear-initramfs(8)`](https://manpages.ubuntu.com/manpages/jammy/man8/dropbear.8.html)
 - [`initramfs.conf(5)`](https://manpages.ubuntu.com/manpages/jammy/man5/initramfs.conf.5.html)
+
+## Moving a node
+
+A node keeps its boot image when it moves. With the default `dhcp` it takes an address on the new LAN at boot and its
+unlock shell is reachable there. With a static `ip=` string it keeps the old site's address and answers at boot only on
+its IPv6 link-local address, from a machine on the same switch:
+
+```bash
+ssh -p <dropbear port> root@fe80::<EUI-64 from the MAC>%<interface>   # e.g. fe80::xxxx:xxff:fexx:xxxx%eth0
+```
+
+After unlocking, set `dropbear_initramfs_ip_config` for the new site (or back to `dhcp`) and run the role again so the
+initramfs is rebuilt.

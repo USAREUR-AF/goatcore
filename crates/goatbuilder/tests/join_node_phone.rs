@@ -146,6 +146,8 @@ fn site(prepared: bool) -> Site {
         "ops/ansible/fabric-crawler-deploy.yml",
         // The real phone scripts and the class's declarations.
         "ops/scripts/phone-node-ssh.sh",
+        // Phase 1: the phone answers over USB.
+        "ops/scripts/join-node-reach.sh",
         "ops/scripts/phone-node-provision.sh",
         "ops/scripts/phone-node-guest-prepare.sh",
         "ops/scripts/phone-node-integrity.sh",
@@ -463,7 +465,6 @@ fn goatbuilder(s: &Site, args: &[&str]) -> (Output, serde_json::Value) {
         .env("PATH", path)
         .env("HOME", &s.root)
         .env("GOAT_SECRET_STORE", "env")
-        .env("OWNER_EMAIL", "owner@example.org")
         .env("DELTA_PG_PASS", "pg-stand-in")
         // The founder's management API token, which the mesh DNS step reads.
         .env("ALPHA_NB_API_TOKEN", "api-token-stand-in")
@@ -655,32 +656,29 @@ fn a_phone_site_passes_the_config_preflight_with_no_class_value_written_by_hand(
 }
 
 /// Gate rows H3 and H4, the whole run. A phone whose VM is as the Terminal
-/// app installs it joins from phase 2 to 15 with no operator step: phase 2
+/// app installs it joins from phase 1 to 15 in one run with no operator step:
+/// phase 1 checks the phone answers over USB, phase 2
 /// prepares the VM and passes the integrity checks, the node is reached over
 /// the Android debug bridge until phase 12 and at its mesh address after it,
 /// and the plays reach the goatnet's other hosts over the mesh.
 #[test]
-fn a_phone_joins_over_usb_from_phase_2_to_15() {
+fn a_phone_joins_over_usb_from_phase_1_to_15() {
     let s = site(false);
     operator_key(&s);
     let (out, v) = join_phone(&s, &[]);
-    assert!(out.status.success(), "{}", says(&out));
-    assert_eq!(phases(&v), vec![1], "phase 1 is attaching the phone");
-    assert!(
-        says(&out).contains("attach the phone by USB") && says(&out).contains("--from 2"),
-        "{}",
-        says(&out)
-    );
-
-    let (out, v) = join_phone(&s, &["--from", "2"]);
     let log = s.log();
     assert!(out.status.success(), "{}\nargv:\n{log}", says(&out));
-    assert_eq!(phases(&v), (2..=15).collect::<Vec<u64>>(), "{}", says(&out));
+    assert_eq!(phases(&v), (1..=15).collect::<Vec<u64>>(), "{}", says(&out));
+    assert!(
+        log.lines().any(|l| l == "adb get-state"),
+        "phase 1 asked adb:\n{log}"
+    );
     assert!(
         !says(&out).contains("OPERATOR STEP"),
         "no operator step after phase 1: {}",
         says(&out)
     );
+    the_joiners_gaps_are_the_admin_surfaces("delta", &log);
 
     // H4: the VM was prepared by the real guest script.
     let config: serde_json::Value = serde_json::from_str(
@@ -932,11 +930,20 @@ fn a_vm_that_does_not_come_back_on_the_new_kernel_is_refused() {
     assert!(!s.log().lines().any(|l| l.starts_with("play ")));
 }
 
-/// Gate row H3: no phone on the cable is refused with GB-299 at phase 2.
+/// Gate row H3: no phone on the cable stops the run at phase 1 (GB-314), with
+/// the instruction for a person; from phase 2 it is refused with GB-299.
 #[test]
 fn no_phone_on_the_cable_is_refused() {
     let s = site(true);
     s.flag("no-phone");
+    let (out, v) = join_phone(&s, &[]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert_eq!(phases(&v), vec![1], "{all}");
+    assert!(
+        all.contains("GB-314") && all.contains("allow USB debugging") && all.contains("--from 1"),
+        "{all}"
+    );
     let (out, v) = join_phone(&s, &["--from", "2"]);
     let all = says(&out);
     assert!(!out.status.success(), "{all}");
@@ -995,4 +1002,58 @@ fn a_shim_takes_the_executable_tool_and_not_an_earlier_file_of_its_name() {
     let path = std::env::join_paths([&plain, &real]).unwrap();
     assert_eq!(host_tool(&path, "env"), Some(real.join("env")));
     assert_eq!(host_tool(&path, "no-such-tool"), None);
+}
+
+/// The joiner's end state, as phase 15 hands it to the rows: the four admin
+/// surfaces are declared and not yet built at a second site (gate rows I1,
+/// I4), nor is the site's own SPIRE server and agent (ADR 1164), and the
+/// real runner's plan against that model reads their rows as gaps (SKIPPED
+/// in a run, with the gap's words) and exits 0.
+fn the_joiners_gaps_are_the_admin_surfaces(env: &str, log: &str) {
+    let run = log
+        .lines()
+        .find(|l| l.starts_with("acceptance "))
+        .unwrap_or_else(|| panic!("phase 15 ran no acceptance:\n{log}"));
+    let words: Vec<&str> = run.split(' ').collect();
+    let at = words.iter().position(|w| *w == "--endstate").unwrap_or_else(|| panic!("{run}"));
+    let model = words[at + 1];
+    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(model).unwrap()).unwrap();
+    let gaps: std::collections::BTreeSet<&str> = doc["services"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, s)| !s["gap"].is_null())
+        .map(|(k, _)| k.as_str())
+        .collect();
+    assert_eq!(
+        gaps,
+        ["id-admin-console", "netbird-dashboard", "onboard-runner", "portal", "spire", "spire-agent"]
+            .into_iter()
+            .collect(),
+        "{doc}"
+    );
+    let yaml = std::process::Command::new("python3").args(["-c", "import yaml"]).status().map(|s| s.success()).unwrap_or(false);
+    if !yaml {
+        eprintln!("skipped: the acceptance runner needs python3 with PyYAML");
+        return;
+    }
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let values = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(values.path(), "{}\n").unwrap();
+    let out = std::process::Command::new("python3")
+        .arg(repo.join("ops/validation/run-acceptance.py"))
+        .args(["--env", env, "--values"])
+        .arg(values.path())
+        .args(["--endstate", model, "--plan"])
+        .output()
+        .unwrap();
+    let plan = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{plan}{}", String::from_utf8_lossy(&out.stderr));
+    let line = plan
+        .lines()
+        .find(|l| l.contains("gaps here, declared and not yet built at this site:"))
+        .unwrap_or_else(|| panic!("no gaps in the plan:\n{plan}"));
+    for row in ["portal-", "onboard-runner-", "console-audit-path-is-a-file"] {
+        assert!(line.contains(row), "{row}: {line}");
+    }
 }
