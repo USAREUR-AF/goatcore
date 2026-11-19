@@ -91,7 +91,17 @@ audit_subscriber_metrics_port: 9303
 # observe-only mode — events are counted in metrics but not written to
 # durable storage. Useful for the first-deploy dual-run validation
 # step (see Block 82S.2).
-audit_subscriber_s3_endpoint: ""
+#
+# With storage TLS (minio_tls_enabled) the default is the minio role's
+# minio_s3_endpoint, the name its server certificate is verified for; the role
+# refuses any other non-empty endpoint then, because a writer pointed at a name
+# the certificate does not carry runs, fails every upload and stores nothing.
+# Observe-only (no endpoint) for a V2 writer must be chosen explicitly:
+# set audit_subscriber_s3_endpoint: "" and audit_subscriber_observe_only: true.
+audit_subscriber_s3_endpoint: "{{ minio_s3_endpoint | default('') if (minio_tls_enabled | default(false) | bool) else '' }}"
+# Explicit opt-in to observe-only mode for a V2 writer; without it the role
+# refuses an empty endpoint, with or without storage TLS.
+audit_subscriber_observe_only: false
 
 # MinIO bucket. Per ADR 0811 the production target is a bucket with
 # Object-Lock COMPLIANCE; bucket *creation* (mc mb --with-lock) is an
@@ -269,6 +279,88 @@ audit_subscriber_batch_interval_ms: 60000
 # `goat_audit_drop_total` going non-zero means the writer cannot keep up and
 # this is the knob, not the batch pair.
 audit_subscriber_channel_depth: 4096
+
+# Per-producer audit rate metering (GHSA-hq6c). OBSERVE-ONLY BY DEFAULT: each
+# producer's audit rate is metered against a budget of, on average, _records
+# records and _bytes charged bytes (an upper bound of the stored record: key,
+# base64 payload up to the inline cap, envelope) per _window_secs, at most
+# _burst_secs of it at once. Samples beyond it are KEPT and counted in
+# goat_audit_producer_over_rate_total{vendor,limit} (alert
+# AuditProducerOverRate). 0 turns a limit off; both 0 turns metering off.
+#
+# The producer ("vendor" label) is a key prefix derived from the router ACL
+# (see the audit-subscriber's quota.rs): the first segment for a vendor or
+# slot; the second segment under from/, release/, hello/; multipub/<pool>/<topic>;
+# each infra writer's own ops/ prefix; one bucket each for ops/names/claim
+# and attest/schema; ops/audit/operator, ops/audit/surface and ops/audit.
+#
+# Enforcement (_enforce: true) DROPS over-budget samples. Known limits, which
+# is why it is off by default: the subscriber sees keys, not credentials, so
+#   - in a shared bucket (ops/names/claim and attest/schema, writable by every
+#     peer; ops/consistency/report, ops/time/attest, ops/net/health, one
+#     certificate on every node; a multi-publisher topic, shared by its
+#     co-publishers) any writer can get every other writer's records refused;
+#   - an overlapping wider grant (a fabric-health leaf's ops/fabric/**, a
+#     federated router's ops/**) can drain a narrower writer's bucket;
+#   - under from/, release/, hello/ and multipub/ the bucket is chosen by the
+#     next segment(s), so a vendor registered under one of those names chooses
+#     its buckets: at most 256 per namespace FOR THE LIFE OF THE PROCESS, then
+#     <namespace>/~other, which whoever filled the 256 first (for example just
+#     after a restart) shares with every legitimate name seen later and can
+#     keep drained. Each of those namespaces also has an aggregate budget
+#     (<namespace>/*, _namespace_factor times the per-bucket budget) that is
+#     metered and alerted; when enforcing, a sample over it is dropped too,
+#     and the aggregate is shared across identities: a slot holding several
+#     co-publish grants can starve an unrelated multipub topic (multipub/*),
+#     and from/* covers every federated sovereign;
+#   - ops/audit/** is never dropped, even when enforcing (metered and alerted
+#     only), so its writers (operator, federated router, surface-visit leaf)
+#     have no rate bound;
+#   - the burst (2,000 records, under half the 4,096-sample writer queue)
+#     holds PER BUCKET only: ops/audit/**, or one credential writing several
+#     buckets at once, can still overflow the shared writer queue, and then
+#     OTHER producers' records are dropped (AuditSubscriberQueueDropping);
+#   - floods faster than the subscriber can receive are dropped by the router
+#     before the subscriber sees them, for every producer, uncounted here.
+# Per-credential limits need the writer's identity at the subscriber or limits
+# at the router.
+#
+# Neither mode bounds total storage: that is minio_audit_bucket_quota_gib and
+# the retention lifecycle.
+#
+# The budget is set from measurement: the busiest goatnet persisted 46.4 msg/s
+# and ~2.7 GiB/day of audit across ~22 producers in total (the busiest production goatnet, 2026-08-20).
+# 30,000 records/min is 500/s per producer, 10.8x that whole-fabric rate;
+# 128 MiB/min of charged bytes is ~69x its audit bytes (the charge is a
+# worst-case bound of the stored record, so a typical sample is charged ~3 KB
+# and the record limit binds first). A load test pushed through this
+# subscriber fires AuditProducerOverRate, and drops records if enforcing.
+audit_subscriber_producer_quota_enforce: false
+audit_subscriber_producer_quota_records: 30000
+audit_subscriber_producer_quota_bytes: 134217728
+audit_subscriber_producer_quota_window_secs: 60
+# 4 s = 2,000 records at the default rate, under half the writer queue.
+audit_subscriber_producer_quota_burst_secs: 4
+# Aggregate budget for each of from/, release/, hello/, multipub/ (all its
+# buckets together), in per-bucket budgets: 4 = 2,000 records/s, 43x the whole
+# measured fabric. Catches one writer spread over many buckets of a namespace.
+audit_subscriber_producer_quota_namespace_factor: 4
+
+# V2 cutover is explicit: readers/storage and a seeded watermark must precede it.
+audit_subscriber_v2_enabled: false
+# Seconds after `docker compose up` the subscriber must stay running, with no
+# restarts, before the play reports success (tasks/verify-running.yml).
+audit_subscriber_settle_seconds: 20
+audit_subscriber_state_dir: "/var/lib/goat-audit-subscriber"
+audit_subscriber_replay_enabled: false
+audit_subscriber_replay_bucket: "fabric-replay"
+audit_subscriber_replay_access_key: "goat-replay-write"
+audit_subscriber_replay_secret_key_envvar: "{{ site_id | upper | replace('-', '_') }}_REPLAY_WRITE_SECRET"
+
+# Explicit observation site and rendered-policy evidence (not live attestation).
+audit_subscriber_receiving_site: "{{ site_id }}"
+audit_subscriber_router_policy_path: "/etc/{{ site_id }}-zenoh/config.json5"
+audit_subscriber_s3_ca_bundle: "{{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') }}"
 
 # Optional HOST directory the subscriber ALSO appends each NDJSON batch to (a
 # best-effort tail; the MinIO WORM write is unaffected on failure). Off-box

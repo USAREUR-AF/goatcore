@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/certmint"
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/config"
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/registry"
 )
@@ -49,12 +48,18 @@ type collectResponse struct {
 	SlotID       string `json:"slot_id"`       // the anchor: cert CN AND write namespace
 	SystemHandle string `json:"system_handle"` // the live alias, display-only (ADR 1039)
 	APIKey       string `json:"api_key"`       // one-time; bcrypt hash kept, plaintext unrecoverable
-	BundleURL    string `json:"bundle_url"`    // one-time tarball download URL
+	BundleURL    string `json:"bundle_url"`    // tarball download URL, valid for BundleTTL after mint
 	BundleToken  string `json:"bundle_token"`
 	URISAN       string `json:"uri_san"`
 	IdentityID   string `json:"identity_id"` // echoed so the console confirms who it collected for
 	CollectedAt  int64  `json:"collected_at"`
 	NoteToShare  string `json:"note_to_share"`
+	// LeafCN is the collected leaf's Subject CN, "<slot_id>.g<generation>"
+	// (GHSA-rr3p). slot_id stays the write namespace.
+	LeafCN string `json:"leaf_cn"`
+	// LeafStatus is live when the router host's reload record shows the
+	// router admits leaf_cn, unknown when this host has no such record.
+	LeafStatus string `json:"leaf_status"`
 }
 
 // collectFabricCredential handles POST /api/orgs/collect.
@@ -73,7 +78,7 @@ func (s *Server) collectFabricCredential(w http.ResponseWriter, r *http.Request)
 		writeDecodeError(w, err)
 		return
 	}
-	identityID := strings.TrimSpace(req.IdentityID)
+	identityID := registry.NormalizeIdentityID(req.IdentityID)
 	if identityID == "" {
 		writeError(w, http.StatusBadRequest, "bad_request", "identity_id is required")
 		return
@@ -152,6 +157,37 @@ func (s *Server) collectFabricCredential(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Collection is the onboard mint, moved later. The collected leaf must
+	// carry a CN no earlier leaf for this slot carried (GHSA-rr3p): if a leaf
+	// was already issued at the slot's current generation, or the slot is
+	// still at generation 0 (the bare anchor every pre-generation leaf has),
+	// advance it first. A generation with no leaf yet (the one a deferred
+	// onboard's assignment made, or one an earlier pending collect advanced to)
+	// is used as is.
+	gen := slot.Generation
+	fresh, err := s.reg.HasLeafAt(r.Context(), anchor, gen)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
+	}
+	if gen == 0 || fresh {
+		if gen, err = s.reg.BumpSlotGeneration(r.Context(), anchor); err != nil {
+			writeError(w, http.StatusInternalServerError, "bump_generation", err.Error())
+			return
+		}
+	}
+	defer s.syncSlotFragment(r.Context())
+	// Hold the credential until the router admits it: a leaf the router
+	// refuses would be shown once and then not work, and the person could not
+	// collect again. Nothing is minted on this path, so a retry is safe.
+	if s.leafStatus(anchor, gen) == leafPending {
+		w.Header().Set("Retry-After", "60")
+		writeError(w, http.StatusServiceUnavailable, "fabric_pending",
+			"your fabric slot is being prepared on the router and nothing has been minted yet; "+
+				"try again in a few minutes (the router loads slot changes within its reload interval, 5 minutes by default)")
+		return
+	}
+
 	apiKey, err := generateAPIKey(anchor)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "gen_key", err.Error())
@@ -173,9 +209,7 @@ func (s *Server) collectFabricCredential(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// CN = the bare anchor, matching the router's pre-baked cert_common_names.
-	// Identical to the onboard mint — collection is that mint, moved later.
-	res, err := s.minter.Mint(r.Context(), anchor, apiKey, certmint.MintOptions{CommonName: anchor})
+	res, err := s.mintSlotLeaf(r.Context(), anchor, apiKey, gen, false, identityID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "mint", err.Error())
 		return
@@ -184,8 +218,8 @@ func (s *Server) collectFabricCredential(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "mark_bundle", err.Error())
 		return
 	}
-	if err := s.reg.StampSlotCert(r.Context(), anchor, res.BundleToken, res.TarballPath); err != nil {
-		writeError(w, http.StatusInternalServerError, "stamp_slot", err.Error())
+	if err := s.reg.StampSlotCertAt(r.Context(), anchor, res.BundleToken, res.TarballPath, gen, identityID); err != nil {
+		writeError(w, http.StatusConflict, "slot_changed_hands", err.Error()+"; nothing was handed out, collect again")
 		return
 	}
 
@@ -212,8 +246,8 @@ func (s *Server) collectFabricCredential(w http.ResponseWriter, r *http.Request)
 	// (write the artefact before reporting success). A failure anywhere above
 	// leaves collected_at NULL and the person can collect again; stamping first
 	// would burn their one collection on a mint that never produced a bundle.
-	if err := s.reg.StampSlotCollected(r.Context(), anchor); err != nil {
-		writeError(w, http.StatusInternalServerError, "stamp_collected", err.Error())
+	if err := s.reg.StampSlotCollectedAt(r.Context(), anchor, gen, identityID); err != nil {
+		writeError(w, http.StatusConflict, "slot_changed_hands", err.Error()+"; nothing was handed out, collect again")
 		return
 	}
 	collected, err := s.reg.SlotForIdentity(r.Context(), identityID)
@@ -238,6 +272,8 @@ func (s *Server) collectFabricCredential(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusCreated, &collectResponse{
+		LeafCN:       registry.LeafCN(anchor, gen),
+		LeafStatus:   s.leafStatus(anchor, gen),
 		SlotID:       anchor,
 		SystemHandle: handle,
 		APIKey:       apiKey,
@@ -246,7 +282,7 @@ func (s *Server) collectFabricCredential(w http.ResponseWriter, r *http.Request)
 		URISAN:       res.URISAN,
 		IdentityID:   identityID,
 		CollectedAt:  collectedAt,
-		NoteToShare: "Shown once. The api_key is stored only as a hash and the tarball URL is single-use — neither can be re-read, " +
+		NoteToShare: "Shown once. The api_key is stored only as a hash and the tarball URL expires 24 h after it is issued — neither can be re-read, " +
 			"and nobody, including an operator, can show them to you again. Do not ask for a rotation to get a working copy: " +
 			"rotation re-issues in place and invalidates whatever you already hold.",
 	})

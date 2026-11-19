@@ -1,0 +1,88 @@
+# Rendered by ops/ansible/roles/goat-logship
+# Source: ops/ansible/roles/goat-logship/templates/docker-proxy.nginx.conf.j2
+#
+# Docker API proxy for goat-logship's docker_logs sources (GHSA-x44g). This
+# container holds the host's Docker socket so that Vector does not: whoever can
+# write to the socket is root on the host. It listens only on a unix socket
+# that only Vector can reach. There is no TCP listener: one on a Docker
+# network, even an internal one, is reachable from every process on the host
+# through the bridge.
+#
+# Passed on: GET and HEAD, for exactly the endpoints Vector's docker_logs source
+# uses, with or without an API-version prefix:
+#   /_ping  /version  /events  /containers/json
+#   /containers/<id-or-name>/json   (inspect)
+#   /containers/<id-or-name>/logs
+# Everything else is 403: every other method (create, start, exec, kill, ...),
+# and every other path, including GET endpoints that read more than logs
+# (/containers/<id>/export and /archive read a container's filesystem,
+# /images, /volumes, /secrets, /info, ...).
+#
+# The path is checked twice. The location regex sees nginx's normalized URI
+# (percent-decoded, dot segments and repeated slashes resolved); the
+# $request_uri check sees the bytes Docker will receive, and accepts only
+# [A-Za-z0-9_.-] in a container segment, so no encoded slash or dot segment
+# can turn an allowed path into another endpoint.
+#
+# Residual: inspect returns a container's environment, and /logs serves any
+# container's output, not only the ones the sources select. A compromised
+# collector can read those; it can no longer start, change or exec into
+# anything.
+
+worker_processes 1;
+daemon off;
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+    worker_connections 256;
+}
+
+http {
+    access_log off;
+    server_tokens off;
+
+    client_body_temp_path /tmp/client_body;
+    proxy_temp_path       /tmp/proxy;
+    fastcgi_temp_path     /tmp/fastcgi;
+    uwsgi_temp_path       /tmp/uwsgi;
+    scgi_temp_path        /tmp/scgi;
+
+    # No request docker_logs sends has a body.
+    client_max_body_size 1k;
+
+    upstream docker {
+        server unix:/var/run/docker.sock;
+    }
+
+    server {
+        # The socket's directory (0710, Vector's group) and the 0660 the
+        # entrypoint gives the socket limit it to Vector (docker-compose.yml).
+        listen unix:/run/goat-logship-docker-proxy/api.sock;
+
+        location ~ "^/(v[0-9]+\.[0-9]+/)?(_ping|version|events|containers/json|containers/[A-Za-z0-9][A-Za-z0-9_.-]*/(json|logs))$" {
+            # GET also admits HEAD.
+            limit_except GET {
+                deny all;
+            }
+            if ($request_uri !~ "^/(v[0-9]+\.[0-9]+/)?(_ping|version|events|containers/json|containers/[A-Za-z0-9][A-Za-z0-9_.-]*/(json|logs))(\?[^#]*)?$") {
+                return 403;
+            }
+
+            proxy_pass http://docker;
+            proxy_http_version 1.1;
+            proxy_set_header Host docker;
+            proxy_set_header Connection "";
+            # /events and /logs?follow=1 are long-lived streams.
+            proxy_buffering off;
+            proxy_read_timeout 24h;
+        }
+
+        # Logged, so a refused request a newer Vector needs shows up in
+        # `docker logs goat-logship-docker-proxy`.
+        location / {
+            access_log /dev/stdout;
+            return 403;
+        }
+    }
+}

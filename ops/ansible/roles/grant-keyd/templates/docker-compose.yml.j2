@@ -9,6 +9,10 @@
 services:
   grant-keyd:
     image: {{ grant_keyd_image }}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: grant-keyd
     restart: "{{ 'no' if '--once' in grant_keyd_args else 'unless-stopped' }}"
     user: "{{ grant_keyd_spire_uid }}:{{ grant_keyd_spire_uid }}"
@@ -95,6 +99,10 @@ services:
   # as the same nonroot UID as grant-keyd so the 0600 key it writes is readable.
   grant-keyd-spiffe-helper:
     image: {{ spire_spiffe_helper_image | default('ghcr.io/spiffe/spiffe-helper:0.10.1') }}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: grant-keyd-spiffe-helper
     restart: unless-stopped
     user: "{{ grant_keyd_spire_uid }}:{{ grant_keyd_spire_uid }}"

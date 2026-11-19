@@ -23,6 +23,36 @@
 
 # 1. Pre-flight
 
+- name: Refuse replay enablement pending owner governance
+  ansible.builtin.assert:
+    that:
+      - not (minio_replay_enabled | default(false) | bool)
+    fail_msg: "Replay capture and ordinary body reads are gated in every environment."
+
+- name: Select existing service users and optional replay identities
+  ansible.builtin.set_fact:
+    minio_effective_users: "{{ minio_extra_users + (minio_replay_users if minio_replay_enabled | bool else []) }}"
+
+- name: Validate replay storage declarations
+  ansible.builtin.assert:
+    that:
+      - minio_replay_bucket != minio_audit_bucket
+      - minio_replay_bucket != minio_telemetry_bucket
+      - minio_replay_bucket != minio_runtime_detection_bucket
+      - minio_replay_bucket is match('^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$')
+      - minio_replay_retention_days | int > 0
+      - minio_replay_bucket_quota_gib is not none
+      - minio_replay_bucket_quota_gib | int > 0
+      - audit_subscriber_id is match('^[A-Za-z0-9_-]+$')
+      - minio_effective_users | map(attribute='name') | unique | length == minio_effective_users | length
+      - minio_replay_users | map(attribute='policy_name') | intersect(minio_extra_users | map(attribute='policy_name') | list) | length == 0
+    fail_msg: "Replay needs a distinct bucket, positive retention and unique site-scoped identities."
+  when: minio_replay_enabled | bool
+
+- name: Prepare native storage TLS
+  ansible.builtin.include_tasks: tls.yml
+  when: minio_tls_enabled | bool
+
 - name: Pre-flight — minio_root_user is set
   ansible.builtin.assert:
     that:
@@ -100,7 +130,7 @@
   no_log: true
   notify: minio compose changed
 
-- name: Pre-flight — each minio_extra_users entry resolves a non-empty secret
+- name: Pre-flight — each minio_effective_users entry resolves a non-empty secret
   ansible.builtin.assert:
     that:
       - lookup('env', item.secret_envvar) | length > 0
@@ -109,10 +139,10 @@
       resolves empty. Generate a secret locally (e.g.
       `openssl rand -hex 24`) and export it from your
       .envrc.local.d/30-site-services.envrc before re-running.
-  loop: "{{ minio_extra_users }}"
+  loop: "{{ minio_effective_users }}"
   loop_control:
     label: "{{ item.name }}"
-  when: minio_extra_users | length > 0
+  when: minio_effective_users | length > 0
 
 - name: Ensure policies dir exists (extra users)
   ansible.builtin.file:
@@ -121,7 +151,7 @@
     owner: root
     group: root
     mode: "0755"
-  when: minio_extra_users | length > 0
+  when: minio_effective_users | length > 0
 
 - name: Copy extra-user policy JSON files to host
   ansible.builtin.copy:
@@ -130,10 +160,24 @@
     owner: root
     group: root
     mode: "0644"
-  loop: "{{ minio_extra_users }}"
+  loop: "{{ minio_effective_users }}"
   loop_control:
-    label: "{{ item.policy_name }} <- {{ item.policy_src }}"
-  when: minio_extra_users | length > 0
+    label: "{{ item.policy_name }}"
+  when:
+    - minio_effective_users | length > 0
+    - item.policy_src is defined
+
+- name: Render replay policy files
+  ansible.builtin.template:
+    src: "{{ item.policy_template }}"
+    dest: "{{ minio_compose_dir }}/policies/{{ item.policy_name }}.json"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ minio_effective_users }}"
+  when: item.policy_template is defined
+  loop_control:
+    label: "{{ item.policy_name }}"
 
 - name: Render mc-extra-users.env (per-user secrets, mc-init container env_file)
   ansible.builtin.template:
@@ -143,7 +187,7 @@
     group: root
     mode: "0600"
   no_log: true
-  when: minio_extra_users | length > 0
+  when: minio_effective_users | length > 0
   notify: minio compose changed
 
 - name: Render mc-init.sh (idempotent bucket + lifecycle bootstrap)
@@ -181,14 +225,16 @@
 
 - name: Bring up MinIO server (mc-init runs only on demand below)
   ansible.builtin.command:
-    cmd: docker compose up -d minio
+    cmd: "docker compose up -d {{ '--force-recreate' if (minio_tls_enabled | bool and _minio_tls_material is changed) else '' }} minio"
     chdir: "{{ minio_compose_dir }}"
   register: _minio_up
   changed_when: "'Started' in _minio_up.stderr or 'Created' in _minio_up.stderr or 'Recreated' in _minio_up.stderr"
 
 - name: Wait for MinIO /minio/health/live
   ansible.builtin.uri:
-    url: "http://localhost:{{ minio_api_port }}/minio/health/live"
+    url: "{{ (minio_s3_endpoint if minio_tls_enabled | bool else 'http://localhost:' ~ minio_api_port) }}/minio/health/live"
+    ca_path: "{{ minio_client_ca_path if minio_tls_enabled | bool else omit }}"
+    validate_certs: true
     status_code: 200
   register: _minio_ready
   retries: "{{ minio_health_retries }}"

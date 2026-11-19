@@ -9,7 +9,9 @@
 //!
 //! It reads every file under `src/` (test modules and `#[cfg(test)]` items
 //! left out) for the places an error is made: `anyhow!(…)`, `bail!(…)`,
-//! `.context(…)` and `.with_context(…)`. A place is coded when its expression
+//! `ensure!(…)`, `.context(…)` and `.with_context(…)`, and a bare `?` on a
+//! standard library or serde call (a file, a program, a JSON or YAML read) in a
+//! function that returns anyhow's `Result`. A place is coded when its expression
 //! calls `coded(`; a message that only names a `GB-nnn` code is not coded,
 //! since the error is not `Coded` and takes the uncoded exit. A message that only meets one of the
 //! catalog's `matches:` patterns is not: main.rs prints a code without the
@@ -55,6 +57,8 @@ const OPENERS: &[(&str, &str)] = &[
     ("anyhow::anyhow!(", "anyhow"),
     ("anyhow!(", "anyhow"),
     ("bail!(", "bail"),
+    ("anyhow::ensure!(", "ensure"),
+    ("ensure!(", "ensure"),
     (".with_context(", "context"),
     (".context(", "context"),
 ];
@@ -163,10 +167,11 @@ fn uncoded_in(file: &str, text: &str) -> Vec<Site> {
             .filter_map(|(o, k)| line[at..].find(o).map(|p| (at + p, *o, *k)))
             .min_by_key(|(p, _, _)| *p)
         {
-            // `anyhow!(` also matches inside `anyhow::anyhow!(`: take the longer.
+            // `anyhow!(` also matches inside `anyhow::anyhow!(`, and `ensure!(`
+            // inside `anyhow::ensure!(`: take the longer.
             let start = pos;
             at = pos + opener.len();
-            if opener == "anyhow!(" && line[..start].ends_with("anyhow::") {
+            if (opener == "anyhow!(" || opener == "ensure!(") && line[..start].ends_with("anyhow::") {
                 continue;
             }
             // The expression: from the opener to the line where its parenthesis closes.
@@ -211,8 +216,60 @@ fn uncoded_in(file: &str, text: &str) -> Vec<Site> {
             };
             out.push(Site { file: file.to_string(), kind, message });
         }
+        // A bare `?` on a standard library or serde call passes the foreign error
+        // up with no code. In a function that returns io::Result or Option the `?`
+        // is that function's own business, and its caller is where it is coded.
+        for m in bare_question().find_iter(line) {
+            if !returns_anyhow(&lines, n) {
+                continue;
+            }
+            let call = m.as_str().trim_end_matches('?').trim_end();
+            let call = call.split_whitespace().collect::<Vec<_>>().join(" ");
+            let message = format!("<{}>", call.chars().take(60).collect::<String>());
+            out.push(Site { file: file.to_string(), kind: "question", message });
+        }
     }
     out
+}
+
+/// A standard library or serde call whose error a bare `?` passes up: a file
+/// read or written, a program started, a JSON or YAML read or written.
+fn bare_question() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(concat!(
+            r"(?:\b(?:std::fs::\w+|fs::\w+|File::(?:open|create)|serde_json::\w+|serde_yaml::\w+)",
+            r"\s*\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)",
+            r"|\.(?:output|status|spawn|read_line|write_all)\((?:[^()]|\([^()]*\))*\))\s*\?",
+        ))
+        .unwrap()
+    })
+}
+
+/// Whether the function around line `n` returns anyhow's `Result` (one type
+/// argument), as goatbuilder's functions do; not `io::Result`, `Option` or a
+/// `Result` with its own error type.
+fn returns_anyhow(lines: &[&str], n: usize) -> bool {
+    let Some(start) = (0..=n).rev().find(|&i| {
+        let t = lines[i].trim_start();
+        (t.starts_with("fn ") || t.starts_with("pub fn ") || t.starts_with("pub(crate) fn ") || t.contains(" fn ")) && t.contains('(')
+    }) else {
+        return false;
+    };
+    // The signature may run over several lines, up to the body's brace.
+    let mut sig = String::new();
+    for l in lines.iter().skip(start).take(12) {
+        sig.push_str(l);
+        sig.push(' ');
+        if l.contains('{') {
+            break;
+        }
+    }
+    let Some((_, ret)) = sig.split_once("->") else { return false };
+    let ret = ret.trim();
+    (ret.starts_with("Result<") || ret.starts_with("anyhow::Result<"))
+        && !ret.contains("io::Result")
+        && !ret.split_once('<').map(|(_, a)| a.contains(',')).unwrap_or(false)
 }
 
 fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -306,7 +363,7 @@ fn every_error_the_source_makes_is_coded_or_listed() {
     );
 }
 
-/// The scanner itself: an uncoded `anyhow!` and `.context` are found, with
+/// The scanner itself: an uncoded `anyhow!`, `ensure!` and `.context` are found, with
 /// their messages; a coded one, and one in a test module, are not; one the
 /// catalog would only match by its words is, and so is one whose message only
 /// names a code: the error is not `Coded`, so it takes the uncoded exit.
@@ -331,9 +388,25 @@ fn d() -> Result<()> {
     Err(anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
 }
 
+fn e(ok: bool) -> Result<()> {
+    anyhow::ensure!(ok, "phase 1 wrote no results to {}", p.display());
+    ensure!(ok, goat_errors::coded("GB-321", "phase 1 wrote no results"));
+    Ok(())
+}
+
 fn f() -> Result<()> {
     let line = parse(argv).context(format!("goatbuilder federate {} (GB-242)", argv.join(" ")))?;
     Ok(())
+}
+
+fn g(p: &Path) -> Result<()> {
+    let t = std::fs::read_to_string(p)?;
+    let v: Value = serde_json::from_str(&t).map_err(|e| goat_errors::coded("GB-326", e.to_string()))?;
+    Ok(())
+}
+
+fn h(p: &Path) -> std::io::Result<String> {
+    std::fs::read_to_string(p)?
 }
 
 #[cfg(test)]
@@ -349,7 +422,9 @@ mod tests {
             "src/x.rs :: anyhow :: an empty plan: {}".to_string(),
             "src/x.rs :: anyhow :: a refusal with its code, GB-149, inside the message".to_string(),
             "src/x.rs :: anyhow :: federate is a mutation: pass --yes without a terminal (C10)".to_string(),
+            "src/x.rs :: ensure :: phase 1 wrote no results to {}".to_string(),
             "src/x.rs :: context :: goatbuilder federate {} (GB-242)".to_string(),
+            "src/x.rs :: question :: <std::fs::read_to_string(p)>".to_string(),
         ]
     );
 }

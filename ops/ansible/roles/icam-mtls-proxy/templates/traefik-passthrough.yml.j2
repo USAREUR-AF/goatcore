@@ -18,7 +18,7 @@ tcp:
     icam-mtls-proxy-mesh-only:
       ipAllowList:
         sourceRange:
-{% for cidr in icam_mtls_proxy_allow_cidrs %}
+{% for cidr in icam_mtls_proxy_allow_cidrs if cidr %}
           - "{{ cidr }}"
 {% endfor %}
   services:

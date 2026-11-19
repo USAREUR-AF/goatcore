@@ -145,9 +145,14 @@ scrape_configs:
       - targets: ["audit-subscriber:9303"]
 
   # goat-logship — the off-box cyber-logging collector (Vector, ADR 1078).
-  # Runs in its own compose project (goat-logship-net) with the metrics port
-  # host-published, so it is scraped via host.docker.internal like minio /
-  # node-exporter, not by in-network name. The GoatLogshipStreamSilent rule
+  # Runs in its own compose project (goat-logship-net). Its metrics port is
+  # published on loopback, the host's mesh address and the default docker
+  # bridge gateway only (roles/goat-logship, GHSA-x44g; never every
+  # interface), so it is scraped via host.docker.internal, which resolves to
+  # that gateway, like node-exporter, not by in-network name. The role's
+  # nftables guard admits the gateway binding only from this stack's `mgmt`
+  # network bridge (logship_metrics_scraper_network). A remote scraper uses
+  # the mesh address. The GoatLogshipStreamSilent rule
   # (rules/goat-logship.yml) rides on this job's vector_component_sent_events
   # metric — the F-169 silent-shipping closer. Job label is goat_logship
   # (underscore) to match the alert `up{job="goat_logship"}`.
@@ -166,13 +171,19 @@ scrape_configs:
   # network model deliberately keeps isolated from mgmt — the in-network
   # name `minio:9000` does not resolve from this stack.
   - job_name: minio
+{% if minio_tls_enabled | default(false) | bool %}
+    scheme: https
+    tls_config:
+      ca_file: /storage-ca/ca.crt
+      server_name: "{{ minio_service_host }}"
+{% endif %}
     metrics_path: /minio/v2/metrics/cluster
     # MinIO runs MINIO_PROMETHEUS_AUTH_TYPE=public (roles/minio compose), so
     # cluster metrics need NO bearer token. A `bearer_token_file` pointing at a
     # file nothing creates makes prometheus fail config load + crash-loop on a
     # fresh deploy. Public auth ⇒ no token line.
     static_configs:
-      - targets: ["host.docker.internal:9000"]
+      - targets: ["{{ (minio_service_host ~ ':' ~ (minio_api_port | string)) if minio_tls_enabled | default(false) | bool else 'host.docker.internal:9000' }}"]
 
   # MinIO per-BUCKET metrics moved to their own endpoint in current
   # MinIO releases: /minio/v2/metrics/bucket carries
@@ -180,9 +191,15 @@ scrape_configs:
   # the native quota metric. This job (not a sidecar) feeds
   # AuditBucketQuotaHigh/Critical.
   - job_name: minio-bucket
+{% if minio_tls_enabled | default(false) | bool %}
+    scheme: https
+    tls_config:
+      ca_file: /storage-ca/ca.crt
+      server_name: "{{ minio_service_host }}"
+{% endif %}
     metrics_path: /minio/v2/metrics/bucket
     static_configs:
-      - targets: ["host.docker.internal:9000"]
+      - targets: ["{{ (minio_service_host ~ ':' ~ (minio_api_port | string)) if minio_tls_enabled | default(false) | bool else 'host.docker.internal:9000' }}"]
 
   # grant-keyd — the E1 key-distribution daemon. It serves /metrics on
   # :9464 and the grant-keyd role joins it to the `mgmt` network so this job

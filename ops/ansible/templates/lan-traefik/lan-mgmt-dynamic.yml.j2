@@ -60,7 +60,11 @@ http:
         sourceRange:
           - "{{ lan_allowlist_cidr | mandatory('lan_allowlist_cidr is unset — set the site LAN CIDR in group_vars/<site>_hosts (e.g. 192.168.8.0/24)') }}"
           - "100.64.0.0/10"  # own-mesh peers (netbird CGNAT)
-          - "172.16.0.0/12"  # Docker bridge — on-host containers
+          # The mgmt Docker network only (on-host containers and docker-proxy),
+          # never 172.16.0.0/12 (GHSA-p22f). Set by tasks/mgmt-network-subnet.yml.
+{% if mgmt_docker_network_subnet | default('') %}
+          - "{{ mgmt_docker_network_subnet }}"
+{% endif %}
 
     dashboard-root-to-access-control:
       redirectRegex:

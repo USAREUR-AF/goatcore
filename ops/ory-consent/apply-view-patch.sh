@@ -38,6 +38,14 @@
 # times it is included. Without the latch the second copy cancelled the FIRST
 # submit on the consent page and "Allow" sent nothing.
 #
+# ONLY A REAL SUBMIT COUNTS. The form is marked as sent only by a submit event
+# the browser fires (isTrusted) that no handler cancels. A script-dispatched
+# submit event sends nothing; password managers fire one when they auto-submit,
+# just before pressing the button, and counting it cancelled the real submit:
+# the page sat with a faded button and no POST left the browser. A form still
+# on screen RELEASE_MS after its submit is released, so a submit lost on the
+# network cannot leave the page stuck either.
+#
 # Usage:
 #   apply-view-patch.sh /usr/src/app/views/partials/scripts.hbs
 set -eu
@@ -68,6 +76,24 @@ cat >> "$TARGET" <<'GUARD'
     if (window.__dlfSubmitGuardInstalled) return;
     window.__dlfSubmitGuardInstalled = true;
 
+    // A form that has not navigated away after this long is treated as never
+    // sent (lost on the network, or cancelled out of sight): the form is
+    // released and the person can press the button again.
+    var RELEASE_MS = 15000;
+    var token = 0;
+
+    function release(form) {
+      form.removeAttribute("data-dlf-submitted");
+      var controls = form.querySelectorAll(
+        'button[type="submit"], input[type="submit"]'
+      );
+      for (var i = 0; i < controls.length; i++) {
+        controls[i].removeAttribute("aria-disabled");
+        controls[i].style.pointerEvents = "";
+        controls[i].style.opacity = "";
+      }
+    }
+
     // One submission per rendered form. A second submit of the same flow is
     // answered by Kratos on a consumed flow and navigates the browser off an
     // in-flight OAuth2 login, orphaning the Hydra challenge.
@@ -77,6 +103,13 @@ cat >> "$TARGET" <<'GUARD'
         var form = event.target;
         if (!form || form.tagName !== "FORM") return;
 
+        // Only a submit event the browser fires sends the form. A submit event
+        // dispatched by a script (isTrusted false) sends nothing: password
+        // managers fire one when they auto-submit, before they press the
+        // button. Counting it as the one submission would cancel the real one,
+        // and the page would sit with a faded button and send nothing.
+        if (event.isTrusted === false) return;
+
         if (form.hasAttribute("data-dlf-submitted")) {
           // Already sent. Swallow this one; the first response is still coming.
           event.preventDefault();
@@ -84,11 +117,20 @@ cat >> "$TARGET" <<'GUARD'
           return;
         }
         form.setAttribute("data-dlf-submitted", "true");
+        var mine = ++token;
+        form.__dlfToken = mine;
 
         // Defer the visual disable to a macrotask. Disabling a submit button
         // synchronously drops its name/value (method=password) from the POST
         // body — the form would serialize without the method Kratos requires.
+        // By then every handler has run: if one cancelled this submit, nothing
+        // was sent, so release the form instead of disabling it.
         window.setTimeout(function () {
+          if (form.__dlfToken !== mine) return;
+          if (event.defaultPrevented) {
+            release(form);
+            return;
+          }
           var controls = form.querySelectorAll(
             'button[type="submit"], input[type="submit"]'
           );
@@ -98,9 +140,14 @@ cat >> "$TARGET" <<'GUARD'
             controls[i].style.opacity = "0.6";
           }
         }, 0);
+
+        window.setTimeout(function () {
+          if (form.__dlfToken === mine) release(form);
+        }, RELEASE_MS);
       },
       true // capture: run before any framework handler can re-dispatch
     );
+
   })();
 </script>
 GUARD

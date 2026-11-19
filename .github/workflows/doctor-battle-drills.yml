@@ -1,6 +1,7 @@
 name: doctor-battle-drills
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'docs/operations/battle-drills/**'

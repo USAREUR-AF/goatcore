@@ -103,6 +103,8 @@ func TestCache_NeverStoredRoutes(t *testing.T) {
 		{"GET", "/api/access/peer"},
 		{"POST", "/api/access/peers"},
 		{"GET", "/api/audit/presign"},
+		{"GET", "/api/audit/object"},
+		{"GET", "/api/replay/presign"},
 		{"GET", "/api/admin/snapshot"},
 		{"GET", "/api/admin/snapshot/meta"},
 		{"GET", "/api/admin/vendor-activity"},
@@ -116,7 +118,7 @@ func TestCache_NeverStoredRoutes(t *testing.T) {
 		{"POST", "/api/orgs/collect"},
 		{"POST", "/api/machines/enroll"},
 		{"POST", "/api/machines/enroll-bulk"},
-		{"POST", "/api/machines/anchor/mesh-key"},		// A person's details, a sponsorship lookup by email, a data-role or
+		{"POST", "/api/machines/anchor/mesh-key"}, // A person's details, a sponsorship lookup by email, a data-role or
 		// audience resolution and a recipient certificate.
 		{"GET", "/api/orgs/sponsorship"},
 		{"GET", "/api/lookup/person-presence"},

@@ -165,6 +165,19 @@
         or ((gzpr_prev_labels.stdout | from_json | default({}, true))[portal_store_label] | default('sqlite')) != 'sqlite'
       tags: [phase0]
 
+    # Phase 4 deploys the previous image through the role, whose storage-TLS
+    # gate would refuse it only after phase 1 has stopped the portal. Ask the
+    # same question of that image here, while the portal still runs.
+    - name: "gate | the previous image's audit reader can start with this storage TLS"
+      # `apply:` tags the included tasks too; a bare tag selects only the include.
+      ansible.builtin.include_tasks:
+        file: roles/goat-zenoh-portal/tasks/storage-tls-gate.yml
+        apply:
+          tags: [phase0]
+      vars:
+        portal_tls_gate_image: "{{ gzpr_manifest.previous_image }}"
+      tags: [phase0]
+
     - name: "gate | export mode: the image that runs store-migrate (the current pin)"
       ansible.builtin.command:
         argv: ["docker", "inspect", "--format", !unsafe '{{.Config.Image}}', "{{ gzpr_container }}"]

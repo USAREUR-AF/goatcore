@@ -9,16 +9,23 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // DefaultMaxStreamsPerPrincipal is the per-key live-stream cap when
 // PORTAL_MAX_STREAMS_PER_PRINCIPAL is unset: room for a person with several
 // inspector tabs, not for a fan-out of polls against the router.
 const DefaultMaxStreamsPerPrincipal = 8
+
+// DefaultBundleTTL is how long a bundle download link works after it is
+// minted when PORTAL_BUNDLE_TTL is unset. The tarball holds the org's private
+// key, and the link is its only credential.
+const DefaultBundleTTL = 24 * time.Hour
 
 // Identity-model values for Config.IdentityModel.
 const (
@@ -56,6 +63,10 @@ type Config struct {
 	// limiter, so without it any key could open N streams for N polls a
 	// second. Operators are exempt. 0 disables the cap.
 	MaxStreamsPerPrincipal int
+	// BundleTTL is how long a bundle download link works after it is minted.
+	// After it the link answers 410 and the bundle is re-issued by a rotate.
+	// Must be positive.
+	BundleTTL time.Duration
 
 	// LazySlotStorage (per-uuid-slot-pool only): when true, the router does NOT
 	// pre-cut a rocksdb store per pool slot (zenoh_lazy_slot_storage), so the
@@ -138,9 +149,11 @@ type Config struct {
 	// socket. Typically goat-zenoh-router.
 	ACLContainerName string
 
-	// ACLDockerSocket is the path to the docker engine socket. Default
-	// /var/run/docker.sock; bind-mounted into the portal container by
-	// the role.
+	// ACLDockerSocket is the docker engine socket used to SIGHUP the router
+	// after an ACL edit. Empty (the default) sends no signal: zenohd 1.9
+	// ignores SIGHUP, the edit applies through admin-REST or the next router
+	// restart, and a mesh-facing service holding the host's Docker socket is
+	// root on the host (GHSA-6828).
 	ACLDockerSocket string
 
 	// ACLStorageDirPrefix is the rocksdb parent dir the per-vendor
@@ -246,6 +259,17 @@ type Config struct {
 	// re-read. It is a duration string so "0" can mean the pre-reload
 	// behaviour exactly, for a goatnet that wants keys frozen at boot.
 	OperatorAPIKeysReloadInterval string
+
+	// OperatorAPIKeysRevokedLedger is where the portal keeps every operator-key
+	// revocation it has read from a tombstone (GHSA-2w7v), so a missing or
+	// emptied key directory never re-accepts a revoked env key. Empty = a
+	// dotfile beside the key directory (DefaultRevocationLedgerPath). It must
+	// be persistent and outside the key directory. The role keeps it on the
+	// same data bind mount as the key directory, so wiping that whole data
+	// directory loses both; the console's offboard check then reports the
+	// handle not verifiably revoked and reconcile --apply rewrites the
+	// tombstone. Handles match case-sensitively here; the console folds case.
+	OperatorAPIKeysRevokedLedger string
 
 	// Whether vendor registration is operator-approved (one-step) vs
 	// auto-approved. Per the design's open decision: start operator-approved.
@@ -353,6 +377,7 @@ type Config struct {
 	// taxonomy's netbird_exercises — one fact, one home; the portal never
 	// invents an exercise. Empty = no exercise-scoped minting on this goatnet.
 	MeshExercisePrefixes string
+	AuditS3CABundle      string
 	AuditS3Endpoint      string // MinIO endpoint for L3/L4 audit tail
 	AuditS3Bucket        string // default "audit-integrity"
 	AuditS3Region        string // default "us-east-1"
@@ -360,6 +385,10 @@ type Config struct {
 	AuditS3SecretKey     string
 	AuditSubscriberID    string // default "site-A"; the role sets it per goatnet
 	AuditTailInterval    string // e.g. "30s"
+	// Replay shares the site endpoint, but never audit bucket credentials.
+	ReplayS3Bucket    string
+	ReplayS3AccessKey string
+	ReplayS3SecretKey string
 
 	// Block 94 cross-surface deep-link contract — sibling-surface
 	// base URLs. Surfaced verbatim at GET /api/siblings; the static
@@ -418,6 +447,7 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.IdentityModel, "identity-model", envOr("PORTAL_IDENTITY_MODEL", IdentityModelPerVendor), "Onboarding identity model: per-vendor or per-uuid-slot-pool (ADR 1025)")
 	fs.StringVar(&cfg.SlotPoolSalt, "slot-pool-salt", envOr("PORTAL_SLOT_POOL_SALT", ""), "Per-goatnet salt for the per-uuid slot pool; MUST match the router template's zenoh_slot_pool_salt (per-uuid mode only)")
 	fs.IntVar(&cfg.MaxStreamsPerPrincipal, "max-streams-per-principal", envInt("PORTAL_MAX_STREAMS_PER_PRINCIPAL", DefaultMaxStreamsPerPrincipal), "Concurrent /api/topics/stream connections one vendor or slot key may hold (operators exempt); 0 disables the cap")
+	fs.DurationVar(&cfg.BundleTTL, "bundle-ttl", envDuration("PORTAL_BUNDLE_TTL", DefaultBundleTTL), "How long a bundle download link works after it is minted (the tarball holds the private key)")
 	fs.IntVar(&cfg.SlotPoolSize, "slot-pool-size", envInt("PORTAL_SLOT_POOL_SIZE", 0), "Number of slots to bake into the registry; MUST equal the router's zenoh_slot_pool_size (per-uuid mode only)")
 	fs.BoolVar(&cfg.LazySlotStorage, "lazy-slot-storage", envBool("PORTAL_LAZY_SLOT_STORAGE", false), "Per-uuid mode: the router does not pre-cut a store per pool slot; live-add the slot's <anchor>/** store via admin-REST at mint (must match the router's zenoh_lazy_slot_storage)")
 	fs.IntVar(&cfg.TopicBudgetSelfBlock, "topic-budget-self-block", envInt("PORTAL_TOPIC_BUDGET_SELF_BLOCK", 0), "Automatic self-service topic-budget allowance every onboarded slot holds (must equal zenoh_topic_budget_self_block); 0 disables the budget-projection endpoint")
@@ -432,7 +462,7 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.BoolVar(&cfg.ZenohRestFake, "zenoh-rest-fake", envBool("PORTAL_ZENOH_REST_FAKE", false), "Use fake Zenoh REST responses (dev/test)")
 	fs.StringVar(&cfg.ACLConfigPath, "acl-config", envOr("PORTAL_ACL_CONFIG", "/etc/goat-zenoh/config.json5"), "Live zenohd config.json5 the portal edits between BEGIN/END markers and SIGHUPs")
 	fs.StringVar(&cfg.ACLContainerName, "acl-container-name", envOr("PORTAL_ACL_CONTAINER_NAME", "goat-zenoh-router"), "Docker container running zenohd; receives SIGHUP after each ACL edit")
-	fs.StringVar(&cfg.ACLDockerSocket, "acl-docker-socket", envOr("PORTAL_ACL_DOCKER_SOCKET", "/var/run/docker.sock"), "Path to docker engine socket (bind-mounted into portal container)")
+	fs.StringVar(&cfg.ACLDockerSocket, "acl-docker-socket", envOr("PORTAL_ACL_DOCKER_SOCKET", ""), "Docker engine socket used only to SIGHUP the router after an ACL edit; empty (the default) sends no signal and needs no socket. zenohd 1.9 ignores SIGHUP; changes apply through admin-REST or the next router restart")
 	fs.StringVar(&cfg.ACLStorageDirPrefix, "acl-storage-dir-prefix", envOr("PORTAL_ACL_STORAGE_DIR_PREFIX", "/var/lib/goat-zenoh/rocksdb"), "Rocksdb parent dir for per-vendor storages (matches what zenohd has bind-mounted)")
 	fs.BoolVar(&cfg.ACLReloadFake, "acl-reload-fake", envBool("PORTAL_ACL_RELOAD_FAKE", false), "Edit the config but skip the SIGHUP (dev/test only)")
 	fs.StringVar(&cfg.ACLAdminRESTURL, "acl-admin-rest-url", envOr("PORTAL_ACL_ADMIN_REST_URL", "http://goat-zenoh-router:8000"), "Zenoh router admin-REST base URL for F-156 live config reload (empty = disable, fall back to SIGHUP + restart-required)")
@@ -463,8 +493,9 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.SchemaDir, "schema-dir", envOr("PORTAL_SCHEMA_DIR", "/var/lib/goat-zenoh-portal/schemas"), "Directory for uploaded schema bodies (Block 85)")
 	fs.StringVar(&cfg.OperatorAPIKey, "operator-api-key", envOr("PORTAL_OPERATOR_API_KEY", ""), "Operator super-user API key (Bearer token); resolves to the default 'operator' handle")
 	var operatorAPIKeysRaw string
-	fs.StringVar(&operatorAPIKeysRaw, "operator-api-keys", envOr("PORTAL_OPERATOR_API_KEYS", ""), "Per-person operator keys as 'handle1:key1,handle2:key2' (attributes audit to a named person)")
+	fs.StringVar(&operatorAPIKeysRaw, "operator-api-keys", envOr("PORTAL_OPERATOR_API_KEYS", ""), "Break-glass and service operator keys as 'handle1:key1,handle2:key2' (attributes audit to a named handle). Personal keys belong in the console-managed directory; a console revocation tombstone refuses a key pinned here (GHSA-2w7v)")
 	fs.StringVar(&cfg.OperatorAPIKeysDir, "operator-api-keys-dir", envOr("PORTAL_OPERATOR_API_KEYS_DIR", ""), "On-host dir of SERVICE operator keys ('handle:key' lines) merged into the env keys; decouples machine credentials (e.g. onboard-runner) from the deploy env so a redeploy can't drop them. Empty = disabled")
+	fs.StringVar(&cfg.OperatorAPIKeysRevokedLedger, "operator-api-keys-revoked-ledger", envOr("PORTAL_OPERATOR_API_KEYS_REVOKED_LEDGER", ""), "File that records every operator-key revocation read from a tombstone, outside the key dir, so a missing or empty dir never re-accepts a revoked env key. Empty = a dotfile beside the key dir")
 	fs.StringVar(&cfg.OperatorAPIKeysReloadInterval, "operator-api-keys-reload", envOr("PORTAL_OPERATOR_API_KEYS_RELOAD", "30s"), "How often to re-read the operator-keys dir so issuing/revoking a key needs no restart. 0 disables (startup-only, the old behaviour)")
 	fs.BoolVar(&cfg.OperatorApprovalRequired, "operator-approval", envBool("PORTAL_OPERATOR_APPROVAL_REQUIRED", true), "Require operator approval at vendor registration")
 	fs.StringVar(&cfg.EnvelopeDefaultClass, "envelope-default-class", envOr("PORTAL_ENVELOPE_DEFAULT_CLASS", "C2"), "QoS class whose rough baseline seeds a new actor's default throughput envelope (ADR 1045; C2 situational default)")
@@ -496,6 +527,7 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.BoolVar(&cfg.MeshKeyMintEnabled, "mesh-key-mint-enabled", envBool("PORTAL_MESH_KEY_MINT_ENABLED", false), "ADR 1116 §9: let the machine mint create the NetBird setup key with auto_groups DERIVED from the node-class, instead of a human choosing them. Off = the derived groups are reported and a human still assigns them")
 	fs.StringVar(&cfg.MeshKeyTTL, "mesh-key-ttl", envOr("PORTAL_MESH_KEY_TTL", "24h"), "How long a minted machine setup key stays usable — the window to join, not the peer's lifetime")
 	fs.StringVar(&cfg.MeshExercisePrefixes, "mesh-exercise-prefixes", envOr("PORTAL_MESH_EXERCISE_PREFIXES", ""), "Exercise name → EX-* group-prefix map (name=EX-PREFIX, comma-separated), rendered from netbird_acl_taxonomy.yml's netbird_exercises. Lets the machine mint scope a key to an exercise's synthetic-site groups")
+	fs.StringVar(&cfg.AuditS3CABundle, "audit-s3-ca-bundle", envOr("PORTAL_AUDIT_S3_CA_BUNDLE", ""), "Organization CA PEM for storage HTTPS")
 	fs.StringVar(&cfg.AuditS3Endpoint, "audit-s3-endpoint", envOr("PORTAL_AUDIT_S3_ENDPOINT", ""), "MinIO/S3 endpoint hosting the audit-integrity bucket (empty = disable L3/L4)")
 	fs.StringVar(&cfg.AuditS3Bucket, "audit-s3-bucket", envOr("PORTAL_AUDIT_S3_BUCKET", "audit-integrity"), "Audit bucket name")
 	fs.StringVar(&cfg.AuditS3Region, "audit-s3-region", envOr("PORTAL_AUDIT_S3_REGION", "us-east-1"), "AWS region for SigV4")
@@ -503,6 +535,9 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.AuditS3SecretKey, "audit-s3-secret-key", envOr("PORTAL_AUDIT_S3_SECRET_KEY", ""), "S3 secret key for the audit bucket (empty = disable L3/L4)")
 	fs.StringVar(&cfg.AuditSubscriberID, "audit-subscriber-id", envOr("PORTAL_AUDIT_SUBSCRIBER_ID", "site-A"), "Top-level object-key prefix written by the audit-subscriber")
 	fs.StringVar(&cfg.AuditTailInterval, "audit-tail-interval", envOr("PORTAL_AUDIT_TAIL_INTERVAL", "30s"), "Interval between MinIO audit tail pulls")
+	fs.StringVar(&cfg.ReplayS3Bucket, "replay-s3-bucket", envOr("PORTAL_REPLAY_S3_BUCKET", ""), "Separate replay bucket; empty disables V2 payload reads")
+	fs.StringVar(&cfg.ReplayS3AccessKey, "replay-s3-access-key", envOr("PORTAL_REPLAY_S3_ACCESS_KEY", ""), "Replay-only read identity")
+	fs.StringVar(&cfg.ReplayS3SecretKey, "replay-s3-secret-key", envOr("PORTAL_REPLAY_S3_SECRET_KEY", ""), "Replay-only read secret")
 
 	// Block 94 cross-surface deep-link contract (sibling base URLs).
 	fs.StringVar(&cfg.SiblingPanoscopeURL, "sibling-panoscope-url", envOr("PORTAL_SIBLING_PANOSCOPE_URL", ""), "Block 94 sibling: panoscope origin (e.g. https://panoscope.goat.example). Empty = no panoscope deep-link.")
@@ -531,7 +566,7 @@ func LoadFromFlags(args []string) (*Config, error) {
 		return nil, err
 	}
 	cfg.OperatorAPIKeys = keys
-	store, err := NewOperatorKeyStore(keys, cfg.OperatorAPIKeysDir)
+	store, err := NewOperatorKeyStoreWithLedger(keys, cfg.OperatorAPIKeysDir, cfg.OperatorAPIKeysRevokedLedger)
 	if err != nil {
 		return nil, err
 	}
@@ -544,7 +579,9 @@ func LoadFromFlags(args []string) (*Config, error) {
 // PORTAL_OPERATOR_API_KEYS into a handle→key map. Whitespace
 // around handles, keys, and the comma separators is trimmed; blank
 // comma-entries are ignored. A pair without exactly one colon, or with an
-// empty handle or key, is a configuration error.
+// empty handle or key, is a configuration error. A pair under a reserved
+// service handle other than id-console (see service_handles.go) is logged and
+// skipped.
 func parseOperatorAPIKeys(raw string) (map[string]string, error) {
 	out := map[string]string{}
 	for index, pair := range strings.Split(raw, ",") {
@@ -560,6 +597,17 @@ func parseOperatorAPIKeys(raw string) (map[string]string, error) {
 		key := strings.TrimSpace(pair[idx+1:])
 		if handle == "" || key == "" {
 			return nil, fmt.Errorf("operator-api-keys entry %d has an empty handle or key", index+1)
+		}
+		if !envMayHoldOperatorHandle(handle) {
+			// A service label the portal trusts to delegate, and this is not
+			// where that service's key comes from (GHSA-q7qx). Skipped, not
+			// fatal: a typo'd envrc must not stop the portal booting with the
+			// keys that are fine. The legacy shared key belongs in
+			// PORTAL_OPERATOR_API_KEY.
+			slog.Warn("operator-api-keys entry uses a reserved service handle; skipped",
+				"entry", index+1, "handle", handle,
+				"hint", "service labels are reserved: the shared key goes in PORTAL_OPERATOR_API_KEY, the console key only as exactly id-console; a person's key needs their own handle")
+			continue
 		}
 		out[handle] = key
 	}
@@ -649,6 +697,18 @@ func envInt(key string, dflt int) int {
 		return dflt
 	}
 	return n
+}
+
+func envDuration(key string, dflt time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return dflt
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return dflt
+	}
+	return d
 }
 
 func envBool(key string, dflt bool) bool {

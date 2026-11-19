@@ -99,6 +99,8 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         "ops/scripts/inventory-hosts.py",
         "ops/scripts/with-secrets",
         "ops/scripts/seed-ssh-key.sh",
+        // Phase 1: the node answers.
+        "ops/scripts/join-node-reach.sh",
         "ops/secrets/posture.py",
         "ops/scripts/require-secret.sh",
         // Every health publisher's play: a play in the checkout is not a
@@ -164,9 +166,15 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         &root.join("bin/ssh"),
         &format!(
             "#!/bin/sh\nprintf 'ssh %s\\n' \"$*\" >> '{l}'\n\
+             if [ -f '{st}/unreachable' ]; then echo 'ssh: connect to host 192.0.2.30 port 22: Connection timed out' >&2; exit 255; fi\n\
+             if [ -f '{st}/silent' ]; then exit 255; fi\n\
+             if [ -f '{st}/loses-stderr' ]; then for a in \"$@\"; do case \"$a\" in UserKnownHostsFile=*) d=\"${{a#UserKnownHostsFile=}}\"; rm -f \"${{d%/*}}/stderr\" ;; esac; done; exit 255; fi\n\
+             if [ -f '{st}/refusing-jump' ]; then echo 'goat@jump.example.org: Permission denied (publickey).' >&2; echo 'Connection closed by UNKNOWN port 65535' >&2; exit 255; fi\n\
+             kh=; for a in \"$@\"; do case \"$a\" in UserKnownHostsFile=*) kh=\"${{a#UserKnownHostsFile=}}\" ;; esac; done\n\
+             [ -z \"$kh\" ] || echo '192.0.2.30 ssh-ed25519 stand-in-host-key' >> \"$kh\"\n\
              case \"$*\" in *BatchMode=yes*)\n\
                if [ -f '{st}/password-only' ]; then\n\
-                 case \"$*\" in *'sudo -n true'*) [ -f '{st}/sudo-seeded' ] || exit 1 ;; *) [ -f '{st}/key-seeded' ] || exit 255 ;; esac\n\
+                 case \"$*\" in *'sudo -n true'*) [ -f '{st}/sudo-seeded' ] || exit 1 ;; *) [ -f '{st}/key-seeded' ] || {{ echo 'goat@192.0.2.30: Permission denied (publickey,password).' >&2; exit 255; }} ;; esac\n\
                fi ;;\n\
              esac\n\
              case \"$*\" in *'bash -s'*|*'sudo -S'*) cat >> '{i}' ;; esac\n\
@@ -218,12 +226,24 @@ fn join_node_with(s: &Site, from: Option<&str>, extra: &[&str]) -> (Output, serd
         "--class".into(),
         "core".into(),
         "--address".into(),
-        "192.0.2.30".into(),
+        extra
+            .iter()
+            .position(|a| *a == "--address")
+            .and_then(|i| extra.get(i + 1))
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| "192.0.2.30".into()),
     ];
     if let Some(n) = from {
         args.extend(["--from".to_string(), n.to_string()]);
     }
-    args.extend(extra.iter().map(|a| a.to_string()));
+    let given = extra.iter().position(|a| *a == "--address");
+    args.extend(
+        extra
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| given.is_none_or(|g| *i != g && *i != g + 1))
+            .map(|(_, a)| a.to_string()),
+    );
     let path = format!(
         "{}:{}",
         s.root.join("bin").display(),
@@ -235,7 +255,6 @@ fn join_node_with(s: &Site, from: Option<&str>, extra: &[&str]) -> (Output, serd
         .env("PATH", path)
         .env("HOME", &s.root)
         .env("GOAT_SECRET_STORE", "env")
-        .env("OWNER_EMAIL", "owner@example.org")
         .env("GAMMA_NB_SETUP_KEY", SETUP_KEY)
         .env("GAMMA_NODE_PASS", &s.node_pass)
         .env("GAMMA_PG_PASS", PG_PASS)
@@ -337,38 +356,17 @@ fn resume_at(v: &serde_json::Value) -> Option<String> {
 #[test]
 fn a_third_site_that_declares_federation_off_joins_from_phase_1_to_15() {
     let s = site();
-    let mut from: Option<String> = None;
-    let mut ran: Vec<u64> = Vec::new();
-    for _ in 0..6 {
-        if from.as_deref() == Some("11") {
-            // The operator's step at phase 10: the node enrolled, and its mesh
-            // address is recorded in the site's vars and the mesh inventory.
-            for f in [
-                "ops/ansible/group_vars/gamma_hosts/vars.yml",
-                "ops/ansible/inventory/mgmt-hosts-mesh.ini",
-            ] {
-                let p = s.checkout.join(f);
-                let t = std::fs::read_to_string(&p).unwrap();
-                std::fs::write(&p, t.replace("TBD_GAMMA_MESH_IP_A", "100.127.0.3")).unwrap();
-            }
-        }
-        let (out, v) = join_node(&s, from.as_deref());
-        assert!(
-            out.status.success(),
-            "join-node {} stopped with a refusal after phases {ran:?} + {:?}:\n{}\nplays:\n{}",
-            from.as_deref()
-                .map(|n| format!("--from {n}"))
-                .unwrap_or_else(|| "(no --from)".into()),
-            phases(&v),
-            says(&out),
-            std::fs::read_to_string(&s.log).unwrap_or_default()
-        );
-        ran.extend(phases(&v));
-        match resume_at(&v) {
-            Some(next) => from = Some(next),
-            None => break,
-        }
-    }
+    // One run, with no --from: phase 1 checks the node answers and goes on.
+    let (out, v) = join_node(&s, None);
+    assert!(
+        out.status.success(),
+        "join-node stopped after phases {:?}:\n{}\nplays:\n{}",
+        phases(&v),
+        says(&out),
+        std::fs::read_to_string(&s.log).unwrap_or_default()
+    );
+    assert_eq!(resume_at(&v), None, "a stop for a person: {}", says(&out));
+    let ran = phases(&v);
     let mut seen = ran.clone();
     seen.dedup();
     assert_eq!(
@@ -399,20 +397,64 @@ fn a_third_site_that_declares_federation_off_joins_from_phase_1_to_15() {
     );
 }
 
-/// Gate row H2: with no operator step between phase 2 and phase 15. The run
-/// stops only at phase 1, reaching the node; from 2 it runs to 15 in one go,
+/// Gate row H2: with no operator step between phase 1 and phase 15. Phase 1
+/// checks the node answers; the run goes on to 15 in one go,
 /// enrolling the node from a key minted where it is used and recording its
 /// mesh address itself, and no secret is in any argument list.
+/// A joiner's account arrives from the founder (seed-from-peer, then Spock),
+/// and site-bootstrap mints an account only on a founder, so phase 13 names no
+/// bootstrap owner. An unattended run with no OWNER_EMAIL in its environment
+/// (the helper sets none) goes through every bootstrap pass.
 #[test]
-fn from_phase_2_a_node_joins_with_no_operator_step_and_no_secret_in_any_argv() {
+fn a_joiner_passes_no_bootstrap_owner_and_needs_no_owner_email() {
     let s = site();
     let (out, v) = join_node(&s, None);
-    assert!(out.status.success(), "{}", says(&out));
-    assert_eq!(phases(&v), vec![1], "only phase 1 is a person's step");
-    assert_eq!(resume_at(&v).as_deref(), Some("2"), "{}", says(&out));
-    let mut printed = says(&out);
-    let (out, v) = join_node(&s, Some("2"));
-    printed.push_str(&says(&out));
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(out.status.success(), "{}\nargv:\n{log}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&15), "{}", says(&out));
+    let bootstraps: Vec<&str> = log
+        .lines()
+        .filter(|l| l.starts_with("play ") && l.contains("bootstrap"))
+        .collect();
+    assert!(!bootstraps.is_empty(), "phase 13 ran the bootstrap passes:\n{log}");
+    assert!(
+        !log.contains("bootstrap_owner_email") && !log.contains("OWNER_EMAIL"),
+        "a joiner passes no bootstrap owner:\n{log}"
+    );
+}
+
+/// Phase 15 runs the acceptance rows against the site's derived end state,
+/// as standup's acceptance gate does: a row whose services the site declares
+/// absent reads N/A, not FAIL, so an unattended run is not stopped by a row
+/// that does not apply (ADR 1206).
+#[test]
+fn phase_15_runs_the_acceptance_rows_against_the_sites_end_state() {
+    let s = site();
+    let (out, v) = join_node(&s, None);
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(out.status.success(), "{}\nargv:\n{log}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&15), "{}", says(&out));
+    let run = log
+        .lines()
+        .find(|l| l.starts_with("acceptance "))
+        .unwrap_or_else(|| panic!("phase 15 ran the acceptance rows:\n{log}"));
+    let words: Vec<&str> = run.split(' ').collect();
+    let at = words
+        .iter()
+        .position(|w| *w == "--endstate")
+        .unwrap_or_else(|| panic!("--endstate: {run}"));
+    let model = std::fs::read_to_string(words[at + 1]).expect("the end-state model was written");
+    let model: serde_json::Value = serde_json::from_str(&model).expect("the model is JSON");
+    assert!(model["services"].is_object(), "{model}");
+    assert!(words.contains(&"--all-eligible"), "{run}");
+    the_joiners_gaps_are_the_admin_surfaces("gamma", &log);
+}
+
+#[test]
+fn from_phase_1_a_node_joins_with_no_operator_step_and_no_secret_in_any_argv() {
+    let s = site();
+    let (out, v) = join_node(&s, None);
+    let printed = says(&out);
     assert!(
         out.status.success(),
         "{}\nargv:\n{}",
@@ -427,7 +469,7 @@ fn from_phase_2_a_node_joins_with_no_operator_step_and_no_secret_in_any_argv() {
     );
     let mut seen = phases(&v);
     seen.dedup();
-    assert_eq!(seen, (2..=15).collect::<Vec<u64>>(), "{}", says(&out));
+    assert_eq!(seen, (1..=15).collect::<Vec<u64>>(), "{}", says(&out));
     // The node's mesh address is in the checkout, and the run says which files it wrote.
     let gv = std::fs::read_to_string(
         s.checkout
@@ -454,12 +496,8 @@ fn from_phase_2_a_node_joins_with_no_operator_step_and_no_secret_in_any_argv() {
         .iter()
         .filter(|(p, _)| p.ends_with("run.json"))
         .map(|(_, t)| serde_json::from_str::<serde_json::Value>(t).unwrap())
-        .find(|r| {
-            r["args"]
-                .as_array()
-                .is_some_and(|a| a.iter().any(|x| x == "--from"))
-        })
-        .expect("a record of the run from phase 2");
+        .find(|r| r["args"].as_array().is_some_and(|a| a.iter().any(|x| x == "join-node")))
+        .expect("a record of the run");
     assert_eq!(
         rec["wrote"],
         serde_json::json!([
@@ -761,6 +799,150 @@ fn a_failed_join_node_step_is_recorded_with_its_exit_code() {
 }
 
 
+/// Phase 1 checks the node answers over SSH before anything is done on it
+/// (GB-314). A node that does not answer stops the run at phase 1, with the
+/// instruction for a person and `--from 1`, and nothing after it runs. A
+/// node that answers but refuses the login (no key yet: phase 2 seeds it)
+/// has answered: phase 1 cannot prove a login before phase 2.
+#[test]
+fn a_node_that_does_not_answer_stops_the_run_at_phase_1() {
+    let s = site();
+    std::fs::write(s.root.join("state/unreachable"), "").unwrap();
+    let (out, v) = join_node(&s, None);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert_eq!(phases(&v), vec![1], "{all}");
+    assert!(all.contains("GB-314") && all.contains("Connection timed out"), "{all}");
+    assert!(all.contains("--address"), "the instruction names --address: {all}");
+    assert!(all.contains("--from 1"), "{all}");
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(!log.lines().any(|l| l.starts_with("play ") || l.starts_with("sshpass")), "something ran past phase 1:\n{log}");
+}
+
+/// When ssh fails and prints nothing, GB-314 says which case it was: ssh
+/// printed nothing, or the file its stderr went to was gone before phase 1
+/// read it. Either way the run stops at phase 1 and nothing runs after it.
+#[test]
+fn an_ssh_failure_with_no_words_names_its_case_at_phase_1() {
+    for (flag, words) in [
+        ("silent", "ssh exited 255 and printed nothing on stderr"),
+        ("loses-stderr", "was gone before it was read"),
+    ] {
+        let s = site();
+        std::fs::write(s.root.join("state").join(flag), "").unwrap();
+        let (out, v) = join_node(&s, None);
+        let all = says(&out);
+        assert!(!out.status.success(), "{flag}: {all}");
+        assert_eq!(phases(&v), vec![1], "{flag}: {all}");
+        assert!(all.contains("GB-314") && all.contains(words), "{flag}: {all}");
+        let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+        assert!(!log.lines().any(|l| l.starts_with("play ") || l.starts_with("sshpass")), "{flag}: something ran past phase 1:\n{log}");
+    }
+}
+
+/// A jump host's "Permission denied" is not the node answering: the run
+/// stops at phase 1. ssh says only that the jump host refused and the
+/// connection closed; the node's own host key never arrived.
+#[test]
+fn a_jump_host_that_refuses_is_not_the_node_answering() {
+    let s = site();
+    std::fs::write(s.root.join("state/refusing-jump"), "").unwrap();
+    let (out, v) = join_node(&s, None);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert_eq!(phases(&v), vec![1], "{all}");
+    assert!(all.contains("GB-314"), "{all}");
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(!log.lines().any(|l| l.starts_with("play ") || l.starts_with("sshpass")), "something ran past phase 1:\n{log}");
+}
+
+/// A Jetson's USB device-mode bridge address, 192.168.55.0/24 (l4tbr0), runs
+/// sshd on the box itself and finishes a key exchange, but it is reachable
+/// only over a direct USB-C cable, never from the site: phase 1 refuses it
+/// before any connection, with GB-314 and the way to the real LAN address.
+#[test]
+fn the_jetson_usb_bridge_address_is_refused_at_phase_1() {
+    for address in ["192.168.55.1", "192.168.55.100"] {
+        let s = site();
+        let (out, v) = join_node_with(&s, None, &["--address", address]);
+        let all = says(&out);
+        assert!(!out.status.success(), "{address}: {all}");
+        assert_eq!(phases(&v), vec![1], "{address}: {all}");
+        assert!(all.contains("GB-314") && all.contains("l4tbr0") && all.contains("--address"), "{address}: {all}");
+        let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+        assert!(!log.lines().any(|l| l.starts_with("ssh ") && !l.starts_with("ssh -G")), "{address}: phase 1 connected:\n{log}");
+        assert!(!log.lines().any(|l| l.starts_with("play ") || l.starts_with("sshpass")), "{address}: something ran past phase 1:\n{log}");
+    }
+    // An address beside it is not the bridge.
+    let s = site();
+    let (out, v) = join_node_with(&s, None, &["--address", "192.168.56.1"]);
+    assert!(phases(&v).contains(&2), "{}", says(&out));
+}
+
+/// A node that takes only its first-login password answers, though it
+/// refuses a key login before phase 2: the run goes on past phase 1.
+#[test]
+fn a_password_only_node_answers_at_phase_1() {
+    let s = site_with(true, NODE_PASS);
+    let (out, v) = join_node(&s, None);
+    assert!(out.status.success(), "{}", says(&out));
+    assert!(phases(&v).contains(&2), "{}", says(&out));
+}
+
+/// The joiner's end state, as phase 15 hands it to the rows: the four admin
+/// surfaces are declared and not yet built at a second site (gate rows I1,
+/// I4), nor is the site's own SPIRE server and agent (ADR 1164), and the
+/// real runner's plan against that model reads their rows as gaps (SKIPPED
+/// in a run, with the gap's words) and exits 0.
+fn the_joiners_gaps_are_the_admin_surfaces(env: &str, log: &str) {
+    let run = log
+        .lines()
+        .find(|l| l.starts_with("acceptance "))
+        .unwrap_or_else(|| panic!("phase 15 ran no acceptance:\n{log}"));
+    let words: Vec<&str> = run.split(' ').collect();
+    let at = words.iter().position(|w| *w == "--endstate").unwrap_or_else(|| panic!("{run}"));
+    let model = words[at + 1];
+    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(model).unwrap()).unwrap();
+    let gaps: std::collections::BTreeSet<&str> = doc["services"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, s)| !s["gap"].is_null())
+        .map(|(k, _)| k.as_str())
+        .collect();
+    assert_eq!(
+        gaps,
+        ["id-admin-console", "netbird-dashboard", "onboard-runner", "portal", "spire", "spire-agent"]
+            .into_iter()
+            .collect(),
+        "{doc}"
+    );
+    let yaml = std::process::Command::new("python3").args(["-c", "import yaml"]).status().map(|s| s.success()).unwrap_or(false);
+    if !yaml {
+        eprintln!("skipped: the acceptance runner needs python3 with PyYAML");
+        return;
+    }
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let values = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(values.path(), "{}\n").unwrap();
+    let out = std::process::Command::new("python3")
+        .arg(repo.join("ops/validation/run-acceptance.py"))
+        .args(["--env", env, "--values"])
+        .arg(values.path())
+        .args(["--endstate", model, "--plan"])
+        .output()
+        .unwrap();
+    let plan = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{plan}{}", String::from_utf8_lossy(&out.stderr));
+    let line = plan
+        .lines()
+        .find(|l| l.contains("gaps here, declared and not yet built at this site:"))
+        .unwrap_or_else(|| panic!("no gaps in the plan:\n{plan}"));
+    for row in ["portal-", "onboard-runner-", "console-audit-path-is-a-file"] {
+        assert!(line.contains(row), "{row}: {line}");
+    }
+}
+
 /// Gate row I3, the declared set on the fixture: every service the end-state
 /// model marks present on gamma's core node is either built by a play the
 /// run ran, or named under the run's not-run heading. The admin surfaces are
@@ -816,6 +998,9 @@ fn every_service_gamma_declares_is_built_or_named() {
         ("mesh-coredns", "goat-coredns.yml"),
         ("fabric-health", "fabric-health-deploy.yml"),
         ("mesh-health", "mesh-health-deploy.yml"),
+        // Declared at every site since the catalog says so (#968).
+        ("zenoh-router", "zenoh-deploy.yml"),
+        ("admit-audit", "bootstrap"),
     ];
     let line = |svc: &str| {
         named

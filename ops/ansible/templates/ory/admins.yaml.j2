@@ -12,6 +12,9 @@
    The password_hash should be a bcrypt hash; generate with:
      htpasswd -bnBC 12 "" "<password>" | sed 's/^://'
    Long-term, password is bootstrap-only; admins switch to FIDO2 within 24h.
+
+   Login groups go to admin-managed metadata_public, never self-editable
+   traits (F-572 / ADR 1188, GHSA-9v3v: every reader ignores traits.groups).
 #}
 {% for admin in site_admins | default([]) %}
 - schema_id: default
@@ -20,10 +23,8 @@
     email: "{{ admin.email }}"
     name: "{{ admin.name }}"
     site: "{{ site_name }}"
-    groups:
-      {% for g in admin.groups | default(['admin']) %}
-      - "{{ g }}"
-      {% endfor %}
+  metadata_public:
+    groups: {{ (admin.groups | default(['admin']) | list) | to_json }}
   credentials:
     password:
       config:

@@ -1,0 +1,18 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "grow",
+  "ok": true,
+  "exit": 0,
+  "checks": [
+    {
+      "name": "handed over",
+      "ok": true,
+      "detail": "already handed over: goatlite.yaml is gone and ops/goatbuilder/goatbuilder.yaml is grow's own file, so there is nothing to grow. Nothing was changed."
+    },
+    {
+      "name": "next",
+      "ok": true,
+      "detail": "goatbuilder validate"
+    }
+  ]
+}

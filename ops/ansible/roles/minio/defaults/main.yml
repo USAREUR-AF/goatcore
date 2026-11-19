@@ -31,7 +31,7 @@ minio_gid: 1000
 # repositories no longer exist on Docker Hub (404, measured 2026-11-03), so
 # the 2024-10-29 pins could not be pulled by any new deploy. Chainguard's
 # free tier publishes only `latest` and `latest-dev`; the `-dev` variants
-# carry a shell and busybox `wget`, which the health check and mc-init use.
+# carry a shell and `wget`, which the health check and mc-init use.
 # The image's own user is 65532; the compose sets `user:` from minio_uid
 # below, so the data directory's owner does not change. Moving a goatnet's
 # running MinIO to this image is a version upgrade: take it through the
@@ -243,3 +243,29 @@ minio_health_delay_seconds: 2
 # Production posture: empty. Per-site group_vars opt in (for example
 # goat-portal-audit-read for Block 88, in group_vars/<site>_hosts/minio.yml).
 minio_extra_users: []
+
+# Replay is online operational data, not an audit/cold-archive tier.
+minio_replay_enabled: "{{ audit_subscriber_replay_enabled | default(false) }}"
+minio_replay_bucket: "{{ audit_subscriber_replay_bucket | default('fabric-replay') }}"
+minio_replay_retention_days: 30
+# Required site capacity budget when replay is enabled.
+minio_replay_bucket_quota_gib: null
+minio_replay_users:
+  - name: goat-replay-write
+    policy_name: replay-write
+    policy_template: replay-write.json.j2
+    secret_envvar: "{{ site_id | upper | replace('-', '_') }}_REPLAY_WRITE_SECRET"
+  - name: goat-replay-read
+    policy_name: replay-read
+    policy_template: replay-read.json.j2
+    secret_envvar: "{{ site_id | upper | replace('-', '_') }}_REPLAY_READ_SECRET"
+
+# Native TLS is staged per site; enabling it requires a coordinated client cutover.
+minio_tls_enabled: false
+minio_service_host: ""
+minio_tls_dir: /etc/minio/tls
+minio_tls_cert_src: ""
+minio_tls_key_src: ""
+minio_tls_ca_src: ""
+minio_s3_endpoint: "https://{{ minio_service_host }}:{{ minio_api_port }}"
+minio_client_ca_path: /etc/goat/storage-ca/ca.crt

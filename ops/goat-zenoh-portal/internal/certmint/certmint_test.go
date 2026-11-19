@@ -460,11 +460,12 @@ func TestMint_EKUArgv(t *testing.T) {
 	stubDir := t.TempDir()
 	argsFile := filepath.Join(stubDir, "args.txt")
 	stub := filepath.Join(stubDir, "cert-sign")
+	leaf, _ := writeStubLeaf(t, stubDir)
 	script := "#!/bin/sh\n" +
 		"echo \"$@\" > " + argsFile + "\n" +
 		"while [ $# -gt 0 ]; do\n" +
 		"  case $1 in\n" +
-		"    --out-cert) echo stub-cert > \"$2\"; shift 2;;\n" +
+		"    --out-cert) cp " + leaf + " \"$2\"; shift 2;;\n" +
 		"    --out-key)  echo stub-key  > \"$2\"; shift 2;;\n" +
 		"    *) shift;;\n" +
 		"  esac\n" +
@@ -508,13 +509,14 @@ func TestMint_OrgArgv(t *testing.T) {
 	stubDir := t.TempDir()
 	argsFile := filepath.Join(stubDir, "args.txt")
 	stub := filepath.Join(stubDir, "cert-sign")
+	leaf, _ := writeStubLeaf(t, stubDir)
 	// One argv element per line, so a value with a space is visible as one.
 	script := "#!/bin/sh\n" +
 		": > " + argsFile + "\n" +
 		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> " + argsFile + "; done\n" +
 		"while [ $# -gt 0 ]; do\n" +
 		"  case $1 in\n" +
-		"    --out-cert) echo stub-cert > \"$2\"; shift 2;;\n" +
+		"    --out-cert) cp " + leaf + " \"$2\"; shift 2;;\n" +
 		"    --out-key)  echo stub-key  > \"$2\"; shift 2;;\n" +
 		"    *) shift;;\n" +
 		"  esac\n" +
