@@ -78,6 +78,8 @@ for another subscriber. The image allows 32 of each. A change of either setting 
 a site with a streaming pair, the standby needs values at least as large as
 the primary's, so it restarts on the new image first.
 
+`max_worker_processes` (16) may become the limit before the slots do; measured value to follow.
+
 ## The slot WAL cap
 
 `max_slot_wal_keep_size` is the most WAL a replication slot may hold before
