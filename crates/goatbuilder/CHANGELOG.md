@@ -7,22 +7,7 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
-
-### For someone deploying
-
-#### Fixed: a standup play limited to the founder is refused when its limit selects no host, instead of passing
-
-Six standup plays run on the site's first management host alone, limited
-with `-l 'mgmt-<site>-01*'`: SPIRE, the LAN service surface, the LAN TLS
-routes, the dashboard, the portal and grant-keyd. When the site's founder was
-named otherwise and another inventory host matched the pattern, ansible
-skipped the play and exited 0, so the phase passed having done nothing. Each
-of those commands now checks first that a host of `<site>_hosts` in the two
-management inventories matches the limit, and refuses with GB-355, naming the
-pattern, the group and the inventories, when none does. `goatbuilder standup`
-and `ops/scripts/goat-standup.sh` run the same check. The naming rule is
-unchanged.
-
+Changes since the last release are one file each in `crates/goatbuilder/changelog.d/`; `python3 ops/release/changelog.py show` prints them as the next release will.
 <!-- END generated: changelog unreleased -->
 
 ## 0.7.3 — 2026-11-17
