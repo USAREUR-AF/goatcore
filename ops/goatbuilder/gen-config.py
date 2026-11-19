@@ -60,7 +60,7 @@ DEFAULT_REPO = {
 }
 # In schema order. release_source is optional: a repository whose release
 # workflow signs goatbuilder binaries, trusted by `goatbuilder update` beside
-# the signers goatbuilder declares; omitted, none is added.
+# the signers goatbuilder declares; omitted, goatbuilder uses source.
 REPO_KEYS = ("source", "image_namespace", "release_source", "signing")
 DEPLOY_KEYS = ("aws_profile", "ssh_user", "state_dir")
 

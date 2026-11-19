@@ -125,9 +125,8 @@ pub struct Repo {
     /// The repository whose release workflow signs the goatbuilder binaries
     /// this project installs. A deployment whose declarations live in one
     /// repository and whose goatbuilder comes from another names the second
-    /// here. It is trusted beside the release signers compiled into
-    /// goatbuilder, never instead of them; omitted, none is added, and
-    /// `source` is never a signer (ADR 1252).
+    /// here. Omitted: `source`. Either is trusted beside the release signers
+    /// compiled into goatbuilder, never instead of them (ADR 1252).
     #[serde(default)]
     pub release_source: Option<String>,
 }

@@ -64,6 +64,9 @@ const GITHUB_ISSUER: &str = "https://token.actions.githubusercontent.com";
 
 /// The workflow a goatbuilder release is triggered by, at the release's tag.
 pub const RELEASE_WORKFLOW: &str = "goatbuilder-release.yml";
+/// The release workflow's `name:`, which the certificate's legacy GitHub
+/// workflow name extension (1.3.6.1.4.1.57264.1.4) carries.
+pub const RELEASE_WORKFLOW_NAME: &str = "goatbuilder-release";
 /// The reusable workflow the release workflow calls, which signs: the
 /// certificate's SAN names it, at the release's tag.
 pub const SIGNING_WORKFLOW: &str = "_release-binary.yml";
@@ -82,6 +85,9 @@ pub struct Expect<'a> {
     pub workflow: &'a str,
     /// The reusable workflow file that signed ([`SIGNING_WORKFLOW`]): the SAN.
     pub signing_workflow: &'a str,
+    /// The triggered workflow's `name:` ([`RELEASE_WORKFLOW_NAME`]): the
+    /// legacy GitHub workflow name extension, when the certificate has it.
+    pub workflow_name: &'a str,
 }
 
 /// What was verified, for the update's report.
@@ -839,6 +845,12 @@ struct Identity {
     source_ref: String,
     build_config: String,
     san: String,
+    /// Fulcio's legacy GitHub workflow extensions (1.3.6.1.4.1.57264.1.4,
+    /// .5 and .6), which cosign's --certificate-github-workflow-name,
+    /// -repository and -ref read. Deprecated by Fulcio, so optional here.
+    workflow_name: Option<String>,
+    workflow_repo: Option<String>,
+    workflow_ref: Option<String>,
 }
 
 /// A DER UTF8String's text (Fulcio's 1.3.6.1.4.1.57264.1.8 and later
@@ -906,6 +918,9 @@ fn identity_of(c: &X509Certificate) -> Result<Identity, Refusal> {
             "Build Config URI (1.3.6.1.4.1.57264.1.18)",
         )?,
         san: san.unwrap_or_default(),
+        workflow_name: ext("1.3.6.1.4.1.57264.1.4", false),
+        workflow_repo: ext("1.3.6.1.4.1.57264.1.5", false),
+        workflow_ref: ext("1.3.6.1.4.1.57264.1.6", false),
     })
 }
 
@@ -960,6 +975,22 @@ fn check_identity(i: &Identity, e: &Expect) -> Result<String, Refusal> {
             "identity",
             format!("the certificate's SAN is {}, not {repo}{signed_by} (the reusable workflow that signs a release)", i.san),
         ));
+    }
+    // The legacy workflow extensions a cosign reinstall line pins: matched
+    // when present, so the binary and that line trust one definition, and
+    // never required, so a Fulcio that stops writing them strands nothing.
+    let legacy = [
+        ("workflow repository (1.3.6.1.4.1.57264.1.5)", &i.workflow_repo, e.signer.to_string(), true),
+        ("workflow ref (1.3.6.1.4.1.57264.1.6)", &i.workflow_ref, tag.clone(), false),
+        ("workflow name (1.3.6.1.4.1.57264.1.4)", &i.workflow_name, e.workflow_name.to_string(), false),
+    ];
+    for (what, got, want, any_case) in legacy {
+        if let Some(got) = got {
+            let same = if any_case { got.eq_ignore_ascii_case(&want) } else { *got == want };
+            if !same {
+                return Err(refuse("identity", format!("the certificate's {what} is {got}, not {want}")));
+            }
+        }
     }
     Ok(i.build_config.clone())
 }
