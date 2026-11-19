@@ -451,6 +451,7 @@ gb-074-what = Before touching anything, update checks that the <asset>.sha256 th
 gb-074-cause-1 = the surface is mid-deploy and the binary, its checksum and SHA256SUMS are from different releases
 gb-074-cause-2 = the download was altered or truncated on the way
 gb-074-cause-3 = the signature over SHA256SUMS is not from the release workflow of the repository goatbuilder.yaml names
+gb-074-cause-4 = this goatbuilder was built before the repository move: it expects the signature of the previous release repository, releases are now signed by the current one, and the refusal's expected identity names a different repository from the one it got. Such a binary cannot update itself
 gb-075-title = goatbuilder could not replace its own binary
 gb-075-what = The download was verified, but writing it next to the running binary or renaming it into place failed. The rename is atomic, so the binary in place is either the old one, whole, or the new one, whole.
 gb-075-cause-1 = the install directory is not writable by this user (a binary under /usr/local/bin installed with sudo)
@@ -1118,6 +1119,18 @@ gb-351-title = a Spock subscription has forward_origins set, which in a mesh rep
 gb-351-what = A Spock subscription, or the setting that creates them, has forward_origins other than empty or 'none'. In a mesh of three or more sites such a subscription passes each change on to the next site, which passes it back, without end, while every subscription still reads replicating and nothing is logged. The spock-forward-origins-check role stopped the run before spock-mesh-peering or ory-narrow-repset changed anything. The message names the setting, or each subscription as <host> <database>.<subscription>.
 gb-351-cause-1 = a site's group_vars set spock_mesh_forward_origins or ory_spock_forward_origins
 gb-351-cause-2 = a subscription was created by hand with forward_origins := '{"{"}all{"}"}'
+gb-352-title = a joining site cannot take a shared secret from its founder
+gb-352-what = join-node's phase 3 gives a joining site the values every site of the goatnet shares (the SPEC lines of newsite-secrets.sh marked cluster: NetBird's datastore key, the replicator, the relay secret, Ory's network id, the Kratos cipher, the Hydra system secret) by taking its founder's. Under a store of references the founder's name has no reference in .envrc.local.d/*.refs; under a store of values it has no value; or, after the secrets injector ran, the founder's or the joiner's name was empty or still a reference. Nothing was written for the joiner's shared names. The message names the variables, never a value.
+gb-352-cause-1 = the founder's value was never stored under the declared secrets posture on this machine
+gb-352-cause-2 = the store's tool is not signed in, so with-secrets could not resolve the reference
+gb-352-cause-3 = join_founder_site in the joiner's group_vars names the wrong site
+gb-353-title = a joining site already holds a shared secret that is not its founder's
+gb-353-what = join-node's phase 3 takes a joining site's shared values from its founder and never overwrites one the joiner already holds. A joiner name holds a value (or a reference to one) whose SHA-256 differs from the founder's. A joiner with a fresh value looks healthy and cannot take part: NetBird cannot decrypt the replicated rows, Spock does not replicate, Kratos and Hydra cannot read the replicated identity data. The value was kept. The message names the variables, never a value or a digest.
+gb-353-cause-1 = the joiner's values were minted fresh, by hand or by newsite-secrets.sh, before this step existed
+gb-353-cause-2 = the joiner's reference points at another goatnet's entry
+gb-354-title = the env store holds none of a joining site's shared secrets
+gb-354-what = join-node's phase 3 takes a joining site's shared values from its founder. Under the env store nothing persists, so it cannot write them: each joiner name must already be exported in the shell that runs join-node. One or more are not. Nothing was written.
+gb-354-cause-1 = the declared store is env (GOAT_SECRET_STORE=env or secrets.store: env)
 gb-355-title = a standup play limited to the founder selects no host of the site's group
 gb-355-what = Six standup plays run on the site's first management host alone (SPIRE, the LAN service surface, the LAN TLS routes, the dashboard, the portal, grant-keyd), limited with -l 'mgmt-<site>-01*', the declared naming rule. Before the play, the same command checked the site's group, <site>_hosts, in inventory/mgmt-hosts.ini and inventory/mgmt-hosts-mesh.ini, and no host there matches the limit. The play was refused before ansible ran: with another host matching the pattern, ansible prints "skipping: no hosts matched" and exits 0 having done nothing. Both avenues, goatbuilder standup and goat-standup.sh, run the check (ops/scripts/inventory-hosts.py --match --require).
 gb-355-cause-1 = the site's first management host is named otherwise than mgmt-<site>-01 in the inventory

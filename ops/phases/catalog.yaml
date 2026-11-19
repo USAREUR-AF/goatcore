@@ -543,17 +543,17 @@ phases:
 - verb: join-node
   phase: 3
   id: repo-work
-  kind: GATE
-  title: 'repo work first: group, inventory, pins, exclusions; then the node''s clock'
-  what: 'Runs the config preflight on the node''s group before it enrols: the node is in the inventory group, the pins and exclusions are declared. The mesh-address placeholder is allowed until phase 12. Then reads the node''s clock from its own time service over ssh, read-only (chronyc -c tracking, else timedatectl show): it must be synchronized to an outside reference and, where chrony gives an offset, within the budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router''s 500 ms limit). A clock that cannot be read is said to be not verified, never passed.'
+  kind: GATE + T
+  title: 'repo work first: group, inventory, pins, exclusions; then the node''s clock; a joiner''s secrets'
+  what: 'Runs the config preflight on the node''s group before it enrols: the node is in the inventory group, the pins and exclusions are declared. The mesh-address placeholder is allowed until phase 12. Then reads the node''s clock from its own time service over ssh, read-only (chronyc -c tracking, else timedatectl show): it must be synchronized to an outside reference and, where chrony gives an offset, within the budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router''s 500 ms limit). A clock that cannot be read is said to be not verified, never passed. Last, on a joining site''s core node, its secrets (join-site-secrets.py): each value every site shares (the SPEC lines of newsite-secrets.sh marked cluster) is taken from the founder''s, as a reference in the reference file or, under a value store, as a value; newsite-secrets.sh mints the site''s own; each shared value is compared with the founder''s by digest, printing names only. A joiner value that differs is refused and kept (GB-353); a founder value that is missing or does not resolve is refused (GB-352).'
   why: A node that is not declared in the repository cannot be converged or graded, and a Zenoh router refuses a timestamp more than 500 ms ahead of its own clock without telling the node's owner; checking first means nothing on the node changes for an undeclared node or a wrong clock.
-  changes: Nothing.
-  verify: the config preflight passes for the node's group, and the clock line prints the node's offset or says it was not verified
-  runs: ops/scripts/standup-config-preflight.py, ops/scripts/join-node-clock-check.py
+  changes: Nothing on the node. On a joining site's core node, the operator's secret store or reference file gains the site's values, and none is overwritten.
+  verify: the config preflight passes for the node's group, the clock line prints the node's offset or says it was not verified, and on a joiner every shared value reads `same as` the founder's
+  runs: ops/scripts/standup-config-preflight.py, ops/scripts/join-node-clock-check.py, ops/scripts/join-site-secrets.py, ops/scripts/newsite-secrets.sh, ops/scripts/with-secrets
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 3 --to 3 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#before-the-real-run
-  failed_because: the node or one of its declared values is missing from the repository, or the node's clock is not synchronized or is over the budget (GB-297)
-  then: declare it in the inventory and group_vars, or repair time synchronization on the node, then resume with --from 3
+  failed_because: the node or one of its declared values is missing from the repository, the node's clock is not synchronized or is over the budget (GB-297), or a joiner's shared secret is missing at the founder (GB-352) or differs at the joiner (GB-353, GB-354)
+  then: declare it in the inventory and group_vars, repair time synchronization on the node, or do what the secret's code says (goatbuilder explain GB-352), then resume with --from 3
 - verb: join-node
   phase: 4
   id: quiet-apt

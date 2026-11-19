@@ -97,3 +97,38 @@ func TestOnboardGate_activeSponsorPasses(t *testing.T) {
 		t.Fatalf("active sponsor at /onboarding/invite: status %d, want 200", rec.Code)
 	}
 }
+
+// The sign-in token's groups claim does not carry an identity's admin groups
+// (they live in metadata_public, which every admin page reads through the live
+// identity check). The onboarding gate must open its admin branch on the same
+// live record, or an admin with no sponsorship row is refused the queue that
+// every other admin page lets them reach.
+func TestOnboardGate_adminByLiveRecordPassesWithoutGroupsClaim(t *testing.T) {
+	const sub = "0b1f0000-0000-4000-8000-0000000000c5"
+	kc, _ := fakeKratosMeta(t, sub, "admin@example.org", "Admin", []string{"PLATFORM-ADMIN"}, "active")
+	s := newUsersAPITestServer(t, kc)
+	s.Cfg.LiveIdentityCheck = true
+	s.Cfg.NotifyGoatnet = "zagros"
+	portalURL, _ := fakeSponsorPortal(t, nil, map[string]sponsorLookupResponse{})
+	s.Cfg.PortalInternalURL = portalURL
+	s.Cfg.PortalLookupToken = "svc-token"
+	if rec := gateReq(t, s, http.MethodGet, "/onboarding", "admin@example.org", sub, "", nil); rec.Code != http.StatusOK {
+		t.Fatalf("admin by live record, no groups claim, at /onboarding: status %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+}
+
+// The admin branch must not open on the live record for someone who is not an
+// admin there: a non-admin with no sponsorship row is still refused.
+func TestOnboardGate_nonAdminWithoutSponsorshipStillRefused(t *testing.T) {
+	const sub = "0b1f0000-0000-4000-8000-0000000000c6"
+	kc, _ := fakeKratosMeta(t, sub, "viewer@example.org", "Viewer", []string{"VIEWER"}, "active")
+	s := newUsersAPITestServer(t, kc)
+	s.Cfg.LiveIdentityCheck = true
+	s.Cfg.NotifyGoatnet = "zagros"
+	portalURL, _ := fakeSponsorPortal(t, nil, map[string]sponsorLookupResponse{})
+	s.Cfg.PortalInternalURL = portalURL
+	s.Cfg.PortalLookupToken = "svc-token"
+	if rec := gateReq(t, s, http.MethodGet, "/onboarding", "viewer@example.org", sub, "", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin without sponsorship at /onboarding: status %d, want 403", rec.Code)
+	}
+}
