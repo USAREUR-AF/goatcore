@@ -70,6 +70,29 @@ variable "public_ingress_cidrs" {
   default     = ["0.0.0.0/0"]
 }
 
+variable "extra_ingress" {
+  description = <<-EOT
+    Further inbound rules for services the host runs beside relay-health, each
+    open only to the CIDRs given (for example a partner receiver's address):
+    [{ port, protocol = "udp" | "tcp", cidrs, description }]. Default none.
+  EOT
+  type = list(object({
+    port        = number
+    protocol    = string
+    cidrs       = list(string)
+    description = string
+  }))
+  default = []
+
+  validation {
+    condition = alltrue([for r in var.extra_ingress :
+      contains(["udp", "tcp"], r.protocol) && r.port >= 1 && r.port <= 65535 &&
+      length(r.cidrs) > 0 && !contains(r.cidrs, "0.0.0.0/0")
+    ])
+    error_message = "extra_ingress: protocol udp or tcp, port 1-65535, and at least one CIDR that is not 0.0.0.0/0."
+  }
+}
+
 variable "tags" {
   description = "Resource tags (merged with compliance default_tags by the root module)."
   type        = map(string)
