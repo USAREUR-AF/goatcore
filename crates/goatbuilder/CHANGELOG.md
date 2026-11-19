@@ -7,77 +7,7 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
-
-### For someone deploying
-
-#### Fixed: the errors the rest of goatbuilder raises carry their catalog code
-
-Sixty-four more errors had no catalog code, so a log of a run that met one
-(stderr not a terminal, no explanation page) showed only `goatbuilder: <text>`.
-Each now prints its code. They use existing codes where one fits: a file
-goatbuilder reads or writes GB-254 (a pins file, a run record, the survey page,
-teardown.yaml), a program that could not be started GB-320 (bash, ansible, ssh,
-git, go, a checkout's script), the mock converger's fixture GB-024, the config
-GB-025, a plan file that is not JSON GB-052, a missing deploy playbook GB-005,
-a component block fleet-pins.yaml lacks GB-257, the assembled tree's marker
-GB-259, a release graduation that printed no record GB-020, a git command
-`doctor` runs that failed GB-258, an internal error GB-322, and a mutation
-without a terminal GB-008. One is new: GB-326, a file of the checkout that is
-not YAML (fleet-pins.yaml, doors.yaml, a role's deploy-history.yml,
-teardown.yaml).
-
-Five checks inside `goatbuilder federate` now carry a code: phase 1's and the slot
-recheck's exit disagreeing with its result GB-315, phase 1 writing no results and
-an edge result naming the wrong side GB-321, and an imported edge result that
-changed while it was read GB-277.
-
-Eighty-four more errors were a file, program or JSON/YAML error passed up as it
-came, with no code. Each now carries one: a file that cannot be read or written
-GB-254 (it names the file), a value that cannot be written as JSON or YAML
-GB-322, a program that could not be started GB-320, fleet-pins.yaml that is not
-YAML GB-326, a mock fixture's pins GB-024, and the end-state grader's output
-GB-066. By file, under `crates/goatbuilder/src/`: converger.rs 10,
-doctor.rs 2, endstate.rs 1, fastlane.rs 1, federate/backout.rs 3,
-federate/handoff.rs 3, federate/measure.rs 1, federate/peering_files.rs 3,
-federate/plan.rs 1, federate/rotation.rs 3, federate/state.rs 1,
-federate/status.rs 2, inspect.rs 8, pins.rs 2, promote.rs 2, push.rs 1,
-release.rs 5, runs.rs 3, standup.rs 10, survey.rs 2, tutor.rs 13, verbs.rs 7. One that carries GB-322, GB-320 or GB-066 exits 1, where it exited 2 (on
-the federation verbs, an internal error already exited 1); the others still
-exit 2.
-
-Exit codes, by the contract's meanings (1 refused: a precondition failed; 2
-usage: the command line was wrong). Each of these errors exited 2 with no code.
-Every place here is on goatbuilder's own error path, where an uncoded error exits
-2; none is on the federation verbs' path, where it exits 1. One that now carries
-GB-020 (`release`), GB-025 (`validate` and every verb that loads the config: it
-does not match the typed model, or does not convert to JSON), GB-258 (`doctor`'s
-git, whose error every caller reads with a fallback), GB-277, GB-315, GB-320,
-GB-321 or GB-322 exits 1, since none is a usage error. The others (GB-005,
-GB-008, GB-024, GB-052, GB-254, GB-257, GB-259, GB-326) still exit 2. Every other exit is unchanged.
-
-#### Changed: an IPsec rotation proves the leaf charon signs with, and checks the strongSwan version
-
-`goatbuilder federate rotate <partner> ipsec-leaf` and `ipsec-ca` now check
-more on the edge (`goat-peering-edge`). Before anything moves, the rotation
-reads the running charon's version (`swanctl --version --daemon --raw`) and
-refuses a strongSwan series it was not tested with, or a version it cannot
-read, with GB-341. The tested series are 5.9 and 6.0, in
-`peering_edge_rotation_strongswan_tested`; add a series there only after
-running the rotation on it. It also refuses a staged leaf on the live leaf's
-key (GB-290), and refuses, naming the peering, when another peering on the
-edge lacks its certificate, key or CA files (GB-343). Once the new IKE SA is
-up, the rotation reloads the credentials from the files alone
-(`swanctl --load-creds --clear`), which drops the old certificate that a
-plain `--load-creds` keeps listed. The confirm then needs charon to list
-exactly one certificate of our id: the live leaf's serial, holding its
-private key, on a key other than the old leaf's. Otherwise the old pair is
-put back (GB-342), and the message names the serials. `swanctl --list-sas`
-names only the identities, which an old and a new leaf share, so the SA alone
-never showed which leaf it ran on. The confirm record
-`.previous-<id>/confirmed` now also names the serial, both keys' digests and
-the strongSwan version. Measured on a real charon, strongSwan 5.9.8 and
-6.0.4, with one and with two peerings on the edge.
-
+Changes since the last release are one file each in `crates/goatbuilder/changelog.d/`; `python3 ops/release/changelog.py show` prints them as the next release will.
 <!-- END generated: changelog unreleased -->
 
 ## 0.7.3 — 2026-11-17
