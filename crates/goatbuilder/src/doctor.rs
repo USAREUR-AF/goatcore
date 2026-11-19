@@ -1401,7 +1401,7 @@ fn which(tool: &str) -> bool {
 fn python_has(modules: &[&str]) -> Result<bool> {
     let code = format!("import {}", modules.join(", "));
     // Quiet: the python:deps row reports a missing module, not a traceback.
-    let status = Cmd::new("python3").args(["-c", &code]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;
+    let status = Cmd::new("python3").args(["-c", &code]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start python3: {e}")))?;
     Ok(status.success())
 }
 
@@ -1410,9 +1410,10 @@ fn git(repo: &Path, args: &[&str]) -> Result<String> {
         .arg("-C")
         .arg(repo)
         .args(args)
-        .output()?;
+        .output()
+        .map_err(|e| goat_errors::coded("GB-320", format!("could not start git: {e}")))?;
     if !out.status.success() {
-        anyhow::bail!("git {} failed", args.join(" "));
+        return Err(goat_errors::coded("GB-258", format!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim())).into());
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }

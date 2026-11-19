@@ -64,6 +64,19 @@ pub fn run_apply(
     a: &ApplyArgs,
     out: &mut dyn Write,
 ) -> anyhow::Result<i32> {
+    run_apply_at(site, a, out, chrono::Utc::now().date_naive())
+}
+
+/// [`run_apply`] on a given date. The term is judged on `today`; every binary
+/// reaches this only through [`run_apply`], with today's UTC date, and the
+/// library's own tests pass the vectors' evaluation date
+/// (tests/acceptance_date_is_the_wall_clock.rs holds both).
+pub(crate) fn run_apply_at(
+    site: &dyn Fn() -> anyhow::Result<Site>,
+    a: &ApplyArgs,
+    out: &mut dyn Write,
+    today: chrono::NaiveDate,
+) -> anyhow::Result<i32> {
     let bytes = read_file(&a.agreement)?;
     let digest = digest_of(&bytes);
     let mut outcomes = Vec::new();
@@ -85,7 +98,6 @@ pub fn run_apply(
     // Render only what we could actually deliver. Writing access rules from an
     // agreement that fails its own conformance check is how a link comes up
     // half-configured and looks deployed.
-    let today = chrono::Utc::now().date_naive();
     let checks = render::verify_locally(&ag, &ours, today);
     if let Some(bad) = checks.iter().find(|c| !c.ok) {
         outcomes.push(FedOutcome::fail(
@@ -190,5 +202,66 @@ fn finish_apply(
     } else {
         writeln!(out, "apply {} ({digest})", a.agreement.display())?;
         print_outcomes(out, &outcomes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vectors() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors")
+    }
+
+    /// The date the normative vectors are evaluated on (their README,
+    /// "Evaluation date"); tests over them pass it, never the wall clock.
+    fn vectors_now() -> chrono::NaiveDate {
+        let s = std::fs::read_to_string(vectors().join("now.txt")).expect("now.txt");
+        chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").expect("YYYY-MM-DD")
+    }
+
+    /// Far past the vector agreement's term, which ends 2026-11-20.
+    fn far_past_the_term() -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2030, 1, 1).unwrap()
+    }
+
+    fn no_site() -> anyhow::Result<Site> {
+        anyhow::bail!("no site in this test")
+    }
+
+    fn args() -> ApplyArgs {
+        ApplyArgs {
+            agreement: vectors().join("compose-full/agreement.canonical.json"),
+            as_party: Some("xaa".into()),
+            out: None,
+            edge_group: Some("g".into()),
+            partner_audience: Vec::new(),
+            confirm: false,
+            json: false,
+        }
+    }
+
+    fn run_at(today: chrono::NaiveDate) -> (i32, String) {
+        let mut out = Vec::new();
+        let code = run_apply_at(&no_site, &args(), &mut out, today).expect("apply ran");
+        (code, String::from_utf8(out).expect("utf-8"))
+    }
+
+    #[test]
+    fn the_vector_agreement_renders_on_the_vectors_date() {
+        let (code, out) = run_at(vectors_now());
+        assert_eq!(code, EXIT_OK, "{out}");
+        assert!(
+            out.contains("--- ops/ansible/group_vars/g/federation-xab.yml ---"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn nothing_renders_far_past_the_term() {
+        let (code, out) = run_at(far_past_the_term());
+        assert_eq!(code, EXIT_FED_NOT_CONFORMANT, "{out}");
+        assert!(out.contains("expired on 2026-11-20"), "{out}");
+        assert!(!out.contains("\n--- "), "{out}");
     }
 }

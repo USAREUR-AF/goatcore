@@ -15,7 +15,17 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
 GOAT="${1:?usage: parity-federate-verbs.sh <goat> <goatbuilder>}"
 GB="${2:?usage: parity-federate-verbs.sh <goat> <goatbuilder>}"
+# Every row runs from inside the vectors directory, so a binary named by a
+# relative path is resolved from here first. A binary that cannot be run is
+# refused now: both sides exiting 127 would otherwise compare equal.
+for arg in "$GOAT" "$GB"; do
+  if [ ! -f "$arg" ] || [ ! -x "$arg" ]; then echo "PARITY FAIL: $arg is not an executable file"; exit 1; fi
+done
+case "$GOAT" in /*) ;; *) GOAT="$PWD/$GOAT" ;; esac
+case "$GB" in /*) ;; *) GB="$PWD/$GB" ;; esac
 V="$REPO/ops/federation/vectors"
+FAR_DIR="$REPO/ops/federation/fixtures/far-term"
+FAR="$FAR_DIR/agreement.canonical.json"
 T="$(mktemp -d -t parity-federate-verbs.XXXXXX)"
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/profile/contexts/default"
@@ -46,10 +56,19 @@ runs() {   # one verb invocation per line, the words after `federate`
   echo "diff compose-full/agreement.canonical.json compose-full/agreement.canonical.json"
   echo "diff compose-full/agreement.canonical.json compose-no-flows/agreement.canonical.json --json"
   echo "diff compose-full/agreement.canonical.json compose-full/agreement.pretty.json"
+  # The normative vector agreement is judged on the wall clock here, so these
+  # rows compare whatever both binaries say on the day: an attestation before
+  # its term ends (2026-11-20), the same refusal after.
   echo "verify compose-full/agreement.canonical.json --as xaa"
   echo "verify compose-full/agreement.canonical.json --json"
   echo "apply compose-full/agreement.canonical.json --as xaa --edge-group g"
   echo "apply compose-full/agreement.canonical.json --as xab --json"
+  # The far-term test fixture (expires 2099-12-31) is the agreement both
+  # binaries must attest and render on any date the gate runs.
+  echo "verify $FAR --as xta"
+  echo "verify $FAR --as xta --json"
+  echo "apply $FAR --as xta --edge-group g"
+  echo "apply $FAR --as xtb --json"
   echo "init"
   echo "init --json"
 }
@@ -62,6 +81,32 @@ while IFS= read -r line; do
   (cd "$V" && "$GOAT" federate $line >"$T/a.out" 2>"$T/a.err"); ra=$?
   # shellcheck disable=SC2086
   (cd "$V" && "$GB" federate $line >"$T/b.out" 2>"$T/b.err"); rb=$?
+  # 126 and 127 are the shell's: the binary was not run at all.
+  case "$ra:$rb" in
+    126:*|127:*|*:126|*:127)
+      fail=1; echo "PARITY FAIL: federate $line — goat exit $ra, goatbuilder exit $rb; a binary could not be run"
+      sed 's/^/    /' "$T/a.err" "$T/b.err" | cut -c1-200 | head -4
+      continue ;;
+  esac
+  # The far-term fixture is one both parties can deliver on any date: verify
+  # attests and apply renders, so a refusal on both sides is a failure, not parity.
+  case "$line" in
+    "verify $FAR --as "*|"apply $FAR --as "*)
+      if [ "$ra" != 0 ] || [ "$rb" != 0 ]; then
+        fail=1; echo "PARITY FAIL: federate $line — goat exit $ra, goatbuilder exit $rb; the far-term fixture must attest and render (exit 0)"
+        sed 's/^/    /' "$T/a.out" | cut -c1-200 | head -20
+        continue
+      fi
+      case "$line" in
+        *--json*) if [ "${line%% *}" = verify ]; then want='"attestation":"conformance ok for sha256:'; else want='"files":["ops/'; fi ;;
+        verify*) want='would publish `conformance ok for sha256:' ;;
+        *) want='--- ' ;;
+      esac
+      if ! grep -qF -- "$want" "$T/a.out" || ! grep -qF -- "$want" "$T/b.out"; then
+        fail=1; echo "PARITY FAIL: federate $line — exit 0 but no '$want' in the output; it did not attest or render"
+        continue
+      fi ;;
+  esac
   if [ "$ra" != "$rb" ]; then
     fail=1; echo "PARITY FAIL: federate $line — goat exit $ra, goatbuilder exit $rb"
   elif ! cmp -s "$T/a.out" "$T/b.out"; then
@@ -69,6 +114,24 @@ while IFS= read -r line; do
     { diff "$T/a.out" "$T/b.out" || true; } | sed 's/^/    /' | cut -c1-200 | head -20
   fi
 done < <(set +e; runs)
+
+# verify and apply decide acceptance, so neither binary takes a caller-supplied
+# evaluation date for them: an expired agreement must never be judged current.
+for verb in "verify $FAR --as xta" "apply $FAR --as xta"; do
+  for bin in "$GOAT" "$GB"; do
+    # shellcheck disable=SC2086 # the words are split on purpose
+    (cd "$V" && "$bin" federate $verb --now 2026-09-05 >/dev/null 2>&1); rc=$?
+    if [ "$rc" != 2 ]; then
+      fail=1; echo "PARITY FAIL: $(basename "$bin") federate $verb --now — exit $rc; a date flag on verify or apply must be refused as unknown (exit 2)"
+    fi
+  done
+done
+
+# The far-term fixture is what its committed generator makes, byte for byte.
+if ! python3 "$FAR_DIR/generate.py" --check "$GB" >"$T/gen.out" 2>&1; then
+  fail=1; echo "PARITY FAIL: ops/federation/fixtures/far-term is not what its generate.py makes"
+  sed 's/^/    /' "$T/gen.out" | head -20
+fi
 
 [ "$n" -gt 100 ] || { echo "PARITY FAIL: only $n runs; the vectors were not found"; exit 1; }
 [ "$fail" = 0 ] && echo "parity ok: goat federate and goatbuilder federate agree on $n runs over the vectors (stdout and exit code)"
