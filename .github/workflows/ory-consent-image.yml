@@ -47,6 +47,9 @@ on:
 env:
   IMAGE_NAME: kratos-selfservice-ui-node-patched
 
+permissions:
+  contents: read
+
 # Supersede in-flight runs for the same ref. A push during review used to
 # leave the previous run going to completion, so a branch pushed three
 # times paid three times for an answer only the last one needed. Keyed on
