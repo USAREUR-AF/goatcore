@@ -10,6 +10,7 @@ ExecStart=/bin/sh -c 'exec /usr/bin/python3 /opt/simple-bn/bn_monitor.py --bind 
 Restart=always
 RestartSec=10
 DynamicUser=yes
+User=simple-bn
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

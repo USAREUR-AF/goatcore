@@ -21,7 +21,6 @@ import os
 import random
 import socket
 import struct
-import sys
 import tempfile
 import threading
 import time
@@ -328,7 +327,7 @@ def write_status(path, doc):
     fd, tmp = tempfile.mkstemp(dir=d, prefix=".status.")
     with os.fdopen(fd, "w") as f:
         json.dump(doc, f)
-    os.chmod(tmp, 0o644)
+    os.chmod(tmp, 0o640)   # readable by bn-monitor, which runs as the same dynamic user
     os.replace(tmp, path)
 
 
