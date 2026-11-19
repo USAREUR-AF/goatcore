@@ -5,6 +5,10 @@
 services:
   smtp-sink:
     image: {{ smtp_sink_image }}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: {{ smtp_sink_container }}
     restart: unless-stopped
     environment:

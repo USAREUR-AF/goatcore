@@ -1310,7 +1310,7 @@ func TestRender_timeSensitiveItemsAreHoistedAboveTheSteps(t *testing.T) {
 	if si := strings.Index(out, "STEP 1"); bi > si {
 		t.Errorf("the callout must precede the steps (callout %d, STEP 1 %d)", bi, si)
 	}
-	for _, want := range []string{"works ONCE", "24 hours", "not ready to build", "7 DAYS"} {
+	for _, want := range []string{"fabric bundle link expires 24 hours", "not ready to build", "7 DAYS"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("time-sensitive block missing %q", want)
 		}
@@ -1349,7 +1349,7 @@ func TestRender_setupKeyAloneRaisesTheTimeSensitiveBanner(t *testing.T) {
 	// "login link and code" is the recovery block's own phrasing — a marker that
 	// is unique to it. It does not pin a lifetime, which belongs to Kratos's
 	// recovery lifespan and the role default.
-	for _, unwanted := range []string{"login link and code", "works ONCE"} {
+	for _, unwanted := range []string{"login link and code", "fabric bundle link"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("banner claims %q for a package that carries no such artifact", unwanted)
 		}

@@ -2,7 +2,7 @@
 
 Overlays `oryd/kratos-selfservice-ui-node` with three additive in-place patches:
 
-1. **groups-forwarding** — forwards Kratos identity `traits.groups` into the OIDC JWT `id_token.groups` claim so downstream consumers (Grafana, netbird-dashboard, future relying parties) can do real groups-based RBAC instead of every-authenticated-user-is-admin pragmas.
+1. **groups-forwarding** — forwards the admin-managed Kratos `metadata_public.groups` (never self-editable `traits.groups`, GHSA-9v3v) into the OIDC JWT `id_token.groups` claim so downstream consumers (Grafana, netbird-dashboard, future relying parties) can do real groups-based RBAC instead of every-authenticated-user-is-admin pragmas.
 2. **audience-fallback** — falls back to `body.client.audience` when Hydra delivers an empty `requested_access_token_audience` in the consent challenge body, so minted tokens carry the `aud` claim every JWT validator requires. (F-144)
 3. **scope-fallback** — falls back to `body.client.scope.split(' ')` when `grantScope` is empty on `acceptOAuth2ConsentRequest`. Same shape as patch 2: for clients with `skip_consent: true`, Hydra delivers an empty `body.requested_scope`, upstream lands `grant_scope: []` in the stored session, and Hydra then strips every claim (including `groups` injected by patch 1) from `/userinfo`. Downstream consumers see an empty userinfo and reject the login. (F-161)
 

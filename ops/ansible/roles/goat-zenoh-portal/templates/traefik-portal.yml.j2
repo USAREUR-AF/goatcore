@@ -8,33 +8,9 @@
 # distinct from mgmt.yml + airdefenders.yml + panoscope.yml so a
 # portal redeploy can't stomp on neighboring routes.
 
-http:
-{% if portal_problem_pages_enabled | default(false) %}
-  middlewares:
-    # A 429 from either limiter below is answered with the problem body the
-    # API document promises, fetched from the problem-pages sidecar. Only
-    # 429: a 5xx range here would mask a portal fault behind a constant page.
-    # Listed on the request router AFTER the mesh gate (a source the gate
-    # refuses never causes a page fetch) and BEFORE the limiters (an errors
-    # middleware only sees the status of what it wraps). It also wraps the
-    # portal itself, so a 429 a handler produced would be replaced too; the
-    # portal produces none (#1247's openapi_contract_test.go holds that
-    # invariant).
-    # Not on the stream router, which carries no limiter.
-    {{ portal_traefik_router_name }}-problems:
-      errors:
-        status:
-          - "429"
-        service: {{ portal_traefik_router_name }}-problems
-        query: "/{status}.json"
-
-{% endif %}
-  routers:
-    {{ portal_traefik_router_name }}:
-      rule: "Host(`{{ portal_traefik_host }}`)"
-      entryPoints:
-        - websecure
-      service: {{ portal_traefik_router_name }}
+{#- The request router's middleware chain and TLS, shared with the bundle
+    router below so the two cannot drift. -#}
+{% macro portal_request_middlewares() %}
 {% if (portal_traefik_mesh_only_middleware | default('') | length > 0) or (portal_traefik_inflight_middleware | default('') | length > 0) or (portal_traefik_ratelimit_middleware | default('') | length > 0) or (portal_problem_pages_enabled | default(false)) %}
       middlewares:
 {% if portal_traefik_mesh_only_middleware | default('') | length > 0 %}
@@ -77,6 +53,8 @@ http:
         - "{{ portal_traefik_ratelimit_middleware }}"
 {% endif %}
 {% endif %}
+{% endmacro %}
+{% macro portal_tls() %}
 {# Empty resolver = file-provider TLS: the cert comes from the site's
    tls.certificates store (internal-CA LAN posture) #}
 {% if portal_traefik_cert_resolver | default('') | length > 0 %}
@@ -85,7 +63,54 @@ http:
 {% else %}
       tls: {}
 {% endif %}
+{% endmacro %}
 
+http:
+{% if portal_problem_pages_enabled | default(false) %}
+  middlewares:
+    # A 429 from either limiter below is answered with the problem body the
+    # API document promises, fetched from the problem-pages sidecar. Only
+    # 429: a 5xx range here would mask a portal fault behind a constant page.
+    # Listed on the request router AFTER the mesh gate (a source the gate
+    # refuses never causes a page fetch) and BEFORE the limiters (an errors
+    # middleware only sees the status of what it wraps). It also wraps the
+    # portal itself, so a 429 a handler produced would be replaced too; the
+    # portal produces none (#1247's openapi_contract_test.go holds that
+    # invariant).
+    # Not on the stream router, which carries no limiter.
+    {{ portal_traefik_router_name }}-problems:
+      errors:
+        status:
+          - "429"
+        service: {{ portal_traefik_router_name }}-problems
+        query: "/{status}.json"
+
+{% endif %}
+  routers:
+    {{ portal_traefik_router_name }}:
+      rule: "Host(`{{ portal_traefik_host }}`)"
+      entryPoints:
+        - websecure
+      service: {{ portal_traefik_router_name }}
+{{ portal_request_middlewares() }}{{ portal_tls() }}
+    # ---------------------------------------------------------------------
+    # Bundle downloads, on their own router with the access log OFF
+    # (GHSA-qc75). The path carries the download token, the only credential
+    # for a tarball that holds an org's private key, and Traefik's access log
+    # records RequestPath. Everything else on the host keeps logging. Same
+    # service, middlewares and TLS as the request router above. The match
+    # ignores case so a /API/... spelling (answered 404 by the portal) is not
+    # logged either; Traefik sanitizes the path (// and ..) before routing.
+    # ---------------------------------------------------------------------
+    {{ portal_traefik_router_name }}-bundle:
+      rule: "Host(`{{ portal_traefik_host }}`) && PathRegexp(`(?i)^/api/(org|vendor)-bundle/`)"
+      priority: 110
+      entryPoints:
+        - websecure
+      service: {{ portal_traefik_router_name }}
+      observability:
+        accessLogs: false
+{{ portal_request_middlewares() }}{{ portal_tls() }}
     # ---------------------------------------------------------------------
     # The SSE route, split onto its own router (ADR 1133).
     # ---------------------------------------------------------------------

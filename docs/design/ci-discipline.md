@@ -19,6 +19,10 @@
 
 Eight workflows are listed under R4 today. `leak-gate` and `contributor-trust` are required checks on `main` and must report on every pull request. `ci`, `agent-references` and `slot-wal-cap` scan whatever a change touches. `codeql` analyzes every pull request and every push to `main`, so that every merged commit carries a code-scanning result; a run takes about three minutes. `acl-assertions` always reports and decides inside its jobs whether to build. `stable-guard` is filtered by branch instead of by path.
 
+## Path-filtered workflows run weekly on main
+
+A workflow with a `paths` filter runs only when a change touches those paths, so an upstream change (a package withdrawn from a mirror, an image tag removed) leaves it broken until an unrelated pull request touches them. `weekly-path-filtered.yml` starts every path-filtered workflow on `main` each Monday through `workflow_dispatch` (`ops/ci/weekly-path-filtered.py`), opens one issue per red workflow and closes it when the workflow is green again. A path-filtered workflow therefore declares `workflow_dispatch`; one that reads pull-request context and cannot run on `main` is listed with its reason in `ops/ci/weekly-path-filtered-exceptions.txt` (`tests/test_weekly_path_filtered.py` enforces this).
+
 ## Rules for writing a workflow
 
 A new workflow, and every line you add to an existing one, follows these four rules ([ADR 1246](../adr/1246-workflows-pin-actions-and-start-read-only-releases-carry-signatures-and-provenance.md)). OpenSSF Scorecard reads each of them; [openssf-scorecard.md](openssf-scorecard.md) has the result per check.

@@ -72,6 +72,21 @@ JSON
   [ "$(role_of id-plain)" = admin ]     # admin-managed metadata promotes
 }
 
+@test "GHSA-9v3v: a not-yet-backfilled identity's self-editable traits.groups never grants a role" {
+  cat > "$WORK/identities.json" <<'JSON'
+[
+  {"id": "id-platform", "state": "active", "traits": {"email": "platform@example.test", "groups": ["NETBIRD-ADMIN"]}},
+  {"id": "id-iam", "state": "active", "traits": {"email": "iam@example.test", "groups": ["NETBIRD-ADMIN"]}, "metadata_public": {"org": {}}}
+]
+JSON
+  export FIXTURE_IDENTITIES="$WORK/identities.json"
+  export NETBIRD_MGMT_ROLE_MAP="NETBIRD-ADMIN=admin"
+  run "${HOST_BASH_UNDER_TEST:-bash}" "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ "$(role_of id-platform)" = user ]   # no metadata_public: traits ignored
+  [ "$(role_of id-iam)" = user ]        # metadata_public without groups: traits ignored
+}
+
 @test "owner and service users are never touched" {
   export NETBIRD_MGMT_ROLE_MAP="NETBIRD-ADMIN=admin,PLATFORM-ADMIN=auditor"
   run "${HOST_BASH_UNDER_TEST:-bash}" "$SCRIPT"

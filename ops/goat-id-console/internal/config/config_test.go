@@ -1,6 +1,9 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -189,6 +192,44 @@ func TestPublicDoorAdminPWAlias(t *testing.T) {
 		}
 		if c.PublicDoorAdminPW != tc.want {
 			t.Errorf("old=%q neutral=%q: PublicDoorAdminPW = %q, want %q", tc.old, tc.neutral, c.PublicDoorAdminPW, tc.want)
+		}
+	}
+}
+
+// TRUSTED_PROXY_HOSTS unset or empty gives the sidecar's name; set to a value
+// that names no host it fails closed (TrustNoProxy) and logs an error, rather
+// than producing the empty list that means "trust every caller".
+func TestLoadTrustedProxyHosts(t *testing.T) {
+	t.Setenv("IDP_TENANT_KRATOS_ADMIN_URL", "")
+	t.Setenv("IDP_OPERATOR_KRATOS_ADMIN_URL", "")
+	var buf bytes.Buffer
+	saved := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(saved) })
+
+	for _, tc := range []struct {
+		env     string
+		want    []string
+		none    bool
+		logsErr bool
+	}{
+		{"", []string{"oauth2-proxy-id-console"}, false, false},
+		{"a, b", []string{"a", "b"}, false, false},
+		{" , ", nil, true, true},
+		{",", nil, true, true},
+		{"   ", nil, true, true},
+	} {
+		buf.Reset()
+		t.Setenv("TRUSTED_PROXY_HOSTS", tc.env)
+		c, err := Load()
+		if err != nil {
+			t.Fatalf("%q: Load: %v", tc.env, err)
+		}
+		if !reflect.DeepEqual(c.TrustedProxyHosts, tc.want) || c.TrustNoProxy != tc.none {
+			t.Errorf("%q: hosts %q none %v, want %q none %v", tc.env, c.TrustedProxyHosts, c.TrustNoProxy, tc.want, tc.none)
+		}
+		if got := strings.Contains(buf.String(), "level=ERROR") && strings.Contains(buf.String(), "TRUSTED_PROXY_HOSTS"); got != tc.logsErr {
+			t.Errorf("%q: error logged = %v, want %v (log: %s)", tc.env, got, tc.logsErr, buf.String())
 		}
 	}
 }

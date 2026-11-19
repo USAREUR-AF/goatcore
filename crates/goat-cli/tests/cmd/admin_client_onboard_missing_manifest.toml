@@ -13,4 +13,4 @@ error: no device manifest at /tmp/goat-cli-phase-f-4-no-such-repo-root/ops/devic
 """
 [env]
 # Keep this fixture away from an operator's active profile and automatic refresh.
-add = { GOAT_OPERATOR_HANDLE = "trycmd-operator", GOAT_PROFILE_DIR = "/tmp/goat-cli-trycmd-uninitialized" }
+add = { GOAT_OPERATOR_HANDLE = "trycmd-operator", GOAT_PROFILE_DIR = "/tmp/goat-cli-trycmd-uninitialized", GOAT_CONTEXT = "fixture" }

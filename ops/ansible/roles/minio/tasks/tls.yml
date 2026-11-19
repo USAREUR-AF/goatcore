@@ -1,0 +1,79 @@
+---
+- name: Validate storage TLS inputs
+  ansible.builtin.assert:
+    that:
+      - minio_service_host is match('^[A-Za-z0-9][A-Za-z0-9.-]+$')
+      - minio_tls_cert_src | length > 0
+      - minio_tls_key_src | length > 0
+      - minio_tls_ca_src | length > 0
+      - minio_s3_endpoint == 'https://' ~ minio_service_host ~ ':' ~ (minio_api_port | string)
+    fail_msg: "Native MinIO TLS requires one explicit service authority and organization-issued certificate/key/CA inputs."
+
+- name: Verify storage certificate against organization root and service name
+  ansible.builtin.command:
+    argv: [openssl, verify, -purpose, sslserver, -CAfile, "{{ minio_tls_ca_src }}", -verify_hostname, "{{ minio_service_host }}", "{{ minio_tls_cert_src }}"]
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Verify storage private key matches leaf certificate
+  ansible.builtin.shell: |
+    set -eu
+    cert_public=$(openssl x509 -in "$CERT_FILE" -pubkey -noout)
+    key_public=$(openssl pkey -in "$KEY_FILE" -pubout)
+    test "$cert_public" = "$key_public"
+  environment:
+    CERT_FILE: "{{ minio_tls_cert_src }}"
+    KEY_FILE: "{{ minio_tls_key_src }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  no_log: true
+
+- name: Create protected storage TLS directory
+  ansible.builtin.file:
+    path: "{{ minio_tls_dir }}"
+    state: directory
+    owner: "{{ minio_uid }}"
+    group: "{{ minio_gid }}"
+    mode: "0750"
+
+- name: Install organization-issued storage leaf and trust bundle
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ minio_tls_dir }}/{{ item.name }}"
+    owner: "{{ minio_uid }}"
+    group: "{{ minio_gid }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {src: "{{ minio_tls_cert_src }}", name: public.crt, mode: '0644'}
+    - {src: "{{ minio_tls_key_src }}", name: private.key, mode: '0600'}
+    - {src: "{{ minio_tls_ca_src }}", name: ca.crt, mode: '0644'}
+  register: _minio_tls_material
+  no_log: true
+
+- name: Prepare console proxy storage trust directory
+  ansible.builtin.file:
+    path: "{{ goat_host_etc_dir | default('/etc/goat') }}/tls/minio"
+    state: directory
+    mode: '0755'
+  when: minio_console_traefik_enabled | bool
+
+- name: Install public storage root for console proxy
+  ansible.builtin.copy:
+    src: "{{ minio_tls_ca_src }}"
+    dest: "{{ goat_host_etc_dir | default('/etc/goat') }}/tls/minio/organization-ca.crt"
+    mode: '0644'
+  when: minio_console_traefik_enabled | bool
+
+- name: Prepare public storage trust directory
+  ansible.builtin.file:
+    path: "{{ minio_client_ca_path | dirname }}"
+    state: directory
+    mode: '0755'
+
+- name: Install public storage CA for host clients
+  ansible.builtin.copy:
+    src: "{{ minio_tls_ca_src }}"
+    dest: "{{ minio_client_ca_path }}"
+    mode: '0644'

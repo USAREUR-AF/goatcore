@@ -32,6 +32,25 @@ runaway run can fill the disk and wedge the host. Guards:
 - `wipe-loadtest.sh` is **allowlist-only, dry-run by default**, and structurally
   cannot delete `audit-integrity` / `telemetry-otlp` / `runtime-detection-archive`
   or any real vendor's rocksdb dir — see the asserts in `lib-loadtest.sh`.
+- **Per-producer audit rate meter (GHSA-hq6c).** Every audit-subscriber meters
+  each producer against 500 records/s and 128 MiB/min by default. It is
+  observe-only unless `audit_subscriber_producer_quota_enforce` is true, in which
+  case over-budget samples are dropped. The dedicated loadtest subscriber from
+  `zenoh-loadtest.yml` runs with metering off. A run that sends load through the
+  **production** subscriber (as M-052's 10→2000 msg/s sweep did) must first raise
+  or zero `audit_subscriber_producer_quota_records` / `_bytes` for that goatnet
+  and re-apply the audit-subscriber role, and must **restore the defaults and
+  re-apply it again when the run ends**. Otherwise `AuditProducerOverRate` fires
+  for `loadtest`, and on an enforcing goatnet the run measures the quota, not
+  the fabric. A production subscriber left with metering off for 2 h fires
+  `AuditProducerMeteringOff`.
+- **Upgrading a host that already runs the loadtest subscriber.** Its compose
+  project is now `audit-subscriber-loadtest` (it used to collide with the
+  production `audit-subscriber` project). A container started before the
+  upgrade still belongs to the old project, so the first
+  `docker compose up -d` after the upgrade fails with a container-name
+  conflict and the new `down` does not remove it. Remove it once by hand:
+  `docker rm -f audit-subscriber-loadtest`, then re-run the play.
 
 ## Prerequisites
 

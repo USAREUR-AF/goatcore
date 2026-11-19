@@ -17,7 +17,7 @@
 use crate::runner::Cmd;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
@@ -99,7 +99,8 @@ fn load_ledger_at(repo: &Path, component: &str, site: Option<&str>) -> Result<(V
     if !p.is_file() {
         return Err(anyhow::Error::from(goat_errors::coded("GB-260", format!("no deploy-history.yml at {} — '{component}' not yet adopted (ADR 0859/1060)", p.display()))));
     }
-    let doc: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&p)?).with_context(|| p.display().to_string())?;
+    let text = std::fs::read_to_string(&p).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?;
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-326", format!("{} is not YAML: {e}", p.display())))?;
     let hosts: Vec<HostMap> = doc
         .get("hosts")
         .and_then(|h| h.as_sequence())
@@ -647,7 +648,7 @@ pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&s
                 .args(ssh_args(h, true))
                 .arg(&script)
                 .status()
-                .with_context(|| format!("ssh {}", h.host))?;
+                .map_err(|e| goat_errors::coded("GB-320", format!("could not start ssh to {}: {e}", h.host)))?;
             if !st.success() {
                 return Err(anyhow::Error::from(goat_errors::coded("GB-258", format!("rollback on {} failed (see above)", h.host))));
             }

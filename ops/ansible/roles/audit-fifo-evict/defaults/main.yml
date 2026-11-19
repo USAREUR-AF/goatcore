@@ -73,7 +73,12 @@ audit_fifo_evict_access_key: goat-audit-evictor
 # per-site naming as audit_subscriber_s3_secret_key_envvar.
 audit_fifo_evict_secret_envvar: "{{ site_id | upper | replace('-', '_') }}_AUDIT_EVICTOR_S3_SECRET_KEY"
 
-audit_fifo_evict_endpoint: "http://127.0.0.1:9000"
+# The object store the evictor talks to. With storage TLS on (minio_tls_enabled,
+# GHSA-9qmp) it is the same verified HTTPS endpoint every other storage client
+# uses, and the evictor trusts the site CA at audit_fifo_evict_ca_path; with
+# storage TLS off it stays on the loopback HTTP listener.
+audit_fifo_evict_endpoint: "{{ minio_s3_endpoint if (minio_tls_enabled | default(false) | bool) else 'http://127.0.0.1:9000' }}"
+audit_fifo_evict_ca_path: "{{ (minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt')) if (minio_tls_enabled | default(false) | bool) else '' }}"
 audit_fifo_evict_dir: /opt/audit-fifo-evict
 # The MinIO client the role runs with `--entrypoint mc`: the same Chainguard
 # image and digest the minio role pins as minio_mc_image (amd64 + arm64 index).

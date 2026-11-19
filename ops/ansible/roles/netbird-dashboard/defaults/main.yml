@@ -20,7 +20,7 @@ ory_compose_dir: /opt/mgmt-host
 # -- F-129 — Kratos groups → netbird-mgmt admin role reconciler -------------
 # List of Kratos group strings that grant netbird-mgmt admin role. The
 # reconciler in dashboard-deploy.yml post_tasks queries Kratos for every
-# active identity whose `traits.groups` intersects this list and SQL-
+# active identity whose `metadata_public.groups` intersects this list and SQL-
 # promotes the matching netbird-mgmt user-rows to role='admin'. Idempotent
 # and one-directional (never demotes — symmetric revoke is Block 83F).
 # Sites can extend in group_vars without touching the play.

@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Deserialize;
 
 use crate::config::{self, Config};
@@ -44,9 +44,9 @@ impl Fixture {
         converger.set_kinds(config.environments.iter().map(|e| (e.name.clone(), e.converger.clone())).collect());
         let p = root.join("declared/pins.yaml");
         let declared: Declared = serde_yaml::from_str(
-            &std::fs::read_to_string(&p).with_context(|| format!("{}", p.display()))?,
+            &std::fs::read_to_string(&p).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?,
         )
-        .with_context(|| format!("{}", p.display()))?;
+        .map_err(|e| goat_errors::coded("GB-024", format!("{}: record unreadable: {e}", p.display())))?;
         Ok(Fixture { root: root.to_path_buf(), config, declared, converger })
     }
 
@@ -57,11 +57,11 @@ impl Fixture {
     fn freshen(&mut self, frozen: bool) -> Result<Option<Check>> {
         let src = self.root.join("source/pins.yaml");
         let Ok(text) = std::fs::read_to_string(&src) else { return Ok(None) };
-        let source: Declared = serde_yaml::from_str(&text).with_context(|| format!("{}", src.display()))?;
+        let source: Declared = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("{}: record unreadable: {e}", src.display())))?;
         let local = self.root.join("declared/pins.yaml");
         let (have, want) = (self.declared.revision, source.revision);
         if have == want {
-            if std::fs::read_to_string(&local)? == text {
+            if std::fs::read_to_string(&local).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&local)).display())))? == text {
                 return Ok(None);
             }
             return Err(goat_errors::coded("GB-046", format!("declared/pins.yaml and source/pins.yaml are both at revision {have} and differ; the local declaration is not the source of record's")).into());
@@ -72,7 +72,7 @@ impl Fixture {
         if frozen {
             return Err(goat_errors::coded("GB-046", format!("declared/pins.yaml is at revision {have}, behind the source of record at {want}, and --frozen refuses to fast-forward: cp source/pins.yaml declared/pins.yaml, or run without --frozen")).into());
         }
-        std::fs::write(&local, &text).with_context(|| format!("{}", local.display()))?;
+        std::fs::write(&local, &text).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", local.display())))?;
         self.declared = source;
         Ok(Some(ok("declaration/source", format!("fast-forwarded declared/pins.yaml from revision {have} to {want} (the source of record)"))))
     }
@@ -492,7 +492,7 @@ pub fn rollback(fixture: &mut Fixture, env: &str, component: &str, n: u32, actor
     }
     let current = fixture.declared_ref(env, component)?;
     let artifacts: BTreeMap<String, Artifact> = match std::fs::read_to_string(fixture.root.join("declared/artifacts.yaml")) {
-        Ok(t) => serde_yaml::from_str(&t).context("declared/artifacts.yaml")?,
+        Ok(t) => serde_yaml::from_str(&t).map_err(|e| goat_errors::coded("GB-024", format!("declared/artifacts.yaml: record unreadable: {e}")))?,
         Err(_) => BTreeMap::new(),
     };
     let a = artifacts.get(component);
@@ -565,14 +565,15 @@ pub fn rollback(fixture: &mut Fixture, env: &str, component: &str, n: u32, actor
     // fixture's source/ when it has one (C3, a new revision), and the local copy.
     fixture.freshen(false)?;
     let pins = fixture.root.join("declared/pins.yaml");
-    let mut doc: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&pins)?)?;
+    let text = std::fs::read_to_string(&pins).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", pins.display())))?;
+    let mut doc: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("{}: record unreadable: {e}", pins.display())))?;
     doc["components"][component][env]["ref"] = serde_yaml::Value::String(target.clone());
     let source = fixture.root.join("source/pins.yaml");
     if source.exists() {
         doc["revision"] = serde_yaml::Value::from(fixture.declared.revision + 1);
-        std::fs::write(&source, serde_yaml::to_string(&doc)?)?;
+        std::fs::write(&source, serde_yaml::to_string(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&source)).display())))?;
     }
-    std::fs::write(&pins, serde_yaml::to_string(&doc)?)?;
+    std::fs::write(&pins, serde_yaml::to_string(&doc).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&pins)).display())))?;
     *fixture = Fixture::open(&fixture.root.clone())?;
     checks.push(ok(&format!("{env}/{component}/declare"), format!("declared {} in declared/pins.yaml (was {})", short(&target), short(&current))));
     let mut r = deploy(fixture, env, Some(component), actor, false)?;

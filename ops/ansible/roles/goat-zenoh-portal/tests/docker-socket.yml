@@ -1,0 +1,18 @@
+---
+# Runs tasks/docker-socket.yml with the role defaults and the vars a case
+# passes (-e). Driven by tests/docker-socket.sh; every case points
+# portal_docker_host_socket at a scratch file, never the host's socket.
+- name: docker socket access
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  tasks:
+    - name: Refuse to run against the host's real Docker socket
+      ansible.builtin.assert:
+        that:
+          - portal_docker_host_socket != '/var/run/docker.sock'
+          - portal_acl_docker_socket | default('') != '/var/run/docker.sock'
+        quiet: true
+    - name: The socket tasks, as the role runs them
+      ansible.builtin.include_tasks: ../tasks/docker-socket.yml

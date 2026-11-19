@@ -468,6 +468,9 @@ func (s *Server) handleOnboardSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The form has no handle input: the handle is derived from the email,
+	// never taken from the JSON (GHSA-mxf4-8rv7-774w).
+	req.Submission = withoutSubmittedHandle(req.Submission)
 	sub, derr := decodeSubmittedAnswers(req.Submission)
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(derr, &typeErr) {
@@ -502,6 +505,20 @@ func (s *Server) handleOnboardSubmit(w http.ResponseWriter, r *http.Request) {
 		onboardErrorDetail(w, http.StatusConflict, "duplicate_email",
 			"an onboarding for this email is already in progress or complete — contact your operator if that's not you",
 			"blocked by proposal "+p.ID+" (status: "+p.Status+")")
+		return
+	}
+
+	// A handle names one person (GHSA-mxf4-8rv7-774w). The handle this door
+	// files under is derived from the email, so an address whose local part
+	// slugs to somebody else's live handle is refused here, before the
+	// one-time invite is spent, as the API intake doors refuse it.
+	if held, herr := s.handleHeldByOther(r.Context(), deriveHandle(sub.Email), sub.Email); herr != nil {
+		onboardError(w, http.StatusInternalServerError, "submit_error", "could not submit your details")
+		return
+	} else if held != nil {
+		onboardErrorDetail(w, http.StatusConflict, "handle_taken",
+			"the account name your email address forms is already in use — contact your operator, or use a different address",
+			"handle "+deriveHandle(sub.Email)+" is held by proposal "+held.ID+" (status: "+held.Status+")")
 		return
 	}
 

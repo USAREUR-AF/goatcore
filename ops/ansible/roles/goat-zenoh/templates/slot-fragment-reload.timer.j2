@@ -1,0 +1,13 @@
+# Rendered by ops/ansible/roles/goat-zenoh/. Do not edit on host.
+# GHSA-rr3p: re-check the slot fragment periodically, so a batched change is
+# loaded when its window opens even with no further config write.
+[Unit]
+Description=Periodic slot-fragment reload check for {{ zenoh_stack }}
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec={{ zenoh_slot_reload_check_s }}s
+Unit={{ zenoh_stack }}-slot-fragment-reload.service
+
+[Install]
+WantedBy=timers.target
