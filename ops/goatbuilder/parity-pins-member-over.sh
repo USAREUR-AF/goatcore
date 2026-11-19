@@ -26,7 +26,7 @@ tree() { # $1 destination, $2 case table
   cp "$2" "$1/ops/pins/fleet-pins.yaml"
 }
 # The refusal or warning lines, with each avenue's own prefix taken off.
-lines() { sed -E 's/^(ERROR: |goatbuilder: )//' | grep -E '^(GB-35[78]|WARN)' || true; }
+lines() { sed -E 's/^(ok    pins|FAIL  pins)  //; s/^(ERROR: |goatbuilder: )//' | grep -E '^(GB-35[78]|WARN)' || true; }
 
 fail=0; n=0
 for case in "$CASES"/*.yaml; do
