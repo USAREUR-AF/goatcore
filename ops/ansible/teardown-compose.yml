@@ -8,10 +8,16 @@
 #
 # Volumes are kept (`down` without `-v`), so the next standup or deploy brings the
 # service back with its data. A directory with no compose file is reported and
-# skipped. The proof is the host's own answer: `docker compose ps -q` lists
+# skipped; containers left from a project whose file is gone are stopped by their
+# compose label. The proof is the host's own answer: `docker compose ps -q` lists
 # nothing for every project afterwards, or the play fails. One row per run goes
 # to /var/lib/goat/<component>/teardown.jsonl; deploy-history.jsonl is never
 # touched, so rollback's history is unchanged.
+#
+# A component that is not on the host (no compose file and no container in any
+# of its directories) has nothing to stop: the play says so and writes no row.
+# With GOAT_TEARDOWN_RESULT set on the operator machine, the play writes there
+# what it found: `stopped` or `nothing to stop` (teardown-result.yml).
 - name: teardown — stop a service's compose projects (volumes kept)
   hosts: "{{ target | mandatory }}"
   become: true
@@ -34,11 +40,33 @@
       loop: "{{ _teardown_dirs }}"
       register: _teardown_stat
 
+    - name: teardown | containers of each project, running or not (found by its compose label)
+      ansible.builtin.command:
+        argv: [docker, ps, -aq, --filter, "label=com.docker.compose.project.working_dir={{ item }}"]
+      loop: "{{ _teardown_dirs }}"
+      register: _teardown_containers
+      changed_when: false
+
+    - name: teardown | is the component on this host at all
+      ansible.builtin.set_fact:
+        _teardown_present: >-
+          {{ (_teardown_stat.results | selectattr('stat.exists') | list | length > 0)
+             or (_teardown_containers.results | map(attribute='stdout_lines') | flatten | length > 0) }}
+
     - name: teardown | directories with no compose file (nothing to stop)
       ansible.builtin.debug:
         msg: "{{ item.item }} has no docker-compose.yml — nothing to stop"
       loop: "{{ _teardown_stat.results }}"
       when: not item.stat.exists
+
+    - name: teardown | stop the containers of a project whose compose file is gone (kept)
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'stop'] + item.1.stdout_lines }}"
+      loop: "{{ _teardown_stat.results | zip(_teardown_containers.results) | list }}"
+      loop_control:
+        label: "{{ item.0.item }}"
+      when: not item.0.stat.exists and (item.1.stdout_lines | length > 0)
+      changed_when: true
 
     - name: teardown | stop the project, volumes kept
       ansible.builtin.command:
@@ -70,4 +98,13 @@
           mkdir -p /var/lib/goat/{{ teardown_component | mandatory }} &&
           printf '%s\n' '{"ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","component":"{{ teardown_component }}","action":"teardown","volumes":"kept","dirs":{{ _teardown_dirs | to_json }}}'
           >> /var/lib/goat/{{ teardown_component }}/teardown.jsonl
+      when: _teardown_present | bool
       changed_when: true
+
+    - name: teardown | nothing of the component is on this host
+      ansible.builtin.debug:
+        msg: "{{ teardown_component }}: nothing to stop (no compose file and no container in {{ _teardown_dirs | join(', ') }}); no row written"
+      when: not (_teardown_present | bool)
+
+    - name: teardown | tell the operator machine what was found
+      ansible.builtin.include_tasks: tasks/teardown-result.yml

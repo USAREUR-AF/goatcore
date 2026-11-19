@@ -66,6 +66,13 @@ SH
   # branch, not the `|| echo` masking an ansible failure this test is after.
   : > "$FIXTURE/ops/ansible/$SITE-lan-services.yml"
   : > "$FIXTURE/ops/ansible/site-services.yml"
+
+  # Phase 10's play is limited to the founder, so its command first checks that
+  # the limit selects a host of the site's group (GB-355). That check is real
+  # here, over an inventory whose founder follows the naming rule.
+  cp "$REPO_ROOT/ops/scripts/inventory-hosts.py" "$FIXTURE/ops/scripts/inventory-hosts.py"
+  mkdir -p "$FIXTURE/ops/ansible/inventory"
+  printf '[%s]\nmgmt-%s-01 ansible_host=192.0.2.10\n' "$GROUP" "$SITE" > "$FIXTURE/ops/ansible/inventory/mgmt-hosts.ini"
 }
 
 # A stub ansible-playbook that always fails, recording every invocation.
@@ -100,6 +107,20 @@ run_standup() {
   # play is handed the lookup, never the value.
   ! grep -q 'synthetic-pg\|synthetic-key' "$CALLS"
   grep -q 'postgres_superuser_password={{ lookup("env", "TESTLAN_PG_PASS") }}' "$CALLS"
+}
+
+@test "phase 10 (lan): a founder named off the rule is refused with GB-355 before ansible runs" {
+  stub_ansible_playbook_fails
+  # The site's group names its founder otherwise; an observability host elsewhere
+  # matches the limit, so ansible alone would skip the play and exit 0.
+  printf '[%s]\ncore-1 ansible_host=192.0.2.10\n[obs_hosts]\nmgmt-%s-01-obs ansible_host=192.0.2.11\n' \
+    "$GROUP" "$SITE" > "$FIXTURE/ops/ansible/inventory/mgmt-hosts.ini"
+  run_standup
+
+  printf '%s\n' "$output" >&2
+  [ ! -s "$CALLS" ]                     # the play never ran
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"GB-355: "* ]]
 }
 
 @test "phase 10 (lan): an empty secret refuses the phase, names it, and never calls ansible" {

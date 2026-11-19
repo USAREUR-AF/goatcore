@@ -518,7 +518,7 @@ gb-075-cause-2 = d'Disk ass voll
 
 # machine-translated additions (2026-10-30) — review per i18n-provenance.toml
 gb-074-title = den erofgeluedene goatbuilder ass vu sengem Release net gedeckt
-gb-074-what = Éier eppes beréiert gëtt, kontrolléiert update, ob den <asset>.sha256, deen d'Surface ausliwwert, mat de SHA256SUMS vum Release iwwereneestëmmt, ob d'Signatur vu SHA256SUMS géint d'Identitéit vum Release-Workflow verifizéiert (wann cosign am PATH ass) an ob de erofgeluedene Binary op dësen Digest hasht. Eng vun dëse Kontrolle ass feelgeschloen, dofir huet update d'Installatioun refuséiert; de installéierte Binary ass onverännert.
+gb-074-what = Éier eppes beréiert gëtt, kontrolléiert update, ob den <asset>.sha256, deen d'Surface ausliwwert, mat de SHA256SUMS vum Release iwwereneestëmmt an ob de erofgeluedene Binary op dësen Digest hasht. Eng vun dëse Kontrolle ass feelgeschloen, dofir huet update d'Installatioun refuséiert; de installéierte Binary ass onverännert. D'Signatur vu SHA256SUMS kontrolléiert de Binary selwer; eng Signatur, déi net verifizéiert, ass GB-261, an en eelere goatbuilder mellt se als GB-074.
 gb-074-cause-1 = d'Surface ass mat engem Deploy amgaang an de Binary, seng Checksum a SHA256SUMS sinn aus verschiddene Releasen
 gb-074-cause-2 = den Download ass ennerwee verännert oder ofgeschnidde ginn
 gb-074-cause-3 = d'Signatur iwwer SHA256SUMS kënnt net vum Release-Workflow vum Repository, deen goatbuilder.yaml nennt

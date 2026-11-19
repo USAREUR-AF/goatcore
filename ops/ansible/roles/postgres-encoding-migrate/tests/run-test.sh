@@ -435,8 +435,10 @@ grep -q 'pemtest-founder-extwriter' "$WORK/state-founder/$RUN/stopped.json" || f
 # WAL keeps completing while the play runs, as it does on a mgmt host: a
 # non-transactional message (no table touched, counts unchanged) and a WAL
 # switch every 2 s on the founder. Each completed segment is handed to the
-# archive command as soon as archive_mode is on.
-( while :; do
+# archive command as soon as archive_mode is on. The ticker clears the EXIT trap
+# first: killed in the moment after its fork, it would run the cleanup.
+( trap - EXIT
+  while :; do
     docker exec -u postgres pemtest-founder-pg psql -X -tA -d postgres \
       -c "SELECT pg_logical_emit_message(false, 'pemtest', 'tick')" -c "SELECT pg_switch_wal()" >/dev/null 2>&1 || true
     sleep 2

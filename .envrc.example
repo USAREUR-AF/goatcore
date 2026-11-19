@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 990 variables, 139 of them secret-bearing by name.
+# 996 variables, 142 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 139 variables.
+# 142 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -46,6 +46,12 @@ export CANARY_REMOTE_KEY=""  # SECRET
 
 # ops/relay/health/canary-publish.sh
 export CANARY_TOKEN=""  # SECRET
+
+# ops/ansible/cgnat-validation.yml
+export CGNAT_SITE_A_SETUP_KEY=""  # SECRET
+
+# ops/ansible/cgnat-validation.yml
+export CGNAT_SITE_B_SETUP_KEY=""  # SECRET
 
 # docs/operations/fresh-deploy-checklist.md, ops/ansible/inventory/generate-relays.sh …
 export CLOUDFLARE_API_TOKEN=""  # SECRET
@@ -121,6 +127,9 @@ export FED_CA_KEY_FROM_AGE=""  # SECRET
 
 # ops/federation/standup/mint-peering-leaves.sh
 export FED_CA_KEY_TMP=""  # SECRET
+
+# ops/federation/standup/mint-peering-leaves.sh
+export FED_LEAF_KEY_RECORD=""  # SECRET
 
 # ops/federation-e2e/live.sh
 export FED_LIVE_GHCR_TOKEN_ENV=""  # SECRET
@@ -451,7 +460,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 851 variables.
+# 854 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -520,7 +529,7 @@ export APPLY=""
 # ops/ansible/roles/isitup/files/check.sh
 export APP_SERVICES_FORMAT=""
 
-# .github/workflows/apt-failover-selftest.yml, .github/workflows/goat-cli-pr.yml
+# .github/workflows/apt-failover-selftest.yml, .github/workflows/goat-cli-pr.yml …
 export APT_FAILOVER=""
 
 # .github/workflows/apt-failover-selftest.yml
@@ -1028,6 +1037,9 @@ export FED_ACCEPTANCE_RT_TIMEOUT=""
 export FED_ACCEPTANCE_SESSION=""
 
 # ops/federation/standup/acceptance.sh
+export FED_ACCEPTANCE_TRACE=""
+
+# ops/federation/standup/acceptance.sh
 export FED_ACCEPTANCE_WAIT=""
 
 # ops/federation/standup/mint-peering-leaves.sh
@@ -1059,6 +1071,9 @@ export FED_EDGE_GROUP=""
 
 # ops/federation/standup/acceptance.sh
 export FED_EDGE_LOG_OURS=""
+
+# ops/federation/standup/acceptance.sh
+export FED_EDGE_TRACE_FILE=""
 
 # ops/federation/standup/acceptance.sh
 export FED_EVIDENCE_DIR=""
@@ -1503,6 +1518,9 @@ export GOCACHE_DARWIN=""
 
 # ops/e2e/hermetic.sh
 export GOMODCACHE=""
+
+# ops/federation/standup/acceptance.sh
+export GOT_RC=""
 
 # ops/compose/goat-obs/docker-compose.yml
 export GRAFANA_ADMIN_USER=""

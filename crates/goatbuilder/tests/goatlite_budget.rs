@@ -43,13 +43,14 @@ const TITLED_UNNUMBERED: &[&str] = &[
 ];
 const MAX_COMMAND_ROWS: usize = 33;
 /// Shell command separators (`&&`, `||`, `;`, `|`) across every command row: work
-/// appended inside an existing step raises it.
-const MAX_COMMAND_SEPARATORS: usize = 59;
+/// appended inside an existing step raises it. 65 since the six founder-limited
+/// plays check their limit first (GB-355): one `&&` each, no new step or prompt.
+const MAX_COMMAND_SEPARATORS: usize = 65;
 const MAX_TUTORIAL_SECTIONS: usize = 7;
 const MAX_TUTORIAL_HEADINGS: usize = 18;
 const MAX_TUTORIAL_BLOCKS: usize = 36;
 const MAX_TUTORIAL_LINES: usize = 75;
-const MAX_TUTORIAL_INLINE_CODE: usize = 159;
+const MAX_TUTORIAL_INLINE_CODE: usize = 158;
 
 /// The heading that follows "it works" in tutorial 00: everything before it is
 /// the way to a working goatnet.

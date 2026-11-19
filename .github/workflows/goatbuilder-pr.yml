@@ -33,6 +33,7 @@ on:
       - 'ops/goatbuilder/parity-*.sh'
       - 'ops/pins/**'
       - 'ops/release/graduate.py'
+      - 'ops/release/tests/**'
       - 'ops/release/ladder.yaml'
       - 'ops/consistency/python/**'
       - 'ops/scripts/rc.sh'
@@ -375,6 +376,11 @@ jobs:
         run: |
           python3 ops/release/tests/test_readiness.py
           python3 ops/release/tests/test_runtime_health.py
+          python3 ops/release/tests/test_hotfix_shadow.py
+      - name: Parity gate — both avenues refuse a member deviation that shadows its goatnet (ADR 1256)
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: ops/goatbuilder/parity-pins-member-over.sh crates/target/debug/goatbuilder
       - name: Every input a standup reaches is set — the scan finds the fixture's gaps in one pass
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
