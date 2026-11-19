@@ -38,6 +38,10 @@
    from the docker host and from the ops host, the driver's address when FE2E_DRIVER is
    workspace (a driver on the edge reaches them over loopback), and not from an address the
    values do not name.
+8. lib/joinsite.py, the judge of the join-site-plan scenario: a service declared on the node
+   that a plan command builds there, or that the plan names, passes; one built only on
+   another node, one neither built nor named (SILENT), and one both built and named (BOTH)
+   fail; a model that places nothing on the node fails.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -564,6 +568,31 @@ def drive_rotate_checks():
     check(rc == 3 and "no longer has the command line" in out, f"drive_rotate: a drive() with no line to swap is not refused: {rc} {out}")
 
 
+def joinsite_checks():
+    def run(services, checks):
+        with tempfile.TemporaryDirectory() as t:
+            m, pl = os.path.join(t, "model.json"), os.path.join(t, "plan.json")
+            write_text(m, json.dumps({"services": services}))
+            write_text(pl, json.dumps({"checks": checks}))
+            p = subprocess.run([sys.executable, os.path.join(ROOT, "lib", "joinsite.py"), m, pl, "n1"],
+                               capture_output=True, text=True)
+            return p.returncode, p.stdout
+    on = lambda: {"present": True, "hosts": ["n1"]}
+    ory = {"name": "cmd", "detail": "cd x && ansible-playbook ory-deploy.yml --limit n1 -e a=b"}
+    named = {"name": "not-run", "detail": "portal \u2014 declared, not yet built at this site (gate row I1, I4)"}
+    rc, out = run({"ory": on(), "portal": on(), "minio": {"present": False, "hosts": ["n1"]}}, [ory, named])
+    check(rc == 0 and "built   ory  by ory-deploy.yml" in out and "named   portal" in out and "minio" not in out,
+          f"joinsite: a built and a named service do not pass: {rc} {out}")
+    rc, out = run({"ory": on()}, [{"name": "cmd", "detail": "ansible-playbook ory-deploy.yml --limit n2"}])
+    check(rc == 1 and "SILENT  ory" in out, f"joinsite: a service built on another node passes: {rc} {out}")
+    rc, out = run({"portal": on(), "grafana": on()}, [named])
+    check(rc == 1 and "SILENT  grafana" in out, f"joinsite: a silent service passes: {rc} {out}")
+    rc, out = run({"ory": on()}, [ory, {"name": "not-run", "detail": "ory \u2014 declared at n1 (gate row I3)"}])
+    check(rc == 1 and "BOTH    ory" in out, f"joinsite: a service built and named passes: {rc} {out}")
+    rc, out = run({"ory": {"present": True, "hosts": ["n2"]}}, [ory])
+    check(rc == 1, f"joinsite: a model that places nothing on the node passes: {rc} {out}")
+
+
 catalog_checks()
 backout_edge_check()
 srctree_checks()
@@ -574,6 +603,7 @@ hostfw_checks()
 handoff_checks()
 samples_checks()
 drive_rotate_checks()
+joinsite_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")

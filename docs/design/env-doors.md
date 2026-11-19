@@ -181,6 +181,11 @@ door whose inventories disagree — a mismatch otherwise surfaces as
 - **SSM sessions idle-timeout (~20 min default)** — a door with no traffic
   closes itself. A closed
   local port means re-run `env-door.sh`, not that the path broke.
+  `deploy-component.sh` re-opens the door itself before each group's play
+  and before it reads the ledgers (two attempts each), and runs a play once
+  more when it lost its connection (`UNREACHABLE`, a reset or closed
+  session); a failed task is never retried. `GOAT_DEPLOY_TRANSPORT_RETRY=0`
+  turns the retry off (`tests/deploy-component-transport.bats`).
 - AWS API is in the connect path. Island-mode or AWS-down means Tier 1 is
   down — same failure domain as enrollment, not worse.
 
