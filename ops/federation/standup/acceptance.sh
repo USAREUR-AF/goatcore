@@ -181,6 +181,12 @@ if [ -n "${FED_EDGE_TRACE_FILE:-}" ]; then
   fi
   TRACE_MODE="file"
 fi
+# Each side's own probes in a session (FED_PROBE_LAUNCHER_OURS, §6.4) are judged across
+# the two runners by run start and probe id; the split run carries neither for them.
+if [ -n "$TRACE_MODE" ] && { [ -n "${FED_PROBE_LAUNCHER_OURS:-}" ] || [ -n "${FED_ACCEPTANCE_SESSION:-}" ]; }; then
+  echo "acceptance: phase 14 split across two drivers (FED_ACCEPTANCE_TRACE, FED_EDGE_TRACE_FILE) is built for a drill's probes (gate row B10), not for a session's own probes (B2): it is refused with FED_PROBE_LAUNCHER_OURS and with FED_ACCEPTANCE_SESSION" >&2
+  exit 2
+fi
 if [ -n "$TRACE_MODE" ] && [ -n "${FED_ACCEPTANCE_ATTEMPT:-}" ]; then
   echo "acceptance: phase 14 split across two drivers is not built for a derived session (FED_ACCEPTANCE_ATTEMPT): its result is signed and published before the edge's lines return" >&2
   exit 2
@@ -1360,9 +1366,13 @@ fi
 # id, so no earlier run's line can match them; and the edge names a peer that matches
 # no subject once, when its session connects, which may be before this run began.
 # That line is tied to the probe's own session id.
+# TRACE_READ: whether the last read of the log succeeded, by the read's own exit
+# status (inline) or the edge file's --verify (file mode). An empty answer is a read.
+TRACE_READ=0
 trace()   { [ -n "$TRACE_MODE" ] && return 0
             if [ -n "$EDGE_LOG_VIA" ]; then side_ssh "$EDGE_LOG_VIA" "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1
-            else ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; fi; }
+            else ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; fi
+            TRACE_READ=$?; }
 lines()   { grep -F "$1" "$TRACE" | grep -E 'is (un)?authorized to ' | tail -3; }
 # verdict [SESSION-FILTER] KEY-FILTER: the last decision, of one session when given.
 verdict() {
@@ -1488,7 +1498,7 @@ decide_forged() {
   fi
   # zid_lines: with no partner probes, exactly the lines naming the id; with them,
   # only this run's (PEER_STARTED). A read that fails is BLOCKED, never a pass.
-  zl=$(zid_lines "$FED_PROBE_FORGED_ZID"); zrc=$?
+  zl=$(zid_lines "$FED_PROBE_FORGED_ZID"); zrc=$?; [ "$TRACE_READ" -eq 0 ] || zrc=$TRACE_READ
   unmatched=$(printf '%s\n' "$zl" | grep -c 'did not match any configured ACL subject' || true)
   allows=$(printf '%s\n' "$zl" | grep -c 'is authorized to ' || true)
   obs zid "$FED_PROBE_FORGED_ZID"; obs unmatched "$unmatched"; obs authorizations "$allows"; obs received "$GOT"
@@ -1516,7 +1526,7 @@ decide_impersonation() {
     pend refusal/impersonation "their certificate bearing our core's name"
     return 0
   fi
-  zl=$(zid_lines "$FED_PROBE_IMPERSONATE_ZID"); zrc=$?
+  zl=$(zid_lines "$FED_PROBE_IMPERSONATE_ZID"); zrc=$?; [ "$TRACE_READ" -eq 0 ] || zrc=$TRACE_READ
   unmatched=$(printf '%s\n' "$zl" | grep -c 'did not match any configured ACL subject' || true)
   allows=$(printf '%s\n' "$zl" | grep -c 'is authorized to ' || true)
   obs zid "$FED_PROBE_IMPERSONATE_ZID"; obs unmatched "$unmatched"; obs authorizations "$allows"; obs received "$landed"

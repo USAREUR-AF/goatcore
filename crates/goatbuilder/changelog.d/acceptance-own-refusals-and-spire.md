@@ -18,5 +18,7 @@ answered, with the run's start beside the ids; the partner counts only its
 edge's lines for an id from that start on, and refuses one id staged for
 two kinds, so each session's id must be unique to its kind and run.
 `FED_PROBE_LAUNCHER_OURS` is refused outside a session and beside
-`FED_PROBE_LAUNCHER`. Without it, the partner's refusal
+`FED_PROBE_LAUNCHER`. Phase 14 split across two drivers
+(`FED_ACCEPTANCE_TRACE`, `FED_EDGE_TRACE_FILE`) is refused with it and in a
+session, before anything fires: it is built for a drill's probes. Without it, the partner's refusal
 rows stay BLOCKED and name you (#815).

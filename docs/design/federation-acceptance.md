@@ -714,6 +714,14 @@ stage, because its launcher started none or its session did not answer, leaves o
 naming the partner. The time rule rests on the two sides' clocks agreeing, as the session's
 timing does (§6.3).
 
+A session's own probes run with phase 14 in one run. Phase 14 split across two drivers
+(`FED_ACCEPTANCE_TRACE=deferred`, then `FED_EDGE_TRACE_FILE`; federation-two-drivers.md,
+"Phase 14 binds by id") is refused (exit 2) with `FED_PROBE_LAUNCHER_OURS` and in a session,
+before anything is fired. **Not built**: own probes in the split run. The forged and
+impersonation rows say "could not be read" only when the read of our edge's log failed (the
+log command's exit status, or a refused edge file); a log that reads and names no line for the
+probe is "names that session nowhere".
+
 A session run with own surfaces only can now reach a combined PASS. The lab-only variant, which
 gives each side the partner's `FED_PROBE_LAUNCHER` and `FED_SPIRE_THEIRS`, proves the same rows
 a second way. It is not a gate.
