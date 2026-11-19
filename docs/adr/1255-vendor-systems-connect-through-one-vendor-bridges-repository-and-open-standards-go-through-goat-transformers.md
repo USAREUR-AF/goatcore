@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted (2026-11-19, operator: "continue with all") |
 | Date | 2026-11-19 |
 | Deciders | operator |
 | Repo scope | Multi: `USAREUR-AF/open-entity-gateway`, `USAREUR-AF/goat-transformers`, and the repositories that point at them |

@@ -922,7 +922,8 @@ entries:
       - "python3 ops/release/graduate.py status"
     read: docs/design/release-graduation.md
     matches:
-      - "REFUSE — "
+      - "fastlane: REFUSE — "
+      - "(?m)^REFUSE — "
     exit: 1
 
   - code: GB-022
