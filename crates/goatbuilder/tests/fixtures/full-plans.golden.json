@@ -263,7 +263,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/dev_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-dev-netbird-infra (Team > Service Users, role admin), create its token, and store it as DEV_NB_API_TOKEN under the declared secrets posture (posture.py hint DEV_NB_API_TOKEN says where). THEN resume: goatbuilder standup dev --site dev --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/dev_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-dev-netbird-infra (Team > Service Users, role admin), create its token, and store it as DEV_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint DEV_NB_API_TOKEN says where). THEN resume: goatbuilder standup dev --site dev --from 12"
     },
     {
       "name": "phase",
@@ -1740,7 +1740,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/preprod_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-preprod-netbird-infra (Team > Service Users, role admin), create its token, and store it as PREPROD_NB_API_TOKEN under the declared secrets posture (posture.py hint PREPROD_NB_API_TOKEN says where). THEN resume: goatbuilder standup preprod --site preprod --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/preprod_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-preprod-netbird-infra (Team > Service Users, role admin), create its token, and store it as PREPROD_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint PREPROD_NB_API_TOKEN says where). THEN resume: goatbuilder standup preprod --site preprod --from 12"
     },
     {
       "name": "phase",
@@ -3217,7 +3217,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/alpha_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-alpha-netbird-infra (Team > Service Users, role admin), create its token, and store it as ALPHA_NB_API_TOKEN under the declared secrets posture (posture.py hint ALPHA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site alpha --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/alpha_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-alpha-netbird-infra (Team > Service Users, role admin), create its token, and store it as ALPHA_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ALPHA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site alpha --from 12"
     },
     {
       "name": "phase",
@@ -4694,7 +4694,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/alpha_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-alpha-netbird-infra (Team > Service Users, role admin), create its token, and store it as ALPHA_NB_API_TOKEN under the declared secrets posture (posture.py hint ALPHA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site alpha --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/alpha_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-alpha-netbird-infra (Team > Service Users, role admin), create its token, and store it as ALPHA_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ALPHA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site alpha --from 12"
     },
     {
       "name": "phase",
@@ -6171,7 +6171,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/beta_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-beta-netbird-infra (Team > Service Users, role admin), create its token, and store it as BETA_NB_API_TOKEN under the declared secrets posture (posture.py hint BETA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site beta --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/beta_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-beta-netbird-infra (Team > Service Users, role admin), create its token, and store it as BETA_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint BETA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site beta --from 12"
     },
     {
       "name": "phase",
@@ -7648,7 +7648,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/alpha_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-alpha-netbird-infra (Team > Service Users, role admin), create its token, and store it as ALPHA_NB_API_TOKEN under the declared secrets posture (posture.py hint ALPHA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site alpha --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/alpha_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-alpha-netbird-infra (Team > Service Users, role admin), create its token, and store it as ALPHA_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ALPHA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site alpha --from 12"
     },
     {
       "name": "phase",
@@ -9125,7 +9125,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/beta_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-beta-netbird-infra (Team > Service Users, role admin), create its token, and store it as BETA_NB_API_TOKEN under the declared secrets posture (posture.py hint BETA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site beta --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/beta_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-beta-netbird-infra (Team > Service Users, role admin), create its token, and store it as BETA_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint BETA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site beta --from 12"
     },
     {
       "name": "phase",
@@ -10602,7 +10602,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/alpha_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-alpha-netbird-infra (Team > Service Users, role admin), create its token, and store it as ALPHA_NB_API_TOKEN under the declared secrets posture (posture.py hint ALPHA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site alpha --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/alpha_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-alpha-netbird-infra (Team > Service Users, role admin), create its token, and store it as ALPHA_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ALPHA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site alpha --from 12"
     },
     {
       "name": "phase",
@@ -12079,7 +12079,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/beta_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-beta-netbird-infra (Team > Service Users, role admin), create its token, and store it as BETA_NB_API_TOKEN under the declared secrets posture (posture.py hint BETA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site beta --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/beta_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-beta-netbird-infra (Team > Service Users, role admin), create its token, and store it as BETA_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint BETA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site beta --from 12"
     },
     {
       "name": "phase",
@@ -13556,7 +13556,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/gamma_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-gamma-netbird-infra (Team > Service Users, role admin), create its token, and store it as GAMMA_NB_API_TOKEN under the declared secrets posture (posture.py hint GAMMA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site gamma --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/gamma_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-gamma-netbird-infra (Team > Service Users, role admin), create its token, and store it as GAMMA_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint GAMMA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site gamma --from 12"
     },
     {
       "name": "phase",
@@ -15033,7 +15033,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/delta_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-delta-netbird-infra (Team > Service Users, role admin), create its token, and store it as DELTA_NB_API_TOKEN under the declared secrets posture (posture.py hint DELTA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site delta --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/delta_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-delta-netbird-infra (Team > Service Users, role admin), create its token, and store it as DELTA_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint DELTA_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site delta --from 12"
     },
     {
       "name": "phase",
@@ -16510,7 +16510,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/zagros_dev_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-zagros-dev-netbird-infra (Team > Service Users, role admin), create its token, and store it as ZAGROS_DEV_NB_API_TOKEN under the declared secrets posture (posture.py hint ZAGROS_DEV_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros-dev --site zagros-dev --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/zagros_dev_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-zagros-dev-netbird-infra (Team > Service Users, role admin), create its token, and store it as ZAGROS_DEV_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ZAGROS_DEV_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros-dev --site zagros-dev --from 12"
     },
     {
       "name": "phase",
@@ -17987,7 +17987,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/alpha_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-alpha-netbird-infra (Team > Service Users, role admin), create its token, and store it as ALPHA_NB_API_TOKEN under the declared secrets posture (posture.py hint ALPHA_NB_API_TOKEN says where). THEN resume: goatbuilder standup dev --site alpha --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/alpha_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-alpha-netbird-infra (Team > Service Users, role admin), create its token, and store it as ALPHA_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ALPHA_NB_API_TOKEN says where). THEN resume: goatbuilder standup dev --site alpha --from 12"
     },
     {
       "name": "phase",
@@ -19464,7 +19464,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/dev_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-dev-netbird-infra (Team > Service Users, role admin), create its token, and store it as DEV_NB_API_TOKEN under the declared secrets posture (posture.py hint DEV_NB_API_TOKEN says where). THEN resume: goatbuilder standup dev --site dev --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/dev_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-dev-netbird-infra (Team > Service Users, role admin), create its token, and store it as DEV_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint DEV_NB_API_TOKEN says where). THEN resume: goatbuilder standup dev --site dev --from 12"
     },
     {
       "name": "phase",
@@ -20941,7 +20941,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/prod_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-prod-netbird-infra (Team > Service Users, role admin), create its token, and store it as PROD_NB_API_TOKEN under the declared secrets posture (posture.py hint PROD_NB_API_TOKEN says where). THEN resume: goatbuilder standup prod --site prod --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/prod_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-prod-netbird-infra (Team > Service Users, role admin), create its token, and store it as PROD_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint PROD_NB_API_TOKEN says where). THEN resume: goatbuilder standup prod --site prod --from 12"
     },
     {
       "name": "phase",
@@ -22418,7 +22418,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/dev_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-dev-netbird-infra (Team > Service Users, role admin), create its token, and store it as DEV_NB_API_TOKEN under the declared secrets posture (posture.py hint DEV_NB_API_TOKEN says where). THEN resume: goatbuilder standup dev --site dev --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/dev_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-dev-netbird-infra (Team > Service Users, role admin), create its token, and store it as DEV_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint DEV_NB_API_TOKEN says where). THEN resume: goatbuilder standup dev --site dev --from 12"
     },
     {
       "name": "phase",
@@ -23895,7 +23895,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/preprod_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-preprod-netbird-infra (Team > Service Users, role admin), create its token, and store it as PREPROD_NB_API_TOKEN under the declared secrets posture (posture.py hint PREPROD_NB_API_TOKEN says where). THEN resume: goatbuilder standup preprod --site preprod --from 12"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/preprod_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-preprod-netbird-infra (Team > Service Users, role admin), create its token, and store it as PREPROD_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint PREPROD_NB_API_TOKEN says where). THEN resume: goatbuilder standup preprod --site preprod --from 12"
     },
     {
       "name": "phase",

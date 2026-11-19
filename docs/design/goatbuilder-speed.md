@@ -216,6 +216,43 @@ reverse order and lists the rest as left in place. Each stop appends a row to
 `/var/lib/goat/<component>/teardown.jsonl`. `deploy-history.jsonl` is never
 touched, so rollback's history is unchanged.
 
+**Each host says what it had.** Every stop's play first asks the host
+whether the component is there at all: for compose-down, a compose file or a
+container carrying the project's working-directory label (a container left
+from a project whose file is gone is stopped too); for service-stop, a
+container of a named service, running or not; for systemd-stop, a loaded
+unit matching a name. A component that is not there has nothing to stop: the
+play says so and writes no `teardown.jsonl` row. Each play writes what it
+found, `stopped` or `nothing to stop`, to the file the operator machine names
+in `GOAT_TEARDOWN_RESULT` (`ops/ansible/tasks/teardown-result.yml`); both
+avenues set it for every stop and end the run with how many stops took a
+component down and how many found nothing on the host. The plan itself is
+unchanged: every declared step is planned, because only the host knows what
+it runs. Status: built in both avenues; the driver's reading of the result is
+unit-tested (`standup::tests::a_stop_counts_what_the_host_said_it_found`);
+the plays have not yet run against a host. Measured before it, on a goatlite
+paused at phase 11: the five phase-12 stops ran, each skipped its missing
+compose file and still wrote a `teardown.jsonl` row.
+
+**The LAN surfaces.** A LAN site's phase-10 surfaces come down with
+`--services`: the LAN name server (`lan-dns`, compose-down of
+`lan_coredns_dir`) with the LAN service surface step, and Traefik
+(service-stop of `traefik` in the mgmt-host project) with the TLS routes
+step. The SPIRE step stops `spire-agent` beside `spire-server`. STUN, the
+coturn host unit the same surface starts, is left running and the
+declaration says so. Status: built (`ops/goatbuilder/teardown.yaml`);
+measured before it, on the same goatlite: `lan-dns`, Traefik and the SPIRE
+agent were left running after `teardown --services`.
+
+**A failed stop names its cause.** Each stop runs as a phase of the run, so
+the runner keeps its output in a log; a failed stop's log is matched against
+the error catalog, and the code goes into the failure row, an `interpreted`
+row and the cause column of `teardown-<site>-timings.tsv`. The playbook
+preflight's refusal of a checkout behind `origin/main` is X-ANSIBLE-005, with
+its `git pull --ff-only` fix. Status: built and unit-tested on that refusal's
+text. Measured before it: the same refusal was recorded as exit 2,
+`uncatalogued`.
+
 Planned on zagros-dev, dry run only:
 
 | Command | Result |
