@@ -17,7 +17,6 @@ temporary directory behind.
 """
 import hashlib
 import html
-import os
 from pathlib import Path
 import re
 import shutil
@@ -71,7 +70,9 @@ case "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac
 
 def render_page():
     source = (ROLE / 'templates/goatbuilder-index.html.j2').read_text()
-    return Environment(undefined=StrictUndefined).from_string(source).render(
+    # Autoescape on: every value rendered here is a fixed test constant with no
+    # HTML-special character, so the page is the one Ansible renders.
+    return Environment(undefined=StrictUndefined, autoescape=True).from_string(source).render(
         goat_get_hostname=HOST,
         goat_get_goatbuilder_release_tag=TAG,
         goat_get_goatbuilder_www_subdir='goatbuilder',
