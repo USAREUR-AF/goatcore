@@ -868,8 +868,9 @@ fn a_password_only_node_answers_at_phase_1() {
 
 /// The joiner's end state, as phase 15 hands it to the rows: the four admin
 /// surfaces are declared and not yet built at a second site (gate rows I1,
-/// I4), and the real runner's plan against that model reads their rows as
-/// gaps (SKIPPED in a run, with the gap's words) and exits 0.
+/// I4), nor is the site's own SPIRE server and agent (ADR 1164), and the
+/// real runner's plan against that model reads their rows as gaps (SKIPPED
+/// in a run, with the gap's words) and exits 0.
 fn the_joiners_gaps_are_the_admin_surfaces(env: &str, log: &str) {
     let run = log
         .lines()
@@ -888,7 +889,9 @@ fn the_joiners_gaps_are_the_admin_surfaces(env: &str, log: &str) {
         .collect();
     assert_eq!(
         gaps,
-        ["id-admin-console", "netbird-dashboard", "onboard-runner", "portal"].into_iter().collect(),
+        ["id-admin-console", "netbird-dashboard", "onboard-runner", "portal", "spire", "spire-agent"]
+            .into_iter()
+            .collect(),
         "{doc}"
     );
     let yaml = std::process::Command::new("python3").args(["-c", "import yaml"]).status().map(|s| s.success()).unwrap_or(false);
