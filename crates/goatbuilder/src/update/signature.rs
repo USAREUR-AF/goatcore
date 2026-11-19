@@ -1539,7 +1539,8 @@ mod tests {
         assert!(check_identity(&ids, &e).is_ok());
         assert!(verify(SUMS_0_7_3, BUNDLE_0_7_3, &e, &root()).is_ok());
 
-        let changed: [(&str, fn(&mut Identity)); 3] = [
+        type Change = (&'static str, fn(&mut Identity));
+        let changed: [Change; 3] = [
             ("workflow repository", |i| i.workflow_repo = Some("example-org/goatcore".into())),
             ("workflow ref", |i| i.workflow_ref = Some("refs/heads/main".into())),
             ("workflow name", |i| i.workflow_name = Some("goat-release".into())),
