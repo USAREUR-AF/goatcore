@@ -122,10 +122,20 @@ func TestSubmit_UnderivableHandleRefusedAndLinkSurvives(t *testing.T) {
 	if rows, err := s.Onboard.ListProposals(context.Background(), onboardstore.ProposalProposed); err != nil || len(rows) != 0 {
 		t.Fatalf("a refused submit must store nothing, got %d rows (err=%v)", len(rows), err)
 	}
-	// Same link, handle given (and an organisation supplied): accepted and complete.
-	pid := submit(t, h, tok, map[string]any{"name": "No Handle", "email": "!!!@example.test", "organization": "Handle Org", "nationality": "CAN", "handle": "no-handle"})
+	// A handle in the JSON is not honoured (the form renders no handle input,
+	// GHSA-mxf4-8rv7-774w), so it does not rescue the address; the remedy the
+	// message names, a different address, does. Same link, still unspent.
+	body2, _ := json.Marshal(map[string]any{"token": tok, "submission": map[string]any{"name": "No Handle", "email": "!!!@example.test", "organization": "Handle Org", "nationality": "CAN", "handle": "no-handle"}})
+	req2 := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/public/onboard/submit", strings.NewReader(string(body2)))
+	req2.Header.Set("Content-Type", "application/json")
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("a JSON handle must not rescue an underivable address: want 422, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	pid := submit(t, h, tok, map[string]any{"name": "No Handle", "email": "no.handle@example.test", "organization": "Handle Org", "nationality": "CAN"})
 	if p, _ := loadProposal(t, s, pid); !p.Complete {
-		t.Fatalf("submit with a handle after refusal must be complete, note=%q", p.Note)
+		t.Fatalf("submit with a usable address after refusal must be complete, note=%q", p.Note)
 	}
 }
 

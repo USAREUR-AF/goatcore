@@ -9,6 +9,7 @@ name: group-permissions-parity
 # pre-ADR-1073 state this replaces).
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'ops/permissions/group-permissions.yml'

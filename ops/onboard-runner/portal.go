@@ -53,6 +53,10 @@ type proposal struct {
 	// queued this offboard (offboard-requested rows only) — the principal the
 	// revoke's audit event attributes the approval to (goat#372).
 	OffboardRequestedBy string `json:"offboard_requested_by,omitempty"`
+	// OffboardRequestedByIdentity is that admin's Kratos identity id, taken
+	// by the console from the authenticated session ('' when it had none).
+	// It names the approver in the admin.offboard operator-action record.
+	OffboardRequestedByIdentity string `json:"offboard_requested_by_identity,omitempty"`
 }
 
 func (c *portalClient) do(ctx context.Context, method, path string, body io.Reader) (int, []byte, error) {
@@ -155,12 +159,18 @@ func (c *portalClient) offboardClaim(ctx context.Context, id string) (bool, erro
 // credential-bearing + one-time — the console uses it for the email but does not
 // persist it; only the account + activation flag are recorded).
 type resultBody struct {
-	Status       string `json:"status"`
-	Error        string `json:"error"`
-	SetupKey     string `json:"setup_key,omitempty"`
-	HandsetKey   string `json:"handset_key,omitempty"`
-	PortalAPIKey string `json:"portal_api_key,omitempty"`
-	BundlePath   string `json:"bundle_path,omitempty"`
+	Status string `json:"status"`
+	Error  string `json:"error"`
+	// OperatorAudit is the offboard leg's operator-action outcome:
+	// "recorded", or "failed" with OperatorAuditError saying why (the
+	// admin.offboard record was not written to the fabric, or names no
+	// approver). Empty on other results.
+	OperatorAudit      string `json:"operator_audit,omitempty"`
+	OperatorAuditError string `json:"operator_audit_error,omitempty"`
+	SetupKey           string `json:"setup_key,omitempty"`
+	HandsetKey         string `json:"handset_key,omitempty"`
+	PortalAPIKey       string `json:"portal_api_key,omitempty"`
+	BundlePath         string `json:"bundle_path,omitempty"`
 	// SlotAnchor is the mint's write anchor (= slot_id = cert CN), carried
 	// EXPLICITLY so the console can record the person→slot linkage without
 	// re-deriving it by regexing BundlePath. That derivation breaks the moment a
@@ -184,6 +194,13 @@ type resultBody struct {
 // (onboarding) proposal.
 func (c *portalClient) result(ctx context.Context, id, status, errMsg string) error {
 	return c.postResult(ctx, id, resultBody{Status: status, Error: errMsg})
+}
+
+// offboardResult is result for the offboard leg, carrying the operator-action
+// audit outcome so the console can say when the cut is unrecorded.
+func (c *portalClient) offboardResult(ctx context.Context, id, status, errMsg, operatorAudit, operatorAuditErr string) error {
+	return c.postResult(ctx, id, resultBody{Status: status, Error: errMsg,
+		OperatorAudit: operatorAudit, OperatorAuditError: operatorAuditErr})
 }
 
 // resultWithKey is result plus the freshly minted NetBird setup key (onboarded

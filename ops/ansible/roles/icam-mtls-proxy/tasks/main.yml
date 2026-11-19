@@ -130,6 +130,9 @@
             state: started
             daemon_reload: "{{ _icam_cert_units.changed }}"
 
+        - name: Read the mgmt Docker network's subnet for the passthrough allowlist
+          ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/mgmt-network-subnet.yml"
+
         - name: Render the Traefik TCP passthrough router for {{ icam_mtls_proxy_hostname }}
           ansible.builtin.template:
             src: traefik-passthrough.yml.j2

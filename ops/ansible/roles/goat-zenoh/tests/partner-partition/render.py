@@ -25,18 +25,27 @@ def render(path, extra):
         return env.from_string(source_file.read()).render(**base)
 mode, mine, main = sys.argv[1], sys.argv[2], sys.argv[3]
 if mode=='off-diff':
+    # GHSA-rr3p changes the default slot-pool render on purpose (slot subjects
+    # from the registry fragment, an enumerated trial-peer-read, one slot-read
+    # policy). The guard is that NOTHING ELSE differs from main, and that the
+    # rr3p side carries those changes correctly (slot-fragment/rr3p_render_diff.py).
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'slot-fragment'))
+    import rr3p_render_diff
     a=render(main,{}); b=render(mine,{})
-    print('OFF byte-identical:', a==b)
-    if a!=b:
-        import difflib
-        for l in list(difflib.unified_diff(a.splitlines(),b.splitlines(),lineterm=''))[:60]: print(l)
+    same = rr3p_render_diff.equivalent(a, b)
+    problems = rr3p_render_diff.intended(b)
+    print('OFF identical apart from the rr3p-intended differences:', same and not problems)
+    if not same:
+        for l in rr3p_render_diff.first_difference(a, b): print(l)
+    for p in problems: print('rr3p render problem:', p)
 elif mode=='on':
     anchor0=h('testsalt:0','sha256')[:32]
     b=render(mine,{'zenoh_partner_read_partition':True,'zenoh_partner_read_lanes':{anchor0:['ZAGROS']},'zenoh_universal_read_cns':['playground-peer']})
     with open('/tmp/on_render.json5','w') as source_file:
         source_file.write(b)
     print('anchor0:',anchor0)
-    print('partner subject:', ('id: "partner-%s"'%anchor0) in b)
+    print('partner policy on its slot subject:', ('"partner-deliver-%s", "audit-operator-read-deny"],\n        subjects: ["slot-%s"]'%(anchor0,anchor0)) in b)
     print('partner-r rule :', ('id: "partner-r-%s"'%anchor0) in b)
     print('partner-deliver:', ('id: "partner-deliver-%s"'%anchor0) in b)
     print('release/ZAGROS/ :', 'release/ZAGROS/**' in b)

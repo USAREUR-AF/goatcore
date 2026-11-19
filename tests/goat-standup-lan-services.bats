@@ -26,7 +26,8 @@ setup() {
   cp "$SUBJECT" "$FIXTURE/ops/scripts/goat-standup.sh"
   chmod +x "$FIXTURE/ops/scripts/goat-standup.sh"
   # Every phase runs through the shared runner, which refuses an empty
-  # $(printenv NAME); it is real here, not stubbed, so that refusal is tested too.
+  # $(printenv NAME) or lookup("env", "NAME"); it is real here, not stubbed, so
+  # that refusal is tested too.
   cp "$REPO_ROOT/ops/scripts/standup-phase-run" "$FIXTURE/ops/scripts/standup-phase-run"
   chmod +x "$FIXTURE/ops/scripts/standup-phase-run"
   # goat-standup.sh reads deploy.state_dir and deploy.aws_profile through
@@ -102,6 +103,10 @@ run_standup() {
   printf '%s\n' "$output" >&2
   [ -s "$CALLS" ]        # ansible-playbook was actually invoked, not short-circuited
   [ "$status" -ne 0 ]    # a failed play must fail the step, not be swallowed by `|| echo`
+  # Standup passes secrets through the environment, not the command line: the
+  # play is handed the lookup, never the value.
+  ! grep -q 'synthetic-pg\|synthetic-key' "$CALLS"
+  grep -q 'postgres_superuser_password={{ lookup("env", "TESTLAN_PG_PASS") }}' "$CALLS"
 }
 
 @test "phase 10 (lan): a founder named off the rule is refused with GB-355 before ansible runs" {

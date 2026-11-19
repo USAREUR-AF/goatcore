@@ -55,9 +55,13 @@ type machineRevokeResponse struct {
 	KeysAlreadySpent []string `json:"keys_already_spent,omitempty"`
 	MeshNote         string   `json:"mesh_note"`
 
-	SlotFreed      bool   `json:"slot_freed"`
-	QuotaRemaining int64  `json:"quota_remaining"`
-	Note           string `json:"note"`
+	SlotFreed bool `json:"slot_freed"`
+	// FabricRevocation says whether the router still admits the machine's
+	// leaf (GHSA-rr3p): live, pending_router_reload, unknown or none.
+	FabricRevocation string `json:"fabric_revocation"`
+	FabricNote       string `json:"fabric_note"`
+	QuotaRemaining   int64  `json:"quota_remaining"`
+	Note             string `json:"note"`
 }
 
 // machineRevoke retires one enrolled machine. Gate mirrors the re-mint
@@ -153,12 +157,24 @@ func (s *Server) machineRevoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db", derr.Error())
 		return
 	}
+	// The free advances the slot's generation; re-render the router's slot
+	// subjects so the machine's leaf stops matching (GHSA-rr3p), and say
+	// whether the router has loaded that yet.
+	revokedCN := ""
+	if sl, err := s.reg.SlotByID(r.Context(), anchor); err == nil && sl.AssignedTo != nil && sl.RevokedAt == nil {
+		revokedCN = registry.LeafCN(anchor, sl.Generation)
+	}
 	freed, serr := s.reg.RevokeAssignedSlot(r.Context(), anchor)
+	s.syncSlotFragment(r.Context())
 	if serr != nil {
 		writeError(w, http.StatusInternalServerError, "revoke_slot", serr.Error())
 		return
 	}
 	resp.SlotFreed = freed
+	if !freed {
+		revokedCN = ""
+	}
+	resp.FabricRevocation, resp.FabricNote = s.revocationStatus(revokedCN)
 
 	resp.QuotaRemaining = -1
 	if q, qerr := s.reg.MachineQuotaFor(r.Context(), custodian); qerr == nil {

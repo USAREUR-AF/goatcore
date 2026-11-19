@@ -672,6 +672,7 @@
              failed (mint) panel above: a failure panel that names a note
              must show the note. */}}
         {{if $p.Note}}<pre class="ob-failnote">{{$p.Note}}</pre>{{end}}
+        {{if $p.OperatorAuditFailed}}<p class="ob-note"><b>Operator-action record not written:</b> {{$p.OperatorAuditReason}}.</p>{{end}}
         <p class="ob-note">The runner's revoke did not land{{if $p.OffboardRequestedBy}} · queued by {{$p.OffboardRequestedBy}}{{end}}{{if $p.OffboardRequestedAt}} at {{$p.OffboardRequestedAt}}{{end}}. Access is NOT cut. Read the failure above first: if the cause is still present (an unreachable management API, a half-provisioned remnant) the retry will fail the same way. Re-queue runs the same reversible revoke again.</p>
         <form class="ob-offboard" method="post" action="/onboarding/{{$p.ID}}/offboard-cut" onsubmit="if (!confirm('Re-queue the cut for {{$p.Handle}}? The runner executes the reversible revoke (goat admin onboard {{$p.Handle}}{{if $p.Env}} --env {{$p.Env}}{{end}} --revoke) again.')) return false; this.querySelector('button[type=submit]').disabled=true; return true;">
           <input type="hidden" name="csrf" value="{{$.CSRFToken}}">
@@ -681,6 +682,8 @@
         <h3>Offboarded</h3>
         {{if $p.OffboardRequestedBy}}
         <p class="ob-note">Access cut by the runner · queued by {{$p.OffboardRequestedBy}}{{if $p.OffboardRequestedAt}} at {{$p.OffboardRequestedAt}}{{end}}. The reversible revoke removed the mesh peer, login, slot and portal keys. This record is kept for audit · sponsor, approver and tier are intact. A fresh invite for this email is now accepted; a returning person is a re-onboard.</p>
+        {{if $p.OperatorAuditFailed}}<p class="ob-note"><b>Offboarded, operator-action record not written:</b> {{$p.OperatorAuditReason}}. The cut itself landed. Recover the record from the runner's fallback log, or record the cut by hand with <code>goat audit emit</code>.</p>{{end}}
+        {{if $p.OperatorAuditUnreported}}<p class="ob-note"><b>Operator-action record: not reported.</b> The runner that ran this cut did not say whether its admin.offboard record was written. Check the operator-action stream (<code>goat audit ops</code>) for this cut before relying on it.</p>{{end}}
         {{else}}
         <p class="ob-note">Marked offboarded{{if $p.DecidedBy}} by {{$p.DecidedBy}}{{end}}{{if $p.DecidedAt}} at {{$p.DecidedAt}}{{end}}. This record is kept for audit · sponsor, approver and tier are intact. A fresh invite for this email is now accepted. Whether access is actually cut is a separate question, answered by the mesh, Ory and slot planes, not by this row.</p>
         {{end}}

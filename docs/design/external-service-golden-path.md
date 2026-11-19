@@ -279,6 +279,49 @@ python3 ops/scripts/external-service-finish.py <PR>     # add --dry-run to see e
 
 It runs on the laptop, not on the mgmt host, for the reasons every deploy does: the CA key, the ansible controller, and the engineer's own GitHub and credential logins live there. Re-running resumes at the step that stopped; `--from <step>` restarts from one.
 
+## Door `admit`: goat signs people in and admits them by rule
+
+A service with no sign-in of its own can let goat be its fence: `door: admit` plus one `admit:` rule
+([ADR 1254](../adr/1254-external-service-admit-door-sign-in-and-admission-by-organization-nation-group-or-email.md)).
+goat signs the visitor in with the goatnet's Hydra and admits them when their organization, nation, group or e-mail
+matches; everyone else gets a page that names the rule.
+
+```yaml
+external_service_bn_monitor:
+  name: simple-bn
+  backend_url: "http://<mesh ip>:8740"
+  health_path: /healthz
+  host_class: INFRA                     # optional; EXTERNAL-INFRA is the default
+  host_class_reason: "the boundary node's own monitor"
+  door: admit
+  admit:
+    orgs: [<org id>]                    # with every descendant in ops/identity/orgs/<env>.yaml
+    nations: [<ISO alpha-3>]            # every organization of that nation
+    groups: [<PREFIX>-PLATFORM-ADMIN]   # optional
+    emails_env: <ENV VAR>               # optional comma-separated allowlist from the secret store
+  door_secrets: {client_secret_env: <ENV VAR>, cookie_secret_env: <ENV VAR>}
+  owner: <who to call>
+```
+
+**What the play does.**
+
+1. `ops/door-admit/expand_rule.py` turns the rule into concrete organization ids from the registry. The run fails on an
+   organization or nation the registry does not have, so a typo stops the run rather than admitting nobody.
+2. It stands up `door-admit-<name>`, the check: role `door-admit`, standard library, no published port.
+3. It stands up `oauth2-proxy-ext-<name>`, the sign-in: role `oauth2-proxy-surface` with
+   `oauth2_proxy_surface_pass_id_token: true`. This step provisions the Hydra client `ext-<name>`.
+4. It points the router at the sign-in.
+
+`state=absent` takes both down and deletes the client.
+
+**Status.** The play, the two roles and the check are built and tested. The router switch to the door is a separate change to the mgmt-host Traefik template. Until it lands, the play refuses `door: admit` (`external_service_admit_route_ready`).
+
+**Who gets in depends on the identity data.** The check reads `aff.id` from the ID token. A person whose identity
+records no organization is admitted only by group or e-mail. Recording organizations is done in the console.
+
+**Secrets:** `openssl rand -hex 32` for the client secret and `openssl rand -hex 16` for the cookie secret. Keep both
+as references in the secret store, resolved into the two env vars at run time.
+
 ## The command
 
 ```bash

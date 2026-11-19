@@ -55,12 +55,25 @@ with skip_consent): GET /consent 200 twice for one challenge, no POST /consent
 at Traefik, no consent/accept at Hydra. The guard now installs once per
 document, and tests/double-submit-guard.test.js runs it included once AND twice.
 
+ONLY A REAL SUBMIT COUNTS. The form is marked as sent only by a submit event
+the browser fires (isTrusted) that no handler cancels. A submit event that a
+script dispatches sends nothing. Password managers dispatch one when they
+auto-submit, just before they press the button; counted as the one
+submission, it cancelled the real submit that followed, so the page sat with a
+faded button and no POST left the browser. Reproduced in headless Chromium:
+dispatching a submit event and then clicking the button sent 0 POSTs under the
+earlier guard and 1 under this one; a double click still sends 1. A submit
+that another handler cancels releases the form in the deferred step, and a
+form still on screen 15 s after its submit is released, so a submit lost on
+the network cannot leave the page stuck. tests/double-submit-guard.test.js
+covers all three.
+
 Applied to a VIEW rather than to lib/routes/consent.js, so it ships via
 apply-view-patch.sh instead of apply-patch.sh.
 
 --- a/views/partials/scripts.hbs
 +++ b/views/partials/scripts.hbs
-@@ -1,2 +1,49 @@
+@@ -1,2 +1,88 @@
  {{! Scripts }}
  <script src="assets/passwordInput.js"></script>
 +
@@ -75,6 +88,24 @@ apply-view-patch.sh instead of apply-patch.sh.
 +    if (window.__dlfSubmitGuardInstalled) return;
 +    window.__dlfSubmitGuardInstalled = true;
 +
++    // A form that has not navigated away after this long is treated as never
++    // sent (lost on the network, or cancelled out of sight): the form is
++    // released and the person can press the button again.
++    var RELEASE_MS = 15000;
++    var token = 0;
++
++    function release(form) {
++      form.removeAttribute("data-dlf-submitted");
++      var controls = form.querySelectorAll(
++        'button[type="submit"], input[type="submit"]'
++      );
++      for (var i = 0; i < controls.length; i++) {
++        controls[i].removeAttribute("aria-disabled");
++        controls[i].style.pointerEvents = "";
++        controls[i].style.opacity = "";
++      }
++    }
++
 +    // One submission per rendered form. A second submit of the same flow is
 +    // answered by Kratos on a consumed flow and navigates the browser off an
 +    // in-flight OAuth2 login, orphaning the Hydra challenge.
@@ -84,6 +115,13 @@ apply-view-patch.sh instead of apply-patch.sh.
 +        var form = event.target;
 +        if (!form || form.tagName !== "FORM") return;
 +
++        // Only a submit event the browser fires sends the form. A submit event
++        // dispatched by a script (isTrusted false) sends nothing: password
++        // managers fire one when they auto-submit, before they press the
++        // button. Counting it as the one submission would cancel the real one,
++        // and the page would sit with a faded button and send nothing.
++        if (event.isTrusted === false) return;
++
 +        if (form.hasAttribute("data-dlf-submitted")) {
 +          // Already sent. Swallow this one; the first response is still coming.
 +          event.preventDefault();
@@ -91,11 +129,20 @@ apply-view-patch.sh instead of apply-patch.sh.
 +          return;
 +        }
 +        form.setAttribute("data-dlf-submitted", "true");
++        var mine = ++token;
++        form.__dlfToken = mine;
 +
 +        // Defer the visual disable to a macrotask. Disabling a submit button
 +        // synchronously drops its name/value (method=password) from the POST
 +        // body — the form would serialize without the method Kratos requires.
++        // By then every handler has run: if one cancelled this submit, nothing
++        // was sent, so release the form instead of disabling it.
 +        window.setTimeout(function () {
++          if (form.__dlfToken !== mine) return;
++          if (event.defaultPrevented) {
++            release(form);
++            return;
++          }
 +          var controls = form.querySelectorAll(
 +            'button[type="submit"], input[type="submit"]'
 +          );
@@ -105,8 +152,13 @@ apply-view-patch.sh instead of apply-patch.sh.
 +            controls[i].style.opacity = "0.6";
 +          }
 +        }, 0);
++
++        window.setTimeout(function () {
++          if (form.__dlfToken === mine) release(form);
++        }, RELEASE_MS);
 +      },
 +      true // capture: run before any framework handler can re-dispatch
 +    );
++
 +  })();
 +</script>

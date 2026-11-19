@@ -782,6 +782,7 @@ def main(argv: list[str]) -> int:
                 for n in released_text(a.repo, (a.repo / CHANGELOG).read_text(encoding="utf-8").split("\n"))[1]:
                     print(f"changelog: note: {n}")
             except OSError:
+                # Only these extra notes are optional; check() already set the verdict.
                 pass
             for m in problems:
                 print(f"changelog: {m}", file=sys.stderr)

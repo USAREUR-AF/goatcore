@@ -471,6 +471,8 @@ an ADR edits no shared file: write the ADR, then run
 | 1248 | [goat follows stock upstream NetBird and WireGuard, and retires each of its own departures when upstream offers the same](1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md) | Proposed. The watch list it governs is written ([`upstream-netbird-wireguard-watch.md`](../design/upstream-netbird-wireguard-watch.md)); merging this record changes no build and no goatnet. | — |
 | 1250 | [Anyone can propose a change; registered contributors get the normal path, and contributor registration grants no access to any environment](1250-anyone-can-propose-a-change-registered-contributors-get-the-normal-path-and-contributor-registration-grants-no-environment-access.md) | Proposed | Amends 1221 |
 | 1251 | [Every source keeps its identity through a pod: carriage rules, provenance at entry, and pod local authority](1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md) | Proposed | Amends 1105 |
+| 1253 | [A simple boundary node sends released data as plain messages one way, a pseudo boundary node crosses to another environment of ours, and one monitor shows every boundary](1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md) | Proposed | — |
+| 1254 | [An external service can let goat sign people in and admit them by organization, nation, group or e-mail](1254-external-service-admit-door-sign-in-and-admission-by-organization-nation-group-or-email.md) | Proposed | Amends 1178 |
 
 <!-- END generated: adr-index -->
 

@@ -558,6 +558,70 @@
   ansible.builtin.set_fact:
     jz_per_vendor: "{{ zenoh_identity_model != 'per-uuid-slot-pool' }}"
 
+# ===== SLOT-POOL MODE: slot fragment (GHSA-rr3p) ===========================
+# The slot-<anchor> subjects come from the portal's registry, not from the pool
+# range: an assigned slot names the CN of its current leaf generation, a free or
+# quarantined one names none. The portal writes the fragment beside the live
+# config and splices it in on every slot change; this reads the same file so a
+# role render carries the same subjects instead of reverting them.
+- name: GHSA-rr3p | read the portal's slot fragment
+  ansible.builtin.slurp:
+    src: "{{ goat_zenoh_slot_fragment_path }}"
+  register: _slot_fragment_raw
+  failed_when: false
+  check_mode: false
+  when: not jz_per_vendor
+
+- name: GHSA-rr3p | refuse to render slot subjects without the fragment
+  ansible.builtin.assert:
+    that:
+      - (_slot_fragment_raw.content is defined) or (zenoh_slot_fragment_bootstrap | bool)
+    quiet: true
+    fail_msg: >-
+      {{ goat_zenoh_slot_fragment_path }} is missing. In per-uuid-slot-pool mode
+      the router's slot subjects are rendered from the portal registry; without
+      the fragment every slot would render with no CN and every holder would
+      lose fabric access at the next restart. Deploy the portal first (it
+      writes the fragment at boot), or, on a fresh standup with no slot
+      assigned yet, re-run with -e zenoh_slot_fragment_bootstrap=true.
+  when: not jz_per_vendor
+
+- name: GHSA-rr3p | carry the fragment into the render
+  ansible.builtin.set_fact:
+    zenoh_slot_fragment_content: "{{ (_slot_fragment_raw.content | b64decode) if (_slot_fragment_raw.content is defined) else '' }}"
+  when: not jz_per_vendor
+
+- name: GHSA-rr3p | the fragment's digest matches its content and it declares every pool slot
+  vars:
+    _frag_head: "{{ zenoh_slot_fragment_content.split('\n', 1)[0] }}"
+    _frag_body: "{{ zenoh_slot_fragment_content.split('\n', 1)[1] | default('') }}"
+    _frag_declared: "{{ _frag_head | regex_search('sha256:([0-9a-f]{64})', '\\1') | first | default('') }}"
+    _frag_missing: >-
+      {%- set m = [] -%}
+      {%- for k in range(zenoh_slot_pool_size | int) -%}
+      {%- set a = ((zenoh_slot_pool_salt ~ ':' ~ k) | hash('sha256'))[:32] -%}
+      {%- if ('id: "slot-' ~ a ~ '",') not in zenoh_slot_fragment_content -%}{%- set _ = m.append(a) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ m }}
+  ansible.builtin.assert:
+    that:
+      - _frag_declared | length == 64
+      - (_frag_body | hash('sha256')) == _frag_declared
+      - _frag_missing | length == 0
+    quiet: true
+    fail_msg: >-
+      The slot fragment at {{ goat_zenoh_slot_fragment_path }} is not usable:
+      declared digest {{ _frag_declared }}, content hashes to
+      {{ _frag_body | hash('sha256') }}; pool slots it does not declare:
+      {{ _frag_missing | length }} (first: {{ (_frag_missing | first) | default('none') }}).
+      zenoh refuses a policy naming an undeclared subject, so a router rendered
+      from it would not start. Check the portal's slot pool salt and size
+      match zenoh_slot_pool_salt / zenoh_slot_pool_size, then restart the
+      portal so it re-renders the fragment.
+  when:
+    - not jz_per_vendor
+    - zenoh_slot_fragment_content | length > 0
+
 # ===== SLOT-POOL MODE: direct render + clobber-guard (unchanged) ===========
 - name: Clobber-safety — count ACL rules in the live config (0 if fresh)
   ansible.builtin.shell:
@@ -887,6 +951,37 @@
   ansible.builtin.debug:
     var: goat_zenoh_read_coverage.stdout_lines
   when: not ansible_check_mode
+
+# ---- GHSA-rr3p | slot-fragment reload watcher (slot-pool mode) -------------
+# The portal splices slot changes into the live config but never restarts the
+# router (it has no docker socket, GHSA-6828). This watcher on the router host
+# does: revocations promptly, additions batched. See the service unit header.
+- name: GHSA-rr3p | install the slot-fragment reload watcher
+  ansible.builtin.copy:
+    src: "slot-fragment-reload.py"
+    dest: "{{ goat_zenoh_slot_reload_path }}"
+    mode: "0755"
+  when: not jz_per_vendor and (zenoh_slot_reload_enabled | bool)
+
+- name: GHSA-rr3p | install the slot-fragment reload units
+  ansible.builtin.template:
+    src: "slot-fragment-reload.{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ zenoh_stack }}-slot-fragment-reload.{{ item }}"
+    mode: "0644"
+    owner: root
+    group: root
+  loop: ["service", "path", "timer"]
+  register: _slot_reload_units
+  when: not jz_per_vendor and (zenoh_slot_reload_enabled | bool)
+
+- name: GHSA-rr3p | enable the slot-fragment reload path and timer
+  ansible.builtin.systemd:
+    name: "{{ zenoh_stack }}-slot-fragment-reload.{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: "{{ _slot_reload_units is changed }}"
+  loop: ["path", "timer"]
+  when: not jz_per_vendor and (zenoh_slot_reload_enabled | bool) and not ansible_check_mode
 
 # ---- Helpers (per-vendor only; slot-pool onboarding is pure cert-mint) -----
 - name: Install add-vendor helper script (per-vendor)
