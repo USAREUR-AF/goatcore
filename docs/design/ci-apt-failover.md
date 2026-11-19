@@ -114,6 +114,7 @@ The runner image's own extra sources (for example packages.microsoft.com) are no
 ## Wired jobs
 
 - `ci.yml`: go, python-and-ansible, peering-forwarder, peering-host-firewall, bats-bash32 and go-vuln.
+  Its federation-standup-python job installs no apt package, so it has no failover step.
 - One job each:
   - `federation-bundle.yml` bundle;
   - `federation-republisher.yml` test;
