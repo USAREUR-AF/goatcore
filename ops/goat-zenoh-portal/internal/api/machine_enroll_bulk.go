@@ -119,6 +119,7 @@ func (s *Server) enrollMachinesBulk(w http.ResponseWriter, r *http.Request) {
 			var one *enrollMachineResponse
 			one, mf = s.enrollOne(r.Context(), actor, actCustodian, grant, spec, req.Exercise, exercisePrefix, meshGroups)
 			if mf == nil {
+				s.requestEnrollCarriage(r, one, spec.Pods)
 				entry.Status = "minted"
 				entry.Result = one
 				resp.Minted++

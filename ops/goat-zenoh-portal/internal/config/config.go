@@ -428,6 +428,22 @@ type Config struct {
 	// PORTAL_GOVERN_RECONCILE_INTERVAL.
 	GovernReconcileInterval string
 
+	// Pod carriage (ADR 1251, docs/design/pod-carriage-and-provenance.md).
+	// CarriageMaxRuleDays is the longest a named or temporary carriage rule
+	// (and a pod's local rule) may run; 0 = the default, 90.
+	// CarriageReactivationDays is how long after archiving a rule's owner may
+	// reactivate it in one step; 0 = the default, 183 (six months).
+	// CarriageRead is the comma-separated read set every pod generation
+	// carries for its sources; "" = "*/**". A bare "**" is refused (ADR 1123).
+	// CarriageSignerKey / CarriageSignerCert are PEM files: the ECDSA P-256 key
+	// that signs pod rule generations and the certificate pods verify them
+	// with. Unset = the generation route answers 503 config.
+	CarriageMaxRuleDays      int
+	CarriageReactivationDays int
+	CarriageRead             string
+	CarriageSignerKey        string
+	CarriageSignerCert       string
+
 	// Lexicon drives the display-only vocabulary of the web UI (product
 	// name/title, the top-level-entity noun, the panoscope nav link). Machine
 	// paths, API routes, cert URI-SANs, and the registry stay vendor-keyed +
@@ -554,6 +570,12 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.Lexicon.OrgTitle, "lex-org-title", envOr("PORTAL_LEX_ORG_TITLE", ""), "Display lexicon: entity noun singular title-case (default first-letter-upper of Org)")
 	fs.StringVar(&cfg.Lexicon.OrgsTitle, "lex-orgs-title", envOr("PORTAL_LEX_ORGS_TITLE", ""), "Display lexicon: entity noun plural title-case (default first-letter-upper of Orgs)")
 	fs.StringVar(&cfg.Lexicon.PanoscopeURL, "lex-panoscope-url", envOr("PORTAL_LEX_PANOSCOPE_URL", ""), "Display lexicon: masthead Panoscope nav link target (the role sets it per goatnet)")
+
+	fs.IntVar(&cfg.CarriageMaxRuleDays, "carriage-max-rule-days", envInt("PORTAL_CARRIAGE_MAX_RULE_DAYS", 90), "Longest a named or temporary pod carriage rule, or a pod's local rule, may run, in days (ADR 1251)")
+	fs.IntVar(&cfg.CarriageReactivationDays, "carriage-reactivation-days", envInt("PORTAL_CARRIAGE_REACTIVATION_DAYS", 183), "How long after a carriage rule is archived its owner may reactivate it in one step, in days (ADR 1251)")
+	fs.StringVar(&cfg.CarriageRead, "carriage-read", envOr("PORTAL_CARRIAGE_READ", "*/**"), "Comma-separated read set rendered into every pod rule generation (ADR 1251 §7.1); a bare ** is refused")
+	fs.StringVar(&cfg.CarriageSignerKey, "carriage-signer-key", envOr("PORTAL_CARRIAGE_SIGNER_KEY", ""), "PEM file holding the ECDSA P-256 key that signs pod rule generations (ADR 1251 §7.1)")
+	fs.StringVar(&cfg.CarriageSignerCert, "carriage-signer-cert", envOr("PORTAL_CARRIAGE_SIGNER_CERT", ""), "PEM file holding the certificate pods verify rule generations with (ADR 1251 §7.1)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err

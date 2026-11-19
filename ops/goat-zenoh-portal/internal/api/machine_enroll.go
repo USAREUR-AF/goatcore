@@ -48,6 +48,36 @@ type machineSpec struct {
 	// is PLATFORM; the SPIRE role registers an SVID per entry (Option B). Empty
 	// for a simple system.
 	Workloads []string `json:"workloads,omitempty"`
+
+	// ADR 1251 §7.3: a keyless source gets a slot and a custodian and no key,
+	// certificate, API key or mesh key. Adapters names the ingress adapters
+	// (machine slots with their own leaf) that may publish for it; Receive
+	// says how they receive it. Both are required with keyless and refused
+	// without it.
+	Keyless  bool         `json:"keyless,omitempty"`
+	Adapters []string     `json:"adapters,omitempty"`
+	Receive  *receiveSpec `json:"receive,omitempty"`
+	// Pods requests a named carriage rule per pod slot at enrollment (ADR
+	// 1251 §7.5). The rule is active when the caller is also the pod's
+	// custodian, otherwise it waits for the pod's custodian to accept it. A
+	// refused request does not undo the enrollment; it is reported per pod.
+	Pods []string `json:"pods,omitempty"`
+}
+
+// receiveSpec is how an ingress adapter receives a keyless source.
+type receiveSpec struct {
+	Interface string `json:"interface"`
+	Port      int64  `json:"port"`
+	Sender    string `json:"sender"`
+}
+
+// enrollCarriageResult reports one requested pod rule.
+type enrollCarriageResult struct {
+	PodSlot   string `json:"pod_slot"`
+	RuleID    string `json:"rule_id,omitempty"`
+	State     string `json:"state,omitempty"`
+	ErrorCode string `json:"error_code,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 type enrollMachineRequest struct {
@@ -95,6 +125,12 @@ type enrollMachineResponse struct {
 	// MeshScope names the exercise the key was scoped to; empty for the goatnet
 	// site scope.
 	MeshScope string `json:"mesh_scope,omitempty"`
+
+	// ADR 1251: keyless sources and carriage requested at enrollment.
+	Keyless  bool                   `json:"keyless,omitempty"`
+	Adapters []string               `json:"adapters,omitempty"`
+	Receive  *receiveSpec           `json:"receive,omitempty"`
+	Carriage []enrollCarriageResult `json:"carriage,omitempty"`
 }
 
 // mintFailure carries an HTTP-shaped refusal out of the mint core, so the
@@ -231,6 +267,9 @@ func (s *Server) mintMeshKey(ctx context.Context, keyName, nodeClass, exercisePr
 // path rolls back its own allocations (RevokeSlot returns the quota by
 // construction), so a bulk caller can keep going.
 func (s *Server) enrollOne(ctx context.Context, actor, custodian string, grant *registry.MachineGrant, spec machineSpec, exerciseName, exercisePrefix string, meshGroups []string) (*enrollMachineResponse, *mintFailure) {
+	if mf := s.validateCarriageSpec(ctx, spec); mf != nil {
+		return nil, mf
+	}
 	// Allocate the machine's own slot, then stamp the custody edge — which
 	// ATOMICALLY re-checks the quota, closing the concurrent-enroll race any
 	// pre-check can't.
@@ -266,6 +305,10 @@ func (s *Server) enrollOne(ctx context.Context, actor, custodian string, grant *
 			return nil, &mintFailure{http.StatusConflict, "affiliation_variant", err.Error()}
 		}
 		return nil, &mintFailure{http.StatusInternalServerError, "record_enrollment", err.Error()}
+	}
+
+	if spec.Keyless {
+		return s.enrollKeyless(ctx, actor, custodian, grant, spec, anchor)
 	}
 
 	// From here the mint mirrors onboardSlotSystem: api_key → vendor row → cert.
@@ -412,6 +455,7 @@ func (s *Server) enrollMachine(w http.ResponseWriter, r *http.Request) {
 		s.writeMintFailure(w, mf)
 		return
 	}
+	s.requestEnrollCarriage(r, resp, req.Pods)
 	resp.QuotaRemaining = -1
 	if q, qerr := s.reg.MachineQuotaFor(r.Context(), custodian); qerr == nil {
 		resp.QuotaRemaining = q.Remaining

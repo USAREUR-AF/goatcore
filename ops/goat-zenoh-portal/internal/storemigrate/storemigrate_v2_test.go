@@ -13,7 +13,7 @@ import (
 // round trip still holds; once the portal opens it, registry migration 2 (slot
 // generations and slot_leaves, GHSA-rr3p) applies, and an export to the
 // SQLite build is refused rather than silently dropping slot_leaves and
-// slots.generation.
+// slots.generation (and, from migration 3, the carriage tables).
 func TestImportStopsAtVersion1AndExportRefusesVersion2(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
@@ -29,7 +29,7 @@ func TestImportStopsAtVersion1AndExportRefusesVersion2(t *testing.T) {
 	}
 	_ = r.Close()
 	_, err = Export(ctx, Registry, dsn, filepath.Join(dir, "back.db"))
-	if err == nil || !strings.Contains(err.Error(), "version 2") {
-		t.Fatalf("export of a version 2 registry: err = %v, want a version refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "copies version 1 only") {
+		t.Fatalf("export of a migrated registry: err = %v, want a version refusal", err)
 	}
 }
