@@ -78,7 +78,10 @@ class OutOfBandRouteMetric(unittest.TestCase):
                 (bindir / tool).write_text(STANDIN)
                 (bindir / tool).chmod(0o755)
             extra = {'breakglass_oob_interface': OOB,
-                     'breakglass_oob_networkd_dropin_root': str(dropins)}
+                     'breakglass_oob_networkd_dropin_root': str(dropins),
+                     # Two reads one second apart: the stand-in's routes are final.
+                     'breakglass_oob_route_check_retries': 1,
+                     'breakglass_oob_route_check_delay': 1}
             if metric is not None:
                 extra['breakglass_oob_route_metric'] = metric
             play = [{'hosts': 'localhost', 'connection': 'local', 'gather_facts': False,
