@@ -327,7 +327,7 @@ def write_status(path, doc):
     fd, tmp = tempfile.mkstemp(dir=d, prefix=".status.")
     with os.fdopen(fd, "w") as f:
         json.dump(doc, f)
-    os.chmod(tmp, 0o640)   # readable by bn-monitor, which runs as the same dynamic user
+    os.chmod(tmp, 0o600)   # bn-monitor runs as the same user (User=simple-bn), so owner-read is enough
     os.replace(tmp, path)
 
 
