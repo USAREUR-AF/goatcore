@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import threading
+from types import SimpleNamespace
 import urllib.error
 import urllib.request
 
@@ -16,6 +17,37 @@ import decoy  # noqa: E402
 SEED = b"synthetic-seed-for-a-local-trial-0000001"
 ZONE = "svc.example.internal"
 TDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "example")
+
+
+def test_serve_command_returns_success_when_server_stops(monkeypatch):
+    env = {"DECOY_SERVICE_ZONE": ZONE}
+    calls = []
+
+    def stopped_server(received):
+        assert received is env
+        calls.append(True)
+
+    monkeypatch.setattr(decoy, "os", SimpleNamespace(environ=env))
+    monkeypatch.setattr(decoy, "serve", stopped_server)
+    assert decoy.main(["serve"]) == 0
+    assert calls == [True]
+
+
+@pytest.mark.parametrize("error", [decoy.Refused("synthetic configuration refusal"),
+                                 OSError("synthetic startup failure"), KeyboardInterrupt()],
+                         ids=["configuration-refusal", "startup-failure", "interrupt"])
+def test_serve_command_propagates_server_failure(monkeypatch, error):
+    env = {"DECOY_SERVICE_ZONE": ZONE}
+
+    def failed_server(received):
+        assert received is env
+        raise error
+
+    monkeypatch.setattr(decoy, "os", SimpleNamespace(environ=env))
+    monkeypatch.setattr(decoy, "serve", failed_server)
+    with pytest.raises(type(error)) as raised:
+        decoy.main(["serve"])
+    assert raised.value is error
 
 
 def test_hkdf_matches_rfc_5869_test_case_3():
