@@ -17,6 +17,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, ".."))
 import door_admit as d  # noqa: E402
+try:
+    import expand_rule  # noqa: E402  (needs PyYAML)
+except ImportError:
+    expand_rule = None
 
 
 def jwt(claims):
@@ -66,12 +70,9 @@ class Decide(unittest.TestCase):
 
 class Expand(unittest.TestCase):
     def setUp(self):
-        self.x = None
-        try:
-            import expand_rule as x
-        except ImportError:
+        if expand_rule is None:
             self.skipTest("PyYAML not installed")
-        self.x = x
+        self.x = expand_rule
 
     def test_orgs_and_nations(self):
         ids, matched = self.x.expand(REGISTRY, {"orgs": ["org-alpha"], "nations": ["ZZB"]})
