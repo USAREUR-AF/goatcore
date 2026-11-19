@@ -81,6 +81,8 @@ only those two prefixes.
 - Local authority may add, extend, revoke or reactivate rules **for that pod only**, each with an end date, each signed locally
   and kept in an append-only ledger. It cannot change another pod or the core, cannot grant without an end date, and cannot
   mint identities (new devices met in the field use offline enrollment).
+- Each local change re-renders the pod's ACL and restarts its router, with the last-known-good rollback
+  `zagros-moon-pod/host/first-boot.sh` already uses.
 - On reconnection the pod reports its ledger. Data sent under a local rule arrives marked "local rule, not yet ratified". An org
   lead ratifies each rule or lets it lapse. Goat's revocations win.
 
@@ -107,14 +109,14 @@ not developers ([`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md)
 | Pod behind a pod | Not supported; a pod forwards only sources it authenticated |
 | Across sovereigns | A rule never crosses a trust root ([ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md), [ADR 1020](../adr/1020-zenoh-federated-peering-trust-model.md)) |
 | Silent denial | A pod refuses an uncovered source at connect time and publishes per-source carriage health |
-| Scale | ACL size grows with covered slots per pod; whether an ACL change needs a router restart is measured first |
+| Scale | ACL size grows with covered slots per pod. zenohd 1.9 applies an ACL change only by restarting the router (F-156), so rendering follows the slot fragment's pattern (`ops/ansible/roles/goat-zenoh/files/slot-fragment-reload.py`): removals at once, additions batched |
 
 ## 7. Build order
 
 | Phase | What | Status |
 |---|---|---|
 | 0 | Guidance: no hand-edited pod ACL entries; interim key convention `<pod-slot>/routed/<source-slot>/…`, documented as unverified | Can do now |
-| 1 | Measure: duplicate delivery, ACL reload, signature overhead | First |
+| 1 | Measure: duplicate delivery over two live paths, signature overhead per sample (ACL reload is settled: restart, F-156) | First |
 | 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Designed |
 | 3 | Provenance: attachment signature, grades, keyless sources, ASTERIX ingress adapter, verification in the CLI | Designed |
 | 4 | Core ACL rendering, carriage health, drift check | Designed; after the current security fixes to the core template are disclosed |

@@ -26,8 +26,8 @@ Zenoh's access control checks only the certificate of the directly connected pee
 [`federated-trust-model.md`](../design/federated-trust-model.md)). A core router therefore sees a pod's certificate, not the
 device behind it, and accepts only the pod's own slot from that connection. Operators have added device slots to a pod's ACL
 by hand, which changes nothing at the core (denial is silent, [`zenoh-brokerless-consequences.md`](../design/zenoh-brokerless-consequences.md)),
-and have carried the device's slot as a prefix in the key, which any client of the pod can forge. The pod's own rule also lets
-any certificate from the goatnet CA write the pod's slot.
+and have carried the device's slot as a prefix in the key, which any client of the pod can forge. A pod's ACL names only its
+own certificate and its upstream router, so every device behind it publishes as the pod.
 
 ## Decision
 
@@ -85,5 +85,8 @@ any certificate from the goatnet CA write the pod's slot.
   route-only update (a router hint); a device without one is enrolled as a machine or a keyless source. Data under the
   interim key `<pod-slot>/routed/<source-slot>/…` keeps flowing until its source is carried, and the pod's operator then
   retires that prefix.
-- Measured before the core change ships: whether one publication can reach a subscriber twice over two live paths, whether an
-  ACL change applies without a router restart, and signature overhead per sample.
+- zenohd 1.9 applies an ACL change only by restarting the router (F-156). Rendered rules therefore reach a router the way the
+  slot fragment does: removals at once, additions batched. A pod applies a local rule change by restarting its router with the
+  last-known-good rollback it already uses.
+- Measured before the core change ships: whether one publication can reach a subscriber twice over two live paths, and
+  signature overhead per sample.
