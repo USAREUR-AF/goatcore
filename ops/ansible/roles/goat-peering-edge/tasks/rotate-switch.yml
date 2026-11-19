@@ -3,6 +3,51 @@
 # §8), included by rotate.yml when this is not the retire step. Never run on retire.
 
 
+# What the switch relies on (that its --load-creds unloads the old key, and what
+# --load-creds --clear and --list-certs show after it) was measured on a real charon
+# of the series in peering_edge_rotation_strongswan_tested. The daemon's own version
+# is read, not the package's, because the running charon is the one that signs.
+- name: peering-edge | rotation | the strongSwan version the daemon reports
+  ansible.builtin.command:
+    argv: [swanctl, --version, --daemon, --raw]
+  register: _pe_rot_sw
+  changed_when: false
+  failed_when: false
+
+- name: peering-edge | rotation | the strongSwan version and series
+  ansible.builtin.set_fact:
+    _pe_rot_sw_version: "{{ _pe_rot_sw.stdout | default('') | regex_search('version=([0-9]+\\.[0-9]+[^ }]*)', '\\1') | default([''], true) | first }}"
+    _pe_rot_sw_series: "{{ _pe_rot_sw.stdout | default('') | regex_search('version=([0-9]+\\.[0-9]+)', '\\1') | default([''], true) | first }}"
+
+- name: peering-edge | rotation | refuse a strongSwan the rotation was not tested with (GB-341)
+  ansible.builtin.assert:
+    that:
+      - _pe_rot_sw_series | length > 0
+      - _pe_rot_sw_series in (peering_edge_rotation_strongswan_tested | map('string') | list)
+    fail_msg: >-
+      goat-peering-edge refuses (GB-341): {{
+      ('the charon on ' ~ inventory_hostname ~ ' reports strongSwan ' ~ _pe_rot_sw_version ~ ', a series ('
+      ~ _pe_rot_sw_series ~ ') the rotation was not tested with; it was tested with '
+      ~ (peering_edge_rotation_strongswan_tested | join(', ')) ~ ' (peering_edge_rotation_strongswan_tested)')
+      if _pe_rot_sw_series | length > 0 else
+      ('`swanctl --version --daemon --raw` on ' ~ inventory_hostname ~ " did not report the running charon's version (exit "
+      ~ (_pe_rot_sw.rc | default('none')) ~ '), so the rotation cannot tell which strongSwan it would run under') }}.
+      Run the rotation on a charon of a tested series, or run it on this series in a lab first and
+      then add the series to peering_edge_rotation_strongswan_tested. Nothing was moved.
+    quiet: true
+
+- name: peering-edge | rotation | the other peerings' credentials, before anything moves
+  ansible.builtin.include_tasks: rotate-other-peerings.yml
+
+- name: peering-edge | rotation | refuse while another peering's credentials are not in place (GB-343)
+  ansible.builtin.fail:
+    msg: >-
+      goat-peering-edge refuses (GB-343): the rotation reloads every credential on {{ inventory_hostname }}
+      from the files alone once the new leaf is up, and another peering's would then be missing:
+      {{ _pe_rot_others.stdout_lines | join('; ') }}. Put that peering's files back (its role run
+      writes them), or remove the peering, before rotating {{ peering_edge_name }}. Nothing was moved.
+  when: _pe_rot_others.stdout | trim | length > 0
+
 # The confirm must fit inside one IKE rekey interval, or a scheduled rekey of either
 # side could fall in it after the rekey this rotation makes first. Checked before
 # anything moves. Durations are strongSwan's: a number with s, m, h or d.
@@ -86,7 +131,7 @@
   ansible.builtin.fail:
     msg: >-
       goat-peering-edge (GB-302): rotation {{ peering_edge_rotation }} of {{ peering_edge_name }} on
-      {{ inventory_hostname }} was rolled back: the SA did not come up on the new leaf, and the old
+      {{ inventory_hostname }} was rolled back: its confirm did not pass on the new leaf (the run that rolled it back said why), and the old
       pair was put back from {{ _pe_rot_aside }}, so the old leaf is live{{
       ' (this run finished putting it back, after a run killed during the roll-back)'
       if (_pe_rot_rb_done.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | list | length > 0)
@@ -184,6 +229,7 @@
           ca={{ _pe_rot_chain_ca | trim | quote }};
           echo "cn=$(openssl x509 -noout -subject -nameopt multiline -in "$c" | sed -n 's/^ *commonName *= *//p')";
           echo "match=$( [ "$(openssl x509 -noout -pubkey -in "$c" | openssl sha256)" = "$(openssl pkey -pubout -in "$k" | openssl sha256)" ] && echo yes || echo no)";
+          echo "newkey=$( [ "$(openssl x509 -noout -pubkey -in "$c" | openssl sha256)" != "$(openssl x509 -noout -pubkey -in {{ peering_edge_cert_path | quote }} 2>/dev/null | openssl sha256)" ] && echo yes || echo no)";
           echo "chain=$(openssl verify -CAfile "$ca" "$c" >/dev/null 2>&1 && echo yes || echo no)";
           echo "curve=$(openssl x509 -noout -text -in "$c" | sed -n 's/.*ASN1 OID: *//p' | head -1)";
           echo "lasts=$(openssl x509 -noout -checkend {{ (peering_edge_min_valid_days | int) * 86400 }} -in "$c" >/dev/null && echo yes || echo no)";
@@ -203,6 +249,7 @@
           curve: "{{ _pe_rot_facts.stdout | default('') | regex_search('(?m)^curve=(.*)$', '\\1') | default([''], true) | first }}"
           lasts: "{{ _pe_rot_facts.stdout | default('') | regex_search('(?m)^lasts=(.*)$', '\\1') | default([''], true) | first }}"
           started: "{{ _pe_rot_facts.stdout | default('') | regex_search('(?m)^started=(.*)$', '\\1') | default([''], true) | first }}"
+          newkey: "{{ _pe_rot_facts.stdout | default('') | regex_search('(?m)^newkey=(.*)$', '\\1') | default([''], true) | first }}"
 
     - name: peering-edge | rotation | refuse a certificate that is not right for this link (GB-290)
       ansible.builtin.assert:
@@ -213,6 +260,7 @@
           - _pe_rot_f.curve | default('') == 'secp384r1'
           - _pe_rot_f.lasts | default('no') == 'yes'
           - _pe_rot_f.started | default('no') == 'yes'
+          - _pe_rot_f.newkey | default('no') == 'yes'
         fail_msg: >-
           goat-peering-edge refuses (GB-290): the staged certificate {{ peering_edge_cert_next_path }}
           on {{ inventory_hostname }} is not right for this link:
@@ -221,7 +269,9 @@
           'its CN is ' ~ (_pe_rot_f.cn | default('') or '(none)') ~ ', not ' ~ peering_edge_local_id ~ '; ' if _pe_rot_f.cn | default('') != peering_edge_local_id else '' }}{{
           'its key is ' ~ (_pe_rot_f.curve | default('') or 'not EC') ~ ', not ECDSA P-384 (secp384r1), which the proposals require; ' if _pe_rot_f.curve | default('') != 'secp384r1' else '' }}{{
           'it is not valid for ' ~ peering_edge_min_valid_days ~ ' more days; ' if _pe_rot_f.lasts | default('no') != 'yes' else '' }}{{
-          'it is not valid yet; ' if _pe_rot_f.started | default('no') != 'yes' else '' }}
+          'it is not valid yet; ' if _pe_rot_f.started | default('no') != 'yes' else '' }}{{
+          "its key is the live leaf's key (a re-certified leaf, not a new one: the confirm can tell the leaves apart only by their keys); "
+          if _pe_rot_f.newkey | default('no') != 'yes' else '' }}
           have the ceremony issue it again. Nothing was moved.
         quiet: true
 
@@ -381,19 +431,97 @@
   ansible.builtin.set_fact:
     _pe_rot_old_lingered: "{{ (not (_pe_rot_prerekey_failed | bool)) and _pe_rot_up_wait.rc == 0 and (_pe_rot_old_gone.rc | default(0)) != 0 }}"
 
+# The new SA is up and the old ones are gone. A --load-creds without --clear unloads
+# a key whose file is gone but keeps its certificate, and --flush-certs does not drop
+# it either (it empties only the cache of certificates received): measured on
+# strongSwan 5.9.8 and 6.0.4. So the credentials are reloaded from the files alone,
+# which drops the old leaf; the IKE SA stays up through it (measured on both).
+- name: peering-edge | rotation | the other peerings' credentials, just before the clear
+  ansible.builtin.include_tasks: rotate-other-peerings.yml
+  when:
+    - not (_pe_rot_prerekey_failed | bool)
+    - _pe_rot_up_wait.rc == 0
+    - not (_pe_rot_old_lingered | bool)
+
+- name: peering-edge | rotation | another peering's credentials went missing during the rotation
+  ansible.builtin.set_fact:
+    _pe_rot_others_gone: >-
+      {{ (not (_pe_rot_prerekey_failed | bool)) and _pe_rot_up_wait.rc == 0 and not (_pe_rot_old_lingered | bool)
+         and (_pe_rot_others.stdout | default('') | trim | length > 0) }}
+
+- name: peering-edge | rotation | reload the credentials from the files alone, dropping the old leaf
+  ansible.builtin.command:
+    argv: [swanctl, --load-creds, --clear, --noprompt]
+  register: _pe_rot_clear
+  changed_when: true
+  failed_when: false
+  when:
+    - not (_pe_rot_prerekey_failed | bool)
+    - _pe_rot_up_wait.rc == 0
+    - not (_pe_rot_old_lingered | bool)
+    - not (_pe_rot_others_gone | bool)
+
+# `swanctl --list-sas` names only the identities, and an old and a new leaf share
+# them. What proves the leaf: charon signs only with a private key it holds, and the
+# partner checks the signature against the certificate we send. So after the clear,
+# charon must list exactly one end-entity certificate of our id: the live leaf's
+# serial, holding its private key. That proves the leaf only if its key is new (a
+# re-certified old key would sign the same), so the live leaf's key must differ from
+# the set-aside leaf's; the staging check refuses a reused key too (GB-290), and this
+# re-check covers a resume that finds the switch already made.
+- name: peering-edge | rotation | the live leaf, on a new key, is the only one of our id charon holds
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      live={{ peering_edge_cert_path | quote }}; old={{ (_pe_rot_aside ~ '/' ~ (peering_edge_cert_path | basename)) | quote }}
+      want=$(openssl x509 -noout -serial -in "$live" | cut -d= -f2 | tr 'A-F' 'a-f' | sed 's/^0*//')
+      [ -n "$want" ] || { echo "missing unreadable"; exit 0; }
+      nk=$(openssl x509 -noout -pubkey -in "$live" | openssl sha256 | awk '{print $NF}')
+      ok=$(openssl x509 -noout -pubkey -in "$old" 2>/dev/null | openssl sha256 | awk '{print $NF}')
+      [ "$nk" != "$ok" ] || { echo "samekey $want"; exit 0; }
+      swanctl --list-certs | awk -v id={{ peering_edge_local_id | quote }} -v want="$want" -v nk="$nk" -v ok="$ok" '
+        function done_one() {
+          if (cn == id && ser != "") { n++; all = all " " ser; if (ser == want && key) live = 1 }
+          cn = ""; ser = ""; key = 0
+        }
+        /^List of / { done_one(); ee = ($0 ~ /End Entity/); next }
+        !ee { next }
+        /^  subject:/ { done_one(); if (match($0, /CN=[^,"]*/)) cn = substr($0, RSTART + 3, RLENGTH - 3); next }
+        /^  serial:/ { ser = tolower($2); gsub(":", "", ser); sub(/^0+/, "", ser); next }
+        /^  pubkey:/ { key = ($0 ~ /has private key/); next }
+        END {
+          done_one()
+          if (!live) print "missing " want
+          else if (n != 1) print "extra" all
+          else print "ok " want " " nk " " ok
+        }'
+    executable: /bin/bash
+  register: _pe_rot_leaf
+  changed_when: false
+  failed_when: false
+  when: _pe_rot_clear is not skipped
+
+- name: peering-edge | rotation | the leaf was not proven
+  ansible.builtin.set_fact:
+    _pe_rot_leaf_unproven: "{{ (_pe_rot_clear is not skipped) and not ((_pe_rot_leaf.stdout | default('') | trim) is match('^ok [0-9a-f]+ [0-9a-f]{64} [0-9a-f]{64}$')) }}"
+    _pe_rot_leaf_words: "{{ (_pe_rot_leaf.stdout | default('') | trim).split(' ') }}"
+
 - name: peering-edge | rotation | the confirm's result
   ansible.builtin.set_fact:
     _pe_rot_up:
-      rc: "{{ 1 if ((_pe_rot_prerekey_failed | bool) or (_pe_rot_old_lingered | bool)) else _pe_rot_up_wait.rc }}"
+      rc: "{{ 1 if ((_pe_rot_prerekey_failed | bool) or (_pe_rot_old_lingered | bool) or (_pe_rot_others_gone | bool) or (_pe_rot_leaf_unproven | bool)) else _pe_rot_up_wait.rc }}"
 
 # The confirm's proof, written before the rotation reports success: the unique id of
-# the IKE SA the re-authentication made on the new leaf, and when. The retire step
+# the IKE SA the re-authentication made on the new leaf, and when, the serial of the
+# leaf charon could sign it with, the sha256 of that leaf's public key and of the
+# set-aside leaf's (the premise of the proof: they differ), and the strongSwan version. The retire step
 # requires it; an SA established after the set-aside proves nothing alone, because
 # the rekey before the re-authentication makes one that still runs on the old leaf.
 - name: peering-edge | rotation | record the confirm (the new SA's id and time)
   ansible.builtin.shell:
     cmd: >-
-      umask 077 && printf 'id=%s\nat=%s\n' {{ (_pe_rot_up_wait.stdout | trim) | quote }} "$(date +%s)"
+      umask 077 && printf 'id=%s\nat=%s\nserial=%s\nnew_key=%s\nold_key=%s\nstrongswan=%s\n' {{ (_pe_rot_up_wait.stdout | trim) | quote }} "$(date +%s)"
+      {{ _pe_rot_leaf_words[1] | quote }} {{ _pe_rot_leaf_words[2] | quote }} {{ _pe_rot_leaf_words[3] | quote }} {{ _pe_rot_sw_version | quote }}
       > {{ (_pe_rot_aside ~ '/confirmed.tmp') | quote }}
       && mv -f {{ (_pe_rot_aside ~ '/confirmed.tmp') | quote }} {{ (_pe_rot_aside ~ '/confirmed') | quote }}
   changed_when: true
@@ -426,18 +554,38 @@
       changed_when: true
       failed_when: false
     - name: peering-edge | rotation | stop
+      vars:
+        _pe_lw: "{{ _pe_rot_leaf_words | default([]) }}"
+        _pe_back: >-
+          The old pair was put back from {{ _pe_rot_aside }} and loaded: the old leaf is live{{
+          '; with an ipsec-ca rotation whose partner no longer trusts our old CA, it cannot carry the link'
+          if peering_edge_rotation_kind == 'ca' else '' }}.
       ansible.builtin.fail:
         msg: >-
-          goat-peering-edge (GB-302): the IKE SA of {{ peering_edge_name }} did not come up on the
+          {% if _pe_rot_others_gone | default(false) | bool %}goat-peering-edge (GB-343): the SA of
+          {{ peering_edge_name }} came up on the new leaf on {{ inventory_hostname }}, but another peering's
+          credentials went missing during the rotation: {{ _pe_rot_others.stdout_lines | join('; ') }}.
+          Reloading every credential from the files alone would have unloaded that peering's key, so the
+          credentials were not reloaded and the rotation was not recorded. {{ _pe_back }} Put that peering's
+          files back, then start a rotation with a new id.
+          {%- elif _pe_rot_leaf_unproven | default(false) | bool %}goat-peering-edge (GB-342): the SA of
+          {{ peering_edge_name }} came up on {{ inventory_hostname }}, but the confirm could not show it runs on
+          the live leaf: {% if (_pe_lw | first | default('')) == 'samekey' %}the live leaf (serial {{ _pe_lw[1] }})
+          has the set-aside leaf's key, so a signature does not tell the two leaves apart; a rotation needs a
+          leaf on a new key{% elif (_pe_lw | first | default('')) == 'extra' %}charon lists more than one
+          end-entity certificate of our id {{ peering_edge_local_id }} after reloading the credentials from the
+          files alone (serials {{ _pe_lw[1:] | join(', ') }}); remove every pair of our id but the live one from
+          {{ peering_edge_swanctl_dir }}{% else %}charon does not hold the live leaf (serial
+          {{ _pe_lw[1] | default('unreadable') }}) with its private key{% endif %}. Nothing was recorded.
+          {{ _pe_back }} Read `swanctl --list-certs` on this edge, then stage a new pair and start a rotation
+          with a new id.
+          {%- else %}goat-peering-edge (GB-302): the IKE SA of {{ peering_edge_name }} did not come up on the
           new leaf within {{ peering_edge_rotation_confirm_seconds }} s on {{ inventory_hostname }}{{
           ' (the rekey before the switch did not complete, so the re-authentication was not tried)'
           if (_pe_rot_prerekey_failed | bool) else '' }}{{
           ' (an SA on the new leaf came up, but the SA from before the re-authentication was still up when the window closed, so make-before-break did not complete and nothing was recorded)'
-          if (_pe_rot_old_lingered | default(false) | bool) else '' }}.
-          The old pair was put back from {{ _pe_rot_aside }} and loaded: the old leaf is live{{
-          '; with an ipsec-ca rotation whose partner no longer trusts our old CA, it cannot carry the link'
-          if peering_edge_rotation_kind == 'ca' else '' }}. Read `swanctl --list-sas` and the charon log
-          on both edges, stage the new pair again and start a rotation with a new id.
+          if (_pe_rot_old_lingered | default(false) | bool) else '' }}. {{ _pe_back }} Read `swanctl --list-sas`
+          and the charon log on both edges, stage the new pair again and start a rotation with a new id.{% endif %}
 
 - name: peering-edge | rotation | our new CA becomes the CA the chain is checked against
   when:

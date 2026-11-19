@@ -1,0 +1,30 @@
+# Decoy layer (ADR 1247, docs/design/deception-layer.md). Installed by
+# ops/ansible/roles/decoy on the host that runs the responder. The responder
+# writes these series through the node-exporter textfile collector.
+groups:
+  - name: decoy
+    rules:
+      - alert: DecoyTouched
+        expr: (time() - goat_decoy_last_touch_timestamp_seconds) < 3600 and goat_decoy_last_touch_timestamp_seconds > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "A decoy was used on {{ $labels.instance }}"
+          description: >-
+            Nothing legitimate uses a decoy. Treat this as an intrusion until
+            the source is explained: read the responder's journal
+            (journalctl -u goat-decoy-responder) for the source, the names and
+            the pace. Runbook: docs/operations/decoy-layer-runbook.md.
+      # The responder rewrites its metrics file every 15 seconds. A file that
+      # stops changing means the responder stopped, and its last numbers stay
+      # on disk looking healthy.
+      - alert: DecoyResponderStale
+        expr: (time() - node_textfile_mtime_seconds{file=~".*goat_decoy\\.prom"}) > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The decoy responder on {{ $labels.instance }} stopped reporting"
+          description: >-
+            Its metrics file has not changed for five minutes. Check
+            systemctl status goat-decoy-responder on the host.

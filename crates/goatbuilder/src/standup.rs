@@ -25,7 +25,7 @@ use std::process::Stdio;
 
 use crate::runner::Cmd;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Deserialize;
 
 use crate::config;
@@ -952,9 +952,9 @@ fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks
         let mut kids = Vec::new();
         for i in &idx {
             let log = format!("{}/standup-{}-12-{}.log", s.state_dir, s.site, q[*i].id);
-            let f = std::fs::File::create(&log)?;
+            let f = std::fs::File::create(&log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&log)).display())))?;
             crate::runner::phase("12", &q[*i].label, "");
-            let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().context("bash")?;
+            let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
             kids.push((*i, child, std::time::Instant::now(), log));
         }
         let mut failed = Vec::new();
@@ -1246,11 +1246,11 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     continue;
                 }
                 if let Some(d) = Path::new(log).parent() {
-                    std::fs::create_dir_all(d)?;
+                    std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
                 }
-                let f = std::fs::File::create(log)?;
+                let f = std::fs::File::create(log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(log)).display())))?;
                 crate::runner::phase(&format!("observability-leg-{leg}"), label, "");
-                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 legs.insert(leg, (child, log.clone()));
             }
             Event::PullStart { label, cmd, log } => {
@@ -1261,11 +1261,11 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     continue;
                 }
                 if let Some(d) = Path::new(log).parent() {
-                    std::fs::create_dir_all(d)?;
+                    std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
                 }
-                let f = std::fs::File::create(log)?;
+                let f = std::fs::File::create(log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(log)).display())))?;
                 crate::runner::phase("image-pull", label, "");
-                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 pulling = Some((child, log.clone()));
             }
             Event::PullJoin { at } => {
@@ -1283,7 +1283,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Image pull FAILED — exit {rc} (full log: {log}). Phase {at} and every later phase run these images, so the run stops here; the log names each image that could not be pulled."), fix: Some(format!("a private package needs GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it); a pin naming an image the registry no longer has needs a new pin in ops/pins/. Then resume: {resume} --from {at}{prof}")) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Image pull FAILED — exit {rc} (GB-333; full log: {log}). Phase {at} and every later phase run these images, so the run stops here; the log names each image that could not be pulled."), fix: Some(format!("a private package needs GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it); a pin naming an image the registry no longer has needs a new pin in ops/pins/. Then resume: {resume} --from {at}{prof}")) });
                     checks.extend(interpreted("image-pull", Some(&log)));
                     exit = EXIT_REFUSED;
                     break 'run;
@@ -1303,7 +1303,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Observability leg \"{leg}\" FAILED — exit {rc} (full log: {log}). The core phases up to {at} have run; phase {at} needs this leg, so the run stops here."), fix: Some(format!("fix the cause (the log names it; obs_scrape_targets unset is the usual one for the stack leg), then: {resume} --obs-only && {resume} --from {at}")) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Observability leg \"{leg}\" FAILED — exit {rc} (GB-334; full log: {log}). The core phases up to {at} have run; phase {at} needs this leg, so the run stops here."), fix: Some(format!("fix the cause (the log names it; obs_scrape_targets unset is the usual one for the stack leg), then: {resume} --obs-only && {resume} --from {at}")) });
                     checks.extend(interpreted(&format!("observability-leg-{leg}"), Some(&log)));
                     exit = EXIT_REFUSED;
                     break 'run;
@@ -1336,7 +1336,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let t0 = std::time::Instant::now();
                 crate::runner::phase(&ph.n.to_string(), &ph.label, "");
-                let status = site_phase_command(repo, &s, &ph.cmd, &rs).current_dir(repo).status().context("bash")?;
+                let status = site_phase_command(repo, &s, &ph.cmd, &rs).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 let secs = t0.elapsed().as_secs();
                 let rc_now = status.code().unwrap_or(1);
                 checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
@@ -1351,7 +1351,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 if !status.success() {
                     let rc = status.code().unwrap_or(1);
                     let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
-                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the site is left partway through phase {}. Read the error above; docs/operations/goatnet-standup.md \"The run\" table has this phase's \"Worked when\" and the Troubleshooting table lists the common failures by symptom + fix.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}{prof}", ph.n)) });
+                    checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc} (GB-331). No later phase has run; the site is left partway through phase {}. Read the error above; docs/operations/goatnet-standup.md \"The run\" table has this phase's \"Worked when\" and the Troubleshooting table lists the common failures by symptom + fix.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}{prof}", ph.n)) });
                     // No row when standup's phase catalog has no such phase.
                     checks.extend(interpreted(&phase_id, log.as_deref()));
                     exit = EXIT_REFUSED;
@@ -1492,8 +1492,9 @@ pub fn class_scope(root: &Path) -> Option<BTreeMap<String, Vec<String>>> {
 /// the phase order the fixture states, converge each through the scripted
 /// converger, verify every record, and report declared → verified time.
 pub fn mock(fixture: &mut Fixture, env: &str, site: &str, actor: &str, run: MockRun) -> Result<Report> {
-    let text = std::fs::read_to_string(fixture.root.join("converger.yaml"))?;
-    let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section (goatbuilder-conformance.md §\"Rehearsing a standup on the fixture\")")?;
+    let text = std::fs::read_to_string(fixture.root.join("converger.yaml")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(fixture.root.join("converger.yaml"))).display())))?;
+    let script: MockScript = serde_yaml::from_str(&text)
+        .map_err(|e| goat_errors::coded("GB-024", format!("converger.yaml has no standup: section (goatbuilder-conformance.md §\"Rehearsing a standup on the fixture\"): {e}")))?;
     let m = script.standup;
     if m.env != env {
         return Err(goat_errors::coded("GB-249", format!("the fixture rehearses environment '{}', not '{env}'", m.env)).into());
@@ -1600,8 +1601,8 @@ pub fn mock(fixture: &mut Fixture, env: &str, site: &str, actor: &str, run: Mock
 /// its class. Nothing earlier in any record is removed (history is evidence),
 /// and `status` afterwards reads the site as torn down, not as pending.
 pub fn teardown_mock(fixture: &mut Fixture, env: &str, site: &str, run: MockRun) -> Result<Report> {
-    let text = std::fs::read_to_string(fixture.root.join("converger.yaml"))?;
-    let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section")?;
+    let text = std::fs::read_to_string(fixture.root.join("converger.yaml")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(fixture.root.join("converger.yaml"))).display())))?;
+    let script: MockScript = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("converger.yaml has no standup: section: {e}")))?;
     let m = script.standup;
     if m.env != env || m.site != site {
         return Err(goat_errors::coded("GB-249", format!("the fixture rehearses {}/{}, not {env}/{site}", m.env, m.site)).into());
@@ -1690,11 +1691,11 @@ fn teardown_cmd(s: &Site, d: &TeardownDecl) -> Result<Option<String>> {
     Ok(match d.action.as_str() {
         "compose-down" => {
             let dirs: Vec<TeardownDir> = d.dirs.iter().map(|x| TeardownDir { var: x.var.clone(), default: x.default.replace("<site>", &s.site) }).collect();
-            let dirs = serde_json::to_string(&dirs)?;
+            let dirs = serde_json::to_string(&dirs).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?;
             Some(format!("{pre} teardown-compose.yml -e target={group} -e teardown_component={} -e 'teardown_dirs={dirs}'", d.component))
         }
-        "service-stop" => Some(format!("{pre} teardown-service-stop.yml -e target={group} -e teardown_component={} -e teardown_project={} -e 'teardown_services={}'", d.component, d.project, serde_json::to_string(&d.services)?)),
-        "systemd-stop" => Some(format!("{pre} teardown-systemd.yml -e target={group} -e teardown_component={} -e 'teardown_units={}'", d.component, serde_json::to_string(&d.units)?)),
+        "service-stop" => Some(format!("{pre} teardown-service-stop.yml -e target={group} -e teardown_component={} -e teardown_project={} -e 'teardown_services={}'", d.component, d.project, serde_json::to_string(&d.services).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?)),
+        "systemd-stop" => Some(format!("{pre} teardown-systemd.yml -e target={group} -e teardown_component={} -e 'teardown_units={}'", d.component, serde_json::to_string(&d.units).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?)),
         "command" => Some(d.run.replace("{repo}", &s.repo).replace("{site}", &s.site)),
         _ => None,
     })
@@ -1722,8 +1723,9 @@ struct TeardownFile {
 }
 
 fn load_teardown(repo: &Path) -> Result<Vec<TeardownDecl>> {
-    let t = std::fs::read_to_string(repo.join("ops/goatbuilder/teardown.yaml")).context("ops/goatbuilder/teardown.yaml")?;
-    Ok(serde_yaml::from_str::<TeardownFile>(&t).context("teardown.yaml")?.steps)
+    let p = repo.join("ops/goatbuilder/teardown.yaml");
+    let t = std::fs::read_to_string(&p).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?;
+    Ok(serde_yaml::from_str::<TeardownFile>(&t).map_err(|e| goat_errors::coded("GB-326", format!("{} is not the teardown declaration: {e}", p.display())))?.steps)
 }
 
 fn teardown_decl<'d>(decls: &'d [TeardownDecl], label: &str) -> Option<&'d TeardownDecl> {
@@ -1814,7 +1816,7 @@ fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, st
     let mut ok = true;
     for (n, label, component, cmd) in steps {
         let t0 = std::time::Instant::now();
-        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
+        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
         let rc = status.code().unwrap_or(1);
         let secs = t0.elapsed().as_secs();
         checks.push(row("time", format!("teardown {component} took {secs}s (exit {rc})")));
@@ -1822,7 +1824,7 @@ fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, st
         let cause = if status.success() { "ok".to_string() } else { crate::explain_phase::cause("teardown", &n.to_string(), None) };
         record_timing(state_dir, &file, *n, label, secs, rc, &cause);
         if !status.success() {
-            checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc}; the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
+            checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc} (GB-335); the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
             ok = false;
             break;
         }
@@ -1837,6 +1839,21 @@ fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, st
 mod tests {
     use super::*;
     use std::process::Command;
+
+    /// Gate row C5: a teardown stop that fails prints its own code on its failed
+    /// row, so a drill log of it holds no uncoded error.
+    #[test]
+    fn a_failed_teardown_stop_prints_its_code() {
+        let t = crate::testdir::path("gb-teardown-fail-");
+        std::fs::create_dir_all(&t).unwrap();
+        let steps = vec![(7, "goat-zenoh".to_string(), "goat-zenoh".to_string(), "exit 3".to_string())];
+        let (rows, ok) = run_teardown_steps(&t, &t.display().to_string(), "zagros", "goatbuilder teardown zagros --site zagros", &steps).unwrap();
+        assert!(!ok);
+        let failed: Vec<&Check> = rows.iter().filter(|c| c.name == "failed").collect();
+        assert_eq!(failed.len(), 1, "{rows:?}");
+        assert!(failed[0].detail.contains("GB-335"), "{}", failed[0].detail);
+        assert!(failed[0].detail.contains("FAILED — exit 3"), "{}", failed[0].detail);
+    }
 
     /// Both drivers run a planned line through the one runner that refuses an empty
     /// `$(printenv NAME)` (tests/test_standup_phase_run.py tests its refusal).
@@ -2601,6 +2618,54 @@ mod tests {
     /// `runs` names exactly the scripts and plays its steps run (each one in a
     /// planned command, or, for a step only a declared node plans, named by this
     /// file).
+    #[test]
+    /// The phase catalog describes teardown's steps (gate row F4): teardown
+    /// walks the standup's applied phases in reverse, a phase for each [A]
+    /// step and an observability leg as the phase it starts with (host 2,
+    /// stack 9), as `teardown` selects them. For every site shape, the
+    /// catalog's teardown entries are exactly those phase numbers, and each
+    /// entry's `runs` names only plays teardown starts.
+    fn the_phase_catalog_describes_teardowns_steps() {
+        let mut walked: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for (_, s, obs_only) in catalog_shapes() {
+            let o = Options {
+                env: "dev",
+                site: "zagros",
+                profile: None,
+                from: 1,
+                to: 14,
+                skip_obs: false,
+                obs_only,
+                dry_run: true,
+                parallel: false,
+                check: false,
+            };
+            for e in plan(&repo_root(), &s, &o, "RESUME") {
+                match e {
+                    Event::Phase(p) if p.kind == "A" => {
+                        walked.insert(p.n.to_string());
+                    }
+                    Event::LegStart { leg, .. } => {
+                        walked.insert(if leg == "stack" { "9" } else { "2" }.to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let entries = goat_errors::phases::phases().of("teardown");
+        let keys: std::collections::BTreeSet<String> = entries.iter().map(|e| e.phase.to_string()).collect();
+        assert_eq!(keys, walked, "the catalog's teardown entries are the phases teardown walks");
+        let decls = std::fs::read_to_string(repo_root().join("ops/goatbuilder/teardown.yaml")).unwrap();
+        let code = [include_str!("standup.rs"), decls.as_str()].concat();
+        for e in &entries {
+            for w in e.runs.split([',', ';', ' ']).filter(|w| w.contains('/')) {
+                let name = w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_' && c != '/');
+                let name = name.rsplit('/').next().unwrap_or(name);
+                assert!(code.contains(name), "teardown phase {}: `runs` names {w}, which teardown does not start", e.phase);
+            }
+        }
+    }
+
     #[test]
     fn the_phase_catalog_describes_standups_plan() {
         let cat = goat_errors::phases::phases();

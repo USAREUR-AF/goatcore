@@ -22,7 +22,7 @@ offline tests; unmeasured on real hosts, and not yet used by the one command's p
 **Not built:** automatic selection among several cores. Live deployment and
 bilateral federation acceptance are separate release gates.
 
-> The verb moves to `goatbuilder federate init` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed), which runs
+> The verb moves to `goatbuilder federate init` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Accepted), which runs
 > where the deployment's declaration is. This document describes the selection as built in
 > `goat federate init` today.
 

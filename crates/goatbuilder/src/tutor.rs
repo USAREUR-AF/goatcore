@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::CommandFactory;
 use serde::{Deserialize, Serialize};
 
@@ -642,14 +642,14 @@ fn available(lesson: &Lesson, repo: &Path) -> std::result::Result<(), String> {
 }
 
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {
-    std::fs::create_dir_all(to)?;
-    for e in std::fs::read_dir(from).with_context(|| from.display().to_string())? {
+    std::fs::create_dir_all(to).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(to)).display())))?;
+    for e in std::fs::read_dir(from).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", from.display())))? {
         let e = e?;
         let dst = to.join(e.file_name());
         if e.file_type()?.is_dir() {
             copy_dir(&e.path(), &dst)?;
         } else {
-            std::fs::copy(e.path(), &dst)?;
+            std::fs::copy(e.path(), &dst).map_err(|err| goat_errors::coded("GB-254", format!("{}: {err}", e.path().display())))?;
         }
     }
     Ok(())
@@ -658,15 +658,15 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 /// A fresh workspace: the marker, a copy of each fixture, and a skeleton of the
 /// repository with one generated pins.yml edited by hand (lesson 8's drift).
 fn setup(repo: &Path, ws: &Path) -> Result<()> {
-    std::fs::create_dir_all(ws)?;
-    std::fs::write(ws.join(MARKER), "goatbuilder tutor workspace. Safe to delete; `goatbuilder tutor --reset` recreates it.\n")?;
+    std::fs::create_dir_all(ws).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(ws)).display())))?;
+    std::fs::write(ws.join(MARKER), "goatbuilder tutor workspace. Safe to delete; `goatbuilder tutor --reset` recreates it.\n").map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(ws.join(MARKER))).display())))?;
     copy_dir(&repo.join("ops/goatbuilder/fixtures/tutor"), &ws.join("fixture"))?;
     for (src, dst) in [("ops/goatbuilder/fixtures/goatnet-from-scratch/01-founder", "zagros-1"), ("ops/goatbuilder/fixtures/goatnet-from-scratch/02-first-federated-node", "zagros-2"), ("ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node", "zagros-3")] {
         if repo.join(src).is_dir() {
             copy_dir(&repo.join(src), &ws.join(dst))?;
         }
     }
-    std::fs::create_dir_all(ws.join("federate"))?;
+    std::fs::create_dir_all(ws.join("federate")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(ws.join("federate"))).display())))?;
     let sk = ws.join("repo");
     for d in ["ops/pins", "ops/ansible/group_vars", "ops/consistency/schema", "ops/consistency/intent", "ops/enrollment/public-keys", "ops/goatbuilder/schema"] {
         if repo.join(d).is_dir() {
@@ -679,8 +679,8 @@ fn setup(repo: &Path, ws: &Path) -> Result<()> {
     let own = repo.join("ops/goatbuilder/goatbuilder.yaml");
     let example = repo.join("ops/goatbuilder/fixtures/goatnet-from-scratch/01-founder/goatbuilder.yaml");
     if let Some(src) = [own, example].into_iter().find(|p| p.is_file()) {
-        std::fs::create_dir_all(sk.join("ops/goatbuilder"))?;
-        std::fs::copy(src, sk.join("ops/goatbuilder/goatbuilder.yaml"))?;
+        std::fs::create_dir_all(sk.join("ops/goatbuilder")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(sk.join("ops/goatbuilder"))).display())))?;
+        std::fs::copy(&src, sk.join("ops/goatbuilder/goatbuilder.yaml")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", src.display())))?;
     }
     if let Ok(rd) = std::fs::read_dir(repo.join("ops/ansible/roles")) {
         for role in rd.flatten() {
@@ -703,10 +703,10 @@ fn inject_drift(repo: &Path, ws: &Path) -> Result<()> {
     let mut gv: Vec<PathBuf> = std::fs::read_dir(sk.join("ops/ansible/group_vars")).map(|r| r.flatten().map(|e| e.path().join("pins.yml")).filter(|p| p.is_file()).collect()).unwrap_or_default();
     gv.sort();
     if let Some(p) = gv.into_iter().find(|p| std::fs::read_to_string(p).map(|t| t.contains("@sha256:")).unwrap_or(false)) {
-        let t = std::fs::read_to_string(&p)?;
+        let t = std::fs::read_to_string(&p).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&p)).display())))?;
         let i = t.find("@sha256:").expect("checked") + 8;
         let swapped = if &t[i..i + 1] == "0" { "1" } else { "0" };
-        std::fs::write(&p, format!("{}{}{}", &t[..i], swapped, &t[i + 1..]))?;
+        std::fs::write(&p, format!("{}{}{}", &t[..i], swapped, &t[i + 1..])).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&p)).display())))?;
     }
     Ok(())
 }
@@ -717,7 +717,7 @@ fn prepare(n: usize, repo: &Path, ws: &Path) -> Result<()> {
     let fresh = |src: &str, dst: &str| -> Result<()> {
         let d = ws.join(dst);
         if d.exists() {
-            std::fs::remove_dir_all(&d)?;
+            std::fs::remove_dir_all(&d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&d)).display())))?;
         }
         copy_dir(&repo.join(src), &d)
     };
@@ -745,7 +745,7 @@ fn load(ws: &Path) -> Progress {
 }
 
 fn save(ws: &Path, p: &Progress) -> Result<()> {
-    std::fs::write(ws.join("progress.json"), serde_json::to_string_pretty(p)?)?;
+    std::fs::write(ws.join("progress.json"), serde_json::to_string_pretty(p).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(ws.join("progress.json"))).display())))?;
     Ok(())
 }
 
@@ -1178,7 +1178,7 @@ pub fn run(repo: &Path, ws: &Path, lesson: Option<u32>, list: bool, reset: bool,
         if !ws.join(MARKER).is_file() {
             return Err(goat_errors::coded("GB-040", format!("{} is not a tutor workspace (no {MARKER}); refusing to delete it", ws.display())).into());
         }
-        std::fs::remove_dir_all(ws)?;
+        std::fs::remove_dir_all(ws).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(ws)).display())))?;
     }
     if !ws.join(MARKER).is_file() {
         if ws.exists() && std::fs::read_dir(ws).map(|mut r| r.next().is_some()).unwrap_or(false) {
