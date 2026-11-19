@@ -70,9 +70,14 @@ func fakeKratos(t *testing.T, id, email, name string, groups []string, state str
 	for i, g := range groups {
 		gi[i] = g
 	}
+	// A migrated identity: groups in admin-managed metadata_public (ADR
+	// 1188) as well as traits. An identity with no metadata groups ranks
+	// unknown (GHSA-vr6w), so tests of ordinary administration use migrated
+	// ones; the unmigrated case has its own tests.
 	cur := map[string]interface{}{
 		"id": id, "state": state,
-		"traits": map[string]interface{}{"email": email, "name": name, "groups": gi},
+		"traits":          map[string]interface{}{"email": email, "name": name, "groups": gi},
+		"metadata_public": map[string]interface{}{"groups": gi},
 	}
 	rt := &kratosAdminRoundTripper{cur: cur}
 	read := func() ([]string, string) {
@@ -161,11 +166,15 @@ func newUsersAPITestServer(t *testing.T, kc *kratos.Client) *Server {
 // caller grants IAM-ADMIN by email and the change lands in Kratos.
 func TestApiPatchUserGroups_operatorKeyGrantsByEmail(t *testing.T) {
 	kc, read := fakeKratos(t, "id-1", "w@example.org", "Casey", nil, "active")
-	h := newUsersAPITestServer(t, kc).Routes()
+	srv := newUsersAPITestServer(t, kc)
+	// A service key (ADR 1071, uncapped). A per-person key needs a resolved
+	// owner at or above the tier it grants (GHSA-7788, admin_tier_review_test.go).
+	srv.Cfg.OnboardOperatorAPIKeys["svc-key"] = "operator"
+	h := srv.Routes()
 
 	body, _ := json.Marshal(map[string]interface{}{"email": "w@example.org", "groups": []string{"IAM-ADMIN"}})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/users/groups", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer runner-key")
+	req.Header.Set("Authorization", "Bearer svc-key")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -215,7 +224,9 @@ func TestApiPatchUserGroups_requiresGroupsField(t *testing.T) {
 // TestApiPatchUserState_operatorKeyReactivates proves the state sibling flips an
 // inactive identity back to active — the reactivate-before-grant path.
 func TestApiPatchUserState_operatorKeyReactivates(t *testing.T) {
-	kc, read := fakeKratos(t, "id-1", "j@example.org", "Riley", nil, "inactive")
+	// A migrated identity: an operator key may not reactivate an unmigrated
+	// one, which ranks unknown (GHSA-7788, ADR 1071 as amended).
+	kc, read := fakeKratosMigrated7788(t, "id-1", "j@example.org", "Riley", nil, "inactive")
 	h := newUsersAPITestServer(t, kc).Routes()
 
 	body, _ := json.Marshal(map[string]interface{}{"email": "j@example.org", "state": "active"})
@@ -262,15 +273,18 @@ func TestApiPatchUserGroups_refusesSelfEscalation(t *testing.T) {
 }
 
 // The same key changing SOMEBODY ELSE still works: the guard refuses self, not
-// the route. A service key (onboard-runner) resolves to no person and is
-// unaffected, which is what keeps machine onboarding working.
+// the route. A key whose owner does not resolve may still make a non-admin
+// change; admin-bearing changes need a resolved owner (GHSA-7788).
 func TestApiPatchUserGroups_selfGuardDoesNotBlockOthers(t *testing.T) {
-	kc, read := fakeKratos(t, "id-other", "other@example.org", "Other", nil, "active")
+	// A migrated identity: an unmigrated one ranks unknown, and a per-person
+	// key may not act on it (GHSA-7788).
+	kc, read := fakeKratosMigrated7788(t, "id-other", "other@example.org", "Other", nil, "active")
 	s := newUsersAPITestServer(t, kc)
 	s.Cfg.OnboardOperatorAPIKeys = map[string]string{"self-key": "self@example.org"}
+	s.Permissions.Groups = append(s.Permissions.Groups, permissions.Group{Name: "DEVELOPER"})
 	h := s.Routes()
 
-	body, _ := json.Marshal(map[string]interface{}{"email": "other@example.org", "groups": []string{"IAM-ADMIN"}})
+	body, _ := json.Marshal(map[string]interface{}{"email": "other@example.org", "groups": []string{"DEVELOPER"}})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/users/groups", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer self-key")
 	rec := httptest.NewRecorder()
@@ -279,7 +293,7 @@ func TestApiPatchUserGroups_selfGuardDoesNotBlockOthers(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if groups, _ := read(); len(groups) != 1 || groups[0] != "IAM-ADMIN" {
-		t.Fatalf("kratos groups = %v, want [IAM-ADMIN]", groups)
+	if groups, _ := read(); len(groups) != 1 || groups[0] != "DEVELOPER" {
+		t.Fatalf("kratos groups = %v, want [DEVELOPER]", groups)
 	}
 }

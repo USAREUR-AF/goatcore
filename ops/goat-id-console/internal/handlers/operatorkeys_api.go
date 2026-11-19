@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/onboardstore"
+	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/opkeys"
 )
 
 // Machine half of the operator-key flow — the same engine the browser pages
@@ -115,13 +116,45 @@ func (s *Server) apiRequestOperatorKey(w http.ResponseWriter, r *http.Request) {
 		onboardError(w, http.StatusBadRequest, "missing_handle", "handle is required")
 		return
 	}
+	// GHSA-2w7v: a handle a revocation tombstone cannot name is refused up
+	// front, so every key the console issues can be fully revoked.
+	if herr := opkeys.CheckHandle(handle); herr != nil {
+		onboardError(w, http.StatusBadRequest, "bad_handle", herr.Error())
+		return
+	}
+	// The filing principal goes on the row; approve then needs a DIFFERENT
+	// principal, so one operator key cannot request, approve and revoke a key
+	// for an arbitrary handle on its own (GHSA-2w7v).
+	r = r.WithContext(onboardstore.WithOperatorKeyRequester(r.Context(), onboardAPIActor(r)))
 	env := strings.TrimSpace(body.Env)
 	if env == "" {
 		env = s.Cfg.NotifyGoatnet
 	}
-	row, err := s.Onboard.RequestOperatorKey(r.Context(), &onboardstore.OperatorKey{
+	if p.IsOperator {
+		h, e, rerr := s.operatorKeyRosterPerson(r.Context(), handle, email) //nolint:contextcheck // behavior kept as reviewed for disclosure; lint cleanup goatcore#1028
+		if rerr != nil {
+			s.emitAudit(r, Actor{Email: onboardAPIActor(r)}, "operator_key_request_refused", nil, "", nil,
+				map[string]interface{}{"via": "api", "handle": handle, "detail": rerr.Error()},
+				false, "refused", "handle names no roster person")
+			code := "not_on_roster"
+			if errors.Is(rerr, errReservedOperatorHandle) {
+				code = "reserved_handle"
+			}
+			onboardError(w, http.StatusBadRequest, code, rerr.Error())
+			return
+		}
+		handle, email = h, e
+	}
+	row, err := s.Onboard.RequestOperatorKey(r.Context(), &onboardstore.OperatorKey{ //nolint:contextcheck // behavior kept as reviewed for disclosure; lint cleanup goatcore#1028
 		Handle: handle, Email: email, Env: env, Reason: body.Reason,
 	})
+	if errors.Is(err, onboardstore.ErrOperatorKeyReservedHandle) {
+		s.emitAudit(r, Actor{Email: onboardAPIActor(r)}, "operator_key_request_refused", nil, "", nil,
+			map[string]interface{}{"via": "api", "handle": handle},
+			false, "refused", "reserved service handle")
+		onboardError(w, http.StatusBadRequest, "reserved_handle", onboardstore.ErrOperatorKeyReservedHandle.Error())
+		return
+	}
 	if err != nil {
 		onboardError(w, http.StatusInternalServerError, "request_error", "could not record the request")
 		return
@@ -189,8 +222,25 @@ func (s *Server) apiCollectOperatorKey(w http.ResponseWriter, r *http.Request) {
 			"collection is bound to the calling principal — you may only collect your own operator key")
 		return
 	}
-	secret, err := s.Onboard.CollectOperatorKey(r.Context(), id, caller)
+	// The key is bound to its holder's identity as it is handed over, in
+	// the collect's own transaction and only on the caller's own row
+	// (GHSA-mxf4-8rv7-774w); one whose holder cannot be resolved is not
+	// issued.
+	holder, berr := s.collectHolder(r.Context(), caller, "")
+	if berr != nil {
+		s.emitAudit(r, Actor{Email: onboardAPIActor(r)}, "operator_key_collect_refused", nil, "", nil,
+			map[string]interface{}{"id": id, "handle": handle, "via": "api"}, false, "refused", berr.Error())
+		onboardError(w, http.StatusForbidden, "holder_unbound", "this key cannot be bound to exactly one identity, so it is not issued: "+berr.Error())
+		return
+	}
+	secret, err := s.Onboard.CollectOperatorKeyAs(r.Context(), id, caller, holder)
+	if err == nil {
+		forgetOperatorOwner(caller)
+	}
 	switch {
+	case errors.Is(err, onboardstore.ErrOperatorKeyHolderMismatch):
+		onboardError(w, http.StatusForbidden, "holder_mismatch", err.Error())
+		return
 	case errors.Is(err, onboardstore.ErrNotFound):
 		onboardError(w, http.StatusNotFound, "not_found", "no such key for that handle")
 		return
@@ -226,6 +276,7 @@ func (s *Server) operatorKeyDecision(w http.ResponseWriter, r *http.Request, act
 
 	var row *onboardstore.OperatorKey
 	var err error
+	var revokeNote string
 	switch action {
 	case "approve":
 		row, err = s.Onboard.ApproveOperatorKey(r.Context(), id, decider, []string{decider})
@@ -246,12 +297,15 @@ func (s *Server) operatorKeyDecision(w http.ResponseWriter, r *http.Request, act
 		row, err = s.Onboard.RejectOperatorKey(r.Context(), id, decider, note, []string{decider})
 	case "revoke":
 		if cur, gerr := s.Onboard.OperatorKey(r.Context(), id); gerr == nil {
-			if rerr := dir.Remove(cur.Handle); rerr != nil {
+			// Tombstone only a key the console issued (GHSA-2w7v review): a
+			// withdrawn request must not disable an env-tier key.
+			var rerr error
+			if revokeNote, rerr = dir.RevokeIssued(cur.Handle, cur.Issued()); rerr != nil {
 				// The record must keep saying active: the key still works, and
 				// a record claiming otherwise is how a live credential is lost
 				// track of.
 				onboardError(w, http.StatusInternalServerError, "remove_error",
-					"the key is STILL LIVE — its file could not be removed: "+rerr.Error())
+					"the key is STILL LIVE — its tombstone could not be written or its file removed: "+rerr.Error())
 				return
 			}
 		}
@@ -277,6 +331,8 @@ func (s *Server) operatorKeyDecision(w http.ResponseWriter, r *http.Request, act
 			map[string]interface{}{"id": id, "action": action, "via": "api", "detail": err.Error()},
 			false, "refused", "decider not comparable to requester")
 		onboardError(w, http.StatusForbidden, "unverified_decider", err.Error())
+	case errors.Is(err, onboardstore.ErrOperatorKeyReservedHandle):
+		onboardError(w, http.StatusConflict, "reserved_handle", err.Error())
 	case errors.Is(err, onboardstore.ErrNotFound):
 		onboardError(w, http.StatusNotFound, "not_found", "no such operator key")
 	case errors.Is(err, onboardstore.ErrOperatorKeyWrongState):
@@ -295,6 +351,13 @@ func (s *Server) operatorKeyDecision(w http.ResponseWriter, r *http.Request, act
 			s.notifyOperatorKeyApproved(r, row)
 		case "reject":
 			s.notifyOperatorKeyRejected(r, row, note)
+		}
+		if revokeNote != "" {
+			// Said plainly in the response, not only in a log.
+			onboardJSON(w, http.StatusOK, map[string]interface{}{
+				"id": row.ID, "handle": row.Handle, "status": row.Status,
+				"fingerprint": row.Fingerprint, "env": row.Env, "warning": revokeNote})
+			return
 		}
 		onboardJSON(w, http.StatusOK, row)
 	}
@@ -333,9 +396,9 @@ func (s *Server) apiReconcileOperatorKeys(w http.ResponseWriter, r *http.Request
 		}
 		return v
 	}
-	if apply && len(res.Stale) > 0 {
+	if apply && (len(res.Stale) > 0 || len(res.Untombstoned) > 0) {
 		s.emitAudit(r, Actor{Email: onboardAPIActor(r)}, "operator_key_reconcile", nil, "", nil,
-			map[string]interface{}{"removed": res.Stale, "env": env, "via": "api"}, false, "ok", "")
+			map[string]interface{}{"removed": res.Stale, "tombstoned": res.Untombstoned, "env": env, "via": "api"}, false, "ok", "")
 	}
 	onboardJSON(w, http.StatusOK, map[string]interface{}{
 		"dir":     s.Cfg.OperatorKeyDir,
@@ -345,5 +408,8 @@ func (s *Server) apiReconcileOperatorKeys(w http.ResponseWriter, r *http.Request
 		"revoked_but_still_granted": nonNil(res.Stale),
 		"granted_but_not_ours":      nonNil(res.Unmanaged),
 		"recorded_but_not_granted":  nonNil(res.Missing),
+		// GHSA-2w7v: revoked handles with no tombstone; an env-pinned key for
+		// them is still accepted until --apply writes the tombstone.
+		"revoked_without_tombstone": nonNil(res.Untombstoned),
 	})
 }

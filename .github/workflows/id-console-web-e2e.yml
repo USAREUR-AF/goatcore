@@ -13,6 +13,7 @@ name: id-console-web-e2e
 # Mirrors portal-web-e2e.yml.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'ops/goat-id-console/**'

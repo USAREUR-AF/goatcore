@@ -8,6 +8,24 @@
 | Related | [`0508-audit-logger-interceptor.md`](0508-audit-logger-interceptor.md), [`0800-open-source-edr.md`](0800-open-source-edr.md), [`../design/egress-proxy.md`](../design/egress-proxy.md) |
 | Implementation note 2026-05-31 | The `Decision` §"Storage" line names a "1 year online + 6 years archive" retention split without naming the substrate for the *archive* tier, AND implicitly assumes COMPLIANCE-mode lock on the online tier. [`../design/audit-cold-storage-offload.md`](../design/audit-cold-storage-offload.md) refines both: the substrate is a three-tier shape (router rocksdb 7d / MinIO 30d **GOVERNANCE** online / cold-storage bucket COMPLIANCE-locked operator-triggered offload). The COMPLIANCE bar is preserved at the cold-storage tier (where evidence-grade preservation lives); the online tier moves to GOVERNANCE so the substrate can FIFO-evict oldest under quota pressure instead of failing new writes — the more common operational case. Layered defenses (least-privilege audit-subscriber S3 user, FIFO-eviction service audit-trail, write-rate anomaly alerts) cover the rare attacker case. The 1y/6y/AU-11 bar is preserved: production sites apply a scheduled (e.g., monthly) offload + a 7y COMPLIANCE retention on the cold-storage bucket. Trial fabrics use the same substrate shape with shorter retentions matched to their disk budget. The substrate-shape decision is the same fleet-wide; the retention *values* differ per-deployment. Production deployments without a cold-archive offload cadence can override the middle tier to COMPLIANCE to keep the original ADR 0811 posture (one tier doing both jobs). |
 
+## Fabric Record Scope (2026-10-26)
+
+The local V2 implementation preserves the exclusion of Zenoh payloads: new audit
+objects and local audit tails contain metadata only. Replay capture and ordinary
+body reads are gated on every tier pending a separate owner-approved governance
+design. Historical combined objects remain under their original retention and
+are exposed to normal readers only through authenticated metadata projection.
+No live rollout or historical inventory was performed for this change.
+
+SourceInfo supplies a publisher assertion. A namespace may be attributed to a
+slot by conservative analysis of a rendered ACL; its digest does not prove
+installed enforcement. Neither establishes authenticated sender identity or
+non-repudiation. Put/delete, receiving site and observed outcome are explicit.
+See the [subscriber contract](../design/zenoh-audit-external-subscriber.md#metadata-and-replay-separation-2026-10-26)
+and [cutover procedure](../operations/audit-replay-cutover.md). Historical retention
+values below are design decisions, not a claim that a control mandates blanket
+capture or those exact durations.
+
 ## TL;DR (for a layperson)
 
 Audit logs are only useful if they can't be quietly modified.

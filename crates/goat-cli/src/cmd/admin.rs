@@ -721,8 +721,9 @@ pub enum SshKeyAction {
 pub enum AdminRoleCmd {
     /// Set a person's Ory login groups to EXACTLY `--groups` (the full desired
     /// set; a person keeping IAM-ADMIN and gaining nothing else still passes the
-    /// whole list). Escalated admin groups (PLATFORM-ADMIN / IAM-ADMIN) are
-    /// allowed on this operator-key path and fully attributed in the audit.
+    /// whole list). Admin groups (PLATFORM-ADMIN / IAM-ADMIN / ADMINS), and any
+    /// change to a person who holds one, are refused for a per-person operator
+    /// key: use the console with step-up, or a service key.
     Set {
         /// The person's email (the dedup key; the console resolves it to their
         /// Kratos identity).
@@ -13945,6 +13946,7 @@ async fn run_operator_key(
                         "revoked_but_still_granted": out.revoked_but_still_granted,
                         "granted_but_not_ours": out.granted_but_not_ours,
                         "recorded_but_not_granted": out.recorded_but_not_granted,
+                        "revoked_without_tombstone": out.revoked_without_tombstone,
                     }))?
                 );
                 return Ok(());
@@ -13952,6 +13954,7 @@ async fn run_operator_key(
             if out.revoked_but_still_granted.is_empty()
                 && out.recorded_but_not_granted.is_empty()
                 && out.granted_but_not_ours.is_empty()
+                && out.revoked_without_tombstone.is_empty()
             {
                 println!("the record and {} agree", out.dir);
                 return Ok(());
@@ -13965,6 +13968,18 @@ async fn run_operator_key(
                         " (removed)"
                     } else {
                         " (run with --apply to remove)"
+                    }
+                );
+            }
+            if !out.revoked_without_tombstone.is_empty() {
+                println!(
+                    "REVOKED HERE, NO TOMBSTONE: {} — a key for these handles pinned in the \
+                     portal's PORTAL_OPERATOR_API_KEYS is still accepted{}",
+                    out.revoked_without_tombstone.join(", "),
+                    if out.applied {
+                        " (tombstone written)"
+                    } else {
+                        " (run with --apply to write the tombstone)"
                     }
                 );
             }

@@ -147,6 +147,12 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         &checkout.join("ops/scripts/mint-site-certs.sh"),
         &format!("#!/bin/sh\nprintf 'mint %s\\n' \"$*\" >> '{l}'\n"),
     );
+    // join-site-secrets.py takes the joiner's shared secrets from its
+    // founder in phase 3; the stand-in records it.
+    executable(
+        &checkout.join("ops/scripts/join-site-secrets.py"),
+        &format!("import sys\nopen('{l}', 'a').write('secrets ' + ' '.join(sys.argv[1:]) + '\\n')\n"),
+    );
     executable(
         &checkout.join("ops/scripts/ansible-preflight.sh"),
         "#!/bin/sh\nexit 0\n",
@@ -167,6 +173,8 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         &format!(
             "#!/bin/sh\nprintf 'ssh %s\\n' \"$*\" >> '{l}'\n\
              if [ -f '{st}/unreachable' ]; then echo 'ssh: connect to host 192.0.2.30 port 22: Connection timed out' >&2; exit 255; fi\n\
+             if [ -f '{st}/silent' ]; then exit 255; fi\n\
+             if [ -f '{st}/loses-stderr' ]; then for a in \"$@\"; do case \"$a\" in UserKnownHostsFile=*) d=\"${{a#UserKnownHostsFile=}}\"; rm -f \"${{d%/*}}/stderr\" ;; esac; done; exit 255; fi\n\
              if [ -f '{st}/refusing-jump' ]; then echo 'goat@jump.example.org: Permission denied (publickey).' >&2; echo 'Connection closed by UNKNOWN port 65535' >&2; exit 255; fi\n\
              kh=; for a in \"$@\"; do case \"$a\" in UserKnownHostsFile=*) kh=\"${{a#UserKnownHostsFile=}}\" ;; esac; done\n\
              [ -z \"$kh\" ] || echo '192.0.2.30 ssh-ed25519 stand-in-host-key' >> \"$kh\"\n\
@@ -817,6 +825,27 @@ fn a_node_that_does_not_answer_stops_the_run_at_phase_1() {
     assert!(!log.lines().any(|l| l.starts_with("play ") || l.starts_with("sshpass")), "something ran past phase 1:\n{log}");
 }
 
+/// When ssh fails and prints nothing, GB-314 says which case it was: ssh
+/// printed nothing, or the file its stderr went to was gone before phase 1
+/// read it. Either way the run stops at phase 1 and nothing runs after it.
+#[test]
+fn an_ssh_failure_with_no_words_names_its_case_at_phase_1() {
+    for (flag, words) in [
+        ("silent", "ssh exited 255 and printed nothing on stderr"),
+        ("loses-stderr", "was gone before it was read"),
+    ] {
+        let s = site();
+        std::fs::write(s.root.join("state").join(flag), "").unwrap();
+        let (out, v) = join_node(&s, None);
+        let all = says(&out);
+        assert!(!out.status.success(), "{flag}: {all}");
+        assert_eq!(phases(&v), vec![1], "{flag}: {all}");
+        assert!(all.contains("GB-314") && all.contains(words), "{flag}: {all}");
+        let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+        assert!(!log.lines().any(|l| l.starts_with("play ") || l.starts_with("sshpass")), "{flag}: something ran past phase 1:\n{log}");
+    }
+}
+
 /// A jump host's "Permission denied" is not the node answering: the run
 /// stops at phase 1. ssh says only that the jump host refused and the
 /// connection closed; the node's own host key never arrived.
@@ -1021,4 +1050,20 @@ fn every_service_gamma_declares_is_built_or_named() {
         !named.iter().any(|d| d.contains("--class obs")),
         "a single-host site is never sent to an obs run: {named:#?}"
     );
+}
+
+/// Gate row I3, a joining site's secrets: phase 3 runs join-site-secrets.py
+/// for gamma with its founder alpha, once, before phase 5's baseline play
+/// changes the node.
+#[test]
+fn phase_3_takes_gammas_shared_secrets_from_alpha_before_the_node_changes() {
+    let s = site();
+    let (out, _) = join_node(&s, Some("2"));
+    assert!(out.status.success(), "{}", says(&out));
+    let log = std::fs::read_to_string(&s.log).unwrap();
+    let lines: Vec<&str> = log.lines().collect();
+    let secrets: Vec<usize> = (0..lines.len()).filter(|&i| lines[i] == "secrets gamma --founder alpha").collect();
+    assert_eq!(secrets.len(), 1, "{log}");
+    let baseline = lines.iter().position(|l| l.starts_with("play ") && l.contains("mgmt-host-baseline.yml")).expect("phase 5 ran");
+    assert!(secrets[0] < baseline, "{log}");
 }

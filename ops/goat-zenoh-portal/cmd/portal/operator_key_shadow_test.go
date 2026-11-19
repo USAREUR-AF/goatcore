@@ -58,3 +58,23 @@ func TestWarnShadowedOperatorKeys_silentWithoutCollision(t *testing.T) {
 		t.Errorf("no collision must log nothing, got %s", buf.String())
 	}
 }
+
+// GHSA-2w7v: an env key refused by a tombstone is in the boot log by handle.
+func TestWarnShadowedOperatorKeys_logsEnvRevokedHandle(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, config.TombstoneFileName("ada")), []byte("ada\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := config.NewOperatorKeyStore(map[string]string{"ada": "op_env_ada"}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	warnShadowedOperatorKeys(slog.New(slog.NewJSONHandler(&buf, nil)), store)
+	if !strings.Contains(buf.String(), `"handle":"ada"`) || !strings.Contains(buf.String(), "refused") {
+		t.Errorf("want a WARN naming ada as refused, got %s", buf.String())
+	}
+	if strings.Contains(buf.String(), "op_") {
+		t.Errorf("log line leaked a key: %s", buf.String())
+	}
+}

@@ -10,6 +10,10 @@
 services:
   consistency-console:
     image: "{{ consistency_console_image }}"
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: consistency-console
     # Memory ceiling: 4x the 7-day peak working set, floor 512M. An unbounded
     # leak on a shared host takes the identity plane down with it.
@@ -78,6 +82,10 @@ services:
 {% if consistency_console_oauth2_proxy_enabled | bool %}
   oauth2-proxy-consistency-console:
     image: "{{ consistency_console_oauth2_proxy_image }}"
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: oauth2-proxy-consistency-console
     # Memory ceiling: 4x the 7-day peak working set, floor 512M. An unbounded
     # leak on a shared host takes the identity plane down with it.

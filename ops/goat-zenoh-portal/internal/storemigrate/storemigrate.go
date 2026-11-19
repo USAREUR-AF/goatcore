@@ -33,6 +33,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/pgstore"
@@ -120,12 +121,21 @@ var Registry = Store{
 		"probation":             "held_at, id",
 		"topic_budgets":         "owner",
 	},
+	// Version 1 only: the copy maps the version 1 tables one to one. Later
+	// registry migrations (2: slot generations and slot_leaves, GHSA-rr3p)
+	// apply when the portal next opens the database, after the import.
 	migrate: func(dsn string) error {
-		r, err := registry.Open(dsn)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		db, err := pgstore.Open(ctx, dsn)
 		if err != nil {
 			return err
 		}
-		return r.Close()
+		defer func() { _ = db.Close() }() //nolint:errcheck // process exit
+		if err := pgstore.Migrate(ctx, db, registry.Migrations[:1]); err != nil {
+			return err
+		}
+		return pgstore.RequireTables(ctx, db, registry.Tables...)
 	},
 }
 
