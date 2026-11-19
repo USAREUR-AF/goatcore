@@ -38,6 +38,11 @@ HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", 
        "transfer-encoding", "upgrade", "host", "authorization", "content-length"}
 
 
+def _bad(name, value):
+    """A header that could split the message: CR or LF in its name or value."""
+    return any(c in str(name) + str(value) for c in "\r\n")
+
+
 def claims_from(auth_header):
     """The payload of a Bearer JWT, or {} when there is none or it does not parse."""
     if not auth_header or not auth_header.lower().startswith("bearer "):
@@ -121,23 +126,37 @@ def main():
             if self.command != "HEAD":
                 self.wfile.write(body)
 
+        def _plain(self, code, text):
+            body = text.encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def _handle(self):
+            # Origin-form paths only: "/..." and never "//host" or "scheme://", so the
+            # request always goes to the one configured upstream.
+            if not self.path.startswith("/") or self.path.startswith("//") or any(c in self.path for c in "\r\n"):
+                self._plain(400, "bad request path\n")
+                return None
             if self.path == "/door-admit/healthz":
                 body = b"ok\n"
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-                return
+                return None
             claims = claims_from(self.headers.get("Authorization"))
             who = claims.get("email") or self.headers.get("X-Forwarded-Email") or ""
             ok, reason = decide(claims, admit)
             self._log(ok, who, reason)
             if not ok:
-                return self._refuse(who, reason)
+                self._refuse(who, reason)
+                return None
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length else None
-            headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP}
+            headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP and not _bad(k, v)}
             headers["Host"] = f"{up_host}:{up_port}"
             conn = http.client.HTTPConnection(up_host, up_port, timeout=a.timeout)
             try:
@@ -151,17 +170,18 @@ def main():
                 self.send_header("Content-Length", str(len(msg)))
                 self.end_headers()
                 self.wfile.write(msg)
-                return
+                return None
             finally:
                 conn.close()
             self.send_response(resp.status, resp.reason)
             for k, v in resp.getheaders():
-                if k.lower() not in HOP:
+                if k.lower() not in HOP and not _bad(k, v):
                     self.send_header(k, v)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(data)
+            return None
 
         do_GET = do_POST = do_PUT = do_DELETE = do_HEAD = do_PATCH = do_OPTIONS = _handle
 

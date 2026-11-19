@@ -66,11 +66,12 @@ class Decide(unittest.TestCase):
 
 class Expand(unittest.TestCase):
     def setUp(self):
+        self.x = None
         try:
-            import expand_rule
+            import expand_rule as x
         except ImportError:
             self.skipTest("PyYAML not installed")
-        self.x = expand_rule
+        self.x = x
 
     def test_orgs_and_nations(self):
         ids, matched = self.x.expand(REGISTRY, {"orgs": ["org-alpha"], "nations": ["ZZB"]})
@@ -125,6 +126,10 @@ class EndToEnd(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as cm:
                 urllib.request.urlopen(req, timeout=5)
             self.assertEqual(cm.exception.code, 403)
+            raw = socket.create_connection(("127.0.0.1", port), timeout=5)
+            raw.sendall(b"GET http://evil.example/ HTTP/1.1\r\nHost: x\r\n\r\n")
+            self.assertIn(b" 400 ", raw.recv(200))
+            raw.close()
         finally:
             p.terminate(); p.wait(); up.shutdown()
 
