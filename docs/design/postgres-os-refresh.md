@@ -51,7 +51,22 @@ neither changes its behaviour:
   clusters are created without data checksums (`data_checksums` is `off`), so no
   page checksum is read.
 
-The `pgbackrest-runner` sidecar keeps its own image and version (2.53.1). Running it
-against a repository the 2.60.1 binary writes is not measured.
+The `pgbackrest-runner` sidecar keeps its own image and version (2.53.1). Nothing
+runs it: the role's scheduled backups and every task `docker exec` into the PostgreSQL
+container, whose 2.60.1 binary runs as `postgres`. Measured locally against one
+repository with the role's settings (cipher, zst, asynchronous archive):
+
+- 2.53.1 reads a repository 2.60.1 wrote (`info`, `verify`). In the compose layout,
+  with no database socket, its `check` and `backup` cannot reach the database.
+- With the socket shared and run as root, which is what `docker exec` into that image
+  does, 2.53.1's `check`, `backup` and `expire` succeed. The files they write are owned
+  by root, so afterwards 2.60.1 as `postgres` can no longer open `backup.info`, and
+  backups and restore fail. This follows from running as root, not from the version:
+  2.58.0 is the same.
+- Run as the repository owner, 2.53.1 in that image crashes in `backup` and `expire`.
+  It does the same on a repository only 2.53.1 wrote, so the crash is not caused by
+  2.60.1's files.
+
+So the sidecar must not be used to write to the repository.
 
 A rebuilt image has a new digest. Deployment pins move to it in a separate change.
