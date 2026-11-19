@@ -621,18 +621,36 @@ class AcceptanceRun(unittest.TestCase):
         return subprocess.Popen(["bash", str(SCRIPT), path, "--as", side], env=self.derived_env(side, evidence, **kw),
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
-    def both_derived(self, delay=1.5, **kw):
+    def both_derived(self, delay=1.5, after=None, **kw):
         """Both sides' phase 14, the second started `delay` seconds after the first,
-        each on its own systems only: they overlap, as the rule in §6.2 asks."""
+        each on its own systems only: they overlap, as the rule in §6.2 asks. With
+        `after`, the second starts once the first has printed that text instead: a
+        case that needs the first side to have read something before the second
+        overwrites it waits for that, not for a time a loaded machine can overrun."""
+        import threading
         import time
         second = dict(kw, **kw.pop("second", {})) if "second" in kw else kw
         ev = {"xaa": os.path.join(self.tmp, "ev-xaa"), "xab": os.path.join(self.tmp, "ev-xab")}
         a = self.derived_side("xaa", ev["xaa"], full=True, **kw)
-        time.sleep(delay)
+        lines_a, seen = [], threading.Event()
+
+        def drain():
+            for line in a.stdout:
+                lines_a.append(line)
+                if after and after in line:
+                    seen.set()
+            seen.set()  # xaa ended: start xab anyway, and let the assertions say what xaa printed
+        reader = threading.Thread(target=drain, daemon=True)
+        reader.start()
+        if after:
+            self.assertTrue(seen.wait(timeout=240), "xaa printed neither %r nor its end in 240 s" % after)
+        else:
+            time.sleep(delay)
         b = self.derived_side("xab", ev["xab"], full=True, **second)
         out_b = b.communicate(timeout=240)[0]
-        out_a = a.communicate(timeout=240)[0]
-        return ev, (a.returncode, out_a), (b.returncode, out_b)
+        a.wait(timeout=240)
+        reader.join(timeout=60)
+        return ev, (a.returncode, "".join(lines_a)), (b.returncode, out_b)
 
     def bilateral(self, evidence):
         d = os.path.join(evidence, "bilateral")
@@ -757,8 +775,10 @@ class AcceptanceRun(unittest.TestCase):
         from before its own start minus twice FED_SESSION_WAIT and waits for this
         run's, so our signed result echoes the partner's current challenge and both
         sides reach the same verdict (§6.3)."""
+        # xab starts once xaa has said it read the earlier run's sample, so xab's own
+        # stamp cannot replace that sample before xaa reads it, however slow xaa is.
         self.earlier_run_on_xaa()
-        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(delay=3)
+        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(after="from an earlier run")
         self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
         for side in ("xaa", "xab"):
             self.assertEqual(self.bilateral(ev[side])["verdict"], "PASS", side)
@@ -935,10 +955,14 @@ class AcceptanceRun(unittest.TestCase):
         # xab's first set carries this run's stamp and sample; the second holds only
         # an unstamped sample (an older runner's, left earlier). xab stamps its runs,
         # so the unstamped one is never learned: BLOCKED, not a FAIL on other bytes.
+        # The first set's stamp is dated when xaa first reads it: xaa has started by
+        # then, so the stamp is this run's however long xaa took to start. (A time
+        # taken before xaa ran fell outside twice the wait on a loaded machine.)
         import time
-        now = int(time.time())
         first, second = self.xab_names()[0], self.xab_names()[1]
-        before = self.xab_keys(first, self.NEW_CHALLENGE, started=now)
+        before = self.xab_keys(first, self.NEW_CHALLENGE, started=0)
+        stamp = [k for k in before if k.endswith("/run")][0]
+        before[stamp] = lambda: self.xab_keys(first, self.NEW_CHALLENGE, started=int(time.time()))[stamp]
         before.update(self.xab_keys(second, self.OLD_CHALLENGE))
         rc, out, rows = self.lone_xaa(before, wait="4")
         self.assertEqual(rows["delivery/inbound/release/" + first]["verdict"], "PASS", out)
