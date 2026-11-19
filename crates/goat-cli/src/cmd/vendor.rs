@@ -345,6 +345,25 @@ pub(super) fn map_portal_err(e: PortalError) -> anyhow::Error {
                      the task."
                 );
             }
+            // The request named a slot this key neither owns nor custodies.
+            // An operator key is NOT the fix and must not be suggested: it is
+            // whole-goatnet administration, and pointing participants at it is
+            // how operator keys spread.
+            403 if e.server_message().is_some_and(|m| m.contains("scope mismatch")) => {
+                GoatError::SlotScope {
+                    hint: format!(
+                        "the portal refused this because the slot in the request is not this profile's slot (HTTP {status}). Nothing was changed.\n\
+                         \n\
+                         The first segment of a topic key is the slot that owns it. `goat profile \
+                         show` prints this profile's slot as its publish anchor.\n\
+                         \x20 - a machine (yours or your org's): it has its own slot and key. \
+                         Use its bundle as a second context (`goat profile init <machine .cbor> \
+                         --context <machine>`) and run the command there.\n\
+                         \x20 - someone else's slot: ask that slot's owner or custodian.\n\
+                         An operator key does not belong in this fix.{server}"
+                    ),
+                }
+            }
             // One shared text for every operator-gated portal 403 — see
             // errors::operator_403_hint. This used to say only that operator
             // credentials are required, which sends the reader nowhere.

@@ -239,7 +239,7 @@ jobs:
         run: cargo clippy -p goatbuilder -p goat-federation -p goat-fun -p goat-selfupdate --all-targets -- -D warnings
       - name: Install the Python the pins and promote flows render with
         if: env.FULL == 'true'
-        run: pip install --quiet pyyaml jsonschema
+        run: pip install --quiet pyyaml jsonschema cryptography
       - name: Mark the time before the tests, for the state-directory guard
         if: env.FULL == 'true'
         run: touch "$RUNNER_TEMP/goatbuilder-tests-start"

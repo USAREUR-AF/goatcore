@@ -23,6 +23,18 @@ either side. `FED_EDGE_TRACE_FILE=<that file>` then decides the pending rows
 by id, fires nothing, and refuses a file for other ids or another window.
 With neither set, phase 14 runs as before. (#961)
 
+<!-- END generated: changelog unreleased -->
+
+## 0.7.3 — 2026-11-17
+
+What changed since 0.7.2, the previous release. `goatbuilder federate directory
+ls|show|check` reads the peering directory and says, for a file a peering
+cannot fetch, whether the party has not uploaded it or the directory's release
+lacks the route. Every error `goatbuilder federate` raises carries its catalog
+code, and `explain release` and `explain fastlane` answer for each step.
+
+### For someone deploying
+
 #### Changed: a joining site is declared to run the data router, admit-audit and SPIRE
 
 The end-state catalog declares the data router (zenoh-router) and admit-audit
@@ -80,6 +92,17 @@ that stages no stamp; its result is still refused (GB-273), so the verdicts
 can differ until a rerun, but a stale result never passes. Tested on the
 in-process fabric only, not on hosts (#792).
 
+#### Added: `goatbuilder federate directory ls|show|check` reads the peering directory
+
+`goatbuilder federate directory` reads the peering directory (saltlick) and
+changes nothing. `ls` lists the directory's release and every party with the
+files it hosts; `show <party>` gives each hosted file's size and sha256;
+`check <party> --for <counterparty>` checks each file a peering reads and says,
+for a missing one, whether the party has not uploaded it (`NOT HOSTED`: the
+party runs phase 5) or the directory's release does not serve the route
+(`ROUTE MISSING`: its operator moves the directory to a newer release). The
+URL is `--url` or `FED_DIRECTORY_URL`. New codes GB-370, GB-371 and GB-372 (#1000).
+
 #### Fixed: every error `goatbuilder federate` raises carries its catalog code
 
 Fifty errors the federate stages and verbs raised had no catalog code, so a log
@@ -132,7 +155,13 @@ no step builds reads "no join-node step builds it yet (gate row I3)". The
 admin surfaces keep their gap line (gate rows I1 and I4). Nothing a run does
 changes (#953).
 
-<!-- END generated: changelog unreleased -->
+### For someone contributing
+
+Nothing.
+
+### To be removed
+
+Nothing.
 
 ## 0.7.2 — 2026-11-15
 
