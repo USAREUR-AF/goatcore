@@ -58,9 +58,9 @@ DEFAULT_REPO = {
     "image_namespace": "ghcr.io/example-org",
     "signing": "intent-sign",
 }
-# In schema order. release_source is optional: the repository whose release
-# workflow signs the goatbuilder binaries `goatbuilder update` installs; omitted,
-# goatbuilder uses source.
+# In schema order. release_source is optional: a repository whose release
+# workflow signs goatbuilder binaries, trusted by `goatbuilder update` beside
+# the signers goatbuilder declares; omitted, none is added.
 REPO_KEYS = ("source", "image_namespace", "release_source", "signing")
 DEPLOY_KEYS = ("aws_profile", "ssh_user", "state_dir")
 

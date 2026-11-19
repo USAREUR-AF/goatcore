@@ -29,10 +29,12 @@
 //!     1.3.6.1.4.1.57264.1.* extensions, docs/oid-info.md in sigstore/fulcio):
 //!     the GitHub Actions issuer, the source repository, the tag
 //!     goatbuilder/v<version> as the source ref, and goatbuilder-release.yml
-//!     at that tag as the Build Config URI. The certificate's SAN names the
-//!     reusable workflow both goat and goatbuilder releases run, so it cannot
-//!     tell them apart; the Build Config URI is the workflow that was
-//!     triggered;
+//!     at that tag as the Build Config URI, and the signer's
+//!     _release-binary.yml at that tag as the SAN. The SAN names the reusable
+//!     workflow both goat and goatbuilder releases run, so it cannot tell
+//!     them apart; the Build Config URI is the workflow that was triggered.
+//!     The SAN is checked too, so the binary trusts the same identity that a
+//!     cosign reinstall line pins with --certificate-identity;
 //!  7. the leaf carries an SCT from a Certificate Transparency log of the
 //!     trusted root, valid at the SCT's time, over its precertificate (RFC
 //!     6962 sections 3.2 and 3.3; cosign v2 verify-blob checks it by default,
@@ -62,6 +64,9 @@ const GITHUB_ISSUER: &str = "https://token.actions.githubusercontent.com";
 
 /// The workflow a goatbuilder release is triggered by, at the release's tag.
 pub const RELEASE_WORKFLOW: &str = "goatbuilder-release.yml";
+/// The reusable workflow the release workflow calls, which signs: the
+/// certificate's SAN names it, at the release's tag.
+pub const SIGNING_WORKFLOW: &str = "_release-binary.yml";
 /// The tag prefix of a goatbuilder release.
 pub const TAG_PREFIX: &str = "goatbuilder/v";
 
@@ -72,8 +77,11 @@ pub struct Expect<'a> {
     pub signer: &'a str,
     /// The release's version, as version.json serves it (`0.5.1`).
     pub version: &'a str,
-    /// The workflow file that was triggered ([`RELEASE_WORKFLOW`]).
+    /// The workflow file that was triggered ([`RELEASE_WORKFLOW`]): the
+    /// Build Config URI.
     pub workflow: &'a str,
+    /// The reusable workflow file that signed ([`SIGNING_WORKFLOW`]): the SAN.
+    pub signing_workflow: &'a str,
 }
 
 /// What was verified, for the update's report.
@@ -942,6 +950,17 @@ fn check_identity(i: &Identity, e: &Expect) -> Result<String, Refusal> {
             ),
         ));
     }
+    let signed_by = format!("/.github/workflows/{}@{tag}", e.signing_workflow);
+    let san_matches = i
+        .san
+        .strip_suffix(&signed_by)
+        .is_some_and(|head| head.eq_ignore_ascii_case(&repo));
+    if !san_matches {
+        return Err(refuse(
+            "identity",
+            format!("the certificate's SAN is {}, not {repo}{signed_by} (the reusable workflow that signs a release)", i.san),
+        ));
+    }
     Ok(i.build_config.clone())
 }
 
@@ -1089,7 +1108,7 @@ mod tests {
             "https://github.com/USAREUR-AF/goatcore/.github/workflows/_release-binary.yml@refs/heads/main",
             "",
         ] {
-            let mut i = ids.clone();
+            let mut i = identity_of(&cert).unwrap();
             i.san = san.into();
             let r = check_identity(&i, &release()).unwrap_err();
             assert!(r.detail.contains("SAN"), "{san}: {r}");

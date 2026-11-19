@@ -295,16 +295,15 @@ fn signed(repo: &Path, agent: &ureq::Agent, base: &str, asset: &str, want: &str,
     let bundle = fetch_text(agent, &bundle_url, total)
         .map_err(|e| sig_refused(format!("the surface serves no signature for SHA256SUMS ({bundle_url}: {e})")))?;
     // The signers are the declared ones (RELEASE_SIGNERS), always, then the
-    // checkout's repo.release_source, else its repo.source, as an addition.
+    // checkout's repo.release_source as an addition.
     // The binary's own build provenance is never one (ADR 1252). The
     // signature is always checked: an unreadable config never skips it.
-    let configured = crate::config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml")).ok().and_then(|c| c.repo).map(|r| r.release_source.unwrap_or(r.source));
-    let signers = release_signers(configured);
+    let signers = release_signers(configured_signer(repo));
     // Checked in process (update/signature.rs): no cosign, and nothing fetched
     // beyond the bundle; the trusted root is embedded, plus the operator's.
     let root = signature::TrustRoot::resolve().map_err(|e| sig_refused(format!("cannot read the trusted root: {e}")))?;
     let verified = first_verified(&signers, |s| {
-        let expect = signature::Expect { signer: &s.repo, version, workflow: &s.workflow };
+        let expect = signature::Expect { signer: &s.repo, version, workflow: &s.workflow, signing_workflow: &s.signing_workflow };
         signature::verify(sums.as_bytes(), &bundle, &expect, &root).map_err(|r| r.to_string())
     });
     match verified {
@@ -360,7 +359,7 @@ pub fn verify_release(o: &VerifyRelease) -> Result<Report> {
     let sums = read("SHA256SUMS").map_err(|e| goat_errors::coded(SIGNATURE_REFUSED, format!("refused: {}/SHA256SUMS cannot be read ({e}) (check: sums)", o.dir.display())))?;
     let bundle = read("SHA256SUMS.cosign-bundle").map_err(|e| goat_errors::coded(SIGNATURE_REFUSED, format!("refused: the release has no signature over SHA256SUMS, {}/SHA256SUMS.cosign-bundle ({e}) (check: bundle)", o.dir.display())))?;
     let root = signature::TrustRoot::resolve_with(o.trusted_root).map_err(|e| goat_errors::coded(SIGNATURE_REFUSED, format!("refused: cannot read the trusted root: {e} (check: trusted-root)")))?;
-    let expect = signature::Expect { signer: o.repo, version: o.version, workflow: signature::RELEASE_WORKFLOW };
+    let expect = signature::Expect { signer: o.repo, version: o.version, workflow: signature::RELEASE_WORKFLOW, signing_workflow: signature::SIGNING_WORKFLOW };
     let v = signature::verify(&sums, &String::from_utf8_lossy(&bundle), &expect, &root).map_err(|r| {
         goat_errors::coded(
             SIGNATURE_REFUSED,
@@ -412,33 +411,63 @@ fn sig_refused(why: String) -> anyhow::Error {
 /// The catalog code for a signature that does not verify.
 const SIGNATURE_REFUSED: &str = "GB-261";
 
-/// The release signers every build trusts, compiled in (ADR 1252): each the
-/// `<owner>/<repo>` whose release workflow signs a release's SHA256SUMS, and
-/// that workflow's file under `.github/workflows/`. The first signs the
-/// releases built from this tree; any after it is a successor already
-/// decided, trusted before it signs anything. A signer change ships first in
-/// a release that trusts the old signer and the new one, signed by the old;
-/// only a later release is signed by the new one alone. Remove an entry only
-/// in a release that no longer needs it, after every release still served
-/// trusts its successor. These name goatbuilder's own publisher, the same for
-/// every deployment; no deployment's value is here.
-const RELEASE_SIGNERS: &[(&str, &str)] = &[("USAREUR-AF/goatcore", signature::RELEASE_WORKFLOW)];
+/// A release signer goatbuilder declares (ADR 1252): the `<owner>/<repo>`
+/// whose release workflow signs a release's SHA256SUMS, and the two workflow
+/// files under `.github/workflows/` its certificate names. The binary checks
+/// a signature against exactly these fields, the ones the reinstall line
+/// gives cosign: the source repository, the release's tag as the source ref,
+/// `release_workflow` at that tag as the Build Config URI, and
+/// `signing_workflow` at that tag as the SAN.
+struct Declared {
+    repo: &'static str,
+    /// The workflow a release is triggered by (the Build Config URI).
+    release_workflow: &'static str,
+    /// The reusable workflow it calls, which signs (the SAN).
+    signing_workflow: &'static str,
+}
 
-/// A release signer: the repository, and the release workflow's file name.
+/// The release signers every build trusts, compiled in (ADR 1252). The
+/// operator decided the trust is a list in the code, not the binary's own
+/// build provenance. The first entry signs the releases built from this
+/// tree; any after it is a successor already decided, trusted before it
+/// signs anything. A signer change ships first in a release that trusts the
+/// old signer and the new one, signed by the old; only a later release is
+/// signed by the new one alone. Remove an entry only once every release
+/// still served trusts its successor. These name goatbuilder's own
+/// publisher, the same for every deployment; no deployment's value is here.
+const RELEASE_SIGNERS: &[Declared] = &[Declared {
+    repo: "USAREUR-AF/goatcore",
+    release_workflow: signature::RELEASE_WORKFLOW,
+    signing_workflow: signature::SIGNING_WORKFLOW,
+}];
+
+/// A release signer: the repository, and its two workflow file names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Signer {
     repo: String,
+    /// The Build Config URI's workflow.
     workflow: String,
+    /// The SAN's workflow.
+    signing_workflow: String,
+}
+
+/// The checkout's repo.release_source, the one configured addition. Its
+/// repo.source names where the declarations live, never a signer.
+fn configured_signer(repo: &Path) -> Option<String> {
+    crate::config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml")).ok().and_then(|c| c.repo).and_then(|r| r.release_source)
 }
 
 /// Who may have signed SHA256SUMS: the declared signers, then the
 /// configured one when it is not blank and not already declared (GitHub names
 /// match without case). Never empty.
 fn release_signers(configured: Option<String>) -> Vec<Signer> {
-    let mut signers: Vec<Signer> = RELEASE_SIGNERS.iter().map(|(repo, workflow)| Signer { repo: (*repo).into(), workflow: (*workflow).into() }).collect();
+    let mut signers: Vec<Signer> = RELEASE_SIGNERS
+        .iter()
+        .map(|d| Signer { repo: d.repo.into(), workflow: d.release_workflow.into(), signing_workflow: d.signing_workflow.into() })
+        .collect();
     if let Some(c) = configured.map(|c| c.trim().to_string()).filter(|c| !c.is_empty()) {
         if !signers.iter().any(|s| s.repo.eq_ignore_ascii_case(&c)) {
-            signers.push(Signer { repo: c, workflow: signature::RELEASE_WORKFLOW.into() });
+            signers.push(Signer { repo: c, workflow: signature::RELEASE_WORKFLOW.into(), signing_workflow: signature::SIGNING_WORKFLOW.into() });
         }
     }
     signers

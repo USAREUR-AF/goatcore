@@ -117,7 +117,7 @@
           "pattern": "^[a-z0-9.-]+(/[a-z0-9._-]+)+$"
         },
         "release_source": {
-          "description": "The repository whose release workflow signs the goatbuilder binaries this project installs, as owner/name. `goatbuilder update` trusts it beside the release signers compiled into goatbuilder, never instead of them. Omitted: source.",
+          "description": "The repository whose release workflow signs the goatbuilder binaries this project installs, as owner/name. `goatbuilder update` trusts it beside the release signers compiled into goatbuilder, never instead of them. Omitted: none is added; source is never a signer.",
           "type": "string",
           "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
         },
