@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use jsonschema::{Draft, JSONSchema};
 use serde::Deserialize;
 use serde_json::Value;
@@ -292,7 +292,7 @@ pub fn load_value(path: &Path) -> Result<Value> {
     let yaml: serde_yaml::Value = serde_yaml::from_str(&text)
         .map_err(|e| goat_errors::coded("GB-245", format!("{} is not valid YAML: {e}", path.display())))?;
     serde_json::to_value(yaml)
-        .with_context(|| format!("{} does not convert to JSON", path.display()))
+        .map_err(|e| goat_errors::coded(REFUSED_CODE, format!("{} does not convert to JSON: {e}", path.display())).into())
 }
 
 /// The checkout's own config a lite file beside it may take `repo` and
@@ -333,7 +333,7 @@ pub fn problems_at(
     checkout: Option<&Value>,
     record_dir: Option<&Path>,
 ) -> Result<Vec<String>> {
-    let schema: Value = serde_json::from_str(SCHEMA_JSON).context("embedded schema is not JSON")?;
+    let schema: Value = serde_json::from_str(SCHEMA_JSON).map_err(|e| goat_errors::coded("GB-322", format!("embedded schema is not JSON: {e}")))?;
     let compiled = JSONSchema::options()
         .with_draft(Draft::Draft7)
         .compile(&schema)
@@ -362,7 +362,7 @@ pub fn problems_at(
         return Ok(out);
     }
     let cfg: Config = serde_json::from_value(derive_lite(value, checkout))
-        .context("config does not match the typed model")?;
+        .map_err(|e| goat_errors::coded(REFUSED_CODE, format!("config does not match the typed model: {e}")))?;
     out.extend(cross_field_at(&cfg, record_dir));
     Ok(out)
 }
@@ -649,7 +649,8 @@ pub fn load(path: &Path) -> Result<Config> {
         )
         .into());
     }
-    serde_json::from_value(derive_lite(&value, checkout.as_ref())).context("config does not match the typed model")
+    serde_json::from_value(derive_lite(&value, checkout.as_ref()))
+        .map_err(|e| goat_errors::coded(REFUSED_CODE, format!("{} does not match the typed model: {e}", path.display())).into())
 }
 
 /// `grow` was given a file that is not a goatlite (ops/errors/catalog.yaml).
