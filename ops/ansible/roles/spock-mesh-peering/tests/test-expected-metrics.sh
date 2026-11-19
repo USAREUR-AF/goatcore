@@ -43,7 +43,9 @@ play() {
   become: false
   vars:
     spock_mesh_metrics_dir: "$dir"
+    spock_mesh_metrics_become: false
     ory_spock_metrics_dir: "$dir"
+    ory_spock_metrics_become: false
     spock_mesh_databases: [{name: netbird}, {name: netbird_events}]
     spock_mesh_target_peers: $peers
     ory_spock_databases: [kratos, hydra]

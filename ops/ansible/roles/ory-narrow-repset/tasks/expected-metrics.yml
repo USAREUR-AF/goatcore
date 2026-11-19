@@ -9,8 +9,10 @@
     path: "{{ ory_spock_metrics_dir }}"
     state: directory
     mode: "0755"
+  become: "{{ ory_spock_metrics_become | bool }}"
 
 - name: "ory-narrow-repset | write the expected subscriptions for node-exporter"
+  become: "{{ ory_spock_metrics_become | bool }}"
   ansible.builtin.copy:
     dest: "{{ ory_spock_metrics_dir }}/spock-ory-expected.prom"
     mode: "0644"

@@ -187,6 +187,15 @@ utf8_joiner_hosts
 utf8_gone_hosts
 EOF
 rm -rf "$WORK/group_vars"; cp -r "$HERE/group_vars" "$WORK/group_vars"
+# The mesh roles' expected-subscriptions textfiles go into the run directory:
+# the fixture runs without root, and node-exporter's directory is root's.
+mkdir -p "$WORK/textfile"
+cat >> "$WORK/group_vars/all.yml" <<EOF
+spock_mesh_metrics_dir: $WORK/textfile
+spock_mesh_metrics_become: false
+ory_spock_metrics_dir: $WORK/textfile
+ory_spock_metrics_become: false
+EOF
 
 for n in "${SPOCKN[@]}"; do dc "$n" up -d postgres-a >/dev/null; done
 for n in "${SPOCKN[@]}"; do wait_pg "$n"; done

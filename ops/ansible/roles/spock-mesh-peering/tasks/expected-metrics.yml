@@ -12,8 +12,10 @@
     path: "{{ spock_mesh_metrics_dir }}"
     state: directory
     mode: "0755"
+  become: "{{ spock_mesh_metrics_become | bool }}"
 
 - name: "spock-mesh | write the expected subscriptions for node-exporter"
+  become: "{{ spock_mesh_metrics_become | bool }}"
   ansible.builtin.copy:
     dest: "{{ spock_mesh_metrics_dir }}/spock-mesh-expected.prom"
     mode: "0644"
