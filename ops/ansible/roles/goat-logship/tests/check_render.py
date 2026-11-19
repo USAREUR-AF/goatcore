@@ -21,8 +21,10 @@ def check(ok, what):
     fails += 0 if ok else 1
 
 
-compose = yaml.safe_load(open(f"{d}/docker-compose.yml"))
-vector = yaml.safe_load(open(f"{d}/vector.yaml"))
+with open(f"{d}/docker-compose.yml") as compose_file:
+    compose = yaml.safe_load(compose_file)
+with open(f"{d}/vector.yaml") as vector_file:
+    vector = yaml.safe_load(vector_file)
 svc = compose["services"]
 vec = svc["goat-logship"]
 
@@ -87,7 +89,8 @@ else:
           f"docker_logs sources ({sorted(docker_srcs)})")
     check(all(s.get("docker_host") == "unix:///run/goat-logship-docker-proxy/api.sock" for s in docker_srcs.values()),
           "every docker_logs source goes through the proxy's unix socket")
-    conf = open(f"{d}/docker-proxy.nginx.conf").read()
+    with open(f"{d}/docker-proxy.nginx.conf") as proxy_file:
+        conf = proxy_file.read()
     listens = [l.strip() for l in conf.splitlines() if l.strip().startswith("listen")]
     check(listens == ["listen unix:/run/goat-logship-docker-proxy/api.sock;"],
           f"proxy listens on the unix socket only, no TCP ({listens})")
@@ -98,7 +101,8 @@ else:
 check(vector["sinks"]["metrics"]["address"] == "0.0.0.0:9598",
       "exporter listens in its own netns; host exposure is the ports list")
 if case not in ("bind-all", "no-counter"):
-    nft = open(f"{d}/logship-expose-guard.nft").read()
+    with open(f"{d}/logship-expose-guard.nft") as guard_file:
+        nft = guard_file.read()
     check("ip daddr 100.64.0.7 tcp dport 9598 counter drop" in nft
           and "ct original ip daddr 100.64.0.7 ct original proto-dst 9598 counter drop" in nft,
           "exposure guard drops non-mesh traffic to the mesh-bound port")
