@@ -44,6 +44,54 @@
 {% for _a, _l in (zenoh_partner_read_lanes | default({})).items() %}
 {% set _ = _partner_lane_map.update({_a: _l}) %}
 {% endfor %}
+{# ---------------------------------------------------------------------------
+   SLOT SUBJECTS (GHSA-rr3p, F-305). In per-uuid-slot-pool mode the router's
+   `slot-<anchor>` subjects are NOT rendered from the pool range: they come from
+   the slot fragment the portal renders from its registry
+   (ops/goat-zenoh-portal/internal/acl/slotfragment.go), which the role reads
+   from the host (zenoh_slot_fragment_content, slurped from
+   goat_zenoh_slot_fragment_path) and the portal splices into the live config
+   between the `slot subjects` markers on every slot change. An assigned slot's
+   subject carries the CN of its CURRENT leaf generation, `<anchor>.g<N>` (the
+   bare anchor at generation 0); a free or quarantined slot's subject carries
+   only "<anchor>.unassigned", a CN no mint produces, so it matches nobody. Never
+   an empty list: zenoh 1.9 types cert_common_names as a non-empty vector and
+   refuses to START on `[]` (zenoh-config 1.9.0 lib.rs:200), and leaving the
+   field out matches every CN. The same holds for every enumerated subject
+   below that can come out empty: it carries "<subject>.unassigned" instead.
+
+   Every per-slot grant below binds to `slot-<anchor>`: own-anchor write, the
+   universal read (no longer via trial-peer-read, which now holds only non-slot
+   readers), fabric-wide read by slot_idx, partner lanes, co-publish and
+   release-lane writes. So a leaf whose CN the fragment does not name holds
+   none of them, whoever held the slot before. Rules and policies stay pre-cut
+   per pool index: they carry no authority without a subject CN, and zenoh 1.9
+   refuses a policy whose subject is not declared, so every pool slot's subject
+   stays declared, with the unassigned CN when free.
+   -------------------------------------------------------------------------- #}
+{% set _slot_fragment = (zenoh_slot_fragment_content | default('')) | string %}
+{% set _slot_read_anchors = [] %}
+{% set _fw_slot_anchors = [] %}
+{% if zenoh_identity_model == 'per-uuid-slot-pool' %}
+{% for k in range(zenoh_slot_pool_size | int) %}
+{% set _a = ((zenoh_slot_pool_salt ~ ':' ~ k) | hash('sha256'))[:32] %}
+{% if not (zenoh_partner_read_partition | default(false) and _a in _partner_lane_map) %}
+{% set _ = _slot_read_anchors.append(_a) %}
+{% endif %}
+{% endfor %}
+{% if zenoh_peer_read_scoped | default(false) | bool %}
+{% for _e in zenoh_fabric_wide_read | default([]) %}
+{% if _e.cn is not defined %}
+{% set _ = _fw_slot_anchors.append(((zenoh_slot_pool_salt ~ ':' ~ _e.slot_idx) | hash('sha256'))[:32]) %}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endif %}
+{% if zenoh_peer_read_scoped | default(false) | bool %}
+{% set _universal_read_rules = ["peer-r-scoped", "peer-deliver-scoped", "peer-w-name-claim", "audit-operator-read-deny", "trial-peer-r-admin-census"] %}
+{% else %}
+{% set _universal_read_rules = ["trial-peer-r-all", "trial-peer-deliver-all", "peer-w-name-claim", "audit-operator-read-deny", "trial-peer-r-admin-census"] %}
+{% endif %}
 {
   mode: "router",
 
@@ -1555,7 +1603,36 @@
       // Universal read — any peer that completed mTLS handshake. The
       // transport.link.tls.root_ca_certificate gate ahead of this
       // subject enforces "CA-rooted" structurally.
-{% if zenoh_partner_read_partition | default(false) and _partner_lane_map | length > 0 %}
+{% if zenoh_identity_model == 'per-uuid-slot-pool' %}
+      // Per-uuid-slot-pool (GHSA-rr3p): never link_protocols. A CA-rooted leaf
+      // is not proof of a current holder: every leaf ever issued for a slot is
+      // CA-rooted for its whole validity, after a revoke and after the slot
+      // went to someone else. Slot readers get the universal read through their
+      // own slot-<anchor> subject (policies below), which names only the
+      // current leaf's CN. This subject holds the NON-slot readers only:
+      // zenoh_universal_read_cns, plus the seeded vendor CNs when the partner
+      // partition is off (they read through link_protocols before). Any other
+      // CA-rooted CN without a subject of its own has no read; the F-364
+      // coverage assert fails the play before restart for any on-host reader.
+{% set _tpr_cns = (zenoh_universal_read_cns | default([])) | list %}
+{% if not (zenoh_partner_read_partition | default(false) and _partner_lane_map | length > 0) %}
+{% for vendor in zenoh_seed_vendors %}
+{% if (vendor ~ '-trial-peer') not in _tpr_cns %}
+{% set _ = _tpr_cns.append(vendor ~ '-trial-peer') %}
+{% endif %}
+{% endfor %}
+{% endif %}
+      {
+        id: "trial-peer-read",
+        cert_common_names: [
+{% for _cn in _tpr_cns %}
+          "{{ _cn }}",
+{% else %}
+          "trial-peer-read.unassigned",   // no non-slot reader declared; never an empty list (zenoh 1.9 refuses [])
+{% endfor %}
+        ],
+      },
+{% elif zenoh_partner_read_partition | default(false) and _partner_lane_map | length > 0 %}
       // B2.1 partition ON (partner-read-partition.md): the universal read is
       // narrowed off link_protocols to the ENUMERATED non-partner population so
       // partner anchors match ONLY their partner-<anchor> subject below (and are
@@ -1568,14 +1645,6 @@
       {
         id: "trial-peer-read",
         cert_common_names: [
-{% if zenoh_identity_model == 'per-uuid-slot-pool' %}
-{% for k in range(zenoh_slot_pool_size | int) %}
-{% set _a = ((zenoh_slot_pool_salt ~ ':' ~ k) | hash('sha256'))[:32] %}
-{% if _a not in _partner_lane_map %}
-          "{{ _a }}",
-{% endif %}
-{% endfor %}
-{% endif %}
 {% for _cn in zenoh_universal_read_cns | default([]) %}
           "{{ _cn }}",
 {% endfor %}
@@ -1595,13 +1664,20 @@
       // malformed entry and refuses a partner anchor outright (naming a partner
       // here would silently undo the B2.1 read partition for that partner).
       //
-      // Renders even when the list is empty — an empty subject matches no CN
-      // (cert_common_names is present but empty), which is the fail-closed
-      // direction: nobody gets the fabric-wide read by omission.
+      // Renders even when the list is empty, as the single CN
+      // "fabric-wide-read.unassigned" that no leaf carries: the fail-closed
+      // direction, nobody gets the fabric-wide read by omission. Not `[]`:
+      // zenoh 1.9 refuses to start on an empty cert_common_names (it is a
+      // non-empty vector, zenoh-config 1.9.0 lib.rs:200).
       {
         id: "fabric-wide-read",
         cert_common_names: [
+{# A slot_idx entry is a slot reader: in per-uuid-slot-pool mode it gets the
+   fabric-wide read through its slot-<anchor> subject (policies below), which
+   names only the slot's current leaf (GHSA-rr3p). Only `cn` entries are listed
+   here. #}
 {% for _e in zenoh_fabric_wide_read | default([]) %}
+{% if _e.cn is defined or zenoh_identity_model != 'per-uuid-slot-pool' %}
 {% if _e.cn is defined %}
 {% set _fw_cn = _e.cn %}
 {% else %}
@@ -1612,7 +1688,12 @@
    as invalid JSON5 — a router that will not start. Flatten, never trust. #}
           "{{ _fw_cn }}",   // {{ _e.owner | replace('\n', ' ') }} — {{ _e.reason | replace('\n', ' ') }}{% if _e.until is defined %} (review {{ _e.until }}){% endif %}
 
+{% endif %}
 {% endfor %}
+{% set _fw_listed = (zenoh_fabric_wide_read | default([]) | selectattr('cn', 'defined') | list | length) if zenoh_identity_model == 'per-uuid-slot-pool' else (zenoh_fabric_wide_read | default([]) | length) %}
+{% if _fw_listed == 0 %}
+          "fabric-wide-read.unassigned",   // no CN entry; never an empty list (zenoh 1.9 refuses [])
+{% endif %}
         ],
       },
 
@@ -1808,26 +1889,46 @@
       },
 
 {% if zenoh_identity_model == 'per-uuid-slot-pool' %}
-      // Pre-cut slot-pool subjects (ADR 1025): the cert CN *is* the slot
-      // anchor <uuid>. The portal mints CN=<uuid> for the system assigned
-      // slot k; that cert matches this pre-existing subject — no ACL edit,
-      // no restart.
+      // Slot-pool subjects (ADR 1025, GHSA-rr3p): one `slot-<anchor>` per pool
+      // slot, rendered by the portal from its registry. An assigned slot names
+      // the CN of its current leaf generation, `<anchor>.g<N>`; a free or
+      // quarantined slot names no CN. A partner anchor has no separate subject
+      // any more: its partner-r-/deliver- lanes bind to slot-<anchor> (policies
+      // below), and it is left out of the slot-read policy, so its read is
+      // exactly its own anchor + release lanes, as before.
+      // The portal rewrites the text between these markers; do not edit it.
+      // BEGIN: slot subjects
+{% if _slot_fragment | length > 0 %}
+{{ _slot_fragment.rstrip('\n') }}
+{% else %}
+      // No slot fragment on this host (fresh standup, zenoh_slot_fragment_bootstrap):
+      // every slot is declared with the unassigned CN until the portal renders one.
 {% for k in range(zenoh_slot_pool_size | int) %}
 {% set _anchor = ((zenoh_slot_pool_salt ~ ':' ~ k) | hash('sha256'))[:32] %}
       {
         id: "slot-{{ _anchor }}",
-        cert_common_names: ["{{ _anchor }}"],
+        cert_common_names: ["{{ _anchor }}.unassigned"],
       },
 {% endfor %}
-{% if zenoh_partner_read_partition | default(false) %}
-      // B2.1 partner subjects: a partner anchor matches ONLY here (it is
-      // excluded from the narrowed trial-peer-read above), so its read is
-      // exactly what partner-r-/deliver- grant — own anchor + release lanes.
-{% for _anchor in _partner_lane_map.keys() %}
+{% endif %}
+      // END: slot subjects
+{% if zenoh_copublish_enabled | default(false) %}
+      // Co-publish grants the role was handed that the slot fragment does not
+      // (yet) declare a subject for: their rules bind here, to a subject with
+      // no leaf CN, so they are inert until the portal renders the grant's
+      // own subject and the role re-renders (GHSA-rr3p review r8 F1).
+{% set _none_seen = [] %}
+{% for _writer, _targets in (zenoh_copublish_grants | default({})).items() %}
+{% for _base in _targets %}
+{% set _ck = 'copub-' ~ _writer ~ '-' ~ ((_base | hash('sha256'))[:16]) %}
+{% if ('id: "' ~ _ck ~ '",') not in _slot_fragment and _ck not in _none_seen %}
+{% set _ = _none_seen.append(_ck) %}
       {
-        id: "partner-{{ _anchor }}",
-        cert_common_names: ["{{ _anchor }}"],
+        id: "{{ _ck }}-none",
+        cert_common_names: ["{{ _writer }}.unassigned"],
       },
+{% endif %}
+{% endfor %}
 {% endfor %}
 {% endif %}
       // F-517: one subject per seeded vendor CN (see the write rules above).
@@ -1864,6 +1965,14 @@
       // transport — it can drop a claim, never forge one). Without this the
       // rule is defined but bound to no subject → default-deny → publishes
       // silently dropped.
+{% if _slot_read_anchors | length > 0 %}
+      // GHSA-rr3p: the universal read for every non-partner slot, bound to the
+      // slot's own subject so only its current leaf holds it. Same rules as the
+      // trial-peer-read binding, including the F-207 operator-audit deny: the
+      // deny and the `**` allow are in ONE subject here, and within a subject
+      // the deny wins.
+      { rules: [{% for _r in _universal_read_rules %}"{{ _r }}"{% if not loop.last %}, {% endif %}{% endfor %}], subjects: [{% for _a in _slot_read_anchors %}"slot-{{ _a }}"{% if not loop.last %}, {% endif %}{% endfor %}] },
+{% endif %}
 {% if zenoh_peer_read_scoped | default(false) | bool %}
       // F-287 amendment fix 8: the universal subject's read is the ENUMERATED
       // namespace set, not `**`. Same reach, no single fan-in declaration.
@@ -1880,6 +1989,11 @@
       // denies (across subjects the first Allow wins, so the deny has to be
       // present in every subject that grants a superset).
       { rules: ["fabric-wide-r", "trial-peer-deliver-all", "peer-r-scoped", "audit-operator-read-deny", "trial-peer-r-admin-census"], subjects: ["fabric-wide-read"] },
+{% if _fw_slot_anchors | length > 0 %}
+      // slot_idx fabric-wide readers (GHSA-rr3p): the same grant on the slot's
+      // own subject, so it follows the slot's current leaf.
+      { rules: ["fabric-wide-r", "trial-peer-deliver-all", "peer-r-scoped", "audit-operator-read-deny", "trial-peer-r-admin-census"], subjects: [{% for _a in _fw_slot_anchors | unique %}"slot-{{ _a }}"{% if not loop.last %}, {% endif %}{% endfor %}] },
+{% endif %}
 {% else %}
       { rules: ["trial-peer-r-all", "trial-peer-deliver-all", "peer-w-name-claim", "audit-operator-read-deny", "trial-peer-r-admin-census"], subjects: ["trial-peer-read"] },
 {% endif %}
@@ -1971,16 +2085,24 @@
       },
 {% endfor %}
 {% if zenoh_copublish_enabled | default(false) %}
-      // ADR 1105 co-publish policies: bind each writer's additive copub-w-*
-      // rules onto its EXISTING slot-<writer> subject (the writer authenticates
-      // with its own cert CN=<writer>). An extra policy entry on the same
-      // subject accumulates allows atop the writer's own slot-w rule — never
-      // replaces it. No new subject, no new cert.
+      // ADR 1105 co-publish policies: each (writer, topic) rule binds to that
+      // topic's own subject copub-<writer>-<sha256(topic)[:16]> (GHSA-rr3p
+      // reviews r7, r8 F1). The portal's slot fragment gives that subject the
+      // writer's CURRENT leaf CN only while a grant for exactly that topic is
+      // active and in effect, so a revoked or expired grant stops at the
+      // router's next fragment load although this rule stays in the config
+      // until the role re-renders, and a grant on one topic never opens
+      // another. A pair the fragment does not declare binds to an inert
+      // "-none" subject (above). Accumulates atop the writer's own slot-w
+      // rule (another subject on the same cert), never replaces it.
 {% for _writer, _targets in (zenoh_copublish_grants | default({})).items() %}
+{% for _base in _targets %}
+{% set _ck = 'copub-' ~ _writer ~ '-' ~ ((_base | hash('sha256'))[:16]) %}
       {
-        rules: [{% for _base in _targets %}"copub-w-{{ _writer }}-{{ loop.index0 }}"{% if not loop.last %}, {% endif %}{% endfor %}],
-        subjects: ["slot-{{ _writer }}"],
+        rules: ["copub-w-{{ _writer }}-{{ loop.index0 }}"],
+        subjects: ["{{ _ck if ('id: "' ~ _ck ~ '",') in _slot_fragment else _ck ~ '-none' }}"],
       },
+{% endfor %}
 {% endfor %}
 {% endif %}
 {% if zenoh_edge_queryable_lockdown | default(false) and (zenoh_edge_queryable_lockdown_grants | default([])) | length > 0 %}
@@ -2023,7 +2145,7 @@
 {% for _anchor in _partner_lane_map.keys() %}
       {
         rules: ["slot-w-{{ _anchor }}", "trial-peer-w-attest-schema", "partner-r-{{ _anchor }}", "partner-deliver-{{ _anchor }}", "audit-operator-read-deny"],
-        subjects: ["partner-{{ _anchor }}"],
+        subjects: ["slot-{{ _anchor }}"],
       },
 {% endfor %}
 {% endif %}

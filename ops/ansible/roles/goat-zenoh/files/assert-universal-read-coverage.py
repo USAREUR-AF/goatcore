@@ -168,9 +168,14 @@ def main(argv):
     # Names carried in the ACL with no cert behind them on this host. Not fatal
     # on its own (an off-host reader is legitimate), but it is the fingerprint
     # of a list ported from another goatnet, so say so loudly.
+    # Slot leaf CNs (`<anchor>` or `<anchor>.g<N>`, GHSA-rr3p) belong to slot
+    # holders, not to on-host readers, and `*.unassigned` is the placeholder a
+    # subject with nobody in it carries; neither is a ported-list fingerprint.
     orphan_shaped = sorted(
         cn for cn in declared
-        if cn not in live and not re.fullmatch(r"[0-9a-f]{32}", cn)
+        if cn not in live
+        and not re.fullmatch(r"[0-9a-f]{32}(\.g[1-9][0-9]*)?", cn)
+        and not cn.endswith(".unassigned")
     )
 
     print(f"universal-read coverage: read IS narrowed in {cfg_path}")

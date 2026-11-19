@@ -1,0 +1,62 @@
+package handlers
+
+// machineRecordRoutesVr6w lists, one by one, every machine route under
+// /api/onboard/ and /api/org-registry/ that machineTargetGate passes
+// through, with the reason it needs no target-identity check (GHSA-vr6w).
+// There is no prefix allow: a route registered there and missing from this
+// table, machineTargetRoutes, machineProposalRoutes or
+// machineQueueRoutesVr6w is refused at runtime (403) and fails
+// TestTargetGate_coversEveryTargetRoute.
+var machineRecordRoutesVr6w = map[string]string{
+	"GET /api/onboard/actions":                         "read only, no credential",
+	"GET /api/onboard/invites":                         "onboarding invite record, not a login identity",
+	"GET /api/onboard/invites/{id}":                    "onboarding invite record, not a login identity",
+	"GET /api/onboard/operator-keys":                   "operator-key request record; two-person rule in the store",
+	"GET /api/onboard/operator-keys/{id}/collect":      "operator-key request record; two-person rule in the store",
+	"GET /api/onboard/proposals":                       "proposal read; credentials redacted above tier (redactAboveTierVr6w)",
+	"GET /api/onboard/proposals/{id}":                  "proposal read; credentials redacted above tier (redactAboveTierVr6w)",
+	"GET /api/onboard/proposals/{id}/repo-access":      "proposal record, not a login identity",
+	"GET /api/onboard/repo-access/policy":              "read only, no credential",
+	"GET /api/onboard/schema":                          "read only, no credential",
+	"GET /api/onboard/ssh-keys":                        "SSH key request record, not a login identity",
+	"GET /api/org-registry/export":                     "organisation registry record, not a login identity",
+	"GET /api/org-registry/orgs":                       "organisation registry record, not a login identity",
+	"GET /api/org-registry/orgs/{id}/children":         "organisation registry record, not a login identity",
+	"GET /api/org-registry/orgs/{id}/descendants":      "organisation registry record, not a login identity",
+	"GET /api/org-registry/suggest":                    "organisation registry record, not a login identity",
+	"POST /api/onboard/email-reference":                "onboarding record, not a login identity",
+	"POST /api/onboard/github-requests":                "onboarding record, not a login identity",
+	"POST /api/onboard/intake":                         "onboarding record, not a login identity",
+	"POST /api/onboard/intake/batch":                   "onboarding record, not a login identity",
+	"POST /api/onboard/invite":                         "invite mint; tier capped in apiMintInvite (inviteTierCeilingVr6w)",
+	"POST /api/onboard/invites/{id}/revoke":            "onboarding invite record, not a login identity",
+	"POST /api/onboard/lint":                           "onboarding record, not a login identity",
+	"POST /api/onboard/operator-keys":                  "operator-key request record; two-person rule in the store",
+	"POST /api/onboard/operator-keys/{id}/approve":     "operator-key request record; two-person rule in the store",
+	"POST /api/onboard/operator-keys/{id}/reject":      "operator-key request record; two-person rule in the store",
+	"POST /api/onboard/operator-keys/{id}/revoke":      "operator-key request record; two-person rule in the store",
+	"POST /api/onboard/operator-keys/reconcile":        "operator-key request record; two-person rule in the store",
+	"POST /api/onboard/proposals/{id}/approve":         "approval; capped in approvalCeiling",
+	"POST /api/onboard/proposals/{id}/fields":          "proposal record, not a login identity",
+	"POST /api/onboard/proposals/{id}/github":          "proposal record, not a login identity",
+	"POST /api/onboard/proposals/{id}/github-request":  "proposal record, not a login identity",
+	"POST /api/onboard/proposals/{id}/offboard-claim":  "runner claim of a queued access cut",
+	"POST /api/onboard/proposals/{id}/onboarded":       "runner bookkeeping: marks a minted proposal onboarded",
+	"POST /api/onboard/proposals/{id}/reject":          "proposal record, not a login identity",
+	"POST /api/onboard/proposals/{id}/repo-access":     "proposal record, not a login identity",
+	"POST /api/onboard/proposals/{id}/sponsor-approve": "approval; capped in approvalCeiling",
+	"POST /api/onboard/proposals/{id}/sponsor-reject":  "proposal record, not a login identity",
+	"POST /api/onboard/register":                       "bookkeeping row for an already-minted login; mints nothing",
+	"POST /api/onboard/ssh-keys":                       "SSH key request record, not a login identity",
+	"POST /api/onboard/ssh-keys/{id}/approve":          "SSH key request record, not a login identity",
+	"POST /api/onboard/ssh-keys/{id}/installed":        "SSH key request record, not a login identity",
+	"POST /api/onboard/ssh-keys/{id}/reject":           "SSH key request record, not a login identity",
+	"POST /api/onboard/ssh-keys/{id}/revoke":           "SSH key request record, not a login identity",
+	"POST /api/onboard/ssh-keys/{id}/skip-report":      "SSH key request record, not a login identity",
+	"POST /api/org-registry/orgs":                      "organisation registry record, not a login identity",
+	"POST /api/org-registry/orgs/{id}/aliases":         "organisation registry record, not a login identity",
+	"POST /api/org-registry/orgs/{id}/merge":           "organisation registry record, not a login identity",
+	"POST /api/org-registry/orgs/{id}/parent":          "organisation registry record, not a login identity",
+	"POST /api/org-registry/orgs/{id}/unmerge":         "organisation registry record, not a login identity",
+	"POST /api/org-registry/orgs/{id}/update":          "organisation registry record, not a login identity",
+}

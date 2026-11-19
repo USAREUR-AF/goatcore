@@ -62,21 +62,18 @@ rec portal-answer-is-not-called-unreachable --expect-exit 7 --expect-in "HTTP 40
   --expect-not-in "E_PORTAL_UNREACHABLE" -- "$GOAT" topic create nope/smoke/v1 --format json
 
 # ---- onboarding: invite, list, revoke, against the console's own record -----------
-rec invite-mint --expect-in "minted" -- "$GOAT" admin invite --env zagros --tier observer
+rec invite-mint --expect-in "minted" -- "$GOAT" admin invite --env zagros --tier browse
 INV="$(python3 -c 'import json,sys,urllib.request,os; r=urllib.request.Request(sys.argv[1], headers={"Authorization":"Bearer "+os.environ["E2E_GOAT_TOKEN"]}); d=json.load(urllib.request.urlopen(r)); print(d[0]["id"] if d else "")' "$CONSOLE/api/onboard/invites")"
-rec invite-stored-with-its-tier -- $OBJ "$CONSOLE/api/onboard/invites" "any(i['id']=='$INV' and json.loads(i['prebound_json']).get('tier')=='observer' for i in d)"
+rec invite-stored-with-its-tier -- $OBJ "$CONSOLE/api/onboard/invites" "any(i['id']=='$INV' and json.loads(i['prebound_json']).get('tier')=='browse' for i in d)"
 rec invite-default-lifetime-is-not-an-hour -- $OBJ "$CONSOLE/api/onboard/invites" "[i['expires_at']-i['created_at'] for i in d if i['id']=='$INV'][0] >= 86400"
 rec invites-ls-json-lists-it --expect-in "$INV" -- "$GOAT" admin invites ls --json
 rec invite-revoke -- "$GOAT" admin invites revoke "$INV"
 rec invite-revoked-in-console -- $OBJ "$CONSOLE/api/onboard/invites?status=revoked" "any(i['id']=='$INV' for i in d)"
 rec queue-ls-json-is-an-array -- bash -c "\"$GOAT\" admin queue ls --env zagros --json | $OBJ --stdin 'isinstance(d, list)'"
 
-# ---- operator keys: a request grants nothing until a decision ---------------------
-rec opkey-request -- "$GOAT" admin operator-key request e2e-person --email e2e-person@example.invalid --env zagros --reason "e2e suite" --json
-OPK="$("$GOAT" admin operator-key list --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else d.get("requests",[]); print(next((x["id"] for x in d if x.get("handle")=="e2e-person"), ""))')"
-rec opkey-listed-as-requested --expect-in "$OPK" -- "$GOAT" admin operator-key list
-rec opkey-reject -- "$GOAT" admin operator-key reject "$OPK" --note "e2e suite"
-rec opkey-rejected-nothing-minted --expect-in "$OPK" -- "$GOAT" admin operator-key list --status rejected
+# ---- operator keys: requested only for a person on the onboarding roster ---------
+rec opkey-request-for-a-non-roster-handle-is-refused --expect-exit 4 -- "$GOAT" admin operator-key request e2e-person --email e2e-person@example.invalid --env zagros --reason "e2e suite" --json
+rec opkey-refused-request-records-nothing --expect-not-in "e2e-person" -- "$GOAT" admin operator-key list
 
 # ---- fabric: a real router, mTLS, a publish received ------------------------------
 rec pubsub-round-trip "${XF[@]}" -- bash -c "

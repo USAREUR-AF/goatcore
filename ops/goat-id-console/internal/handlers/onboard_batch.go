@@ -87,6 +87,17 @@ func (s *Server) apiOnboardBatch(w http.ResponseWriter, r *http.Request) {
 			resp.Results = append(resp.Results, rr)
 			continue
 		}
+		if held, herr := s.handleHeldByOther(r.Context(), handle, email); herr != nil || held != nil {
+			msg := "could not check the handle"
+			if held != nil {
+				msg = handleTakenMessage(handle, held)
+			}
+			rr.OK = false
+			rr.Findings = append(rr.Findings, onboardlint.Finding{Severity: "error", Field: "identity.handle", Message: msg})
+			resp.Summary.Rejected++
+			resp.Results = append(resp.Results, rr)
+			continue
+		}
 		resp.Summary.Valid++
 		if !req.DryRun {
 			lintJSON, err := json.Marshal(res)

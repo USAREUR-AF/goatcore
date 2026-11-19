@@ -16,7 +16,9 @@ KRATOS="${KRATOS_ADMIN:-http://127.0.0.1:4434}"
 APPLY="${APPLY:-0}"
 resp=$(mktemp "${TMPDIR:-/tmp}/ory-mirror-resp.XXXXXX")
 trap 'rm -f "$resp"' EXIT
-LOGIN_GROUPS='def login_groups: if ((.metadata_public // {}) | has("groups")) then (.metadata_public.groups // []) else (.traits.groups // []) end;'
+# Login groups come ONLY from admin-managed metadata_public (GHSA-9v3v):
+# self-editable traits never count, even for a not-yet-backfilled identity.
+LOGIN_GROUPS='def login_groups: ((.metadata_public // {}).groups // []);'
 
 ids=$(curl -fsS -m 10 "$KRATOS/admin/identities?per_page=1000" \
   | jq -r --arg have "$HAVE" --arg tgt "$TARGET" --arg mode "$MODE" "$LOGIN_GROUPS"'

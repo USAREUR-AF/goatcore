@@ -73,6 +73,12 @@ func (s *Server) apiRegisterMintedProposal(w http.ResponseWriter, r *http.Reques
 	}
 
 	created, existing, err := s.Onboard.RegisterMintedProposal(r.Context(), p)
+	if rq, refused := asRunnerQueueRefusal7788(err); refused {
+		s.emitAudit(r, Actor{Email: actor}, "onboard_register_minted", nil, "", nil,
+			map[string]interface{}{"handle": p.Handle, "env": p.Env, "tier": p.Tier}, false, "refused", rq.Msg)
+		onboardError(w, http.StatusForbidden, "forbidden", rq.Msg)
+		return
+	}
 	if err != nil {
 		onboardError(w, http.StatusInternalServerError, "register_error",
 			"could not register the minted proposal")

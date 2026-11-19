@@ -41,6 +41,10 @@ services:
   prometheus:
     # Pinned per ADR 0703 — index digest captured 2026-04-27.
     image: prom/prometheus:v2.54.1@sha256:69961df6ffa67598048a31aa2822d61f3c93b91d7db24e44d9bb03f99d520da9
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: prometheus
     restart: unless-stopped
     # Bulkhead — cgroup limits per failure-isolation.md §10.
@@ -85,6 +89,11 @@ services:
 
   alertmanager:
     image: prom/alertmanager:v0.27.0@sha256:45c3a586d4332d710bef92b06e90380c0b1f588968c00100d4b5e4e44c40ca5f
+    # GHSA-6x9h: no capabilities. In particular no CAP_NET_RAW, which a
+    # container on the shared mgmt bridge could use to ARP-spoof a
+    # neighbour's address. Verified to start and serve without any.
+    cap_drop:
+      - ALL
     container_name: alertmanager
     restart: unless-stopped
     # Bulkhead — cgroup limits per failure-isolation.md §10.
@@ -109,6 +118,10 @@ services:
 
   node-exporter:
     image: prom/node-exporter:v1.8.2@sha256:065914c03336590ebed517e7df38520f0efb44465fde4123c3f6b7328f5a9396
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: node-exporter
     restart: unless-stopped
     # Bulkhead — cgroup limits per failure-isolation.md §10.
@@ -141,6 +154,10 @@ services:
 
   postgres-exporter:
     image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0@sha256:31bdf410910646a05c7edde8d95ab771c9d78fbfbc26b50a52548707496c284d
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: postgres-exporter
     restart: unless-stopped
     # Bulkhead — cgroup limits per failure-isolation.md §10.

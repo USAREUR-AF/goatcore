@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# simple-bn sender. Reads its receiver and feeds from /etc/simple-bn/receiver.env (mode 600):
+#   SIMPLE_BN_DEST=<host>:<port>   SIMPLE_BN_LABEL=<receiver name>   SIMPLE_BN_NODE=<this node>
+#   SIMPLE_BN_FEEDS=<a,b,c>        SIMPLE_BN_SAC=<0-255>             SIMPLE_BN_PROFILES=<json path or empty>
+[Unit]
+Description=simple-bn sender: feeds as ASTERIX CAT034/CAT048 over UDP to one declared receiver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/simple-bn/receiver.env
+ExecStart=/usr/bin/python3 /opt/simple-bn/simple_bn_sender.py --dest ${SIMPLE_BN_DEST} --label ${SIMPLE_BN_LABEL} --node ${SIMPLE_BN_NODE} --feeds ${SIMPLE_BN_FEEDS} --sac ${SIMPLE_BN_SAC} --profiles ${SIMPLE_BN_PROFILES} --status /run/simple-bn/status.json
+Restart=always
+RestartSec=5
+DynamicUser=yes
+User=simple-bn
+RuntimeDirectory=simple-bn
+RuntimeDirectoryMode=0750
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+MemoryMax=128M
+CPUQuota=15%
+
+[Install]
+WantedBy=multi-user.target

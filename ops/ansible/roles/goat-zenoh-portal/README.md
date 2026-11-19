@@ -12,12 +12,14 @@ Zenoh trial fabric onto a single host. Per design at
   `ops/goat-zenoh-portal/Dockerfile`).
 - A persistent volume holding the SQLite registry + minted vendor
   tarballs.
-- Bind-mounts for the **live** zenohd config-dir + the host docker
-  socket + the per-vendor rocksdb storage parent dir. The portal
-  applies marker-based incremental edits to the live `config.json5`
-  on vendor approval, mkdirs the per-vendor storage dir, then SIGHUPs
-  the zenohd container by POSTing to the Docker Engine API over the
-  mounted socket. No shell-out (compatible with the Chainguard
+- Bind-mounts for the **live** zenohd config-dir + the per-vendor
+  rocksdb storage parent dir. The portal applies marker-based
+  incremental edits to the live `config.json5` on vendor approval,
+  mkdirs the per-vendor storage dir, and pushes the change to the
+  running router through admin-REST. No Docker socket is mounted
+  unless `portal_acl_docker_socket` is set (GHSA-6828): a mesh-facing
+  service holding it is root on the host, and the SIGHUP it would send
+  is ignored by zenohd 1.9. No shell-out (compatible with the Chainguard
   distroless image).
 - A bind-mount of the operator's age-identity file (read-only) so the
   portal can shell out to `cert-sign --age-identity ...` for vendor
@@ -34,8 +36,9 @@ Zenoh trial fabric onto a single host. Per design at
 | `portal_data_dir` | base for SQLite + bundle tarballs | `/opt/goat-zenoh-portal` |
 | `portal_zenoh_rest_url` | zenohd REST plugin URL | `http://zenohd:8000` |
 | `portal_acl_config_path` | live zenohd `config.json5` the portal edits in place | `/etc/goat-zenoh/config.json5` |
-| `portal_acl_container_name` | zenohd container — SIGHUP target | `goat-zenoh-router` |
-| `portal_acl_docker_socket` | Docker Engine API socket (mounted into portal) | `/var/run/docker.sock` |
+| `portal_acl_container_name` | zenohd container — target of the opt-in SIGHUP | `goat-zenoh-router` |
+| `portal_acl_docker_socket` | Docker Engine API socket for the opt-in router SIGHUP. Empty: no socket is mounted and no signal is sent. Set, it is mounted read-write and regrouped to the portal's gid, which makes the portal root on the host (GHSA-6828); zenohd 1.9 ignores SIGHUP, so leave it empty | `""` |
+| `portal_docker_host_socket`, `portal_docker_socket_group` | with `portal_acl_docker_socket` empty, a socket at this path that an earlier deploy left with the portal's gid (65532) is given back to this group, mode 0660 (`tasks/docker-socket.yml`) | `/var/run/docker.sock`, `docker` |
 | `portal_acl_storage_dir_prefix` | per-vendor rocksdb parent dir | `/var/lib/goat-zenoh/rocksdb` |
 | `portal_acl_reload_fake` | skip SIGHUP step (marker edits still run) | `false` |
 | `portal_ca_bundle_dir` | mounted ro into container | `/etc/<site_id>-ca` |
@@ -57,8 +60,9 @@ Zenoh trial fabric onto a single host. Per design at
   baseline covers this).
 - The goat-zenoh role's zenohd container running on the same host
   so `portal_acl_config_path` (the same live `config.json5` zenohd reads)
-  is bind-mounted into the portal AND the SIGHUP target is reachable
-  via the host docker socket.
+  is bind-mounted into the portal. The portal gets no Docker socket by
+  default; ACL edits reach the running router through admin-REST or at
+  its next restart.
 - An age-identity file at `portal_age_identity_path` containing the
   operator's age private key — used by `cert-sign` to decrypt the
   goatnet's CA key for per-vendor leaf issuance.
