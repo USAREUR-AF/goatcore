@@ -38,7 +38,7 @@ own certificate and its upstream router, so every device behind it publishes as 
 2. **Carriage is written as rules.** The default rule, created when an org is onboarded, lets pods run by an org carry that
    org's devices. Named rules cover other cases (a partner's pod). Every named or temporary rule carries an end date. Expired
    rules are archived, never deleted, and can be reactivated by their owner in one step within a reactivation window
-   (proposed: six months); older ones are approved again like a new rule. A sensitive device can opt out of the org rule.
+   (six months by default; a named or temporary rule runs at most 90 days by default); older ones are approved again like a new rule. A sensitive device can opt out of the org rule.
 3. **Rules are rendered, never hand-edited.** A generator renders the rules into each pod's ACL and the core router's ACL. A pod
    admits each covered device's own certificate under its own slot; only the pod's certificate writes the pod's slot; the core
    lets a pod's connection write exactly the slots its rules cover. Pods pull a signed rule generation. A drift check compares
