@@ -79,7 +79,8 @@ def setup_key_message(extra_vars):
 
     msg = find(plays)
     assert msg is not None, "site-bootstrap.yml has no 'show bootstrap setup key' task"
-    env = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined)
+    env = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined,
+                             autoescape=jinja2.select_autoescape(default_for_string=False))
     base = {"site_id": "fixture", "site_account_id": "acc_fixture", "create_key": {"stdout": "setup_key_id: sk_x"}}
     return env.from_string(msg).render(**base, **extra_vars)
 
