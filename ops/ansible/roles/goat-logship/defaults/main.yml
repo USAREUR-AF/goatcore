@@ -331,6 +331,9 @@ logship_metrics_bind_docker_gateway: true
 logship_metrics_scraper_network: "mgmt"
 logship_metrics_scraper_iface: ""
 logship_expose_guard_nft_path: /etc/goat/logship-expose-guard.nft
+# Count drops in the guard rules: auto = when the kernel has nft counters
+# (checked with nft -c at deploy), true / false to force.
+logship_expose_guard_counter: auto
 
 # -- Healthcheck timing ------------------------------------------------------
 logship_health_retries: 30

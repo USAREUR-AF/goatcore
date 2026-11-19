@@ -27,5 +27,6 @@ else echo "  SKIP exposure guard load check (no nft or no user namespaces)"; fi
 # truthiness, so a "false" string would still render the source.
 run no-docker -e '{"logship_source_identity_enroll": false, "logship_source_app_http": false, "logship_source_app_auth": false, "logship_http_bandwidth_metrics": false}'
 run bind-all -e '{"logship_bind_all": true}'
+run no-counter -e '{"_logship_guard_counter": false}'
 [ "$fails" -eq 0 ] || { echo "goat-logship: render FAILED ($fails)"; exit 1; }
 echo "goat-logship: render OK"

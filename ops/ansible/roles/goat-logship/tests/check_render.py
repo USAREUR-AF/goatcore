@@ -97,7 +97,7 @@ else:
 # 5. The exporter address inside the container and the guard.
 check(vector["sinks"]["metrics"]["address"] == "0.0.0.0:9598",
       "exporter listens in its own netns; host exposure is the ports list")
-if case != "bind-all":
+if case not in ("bind-all", "no-counter"):
     nft = open(f"{d}/logship-expose-guard.nft").read()
     check("ip daddr 100.64.0.7 tcp dport 9598 counter drop" in nft
           and "ct original ip daddr 100.64.0.7 ct original proto-dst 9598 counter drop" in nft,
@@ -105,5 +105,11 @@ if case != "bind-all":
     check('iifname != "lo" iifname != "br-0123456789ab" ip daddr 172.17.0.1 tcp dport 9598 counter drop' in nft
           and 'iifname != "br-0123456789ab" meta l4proto tcp ct original ip daddr 172.17.0.1 ct original proto-dst 9598 counter drop' in nft,
           "exposure guard admits the gateway binding only from the scraper's bridge")
+
+if case == "no-counter":
+    nft = open(f"{d}/logship-expose-guard.nft").read()
+    check("counter" not in nft.split("table inet goat_logship_expose {", 1)[1]
+          and "ip daddr 100.64.0.7 tcp dport 9598 drop" in nft,
+          "a kernel without nft counters gets the same drops, uncounted")
 
 sys.exit(1 if fails else 0)

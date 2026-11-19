@@ -26,21 +26,24 @@
 #
 # Its own table: Docker never touches it, and a restart of dockerd leaves it in
 # place. goat-logship-expose-guard.service loads it at boot, before docker.
+{% set _logship_guard_verdict = 'counter drop' if (_logship_guard_counter | default(true) | bool) else 'drop' %}
+# Rules count drops where the kernel has nft counters (not built into the
+# Jetson Tegra kernel); without them the rules drop the same traffic uncounted.
 table inet goat_logship_expose
 delete table inet goat_logship_expose
 table inet goat_logship_expose {
 	chain forward {
 		type filter hook forward priority filter - 10; policy accept;
-		ct direction original iifname != "{{ logship_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _logship_bind | trim }} ct original proto-dst {{ logship_metrics_port }} counter drop
+		ct direction original iifname != "{{ logship_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _logship_bind | trim }} ct original proto-dst {{ logship_metrics_port }} {{ _logship_guard_verdict }}
 {% if (_logship_gw_bind | default('', true) | trim) | length > 0 %}
-		ct direction original iifname != "{{ _logship_scraper_iface | trim }}" meta l4proto tcp ct original ip daddr {{ _logship_gw_bind | trim }} ct original proto-dst {{ logship_metrics_port }} counter drop
+		ct direction original iifname != "{{ _logship_scraper_iface | trim }}" meta l4proto tcp ct original ip daddr {{ _logship_gw_bind | trim }} ct original proto-dst {{ logship_metrics_port }} {{ _logship_guard_verdict }}
 {% endif %}
 	}
 	chain input {
 		type filter hook input priority filter - 10; policy accept;
-		iifname != "lo" iifname != "{{ logship_mesh_iface }}" ip daddr {{ _logship_bind | trim }} tcp dport {{ logship_metrics_port }} counter drop
+		iifname != "lo" iifname != "{{ logship_mesh_iface }}" ip daddr {{ _logship_bind | trim }} tcp dport {{ logship_metrics_port }} {{ _logship_guard_verdict }}
 {% if (_logship_gw_bind | default('', true) | trim) | length > 0 %}
-		iifname != "lo" iifname != "{{ _logship_scraper_iface | trim }}" ip daddr {{ _logship_gw_bind | trim }} tcp dport {{ logship_metrics_port }} counter drop
+		iifname != "lo" iifname != "{{ _logship_scraper_iface | trim }}" ip daddr {{ _logship_gw_bind | trim }} tcp dport {{ logship_metrics_port }} {{ _logship_guard_verdict }}
 {% endif %}
 	}
 }
