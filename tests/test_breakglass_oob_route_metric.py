@@ -142,6 +142,20 @@ class OutOfBandRouteMetric(unittest.TestCase):
         self.assertIn('strictly higher', r.stdout)
         self.assertIn(PRIMARY, r.stdout)
 
+    def test_only_the_out_of_band_interface_is_touched(self):
+        # The primary is never named: every nmcli or networkctl call that names a
+        # device names the out-of-band one, under either stack.
+        for stack in ('networkd', 'nm'):
+            with self.subTest(stack):
+                r, log, _ = self.run_tasks(stack)
+                self.assertEqual(r.returncode, 0, r.stdout[-4000:])
+                calls = [l for l in log.splitlines() if l.split(' ', 1)[0] in ('nmcli', 'networkctl')]
+                self.assertTrue(calls, f'{stack}: no nmcli or networkctl call')
+                for call in calls:
+                    self.assertNotIn(PRIMARY, call.split(), f'{stack}: {call!r} names the primary')
+                    if any(w in call for w in ('device show', 'device reapply', 'status', 'reconfigure')):
+                        self.assertEqual(call.split()[-1], OOB, f'{stack}: {call!r} names another interface')
+
     def test_the_role_runs_the_metric_tasks_only_when_an_interface_is_named(self):
         tasks = yaml.safe_load((ROLE / 'tasks/main.yml').read_text())
         hits = [t for t in tasks if isinstance(t, dict)
