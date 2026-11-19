@@ -145,6 +145,42 @@ cert URI-SAN, not a structured ZID prefix (the [deliberate delta](https://github
   subscribers; useful to *suppress* publishing when nobody's listening (save CPU/bandwidth on the denied edge).
   Not needed until a measured idle-publish cost justifies it. Revisit alongside the fabric-health active
   idle-probe roadmap.
+- **zenoh-nostd (a Zenoh client for microcontrollers)** —
+  [`eclipse-zenoh/zenoh-nostd`](https://github.com/eclipse-zenoh/zenoh-nostd) is a pure-Rust Zenoh client that
+  needs no standard library and no heap. Watched, not adopted: it cannot present a client certificate, so it
+  cannot join a goat fabric directly, and no goat component runs Zenoh on a device that small today.
+  - *What it offers (read from its source at tag `0.2.0`, 2026-11-16):* put, publisher, subscriber, get and
+    queryable in client mode; platforms for ESP32-S3 (Embassy), ordinary hosts and the browser
+    (`wasm32-unknown-unknown`); a small broker that joins several clients and can forward to a Zenoh network;
+    a `zenoh-sansio` crate that holds the transport state machine with no I/O attached. Links are `tcp`, `udp`
+    and `ws`. Its README marks it as early development; it is consumed as a git dependency and needs Rust 1.91.
+  - *What it lacks for goat:* TLS, and with it the client certificate every goat router requires; the `serial`
+    link (parsed, not implemented, upstream issue #11); the Interest protocol (upstream issue #46).
+  - *How a device that small would join:* behind a gateway peer that holds the fabric certificate, has a
+    recorded owner and publishes for the device, the same shape as the REST publish bridge
+    ([ADR 1023](../adr/1023-zenoh-rest-pub-bridge-for-non-rust-publishers.md)). Designed, not built.
+  - *Revisit when any one of these is true:* upstream adds TLS with client certificates; upstream implements
+    the serial link, which makes it a candidate for bearers below IP; a microcontroller-class publisher is
+    required by a goat component or a partner integration.
+  - *Lowest-risk first trial:* the browser playground's isolated router, where the client would speak the
+    native protocol over `ws` and the remote-api plugin would not be needed.
+- **Hiroz (a ROS 2 stack written in Rust on Zenoh)** —
+  [`ZettaScaleLabs/hiroz`](https://github.com/ZettaScaleLabs/hiroz) lets a robot program publish and subscribe
+  to ROS 2 topics with no ROS installation, and it interoperates with ROS 2 systems that use the Zenoh
+  middleware (`rmw_zenoh`). Watched, not adopted: no goat component speaks ROS 2 today, and its README marks
+  it as experimental.
+  - *What it offers (read from its README and workspace manifest at version `0.2.1`, 2026-11-16):* a pure-Rust
+    ROS 2 implementation built on the `zenoh` crate at `1.9.0`, the version the goat fleet pins; a middleware
+    crate (`rmw-zenoh-rs`) so existing C, C++ and Python ROS 2 programs keep working; Python and Go packages;
+    code generation for ROS 2 message types. It is tested with ROS 2 Humble, Jazzy, Kilted and Lyrical.
+  - *What a goat integration has to settle:* the workspace enables only the `transport_tcp` and
+    `transport_serial` features of `zenoh`, so a build that joins a goat fabric must add `transport_tls` to
+    present its client certificate (unmeasured); ROS 2 key expressions follow the `rmw_zenoh` layout, not the
+    owner-rooted layout goat routers authorize, so the mapping between the two is a design decision, not a
+    configuration value.
+  - *Revisit when any one of these is true:* a robot or vehicle that runs ROS 2 has to publish to or read from
+    a goatnet; a conversion between ROS 2 messages and another format is built and needs a ROS 2 endpoint to
+    prove it against; upstream declares a stable release.
 
 ## What stays behind the router-image boundary (no change)
 

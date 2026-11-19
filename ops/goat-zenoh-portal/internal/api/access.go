@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/access"
+	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/kratosadmin"
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/peername"
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/registry"
 )
@@ -119,14 +120,15 @@ func (s *Server) collectAccessSources(ctx context.Context) (access.Sources, []ac
 		for _, id := range ids {
 			affID, affKind, affNation := id.Aff()
 			src.Identities = append(src.Identities, access.IdentityIn{
-				ID:        id.ID,
-				Email:     id.Email(),
-				Name:      id.Name(),
-				Vendor:    id.VendorShortTag(),
-				AffID:     affID,
-				AffKind:   affKind,
-				AffNation: affNation,
-				Disabled:  id.State != "active",
+				ID:          id.ID,
+				Email:       id.Email(),
+				Name:        id.Name(),
+				Vendor:      id.VendorShortTag(),
+				AffID:       affID,
+				AffKind:     affKind,
+				AffNation:   affNation,
+				Nationality: identityNationality(id),
+				Disabled:    id.State != "active",
 				// Groups intentionally empty in PR-A: the model is flat
 				// community-read (ADR 1025), surfaced as a note rather than
 				// N×M per-topic read edges. Restricted read tiers plug in
@@ -162,6 +164,7 @@ func (s *Server) collectAccessSources(ctx context.Context) (access.Sources, []ac
 				Custodian:    derefStr(m.EnrolledBy),
 				NodeClass:    derefStr(m.NodeClass),
 				SlotID:       m.SlotID,
+				Affiliation:  derefStr(m.Affiliation),
 			})
 		}
 	}
@@ -228,6 +231,17 @@ func (s *Server) collectAccessSources(ctx context.Context) (access.Sources, []ac
 	// lane that grants nothing, since alliance members already read everything.
 	// Declared release-sets are unaffected and still populate src.Releases.
 	return src, warn
+}
+
+// identityNationality returns metadata_public.nationality: the PERSON's own
+// citizenship (ADR 1171), ISO 3166-1 alpha-3. Read from admin-managed metadata
+// only, never from self-editable traits, and never derived from the
+// organization's nation in aff. Empty means the identity record carries none:
+// the approved manifest holds it, and stamping it onto the identity is
+// designed, not built (docs/design/peer-identity-resolution.md).
+func identityNationality(id kratosadmin.Identity) string {
+	s, _ := id.MetadataPublic["nationality"].(string)
+	return strings.TrimSpace(s)
 }
 
 // assembleAccessGraph builds the COP graph and reports how ownership was
@@ -330,11 +344,38 @@ func (s *Server) handleAccessPeersBatch(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"peers": out, "notes": access.NoteTexts(warn)})
 }
 
-// resolvePeerName does one peer→person resolution against an assembled source set:
-// name → roster handle (longest prefix) → org + the live Ory identity (email-hash
-// reconcile) → ory id + deep-link targets. Best-effort: org resolves whenever the
-// handle matches; the person id resolves when a live identity shares the hash.
+// resolvePeerName does one peer→person resolution against an assembled source
+// set. The record answers first (recordOwner): a machine through its enrolled
+// custodian, a person's device through the slot that carries the person's
+// identity. The declared roster answers only when the record does not, and the
+// row's `owner.source` says which one did (docs/design/peer-identity-resolution.md
+// §"The owner comes from the record, not the roster").
 func resolvePeerName(src access.Sources, name string) map[string]any {
+	owner := recordOwner(src, name)
+	if owner.source == "record" {
+		return owner.row(src, name)
+	}
+	resp := resolvePeerNameFromRoster(src, name)
+	if _, ok := resp["org"]; ok {
+		resp["owner"] = map[string]any{
+			"source": "roster",
+			"note":   "answered from the declared roster: a lead, not the recorded link; the record says: " + owner.reason,
+		}
+	} else {
+		resp["owner"] = map[string]any{"source": "none", "reason": owner.reason}
+		if r, ok := resp["reason"].(string); ok && r != "" {
+			resp["reason"] = owner.reason + "; roster: " + r
+		} else {
+			resp["reason"] = owner.reason
+		}
+	}
+	return resp
+}
+
+// resolvePeerNameFromRoster is the roster resolution: name → roster handle
+// (longest prefix) → org + the live Ory identity (email-hash reconcile). It is
+// the fallback behind the record.
+func resolvePeerNameFromRoster(src access.Sources, name string) map[string]any {
 	resp := map[string]any{"netbird_name": name, "resolved": false}
 	handle := access.MatchPeerHandle(name, src.Roster)
 	if handle == "" {
@@ -356,6 +397,163 @@ func resolvePeerName(src access.Sources, name string) map[string]any {
 		return resp
 	}
 	resolveMember(resp, src, member)
+	return resp
+}
+
+// ownerAnswer is what the record says about one peer.
+type ownerAnswer struct {
+	source  string // "record" or "" (the record did not answer)
+	via     string // "machine-custody" | "slot-identity"
+	reason  string // why the record did not answer
+	handle  string // the responsible person's slot handle
+	ident   access.IdentityIn
+	machine *access.MachineIn
+}
+
+// recordOwner answers from the recorded links only: a `machine-<handle>` peer
+// from its enrolled machine's custodian (slots.enrolled_by → the custodian's
+// slot, by anchor or alias → slots.identity_id → the Kratos identity); a
+// `peer-<handle>-…` device from the slot whose alias is the longest handle the
+// name carries and that has a recorded identity. Nothing here reads the roster.
+func recordOwner(src access.Sources, name string) ownerAnswer {
+	if system := access.MatchMachineHandle(name, src.Machines); system != "" {
+		var m access.MachineIn
+		for _, x := range src.Machines {
+			if x.SystemHandle == system {
+				m = x
+				break
+			}
+		}
+		a := ownerAnswer{via: "machine-custody", machine: &m}
+		if m.Custodian == "" {
+			a.reason = "machine " + system + " is enrolled with no custodian on its slot"
+			return a
+		}
+		v := vendorFor(src, m.Custodian)
+		if v == nil {
+			a.reason = "machine " + system + " is enrolled, but its custodian " + m.Custodian + " holds no live slot"
+			return a
+		}
+		return identityAnswer(src, a, v, "machine "+system+"'s custodian")
+	}
+	aliases := make([]string, 0, len(src.Vendors))
+	for _, v := range src.Vendors {
+		if v.Alias != "" {
+			aliases = append(aliases, v.Alias)
+		}
+	}
+	handle := peername.MatchLongestKey(name, aliases)
+	if handle == "" {
+		return ownerAnswer{reason: "no enrolled machine and no slot handle matches this peer name"}
+	}
+	return identityAnswer(src, ownerAnswer{via: "slot-identity"}, vendorFor(src, handle), "the slot for "+handle)
+}
+
+// vendorFor finds the slot a custodian column or a handle names: by anchor
+// (the vendor prefix) first, then by alias.
+func vendorFor(src access.Sources, key string) *access.VendorIn {
+	for i := range src.Vendors {
+		if src.Vendors[i].Prefix == key {
+			return &src.Vendors[i]
+		}
+	}
+	for i := range src.Vendors {
+		if src.Vendors[i].Alias == key {
+			return &src.Vendors[i]
+		}
+	}
+	return nil
+}
+
+func identityAnswer(src access.Sources, a ownerAnswer, v *access.VendorIn, what string) ownerAnswer {
+	a.handle = v.Alias
+	if v.IdentityID == "" {
+		a.reason = what + " carries no recorded identity (slots.identity_id is empty)"
+		return a
+	}
+	for _, id := range src.Identities {
+		if id.ID == v.IdentityID {
+			a.ident = id
+			a.source = "record"
+			return a
+		}
+	}
+	a.reason = what + " records identity " + v.IdentityID + ", which the identity layer does not hold"
+	return a
+}
+
+// row renders a record answer. The top-level fields keep their meaning, so a
+// consumer that reads only them gets the recorded owner; `owner` says where
+// each fact came from, and states a fact the record lacks instead of leaving
+// it blank.
+func (a ownerAnswer) row(src access.Sources, name string) map[string]any {
+	id := a.ident
+	orgID := id.AffID
+	if orgID == "" {
+		orgID = id.Vendor
+	}
+	org := map[string]any{"id": id.AffID, "kind": id.AffKind, "nation": id.AffNation, "short_tag": id.Vendor}
+	if orgID == "" {
+		org["state"] = "missing"
+		org["reason"] = "the identity record carries no organization (metadata_public.aff and .org are absent)"
+	} else {
+		org["state"] = "recorded"
+	}
+	nat := map[string]any{"value": id.Nationality}
+	if id.Nationality != "" {
+		nat["state"] = "recorded"
+	} else {
+		nat["state"] = "not_stamped"
+		nat["reason"] = "the identity record carries no nationality; it is held on the approved manifest and not yet stamped onto the identity"
+	}
+	owner := map[string]any{
+		"source": "record",
+		"via":    a.via,
+		// The first hop of both record tiers is still the peer NAME: the
+		// machine or slot handle is found in the name the key minted. Every
+		// hop after it is a recorded link. The link is recorded end to end
+		// only when the slot carries the setup key id or the NetBird peer id
+		// that admitted this peer (ADR 1249 decision 3, designed). Said here
+		// so a consumer does not read this as stronger than it is.
+		"matched_by":  "peer-name",
+		"link_note":   "the slot was found by the handle in the peer name; the slot's owner, identity and organization are recorded links",
+		"person":      map[string]any{"handle": a.handle, "identity_id": id.ID, "disabled": id.Disabled},
+		"org":         org,
+		"nationality": nat,
+	}
+	resp := map[string]any{
+		"netbird_name": name,
+		"resolved":     !id.Disabled,
+		"handle":       a.handle,
+		"org":          orgID,
+		"affiliation":  id.AffKind,
+		// Two facts, kept apart (ADR 1171): the organization's nation and the
+		// person's own nationality. Neither is filled from the other.
+		"nation":      id.AffNation,
+		"nationality": id.Nationality,
+		"person": map[string]any{
+			"ory_identity_id": id.ID,
+			"email":           id.Email,
+			"name":            id.Name,
+			"disabled":        id.Disabled,
+		},
+		"deep_links": map[string]any{
+			"id_console_user": "/users/" + id.ID,
+			"org_access":      "/api/access/who?id=" + orgID,
+		},
+		"owner": owner,
+	}
+	if id.Disabled {
+		resp["reason"] = "the recorded owner's identity is disabled"
+	}
+	if a.machine != nil {
+		resp["machine"] = map[string]any{
+			"system_handle": a.machine.SystemHandle,
+			"slot_id":       a.machine.SlotID,
+			"node_class":    a.machine.NodeClass,
+		}
+		owner["machine_unit"] = a.machine.Affiliation
+	}
 	return resp
 }
 

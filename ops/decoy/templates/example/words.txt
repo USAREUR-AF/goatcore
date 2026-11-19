@@ -1,0 +1,12 @@
+archive
+backup
+billing
+build
+cache
+ledger
+metrics
+queue
+registry
+replica
+reports
+staging

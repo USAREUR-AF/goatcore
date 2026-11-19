@@ -1,0 +1,111 @@
+---
+# Render on the control machine, where the seed is; write only the results to the host.
+
+- name: decoy | which declared host groups this host is in
+  ansible.builtin.set_fact:
+    _decoy_groups: >-
+      {{ deception_entry_points | map(attribute='hosts') | unique | intersect(group_names) | list }}
+
+- name: decoy | write the declaration the renderer reads
+  delegate_to: localhost
+  become: false
+  ansible.builtin.tempfile:
+    state: file
+    suffix: .decoy.json
+  register: _decoy_decl
+  changed_when: false
+  when: _decoy_groups | length > 0
+
+- name: decoy | fill the declaration file
+  delegate_to: localhost
+  become: false
+  ansible.builtin.copy:
+    dest: "{{ _decoy_decl.path }}"
+    mode: "0600"
+    content: >-
+      {{ {'deception_service_zone': deception_service_zone,
+          'deception_entry_points': deception_entry_points} | to_json }}
+  changed_when: false
+  when: _decoy_groups | length > 0
+
+- name: decoy | render this host's entry points
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../decoy/decoy.py"
+      - render
+      - --declaration
+      - "{{ _decoy_decl.path }}"
+      - --host-group
+      - "{{ item }}"
+      - --templates
+      - "{{ deception_templates_dir }}"
+  environment:
+    GOAT_DECOY_SEED: "{{ deception_seed }}"
+  loop: "{{ _decoy_groups }}"
+  register: _decoy_rendered
+  changed_when: false
+  no_log: true
+
+- name: decoy | remove the declaration file
+  delegate_to: localhost
+  become: false
+  ansible.builtin.file:
+    path: "{{ _decoy_decl.path }}"
+    state: absent
+  changed_when: false
+  when: _decoy_groups | length > 0
+
+- name: decoy | the files to plant
+  ansible.builtin.set_fact:
+    _decoy_files: >-
+      {{ _decoy_rendered.results | default([]) | map(attribute='stdout') | map('from_json') | flatten }}
+  no_log: true
+
+- name: decoy | read what is planted now
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+    checksum_algorithm: sha256
+  loop: "{{ _decoy_files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: _decoy_present
+
+# A planted file whose content differs from the content computed from the seed
+# was changed by somebody. That is a touch: stop and say so.
+- name: decoy | a changed decoy is a touch
+  ansible.builtin.assert:
+    that:
+      - (not item.stat.exists) or item.stat.checksum == item.item.sha256 or (deception_replant | bool)
+    fail_msg: >-
+      {{ item.item.path }} on {{ inventory_hostname }} no longer has the content
+      this goatnet planted. Treat it as a decoy touch
+      (docs/operations/decoy-layer-runbook.md). After the investigation, rerun
+      with -e deception_replant=true to restore it.
+    quiet: true
+  loop: "{{ _decoy_present.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+- name: decoy | directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ _decoy_files | map(attribute='dir') | unique | list }}"
+
+- name: decoy | plant
+  ansible.builtin.copy:
+    dest: "{{ item.path }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop: "{{ _decoy_files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  no_log: true

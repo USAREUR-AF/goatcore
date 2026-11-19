@@ -1,0 +1,53 @@
+name: decoy
+
+# The decoy layer (ADR 1247): the responder and planting tool in ops/decoy, the
+# role that deploys them, and its alert rule.
+
+on:
+  pull_request:
+    paths:
+      - 'ops/decoy/**'
+      - 'ops/ansible/roles/decoy/**'
+      - 'ops/ansible/decoy-deploy.yml'
+      - '.github/workflows/decoy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: responder tests, alert rule tests, playbook syntax
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # The same Prometheus the goat-obs stack runs; see goat-obs-checks.yml.
+      PROM_VERSION: '2.54.1'
+      PROM_SHA256: '31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e62924f'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: install test tools
+        run: python3 -m pip install -q pytest pyyaml ansible-core
+      - name: responder and planting tests
+        run: python3 -m pytest -q ops/decoy
+      - name: install promtool (version-pinned + checksum-verified)
+        run: |
+          set -euo pipefail
+          tarball="prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
+          curl -fsSLO --retry 6 --retry-delay 15 --retry-all-errors "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${tarball}"
+          echo "${PROM_SHA256}  ${tarball}" | sha256sum -c -
+          tar xzf "${tarball}"
+          sudo install -m 0755 "prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+      - name: alert rule check and tests
+        run: |
+          promtool check rules ops/ansible/roles/decoy/files/decoy-alerts.yml
+          promtool test rules ops/ansible/roles/decoy/tests/decoy-alerts.test.yml
+      - name: playbook syntax and template render
+        working-directory: ops/ansible
+        run: |
+          ansible-playbook --syntax-check -i localhost, decoy-deploy.yml -e target=localhost
+          ansible-playbook -i localhost, -c local roles/decoy/tests/render.yml
