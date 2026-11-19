@@ -485,6 +485,100 @@
    ]
   }
  },
+ "goatbuilder federate directory": {
+  "args": [],
+  "flags": {
+   "--url": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate directory check": {
+  "args": [
+   {
+    "name": "PARTY",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--for": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate directory ls": {
+  "args": [],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
+ "goatbuilder federate directory show": {
+  "args": [
+   {
+    "name": "PARTY",
+    "required": true
+   }
+  ],
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--side": [
+    "edge",
+    "core"
+   ]
+  }
+ },
  "goatbuilder federate import": {
   "args": [
    {
