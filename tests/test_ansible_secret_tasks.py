@@ -167,21 +167,40 @@ def extract(path, names):
     return picked
 
 
-def redirect_etc(node, tmp):
+def redirect_etc(node, tmp, moved=None):
     """A copy into /etc or /tmp writes into the test's directory instead,
-    owned by whoever runs the test."""
+    owned by whoever runs the test, and every other mention of that path in
+    the tasks names the new one."""
+    top = moved is None
+    moved = {} if top else moved
     if isinstance(node, list):
         for n in node:
-            redirect_etc(n, tmp)
+            redirect_etc(n, tmp, moved)
     elif isinstance(node, dict):
         for key in ('copy', 'ansible.builtin.copy'):
             args = node.get(key)
             if isinstance(args, dict) and str(args.get('dest', '')).startswith(('/etc/', '/tmp/')):
-                args['dest'] = str(tmp / Path(args['dest']).name)
+                new = str(tmp / Path(args['dest']).name)
+                moved[args['dest']] = new
+                args['dest'] = new
                 args.pop('owner', None)
                 args.pop('group', None)
         for v in node.values():
-            redirect_etc(v, tmp)
+            redirect_etc(v, tmp, moved)
+    if top and moved:
+        rename(node, moved)
+
+
+def rename(node, moved):
+    """Replace each moved path in every string of the tasks, in place."""
+    items = enumerate(node) if isinstance(node, list) else node.items() if isinstance(node, dict) else ()
+    for k, v in list(items):
+        if isinstance(v, str):
+            for old, new in moved.items():
+                v = v.replace(old, new)
+            node[k] = v
+        else:
+            rename(v, moved)
 
 
 # (label, file, task names or None for the whole file, extra vars,
@@ -205,11 +224,11 @@ CASES = [
      ['postgres_superuser_password', 'id_admin_console_db_password']),
     ('cgnat setup-key hash and seed SQL', 'cgnat-validation.yml',
      ['Hash the setup key (base64 of its sha256, as NetBird stores it)',
-      'Compute setup-key hash + mask', 'Render seed SQL'],
+      'Compute setup-key hash + mask', 'Render seed SQL', 'Apply seed SQL via psql'],
      {'site_uuid_upper': "{{ cgnat_site_a_setup_key | upper }}", 'site_account_id': 'acc_a',
       'site_key_id': 'sk_a', 'site_group_id': 'grp_a', 'site_domain': 'cgnat-a.local',
       'site_net_id': 'cgnat-a-net', 'site_network_net': '{"IP":"100.64.0.0","Mask":"//8AAA=="}'},
-     [], 'cgnat_seed'),
+     ['postgres_superuser_password'], 'cgnat_seed'),
     ('cgnat seed and peer counts', 'cgnat-validation.yml',
      ['Apply seed SQL via psql', 'Query enrolled peer count (site α)',
       'Query enrolled peer count (site β)'], {}, ['postgres_superuser_password']),
@@ -299,6 +318,10 @@ class SecretTasksDoNotLogOrPassOnTheCommandLine(unittest.TestCase):
             }]
             (tmp / 'compose').mkdir()
             (tmp / 'compose' / '.env').write_text('')
+            if post == 'cgnat_seed':
+                # A seed an earlier run left readable by everyone.
+                (tmp / 'cgnat-a-seed.sql').write_text('-- an earlier run\n')
+                (tmp / 'cgnat-a-seed.sql').chmod(0o644)
             (tmp / 'play.yml').write_text(yaml.safe_dump(play, allow_unicode=True, sort_keys=False))
             env = dict(os.environ,
                        PATH=f'{bindir}:{os.environ["PATH"]}',
@@ -357,6 +380,11 @@ class SecretTasksDoNotLogOrPassOnTheCommandLine(unittest.TestCase):
                 self.assertIn(base64.b64encode(hashlib.sha256(key.encode()).digest()).decode(), text)
                 self.assertIn(f"'{key[:5]}****'", text)
                 self.assertEqual(oct(seed.stat().st_mode & 0o777), '0o600', f'{label}: {seed} mode')
+                # psql reads the seed on stdin: a copy into the container would be
+                # root-owned and mode 0600, which psql (the image's postgres user)
+                # cannot read.
+                self.assertNotRegex(argv, r'(?m)^cp ', f'{label}: the seed was copied into the container')
+                self.assertIn('INSERT INTO accounts', read('stdin'), f'{label}: psql never read the seed')
 
     def test_cases(self):
         for label, rel, names, extra, delivered, *post in CASES:
