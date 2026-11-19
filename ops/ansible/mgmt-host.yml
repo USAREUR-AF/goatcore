@@ -47,9 +47,9 @@
 # Or for a single-instance (Phase 3+ per-site) deploy, omit -e phase2=true.
 
 - name: Deploy management-plane compose stack
-  # Default targets the umbrella mgmt_hosts group (backward-compat for
-  # direct callers like coordinated-upgrade.yml + cgnat-validation.yml).
-  # site-bootstrap.yml overrides via `-e mgmt_host_target=<site>_hosts`
+  # No default: each caller names its hosts. cgnat-validation.yml and
+  # goat-client-assay.yml set mgmt_host_target on their import;
+  # site-bootstrap.yml sets it to <site>_hosts
   # so its Phase 2A import_playbook only fans out to the requested site,
   # NEVER to other reachable mgmt_hosts members.
   hosts: "{{ mgmt_host_target | mandatory }}"
@@ -770,62 +770,91 @@
     # the "image-baked PGDATA → initdb skipped → POSTGRES_PASSWORD env ignored"
     # state ~30s after compose-up instead of waiting for management-a's SASL
     # auth flap ~10min later. See docs/findings/F-044-pgedge-postgres-baked-data-dir.md.
-    - name: F-044 preflight — postgres password auth round-trip
+    - name: F-044 preflight — the password from a 0600 env file
       block:
-        - name: F-044 preflight — psql connect via TCP with env-derived password
-          ansible.builtin.command:
-            argv:
-              - docker
-              - exec
-              - postgres-a
-              - sh
-              - -c
-              - "PGPASSWORD={{ postgres_superuser_password | quote }} psql -h 127.0.0.1 -U postgres -d postgres -tAc 'SELECT 1'"
-          register: pg_pwcheck
-          changed_when: false
-          # A freshly-basebackup'd streaming standby refuses TCP connections with
-          # "the database system is in recovery mode" until it reaches a
-          # consistent state and hot_standby opens (seconds). That is NOT an auth
-          # failure and NOT F-044 — retry while it settles so a healthy standby
-          # passes on its own. The rescue below only fires for a real, persistent
-          # auth failure (a standby's postgres password comes from the primary via
-          # basebackup, so it is correct whenever the primary's is).
-          retries: 12
-          delay: 5
-          until: pg_pwcheck.rc == 0
-      rescue:
-        - name: F-044 preflight — a standby still in recovery is not an auth failure (tolerate)
-          ansible.builtin.debug:
-            msg: >-
-              postgres-a reports "in recovery mode" — a streaming standby that has
-              not yet reached consistency. Not F-044; the password round-trip is
-              deferred. Streaming convergence is verified separately by the
-              postgres-streaming-replication role (primary pg_stat_replication).
-          when: "'in recovery mode' in (pg_pwcheck.stderr | default(''))"
-        - name: F-044 — postgres password mismatch; fail loud with operator path
-          when: "'in recovery mode' not in (pg_pwcheck.stderr | default(''))"
-          ansible.builtin.fail:
-            msg: |
-              POSTGRES PASSWORD AUTH FAILED — F-044 likely cause.
+        - name: F-044 preflight — create the postgres env file (0600)
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pgenv
+          register: pg_env
 
-              The postgres-spock image's pgedge base ships
-              /var/lib/pgsql/16/data pre-populated. Docker auto-copied
-              it into the named pgdata-* volume on first mount; postgres
-              entrypoint skipped initdb; POSTGRES_PASSWORD env was
-              silently ignored. The `postgres` role has the pgedge
-              build-time default password, NOT the runtime env value.
+        - name: F-044 preflight — write the superuser password to the postgres env file
+          ansible.builtin.copy:
+            dest: "{{ pg_env.path }}"
+            content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+            mode: "0600"
+          no_log: true
 
-              Fix path A (durable): rebuild postgres-spock with the
-              data-scrub already in ops/postgres/spock/Dockerfile, bump
-              the SHA pin in ops/compose/mgmt-host/docker-compose.yml,
-              redeploy.
+        - name: F-044 preflight — postgres password auth round-trip
+          block:
+            - name: F-044 preflight — psql connect via TCP with env-derived password
+              ansible.builtin.command:
+                argv:
+                  - docker
+                  - exec
+                  - --env-file
+                  - "{{ pg_env.path }}"
+                  - postgres-a
+                  - psql
+                  - -h
+                  - 127.0.0.1
+                  - -U
+                  - postgres
+                  - -d
+                  - postgres
+                  - -tAc
+                  - "SELECT 1"
+              register: pg_pwcheck
+              changed_when: false
+              # A freshly-basebackup'd streaming standby refuses TCP connections with
+              # "the database system is in recovery mode" until it reaches a
+              # consistent state and hot_standby opens (seconds). That is NOT an auth
+              # failure and NOT F-044 — retry while it settles so a healthy standby
+              # passes on its own. The rescue below only fires for a real, persistent
+              # auth failure (a standby's postgres password comes from the primary via
+              # basebackup, so it is correct whenever the primary's is).
+              retries: 12
+              delay: 5
+              until: pg_pwcheck.rc == 0
+          rescue:
+            - name: F-044 preflight — a standby still in recovery is not an auth failure (tolerate)
+              ansible.builtin.debug:
+                msg: >-
+                  postgres-a reports "in recovery mode" — a streaming standby that has
+                  not yet reached consistency. Not F-044; the password round-trip is
+                  deferred. Streaming convergence is verified separately by the
+                  postgres-streaming-replication role (primary pg_stat_replication).
+              when: "'in recovery mode' in (pg_pwcheck.stderr | default(''))"
+            - name: F-044 — postgres password mismatch; fail loud with operator path
+              when: "'in recovery mode' not in (pg_pwcheck.stderr | default(''))"
+              ansible.builtin.fail:
+                msg: |
+                  POSTGRES PASSWORD AUTH FAILED — F-044 likely cause.
 
-              Fix path B (workaround for current env):
-                docker exec postgres-a psql -U postgres -d postgres -c \
-                  "ALTER USER postgres WITH PASSWORD '$POSTGRES_PASSWORD'"
-                docker restart management-a   # (and any other DB consumer)
+                  The postgres-spock image's pgedge base ships
+                  /var/lib/pgsql/16/data pre-populated. Docker auto-copied
+                  it into the named pgdata-* volume on first mount; postgres
+                  entrypoint skipped initdb; POSTGRES_PASSWORD env was
+                  silently ignored. The `postgres` role has the pgedge
+                  build-time default password, NOT the runtime env value.
 
-              See docs/findings/F-044-pgedge-postgres-baked-data-dir.md.
+                  Fix path A (durable): rebuild postgres-spock with the
+                  data-scrub already in ops/postgres/spock/Dockerfile, bump
+                  the SHA pin in ops/compose/mgmt-host/docker-compose.yml,
+                  redeploy.
+
+                  Fix path B (workaround for current env):
+                    docker exec postgres-a psql -U postgres -d postgres -c \
+                      "ALTER USER postgres WITH PASSWORD '$POSTGRES_PASSWORD'"
+                    docker restart management-a   # (and any other DB consumer)
+
+                  See docs/findings/F-044-pgedge-postgres-baked-data-dir.md.
+      always:
+        - name: F-044 preflight — remove the postgres env file
+          ansible.builtin.file:
+            path: "{{ pg_env.path }}"
+            state: absent
+          when: pg_env.path is defined
 
     - name: Probe signal-a /healthz
       ansible.builtin.uri:

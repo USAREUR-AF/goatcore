@@ -290,6 +290,39 @@ def grade_pair(name, lo_ref, hi_ref, records, legacy, top):
     return "UNDECLARED-SKEW"
 
 
+def shadowing_members(comp_def, goatnet, goatnets, against=None):
+    """Members of `goatnet` whose own deviation keeps them off the goatnet's
+    value (ADR 1256): [(member, value)], in member order. `against` is the value
+    to compare with, by default what the goatnet resolves to now; a hotfix
+    passes the ref it is about to add. Absent members shadow nothing."""
+    if against is None:
+        st, against = effective(comp_def, goatnet)
+        if st != "value":
+            against = None
+    devs = comp_def.get("deviations") or {}
+    out = []
+    for m in ((goatnets.get(goatnet) or {}).get("members") or []):
+        dev = devs.get(m)
+        if not dev or dev.get("absent") or "value" not in dev:
+            continue
+        if dev["value"] != against:
+            out.append((m, dev["value"]))
+    return out
+
+
+def shadow_advice(component, goatnet, ref, shadows):
+    """What `hotfix` prints for each member that would keep its own pin."""
+    lines = [f"\nWARNING: {len(shadows)} member(s) of {goatnet} pin their own {component} "
+             "and would NOT take this hotfix (ADR 1256):"]
+    for m, value in shadows:
+        lines.append(f"  {m}: pins {value}")
+    lines.append("For each one, decide before the deploy:")
+    lines.append(f"  - delete its deviation under components.{component}.deviations, and it takes the hotfix; or")
+    lines.append(f"  - keep its pin deliberately: set under that member deviation  over: \"{ref}\"")
+    lines.append("generate-pins.py --check and `goatbuilder pins` refuse (GB-357, GB-358) until each is decided.")
+    return lines
+
+
 def grade_component(name, comp_def, live_rungs, records, overrides, allow):
     cls = (overrides.get(name) or {}).get("class", "ladder")
     if cls == "exempt":
@@ -364,6 +397,16 @@ def cmd_status(args):
                      else v.rsplit(":", 1)[-1].removeprefix("sha-")[:10])
             cells.append(f"  {short:<10}")
         print(f"{r['component']:<{w}}  {r['grade']:<{g}}" + "".join(cells))
+    pins = load_pins()
+    goatnets = pins.get("goatnets") or {}
+    shadowed = [(name, r["goatnet"], m, v)
+                for name, comp_def in sorted((pins.get("components") or {}).items())
+                for r in live
+                for m, v in shadowing_members(comp_def, r["goatnet"], goatnets)]
+    if shadowed:
+        print(f"\nmember deviations off their rung's value ({len(shadowed)}; ADR 1256):")
+        for name, gn, m, v in shadowed:
+            print(f"  {name}: {m} ({gn}) pins …{str(v)[-19:]}")
     open_recs = [r for r in records if r.get("state") == "candidate" and "_error" not in r]
     if open_recs:
         print(f"\nopen records ({len(open_recs)}):")
@@ -725,6 +768,9 @@ def cmd_hotfix(args):
     print(f"\nnow make this edit in ops/pins/fleet-pins.yaml under components.{args.component}:")
     print(f"    deviations:\n      {prod['goatnet']}:\n        value: {args.ref}\n"
           f"        reason: \"HOTFIX ({today}, ack {args.ack}): {args.reason} — record {path.name}\"")
+    shadows = shadowing_members(comp, prod["goatnet"], pins.get("goatnets") or {}, against=args.ref)
+    if shadows:
+        print("\n".join(shadow_advice(args.component, prod["goatnet"], args.ref, shadows)))
     print("\nbackfill: deploy the same ref to preprod, fill evidence, then "
           "`graduate.py graduate` folds it to fleet and clears both deviations.")
     return 0

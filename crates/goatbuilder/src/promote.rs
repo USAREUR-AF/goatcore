@@ -506,6 +506,54 @@ fn rung_goatnet(r: &Value) -> String {
     s_of(get(r, "goatnet")).unwrap_or_default()
 }
 
+/// Members of `goatnet` whose own deviation keeps them off the goatnet's value
+/// (ADR 1256): (member, value), in member order. `against` is the value to
+/// compare with, by default what the goatnet resolves to now; a hotfix passes
+/// the ref it is about to add. Absent members shadow nothing. Mirrors
+/// graduate.py `shadowing_members`.
+pub fn shadowing_members(comp_def: &Value, goatnet: &str, goatnets: &Value, against: Option<&Value>) -> Vec<(String, Value)> {
+    let against: Option<Value> = match against {
+        Some(a) => Some(a.clone()),
+        None => match effective(comp_def, goatnet) {
+            ("value", v) => v,
+            _ => None,
+        },
+    };
+    let devs = get(comp_def, "deviations").cloned().unwrap_or(Value::Null);
+    let members: Vec<String> = get(goatnets, goatnet).and_then(|g| get(g, "members")).and_then(|m| m.as_array()).map(|a| a.iter().map(py_str).collect()).unwrap_or_default();
+    let mut out = Vec::new();
+    for m in members {
+        let dev = match devs.get(&m) {
+            Some(d) if truthy(d) => d,
+            _ => continue,
+        };
+        if get(dev, "absent").map(truthy).unwrap_or(false) {
+            continue;
+        }
+        let value = match get(dev, "value") {
+            Some(v) => v.clone(),
+            None => continue,
+        };
+        if Some(&value) != against.as_ref() {
+            out.push((m, value));
+        }
+    }
+    out
+}
+
+/// What `hotfix` prints for each member that would keep its own pin.
+pub fn shadow_advice(component: &str, goatnet: &str, reference: &str, shadows: &[(String, Value)]) -> Vec<String> {
+    let mut lines = vec![format!("\nWARNING: {} member(s) of {goatnet} pin their own {component} and would NOT take this hotfix (ADR 1256):", shadows.len())];
+    for (m, value) in shadows {
+        lines.push(format!("  {m}: pins {}", py_str(value)));
+    }
+    lines.push("For each one, decide before the deploy:".into());
+    lines.push(format!("  - delete its deviation under components.{component}.deviations, and it takes the hotfix; or"));
+    lines.push(format!("  - keep its pin deliberately: set under that member deviation  over: \"{reference}\""));
+    lines.push("generate-pins.py --check and `goatbuilder pins` refuse (GB-357, GB-358) until each is decided.".into());
+    lines
+}
+
 fn grade_component(name: &str, comp_def: &Value, live: &[Value], records: &[Record], overrides: &Value, allow: &Value) -> Map<String, Value> {
     let cls = get(overrides, name).and_then(|o| get(o, "class")).map(py_str).unwrap_or_else(|| "ladder".into());
     let mut row = Map::new();
@@ -641,6 +689,30 @@ fn cmd_status(t: &Tree, json: bool, o: &mut Out) -> Result<i32> {
             line.push_str(&format!("  {:<10}", short_ref(&cell)));
         }
         o.out(line);
+    }
+    let pins = t.load_pins()?;
+    let goatnets = get(&pins, "goatnets").cloned().unwrap_or(json!({}));
+    let mut shadowed: Vec<(String, String, String, Value)> = Vec::new();
+    if let Some(comps) = get(&pins, "components").and_then(|c| c.as_object()) {
+        let mut names: Vec<&String> = comps.keys().collect();
+        names.sort();
+        for name in names {
+            for r in &st.live {
+                for (m, v) in shadowing_members(&comps[name], &rung_goatnet(r), &goatnets, None) {
+                    shadowed.push((name.clone(), rung_goatnet(r), m, v));
+                }
+            }
+        }
+    }
+    if !shadowed.is_empty() {
+        o.out(String::new());
+        o.out(format!("member deviations off their rung's value ({}; ADR 1256):", shadowed.len()));
+        for (name, gn, m, v) in &shadowed {
+            let s = py_str(v);
+            let n = s.chars().count();
+            let tail: String = s.chars().skip(n.saturating_sub(19)).collect();
+            o.out(format!("  {name}: {m} ({gn}) pins …{tail}"));
+        }
     }
     let open: Vec<&Record> = st.records.iter().filter(|r| r.error.is_none() && r.s("state").as_deref() == Some("candidate")).collect();
     if !open.is_empty() {
@@ -895,6 +967,11 @@ pub fn cmd_hotfix(t: &Tree, component: &str, reference: &str, reason: &str, ack:
     o.out(format!("hotfix record written: {} (backfill owed — status shows hotfix-backfill-owed until this ref graduates normally)", t.rel(&path)));
     o.out(format!("\nnow make this edit in ops/pins/fleet-pins.yaml under components.{component}:"));
     o.out(format!("    deviations:\n      {}:\n        value: {reference}\n        reason: \"HOTFIX ({today}, ack {ack}): {reason} — record {}\"", rung_goatnet(&prod), path.file_name().unwrap_or_default().to_string_lossy()));
+    let goatnets = get(&pins, "goatnets").cloned().unwrap_or(json!({}));
+    let shadows = shadowing_members(comp, &rung_goatnet(&prod), &goatnets, Some(&json!(reference)));
+    if !shadows.is_empty() {
+        o.out(shadow_advice(component, &rung_goatnet(&prod), reference, &shadows).join("\n"));
+    }
     o.out("\nbackfill: deploy the same ref to preprod, fill evidence, then `promote graduate` folds it to fleet and clears both deviations.");
     Ok(0)
 }
@@ -2311,6 +2388,23 @@ mod tests {
         assert_eq!(rd["state"], json!("soaking"));
         let blocked = json!({"state": "blocked", "class": "ladder", "blockers": ["runtime-health: preprod OOM-killed 2 time(s) since deploy"]});
         assert_eq!(next_step(&blocked), "runtime health → graduate → PROD");
+    }
+
+    #[test]
+    fn shadowing_members_names_members_off_the_goatnet_value_and_skips_absent_ones() {
+        let old = "ghcr.io/example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let fix = "ghcr.io/example/app@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let pin = "ghcr.io/example/app@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        let goatnets = json!({"zagros": {"members": ["zagros_a_hosts", "zagros_b_hosts"]}});
+        let c = json!({"fleet": old, "deviations": {"zagros": {"value": fix, "reason": "h"}, "zagros_b_hosts": {"value": pin, "over": old, "reason": "r"}}});
+        assert_eq!(shadowing_members(&c, "zagros", &goatnets, None), vec![("zagros_b_hosts".to_string(), json!(pin))]);
+        assert_eq!(shadowing_members(&c, "zagros", &goatnets, Some(&json!(fix))).len(), 1);
+        let on_it = json!({"fleet": old, "deviations": {"zagros_b_hosts": {"value": fix, "over": old, "reason": "r"}}});
+        assert!(shadowing_members(&on_it, "zagros", &goatnets, Some(&json!(fix))).is_empty());
+        let absent = json!({"fleet": old, "deviations": {"zagros_b_hosts": {"absent": true, "reason": "r"}}});
+        assert!(shadowing_members(&absent, "zagros", &goatnets, None).is_empty());
+        let text = shadow_advice("app", "zagros", fix, &[("zagros_b_hosts".to_string(), json!(pin))]).join("\n");
+        assert!(text.contains("zagros_b_hosts") && text.contains(&format!("over: \"{fix}\"")), "{text}");
     }
 
     #[test]

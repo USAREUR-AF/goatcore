@@ -1,0 +1,19 @@
+---
+# teardown-result.yml — included last by the teardown plays (teardown-compose,
+# teardown-service-stop, teardown-systemd). Each host sets `_teardown_present`:
+# whether the component was on it at all. When the operator machine sets
+# GOAT_TEARDOWN_RESULT (goatbuilder teardown and ops/scripts/goat-teardown.sh
+# do, one file per stop), one line goes there: `stopped` when any host had the
+# component, else `nothing to stop`. The drivers count a stop with nothing to
+# stop apart from one that came down. Unset, nothing is written.
+- name: teardown | write what was found to the operator machine's result file
+  ansible.builtin.copy:
+    dest: "{{ lookup('ansible.builtin.env', 'GOAT_TEARDOWN_RESULT') }}"
+    content: >-
+      {{ 'stopped' if (ansible_play_hosts | map('extract', hostvars, '_teardown_present')
+                       | map('bool') | select | list | length > 0) else 'nothing to stop' }}
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: lookup('ansible.builtin.env', 'GOAT_TEARDOWN_RESULT') | length > 0

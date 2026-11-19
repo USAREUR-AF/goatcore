@@ -3,6 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Accepted (design 2026-07-31, refined 2026-08-01; grammar + registry + ACL render + resolver + CLI built and ZAGROS live-fired 2026-08-01, then reverted to default-off. Amended 2026-09-04: the class segment is `multipub/`, was `shared/` — see "Amendment" below) |
+| Amended by | [ADR 1251](1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md) — a single-owner root may also be written by a pod its carriage rules allow |
 | Date | 2026-08-01 |
 | Repo scope | goat core — machine-plane write authz, org self-administration |
 | Supersedes | — |

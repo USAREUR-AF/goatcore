@@ -408,6 +408,12 @@ fn site(prepared: bool) -> Site {
         &checkout.join("ops/scripts/mint-site-certs.sh"),
         &format!("#!/bin/sh\nprintf 'mint %s\\n' \"$*\" >> '{l}'\n"),
     );
+    // join-site-secrets.py takes the joiner's shared secrets from its
+    // founder in phase 3; the stand-in records it.
+    executable(
+        &checkout.join("ops/scripts/join-site-secrets.py"),
+        &format!("import sys\nopen('{l}', 'a').write('secrets ' + ' '.join(sys.argv[1:]) + '\\n')\n"),
+    );
     executable(
         &checkout.join("ops/scripts/ansible-preflight.sh"),
         "#!/bin/sh\nexit 0\n",

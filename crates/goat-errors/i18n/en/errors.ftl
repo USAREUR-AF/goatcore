@@ -447,10 +447,11 @@ gb-073-cause-1 = this machine is not on the goatnet's mesh (get.<site> is mesh-o
 gb-073-cause-2 = the surface is mid-deploy, or does not publish this platform's binary
 gb-073-cause-3 = the link stalled; a slow link is fine, a silent one for 30 seconds is not
 gb-074-title = the downloaded goatbuilder is not vouched for by its release
-gb-074-what = Before touching anything, update checks that the <asset>.sha256 the surface serves agrees with the release's SHA256SUMS, that the SHA256SUMS signature verifies against the release workflow's identity (when cosign is on PATH), and that the downloaded binary hashes to that digest. One of these failed, so it refused to install; the installed binary is unchanged.
+gb-074-what = Before touching anything, update checks that the <asset>.sha256 the surface serves agrees with the release's SHA256SUMS, and that the downloaded binary hashes to that digest. One of these failed, so it refused to install; the installed binary is unchanged. The signature over SHA256SUMS is checked in the binary itself; a signature that does not verify is GB-261, and an older goatbuilder reports it as GB-074.
 gb-074-cause-1 = the surface is mid-deploy and the binary, its checksum and SHA256SUMS are from different releases
 gb-074-cause-2 = the download was altered or truncated on the way
 gb-074-cause-3 = the signature over SHA256SUMS is not from the release workflow of the repository goatbuilder.yaml names
+gb-074-cause-4 = this goatbuilder was built before the repository move: it expects the signature of the previous release repository, releases are now signed by the current one, and the refusal's expected identity names a different repository from the one it got. Such a binary cannot update itself
 gb-075-title = goatbuilder could not replace its own binary
 gb-075-what = The download was verified, but writing it next to the running binary or renaming it into place failed. The rename is atomic, so the binary in place is either the old one, whole, or the new one, whole.
 gb-075-cause-1 = the install directory is not writable by this user (a binary under /usr/local/bin installed with sudo)
@@ -1098,6 +1099,12 @@ gb-311-title = an IPsec rotation stopped half way through its switch, and what i
 gb-311-what = The switch of an IPsec credential rotation (goat-peering-edge) moves the staged key, then the staged certificate, over the live names. A run killed between the two moves leaves one moved in and the other still staged. The next run finishes the remaining move when what is left is the moved one's match: the moved file is not the set-aside one, and the two halves are one key pair (each parsed by openssl; a file that does not parse matches nothing). Here they are not, so the live pair would be mixed: nothing was moved.
 gb-311-cause-1 = the staged file left behind was replaced after the run stopped
 gb-311-cause-2 = someone moved or edited the live or set-aside files by hand
+gb-313-title = phase 8 refused the edge's certificate request for an edge leaf
+gb-313-what = On a two-driver peering the edge makes its two leaf keys and sends only their certificate requests, which phase 8 signs with our CA (mint-peering-leaves.sh --request, peering_leaf_material.py). A request is signed only when its subject is exactly one attribute, CN = the name phase 8 derives for that leaf, it carries no extension or attribute, its key is EC P-256, it is signed with ECDSA and SHA-256 or stronger and its self-signature verifies, and its key is new: not the other request's, not our CA's, not another leaf's in the output folder or a previous set there, and not one the key record lists as signed before. The certificate's names come from the agreement, never from the request. One request failed, so neither edge leaf was signed and nothing was written.
+gb-313-cause-1 = the request was made with another name, or with extra subject attributes, extensions or attributes
+gb-313-cause-2 = the edge's key is not P-256, or the request is signed with SHA-1 or another weak algorithm
+gb-313-cause-3 = the edge reused a key: the same key for both leaves, our CA's key, a controller leaf's key, or a key signed for this peering before (the key record outlives the output folder)
+gb-313-cause-4 = the request file was changed on the way, or holds anything besides one request
 gb-328-title = a rotation's values reach no play in the phases this run built
 gb-328-what = A key rotation of `goatbuilder federate rotate` passes its values (the rotation id, and for an IPsec rotation its kind and read-back) to the plays of one phase: phase 11 for ipsec-leaf and ipsec-ca, phase 2 for the peering key. It puts them before each play's `-e fed_work=`. The phase this run built has no such play, so the values would reach nothing and the phase would run as a plain one and report the rotation done. Nothing ran. The phases are built from the agreement each run, and the rotation already checked that the agreement chose its transport, so this is goatbuilder's own fault, not the peering's.
 gb-328-cause-1 = the phase's command in this goatbuilder no longer runs its play with `-e fed_work=`
@@ -1118,6 +1125,30 @@ gb-351-title = a Spock subscription has forward_origins set, which in a mesh rep
 gb-351-what = A Spock subscription, or the setting that creates them, has forward_origins other than empty or 'none'. In a mesh of three or more sites such a subscription passes each change on to the next site, which passes it back, without end, while every subscription still reads replicating and nothing is logged. The spock-forward-origins-check role stopped the run before spock-mesh-peering or ory-narrow-repset changed anything. The message names the setting, or each subscription as <host> <database>.<subscription>.
 gb-351-cause-1 = a site's group_vars set spock_mesh_forward_origins or ory_spock_forward_origins
 gb-351-cause-2 = a subscription was created by hand with forward_origins := '{"{"}all{"}"}'
+gb-352-title = a joining site cannot take a shared secret from its founder
+gb-352-what = join-node's phase 3 gives a joining site the values every site of the goatnet shares (the SPEC lines of newsite-secrets.sh marked cluster: NetBird's datastore key, the replicator, the relay secret, Ory's network id, the Kratos cipher, the Hydra system secret) by taking its founder's. Under a store of references the founder's name has no reference in .envrc.local.d/*.refs; under a store of values it has no value; or, after the secrets injector ran, the founder's or the joiner's name was empty or still a reference. Nothing was written for the joiner's shared names. The message names the variables, never a value.
+gb-352-cause-1 = the founder's value was never stored under the declared secrets posture on this machine
+gb-352-cause-2 = the store's tool is not signed in, so with-secrets could not resolve the reference
+gb-352-cause-3 = join_founder_site in the joiner's group_vars names the wrong site
+gb-353-title = a joining site already holds a shared secret that is not its founder's
+gb-353-what = join-node's phase 3 takes a joining site's shared values from its founder and never overwrites one the joiner already holds. A joiner name holds a value (or a reference to one) whose SHA-256 differs from the founder's. A joiner with a fresh value looks healthy and cannot take part: NetBird cannot decrypt the replicated rows, Spock does not replicate, Kratos and Hydra cannot read the replicated identity data. The value was kept. The message names the variables, never a value or a digest.
+gb-353-cause-1 = the joiner's values were minted fresh, by hand or by newsite-secrets.sh, before this step existed
+gb-353-cause-2 = the joiner's reference points at another goatnet's entry
+gb-354-title = the env store holds none of a joining site's shared secrets
+gb-354-what = join-node's phase 3 takes a joining site's shared values from its founder. Under the env store nothing persists, so it cannot write them: each joiner name must already be exported in the shell that runs join-node. One or more are not. Nothing was written.
+gb-354-cause-1 = the declared store is env (GOAT_SECRET_STORE=env or secrets.store: env)
+gb-355-title = a standup play limited to the founder selects no host of the site's group
+gb-355-what = Six standup plays run on the site's first management host alone (SPIRE, the LAN service surface, the LAN TLS routes, the dashboard, the portal, grant-keyd), limited with -l 'mgmt-<site>-01*', the declared naming rule. Before the play, the same command checked the site's group, <site>_hosts, in inventory/mgmt-hosts.ini and inventory/mgmt-hosts-mesh.ini, and no host there matches the limit. The play was refused before ansible ran: with another host matching the pattern, ansible prints "skipping: no hosts matched" and exits 0 having done nothing. Both avenues, goatbuilder standup and goat-standup.sh, run the check (ops/scripts/inventory-hosts.py --match --require).
+gb-355-cause-1 = the site's first management host is named otherwise than mgmt-<site>-01 in the inventory
+gb-355-cause-2 = the host is listed under another group than <site>_hosts
+gb-357-title = a member deviation no longer names the value its goatnet resolves to
+gb-357-what = A member host-group's deviation in ops/pins/fleet-pins.yaml carries `over:`, the value its goatnet resolved the component to when the deviation was written. The goatnet now resolves it to something else: a goatnet deviation was added or changed (a hotfix), or fleet moved (a graduation, a fastlane). The member deviation still wins by precedence, so that member would keep its old pin and silently miss the change. Nothing was rendered.
+gb-357-cause-1 = a hotfix or other goatnet deviation was added after the member deviation was written
+gb-357-cause-2 = fleet moved, by graduation or fastlane, and the member deviation was not looked at
+gb-358-title = a member deviation does not name the value it overrides, or `over:` is where it means nothing
+gb-358-what = Every member host-group deviation with a `value:` in ops/pins/fleet-pins.yaml names, in `over:`, what its goatnet resolves the component to without it: a ref, `absent`, or `none` (fleet null and no goatnet deviation). This one has no `over:`, or `over:` sits on a goatnet deviation or an `absent: true` one, where it means nothing. The message prints the line to paste. Nothing was rendered.
+gb-358-cause-1 = the table predates ADR 1256, so its member deviations carry no `over:`
+gb-358-cause-2 = `over:` was added to a goatnet-scope or an absent member deviation
 gb-370-title = no usable peering directory URL or id was given
 gb-370-what = goatbuilder federate directory needs the directory's base URL, from --url or FED_DIRECTORY_URL, as an http(s) URL; and a party or counterparty id as the directory accepts it, 2 to 16 of a-z, 0-9 and -. Nothing was requested.
 gb-370-cause-1 = neither --url nor FED_DIRECTORY_URL is set in this shell

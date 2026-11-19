@@ -96,6 +96,7 @@
       register: existing_turn_secret
       changed_when: false
       failed_when: false
+      no_log: true
 
     - name: Set TURN secret fact
       ansible.builtin.set_fact:
@@ -105,6 +106,7 @@
                      existing_turn_secret.stdout | default('') |
                      ternary(existing_turn_secret.stdout | default(''),
                              lookup('pipe', 'openssl rand -hex 32'))) }}
+      no_log: true
 
     - name: Write turnserver.conf
       ansible.builtin.template:
@@ -261,6 +263,7 @@
             group: root
             mode: "0600"
           when: relay_cert_dns01 | default(false) | bool
+          no_log: true
 
         # relay_certbot_email: the contact address certbot registers with the
         # certificate authority, declared in the relay group's group_vars. It
@@ -332,30 +335,53 @@
           register: relay_cert_after
           failed_when: not relay_cert_after.stat.exists
 
-        - name: Deploy Netbird relay container (with TLS cert from certbot)
-          # GOMAXPROCS=1: on a 2-vCPU relay, default GOMAXPROCS=NumCPU=2 causes
-          # inter-thread futex contention that caps single-flow throughput.
-          # GOMAXPROCS=1 collapses to a single OS thread and eliminates that
-          # synchronization overhead, raising single-flow throughput by ~25%.
-          # Multi-flow performance is unchanged. Retest the GOMAXPROCS sweep on
-          # any relay shape with ≥4 vCPU — the optimal point may shift.
-          # See docs/operations/relay-throughput-ceiling.md for details.
-          ansible.builtin.shell: |
-            docker rm -f netbird-relay 2>/dev/null || true
-            docker run -d \
-              --name netbird-relay \
-              --restart unless-stopped \
-              -e NB_LOG_LEVEL=info \
-              -e NB_LISTEN_ADDRESS=:33073 \
-              -e "NB_EXPOSED_ADDRESS=rels://{{ relay_dns_name }}:33073" \
-              -e "NB_AUTH_SECRET={{ nb_relay_auth_secret }}" \
-              -e GOMAXPROCS=1 \
-              -p 33073:33073/tcp \
-              -p 33073:33073/udp \
-              -v /etc/letsencrypt:/etc/letsencrypt:ro \
-              netbirdio/relay:0.82.0@sha256:8f6b9e4193653ede89e83dd4aa4e2cf2562579b3e2481dcf259a7ab28bcd5fa1 \
-              --tls-cert-file /etc/letsencrypt/live/{{ relay_dns_name }}/fullchain.pem \
-              --tls-key-file /etc/letsencrypt/live/{{ relay_dns_name }}/privkey.pem
+        # The auth secret reaches the container through a 0600 env file that the
+        # always section removes, so it is not on the host's command line.
+        - name: Deploy Netbird relay container, the auth secret from a 0600 env file
+          block:
+            - name: Create the relay env file (0600)
+              ansible.builtin.tempfile:
+                state: file
+                suffix: .relayenv
+              register: relay_env
+
+            - name: Write the relay auth secret to the env file
+              ansible.builtin.copy:
+                dest: "{{ relay_env.path }}"
+                content: "NB_AUTH_SECRET={{ nb_relay_auth_secret }}\n"
+                mode: "0600"
+              no_log: true
+
+            - name: Deploy Netbird relay container (with TLS cert from certbot)
+              # GOMAXPROCS=1: on a 2-vCPU relay, default GOMAXPROCS=NumCPU=2 causes
+              # inter-thread futex contention that caps single-flow throughput.
+              # GOMAXPROCS=1 collapses to a single OS thread and eliminates that
+              # synchronization overhead, raising single-flow throughput by ~25%.
+              # Multi-flow performance is unchanged. Retest the GOMAXPROCS sweep on
+              # any relay shape with ≥4 vCPU — the optimal point may shift.
+              # See docs/operations/relay-throughput-ceiling.md for details.
+              ansible.builtin.shell: |
+                docker rm -f netbird-relay 2>/dev/null || true
+                docker run -d \
+                  --name netbird-relay \
+                  --restart unless-stopped \
+                  -e NB_LOG_LEVEL=info \
+                  -e NB_LISTEN_ADDRESS=:33073 \
+                  -e "NB_EXPOSED_ADDRESS=rels://{{ relay_dns_name }}:33073" \
+                  --env-file "{{ relay_env.path }}" \
+                  -e GOMAXPROCS=1 \
+                  -p 33073:33073/tcp \
+                  -p 33073:33073/udp \
+                  -v /etc/letsencrypt:/etc/letsencrypt:ro \
+                  netbirdio/relay:0.82.0@sha256:8f6b9e4193653ede89e83dd4aa4e2cf2562579b3e2481dcf259a7ab28bcd5fa1 \
+                  --tls-cert-file /etc/letsencrypt/live/{{ relay_dns_name }}/fullchain.pem \
+                  --tls-key-file /etc/letsencrypt/live/{{ relay_dns_name }}/privkey.pem
+          always:
+            - name: Remove the relay env file
+              ansible.builtin.file:
+                path: "{{ relay_env.path }}"
+                state: absent
+              when: relay_env.path is defined
 
         - name: Wait for relay to start
           ansible.builtin.pause:
@@ -506,19 +532,44 @@
     # because rathole_public_key is undefined when the rathole stack is
     # skipped.
     # ==================================================================
+    # The credentials reach the AWS CLI through a 0600 file that the always
+    # section removes (--secret-string file://), not its command line.
     - name: Store rathole credentials in Secrets Manager
       delegate_to: localhost
       become: false
-      ansible.builtin.shell: >
-        {{ aws_cmd }} aws secretsmanager put-secret-value
-        --region "{{ aws_region }}"
-        --secret-id "{{ rathole_secret_name }}"
-        --secret-string '{"token":"{{ rathole_auth_token }}","public_key":"{{ rathole_public_key }}","relay_ip":"{{ vps_public_ip }}","turn_secret":"{{ turn_secret }}"}'
-      changed_when: false
       when:
         - deploy_rathole | default(true) | bool
         - rathole_secret_name is defined
         - rathole_public_key | default('') | length > 0
+      block:
+        - name: Create the credentials file (0600)
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .json
+          register: rathole_secret_file
+
+        - name: Write the rathole credentials to the file
+          ansible.builtin.copy:
+            dest: "{{ rathole_secret_file.path }}"
+            content: >-
+              {{ {'token': rathole_auth_token, 'public_key': rathole_public_key,
+                  'relay_ip': vps_public_ip, 'turn_secret': turn_secret} | to_json }}
+            mode: "0600"
+          no_log: true
+
+        - name: Put the rathole credentials in Secrets Manager
+          ansible.builtin.shell: >
+            {{ aws_cmd }} aws secretsmanager put-secret-value
+            --region "{{ aws_region }}"
+            --secret-id "{{ rathole_secret_name }}"
+            --secret-string "file://{{ rathole_secret_file.path }}"
+          changed_when: false
+      always:
+        - name: Remove the credentials file
+          ansible.builtin.file:
+            path: "{{ rathole_secret_file.path }}"
+            state: absent
+          when: rathole_secret_file.path is defined
 
     # ==================================================================
     # Verify
@@ -531,7 +582,7 @@
           ========================================
           IP:         {{ vps_public_ip }}
           {% if deploy_rathole | default(true) | bool %}
-          Rathole:    token={{ rathole_auth_token[:8] }}... pubkey={{ rathole_public_key[:16] }}...
+          Rathole:    token={{ 'set' if (rathole_auth_token | default('') | length > 0) else 'NOT SET' }} pubkey={{ rathole_public_key[:16] }}...
           {% else %}
           Rathole:    SKIPPED (deploy_rathole=false; wg-cp0 replaces this role)
           {% endif %}

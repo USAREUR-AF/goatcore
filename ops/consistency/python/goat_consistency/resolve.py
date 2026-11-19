@@ -93,6 +93,101 @@ class SchemaError(Exception):
     The CLI entry points turn this back into `ERROR: …` + exit 2."""
 
 
+# ADR 1256: a member deviation names the goatnet value it overrides. Without
+# it, a member deviation written before a goatnet-level change (a hotfix
+# deviation, a graduation, a fleet bump) keeps winning by precedence, and the
+# member silently misses the change. `over:` is an optimistic lock written in
+# the table: it must equal what the member's goatnet resolves the component to
+# without the member deviation. A ref, or `absent` (the goatnet declares the
+# component absent), or `none` (`fleet: null` and no goatnet deviation).
+OVER_ABSENT = "absent"
+OVER_NONE = "none"
+
+
+def goatnet_resolution(spec, goatnet):
+    """What `goatnet` resolves a component to with no member deviation, as the
+    `over:` token: the goatnet deviation's value, `absent`, or the fleet value
+    (`none` when fleet is null)."""
+    dev = (spec.get("deviations") or {}).get(goatnet)
+    if dev is not None:
+        dev = dev or {}
+        if dev.get("absent"):
+            return OVER_ABSENT
+        return str(dev.get("value"))
+    fleet = spec.get("fleet")
+    return OVER_NONE if fleet is None else str(fleet)
+
+
+def over_line(token):
+    """The line an operator pastes under the member deviation."""
+    if token in (OVER_ABSENT, OVER_NONE):
+        return "over: %s" % token
+    return 'over: "%s"' % token
+
+
+def check_member_over(goatnets, components, member_of):
+    """GB-358: a member `value:` deviation must carry `over:`, and only it may.
+    GB-357: `over:` must name what the member's goatnet resolves to now."""
+    for cname, spec in components.items():
+        spec = spec or {}
+        for scope, dev in (spec.get("deviations") or {}).items():
+            dev = dev or {}
+            has_over = "over" in dev
+            if scope in goatnets:
+                if has_over:
+                    die("GB-358 pins: component '%s': `over:` is on the goatnet deviation "
+                        "'%s'. Only a member deviation names what it overrides; a goatnet "
+                        "deviation overrides fleet. Delete the `over:` line."
+                        % (cname, scope))
+                continue
+            if dev.get("absent"):
+                if has_over:
+                    die("GB-358 pins: component '%s': member deviation '%s' is `absent: "
+                        "true` and also carries `over:`. A member that does not run the "
+                        "component shadows nothing. Delete the `over:` line."
+                        % (cname, scope))
+                continue
+            goatnet = member_of.get(scope)
+            if goatnet is None:
+                continue
+            now = goatnet_resolution(spec, goatnet)
+            value = dev.get("value")
+            if not has_over:
+                die("GB-358 pins: component '%s': member deviation '%s' pins %s but does "
+                    "not name what it overrides. Goatnet '%s' resolves '%s' to %s without "
+                    "it. To keep %s on %s deliberately, add under deviations.%s:  %s  "
+                    "Or delete the deviation, and %s takes %s."
+                    % (cname, scope, value, goatnet, cname, now, value, scope, scope,
+                       over_line(now), scope, now))
+            if str(dev.get("over")) != now:
+                die("GB-357 pins: component '%s': member deviation '%s' was written over "
+                    "%s, but goatnet '%s' now resolves '%s' to %s, so %s would silently "
+                    "keep %s. Delete the deviation, and %s takes %s. Or, to keep %s on %s "
+                    "deliberately, set under deviations.%s:  %s"
+                    % (cname, scope, dev.get("over"), goatnet, cname, now, scope, value,
+                       scope, now, value, scope, scope, over_line(now)))
+
+
+def redundant_member_deviations(goatnets, components, member_of):
+    """Member value deviations that pin what their goatnet already resolves
+    to: a warning, not a refusal (it shadows nothing today, and becomes a
+    shadow the moment the goatnet value moves)."""
+    out = []
+    for cname, spec in sorted(components.items()):
+        spec = spec or {}
+        for scope, dev in sorted((spec.get("deviations") or {}).items()):
+            dev = dev or {}
+            if scope in goatnets or dev.get("absent") or scope not in member_of:
+                continue
+            now = goatnet_resolution(spec, member_of[scope])
+            if str(dev.get("value")) == now:
+                out.append("WARN pins: component '%s': member deviation '%s' pins %s, "
+                           "which goatnet '%s' already resolves to. It changes nothing "
+                           "today and would hold %s back from the goatnet's next value. "
+                           "Delete it." % (cname, scope, now, member_of[scope], scope))
+    return out
+
+
 def die(msg):
     raise SchemaError(msg)
 
@@ -316,6 +411,7 @@ def validate(goatnets, components):
                             "'%s') carries no deviation — the pin is unresolvable"
                             % (cname, m, gn))
     check_placement(components)
+    check_member_over(goatnets, components, member_of)
     return member_of
 
 
