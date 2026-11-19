@@ -473,6 +473,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1251 | [Every source keeps its identity through a pod: carriage rules, provenance at entry, and pod local authority](1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md) | Proposed | Amends 1105 |
 | 1253 | [A simple boundary node sends released data as plain messages one way, a pseudo boundary node crosses to another environment of ours, and one monitor shows every boundary](1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md) | Proposed | — |
 | 1254 | [An external service can let goat sign people in and admit them by organization, nation, group or e-mail](1254-external-service-admit-door-sign-in-and-admission-by-organization-nation-group-or-email.md) | Proposed | Amends 1178 |
+| 1255 | [Vendor systems connect through one vendor-bridges repository, and open standards go through goat-transformers](1255-vendor-systems-connect-through-one-vendor-bridges-repository-and-open-standards-go-through-goat-transformers.md) | Proposed | Amends 0217: open-entity-gateway holds vendor bridges only, one package per vendor; open-standard conversion and transports live in goat-transformers; no relays; rejects removing the repository and keeping it as a general gateway |
 
 <!-- END generated: adr-index -->
 
