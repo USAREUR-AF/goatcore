@@ -119,5 +119,84 @@ class BaseCurrent(unittest.TestCase):
         self.assertIn("merge base", r.stderr)
 
 
+class EntryOnlyMergedAfterARelease(unittest.TestCase):
+    """An entry-only pull request cut before a release and merged after it, through the
+    real ops/release/changelog.py: the base check passes, the merge has no conflict, and
+    the merged tree passes `changelog.py check` with the entry still unreleased. The
+    merged tree is read as a merge queue reads it: `git merge-tree --write-tree`, then
+    CHANGELOG.md, changelog.d/ and changelog.py archived from that tree alone."""
+
+    CHANGELOG_PY = HERE.parent / "release" / "changelog.py"
+    START = ("# goatbuilder changelog\n\n## Unreleased\n\n{begin}\n{end}\n\n## 1.0.0 — 2099-01-01\n\n"
+             "### For someone deploying\n\nNothing.\n\n### For someone contributing\n\nNothing.\n\n"
+             "### To be removed\n\nNothing.\n")
+
+    def cl(self, repo, *args):
+        return subprocess.run([sys.executable, str(Path(repo) / "ops/release/changelog.py"), "--repo", str(repo), *args],
+                              capture_output=True, text=True)
+
+    def entry(self, repo, slug, title):
+        write(repo, f"crates/goatbuilder/changelog.d/{slug}.md",
+              f"---\nheading: For someone contributing\ntitle: {title}\n---\n\n{title}, the body.\n")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.r = Path(self._tmp.name) / "repo"
+        git(self._tmp.name, "init", "-q", "-b", "main", str(self.r))
+        text = self.CHANGELOG_PY.read_text(encoding="utf-8")
+        write(self.r, "ops/release/changelog.py", text)
+        ns = {}
+        exec(compile("\n".join(l for l in text.split("\n") if l.startswith(("BEGIN", "END", "ENTRIES", "CHANGELOG ="))),
+                     "markers", "exec"), ns)
+        write(self.r, CL, self.START.format(begin=ns["BEGIN"], end=ns["END"]))
+        write(self.r, "crates/goatbuilder/changelog.d/README.md", "how to write one\n")
+        self.assertEqual(self.cl(self.r, "write").returncode, 0)
+        git(self.r, "add", "-A")
+        git(self.r, "commit", "-q", "-m", "chore(release): goatbuilder 1.0.0")
+        self.cut = git(self.r, "rev-parse", "HEAD")
+        # main: a pull request with an entry merges, then 2.0.0 is released.
+        self.entry(self.r, "main-entry", "Added: merged before the release")
+        self.cl(self.r, "write")
+        git(self.r, "add", "-A")
+        git(self.r, "commit", "-q", "-m", "feat: merged before the release")
+        r = self.cl(self.r, "release", "2.0.0", "2099-02-01")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        git(self.r, "add", "-A")
+        git(self.r, "commit", "-q", "-m", "chore(release): goatbuilder 2.0.0")
+        # the pull request: cut before the release, its entry file only.
+        git(self.r, "checkout", "-q", "-b", "entry-only", self.cut)
+        self.entry(self.r, "pr-entry", "Added: cut before the release")
+        git(self.r, "add", "-A")
+        git(self.r, "commit", "-q", "-m", "feat: cut before the release")
+        self.head = git(self.r, "rev-parse", "HEAD")
+        git(self.r, "checkout", "-q", "main")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_the_base_check_passes(self):
+        r = subprocess.run([sys.executable, str(CHECK), "--repo", str(self.r), "--base", "main", "--head", self.head],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_the_merged_tree_passes_the_check_and_keeps_the_entry_unreleased(self):
+        m = subprocess.run(["git", "-C", str(self.r), "merge-tree", "--write-tree", "main", self.head],
+                           capture_output=True, text=True)
+        self.assertEqual(m.returncode, 0, "the merge conflicts: " + m.stdout)
+        tree = m.stdout.split("\n", 1)[0]
+        d = Path(self._tmp.name) / "merged"
+        d.mkdir()
+        tar = Path(self._tmp.name) / "merged.tar"
+        git(self.r, "archive", "-o", str(tar), tree, CL, "crates/goatbuilder/changelog.d", "ops/release/changelog.py")
+        subprocess.run(["tar", "-x", "-C", str(d), "-f", str(tar)], check=True)
+        r = self.cl(d, "check")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(any(l.startswith("changelog: ok,") for l in r.stdout.split("\n")), r.stdout)
+        self.assertTrue((d / "crates/goatbuilder/changelog.d/pr-entry.md").is_file())
+        released = (d / CL).read_text(encoding="utf-8").split("## 2.0.0", 1)[1]
+        self.assertIn("Added: merged before the release", released)
+        self.assertNotIn("Added: cut before the release", released)
+
+
 if __name__ == "__main__":
     unittest.main()

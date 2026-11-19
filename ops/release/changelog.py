@@ -715,6 +715,31 @@ def self_test(repo: Path) -> int:
         except Refused as e:
             expect("a malformed version and date are refused", len(e.args[0]) == 2)
 
+        # The Unreleased section on main is one fixed pointer line, never a render: a
+        # render committed by every pull request made each merge conflict with every
+        # other open pull request that adds an entry.
+        r = fresh("pointer-render")
+        _entry(r, "zz-render.md", "For someone contributing", "Added: a rendered entry", "Rendered.")
+        p = r / CHANGELOG
+        lines = p.read_text(encoding="utf-8").split("\n")
+        b, e = region(lines)
+        lines[b:e + 1] = [BEGIN, ""] + render(read_entries(r), every_heading=False) + ["", END]
+        p.write_text("\n".join(lines), encoding="utf-8")
+        expect("a render committed in the Unreleased section is refused: it holds only the pointer line",
+               any("only the pointer line" in m for m in check(r)))
+
+        r = fresh("pointer-entry")
+        _entry(r, "zz-entry-only.md", "For someone contributing", "Added: an entry alone", "Alone.")
+        expect("a new entry passes the check with no change to CHANGELOG.md", check(r) == [])
+
+        r = fresh("pointer-release")
+        _entry(r, "zz-folded.md", "For someone contributing", "Added: a folded entry", "Folded.")
+        release(r, "9.9.8", "2099-01-01")
+        after = (r / CHANGELOG).read_text(encoding="utf-8")
+        expect("a release folds the entries and leaves the pointer line, then passes the check",
+               f"{BEGIN}\n" in after and "`python3 ops/release/changelog.py show`" in after.split(END)[0]
+               and "#### Added: a folded entry\n\nFolded." in after.split(END)[1] and check(r) == [])
+
     print("released sections against their release text (a git history of its own):")
     _released_text_cases(expect)
 
