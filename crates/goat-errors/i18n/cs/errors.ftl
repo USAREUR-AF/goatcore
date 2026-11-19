@@ -516,7 +516,7 @@ gb-075-cause-2 = disk je plný
 
 # machine-translated additions (2026-10-30) — review per i18n-provenance.toml
 gb-074-title = stažený goatbuilder není ověřen svým vydáním
-gb-074-what = Před jakýmkoli zásahem update zkontroluje, že <asset>.sha256 z surface souhlasí s SHA256SUMS vydání, že podpis SHA256SUMS lze ověřit vůči identitě release workflow (pokud je cosign v PATH) a že stažený binární soubor má tento otisk. Jedna z kontrol selhala, proto instalaci odmítl; nainstalovaný binární soubor zůstal beze změny.
+gb-074-what = Před jakýmkoli zásahem update zkontroluje, že <asset>.sha256 z surface souhlasí s SHA256SUMS vydání a že stažený binární soubor má tento otisk. Jedna z kontrol selhala, proto instalaci odmítl; nainstalovaný binární soubor zůstal beze změny. Podpis SHA256SUMS ověřuje sám binární soubor; podpis, který neprojde ověřením, je GB-261 a starší goatbuilder jej hlásí jako GB-074.
 gb-074-cause-1 = surface se právě nasazuje a binární soubor, jeho kontrolní součet a SHA256SUMS pocházejí z různých vydání
 gb-074-cause-2 = stažený soubor byl cestou změněn nebo zkrácen
 gb-074-cause-3 = podpis SHA256SUMS nepochází z release workflow repozitáře, který uvádí goatbuilder.yaml
