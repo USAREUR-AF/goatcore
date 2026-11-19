@@ -1077,7 +1077,7 @@ class AcceptanceRun(unittest.TestCase):
         # value either side put on a core is checked, raw and base64-decoded: no private
         # key block, no signing seed, and none of the fake fabric's private keys.
         import base64, re
-        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(own=True)
+        _, (rc_a, out_a), (rc_b, out_b) = self.both_derived(own=True)
         self.assertEqual((rc_a, rc_b), (0, 0), (out_a, out_b))
         keys = [k for _, k, _ in self.fabric.puts]
         for want in ("/probes", "/spire-bundle", "/spire-svid"):
@@ -1087,7 +1087,8 @@ class AcceptanceRun(unittest.TestCase):
         spire = os.path.join(self.tmp, "spire")
         for fn in os.listdir(spire):
             if fn.endswith(".key"):
-                body = b"".join(l.strip() for l in open(os.path.join(spire, fn), "rb") if not l.startswith(b"-----"))
+                with open(os.path.join(spire, fn), "rb") as kf:
+                    body = b"".join(l.strip() for l in kf if not l.startswith(b"-----"))
                 secrets.append(body[:40])
 
         def texts(v):
@@ -1096,7 +1097,7 @@ class AcceptanceRun(unittest.TestCase):
                 try:
                     yield base64.b64decode(tok + b"=" * (-len(tok) % 4), validate=True)
                 except Exception:
-                    pass
+                    pass  # not base64 after all: the raw value was checked above
         for side, k, v in self.fabric.puts:
             for t in texts(v):
                 self.assertNotIn(b"PRIVATE KEY", t, (side, k))
@@ -1107,7 +1108,7 @@ class AcceptanceRun(unittest.TestCase):
                 self.assertIsNone(re.search(rb"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", v), (side, k, v[:80]))
 
     def test_own_surfaces_without_the_partners_probes_our_refusal_rows_are_blocked_naming_them(self):
-        ev, (rc_a, out_a), (rc_b, out_b) = self.both_derived(own=True, second={"own": False})
+        ev, (rc_a, out_a), _ = self.both_derived(own=True, second={"own": False})
         rows = self.rows_of(ev["xaa"])
         self.assertEqual(rows["refusal/acl-trace"]["verdict"], "BLOCKED", out_a)
         self.assertIn("xab", rows["refusal/acl-trace"]["reason"])
@@ -1123,7 +1124,8 @@ class AcceptanceRun(unittest.TestCase):
         out = os.path.join(self.tmp, "derived.json")
         subprocess.run(["python3", str(HERE / "acceptance_session.py"), "derive", "--agreement", path,
                         "--us", "xaa", "--attempt", "1", "--out", out], capture_output=True, check=True)
-        sid = json.load(open(out))["session_id"]
+        with open(out) as f:
+            sid = json.load(f)["session_id"]
         self.fabric.faults.stale["xaa"] = {
             "from/xab/%s/acceptance/%s/xab/probes" % (st, sid): ("%s agreed=%s forged=%s impersonate=%s" % (
                 "0" * 32, self.fabric.agreed_zid, self.fabric.zids["forged"], self.fabric.zids["impersonate"])).encode()}
@@ -1204,11 +1206,12 @@ class AcceptanceRun(unittest.TestCase):
         # row is BLOCKED, never PASS.
         d = os.path.join(self.tmp, "runner")
         shutil.copytree(HERE, d, ignore=shutil.ignore_patterns("__pycache__", "test_*"))
-        src = open(os.path.join(d, "acceptance.sh")).read()
+        with open(os.path.join(d, "acceptance.sh")) as f:
+            src = f.read()
         cut = 'python3 - "$TRACE" "$1" "$PEER_STARTED" "$RUN_START_SLACK" <<\'PY\''
         self.assertIn(cut, src)
-        open(os.path.join(d, "acceptance.sh"), "w").write(
-            src.replace(cut, 'python3 - /nonexistent "$1" "$PEER_STARTED" "$RUN_START_SLACK" <<\'PY\'', 1))
+        with open(os.path.join(d, "acceptance.sh"), "w") as f:
+            f.write(src.replace(cut, 'python3 - /nonexistent "$1" "$PEER_STARTED" "$RUN_START_SLACK" <<\'PY\'', 1))
         ev, (rc_a, out_a), _ = self.both_derived(own=True, script=os.path.join(d, "acceptance.sh"),
                                                  second={"script": None})
         rows = self.rows_of(ev["xaa"])
@@ -1277,10 +1280,12 @@ class AcceptanceRun(unittest.TestCase):
         # seam): the guard after it must stop the run, exit 1, with nothing staged.
         d = os.path.join(self.tmp, "runner")
         shutil.copytree(HERE, d, ignore=shutil.ignore_patterns("__pycache__", "test_*"))
-        src = open(os.path.join(d, "acceptance.sh")).read()
+        with open(os.path.join(d, "acceptance.sh")) as f:
+            src = f.read()
         cut = "      | awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{if(f)exit}')"
         self.assertIn(cut, src)
-        open(os.path.join(d, "acceptance.sh"), "w").write(src.replace(cut, "      | cat)", 1))
+        with open(os.path.join(d, "acceptance.sh"), "w") as f:
+            f.write(src.replace(cut, "      | cat)", 1))
         ev, (rc_a, out_a), _ = self.both_derived(own=True, script=os.path.join(d, "acceptance.sh"),
                                                  second={"script": None})
         self.assertEqual(rc_a, 1, out_a)

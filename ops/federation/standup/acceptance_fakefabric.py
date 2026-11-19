@@ -430,6 +430,7 @@ class Fabric:
         zid = {"agreed": self.agreed_zid, "forged": self.zids["forged"], "impersonate": self.zids["impersonate"]}
         zid.update(self.faults.own_zid.get(side, {}))
         dead = self.faults.own_dead.get(side, set())
+        closed = None                      # a REST URL nothing listens on, for a dead session
         if dead:
             s = socket.socket()
             s.bind(("127.0.0.1", 0))
