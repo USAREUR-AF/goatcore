@@ -1,8 +1,8 @@
 # Simple boundary node, pseudo boundary node, and the boundary monitor
 
-**Status: WIP.** The sender and the monitor are built and run on one goatnet with synthetic data only. The TCP transport and the
-synthetic-only guard are built. The fabric subscription, the WireGuard stage, the ansible role and the pseudo boundary
-node are designed, not built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
+**Status: WIP.** The sender and the monitor are built and run on one goatnet with synthetic data only. The TCP transport, the
+synthetic-only guard, fixed per-feed source ports and the ansible role (`ops/ansible/simple-bn.yml`) are built. The fabric
+subscription, the WireGuard stage and the pseudo boundary node are designed, not built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
 seven days without a gap. Decision record: [ADR 1253](../adr/1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md).
 
 ## 1. Three kinds of boundary
@@ -37,8 +37,11 @@ release/<set>/** on the fabric ──► simple-bn ──► encoder (ASTERIX CA
 **Detail.**
 
 - Code: [`ops/simple-bn/simple_bn_sender.py`](../../ops/simple-bn/simple_bn_sender.py), Python standard library only.
-- **One UDP socket per feed.** Each feed therefore has its own source port as well as its own ASTERIX source identity
-  (SAC/SIC), so a receiver, a packet capture and the monitor can each tell the feeds apart.
+- **One socket per feed, from a fixed source port.** Each feed declares `src_port` (1024-65535, unique) in its
+  profile and always sends from it, so a receiver's firewall can allowlist our address and those ports. Each feed also
+  has its own ASTERIX source identity (SAC/SIC), so a receiver, a packet capture and the monitor can each tell the
+  feeds apart. A kernel-chosen port would change on every restart and could not be allowlisted, so the role refuses a
+  feed without one.
 - **The socket is connected.** If the receiver host answers ICMP port-unreachable, the next send fails with
   `ECONNREFUSED`. The sender records this as `receiver-refusing`. It is the only signal a one-way UDP stream gives.
 - **Feeds today are notional sensors built into the sender.** Three generic sensor classes, each with its own update
@@ -46,8 +49,8 @@ release/<set>/** on the fabric ──► simple-bn ──► encoder (ASTERIX CA
   - `hemispheric-cuas`: drones, helicopters, aircraft, 1 s updates.
   - `counterfire`: projectile salvos on ballistic arcs, 1 s updates.
   - `surveillance-3d`: drones, helicopters, aircraft, 2 s updates.
-- **A deployment names its own feeds** with a profiles file (`--profiles`, JSON) that sets `base`, `title` and `sic` per
-  feed. Deployment names stay in the private overlay, never in this repo.
+- **A deployment names its own feeds** with a profiles file (`--profiles`, JSON) that sets `base`, `title`, `sic` and
+  `src_port` per feed. Deployment names stay in the private overlay, never in this repo.
 - **Every CAT048 report sets the SIM bit** in I048/020, so a receiver can tell the reports are simulated. Each report
   carries:
   - Target report: I048/010, I048/140, I048/020 and I048/040.
@@ -192,7 +195,43 @@ The same page then shows a canonical boundary node and a simple-bn side by side.
 |---|---|---|
 | UDP, no reply channel | "no acknowledgement", plus `receiver-refusing` when the receiver host rejects the port | built |
 | TCP | connected or reconnecting, bytes the kernel accepted, blocks dropped while down | built |
-| application acknowledgement | the receiver returns the last sequence number it processed; the monitor shows the gap | designed, needs the receiver's agreement |
+| application acknowledgement | the receiver's `ack` messages (§6a): N received of M sent per SIC and window | built; needs the receiver to send them |
+
+## 6a. Receiver feedback and the status API
+
+The receiver can tell the boundary node what it sees, so integration questions are answered by the two systems rather
+than by people out of band. Anyone can read the same answers from a status API without opening the page.
+
+**Feedback channel, `goat.bn-feedback/v1` (built).** The receiver sends one JSON object per UDP datagram, at most 4 KiB.
+
+| Type | Fields | What the monitor shows |
+|---|---|---|
+| `hello` | `system`, `contact`, `version` | who the receiver is |
+| `ack` | `sic`, `received` (datagrams carrying that SIC), `window_s`, `last_tod` | per feed: the receiver received N of the M we sent in the window |
+| `status` | `receiving`, `decoding`, `sics`, `positions_set`, `note` | whether they decode, and which SICs they see placed |
+| `request` | `sac`, `sic`, `transport`, `wg_public_key`, `wg_endpoint`, `note` | what they want changed, including their WireGuard public key |
+
+- **Two ways in, both from the receiver's address only:**
+  - **A reply to a feed's own source port.** The feed's socket is connected to the receiver, so the kernel delivers only
+    datagrams from the receiver's address and port. A stateful cloud firewall already admits these replies, so no
+    firewall change is needed.
+  - **The dedicated `receiver.feedback_port`.** Our firewall must admit UDP to that port from the receiver's address,
+    and the sender also checks the source address.
+- **Malformed input is dropped.** A message that does not parse, names an unknown type, or comes from another address is
+  counted as `rejected` and dropped. Strings are cut to 200 characters, and unknown keys are dropped.
+- **The receiver's address is the trust.** Nothing in a message changes the sender's behavior. A `request` is shown to
+  the operator, who decides.
+
+**Status API (built), on the monitor's port:**
+
+| Route | Returns |
+|---|---|
+| `GET /api/v1/status` | every status document on the node: feeds, counts, windows, ack state, feedback |
+| `GET /api/v1/feeds/<feed>` | one feed |
+| `GET /api/v1/feedback` | what each receiver has reported |
+| `GET /api/v1/health` | `200 {"ok": true}` when every feed is sending, otherwise `503` with the problems |
+
+`/api/status` remains as an alias of `/api/v1/status`.
 
 ## 7. Declaration
 
@@ -206,6 +245,9 @@ simple_bn:
   receiver:
     label: <receiver name shown in the monitor>
     ref: op://<vault>/<item>                          # host, port, protocol, format live in the store
+    dest_env: <ENV VAR>                               # the receiver's HOST:PORT, from the store
+    our_source_env: <ENV VAR>                         # our public source address, given to the receiver
+    feedback_port: <udp port or 0>                    # optional dedicated port for goat.bn-feedback/v1
     transport: udp                                  # udp | tcp
     format: ASTERIX CAT034/CAT048
   encryption: {stage: 0}                              # 1 = wireguard: our_pubkey, peer_pubkey, peer_endpoint, tunnel /30
@@ -215,15 +257,34 @@ simple_bn:
   input: notional                                     # stage 0 (encryption none) refuses anything else
 ```
 
-## 8. Install by hand (until the role exists)
+## 8. Establishing a simple-bn
 
-```
-install -d -m 755 /opt/simple-bn; install -d -m 700 /etc/simple-bn
-install -m 644 simple_bn_sender.py bn_monitor.py /opt/simple-bn/
-install -m 600 receiver.env /etc/simple-bn/receiver.env
-install -m 644 systemd/*.service /etc/systemd/system/
-systemctl daemon-reload; systemctl enable --now simple-bn-sender bn-monitor
-```
+A simple-bn is set up the same way on every goatnet: one declaration, one profiles file, two secret-store references,
+one playbook run. The run ends by printing the facts the receiver needs.
 
-Checks: `systemctl is-active simple-bn-sender bn-monitor`; `curl http://<mesh address>:8740/healthz`;
-`python3 -m unittest discover ops/simple-bn/tests`.
+1. **Choose the host** by the rule in §3.
+2. **Write the profiles file** in the overlay. Give each feed a `base`, a `title`, a `sic` and a fixed `src_port`.
+3. **Write the declaration** (§7) in the boundary host group's vars. Name two env vars for the secret-store values:
+   `receiver.dest_env` (the receiver's HOST:PORT) and `receiver.our_source_env` (our public source address).
+4. **Store both values** in the secret store and add their references to `.envrc.local.d/*.refs`.
+5. **Run the playbook** from an assembled tree:
+   `ops/ansible/simple-bn.yml -i inventory/<boundary host inventory> -e target=<boundary host group>`.
+   The role:
+   - refuses an incomplete declaration, a feed without a unique `src_port`, and stage 0 with non-notional input;
+   - installs the sender and the monitor, and renders `/etc/simple-bn/receiver.env` (mode 600);
+   - checks that every feed is sending from its declared source port and that the monitor answers on the mesh address.
+
+   Run it a second time: that run must report no changes.
+6. **Give the receiver the facts the run printed:**
+   - our source address;
+   - the protocol and their port;
+   - the format;
+   - for each feed, its SAC, SIC and source port.
+
+   These are everything a receiver's firewall and decoder need. The receiver's own address is never printed.
+7. **Before real data,** do the WireGuard stage (§4) with the receiver.
+
+`-e state=absent` stops the services and removes the files.
+
+Checks on the host: `systemctl is-active simple-bn-sender bn-monitor`, `curl http://<mesh address>:8740/healthz`.
+Tests: `python3 -m unittest discover -s ops/simple-bn/tests`.

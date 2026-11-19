@@ -193,8 +193,14 @@ class Feed:
         self.name, self.p, self.sac, self.sic, self.rnd = name, p, sac, p["sic"], rnd
         self.dest, self.transport = dest, transport
         self.sock, self.src_port, self.backoff, self.next_retry = None, None, 1.0, 0.0
+        # A fixed source port (profile `src_port`) lets the receiver's firewall pin each feed;
+        # without one the kernel picks a port, which changes on every restart.
+        self.fixed_src_port = p.get("src_port")
         if transport == "udp":
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            if self.fixed_src_port:
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.sock.bind(("0.0.0.0", int(self.fixed_src_port)))
             self.sock.connect(dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
             self.src_port = self.sock.getsockname()[1]
         self.next_tn = 1
@@ -233,6 +239,9 @@ class Feed:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(5)
         try:
+            if self.fixed_src_port:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(("0.0.0.0", int(self.fixed_src_port)))
             s.connect(self.dest)
         except OSError as e:
             s.close()
@@ -376,6 +385,91 @@ class Feed:
             }
 
 
+# ---------------------------------------------------------------- receiver feedback (goat.bn-feedback/v1)
+# The receiver tells us what it sees, so integration questions are answered by the systems
+# themselves rather than out of band. One JSON object per UDP datagram, at most 4 KiB:
+#   {"type": "hello",   "system": "...", "contact": "...", "version": "..."}
+#   {"type": "ack",     "sic": 42, "received": 118, "window_s": 60, "last_tod": 51234.5}
+#   {"type": "status",  "receiving": true, "decoding": true, "sics": [42, 53], "positions_set": true, "note": "..."}
+#   {"type": "request", "sac": 7, "transport": "tcp", "wg_public_key": "...", "wg_endpoint": "host:port", "note": "..."}
+# Accepted from the receiver's address only (plus --feedback-allow addresses), either on the
+# dedicated --feedback-port or as a reply to a feed's own source port. Anything else is
+# counted as rejected and dropped. Strings are cut to 200 characters; unknown keys are dropped.
+
+FEEDBACK_FIELDS = {
+    "hello": {"system": str, "contact": str, "version": str},
+    "ack": {"sic": int, "received": int, "window_s": int, "last_tod": (int, float)},
+    "status": {"receiving": bool, "decoding": bool, "sics": list, "positions_set": bool, "note": str},
+    "request": {"sac": int, "sic": int, "transport": str, "wg_public_key": str, "wg_endpoint": str, "note": str},
+}
+
+
+def parse_feedback(data):
+    """A clean feedback message, or None. Never raises."""
+    if len(data) > 4096:
+        return None
+    try:
+        m = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(m, dict) or m.get("type") not in FEEDBACK_FIELDS:
+        return None
+    out = {"type": m["type"]}
+    for k, typ in FEEDBACK_FIELDS[m["type"]].items():
+        v = m.get(k)
+        if v is None or isinstance(v, bool) and typ is not bool:
+            continue
+        if isinstance(v, typ):
+            if isinstance(v, str):
+                v = v[:200]
+            if isinstance(v, list):
+                v = [x for x in v if isinstance(x, int) and not isinstance(x, bool)][:64]
+            out[k] = v
+    if out["type"] == "ack" and "sic" not in out:
+        return None
+    return out
+
+
+class Feedback:
+    def __init__(self, allowed):
+        self.allowed = set(allowed)
+        self.lock = threading.Lock()
+        self.last = {}          # type -> {"at": t, "from": "ip:port", "msg": {...}}
+        self.acks = {}          # sic -> {"at": t, **ack}
+        self.counts = {"accepted": 0, "rejected": 0}
+        self.last_heard = None
+
+    def take(self, data, addr, via):
+        msg = parse_feedback(data) if addr[0] in self.allowed else None
+        with self.lock:
+            if msg is None:
+                self.counts["rejected"] += 1
+                return None
+            now = time.time()
+            self.counts["accepted"] += 1
+            self.last_heard = now
+            self.last[msg["type"]] = {"at": now, "via": via, "msg": msg}
+            if msg["type"] == "ack":
+                self.acks[msg["sic"]] = {"at": now, **msg}
+        return msg
+
+    def listen(self, sock, via):
+        while True:
+            try:
+                data, addr = sock.recvfrom(4097)
+            except OSError:
+                time.sleep(1)
+                continue
+            self.take(data, addr, via)
+
+    def status(self):
+        with self.lock:
+            return {"schema": "goat.bn-feedback/v1", "last_heard": self.last_heard, "counts": dict(self.counts),
+                    "hello": self.last.get("hello"), "status": self.last.get("status"),
+                    "request": self.last.get("request"),
+                    "acks": {str(k): v for k, v in self.acks.items()}}
+
+
 ENCRYPTION = ("none", "wireguard", "receiver-transport")
 INPUTS = ("notional", "fabric")
 
@@ -416,6 +510,8 @@ def main():
     ap.add_argument("--transport", choices=["udp", "tcp"], default="udp")
     ap.add_argument("--input", default="notional", help="notional (built) or fabric (designed)")
     ap.add_argument("--encryption", default="none", help="none | wireguard | receiver-transport (what protects the path)")
+    ap.add_argument("--feedback-port", type=int, default=0, help="dedicated UDP port for receiver feedback (0 = off)")
+    ap.add_argument("--feedback-allow", default="", help="extra source addresses allowed to send feedback, comma-separated")
     a = ap.parse_args()
 
     err = guard(a.input, a.encryption)
@@ -428,6 +524,14 @@ def main():
     feeds = [Feed(n.strip(), a.sac, dest, random.Random(rnd.random()), profiles, transport=a.transport)
              for n in a.feeds.split(",") if n.strip()]
     started = time.time()
+    fb = Feedback([dest[0]] + [x.strip() for x in a.feedback_allow.split(",") if x.strip()])
+    for f in feeds:
+        if f.transport == "udp":   # replies to the feed's own source port, from the receiver's port only (connected socket)
+            threading.Thread(target=fb.listen, args=(f.sock, f"reply:{f.src_port}"), daemon=True).start()
+    if a.feedback_port:
+        fsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        fsock.bind(("0.0.0.0", a.feedback_port))
+        threading.Thread(target=fb.listen, args=(fsock, f"port:{a.feedback_port}"), daemon=True).start()
     for f in feeds:
         threading.Thread(target=f.run, daemon=True, name=f.name).start()
     print(json.dumps({"event": "start", "node": a.node, "receiver": a.label,
@@ -443,7 +547,17 @@ def main():
                                                          "format": "ASTERIX CAT034/CAT048",
                                                          "encryption": a.encryption},
                "started": started, "now": now, "uptime_s": round(now - started),
-               "feeds": [f.status(now) for f in feeds]}
+               "feeds": [f.status(now) for f in feeds],
+               "feedback": dict(fb.status(), port=a.feedback_port or None)}
+        acks = doc["feedback"]["acks"]
+        for fd in doc["feeds"]:   # an application ack for this SIC in the last 2 minutes upgrades the feed's ack state
+            ak = acks.get(str(fd["sic"]))
+            if ak and now - ak["at"] < 120:
+                sent = fd["windows"]["1m" if ak.get("window_s", 60) <= 60 else "15m"].get("datagrams", 0)
+                fd["ack"] = {"mode": "app", "note": "the receiver reports what it received", "at": ak["at"],
+                             "receiver_received": ak.get("received"), "window_s": ak.get("window_s"),
+                             "we_sent_in_window": sent, "last_tod": ak.get("last_tod"),
+                             "last_refused": fd["ack"].get("last_refused")}
         write_status(a.status, doc)
         if now - last_log >= 60:
             print(json.dumps({"event": "stats", "uptime_s": doc["uptime_s"],
