@@ -270,3 +270,67 @@ fn status_on_real_hosts_agrees_with_verify_and_diff_for_every_machine() {
     assert_eq!(by_diff, want, "diff, every machine:\n{dtext}");
     assert_eq!(by_verify, want, "verify, every machine");
 }
+
+/// Gate D on real hosts: the `machines` list `status` and `verify` carry beside
+/// their rows, graded the same way (tests/status_machines.rs holds its fields).
+#[path = "common/machines.rs"]
+mod shape;
+
+#[test]
+fn status_and_verify_on_real_hosts_list_each_machine_s_state_and_reason() {
+    let w = world();
+    let repo = w.path();
+    let (code, doc, text) = run(repo, &["status", "--env", "zagros"]);
+    assert_eq!(code, 3, "{text}");
+    let want = |rows: &[(&str, &str, &str, &str)]| -> BTreeMap<(String, String), (String, String)> {
+        rows.iter()
+            .map(|(h, c, s, r)| {
+                (
+                    (h.to_string(), c.to_string()),
+                    (s.to_string(), r.to_string()),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        shape::machines(&doc, &text),
+        want(&[
+            ("core-a", "portal", "converged", "declared"),
+            ("core-a", "herd", "converged", "declared"),
+            ("core-b", "portal", "pending", "other-ref"),
+            ("core-b", "herd", "converged", "declared"),
+            ("core-c", "portal", "unknown", "unreachable"),
+            ("core-c", "herd", "unknown", "unreachable"),
+            ("core-f", "portal", "unknown", "no-answer"),
+            ("core-f", "herd", "unknown", "no-answer"),
+        ]),
+        "{text}"
+    );
+    let (code, doc, text) = run(repo, &["verify", "portal", "--env", "zagros"]);
+    assert_eq!(code, 3, "{text}");
+    assert_eq!(
+        shape::machines(&doc, &text),
+        want(&[
+            ("core-a", "portal", "converged", "declared"),
+            ("core-b", "portal", "pending", "other-ref"),
+            ("core-c", "portal", "unknown", "unreachable"),
+            ("core-f", "portal", "unknown", "no-answer"),
+        ]),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_verify_that_reads_nothing_carries_an_empty_machines_list() {
+    let w = world();
+    let (_, doc, text) = run(
+        w.path(),
+        &["verify", "portal", "--env", "zagros", "--dry-run"],
+    );
+    assert_eq!(doc["verb"], "verify", "{text}");
+    assert_eq!(
+        doc["machines"],
+        serde_json::json!([]),
+        "a dry run reads no ledger, and says so with an empty list:\n{text}"
+    );
+}
