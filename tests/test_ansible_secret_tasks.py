@@ -229,8 +229,9 @@ CASES = [
       'site_key_id': 'sk_a', 'site_group_id': 'grp_a', 'site_domain': 'cgnat-a.local',
       'site_net_id': 'cgnat-a-net', 'site_network_net': '{"IP":"100.64.0.0","Mask":"//8AAA=="}'},
      ['postgres_superuser_password'], 'cgnat_seed'),
-    ('cgnat seed and peer counts', 'cgnat-validation.yml',
-     ['Apply seed SQL via psql', 'Query enrolled peer count (site α)',
+    # The seed's apply runs in the setup-key case above, after the render.
+    ('cgnat peer counts', 'cgnat-validation.yml',
+     ['Query enrolled peer count (site α)',
       'Query enrolled peer count (site β)'], {}, ['postgres_superuser_password']),
     ('relay DNS-01 credentials', 'goat-relay-deploy.yml',
      ['LE — write Cloudflare DNS-01 credentials (0600)'], {'goat_relay_le_dns01': True}, []),

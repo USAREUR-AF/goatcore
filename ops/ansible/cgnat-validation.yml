@@ -256,10 +256,11 @@
           no_log: true
 
         - name: Apply seed SQL via psql
+          # On stdin: psql runs as the image's postgres user, and a copy in the
+          # container would be root-owned at the seed's mode 0600.
           ansible.builtin.shell: |
-            docker cp /tmp/cgnat-a-seed.sql postgres-a:/tmp/seed.sql
-            docker exec --env-file '{{ pg_env.path }}' postgres-a \
-              psql -U postgres -d netbird -f /tmp/seed.sql
+            docker exec -i --env-file '{{ pg_env.path }}' postgres-a \
+              psql -U postgres -d netbird -f - < /tmp/cgnat-a-seed.sql
           changed_when: true
       always:
         - name: Remove the postgres env file
@@ -383,10 +384,11 @@
           no_log: true
 
         - name: Apply seed SQL via psql
+          # On stdin: psql runs as the image's postgres user, and a copy in the
+          # container would be root-owned at the seed's mode 0600.
           ansible.builtin.shell: |
-            docker cp /tmp/cgnat-b-seed.sql postgres-a:/tmp/seed.sql
-            docker exec --env-file '{{ pg_env.path }}' postgres-a \
-              psql -U postgres -d netbird -f /tmp/seed.sql
+            docker exec -i --env-file '{{ pg_env.path }}' postgres-a \
+              psql -U postgres -d netbird -f - < /tmp/cgnat-b-seed.sql
           changed_when: true
 
     # =============================================================================
