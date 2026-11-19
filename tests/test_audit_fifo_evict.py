@@ -255,6 +255,9 @@ class StorageTLS(unittest.TestCase):
     def test_https_client_trusts_the_site_ca(self):
         argv = self.argv_for(self.base(ca_path="/etc/goat/storage-ca/ca.crt"))
         self.assertIn("/etc/goat/storage-ca/ca.crt:/mc-config/certs/CAs/storage-ca.crt:ro", argv)
+        # measured against a real TLS MinIO: without a writable config dir mc fails "Unable to save new mc config"
+        self.assertIn("/mc-config:rw,mode=1777", argv)
+        self.assertEqual(argv[argv.index("/mc-config:rw,mode=1777") - 1], "--tmpfs")
         image = argv.index("fixture/mc")
         self.assertEqual(argv[image + 1:image + 4], ["--config-dir", "/mc-config", "--json"])
         self.assertNotIn("--insecure", argv)

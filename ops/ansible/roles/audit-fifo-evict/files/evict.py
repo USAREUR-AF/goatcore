@@ -58,7 +58,10 @@ class MC:
         if ca_path:
             # HTTPS storage (GHSA-9qmp): mc verifies the server against the site CA
             # it finds under <config-dir>/certs/CAs, plus the system roots. Never --insecure.
-            argv += ["-v", ca_path + ":/mc-config/certs/CAs/storage-ca.crt:ro"]
+            # mc writes its own config into --config-dir, and the image runs as a
+            # non-root user, so the directory is a private in-memory one.
+            argv += ["--tmpfs", "/mc-config:rw,mode=1777",
+                     "-v", ca_path + ":/mc-config/certs/CAs/storage-ca.crt:ro"]
             config_dir = ["--config-dir", "/mc-config"]
         argv += ["--entrypoint", "mc", self.config["mc_image"], *config_dir, "--json", *args]
         process = None
