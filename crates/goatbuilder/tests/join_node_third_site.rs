@@ -772,9 +772,18 @@ fn a_dry_runs_footer_does_not_call_phase_1_a_manual_step() {
         .unwrap_or_else(|| panic!("a footer row: {}", says(&out)))
         .to_string();
     assert!(footer.starts_with("PLAN complete."), "{footer}");
-    assert!(!footer.contains("manual"), "phase 1 is a check, not a manual step: {footer}");
-    assert!(!footer.contains("--from 2"), "a run does not pause after phase 1: {footer}");
-    assert!(footer.contains("GB-314") && footer.contains("--from 1"), "names the stop and how to resume: {footer}");
+    assert!(
+        !footer.contains("manual"),
+        "phase 1 is a check, not a manual step: {footer}"
+    );
+    assert!(
+        !footer.contains("--from 2"),
+        "a run does not pause after phase 1: {footer}"
+    );
+    assert!(
+        footer.contains("GB-314") && footer.contains("--from 1"),
+        "names the stop and how to resume: {footer}"
+    );
 }
 
 /// Like standup, a join-node run leaves a row per executed step in the state

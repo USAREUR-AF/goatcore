@@ -1012,8 +1012,12 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
     checks.extend(not_run(repo, o, Some(&phases)));
     if o.dry_run {
         checks.extend(crate::inputs::rows(&listed));
-        let needs = if o.via == "usb" { "takes no --address: the phone is found over USB" } else { "needs --address" };
-        checks.push(row("footer", format!("PLAN complete. Remove --dry-run to execute ({needs}). Phase 1, reaching the node, is the one manual step: it pauses the run; resume with --from 2. docs/tutorials/02-first-federated-node.md walks through it.")));
+        let (needs, answers) = if o.via == "usb" {
+            ("takes no --address: the phone is found over USB", "the phone answers over USB")
+        } else {
+            ("needs --address", "the node answers over SSH at --address")
+        };
+        checks.push(row("footer", format!("PLAN complete. Remove --dry-run to execute ({needs}). Phase 1 checks that {answers}, and the run goes on to phase 15 with no operator step; a node that does not answer stops the run at phase 1 with GB-314: resume with --from 1. docs/tutorials/02-first-federated-node.md walks through it.")));
     }
     let mut r = Report::new("join-node", checks, EXIT_REFUSED);
     r.exit = exit;
