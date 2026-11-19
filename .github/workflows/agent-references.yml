@@ -187,11 +187,16 @@ jobs:
       - name: Check the commit messages too
         run: |
           set -euo pipefail
-          # History cannot be scrubbed later, so a trailer in a commit message
-          # is worse than one in a file. The step above scans files; this
-          # scans the messages themselves, with the base's copy of the script.
+          scanner=ops/ci/check-no-agent-references-in-commits.sh
+          if [ ! -f "$scanner" ]; then
+            # An older recorded base may predate the script. Use the copy
+            # from the trusted commit that supplied this workflow.
+            workflow_scanner="$(mktemp "$RUNNER_TEMP/check-commit-messages.XXXXXX")"
+            git show "$GITHUB_WORKFLOW_SHA:$scanner" > "$workflow_scanner"
+            scanner="$workflow_scanner"
+          fi
           rc=0
-          ops/ci/check-no-agent-references-in-commits.sh "$RANGE_BASE" "$RANGE_HEAD" || rc=$?
+          bash "$scanner" "$RANGE_BASE" "$RANGE_HEAD" || rc=$?
           if [ "$rc" -eq 1 ]; then
             echo
             echo
