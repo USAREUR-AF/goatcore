@@ -10,5 +10,6 @@
   "textfile_dir": {{ audit_fifo_evict_textfile_dir | to_json }},
   "mc_image": {{ audit_fifo_evict_mc_image | to_json }},
   "state_dir": {{ audit_fifo_evict_dir | to_json }},
-  "env_file": {{ (audit_fifo_evict_dir ~ "/evictor.env") | to_json }}
+  "env_file": {{ (audit_fifo_evict_dir ~ "/evictor.env") | to_json }},
+  "ca_path": {{ audit_fifo_evict_ca_path | to_json }}
 }

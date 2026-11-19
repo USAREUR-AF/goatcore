@@ -5,6 +5,10 @@
 # mounted socket. The ledger role writes /var/lib/goat/<component>/ here exactly
 # as on a Thor.
 FROM ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c
+ARG UBUNTU_MIRROR=
+# CI passes the runner's Ubuntu mirror (.github/actions/apt-failover); unset, the image's sources stay.
+RUN if [ -n "$UBUNTU_MIRROR" ] && [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \
+      sed -i -E "s#https?://(archive|security)\.ubuntu\.com/ubuntu/?#$UBUNTU_MIRROR/#" /etc/apt/sources.list.d/ubuntu.sources; fi
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssh-server sudo python3 ca-certificates \

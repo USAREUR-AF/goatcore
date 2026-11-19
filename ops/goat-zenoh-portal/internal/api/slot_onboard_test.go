@@ -182,14 +182,20 @@ func TestSlotOnboard_DeleteFreesSlotAndAlias(t *testing.T) {
 
 	// Delete alpha (slot 0). Must 204 and free the slot.
 	anchor0 := registry.SlotAnchor(slotSalt, 0)
-	if resp := doJSON(t, c, "DELETE", ts.URL+"/api/vendors/"+anchor0, "dev-operator-key", nil); resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete alpha: want 204, got %d %s", resp.StatusCode, mustReadBody(t, resp))
+	if resp := doJSON(t, c, "DELETE", ts.URL+"/api/vendors/"+anchor0, "dev-operator-key", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete alpha: want 200, got %d %s", resp.StatusCode, mustReadBody(t, resp))
 	}
 	if got := aliasCount(); got != 2 {
 		t.Errorf("aliases after delete = %d, want 2 (alpha's alias should be gone)", got)
 	}
 
-	// The freed slot is reclaimable — a new onboard succeeds and takes slot 0.
+	// The freed slot is quarantined while a leaf minted for it may be valid:
+	// a new onboard does not get it.
+	if resp := doJSON(t, c, "POST", ts.URL+"/api/vendors", "dev-operator-key", map[string]any{"prefix": "echo"}); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("onboard into a just-freed slot: want 503 (quarantined), got %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	// Past the quarantine the freed slot is reclaimable — a new onboard succeeds and takes slot 0.
+	pastReuseQuarantine(t)
 	resp := doJSON(t, c, "POST", ts.URL+"/api/vendors", "dev-operator-key", map[string]any{"prefix": "echo"})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("re-onboard into freed slot: want 201, got %d %s", resp.StatusCode, mustReadBody(t, resp))
@@ -200,8 +206,8 @@ func TestSlotOnboard_DeleteFreesSlotAndAlias(t *testing.T) {
 
 	// Idempotent reconcile: deleting an already-absent vendor whose slot is now
 	// reassigned still frees it (204); deleting a never-used anchor 404s.
-	if resp := doJSON(t, c, "DELETE", ts.URL+"/api/vendors/"+anchor0, "dev-operator-key", nil); resp.StatusCode != http.StatusNoContent {
-		t.Errorf("delete echo (slot 0): want 204, got %d", resp.StatusCode)
+	if resp := doJSON(t, c, "DELETE", ts.URL+"/api/vendors/"+anchor0, "dev-operator-key", nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("delete echo (slot 0): want 200, got %d", resp.StatusCode)
 	}
 	if resp := doJSON(t, c, "DELETE", ts.URL+"/api/vendors/"+registry.SlotAnchor(slotSalt, 0), "dev-operator-key", nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("delete now-free slot 0 again: want 404 (nothing to delete or free), got %d", resp.StatusCode)
@@ -229,8 +235,8 @@ func TestSlotOnboard_DeleteByHandleResolvesAnchor(t *testing.T) {
 
 	// DELETE by the HANDLE (the identifier the operator knows), not the anchor.
 	// Pre-fix this 404s (delete matches the anchor-keyed row) and orphans the slot.
-	if resp := doJSON(t, c, "DELETE", ts.URL+"/api/vendors/"+handle, "dev-operator-key", nil); resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete by handle %q: want 204, got %d %s", handle, resp.StatusCode, mustReadBody(t, resp))
+	if resp := doJSON(t, c, "DELETE", ts.URL+"/api/vendors/"+handle, "dev-operator-key", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete by handle %q: want 200, got %d %s", handle, resp.StatusCode, mustReadBody(t, resp))
 	}
 
 	// Proof the slot was actually freed (not orphaned): re-onboarding the same

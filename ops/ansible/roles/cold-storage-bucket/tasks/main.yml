@@ -36,6 +36,23 @@
   become: true
   failed_when: cold_storage_minio_state.rc != 0 or 'running' not in cold_storage_minio_state.stdout
 
+- name: cold-storage | inspect destination alias without logging credentials
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ cold_storage_minio_container }}", mc, --json, alias, list, "{{ cold_storage_target_alias }}"]
+  register: _cold_alias
+  changed_when: false
+  become: true
+  no_log: true
+
+- name: cold-storage | require HTTPS destination before bucket operations
+  ansible.builtin.assert:
+    that:
+      - (_cold_alias.stdout | from_json).status == 'success'
+      - ((_cold_alias.stdout | from_json).URL | urlsplit('scheme')) == 'https'
+      - ((_cold_alias.stdout | from_json).URL | urlsplit('hostname') | length) > 0
+    fail_msg: "Cold-storage alias must use verified HTTPS."
+  no_log: true
+
 - name: cold-storage | check if bucket already exists
   ansible.builtin.command:
     cmd: >-

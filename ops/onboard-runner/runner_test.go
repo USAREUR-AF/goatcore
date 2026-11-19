@@ -28,6 +28,7 @@ type fakePortal struct {
 	resultColOn map[string]bool      // id -> collab_activated written back
 	claimFail   map[string]bool      // ids where claim should 409 (race loser)
 	resultErrs  map[string]string    // id -> error written back on the result
+	resultAudit map[string]string    // id -> operator_audit + " " + operator_audit_error written back
 
 	offboardClaims    []string        // ids offboard-claimed, in order
 	offboardClaimFail map[string]bool // ids where offboard-claim should 409
@@ -44,6 +45,7 @@ func newFakePortal() *fakePortal {
 		resultColOn: map[string]bool{},
 		claimFail:   map[string]bool{},
 		resultErrs:  map[string]string{},
+		resultAudit: map[string]string{},
 
 		offboardClaimFail: map[string]bool{},
 	}
@@ -114,6 +116,8 @@ func (f *fakePortal) handler() http.Handler {
 			CollabAccount   string `json:"collab_account"`
 			CollabSetupLink string `json:"collab_setup_link"`
 			CollabActivated bool   `json:"collab_activated"`
+			OperatorAudit   string `json:"operator_audit"`
+			OperatorAuditEr string `json:"operator_audit_error"`
 		}
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &body)
@@ -127,6 +131,7 @@ func (f *fakePortal) handler() http.Handler {
 		p.Status = body.Status
 		f.results[id] = body.Status
 		f.resultErrs[id] = body.Error
+		f.resultAudit[id] = strings.TrimSpace(body.OperatorAudit + " " + body.OperatorAuditEr)
 		f.resultKeys[id] = body.SetupKey
 		f.resultBun[id] = body.BundlePath
 		f.resultColA[id] = body.CollabAccount

@@ -92,6 +92,12 @@ class Core:
 
     def get(self, expr):
         with self.lock:
+            # A value may be a function, called at the first read that matches it and
+            # kept: a test's value that depends on when the runner reads it (a stamp
+            # dated after the runner started, however slowly it started).
+            for k, v in list(self.store.items()):
+                if callable(v) and _match(expr, k):
+                    self.store[k] = v()
             return [(k, v) for k, v in sorted(self.store.items()) if _match(expr, k)]
 
 

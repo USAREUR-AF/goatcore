@@ -313,7 +313,24 @@ class Publish(Fixture):
         with open(self.partner, "w") as f:
             f.write(text)
         proposed, _ = self.propose()
-        self.assertEqual(open(proposed).read().count("acceptance:"), 1)
+        self.assertEqual(Path(proposed).read_text().count("acceptance:"), 1)
+
+    def test_proposal_uses_session_date_when_agreement_expiry_cannot_be_read(self):
+        import yaml
+        self.ready()
+        before = Path(self.partner).read_text()
+        for text in (None, "not JSON", "{}"):
+            with self.subTest(agreement=text):
+                if text is None:
+                    os.unlink(self.ag)
+                else:
+                    with open(self.ag, "w") as f:
+                        f.write(text)
+                proposed, diff = self.propose()
+                block = yaml.safe_load(Path(proposed).read_text())["acceptance"]
+                self.assertEqual(block["expires"], self.m["expires_at"][:10])
+                self.assertIn("+acceptance:", diff)
+                self.assertEqual(Path(self.partner).read_text(), before)
 
     def test_the_proposal_is_never_written_over_the_deployments_file(self):
         self.ready()

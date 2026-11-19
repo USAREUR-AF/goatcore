@@ -130,13 +130,29 @@
   run_once: true
   become: true
 
+# The optional assets (goat_get_optional_assets) are probed too, but never
+# decide the leg: a tag without them is complete.
+- name: goat-get | probe the download mirror for the optional assets
+  ansible.builtin.uri:
+    url: "{{ goat_get_mirror_base }}/{{ goat_get_mirror_prefix }}/{{ item }}"
+    method: HEAD
+    status_code: [200, 403, 404]
+  register: goat_get_mirror_optional_probe
+  failed_when: false
+  loop: "{{ goat_get_optional_assets | default([]) }}"
+  run_once: true
+  become: true
+
 - name: goat-get | use the mirror only when it carries the COMPLETE set
   ansible.builtin.set_fact:
     # One Jinja expression, not a YAML mapping: set_fact does NOT evaluate
     # Jinja in a dict KEY, so templated keys would stay unrendered strings
     # and every lookup below would miss silently.
     goat_get_asset_urls: >-
-      {{ dict(goat_get_assets | zip(goat_get_assets
+      {%- set names = goat_get_assets + (goat_get_mirror_optional_probe.results | default([])
+                     | selectattr('status', 'defined') | selectattr('status', 'equalto', 200)
+                     | map(attribute='item') | list) -%}
+      {{ dict(names | zip(names
          | map('regex_replace', '^',
                goat_get_mirror_base ~ '/' ~ goat_get_mirror_prefix ~ '/'))) }}
     goat_get_dl_headers: {"Accept": "application/octet-stream"}
@@ -206,16 +222,17 @@
   ansible.builtin.set_fact:
     goat_get_asset_urls: >-
       {{ goat_get_release.json.assets
-         | selectattr('name', 'in', goat_get_assets)
+         | selectattr('name', 'in', goat_get_assets + (goat_get_optional_assets | default([])))
          | items2dict(key_name='name', value_name='url') }}
   when: goat_get_source == 'github'
 
 - name: goat-get | every requested asset is present in the release
   ansible.builtin.assert:
     that:
-      - goat_get_asset_urls.keys() | list | sort == goat_get_assets | sort
+      - goat_get_assets | reject('in', goat_get_asset_urls.keys() | list) | list | length == 0
     fail_msg: >-
-      Release {{ goat_get_release_tag }} is missing some expected assets.
+      Release {{ goat_get_release_tag }} is missing some expected assets
+      (every one in goat_get_assets is required; goat_get_optional_assets are not).
       Wanted {{ goat_get_assets }}, found {{ goat_get_asset_urls.keys() | list }}.
 
 - name: goat-get | download each release asset to the www dir
@@ -230,13 +247,22 @@
     # up on the larger asset over a lossy mesh. Give it room + retry — the host's
     # egress to GitHub is the slow, flaky leg.
     timeout: 300
-  loop: "{{ goat_get_assets }}"
+  loop: "{{ goat_get_asset_urls.keys() | list | sort }}"
   become: true
   no_log: true
   register: goat_get_download
   until: goat_get_download is succeeded
   retries: 3
   delay: 5
+
+# An optional asset this release lacks must not stay behind from the release
+# served before it: a SHA256SUMS.sigstore.json signs THAT release's SHA256SUMS.
+- name: goat-get | remove optional assets this release does not carry
+  ansible.builtin.file:
+    path: "{{ goat_get_www_dir }}/{{ item }}"
+    state: absent
+  loop: "{{ goat_get_optional_assets | default([]) | reject('in', goat_get_asset_urls.keys() | list) | list }}"
+  become: true
 
 - name: goat-get | render landing index.html
   ansible.builtin.template:

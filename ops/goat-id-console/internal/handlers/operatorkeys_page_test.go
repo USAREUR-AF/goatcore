@@ -106,6 +106,15 @@ func TestTemplates_operatorKeysPage(t *testing.T) {
 			not:  []string{"/operator-keys/opk-1/approve", "/operator-keys/opk-1/reject"},
 		},
 		{
+			// GHSA-2w7v: a request filed before the filer was recorded cannot be
+			// decided by anyone; the page says to withdraw and re-request.
+			name: "a pre-upgrade request says to re-request instead of offering controls",
+			vars: &pageVars{OperatorKeyRows: []operatorKeyRow{{OperatorKey: requested, Unverifiable: true, LegacyRequest: true}},
+				OperatorKeyStatus: onboardstore.OperatorKeyRequested, OperatorKeyDirPath: "/opt/keys.d"},
+			must: []string{"Filed before the upgrade", "request again"},
+			not:  []string{"/operator-keys/opk-1/approve", "/operator-keys/opk-1/reject", "Not decidable from this session"},
+		},
+		{
 			// Self-revoke is de-escalation and stays enabled on an own row.
 			name: "your own live key can still be revoked by you",
 			vars: &pageVars{OperatorKeyRows: []operatorKeyRow{{OperatorKey: active, Own: true}},

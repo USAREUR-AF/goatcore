@@ -11,6 +11,8 @@
 //! later verb lands in this binary and deletes the script it replaces, behind
 //! the parity gate (docs/design/goatbuilder-conformance.md).
 
+#[cfg(test)]
+mod argv_secrets;
 mod assay;
 mod awake;
 mod complete;

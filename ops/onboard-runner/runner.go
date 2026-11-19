@@ -27,12 +27,17 @@ import (
 // live here (in the process env, handed to `goat`). See
 // docs/design/operator-onboard-intake.md §"Fast-follow".
 type runner struct {
-	pc       *portalClient
-	onlyEnv  string // "" = handle any env; else skip proposals for other envs
-	repoRoot string // manifest is written to <repoRoot>/ops/operators/<env>/<handle>.yml
-	goatBin  string // path to the goat binary (default "goat")
-	runnerID string // GOAT_OPERATOR_HANDLE stamped into the mint's audit event
-	dryRun   bool   // poll + log only; never claim, mint, or write back
+	pc *portalClient
+	// auditFallbackPath is where an operator-action record the fabric did not
+	// take is appended as one JSON line (the CLI's fallback-log shape). ""
+	// means <repoRoot>/out/audit/operator-actions.log, on the persisted
+	// repo-root mount.
+	auditFallbackPath string
+	onlyEnv           string // "" = handle any env; else skip proposals for other envs
+	repoRoot          string // manifest is written to <repoRoot>/ops/operators/<env>/<handle>.yml
+	goatBin           string // path to the goat binary (default "goat")
+	runnerID          string // GOAT_OPERATOR_HANDLE stamped into the mint's audit event
+	dryRun            bool   // poll + log only; never claim, mint, or write back
 	// deferCredential passes --defer-credential to the mint (mint-on-collect):
 	// the slot and the identity are created, the fabric credential is not, and
 	// its owner collects it from the console. PER-GOATNET and OFF by default —

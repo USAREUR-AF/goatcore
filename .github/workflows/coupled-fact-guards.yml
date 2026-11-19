@@ -57,6 +57,7 @@ name: coupled-fact-guards
 # self-test step runs first, every time.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'ops/ansible/group_vars/**'

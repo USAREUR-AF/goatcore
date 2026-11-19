@@ -100,6 +100,10 @@
         state: directory
         mode: "0755"
 
+    # lan-mesh-allowlist admits the mgmt network's own subnet, read live.
+    - name: lan-routes | read the mgmt Docker network's subnet
+      ansible.builtin.import_tasks: tasks/mgmt-network-subnet.yml
+
     - name: lan-routes | render lan-mgmt dynamic config
       ansible.builtin.template:
         src: templates/lan-traefik/lan-mgmt-dynamic.yml.j2

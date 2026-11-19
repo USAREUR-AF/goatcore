@@ -159,9 +159,61 @@ per-goatnet surface `version_check` resolves.
   `<get-base>/version.json`, and downloads `<get-base>/goat-<os>-<arch>` — so
   `goat update` on an ZAGROS context pulls from get.zagros, on nova from get.nova.
   Overridable with `GOAT_GET_ENDPOINT` / `<CONTEXT>_GET_ENDPOINT`.
-- **Verify-before-replace.** Checks the download against the surface's own
-  `<asset>.sha256` *before* touching the installed binary; a mismatch aborts
-  with the old binary intact.
+- **Provenance before bytes.** The surface's `<asset>.sha256` must agree with
+  the release's `SHA256SUMS`, and `SHA256SUMS` must carry a verified cosign
+  signature (`SHA256SUMS.cosign-bundle`) whose certificate identity is exactly
+  `https://github.com/<repo>/.github/workflows/_release-binary.yml@refs/tags/goat-cli-v<version>`,
+  where `<repo>` built the binary (or is `GOAT_UPDATE_SIGNER=<owner>/<repo>`)
+  and `<version>` is the one version.json advertises. A signing run from a
+  branch, a pull request or another workflow does not verify, and an older
+  release cannot be passed off under a newer version.json.
+- **No downgrade.** The advertised version must be newer than the running one;
+  `--force` reinstalls the same version, and only `--allow-downgrade` installs
+  an older one.
+  Residual: nothing signs which release is the *latest*, so a surface can hold
+  a client at any genuine release newer than the one it runs (not the newest).
+  Closing that needs a signed "latest" pointer; `goat update` cannot know the
+  newest version on its own.
+- **Dry run.** `--dry-run` runs every check above (checksum agreement, the
+  release signature, the version rules) and stops before downloading the
+  binary: it refuses whatever a real run would refuse at that point.
+- **Trust root.** cosign needs the Sigstore trust root. By default it reads it
+  through TUF (`~/.sigstore/root`, refreshed online). On a goatnet with no
+  internet, set `GOAT_SIGSTORE_TRUSTED_ROOT` to a Sigstore TrustedRoot JSON
+  kept on the operator's machine: `goat update` then runs
+  `cosign verify-blob --new-bundle-format --trusted-root=<file> --offline` and
+  fetches nothing. That needs the release's signature in the Sigstore bundle
+  format, `SHA256SUMS.sigstore.json`: the release workflow writes it beside the
+  legacy `SHA256SUMS.cosign-bundle` (releases cut after this change), goat-get mirrors it
+  when the release has it, and `goat update` prefers it whenever it is served.
+  cosign cannot check the legacy bundle against a pinned root, so offline a
+  release with only the legacy bundle is refused. Online, a surface that
+  withholds the new bundle gains nothing: the legacy bundle is checked against
+  the same exact identity. The
+  file must be a readable, non-empty JSON object before cosign is called, and a
+  root cosign rejects is reported as that pinned file, not as an unreachable network. The
+  surface mirrors the release's `SHA256SUMS.cosign-bundle` beside
+  `SHA256SUMS`; it never serves the trust root, which would let the surface
+  choose what it is checked against. A host that cannot load a trust root is
+  told so. `--allow-unsigned` does not apply while cosign is installed.
+- **The release checks the same identity.** On a tag run, `_release-binary.yml`
+  verifies its own signature with the exact `--certificate-identity` clients
+  require (`…/_release-binary.yml@${GITHUB_REF}`), so a certificate clients
+  would refuse fails the release instead of every update.
+- **Assumption: only an admin can create a `goat-cli-v*` tag.** A tag run uses
+  the workflow file at the tagged commit, so a tag pushed on a branch commit
+  whose `_release-binary.yml` skips the admin check would still sign under the
+  pinned identity. The pin is as strong as the repository's tag ruleset.
+  Checked on 2026-11-09: two active tag rulesets require both the admin role
+  and goat-owners to create any tag, with no app or Actions bypass. A checksum served next to the binary
+  shows only that both came from the same server, so it is never the only
+  check: without cosign on PATH the update refuses unless `--allow-unsigned`
+  accepts the surface's checksum alone for that run.
+- **Verify-before-replace.** Checks the download against that digest *before*
+  touching the installed binary; a mismatch aborts with the old binary intact.
+- **Bounded.** The small files are capped in size and time; the binary at
+  512 MiB, by a 30 s stall and by a 30-minute total deadline
+  (`GOAT_UPDATE_DEADLINE_SECS`).
 - **Atomic replace.** Downloads to a temp file next to `current_exe()`,
   verifies, then renames over it on the same filesystem — the running process
   keeps its inode; the new binary is in place for the next invocation. No

@@ -83,9 +83,11 @@ type = "noise"
 [client.transport.noise]
 remote_public_key = "${VPS_RELAY_PUBKEY}"
 
+# Traefik's enrollment-only entrypoint, never websecure (127.0.0.1:443): a
+# host-local connection to websecure passes the mesh-only allowlist.
 [client.services.netbird-mgmt]
 type = "tcp"
-local_addr = "127.0.0.1:443"
+local_addr = "127.0.0.1:8443"
 EOF
 
 sudo chmod 600 "$CONFIG_DIR/client-${NAME}.toml"
