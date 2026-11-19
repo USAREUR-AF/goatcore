@@ -15,6 +15,14 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
 GOAT="${1:?usage: parity-federate-verbs.sh <goat> <goatbuilder>}"
 GB="${2:?usage: parity-federate-verbs.sh <goat> <goatbuilder>}"
+# Every row runs from inside the vectors directory, so a binary named by a
+# relative path is resolved from here first. A binary that cannot be run is
+# refused now: both sides exiting 127 would otherwise compare equal.
+for arg in "$GOAT" "$GB"; do
+  if [ ! -f "$arg" ] || [ ! -x "$arg" ]; then echo "PARITY FAIL: $arg is not an executable file"; exit 1; fi
+done
+case "$GOAT" in /*) ;; *) GOAT="$PWD/$GOAT" ;; esac
+case "$GB" in /*) ;; *) GB="$PWD/$GB" ;; esac
 V="$REPO/ops/federation/vectors"
 FAR_DIR="$REPO/ops/federation/fixtures/far-term"
 FAR="$FAR_DIR/agreement.canonical.json"
@@ -73,6 +81,13 @@ while IFS= read -r line; do
   (cd "$V" && "$GOAT" federate $line >"$T/a.out" 2>"$T/a.err"); ra=$?
   # shellcheck disable=SC2086
   (cd "$V" && "$GB" federate $line >"$T/b.out" 2>"$T/b.err"); rb=$?
+  # 126 and 127 are the shell's: the binary was not run at all.
+  case "$ra:$rb" in
+    126:*|127:*|*:126|*:127)
+      fail=1; echo "PARITY FAIL: federate $line — goat exit $ra, goatbuilder exit $rb; a binary could not be run"
+      sed 's/^/    /' "$T/a.err" "$T/b.err" | cut -c1-200 | head -4
+      continue ;;
+  esac
   # The far-term fixture is one both parties can deliver on any date: verify
   # attests and apply renders, so a refusal on both sides is a failure, not parity.
   case "$line" in
