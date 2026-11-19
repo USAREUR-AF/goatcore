@@ -11,11 +11,20 @@
 - name: Pre-flight — assert IP config is set
   ansible.builtin.fail:
     msg: >-
-      dropbear_initramfs_ip_config is empty. The initramfs cannot bring up
-      networking without a static IP config; DHCP is intentionally rejected.
-      Set per-host (typically from underlay_lan_ip + underlay_gateway +
-      underlay_netmask in group_vars).
+      dropbear_initramfs_ip_config is empty. Use "dhcp" (the default: DHCP on
+      every wired port, plus the IPv6 link-local address the kernel always
+      assigns) or a static kernel ip= string. A static string names one site's
+      LAN, so the node cannot be reached at boot after it moves to another site.
   when: dropbear_initramfs_ip_config | length == 0
+
+- name: Notice — static boot address pins this node to one site
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} boots with the static address
+      {{ dropbear_initramfs_ip_config }}. Moved to another site, it answers at
+      boot only on its IPv6 link-local address until this is changed and the
+      initramfs is rebuilt.
+  when: dropbear_initramfs_ip_config not in ['dhcp', 'any', 'on', 'both']
 
 - name: Pre-flight — assert no public-bind smell in DROPBEAR_OPTIONS
   ansible.builtin.fail:
@@ -69,7 +78,7 @@
       DROPBEAR_OPTIONS="{{ dropbear_options }}"
   notify: update initramfs
 
-- name: Configure initramfs networking — static IP for boot-time NIC bring-up
+- name: Configure initramfs networking — DHCP by default, or the declared static ip= string
   ansible.builtin.lineinfile:
     path: /etc/initramfs-tools/initramfs.conf
     regexp: '^IP='
@@ -180,7 +189,7 @@
   ansible.builtin.debug:
     msg: |
       dropbear-initramfs ready on {{ inventory_hostname }}.
-      Bind: {{ dropbear_initramfs_ip_config | regex_replace('^([^:]+).*', '\\1') }}:{{ dropbear_initramfs_ssh_port }}
+      Boot network: {{ dropbear_initramfs_ip_config }} (always also the IPv6 link-local address), port {{ dropbear_initramfs_ssh_port }}
       Authorized keys: {{ dropbear_authorized_keys | length }}
       Verify on next reboot — initramfs hangs at LUKS prompt; SSH from a
       peer in the same site to type the passphrase. See

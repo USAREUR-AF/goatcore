@@ -10,6 +10,31 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ### For someone deploying
 
+#### Fixed: a standup play limited to the founder is refused when its limit selects no host, instead of passing
+
+Six standup plays run on the site's first management host alone, limited
+with `-l 'mgmt-<site>-01*'`: SPIRE, the LAN service surface, the LAN TLS
+routes, the dashboard, the portal and grant-keyd. When the site's founder was
+named otherwise and another inventory host matched the pattern, ansible
+skipped the play and exited 0, so the phase passed having done nothing. Each
+of those commands now checks first that a host of `<site>_hosts` in the two
+management inventories matches the limit, and refuses with GB-355, naming the
+pattern, the group and the inventories, when none does. `goatbuilder standup`
+and `ops/scripts/goat-standup.sh` run the same check. The naming rule is
+unchanged.
+
+<!-- END generated: changelog unreleased -->
+
+## 0.7.3 — 2026-11-17
+
+What changed since 0.7.2, the previous release. `goatbuilder federate directory
+ls|show|check` reads the peering directory and says, for a file a peering
+cannot fetch, whether the party has not uploaded it or the directory's release
+lacks the route. Every error `goatbuilder federate` raises carries its catalog
+code, and `explain release` and `explain fastlane` answer for each step.
+
+### For someone deploying
+
 #### Changed: a joining site is declared to run the data router, admit-audit and SPIRE
 
 The end-state catalog declares the data router (zenoh-router) and admit-audit
@@ -67,6 +92,17 @@ that stages no stamp; its result is still refused (GB-273), so the verdicts
 can differ until a rerun, but a stale result never passes. Tested on the
 in-process fabric only, not on hosts (#792).
 
+#### Added: `goatbuilder federate directory ls|show|check` reads the peering directory
+
+`goatbuilder federate directory` reads the peering directory (saltlick) and
+changes nothing. `ls` lists the directory's release and every party with the
+files it hosts; `show <party>` gives each hosted file's size and sha256;
+`check <party> --for <counterparty>` checks each file a peering reads and says,
+for a missing one, whether the party has not uploaded it (`NOT HOSTED`: the
+party runs phase 5) or the directory's release does not serve the route
+(`ROUTE MISSING`: its operator moves the directory to a newer release). The
+URL is `--url` or `FED_DIRECTORY_URL`. New codes GB-370, GB-371 and GB-372 (#1000).
+
 #### Fixed: every error `goatbuilder federate` raises carries its catalog code
 
 Fifty errors the federate stages and verbs raised had no catalog code, so a log
@@ -119,20 +155,13 @@ no step builds reads "no join-node step builds it yet (gate row I3)". The
 admin surfaces keep their gap line (gate rows I1 and I4). Nothing a run does
 changes (#953).
 
-#### Fixed: a standup play limited to the founder is refused when its limit selects no host, instead of passing
+### For someone contributing
 
-Six standup plays run on the site's first management host alone, limited
-with `-l 'mgmt-<site>-01*'`: SPIRE, the LAN service surface, the LAN TLS
-routes, the dashboard, the portal and grant-keyd. When the site's founder was
-named otherwise and another inventory host matched the pattern, ansible
-skipped the play and exited 0, so the phase passed having done nothing. Each
-of those commands now checks first that a host of `<site>_hosts` in the two
-management inventories matches the limit, and refuses with GB-355, naming the
-pattern, the group and the inventories, when none does. `goatbuilder standup`
-and `ops/scripts/goat-standup.sh` run the same check. The naming rule is
-unchanged.
+Nothing.
 
-<!-- END generated: changelog unreleased -->
+### To be removed
+
+Nothing.
 
 ## 0.7.2 — 2026-11-15
 

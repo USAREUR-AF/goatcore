@@ -1,0 +1,38 @@
+---
+# Renders the role's templates with synthetic values and checks what matters in
+# each: the Traefik rule matches a tagged name and no real one, and the egress
+# rule names the account's uid.
+- name: decoy templates render
+  hosts: localhost
+  gather_facts: false
+  vars:
+    deception_service_zone: "svc.example.internal"
+    decoy_traefik_middlewares: ["mesh-only-allowlist@file"]
+    decoy_listen_port: 8642
+    decoy_install_dir: /opt/goat-decoy
+    decoy_config_dir: /etc/goat-decoy
+    decoy_user: goat-decoy
+    decoy_memory_max: 128M
+    decoy_metrics_file: /var/lib/node_exporter/textfile/goat_decoy.prom
+    _decoy_listen: "172.18.0.1"
+    _decoy_account: { uid: 987 }
+  tasks:
+    - name: render
+      ansible.builtin.set_fact:
+        _route: "{{ lookup('template', '../templates/traefik-decoy.yml.j2') | from_yaml }}"
+        _nft: "{{ lookup('template', '../templates/goat-decoy-egress.nft.j2') }}"
+        _unit: "{{ lookup('template', '../templates/goat-decoy-responder.service.j2') }}"
+    - name: the rule's pattern
+      ansible.builtin.set_fact:
+        _rx: "{{ _route.http.routers['goat-decoy'].rule[12:-2] }}"
+    - name: checks
+      ansible.builtin.assert:
+        that:
+          - "'replica-3f2a-abcdefg2.svc.example.internal' is match(_rx)"
+          - "'docs.svc.example.internal' is not match(_rx)"
+          - "'replica-3f2a-abcdefg2.svcXexample.internal' is not match(_rx)"
+          - "'a.replica-3f2a-abcdefg2.svc.example.internal' is not match(_rx)"
+          - _route.http.routers['goat-decoy'].priority == 1
+          - _route.http.services['goat-decoy'].loadBalancer.servers[0].url == 'http://172.18.0.1:8642'
+          - "'meta skuid 987 ct state new counter drop' in _nft"
+          - "'Requires=goat-decoy-egress-deny.service' in _unit"
