@@ -46,10 +46,18 @@
           http://169.254.169.254/latest/meta-data/public-ipv4
       register: coturn_public_ip_result
       changed_when: false
+      when: relay_cloud | default('aws') != 'azure'
 
     - name: Set coturn_external_ip from detected public IP
       ansible.builtin.set_fact:
         coturn_external_ip: "{{ coturn_public_ip_result.stdout | trim }}"
+      when: relay_cloud | default('aws') != 'azure'
+
+    # Azure: generate-relays-azure.sh writes relay_public_ip per host.
+    - name: Set coturn_external_ip from inventory (Azure)
+      ansible.builtin.set_fact:
+        coturn_external_ip: "{{ relay_public_ip | mandatory('relay_public_ip is unset: regenerate the inventory with generate-relays-azure.sh') }}"
+      when: relay_cloud | default('aws') == 'azure'
 
   roles:
     - role: coturn

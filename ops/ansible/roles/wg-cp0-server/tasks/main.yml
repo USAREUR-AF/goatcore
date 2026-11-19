@@ -18,6 +18,25 @@
       - wg_cp0_listen_port | int > 0
     fail_msg: "wg_cp0_relay_address + wg_cp0_subnet + wg_cp0_listen_port are required."
 
+# Azure relays: no off-host backup of the privkey is built (there is no Key
+# Vault equivalent, and the operator has no Azure write role to make one).
+# Refuse the AWS default rather than drop the backup silently; local_file is
+# an explicit choice that the key lives only on the relay disk, so a rebuilt
+# relay gets a new key and the bundles must be rotated
+# (wg-cp0-rotate-bundles.yml). Checked before any key is generated.
+- name: Azure relays — require an explicit wg-cp0 key custody choice
+  ansible.builtin.assert:
+    that:
+      - wg_cp0_secret_storage == "local_file"
+    fail_msg: >-
+      {{ inventory_hostname }} is an Azure relay (relay_cloud=azure) and
+      wg_cp0_secret_storage is {{ wg_cp0_secret_storage }}. There is no
+      Azure backup of the wg-cp0 privkey. Set wg_cp0_secret_storage=local_file
+      to accept on-relay-only custody (re-key by rotating bundles after a
+      rebuild), and open the port with wg_cp0_enabled in goat-relay-azure.
+    quiet: true
+  when: relay_cloud | default('aws') == 'azure'
+
 - name: Install WireGuard + nftables tooling
   ansible.builtin.apt:
     name:

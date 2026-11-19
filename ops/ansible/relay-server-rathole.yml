@@ -132,7 +132,9 @@
       register: existing_public_key_sm
       changed_when: false
       failed_when: false
-      when: rathole_secret_name is defined
+      when:
+        - rathole_secret_name is defined
+        - relay_cloud | default('aws') != 'azure'
 
 # -- Unify credential facts --
 # Public-key priority: fresh genkey > local server.pubkey > SM fallback. Never
@@ -331,3 +333,63 @@
     state: started
     daemon_reload: true
   when: rathole_watchdog_enabled | default(true) | bool
+
+# ==================================================================
+# Azure hand-off — rathole credentials without a cloud secret store
+# ==================================================================
+# On AWS the calling play puts {token, public_key, relay_ip} in Secrets
+# Manager with the operator's AWS credentials, and the site's rathole client
+# play reads it back. On Azure the operator has no write role and at most read
+# on one Key Vault secret, so nothing here writes to Key Vault.
+#
+# The relay stays the source of truth, as it already is on AWS: server.toml
+# holds the token and the private key, server.pubkey the public key, and a
+# re-run reads them back (above). Secrets Manager never held the private key,
+# so it was a hand-off channel, not a recovery store; nothing is lost by not
+# having it. A rebuilt relay gets new credentials on both clouds.
+#
+# The hand-off to the site is opt-in: set relay_rathole_handoff_dir to a local
+# directory and this writes <dir>/<inventory_hostname>.yml (dir 0700, file
+# 0600) on the control node, in the variables relay-client.yml takes:
+#   ansible-playbook -i <site inventory> relay-client.yml -e @<dir>/relay-<name>.yml
+# Unset (default): nothing leaves the relay; read server.toml over SSH when
+# the site client is configured. Either way, delete the file once the site
+# client is up. No Azure admin step is needed for this path.
+- name: Azure hand-off — create the local credentials directory (0700)
+  delegate_to: localhost
+  become: false
+  ansible.builtin.file:
+    path: "{{ relay_rathole_handoff_dir }}"
+    state: directory
+    mode: "0700"
+  when:
+    - relay_cloud | default('aws') == 'azure'
+    - relay_rathole_handoff_dir | default('') | length > 0
+    - rathole_public_key | default('') | length > 0
+
+- name: Azure hand-off — write relay-client.yml vars for this relay (0600)
+  delegate_to: localhost
+  become: false
+  ansible.builtin.copy:
+    dest: "{{ relay_rathole_handoff_dir }}/{{ inventory_hostname }}.yml"
+    mode: "0600"
+    content: "{{ {
+      'vps_relay_ip': vps_public_ip,
+      'vps_relay_token': rathole_auth_token,
+      'vps_relay_pubkey': rathole_public_key
+      } | to_nice_yaml }}"
+  no_log: true
+  when:
+    - relay_cloud | default('aws') == 'azure'
+    - relay_rathole_handoff_dir | default('') | length > 0
+    - rathole_public_key | default('') | length > 0
+
+- name: Azure hand-off — where the credentials are
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: rathole credentials stay on the relay
+      ({{ rathole_config_dir }}/server.toml, server.pubkey); no Key Vault write.
+      {{ ('Hand-off file: ' ~ relay_rathole_handoff_dir ~ '/' ~ inventory_hostname ~ '.yml (delete after use).')
+         if (relay_rathole_handoff_dir | default('') | length > 0)
+         else 'Set -e relay_rathole_handoff_dir=<local dir> to write a relay-client.yml vars file.' }}
+  when: relay_cloud | default('aws') == 'azure'

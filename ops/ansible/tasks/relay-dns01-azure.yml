@@ -1,0 +1,117 @@
+---
+# relay-dns01-azure.yml — first issuance of a relay's Let's Encrypt certificate
+# by DNS-01 through Azure DNS. Included by goat-relay-deploy.yml and
+# relay-server.yml when relay_dns01_provider == 'azure'; the Cloudflare path
+# in those plays is unchanged.
+#
+# Same tool as the Cloudflare path: certbot. certbot has no first-party Azure
+# DNS plugin and Ubuntu does not package one, so this uses certbot's manual
+# mode with a hook (templates/certbot-azure-dns01-hook.py, standard library
+# only). certbot records the hooks in the renewal conf, so the timer renews
+# unattended, and the calling play's `certbot renew --dry-run` proves it.
+#
+# Auth: the relay VM's managed identity, read from IMDS on the relay. Nothing
+# from the operator's laptop reaches the relay, and no credential is written.
+# ADMIN STEP (once per relay, in Terraform): give the VM a managed identity and
+# DNS Zone Contributor on the zone. Without it the `check` task below fails.
+#
+# Variables (put them in the relay inventory's [relay_servers:vars] or -e):
+#   relay_dns01_azure_zone_name            REQUIRED  zone holding relay_dns_name, e.g. relay.example.com
+#   relay_dns01_azure_zone_resource_group  REQUIRED  resource group of that zone
+#   relay_dns01_azure_subscription_id      ""        subscription of the zone; empty = the VM's own (IMDS)
+#   relay_dns01_azure_auth                 managed_identity | user_assigned_identity
+#   relay_dns01_azure_client_id            ""        client ID, needed for user_assigned_identity
+#   relay_dns01_azure_propagation_seconds  30        wait after writing the TXT record
+#   relay_dns01_azure_ttl                  60        TTL of the challenge record
+
+- name: Azure DNS-01 — require zone, resource group and a known auth mode
+  ansible.builtin.assert:
+    that:
+      - relay_dns_name is defined and (relay_dns_name | length > 0)
+      - relay_dns01_azure_zone_name | default('') | length > 0
+      - relay_dns01_azure_zone_resource_group | default('') | length > 0
+      - (relay_dns_name | lower) == (relay_dns01_azure_zone_name | lower)
+        or (relay_dns_name | lower).endswith('.' ~ (relay_dns01_azure_zone_name | lower))
+      - relay_dns01_azure_auth | default('managed_identity') in ['managed_identity', 'user_assigned_identity']
+      - relay_dns01_azure_auth | default('managed_identity') != 'user_assigned_identity'
+        or (relay_dns01_azure_client_id | default('') | length > 0)
+    fail_msg: >-
+      relay_dns01_provider=azure needs relay_dns01_azure_zone_name (the zone
+      holding {{ relay_dns_name | default('relay_dns_name') }}) and
+      relay_dns01_azure_zone_resource_group. relay_dns01_azure_auth is
+      managed_identity (default) or user_assigned_identity, which also needs
+      relay_dns01_azure_client_id. See ops/ansible/tasks/relay-dns01-azure.yml.
+    quiet: true
+
+- name: Azure DNS-01 — install certbot
+  ansible.builtin.apt:
+    name: [certbot]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Azure DNS-01 — ensure /etc/letsencrypt exists
+  ansible.builtin.file:
+    path: /etc/letsencrypt
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Written every run, like cloudflare.ini: a zone move or a new identity must
+# reach renewals, not only first issuance. It holds names, never a secret.
+- name: Azure DNS-01 — write hook config
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/azure-dns01.json
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ {
+      'zone_name': relay_dns01_azure_zone_name,
+      'resource_group': relay_dns01_azure_zone_resource_group,
+      'subscription_id': relay_dns01_azure_subscription_id | default(''),
+      'auth': relay_dns01_azure_auth | default('managed_identity'),
+      'client_id': relay_dns01_azure_client_id | default(''),
+      'ttl': relay_dns01_azure_ttl | default(60) | int,
+      'propagation_seconds': relay_dns01_azure_propagation_seconds | default(30) | int
+      } | to_nice_json }}\n"
+
+- name: Azure DNS-01 — install certbot hook
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/templates/certbot-azure-dns01-hook.py"
+    dest: /usr/local/sbin/goat-certbot-azure-dns01
+    owner: root
+    group: root
+    mode: "0755"
+
+# Fails here, with the admin step named, rather than inside certbot.
+- name: Azure DNS-01 — prove the VM identity can reach the zone
+  ansible.builtin.command: /usr/local/sbin/goat-certbot-azure-dns01 check
+  register: relay_dns01_azure_check
+  changed_when: false
+
+- name: Azure DNS-01 — check for an existing cert
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ relay_dns_name }}/fullchain.pem"
+  register: relay_dns01_azure_cert
+
+- name: Azure DNS-01 — obtain cert via certbot (manual mode, Azure DNS hook)
+  ansible.builtin.command:
+    argv:
+      - certbot
+      - certonly
+      - --manual
+      - --preferred-challenges
+      - dns
+      - --manual-auth-hook
+      - /usr/local/sbin/goat-certbot-azure-dns01 auth
+      - --manual-cleanup-hook
+      - /usr/local/sbin/goat-certbot-azure-dns01 cleanup
+      - -d
+      - "{{ relay_dns_name }}"
+      - --email
+      - "{{ relay_certbot_email | default('person-35@example.org') }}"
+      - --agree-tos
+      - --non-interactive
+  register: relay_dns01_azure_certbot
+  when: not relay_dns01_azure_cert.stat.exists
