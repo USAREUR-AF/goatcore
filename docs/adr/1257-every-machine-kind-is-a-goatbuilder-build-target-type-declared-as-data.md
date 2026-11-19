@@ -8,39 +8,40 @@
 | Repo scope | goat core: `crates/goatbuilder`, `ops/goatbuilder/targets/`, `ops/goatbuilder/families/`, `ops/bootstrap/` |
 | Supersedes | — |
 | Superseded by | — |
-| Amends | [ADR 1141](1141-four-node-host-site-baseline.md), [ADR 1183](1183-rescue-nodes-are-part-of-the-site-baseline.md), [ADR 1114](1114-breakglass-node-class-and-two-path-reach.md), [ADR 1131](1131-network-jump-class-and-herd-gear-scope.md) (where each meets a target type; see Decision 8) |
-| Related | [ADR 1200](1200-deployment-e2e-three-tiers.md) (deployment-e2e, which the CI tier extends), [ADR 1198](1198-goatbuilder-config-driven-deploy-release-cli.md) (goatbuilder), [ADR 1248](1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md) (stock NetBird), [ADR 1253](1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md) (simple boundary node); design [goatbuilder-build-targets.md](../design/goatbuilder-build-targets.md) |
+| Amends | [ADR 1141](1141-four-node-host-site-baseline.md), [ADR 1183](1183-rescue-nodes-are-part-of-the-site-baseline.md), [ADR 1114](1114-breakglass-node-class-and-two-path-reach.md), [ADR 1131](1131-network-jump-class-and-herd-gear-scope.md) (where each meets a target type; see Decision 9) |
+| Related | [ADR 1200](1200-deployment-e2e-three-tiers.md) (deployment-e2e, which the CI tier extends), [ADR 1198](1198-goatbuilder-config-driven-deploy-release-cli.md) (goatbuilder), [ADR 1248](1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md) (stock NetBird), [ADR 1253](1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md) (simple boundary node), [ADR 1255](1255-vendor-systems-connect-through-one-vendor-bridges-repository-and-open-standards-go-through-goat-transformers.md) (vendor bridges); design [goatbuilder-build-targets.md](../design/goatbuilder-build-targets.md) |
 
 ## TL;DR (for a layperson)
 
-A goatnet runs many kinds of machine, from the servers at a site to small boxes wired to sensors. Today the build tool knows a few of them, each in its own code, and none from a bare machine. This decision writes down, once each, two things:
+A goatnet runs many kinds of machine: the servers at a site, small boxes that let an operator in when the network is down, small boxes wired to sensors, gateways to partners. Today the build tool knows a few of them, each in its own code, and none from a bare machine. This decision writes down, once each, two things:
 
-- the families of hardware we use, and how each is prepared;
-- the job a machine does in a goatnet.
+- the **families of hardware** we use, and how each is prepared;
+- the **job** a machine does in a goatnet (its target type).
 
-It also lets each machine list the sensors wired to it, and the tool then turns on one small relay for each of those sensors. The tool checks any machine against these files, however it was set up. On hardware we know, the tool can also do the whole job from a blank disk. On other hardware, a capable person follows written directions, and the tool checks that they got there. Every kind is built and proven in a fixed order before 1.0.
+The tool builds any machine from those files and checks the result, however the machine was first set up. On hardware we know, the tool can also prepare the machine from a blank disk. On other hardware, a capable person follows written directions, and the tool checks that they got there. One shared foundation is built first; after it, four groups of machine types are built in parallel, and every type is built and proven before 1.0.
 
 ## Context
 
-The operator set this as 1.0 scope on 2026-11-19, in these words, quoted as written. `[kit]` replaces the name of a private sensor-kit product line, and `[service]` the name of a military service; every other word is the operator's.
+The operator set this as 1.0 scope on 2026-11-19 and corrected the model through the evening, in these words, quoted as written. `[kit]` replaces the name of a private sensor-kit product line, `[service]` the name of a military service and `[a teammate]` a person's name; every other word is the operator's.
 
 1. "we need a deployment plan that is able to holistically deploy our services on a machine from the baremetal up just like we can do for other things like host site machines for core and obs and break glass and network jump box, and pods and [kit] kids and boundary nodes for federation and simple boundary nodes, we need the ability to build goat-processing nodes. all of these actually need to be first class build target types in goatbuilder and they should be sequenced to be built and proven capabilities before the 1.0 release I think."
 2. "there might be a gap in that we manually install ubuntu and do luks encryption first, but we should really guide as much as possible without createing a negative abstraction constraint by forcing it to muuch to be on rails"
 3. "yeah and I think that goatbuilder should incoproate the rpi and [kit] buildout stuff as much as that is possible so that admins can really use one tool for all infra mangement, unless it's just stoo special and sprawled to reign into the cli"
 4. "let's be careful not to overdo it on the managment of os and such things though it's really hard to get that right with a cli, we can probably provide a golden path on known hardware and some generalization, but we need to maintain a supported generalized approach that relaies on a smart and driven human to understand intent and end state and work through gneral directions"
 5. "I'm not so concerned about the nuances of before or after the cutoff for every detail as long as it's roughly corectr and everythign relevant is properly sequenced"
-6. "these arent' two different things "Raspberry Pi and [kit] buildout" the pis need certain attention to prep them and in the future we will use the smaller computer that onLogic produces instead of pis by the way. and the [kit] kid is what runs on a small computer or a pod or a boundary node"
-7. "or a break glass or a network jump box"
-
-Later the same evening the operator corrected the model again:
-
-8. ""small computer" is a family of platform type, not a target type. and why is [kit] the only payload? a [kit] kid is more like a target type that is run on a small computer as some other target types are as well. you also forgot octopod and firstbite"
-9. "the [service] approved hardware that is the mobile edge node call the TSI V3 (the regular size and the mini)" ... "one that we probably wont meddle with because it's such a pain in the ass but worth mentioning and putting in the structure now"
-10. "if we list aws ec2 we should probably list the other two counterparts for azure and gcp"
-11. "the karbon 801/802 and thor and orin all belong to a familly of platforms that are suitable for running core services and obs services"
-12. "I think you got the [kit] kid wrong unless it has changed a lot since I last looked at it you have it deploying like all the functionality -- is that actually true?"
-
-The operator agreed to the plan this ADR records, including two proof tiers. Statements 6 to 12 corrected the first model twice. The Pi is hardware that needs its own preparation, and a small computer is a family of hardware, not a role. The kit's kids are per-sensor relay processes, not a whole stack, so a machine's wired sensors decide which of them run. The edge has two more roles, octo-pod and first-bite. Hardware comes in families, and the cloud family lists all three providers.
+6. "the pis need certain attention to prep them and in the future we will use the smaller computer that onLogic produces instead of pis by the way. and the [kit] kid is what runs on a small computer or a pod or a boundary node" ... "or a break glass or a network jump box"
+7. ""small computer" is a family of platform type, not a target type. ... you also forgot octopod and firstbite"
+8. "the [service] approved hardware that is the mobile edge node call the TSI V3 (the regular size and the mini)" ... "one that we probably wont meddle with because it's such a pain in the ass but worth mentioning and putting in the structure now"
+9. "if we list aws ec2 we should probably list the other two counterparts for azure and gcp"
+10. "the karbon 801/802 and thor and orin all belong to a familly of platforms that are suitable for running core services and obs services"
+11. "I think [kit] kids just run integration componenets and nothing else"
+12. "i think the gateway would b e another thing that runs on a small computer"
+13. "for the pis pay attention to the pi script that [a teammate] has been honing even recently, I think we need that level of builder for any hardware that we use"
+14. (about a strictly linear build order) "you think that each one needs to build on the last? where is that coming from?"
+15. "not included but it should be acknowledged is the network gear the switches and routers that connecting things at local sites and connect them to transport" ... "jump box needs to be clarified that it's for network gear only"
+16. "break glass and network jump box are both small computers they just facilitate entery into othe rmachines"
+17. "boundary nodes and pods could be eithe rmsall omcputers or host class computers depednign on the load the need for resilience and ruggedization"
+18. "processing should probably be host class due to the load the need for resilience"
 
 What exists today is measured in the design document (§2). In short:
 
@@ -50,117 +51,127 @@ What exists today is measured in the design document (§2). In short:
   - the image builder's roles (`ops/bootstrap/hardware-classes.yaml:111`).
 - No verb installs or checks an operating system.
 - Only some kinds are built, and few are proven: there is no hermetic founder standup, and there is no acceptance for break-glass or network-jump.
+- The edge kinds (octo-pod, the sensor kit, first-bite, the vendor bridges) each have their own repository and their own installer, and goatbuilder calls none of them.
 
 ## Decision
 
-1. **Platform families and target types, kept apart, each declared as data; sensors declared per machine.**
-   - **Platform family:** hardware that can play the same roles, and its preparation: firmware, boot media, the OS image, the disk-encryption shape and how it unlocks. One data file per family, under `ops/goatbuilder/families/`. A model joins a family by an entry in it, and no target type names a model. `ops/bootstrap/hardware-classes.yaml`'s platforms become the models of these families. The families:
-     - **host-class:** Karbon 801 and 802, Jetson Orin and Thor; supported; suited to core and obs.
-     - **cloud:** AWS EC2, supported; Azure VMs and Google Compute Engine, listed, not built.
-     - **small computer:** Raspberry Pi 5 today, a smaller OnLogic model later; proposed.
-     - **ruggedized mobile edge:** TSI V3 and TSI V3 mini; listed, not planned. They keep their own baseline, and goatbuilder only checks their end state.
-   - **Target type:** the role a machine plays in a goatnet. It is one file, `ops/goatbuilder/targets/<type>.yaml`, declaring:
-     - the families it accepts;
-     - the minimum encryption scope it requires;
-     - the OS baselines it accepts;
-     - its plays, in order;
-     - its services;
-     - whether it allows sensors;
-     - its acceptance checks;
-     - its proof tiers.
+1. **Platform families, declared as data.** A family is hardware that can play the same roles, with its preparation: firmware, boot media, the OS image, the disk-encryption shape and how it unlocks. One file per family, under `ops/goatbuilder/families/`. A model joins a family by an entry in it, and no target type names a model. `ops/bootstrap/hardware-classes.yaml`'s platforms become the models of these families.
 
-     `standup`, `join-node` and the image tooling read it, and the compiled class list and the image roles are replaced by these files. The types are:
-     - **host site:** core, obs, break-glass, network jump box;
-     - **edge:** octo-pod (the edge gateway appliance), sensor node (a small computer whose only job is sensors), first-bite (the tap decoder);
-     - **boundary:** federation boundary, simple boundary;
-     - **processing:** goat-processors;
-     - and phone, which `join-node` builds today.
+   | Family | Models | Status |
+   |---|---|---|
+   | host-class | Karbon 801 and 802, Jetson Orin and Thor | supported; suited to core, obs and other heavy or resilient roles |
+   | cloud | AWS EC2; Azure Virtual Machines and Google Compute Engine | EC2 supported; Azure and Google listed, not built |
+   | small computer | Raspberry Pi 5 today; a smaller OnLogic model later | proposed |
+   | ruggedized mobile edge | TSI V3 and TSI V3 mini | listed, not planned: they keep their own baseline, and goatbuilder only checks their end state |
 
-     **Nothing in a type may assume a model**, and in particular none may assume a Raspberry Pi. A small computer is a family, not a type.
-   - **Wired sensors, declared per machine.** Sensor support is a capability, not a machine: a machine's declaration lists its wired sensors, and goatbuilder installs the sensor platform and turns on the per-sensor relay processes for them, on any target type that allows sensors; the small-computer "sensor node" type is the one whose only job is sensors.
-     - The kit's relays (its kids) convert a sensor's native output to ASTERIX, CoT, ISA or SAPIENT, and forward it to the fabric.
-     - Declaring one sensor turns on that sensor's set of relay processes (tracks, status, events and so on), not a single process.
-     - A machine with no sensors runs none.
-     - The types that allow sensors today are sensor node, octo-pod, break-glass, network jump box and both boundary types.
-     - There is no separate payload tier.
-     - Which install model goatbuilder targets is open (question 5 below): one package with an activation list, or per-sensor bundles installed per machine.
-2. **Encryption scope is split between family and type.**
-   - The family declares the scope each model can deliver and how it unlocks. For example, a Karbon delivers `root` with TPM2 unlock; a Pi, with no TPM, delivers `data` with a hardware token, or `root` with a network unlock.
-   - The type declares the minimum scope its role requires.
-   - A type accepts only families whose models deliver its scope, and `doctor --target` checks the scope delivered.
+   **Every family's builder works at the level of the team's Raspberry Pi base-image builder** (statement 13): numbered, re-runnable steps from blank media to a verified machine, each proving its result before the next, ending in a check of the built box. That builder is the small-computer family's golden path. The other Pi preparations (an SD-seed self-install, and the Clevis-and-Tang proposal in `hardware-classes.yaml`) fold into it. The host-class and cloud builders (`ops/bootstrap/build-image-*.sh`) are measured against the same level.
 
-   Why: unlock depends on the hardware (the existing file already says so, `hardware-classes.yaml:46`). How much must be encrypted is a security property of the role, checked on the end state. Joining the two would either make every type know every model, or let weaker hardware lower a role's requirement.
-3. **The contract starts at a reachable Ubuntu host with an SSH key.** goatbuilder builds above that line, whatever got the machine there.
-4. **The end state is checked, whichever path was taken.** `goatbuilder doctor --target <type>` reads a host and reports each property its type and family require, for example the encryption scope, the OS version, chrony before docker, the docker data root, the inotify floor and each declared sensor's relay processes running. It changes nothing, and every refusal says what to fix on the machine. For a family goatbuilder does not prepare, such as the ruggedized mobile edge, this check is goatbuilder's whole part below the line.
-5. **Two install paths below the line, and goatbuilder stays thin there.**
-   - **Golden path, optional:** `goatbuilder image <model>` wraps that model's preparation in `ops/bootstrap`. Raspberry Pi preparation is golden-path data of the Pi model in the small-computer family. Three Pi image builders exist today and differ, and one is picked before goatbuilder wraps any.
-   - **General path, supported:** written directions per type that state the intent and the end state, for a capable person on any other hardware.
+2. **Target types, declared as data.** A target type is the role a machine plays in a goatnet. One file, `ops/goatbuilder/targets/<type>.yaml`, declares the families it accepts, the minimum encryption scope it requires, the OS baselines it accepts, its plays in order, its services, its acceptance checks and its proof tiers. `standup`, `join-node` and the image tooling read it, and the compiled class list and the image roles are replaced by these files.
 
-   Steps that stay outside the command line are given as written directions with the end state checked. One is the physical work on a Pi's drive and its unlock token. Another is the per-sensor packages, which each sensor's owner authors with the sensor platform's own tool. goatbuilder is not an operating-system installer or configuration manager beyond the golden path.
-6. **Two proof tiers.**
-   - **CI:** a VM from a fresh Ubuntu cloud image, through the build, to the type's acceptance, `doctor --target` and, where the type allows sensors, the relay processes of a declared test sensor. This extends ADR 1200's deployment-e2e harness from container hosts to VMs.
-   - **Hardware:** a recorded run on real equipment, from the model's golden path.
+   | Group | Type | What it does | Families |
+   |---|---|---|---|
+   | host site | core | management plane: mesh control, identity, fabric router | host-class, cloud |
+   | host site | obs | observability and storage | host-class, cloud |
+   | access | break-glass | entry into the site's goat machines when the mesh and control plane are both down | small computer |
+   | access | network-gear jump box | entry into the site's network gear only: switches, routers, out-of-band management. Not a general jump host | small computer (a Thor serves today) |
+   | edge | octo-pod | edge gateway: takes in feeds, records and audits them, releases chosen feeds to the fabric | small computer or host-class |
+   | edge | sensor node | runs the sensor kit's relays for the sensors wired to it | small computer |
+   | edge | vendor gateway | runs the vendor bridges (ADR 1255) | small computer |
+   | edge | first-bite | decodes binary messages from a network tap | small computer or host-class |
+   | boundary | federation boundary | the edge router that peers with another goatnet | small computer or host-class |
+   | boundary | simple boundary | sends selected data out to a partner receiver | small computer or host-class |
+   | processing | goat-processors | correlation, fusion, filtering and quality | host-class |
 
-   The 1.0 gate (`goatbuilder-v1-gate.md` group J) requires CI for every type, and hardware for core, obs, break-glass, network jump box and federation boundary.
-7. **The sequence.** Each step builds on the one before it; exact 1.0 cut lines are not decided item by item (statement 5).
-   1. The type and family definitions, with core, obs, break-glass and network jump box moved onto them.
-   2. Standup phase 11 automated, by extending `ops/mgmt-host-bootstrap` with a verb that creates the admin service user and a hashed token. The plaintext is written once to a mode-0600 file under `/run`. There is no fork of NetBird's management service, under ADR 1248; this replaces the forked plan in `goatlite.md`'s table row 6. Designed. It mints an admin credential for the mesh control plane, so its build is reviewed as a trust change before it starts.
-   3. Federation boundary.
-   4. Simple boundary and goat-processors.
-   5. The small-computer family, Raspberry Pi preparation first.
-   6. octo-pod, sensor node and first-bite, with octo-pod push-deployed.
-   7. Sensors declared per machine, with each declared sensor's relay processes turned on, on any type that allows them.
-8. **Where this amends earlier decisions:**
-   - **ADR 1141** (Decision, point 1, "Roles, not hardware") stands, and is now explicit in the data: a role's machine contract is its target-type file, and hardware is a model in a platform family (host-class is the family ADR 1141's core and obs run on). `hardware-classes.yaml`'s roles axis is replaced by the type files.
-   - **ADR 1183** (Decision: the two keys per class, and consequence 2, "`goat-standup.sh` phase 14 converges each declared node") stands for *whether* a site has each rescue node. *What* phase 14 converges is now the `breakglass` and `network-jump` type files, not plays named in the driver. Consequence 3, "a declared break-glass node is a graded peer", gains the type's acceptance rows, which do not exist today.
-   - **ADR 1114** §5 (the dual-homing contract) becomes checks of the `breakglass` type in `doctor --target`: the route-metric asymmetry, out-of-band inbound closed, and TCP-level health on the out-of-band path. Today nothing checks them. §1 to §4 and the manual enrolment stand.
-   - **ADR 1131** §2 (the `NETWORK-JUMP` peer, whose connector holds the key) becomes the `network-jump` type: its plays (`herd-connector-deploy.yml`), its required image input (`herd_connector_image`) and its acceptance. The class, its ACL shape and operator enrolment stand.
-9. **octo-pod is push-deployed.** It is built and updated like any other type. The pull converger comes after 1.0, as the operator decided on 15 November (`goatbuilder-v1-gate.md` group D), and arrives as a value of `converger:`.
+   `join-node` also builds `phone` today, which becomes a type file like the rest. Where a type accepts two families, the machine's declaration picks one, by load, resilience and ruggedization (statement 17). **Nothing in a type may assume a model**, and in particular none may assume a Raspberry Pi.
+
+3. **The sensor kit's relays are integration components, and the sensor node runs them.** A kid decodes one sensor's native output and converts it to ASTERIX, CoT, ISA or SAPIENT, and nothing else (statement 11). A sensor node's declaration lists its wired sensors; goatbuilder installs the sensor platform and turns on each declared sensor's relays. Whether types other than the sensor node host relays (statement 6) is open (question 3), because the kit's platform brings its own local router and container runtime onto the host. How the relays are packaged and installed is open (question 1).
+
+4. **Each machine is built in six steps.**
+   1. **Declare it** in the site config: its family and model, its target type, and for a sensor node its sensors.
+   2. **Install the OS and disk encryption:** scripted on a known model (the family's golden path), or by hand from written directions.
+   3. **Host baseline:** hardening, packages and WireGuard modules, then checked.
+   4. **Join the goatnet:** enrolment and mesh address.
+   5. **Install the type:** its services, over the mesh.
+   6. **Prove it:** the type's acceptance checks, written to the deploy ledger.
+
+   Steps 3 to 6 are what `join-node` does today (`joinnode.rs`, phases 4 to 6, 10 to 12, 13 and 15). A founder site differs at step 4: there is no goatnet to join yet, so its core install creates the mesh control plane before anything enrols. An edge kind whose own installer enrols the machine keeps that order, and goatbuilder checks the end state.
+
+5. **The contract starts at a reachable Ubuntu host with an SSH key**, and **the end state is checked, whichever path was taken.** `goatbuilder doctor --target <type>` reads a host and reports each property its type and family require: the encryption scope, the OS version, chrony before docker, the docker data root, the inotify floor, and the type's own properties. It changes nothing, and every refusal says what to fix on the machine, not which installer to use. For a family goatbuilder does not prepare, such as the ruggedized mobile edge, this check is goatbuilder's whole part below the line.
+
+6. **goatbuilder stays thin below the line.** The golden path (`goatbuilder image <model>`) wraps a family's builder; the general path is written directions that state the intent and the end state. Steps that need a person stay as directions with the end state checked: the physical work on a Pi's drive and its unlock token, and authoring a sensor's relays. goatbuilder is not an operating-system installer or configuration manager beyond the golden path. **Edge kinds keep their own installers:** a type whose software has its own repository and installer (octo-pod, the sensor kit, first-bite, the vendor bridges) calls and checks that installer at a pinned release; it does not reimplement it.
+
+7. **Encryption scope is split between family and type.** The family declares the scope each model can deliver and how it unlocks (a Karbon delivers `root` with TPM2; a Pi, with no TPM, delivers `root` with a hardware-token unlock). The type declares the minimum scope its role requires. A type accepts only families whose models deliver its scope, and `doctor --target` checks the scope delivered. Unlock depends on the hardware (`hardware-classes.yaml:46`); how much must be encrypted is a property of the role.
+
+8. **Two proof tiers.**
+   - **CI:** a VM from a fresh cloud image, through steps 3 to 6 and `doctor --target`. This extends ADR 1200's deployment-e2e harness from container hosts to VMs. For the small-computer family, CI proves the software on an arm64 VM; the physical steps of the Pi builder are proven on the bench.
+   - **Hardware:** a recorded run on real equipment, from the family's golden path.
+
+   The 1.0 gate (`goatbuilder-v1-gate.md` group J) requires CI for every type, and hardware where the equipment exists.
+
+9. **Where this amends earlier decisions:**
+   - **ADR 1141** (point 1, "Roles, not hardware") stands, and is now explicit in the data: a role's machine contract is its target-type file, and hardware is a model in a family (host-class is the family ADR 1141's core and obs run on). `hardware-classes.yaml`'s roles axis is replaced by the type files.
+   - **ADR 1183** stands for *whether* a site has each rescue node. *What* `standup` phase 14 converges is now the `breakglass` and `network-jump` type files. Consequence 3, "a declared break-glass node is a graded peer", gains the type's acceptance rows, which do not exist today.
+   - **ADR 1114** §5 (the dual-homing contract) becomes checks of the `breakglass` type in `doctor --target`. The break-glass node moves to the small-computer family (statement 16). §1 to §4 and the manual enrolment stand.
+   - **ADR 1131** §2 becomes the `network-jump` type, renamed in prose "network-gear jump box" to state its scope (statement 15): its plays (`herd-connector-deploy.yml`), its required image input (`herd_connector_image`) and its acceptance. The class name, its ACL shape and operator enrolment stand.
+
+10. **The order of work: one foundation, then four lanes in parallel** (statements 5 and 14). The only dependencies are real ones:
+    - **Foundation, first:** the type and family file formats and their reader, and the `doctor` base check. Nothing moves onto files before they exist. It is built incrementally: core first, proven unchanged against today's plans, then each other type.
+    - **Host-site lane:** core and obs onto type files; `standup` phase 11 automated (by extending `ops/mgmt-host-bootstrap` with a verb that creates the admin service user and a hashed token, no fork of NetBird under ADR 1248; reviewed as a trust change before it starts).
+    - **Boundary lane:** federation boundary and simple boundary. Their small-computer variants wait for the small-computer builder.
+    - **Processing lane:** goat-processors, whose acceptance runs the engines on recorded data and checks the output against the conformance vectors.
+    - **Small-computer lane:** the small-computer builder first; then break-glass, network-gear jump box, sensor node, octo-pod, vendor gateway and first-bite on it.
+
+    Exact 1.0 cut lines are not decided item by item (statement 5). octo-pod is push-deployed like every other type; the pull converger comes after 1.0, as the operator decided on 15 November (gate group D).
+
+11. **Network gear is outside goatbuilder, and acknowledged** (statement 15). Each site's switches and routers connect its machines to each other and the site to its transport. goatbuilder does not configure them, reaches them only through the network-gear jump box, and every machine it builds depends on them.
 
 ### Open questions for the operator
 
-1. **Multi-sensor machines.** A machine with several wired sensors runs each sensor's set of relay processes. Is a gateway that fronts several sensors anything more than a machine with a longer sensor list?
-2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of the machines that run sensor relay processes?
-3. **The Pi's OS baseline.** Ubuntu Server 24.04 or 26.04?
-4. **The Pi's golden path.** Which of the existing Pi image builders becomes the Pi's golden path? That choice also settles whether the Pi delivers root or data-volume encryption.
-5. **The sensor install model.** The sensor platform's design installs one package on every edge machine and activates only the relevant relay processes, from an activation list whose format is not fixed yet. Its current public release ships a sensor-neutral package, with each sensor's relay processes in a separate bundle installed and activated per machine. And one prototype starts a sensor's processes only when it is both declared and discovered live on the local network. Which of these does goatbuilder target?
+1. **How the sensor kit is installed.** The kit's original design installs one package on every edge machine and turns on only the relays for its sensors. Its current prototype composes a chosen set of relays per machine and starts only those whose sensor is discovered live on the local network. Its public sensor-neutral platform (release 0.3.0 in preparation, unsigned so far) installs a platform package and then one bundle per sensor and architecture, with `install`, `configure` and `activate` per machine. The recommendation is the public platform's model: it is the one with a per-machine command set goatbuilder can call and check, and it matches what both newer lines already do (per machine, not uniform). It needs a signed release and signed bundles before goatbuilder relies on it.
+2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of sensor nodes?
+3. **Relays on other types.** Do any types besides the sensor node run sensor relays, given that the kit's platform brings its own local router and container runtime?
+4. **The Pi's OS baseline.** Ubuntu Server 24.04 (the public sensor platform supports only 24.04) or 26.04?
 
 ## Alternatives considered
 
 - **Keep the classes in code and add arms for the new kinds.** Every new kind would be new Rust, and the image builder and `standup` would keep their own lists. Rejected.
-- **One concept, "machine kind", covering hardware, role and software.** This was the first draft of this plan. It made the sensor kit a machine kind and tied it to the Pi, and the operator corrected it (statement 6). Rejected.
-- **The sensor kit as a payload that deploys the kit's whole stack onto a host.** This was the second draft. The operator corrected it (statements 8 and 12): a kid is one relay per sensor, the same package goes on every edge machine, and only the kids for the wired sensors run. A payload tier would also have added a third concept for what is a property of one machine. Rejected in favour of sensors declared per machine.
-- **The small computer as a target type.** It is hardware that several roles run on (statement 8), so it is a family. Rejected.
-- **goatbuilder installs and manages the operating system everywhere.** This is the rails the operator warned against (statements 2 and 4). Hardware goatbuilder does not know would have no supported path. Rejected in favour of a per-platform golden path plus the general path.
-- **Leave the OS to the operator entirely, with no checks.** This is today's state. A hand install that misses its encryption or the docker data root fails later, far from its cause. `doctor --target` closes that without owning the install. Rejected.
-- **Hardware proof only.** Most kinds have no equipment in the test laboratory, so most would never be proven. Rejected as the only tier.
-- **Bring every step of the sensor-kit buildout into the command line.** Statement 3 bounds this to "as much as that is possible". The per-sensor packages belong to each sensor's owner and their tool, and the physical preparation of a device is a person's work. Both stay as written directions with the end state checked.
+- **One concept, "machine kind", covering hardware, role and software.** The first draft. It made the sensor kit a machine kind and tied it to the Pi; the operator corrected it. Rejected.
+- **The sensor kit as a payload tier deployed onto many types.** The second draft. A kid is an integration component, not a stack to place on any machine (statement 11). Rejected.
+- **The small computer as a target type.** It is hardware that several roles run on (statement 7). Rejected.
+- **A strictly linear build order.** Nothing but the foundation and the small-computer builder forces an order (statement 14). Rejected in favour of parallel lanes.
+- **goatbuilder reimplements the edge kinds' installers.** Duplicates working tools and takes them from their owners. Rejected in favour of calling and checking them at a pinned release.
+- **goatbuilder installs and manages the operating system everywhere.** The rails the operator warned against (statements 2 and 4). Rejected.
+- **Leave the OS to the operator entirely, with no checks.** Today's state: a hand install that misses its encryption fails later, far from its cause. Rejected.
+- **Hardware proof only.** Most kinds have no equipment in the test laboratory. Rejected as the only tier.
 
 ## Consequences
 
 **Positive.**
 
-- Every role and hardware family has one written definition, read by every verb, and every machine's sensors are declared next to it.
-- A new role costs a file; new hardware costs a model entry in a family; a new sensor on a machine costs a line in its declaration.
+- Every role and hardware family has one written definition, read by every verb.
+- A new role costs a file; new hardware costs a model entry in a family.
 - Any install path is checked by the same end-state test.
 - Rescue nodes and boundary nodes gain acceptance checks and proof.
 - Standup's last manual step goes, without a fork of NetBird.
+- Four lanes can be built by separate people at once.
 
 **Negative.**
 
 - The 1.0 gate grows by one group.
 - The CI tier needs VMs in CI, which costs runner time and needs a new harness beside ADR 1200's container hosts.
-- The type and family schemas, and the per-machine sensor declaration, become compatibility surfaces under ADR 1228 once 1.0 ships.
-- Moving four existing kinds onto the files touches `join-node` and `standup` together.
+- The type and family schemas become compatibility surfaces under ADR 1228 once 1.0 ships.
+- Moving the existing kinds onto the files touches `join-node` and `standup` together.
 - Automating phase 11 puts an admin credential's creation in code, which must be reviewed as such.
+- The edge kinds depend on other repositories' releases, which must be pinned and signed.
 
 ## Assessor view (SCA-R)
 
 This strengthens configuration management (NIST SP 800-53 CM-2, CM-6, CM-8) and system integrity (SI-7):
 
-- every role and hardware family has a declared baseline in the repository, and every machine's sensors are declared;
+- every role and hardware family has a declared baseline in the repository;
 - every built machine is checked against it by a read-only test, whatever path installed it;
-- full-disk or data-volume encryption (SC-28) and time synchronisation (AU-8) become checked properties per role, not installer conventions.
+- disk encryption (SC-28) and time synchronization (AU-8) become checked properties per role, not installer conventions;
+- software from other repositories is installed only at a pinned, signed release.
 
 The automated phase 11 creates an administrative credential (AC-2, IA-5). It writes the plaintext once, to a root-only file, stores only a hash in the management database, and is tested for never appearing in logs.
 
@@ -169,7 +180,8 @@ Residual risk: on hardware outside the golden path, the install is a person's wo
 ## Trigger conditions for revisit
 
 - A role whose build cannot be expressed as plays in order on a reachable host.
-- The pull converger ships (pods, and how every type updates in place).
+- The pull converger ships (how every type updates in place).
 - A second operating-system family enters a type's accepted baselines.
 - The CI VM tier costs more runner time than the gate can carry on every pull request.
 - The OnLogic hardware arrives (its model joins the small-computer family).
+- The sensor kit's install model is decided (question 1).
