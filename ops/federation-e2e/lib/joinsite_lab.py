@@ -19,6 +19,7 @@ names or addresses: every command of the plan must reach only the lab.
 """
 import json
 import re
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -34,6 +35,34 @@ ALPHA_FEDERATION_KEYS = (
     "federation_peer_mesh_addr", "federation_peer_public_sni",
 )
 FIXTURE_NET = re.compile(r"\b192\.0\.2\.\d{1,3}\b")
+USER_AT_HOST = re.compile(r"[A-Za-z0-9_<>.-]+@([A-Za-z0-9_.<>-]+)")
+
+
+def words(cmd):
+    """The command's words, with a quoted argument (bash -c '...') split into its own words."""
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        parts = cmd.split()
+    out = []
+    for p in parts:
+        out.extend(words(p) if any(c.isspace() for c in p) else [p])
+    return out
+
+
+def ssh_targets(cmd):
+    """The host of each ssh's first user@host word. A word scan, not a nested regex."""
+    ws = words(cmd)
+    hosts = []
+    for i, w in enumerate(ws):
+        if w.rsplit("/", 1)[-1] != "ssh":
+            continue
+        for nxt in ws[i + 1:]:
+            m = USER_AT_HOST.fullmatch(nxt)
+            if m:
+                hosts.append(m.group(1))
+                break
+    return hosts
 
 
 def layout(fixture, dest, founder_addr, joiner_addr):
@@ -92,7 +121,7 @@ def reach(plan_path, pairs):
             bad.append(f"the fixture's address {hit}: {cmd[:160]}")
         for target in re.findall(r"(?:^|\s)-l\s+'?([A-Za-z0-9_.*:-]+)", cmd) + \
                 re.findall(r"(?:^|\s)--limit\s+'?([A-Za-z0-9_.*:-]+)", cmd) + \
-                re.findall(r"ssh(?:\s+-\S+(?:\s+\S+)?)*\s+[A-Za-z0-9_<>.-]+@([A-Za-z0-9_.<>-]+)", cmd):
+                ssh_targets(cmd):
             if target.strip("'*") not in allowed and not target.startswith("<"):
                 bad.append(f"a target outside the lab, {target}: {cmd[:160]}")
     for b in bad:
