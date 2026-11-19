@@ -126,6 +126,8 @@ router sessions on an Apple M3 gave the same counts.
 | peer, endpoints pod-a and core | pod-a and core | 2 for all 3,000 |
 | peer, endpoints pod-a and pod-b | pod-a and pod-b | 2 for all 3,000 |
 
+Standard pattern: a device publishes in client mode and lists the pods it may use as router hints, so it holds one router link at a time. Peer mode to two routers delivers every publication twice and is not used for publishing through pods.
+
 Session-side remedies for peer mode, not built: publish in client mode and list several pods for failover; or have the
 subscriber drop a sample whose `prov` (signer, `ts`, `sha256`) it has already accepted, which covers signed samples only.
 Whether zenoh's advanced publisher and subscriber sequence numbers drop such duplicates is unmeasured.
