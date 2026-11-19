@@ -10,10 +10,10 @@ its own is now active only when its acceptance rows pass (pgBackRest's stanza
 `info`). It is FAIL when one fails, and UNKNOWN when none ran. An empty
 container list is never read as running.
 
-The pgbackrest role now removes the sidecar from a host that still has it: the
-overlay `docker-compose.pgbackrest.yml`, the container, and the
-`PGBACKREST_IMAGE` line in `.env`. This happens the next time the role runs on
-that host. The bind-mounted repository is not touched. Before that, the role
+To take it off a host, deploy the pgbackrest role; it removes the retired sidecar
+there: the container, running or stopped, the overlay
+`docker-compose.pgbackrest.yml`, and the `PGBACKREST_IMAGE` line in `.env`. The
+bind-mounted repository is not touched. Before that, the role
 stops and names any file in the repository, log or spool directory that the
 database user does not own. A pgbackrest command run as root, as the sidecar did
 when exec'd into, leaves such files, and backups and restore then fail. The
