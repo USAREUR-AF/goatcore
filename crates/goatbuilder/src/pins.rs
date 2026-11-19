@@ -458,7 +458,114 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
             }
         }
     }
+    check_member_over(t, &member_of)?;
     Ok(member_of)
+}
+
+// --- ADR 1256: a member deviation names the goatnet value it overrides ----------
+// `over:` must equal what the member's goatnet resolves the component to without
+// the member deviation: a ref, `absent`, or `none` (`fleet: null`, no goatnet
+// deviation). Mirrors goat_consistency.resolve.check_member_over word for word
+// (ops/goatbuilder/parity-pins-member-over.sh holds the two equal).
+
+const OVER_ABSENT: &str = "absent";
+const OVER_NONE: &str = "none";
+
+/// What `goatnet` resolves a component to with no member deviation, as the `over:` token.
+pub fn goatnet_resolution(spec: &Value, goatnet: &str) -> String {
+    if let Some(dev) = deviations(spec).get(goatnet) {
+        let dev = if dev.is_object() { dev.clone() } else { Value::Object(Map::new()) };
+        if truthy(get(&dev, "absent")) {
+            return OVER_ABSENT.into();
+        }
+        return py_str(get(&dev, "value").unwrap_or(&Value::Null));
+    }
+    match get(spec, "fleet") {
+        None | Some(Value::Null) => OVER_NONE.into(),
+        Some(f) => py_str(f),
+    }
+}
+
+/// The line an operator pastes under the member deviation.
+pub fn over_line(token: &str) -> String {
+    if token == OVER_ABSENT || token == OVER_NONE {
+        format!("over: {token}")
+    } else {
+        format!("over: \"{token}\"")
+    }
+}
+
+fn refuse<T>(code: &str, msg: String) -> Result<T> {
+    Err(anyhow::Error::from(goat_errors::coded(code, msg)))
+}
+
+/// GB-358: a member `value:` deviation must carry `over:`, and only it may.
+/// GB-357: `over:` must name what the member's goatnet resolves to now.
+pub fn check_member_over(t: &Table, member_of: &[(String, String)]) -> Result<()> {
+    for (cname, spec) in &t.components {
+        for (scope, dev) in &deviations(spec) {
+            let dev = if dev.is_object() { dev.clone() } else { Value::Object(Map::new()) };
+            let over = get(&dev, "over");
+            if t.goatnets.contains_key(scope) {
+                if over.is_some() {
+                    return refuse("GB-358", format!("GB-358 pins: component '{cname}': `over:` is on the goatnet deviation '{scope}'. Only a member deviation names what it overrides; a goatnet deviation overrides fleet. Delete the `over:` line."));
+                }
+                continue;
+            }
+            if truthy(get(&dev, "absent")) {
+                if over.is_some() {
+                    return refuse("GB-358", format!("GB-358 pins: component '{cname}': member deviation '{scope}' is `absent: true` and also carries `over:`. A member that does not run the component shadows nothing. Delete the `over:` line."));
+                }
+                continue;
+            }
+            let goatnet = match member_of.iter().find(|(m, _)| m == scope) {
+                Some((_, g)) => g.clone(),
+                None => continue,
+            };
+            let now = goatnet_resolution(spec, &goatnet);
+            let value = py_str(get(&dev, "value").unwrap_or(&Value::Null));
+            let line = over_line(&now);
+            match over {
+                None => {
+                    return refuse("GB-358", format!("GB-358 pins: component '{cname}': member deviation '{scope}' pins {value} but does not name what it overrides. Goatnet '{goatnet}' resolves '{cname}' to {now} without it. To keep {value} on {scope} deliberately, add under deviations.{scope}:  {line}  Or delete the deviation, and {scope} takes {now}."));
+                }
+                Some(o) if py_str(o) != now => {
+                    let was = py_str(o);
+                    return refuse("GB-357", format!("GB-357 pins: component '{cname}': member deviation '{scope}' was written over {was}, but goatnet '{goatnet}' now resolves '{cname}' to {now}, so {scope} would silently keep {value}. Delete the deviation, and {scope} takes {now}. Or, to keep {value} on {scope} deliberately, set under deviations.{scope}:  {line}"));
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Member value deviations that pin what their goatnet already resolves to: a
+/// warning, not a refusal.
+pub fn redundant_member_deviations(t: &Table, member_of: &[(String, String)]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut comps: Vec<(&String, &Value)> = t.components.iter().collect();
+    comps.sort_by(|a, b| a.0.cmp(b.0));
+    for (cname, spec) in comps {
+        let devs = deviations(spec);
+        let mut scopes: Vec<(&String, &Value)> = devs.iter().collect();
+        scopes.sort_by(|a, b| a.0.cmp(b.0));
+        for (scope, dev) in scopes {
+            let dev = if dev.is_object() { dev.clone() } else { Value::Object(Map::new()) };
+            if t.goatnets.contains_key(scope) || truthy(get(&dev, "absent")) {
+                continue;
+            }
+            let goatnet = match member_of.iter().find(|(m, _)| m == scope) {
+                Some((_, g)) => g.clone(),
+                None => continue,
+            };
+            let now = goatnet_resolution(spec, &goatnet);
+            if py_str(get(&dev, "value").unwrap_or(&Value::Null)) == now {
+                out.push(format!("WARN pins: component '{cname}': member deviation '{scope}' pins {now}, which goatnet '{goatnet}' already resolves to. It changes nothing today and would hold {scope} back from the goatnet's next value. Delete it."));
+            }
+        }
+    }
+    out
 }
 
 fn deviations(spec: &Value) -> Map<String, Value> {
@@ -1315,6 +1422,9 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
 
     let t = load_table(&p.table())?;
     let member_of = validate(&p, &t)?;
+    for w in redundant_member_deviations(&t, &member_of) {
+        note(&mut rows, w);
+    }
     let mut sorted: Vec<&(String, String)> = member_of.iter().collect();
     sorted.sort();
     for (member, goatnet) in sorted {
@@ -1461,6 +1571,58 @@ pub fn render_all(repo: &Path) -> Result<Rendered> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn over_table(devs: Value, fleet: Value) -> (Table, Vec<(String, String)>) {
+        let goatnets = serde_json::json!({"zagros": {"members": ["zagros_a_hosts", "zagros_b_hosts"]}});
+        let comps = serde_json::json!({"app": {"var": "app_image", "fleet": fleet, "deviations": devs}});
+        let t = Table { goatnets: goatnets.as_object().unwrap().clone(), components: comps.as_object().unwrap().clone(), lite: BTreeSet::new() };
+        let m = vec![("zagros_a_hosts".to_string(), "zagros".to_string()), ("zagros_b_hosts".to_string(), "zagros".to_string())];
+        (t, m)
+    }
+
+    fn over_refusal(devs: Value, fleet: Value) -> Option<String> {
+        let (t, m) = over_table(devs, fleet);
+        check_member_over(&t, &m).err().map(|e| format!("{e:#}"))
+    }
+
+    const OLD: &str = "ghcr.io/example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const FIX: &str = "ghcr.io/example/app@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const PIN: &str = "ghcr.io/example/app@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+    #[test]
+    fn a_member_deviation_written_over_an_older_goatnet_value_is_refused_gb357() {
+        let msg = over_refusal(serde_json::json!({"zagros": {"value": FIX, "reason": "hotfix"}, "zagros_b_hosts": {"value": PIN, "over": OLD, "reason": "r"}}), Value::String(OLD.into())).unwrap();
+        assert!(msg.starts_with("GB-357") && msg.contains(&format!("over: \"{FIX}\"")), "{msg}");
+    }
+
+    #[test]
+    fn a_member_value_without_over_is_refused_gb358_with_the_line_to_paste() {
+        let msg = over_refusal(serde_json::json!({"zagros_b_hosts": {"value": PIN, "reason": "r"}}), Value::String(OLD.into())).unwrap();
+        assert!(msg.starts_with("GB-358") && msg.contains(&format!("over: \"{OLD}\"")), "{msg}");
+    }
+
+    #[test]
+    fn over_naming_the_current_value_absent_members_and_goatnet_deviations_pass() {
+        assert!(over_refusal(serde_json::json!({"zagros": {"value": FIX, "reason": "h"}, "zagros_b_hosts": {"value": PIN, "over": FIX, "reason": "r"}}), Value::String(OLD.into())).is_none());
+        assert!(over_refusal(serde_json::json!({"zagros": {"value": FIX, "reason": "h"}, "zagros_b_hosts": {"absent": true, "reason": "r"}}), Value::String(OLD.into())).is_none());
+        assert!(over_refusal(serde_json::json!({"zagros_a_hosts": {"value": PIN, "over": "none", "reason": "r"}, "zagros_b_hosts": {"value": PIN, "over": "none", "reason": "r"}}), Value::Null).is_none());
+    }
+
+    #[test]
+    fn over_where_it_means_nothing_is_refused_gb358() {
+        let on_goatnet = over_refusal(serde_json::json!({"zagros": {"value": FIX, "over": OLD, "reason": "h"}}), Value::String(OLD.into())).unwrap();
+        assert!(on_goatnet.starts_with("GB-358") && on_goatnet.contains("goatnet deviation"), "{on_goatnet}");
+        let on_absent = over_refusal(serde_json::json!({"zagros_b_hosts": {"absent": true, "over": OLD, "reason": "r"}}), Value::String(OLD.into())).unwrap();
+        assert!(on_absent.starts_with("GB-358") && on_absent.contains("absent"), "{on_absent}");
+    }
+
+    #[test]
+    fn a_redundant_member_deviation_is_one_warning() {
+        let (t, m) = over_table(serde_json::json!({"zagros_b_hosts": {"value": OLD, "over": OLD, "reason": "r"}}), Value::String(OLD.into()));
+        assert!(check_member_over(&t, &m).is_ok());
+        let w = redundant_member_deviations(&t, &m);
+        assert!(w.len() == 1 && w[0].starts_with("WARN pins") && w[0].contains("zagros_b_hosts"), "{w:?}");
+    }
 
     #[test]
     fn canonical_json_sorts_keys_indents_two_and_ends_with_one_newline() {
