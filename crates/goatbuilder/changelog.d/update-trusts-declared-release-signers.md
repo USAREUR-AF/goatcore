@@ -19,4 +19,4 @@ before. When no signer
 matches, GB-261 names each signer it checked and why each one refused. When
 the signer changes in future, one release first trusts both the old signer and
 the new one (ADR 1252). An install from before the move still needs one
-reinstall: see GB-074. (#PR)
+reinstall: see GB-074. (#1036)
