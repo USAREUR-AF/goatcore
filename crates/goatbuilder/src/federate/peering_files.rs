@@ -1369,12 +1369,12 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
             "would write"
         } else {
             if let Some(parent) = t.parent() {
-                std::fs::create_dir_all(parent)?;
+                std::fs::create_dir_all(parent).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(parent)).display())))?;
             }
             // Whole or not at all: a reader never sees half a record.
             let tmp = t.with_extension("goatbuilder-tmp");
-            std::fs::write(&tmp, &r.body)?;
-            std::fs::rename(&tmp, &t)?;
+            std::fs::write(&tmp, &r.body).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&tmp)).display())))?;
+            std::fs::rename(&tmp, &t).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&tmp)).display())))?;
             "written"
         };
         let detail = if writes || same {

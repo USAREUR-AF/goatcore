@@ -26,7 +26,7 @@
 use crate::runner::Cmd;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::Check;
 
@@ -89,7 +89,7 @@ fn check_with(repo: &Path, set: &[(&str, &str)], unset: &[&str]) -> Result<Fresh
     for k in unset {
         cmd.env_remove(k);
     }
-    let out = cmd.output().with_context(|| "ops/scripts/fresh-source.sh")?;
+    let out = cmd.output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ops/scripts/fresh-source.sh: {e}")))?;
     let said = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
     let trunk = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let check = if out.status.success() {
@@ -174,8 +174,8 @@ pub fn marker(repo: &Path) -> Result<Option<Marker>> {
     if !p.is_file() {
         return Ok(None);
     }
-    let text = std::fs::read_to_string(&p).with_context(|| p.display().to_string())?;
-    parse_marker(&text).map(Some).with_context(|| format!("{MARKER} in {}", repo.display()))
+    let text = std::fs::read_to_string(&p).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?;
+    parse_marker(&text).map(Some).map_err(|e| goat_errors::coded("GB-259", format!("{MARKER} in {}: {e}", repo.display())).into())
 }
 
 fn parse_marker(text: &str) -> Result<Marker> {

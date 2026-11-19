@@ -1715,7 +1715,7 @@ fn main() {
                 && !matches!(with, "status" | "allocate");
             if side_edge_alone {
                 if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                    Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
+                    Err(goat_errors::coded("GB-008", "federate is a mutation: pass --yes without a terminal (C10)").into())
                 } else {
                     let o = federate::Options { with, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) };
                     let at = federate::work_dir(&o);

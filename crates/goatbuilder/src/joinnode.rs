@@ -66,7 +66,7 @@
 use std::path::Path;
 use crate::runner::Cmd;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::config;
 use crate::standup::{sh_quote, sh_word};
@@ -891,7 +891,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         checks.push(row("cmd", open.clone()));
         if !o.dry_run {
             crate::runner::phase("door", &format!("open the env door to {}", o.env), "");
-            let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &open]).current_dir(repo).status().context("bash")?;
+            let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &open]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
             if !status.success() {
                 checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! the env door to {} did not open — no phase has run", o.env), fix: Some(format!("{open} --status says why; then re-run: {resume} --from {}", o.from.max(1))) });
                 let mut r = Report::new("join-node", checks, EXIT_REFUSED);
@@ -909,7 +909,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         checks.push(row("cmd", setup.clone()));
         if !o.dry_run {
             crate::runner::phase("usb", &format!("write the SSH configuration for {} over USB", o.node), "");
-            let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &setup]).current_dir(repo).status().context("bash")?;
+            let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &setup]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
             if !status.success() {
                 checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! the SSH configuration for {} could not be written — no phase has run", o.node), fix: Some(format!("check the state directory ({}) is writable; then re-run: {resume} --from {}", crate::settings::state_dir_abs(repo), o.from.max(1))) });
                 let mut r = Report::new("join-node", checks, EXIT_REFUSED);
@@ -935,7 +935,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         crate::runner::phase(&ph.n.to_string(), &ph.label, "");
         let before: Vec<Option<Vec<u8>>> = ph.writes.iter().map(|f| std::fs::read(repo.join(f)).ok()).collect();
         let t0 = std::time::Instant::now();
-        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
+        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
         // Timed as standup times its phases (standup::record_timing).
         let (secs, rc_now) = (t0.elapsed().as_secs(), status.code().unwrap_or(1));
         checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));

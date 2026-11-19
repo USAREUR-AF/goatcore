@@ -879,12 +879,12 @@ pub fn driver_apply(
         .into());
     }
     let mut placed = vec![(
-        std::fs::read(dir.join("plan").join("org.candidate"))?,
+        std::fs::read(dir.join("plan").join("org.candidate")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(dir.join("plan").join("org.candidate"))).display())))?,
         dc.core.org.clone().expect("checked"),
     )];
     if let Some(out) = &dc.core.out {
         placed.push((
-            std::fs::read(dir.join("plan").join("live.candidate"))?,
+            std::fs::read(dir.join("plan").join("live.candidate")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(dir.join("plan").join("live.candidate"))).display())))?,
             out.clone(),
         ));
     }
@@ -2229,7 +2229,7 @@ pub fn backout_with(
     });
     let _ = std::fs::write(
         base.join("result.json"),
-        serde_json::to_string_pretty(&result)? + "\n",
+        serde_json::to_string_pretty(&result).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))? + "\n",
     );
     let mut r = Report::new("federate-backout", checks, EXIT_NOT_CONVERGED);
     r.exit = exit;
