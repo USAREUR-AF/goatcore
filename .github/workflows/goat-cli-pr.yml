@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain (1.100.0 + clippy)
         uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0
@@ -49,7 +49,7 @@ jobs:
           components: clippy
 
       - name: Cache cargo registry + git deps
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -60,7 +60,7 @@ jobs:
             cargo-goat-cli-pr-host-
 
       - name: Cache cargo build target
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: crates/target
           key: target-goat-cli-pr-host-${{ hashFiles('crates/Cargo.lock') }}
@@ -106,7 +106,7 @@ jobs:
       CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
       AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/apt-failover
 
       - name: Install Rust toolchain (1.100.0, target x86_64-pc-windows-gnu)
@@ -140,7 +140,7 @@ jobs:
           sudo apt-get "${apt_args[@]}" install -y gcc-mingw-w64-x86-64
 
       - name: Cache cargo registry + git deps
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -151,7 +151,7 @@ jobs:
             cargo-goat-cli-pr-win-
 
       - name: Cache cargo build target
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: crates/target
           key: target-goat-cli-pr-win-${{ hashFiles('crates/Cargo.lock') }}
