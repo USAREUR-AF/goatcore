@@ -207,6 +207,22 @@ MGMT="$(netbird status 2>/dev/null | awk -F': ' '/^Management:/{print $2}' || tr
 # profile match stays as the fast path, so a deployer on the mesh with a
 # differently named profile does not fall through to the base inventory.
 MESH_HOST=""
+# open_door — open (or re-open) this goatnet's door; a door idles out after
+# about 20 minutes, so a long run re-opens it before each group and before
+# reading the ledgers. Two attempts, a short pause between them.
+open_door() {
+  local n
+  for n in 1 2; do
+    if "$HERE/door-open.sh" "$NAME" >/dev/null 2>&1; then return 0; fi
+    [ "$n" = 2 ] || sleep "${GOAT_DOOR_RETRY_PAUSE:-5}"
+  done
+  return 1
+}
+# transport_failed <log> — the play lost its connection (a host UNREACHABLE, a
+# door or SSM session that dropped), as opposed to a task that failed.
+transport_failed() {
+  grep -q -E 'UNREACHABLE!|unreachable=[1-9]|Connection (refused|reset|closed)|Session (terminated|closed)|TargetNotConnected' "$1"
+}
 for G in $MEMBERS; do
   MESH_HOST="$(awk -v g="[$G]" '$0==g{f=1;next} /^\[/{f=0} f && /ansible_host=/{sub(/.*ansible_host=/,""); sub(/[[:space:]].*/,""); print; exit}' "$REPO/ops/ansible/inventory/mgmt-hosts-mesh.ini" 2>/dev/null || true)"
   [ -n "$MESH_HOST" ] && break
@@ -218,7 +234,7 @@ elif [ "${GOAT_MESH_PROBE:-1}" != 0 ] && [ -n "$MESH_HOST" ] && nc -z -w 3 "$MES
   INV="-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini"; TRANSPORT="mesh (this laptop reaches $MESH_HOST:22; netbird profile reads '$PROFILE')"; TRANSPORT_KIND="mesh"
 elif "$HERE/env-door.sh" "$NAME" --print >/dev/null 2>&1; then
   INV="-i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini"; TRANSPORT="door ($HERE/door-open.sh $NAME)"; TRANSPORT_KIND="door"
-  if [ "$DRY" = 0 ]; then "$HERE/door-open.sh" "$NAME" >/dev/null 2>&1 || die "door to $NAME did not open"; fi
+  if [ "$DRY" = 0 ]; then open_door || die "door to $NAME did not open (tried twice)"; fi
 fi
 # direct and mesh reach this goatnet over plain SSH; no AWS account is needed to
 # list its inventory or tail its deploy ledger (GOAT_AWS_MODE=none, ADR 1204).
@@ -261,9 +277,22 @@ for G in $MEMBERS; do
     if [ "$DRY" = 1 ]; then
       note "DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $(basename "$PLAY") ${TARGET_FLAG}$G) > $LOG"
     else
-      ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
-          ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" ) > "$LOG" 2>&1 \
-        && DEPLOY_RC=0 || DEPLOY_RC=$?
+      [ "$TRANSPORT_KIND" != door ] || open_door || note "$G: door to $NAME did not re-open; trying the play anyway"
+      run_play() {
+        ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
+            ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" ) > "$1" 2>&1 \
+          && DEPLOY_RC=0 || DEPLOY_RC=$?
+      }
+      run_play "$LOG"
+      # A dropped connection, not a failed task: re-open the door (door transport)
+      # and run the play once more. The play is idempotent, so a second run after
+      # a partial one converges the same way (GOAT_DEPLOY_TRANSPORT_RETRY=0: off).
+      if [ "$DEPLOY_RC" != 0 ] && [ "${GOAT_DEPLOY_TRANSPORT_RETRY:-1}" != 0 ] && transport_failed "$LOG"; then
+        note "$G: the connection dropped (log $LOG); re-opening the transport and running the play once more"
+        [ "$TRANSPORT_KIND" != door ] || open_door || true
+        mv "$LOG" "$LOG.first"
+        run_play "$LOG"
+      fi
       RECAP="$(grep -A8 'PLAY RECAP' "$LOG" | grep -E 'ok=' || true)"
       printf '%s\n' "$RECAP" | sed 's/^/      /'
       # A declared member group with no host in the loaded inventories (a site
@@ -297,6 +326,7 @@ for G in $MEMBERS; do
   # design-absence, so a missing ledger there is the correct state, not drift.
   # The inventory read is also what says which hosts MUST answer: a failed read,
   # or a host that never returns a row, is not convergence (#1545).
+  [ "$TRANSPORT_KIND" != door ] || open_door || true
   if ! INVENTORY="$( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES GOAT_AWS_MODE="$READONLY_AWS_MODE" ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
       ansible-inventory $INV --list 2> "$LOG.inventory" )"; then
     note "$G: inventory read FAILED — log $LOG.inventory"; RC=1; continue

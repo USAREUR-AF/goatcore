@@ -7,49 +7,7 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
-
-### For someone deploying
-
-#### Fixed: under goatlite, the doctor and the browser step name the right phase and command
-
-`goatbuilder doctor` says a goatlite's missing secrets file is created by
-phase 1 of the standup, the phase whose "create the local secrets store" step
-writes it; it said phase 3. The browser step that pauses a LAN standup at
-phase 11 names `goatbuilder secrets hint <SITE>_NB_API_TOKEN` as the command
-that says where to store the token, instead of the posture script behind it.
-
-#### Fixed: a goatlite standup no longer points at 1Password or goatbuilder.yaml
-
-Phase 6 of a goatlite standup told the learner to copy the bootstrap setup key
-to 1Password. It now says to keep the key only until it enrols the first peer,
-and only in the goatnet's local secrets store. Phase 1 told a goatlite to
-declare `secrets: {store: env-file}` in `ops/goatbuilder/goatbuilder.yaml`, a
-file a goatlite does not have; under goatlite it no longer gives that advice.
-The full preset's text is unchanged in both places.
-
-#### Fixed: `teardown` says what each host had, stops the LAN surfaces, and names a refused stop's cause
-
-Each stop of `goatbuilder teardown` and `ops/scripts/goat-teardown.sh` now
-asks the host whether the component is there at all: a compose project's
-file or containers, a service's containers, a systemd unit. A component that
-was never deployed on the host, such as a phase-12 service after a standup
-paused at the browser step (phase 11), is reported as "nothing to stop" and
-writes no `teardown.jsonl` row; before, each such stop wrote a row for a
-service that had never run. The run ends with how many stops took a
-component down and how many found nothing on the host.
-
-`teardown --services` now also stops the LAN name server (`lan-dns`), the
-LAN Traefik and the SPIRE agent, which it left running on a goatlite. STUN
-(the coturn unit) is still left running, and says so.
-
-A stop that fails names the catalogued error its output carries, in its
-failure row, an `interpreted` row and the cause column of
-`teardown-<site>-timings.tsv`. The playbook preflight's refusal of a stale
-checkout is X-ANSIBLE-005, with the `git pull --ff-only` that fixes it; it
-was recorded as "uncatalogued". GB-021, fastlane's refusal, no longer
-matches every line containing "REFUSE —", so other tools' refusals are not
-read as a fastlane refusal.
-
+Changes since the last release are one file each in `crates/goatbuilder/changelog.d/`; `python3 ops/release/changelog.py show` prints them as the next release will.
 <!-- END generated: changelog unreleased -->
 
 ## 0.7.3 — 2026-11-17

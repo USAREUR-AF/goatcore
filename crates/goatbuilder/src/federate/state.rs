@@ -350,7 +350,7 @@ impl State {
         let tmp = work.join(temp_name(std::process::id()));
         let mut f = File::create(&tmp)
             .map_err(|e| io(format!("cannot write the run journal {}", tmp.display()), e))?;
-        let mut text = serde_json::to_string_pretty(self)?;
+        let mut text = serde_json::to_string_pretty(self).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?;
         text.push('\n');
         f.write_all(text.as_bytes())
             .map_err(|e| io(format!("cannot write the run journal {}", tmp.display()), e))?;

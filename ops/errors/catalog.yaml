@@ -3668,18 +3668,18 @@ entries:
   - code: GB-320
     tool: goatbuilder
     title: a program the run starts could not be started
-    what: "A goatbuilder verb runs its phases and helpers as programs: bash for a phase's command, python3 for a step written in Python (the preflight, the slot recheck), and the helpers a step names (the core's candidate planner). The operating system refused to start one: it is not installed, not on PATH, or not executable. Nothing of that step ran."
+    what: "A goatbuilder verb runs its phases and helpers as programs: bash for a phase's command, python3 for a step written in Python (the preflight, the slot recheck), the tools a verb drives (ansible, ssh, git, go) and the helpers a step names (the core's candidate planner, a script of the checkout such as ops/scripts/fresh-source.sh or an overlay's assemble.sh). The operating system refused to start one: it is not installed, not on PATH, or not executable. Nothing of that step ran."
     causes:
-      - "bash or python3 is not installed on the machine goatbuilder runs on, or not on PATH"
+      - "bash, python3, ansible, ssh, git or go is not installed on the machine goatbuilder runs on, or not on PATH"
       - "a helper the step names is missing from the checkout, or has lost its executable bit"
     fixes:
-      - "command -v bash python3   (install what is missing, then run the same command again)"
+      - "command -v bash python3 ansible ssh git go   (install what the message names, then run the same command again)"
       - "git -C <checkout> status   (restore a helper the checkout is missing)"
     read: docs/design/goatbuilder.md
     exit: 1
     matches:
       - "^GB-320: "
-      - "could not start (bash|python3)"
+      - "could not start (bash|python3|ansible|ssh|go run)"
 
   - code: GB-321
     tool: goatbuilder
@@ -3780,6 +3780,20 @@ entries:
     exit: 1
     matches:
       - "^GB-316: "
+  - code: GB-326
+    tool: goatbuilder
+    title: a file of the checkout goatbuilder reads is not the YAML it should be
+    what: "goatbuilder read a file of the checkout (fleet-pins.yaml, the inventory's doors.yaml, a role's deploy-history.yml, ops/goatbuilder/teardown.yaml) and it does not parse as YAML, or not in the shape that file has. The message names the file and the parser's line and column. Nothing that reads it ran."
+    causes:
+      - "a bracket, quote or indentation error near the line named"
+      - "the file was edited by hand into another shape"
+    fixes:
+      - "fix the line the message names, then run the same command again"
+      - "git -C <checkout> diff <the file>   (what changed since the last commit)"
+    read: docs/design/goatbuilder.md
+    exit: 2
+    matches:
+      - "^GB-326: "
 
   - code: GB-278
     tool: goatbuilder
