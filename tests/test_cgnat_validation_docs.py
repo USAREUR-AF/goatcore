@@ -1,5 +1,5 @@
-"""The CGNAT validation runbook and the design document's artifact list name
-only files that exist, and the runbook's commands put no secret value on a
+"""The CGNAT validation runbook and design document name only files that
+exist, and the runbook's commands put no secret value on a
 command line.
 
 A path counts when it is in backticks or a Markdown link and looks like a file
@@ -49,6 +49,9 @@ class CgnatValidationDocs(unittest.TestCase):
         text = section(DESIGN.read_text(), '9. Related artifacts')
         self.assertTrue(named_paths(text), 'the artifact list names nothing')
         self.assertEqual(missing(DESIGN, text), [])
+
+    def test_design_document_names_only_files_that_exist(self):
+        self.assertEqual(missing(DESIGN, DESIGN.read_text()), [])
 
     def test_runbook_commands_put_no_secret_on_a_command_line(self):
         blocks = '\n'.join(re.findall(r'```bash\n(.*?)```', RUNBOOK.read_text(), re.S))
