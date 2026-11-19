@@ -111,7 +111,8 @@ if case not in ("bind-all", "no-counter"):
           "exposure guard admits the gateway binding only from the scraper's bridge")
 
 if case == "no-counter":
-    nft = open(f"{d}/logship-expose-guard.nft").read()
+    with open(f"{d}/logship-expose-guard.nft") as guard_file:
+        nft = guard_file.read()
     check("counter" not in nft.split("table inet goat_logship_expose {", 1)[1]
           and "ip daddr 100.64.0.7 tcp dport 9598 drop" in nft,
           "a kernel without nft counters gets the same drops, uncounted")
