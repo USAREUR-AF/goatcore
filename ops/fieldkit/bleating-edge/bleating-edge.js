@@ -83,7 +83,7 @@
         if (res.ok && data) return data;
         var err = data && data.error ? data.error : {};
         throw plainError(
-          err.what || ("The pod refused (" + res.status + ")."),
+          err.what || err.message || ("The pod refused (" + res.status + ")."),
           err.why || "",
           err.fix || (res.status === 401 || res.status === 403
             ? "Sign in with your goat certificate or card. Only a person named as local authority can change rules."

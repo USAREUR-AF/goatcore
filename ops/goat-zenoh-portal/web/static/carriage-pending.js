@@ -5,7 +5,7 @@
 // POST /api/carriage/local-rules/{id}/ratify or /lapse. The portal decides who
 // may see and decide each rule; this page holds no rule of its own.
 
-import { api, escapeHTML, hydrateAuth, showRequestError } from "/app.js";
+import { api, ApiError, escapeHTML, hydrateAuth, readResponse, request, showRequestError } from "/app.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -15,6 +15,36 @@ const ACTION_WORDS = {
   revoke: "Shut out",
   reactivate: "Bring back",
 };
+
+// Refusals the carriage routes return, in plain words (codes from the portal's
+// carriage handlers). Anything else falls back to the portal's own message.
+const REFUSALS = {
+  local_rule_not_pending: "Someone already decided this change. The list now shows what is still waiting.",
+  local_rule_expired: "This change has already ended on the pod, so there is nothing to keep. Let it lapse instead.",
+  carriage_source_revoked: "goat has revoked this source. A revoke made in goat always wins, so this change cannot be kept.",
+  ledger_conflict: "The pod's record of this change does not match what goat holds. Ask a goat operator to check the pod's ledger before you decide.",
+  carriage_not_authorized: "Only an org lead of the pod's org can decide this change.",
+  config: "The portal is not set up for pod rules yet. Ask a goat operator.",
+};
+
+async function post(path) {
+  const res = await request(path, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!res.ok) {
+    let body = null;
+    try { body = await res.clone().json(); } catch (_) { body = null; }
+    const code = body?.code || body?.error?.code;
+    if (code && REFUSALS[code]) {
+      const e = new ApiError(REFUSALS[code], res.status, "request");
+      e.code = code;
+      throw e;
+    }
+  }
+  return readResponse(res);
+}
 
 // The portal sends times as Unix seconds; an RFC 3339 string is shown as given.
 function when(t) {
@@ -83,10 +113,11 @@ async function decide(r, verb) {
   if (!r || !window.confirm(preview(r, verb))) return;
   const status = $("pending-status");
   try {
-    await api(`/api/carriage/local-rules/${encodeURIComponent(r.id)}/${verb}`, { method: "POST", body: "{}" });
+    await post(`/api/carriage/local-rules/${encodeURIComponent(r.id)}/${verb}`);
     await load();
     status.textContent = `${verb === "ratify" ? "Ratified" : "Let lapse"}: ${r.id}. ` + status.textContent;
   } catch (e) {
+    if (e.code === "local_rule_not_pending") await load();
     showRequestError(e, status, () => decide(r, verb));
   }
 }

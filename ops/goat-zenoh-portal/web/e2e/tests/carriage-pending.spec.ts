@@ -13,7 +13,7 @@ const POD = "9d0c4b7e2a1f4c3d8e6b5a4f3c2d1e0f";
 const LIDAR = "e5d4c3b2a1f04e9d8c7b6a5f4e3d2c1b";
 const CAMERA = "b81e44d0c2a94f6e9a7d3c5b1e0f2a6c";
 
-async function mock(page: Page, refuse = false) {
+async function mock(page: Page, refuse: false | "forbidden" | "conflict" = false) {
   const now = Math.floor(Date.now() / 1000);
   const decided: string[] = [];
   let rows = [
@@ -36,7 +36,10 @@ async function mock(page: Page, refuse = false) {
     }
     const m = url.pathname.match(/^\/api\/carriage\/local-rules\/([^/]+)\/(ratify|lapse)$/);
     if (m && route.request().method() === "POST") {
-      if (refuse) return json({ error: { code: "forbidden", message: "only an org lead of the pod's org may decide this rule" } }, 403);
+      if (refuse) {
+        const [status, code] = refuse === "conflict" ? [409, "carriage_source_revoked"] : [403, "carriage_not_authorized"];
+        return json({ type: "about:blank", title: "refused", status, code, detail: code, error: { code, message: code } }, status);
+      }
       decided.push(`${m[2]} ${m[1]}`);
       rows = rows.filter((r) => r.id !== m[1]);
       return json({ local_rule: { id: m[1], state: m[2] === "ratify" ? "ratified" : "lapsed" } });
@@ -82,11 +85,16 @@ test("ratify and let lapse say the result and command first; cancel does nothing
   expect(decided).toEqual(["ratify lr-1", "lapse lr-2"]);
 });
 
-test("a refusal is shown, and the row stays", async ({ page }) => {
-  await mock(page, true);
-  await page.goto("/carriage-pending.html");
-  page.once("dialog", (d) => d.accept());
-  await page.locator('[data-lapse="lr-2"]').click();
-  await expect(page.locator("#pending-status")).toContainText("only an org lead");
-  await expect(page.locator('tr[data-id="lr-2"]')).toHaveCount(1);
-});
+for (const [kind, words] of [
+  ["forbidden", "Only an org lead of the pod's org can decide this change."],
+  ["conflict", "A revoke made in goat always wins"],
+] as const) {
+  test(`a ${kind} refusal is shown in plain words, and the row stays`, async ({ page }) => {
+    await mock(page, kind);
+    await page.goto("/carriage-pending.html");
+    page.once("dialog", (d) => d.accept());
+    await page.locator('[data-ratify="lr-2"]').click();
+    await expect(page.locator("#pending-status")).toContainText(words);
+    await expect(page.locator('tr[data-id="lr-2"]')).toHaveCount(1);
+  });
+}
