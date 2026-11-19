@@ -42,6 +42,11 @@
    that a plan command builds there, or that the plan names, passes; one built only on
    another node, one neither built nor named (SILENT), and one both built and named (BOTH)
    fail; a model that places nothing on the node fails.
+9. lib/joinsite_lab.py, the join-site-hosts lab: layout on the tree's fixture leaves two sites
+   (alpha's node named mgmt-alpha-01, gamma's gamma-core-1) at the given addresses, with beta
+   and delta gone and alpha's signal federation declared off; reach passes a plan whose
+   targets are the lab's, and fails one that names the fixture's documentation address, a
+   limit outside the lab, or no command at all.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -593,6 +598,58 @@ def joinsite_checks():
     check(rc == 1, f"joinsite: a model that places nothing on the node passes: {rc} {out}")
 
 
+def joinsite_lab_checks():
+    lab = os.path.join(ROOT, "lib", "joinsite_lab.py")
+    fixture = os.path.join(ROOT, "..", "goatbuilder", "fixtures", "join-node-third-site")
+    with tempfile.TemporaryDirectory() as t:
+        dest = os.path.join(t, "tree")
+        p = subprocess.run([sys.executable, lab, "layout", fixture, dest, "10.77.6.10", "10.77.6.20"],
+                           capture_output=True, text=True)
+        check(p.returncode == 0, f"joinsite_lab: layout failed: {p.stderr}")
+        with open(os.path.join(dest, "ops/ansible/inventory/mgmt-hosts.ini"), encoding="utf-8") as fh:
+            inv = fh.read()
+        check("mgmt-alpha-01 ansible_host=10.77.6.10" in inv and "gamma-core-1 ansible_host=10.77.6.20" in inv
+              and "beta" not in inv and "delta" not in inv, f"joinsite_lab: the lab inventory is not two sites: {inv}")
+        gv = os.path.join(dest, "ops/ansible/group_vars")
+        check(sorted(os.listdir(gv)) == ["alpha_hosts", "gamma_hosts"], f"joinsite_lab: group_vars left: {os.listdir(gv)}")
+        with open(os.path.join(gv, "alpha_hosts", "vars.yml"), encoding="utf-8") as fh:
+            alpha = fh.read()
+        check("signal_federation_proxy_enabled" not in alpha and "federation_peer" not in alpha
+              and "signal_federation_absent_reason:" in alpha and "goatnet_founder: true" in alpha,
+              f"joinsite_lab: alpha's signal federation is not declared off: {alpha}")
+        with open(os.path.join(dest, "ops/ansible/inventory/mgmt-hosts-mesh.ini"), encoding="utf-8") as fh:
+            mesh = fh.read()
+        check("mgmt-alpha-01 " in mesh and "alpha-core-1" not in mesh and "beta" not in mesh,
+              f"joinsite_lab: the mesh inventory is not the lab's: {mesh}")
+
+        def reach(cmds, timeout=None):
+            plan = os.path.join(t, "plan.json")
+            write_text(plan, json.dumps({"checks": [{"name": "cmd", "detail": c} for c in cmds]}))
+            r = subprocess.run([sys.executable, lab, "reach", plan, "mgmt-alpha-01=10.77.6.10", "gamma-core-1=10.77.6.20",
+                                "alpha_hosts", "gamma_hosts"], capture_output=True, text=True, timeout=timeout)
+            return r.returncode, r.stdout
+        good = ["ansible-playbook x.yml -l 'mgmt-alpha-01*'", "ssh -o BatchMode=yes goat@10.77.6.20 true",
+                "ansible-playbook y.yml --limit gamma-core-1", "ansible-playbook z.yml -e target=alpha_hosts"]
+        rc, out = reach(good)
+        check(rc == 0 and " 0 reach outside the lab" in out, f"joinsite_lab: a lab plan does not pass: {rc} {out}")
+        rc, out = reach(good + ["ssh goat@192.0.2.30 true"])
+        check(rc == 1 and "the fixture's address 192.0.2.30" in out, f"joinsite_lab: the fixture's address passes: {rc} {out}")
+        rc, out = reach(good + ["ansible-playbook x.yml -l 'mgmt-beta-01*'"])
+        check(rc == 1 and "outside the lab, mgmt-beta-01*" in out, f"joinsite_lab: a foreign limit passes: {rc} {out}")
+        rc, out = reach([])
+        check(rc == 1, f"joinsite_lab: an empty plan passes: {rc} {out}")
+        rc, out = reach(good + ["ssh -o BatchMode=yes -p 22 goat@203.0.113.5 true"])
+        check(rc == 1 and "outside the lab, 203.0.113.5" in out, f"joinsite_lab: a foreign ssh target passes: {rc} {out}")
+        rc, out = reach(good + ["bash -c 'ssh -o BatchMode=yes goat@10.77.6.10 true'"])
+        check(rc == 0, f"joinsite_lab: an ssh to the lab inside a quoted command fails: {rc} {out}")
+        # A long run of options with no target is read in linear time, not by backtracking.
+        try:
+            rc, out = reach(good + ["ssh" + " -!" * 40 + " x"], timeout=20)
+            check(rc == 0, f"joinsite_lab: an ssh with no user@host target fails: {rc} {out}")
+        except subprocess.TimeoutExpired:
+            check(False, "joinsite_lab: reach did not finish within 20 s on a long ssh option run")
+
+
 catalog_checks()
 backout_edge_check()
 srctree_checks()
@@ -604,6 +661,7 @@ handoff_checks()
 samples_checks()
 drive_rotate_checks()
 joinsite_checks()
+joinsite_lab_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")
