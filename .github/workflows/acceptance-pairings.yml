@@ -6,6 +6,7 @@ name: Acceptance pairings
 # UNKNOWN forever, which is a check that can never fail sitting in the suite
 # looking like coverage.
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'ops/validation/acceptance-tests.yaml'

@@ -94,3 +94,8 @@ pub use types::{
     is_reserved_namespace, NodeClass, NodeKind, PeerId, Role, TopicKey, INFRA_VENDORS,
     RESERVED_NAMESPACE_PREFIXES,
 };
+
+pub mod replay_fetch;
+
+#[cfg(test)]
+mod audit_metadata_tests;

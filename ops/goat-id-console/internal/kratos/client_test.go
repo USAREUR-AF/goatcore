@@ -61,8 +61,8 @@ func (listSessionsRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	return w.Result(), nil
 }
 
-// ADR 1052 Phase 4 — Org() reads traits.org first, falling back to the legacy
-// traits.vendor for identities not yet backfilled.
+// ADR 1052 Phase 4 — Org() reads metadata_public.org first, falling back to
+// the legacy metadata_public.vendor block (GHSA-9v3v: never traits).
 func TestVendor_PrefersOrgFallsBackToVendor(t *testing.T) {
 	block := func(tag, name string) map[string]interface{} {
 		return map[string]interface{}{"short_tag": tag, "display_name": name}
@@ -86,7 +86,7 @@ func TestVendor_PrefersOrgFallsBackToVendor(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotTag, gotDisplay := Identity{Traits: tc.traits}.Org()
+			gotTag, gotDisplay := Identity{MetadataPublic: tc.traits}.Org()
 			if gotTag != tc.wantTag || gotDisplay != tc.wantDisplay {
 				t.Fatalf("Org() = (%q, %q), want (%q, %q)", gotTag, gotDisplay, tc.wantTag, tc.wantDisplay)
 			}
@@ -95,11 +95,11 @@ func TestVendor_PrefersOrgFallsBackToVendor(t *testing.T) {
 }
 
 // F-572 / ADR 1188 — the authorization fields (groups, org, aff) move from
-// self-editable traits to admin-managed metadata_public. The accessors must
-// read metadata_public FIRST and fall back to traits during the backfill
-// window, so a self-service settings edit — which can only touch traits — can
-// no longer change what the console and the JWT claim see.
-func TestAuthzFields_PreferMetadataPublicFallBackToTraits(t *testing.T) {
+// self-editable traits to admin-managed metadata_public. The accessors read
+// ONLY metadata_public (GHSA-9v3v: no traits fallback, even before the
+// backfill), so a self-service settings edit — which can only touch traits —
+// can never change what the console and the JWT claim see.
+func TestAuthzFields_MetadataPublicOnly(t *testing.T) {
 	orgBlock := func(tag, name string) map[string]interface{} {
 		return map[string]interface{}{"short_tag": tag, "display_name": name}
 	}
@@ -114,11 +114,26 @@ func TestAuthzFields_PreferMetadataPublicFallBackToTraits(t *testing.T) {
 			t.Fatalf("Groups() = %v, want [PLATFORM-ADMIN] (metadata_public wins)", got)
 		}
 	})
-	t.Run("groups fall back to traits when metadata_public is absent", func(t *testing.T) {
-		id := Identity{Traits: map[string]interface{}{"groups": []interface{}{"OBSERVER"}}}
-		got := id.Groups()
-		if len(got) != 1 || got[0] != "OBSERVER" {
-			t.Fatalf("Groups() = %v, want [OBSERVER] (traits fallback)", got)
+	t.Run("GHSA-9v3v: traits never grant groups, even with metadata_public absent", func(t *testing.T) {
+		id := Identity{Traits: map[string]interface{}{"groups": []interface{}{"PLATFORM-ADMIN"}}}
+		if got := id.Groups(); len(got) != 0 {
+			t.Fatalf("Groups() = %v, want none (fail closed)", got)
+		}
+		if id.HasGroup("PLATFORM-ADMIN") {
+			t.Fatal("HasGroup read a self-editable trait")
+		}
+		id.MetadataPublic = map[string]interface{}{"org": map[string]interface{}{}}
+		if got := id.Groups(); len(got) != 0 {
+			t.Fatalf("Groups() with metadata_public but no groups key = %v, want none", got)
+		}
+	})
+	t.Run("GHSA-9v3v: traits never supply org or aff for a not-yet-backfilled identity", func(t *testing.T) {
+		id := Identity{Traits: map[string]interface{}{
+			"org": orgBlock("self", "Self"),
+			"aff": map[string]interface{}{"id": "self", "kind": "partner"},
+		}}
+		if tag, _ := id.Org(); tag != "" {
+			t.Fatalf("Org() tag = %q, want empty", tag)
 		}
 	})
 	t.Run("org prefers metadata_public", func(t *testing.T) {

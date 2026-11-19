@@ -95,7 +95,8 @@ def main(argv):
         return 2
     base_ref = argv[2]
     try:
-        head = parse(open(PATH, encoding="utf-8").read())
+        with open(PATH, encoding="utf-8") as allowlist:
+            head = parse(allowlist.read())
     except (OSError, ValueError) as e:
         print(f"cannot read {PATH}: {e}", file=sys.stderr)
         return 2

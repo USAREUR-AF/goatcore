@@ -57,13 +57,19 @@ scrape_configs:
 {% set jobs = obs_scrape_targets | map(attribute='job') | unique | list %}
 {% for j in jobs %}
   - job_name: {{ j }}
+{% if minio_tls_enabled | default(false) | bool and j in ['minio', 'minio-bucket'] %}
+    scheme: https
+    tls_config:
+      ca_file: /storage-ca/ca.crt
+      server_name: "{{ minio_service_host }}"
+{% endif %}
 {% set first_target = (obs_scrape_targets | selectattr('job', 'equalto', j) | list)[0] %}
 {% if first_target.metrics_path is defined %}
     metrics_path: "{{ first_target.metrics_path }}"
 {% endif %}
     static_configs:
 {% for t in obs_scrape_targets if t.job == j %}
-      - targets: ["{{ t.addr }}"]
+      - targets: ["{{ (minio_service_host ~ ':' ~ (minio_api_port | string)) if minio_tls_enabled | default(false) | bool and j in ['minio', 'minio-bucket'] else t.addr }}"]
         labels:
           target_name: "{{ t.name }}"
           # `host` is ADDITIVE alongside target_name, not a rename: existing

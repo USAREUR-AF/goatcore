@@ -1,6 +1,7 @@
 name: goat-id-console integration tests
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   push:
     paths:
       - 'ops/goat-id-console/**'

@@ -417,6 +417,12 @@
     chdir: "{{ ory_compose_dir }}"
   changed_when: true
 
+# GHSA-9v3v: the consent image mints the JWT groups/aff claims. Refuse an
+# image that still forwards self-editable traits (pre-fix build), and refuse
+# when the check cannot run. Before anything below starts selfservice-ui.
+- name: consent-image-gate | Verify the consent image before starting it
+  ansible.builtin.include_tasks: consent-image-gate.yml
+
 - name: Run Kratos migrations (one-shot)
   ansible.builtin.command:
     cmd: docker compose -f docker-compose.yml -f docker-compose.ory.yml run --rm --no-deps kratos-migrate

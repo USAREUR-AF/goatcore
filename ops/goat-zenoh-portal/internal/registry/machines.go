@@ -93,6 +93,25 @@ func normalizeMachineCustodians(ctx context.Context, db *sqlx.DB) error {
 		}
 		slog.Info("normalized custody stamp to the custodian's slot anchor", "handle", c, "anchor", anchor)
 	}
+
+	// slot_leaves.issued_for_custodian (GHSA-rr3p) is copied from enrolled_by,
+	// by migration 2's backfill before this normalization runs, so it can hold
+	// the same legacy spelling; the machine-quota quarantine count keys on the
+	// anchor form.
+	var leafCustodians []string
+	if err := db.SelectContext(ctx, &leafCustodians,
+		`SELECT DISTINCT issued_for_custodian FROM slot_leaves WHERE issued_for_custodian <> ''`); err != nil {
+		return fmt.Errorf("read leaf custodians: %w", err)
+	}
+	for _, c := range leafCustodians {
+		anchor, isHandle := anchorFor[c]
+		if !isHandle || anchor == c {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE slot_leaves SET issued_for_custodian = $1 WHERE issued_for_custodian = $2`, anchor, c); err != nil {
+			return fmt.Errorf("normalize leaf custodian %q: %w", c, err)
+		}
+	}
 	return nil
 }
 
@@ -398,7 +417,12 @@ type MachineQuota struct {
 	Custodian string `json:"custodian"`
 	Quota     int64  `json:"quota"`
 	Used      int64  `json:"used"`
-	Remaining int64  `json:"remaining"`
+	// Quarantined is the number of free pool slots this custodian's revoked
+	// machines keep out of circulation until their leaves expire (GHSA-rr3p
+	// reuse quarantine). They count against the quota; an operator who
+	// replaces machines raises the quota rather than waiting a year.
+	Quarantined int64 `json:"quarantined"`
+	Remaining   int64 `json:"remaining"`
 }
 
 // normalizeCustodian resolves a custodian identifier to its canonical form: the
@@ -586,11 +610,15 @@ func (r *Registry) MachineQuotaFor(ctx context.Context, custodian string) (*Mach
 	if err != nil {
 		return nil, err
 	}
-	remaining := quota - used
+	var quarantined int64
+	if err := r.reader().GetContext(ctx, &quarantined, machineQuarantineSQL, custodian, SlotLeafClock().Unix()); err != nil {
+		return nil, fmt.Errorf("count quarantined machine slots: %w", err)
+	}
+	remaining := quota - used - quarantined
 	if remaining < 0 {
 		remaining = 0 // a lowered quota can leave used > quota; never report negative
 	}
-	return &MachineQuota{Custodian: custodian, Quota: quota, Used: used, Remaining: remaining}, nil
+	return &MachineQuota{Custodian: custodian, Quota: quota, Used: used, Quarantined: quarantined, Remaining: remaining}, nil
 }
 
 // RecordMachineEnrollment stamps the custody edge + grammar born-as snapshot onto
@@ -679,7 +707,11 @@ func (r *Registry) RecordMachineEnrollment(ctx context.Context, slotID, custodia
 		custodian, slotID); err != nil {
 		return fmt.Errorf("count enrolled: %w", err)
 	}
-	if used >= quota {
+	var quarantined int64
+	if err := tx.GetContext(ctx, &quarantined, machineQuarantineSQL, custodian, SlotLeafClock().Unix()); err != nil {
+		return fmt.Errorf("count quarantined: %w", err)
+	}
+	if used+quarantined >= quota {
 		return ErrQuotaExhausted
 	}
 

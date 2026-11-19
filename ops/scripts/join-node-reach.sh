@@ -77,11 +77,20 @@ case "${1:-}" in
     fi
     ssh "${opts[@]}" "$target" true </dev/null >/dev/null 2>"$errf" &
     pid=$!
-    ( sleep "$limit"; : > "$bound"; kill -TERM "$pid" ) </dev/null >/dev/null 2>&1 &
+    # The watchdog clears the EXIT trap first, so it can never remove the
+    # run's files (the stderr file among them) if a signal reaches it.
+    ( trap - EXIT; sleep "$limit"; : > "$bound"; kill -TERM "$pid" ) </dev/null >/dev/null 2>&1 &
     dog=$!
     wait "$pid"; rc=$?
+    # ssh's stderr is read before the watchdog is stopped. When ssh fails and
+    # says nothing, the message says which case it was: the file was gone, or
+    # it was there and empty, so a failure names its cause.
+    if [ -e "$errf" ]; then
+      err="$(cat "$errf" 2>/dev/null)"; silent="ssh exited $rc and printed nothing on stderr"
+    else
+      err=""; silent="ssh exited $rc; its stderr file $errf was gone before it was read"
+    fi
     kill -TERM "$dog" 2>/dev/null
-    err="$(cat "$errf" 2>/dev/null)"
     if [ -e "$bound" ]; then
       err="no answer within the ${limit} s bound, JOIN_NODE_REACH_LIMIT${err:+; ssh said: $(printf '%s\n' "$err" | grep -v '^Warning: Permanently added' | head -n 1)}"
     fi
@@ -94,7 +103,7 @@ case "${1:-}" in
       exit 0
     fi
     line="$(printf '%s\n' "$err" | grep -v '^Warning: Permanently added' | head -n 1)"
-    echo "GB-314: $target does not answer over SSH (${line:-ssh exited $rc}); nothing was done on it." >&2
+    echo "GB-314: $target does not answer over SSH (${line:-$silent}); nothing was done on it." >&2
     echo "  Reach the box on the site LAN first: ssh $target. Find its real LAN address and pass it as --address." >&2
     echo "  On a Jetson the address handed over may be 192.168.55.1: that is l4tbr0, the USB device-mode bridge" >&2
     echo "  on the box itself, reachable only over a direct USB-C cable." >&2

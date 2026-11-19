@@ -48,6 +48,135 @@
       goatnet's pin table (ops/pins/fleet-pins.yaml) or in its group_vars.
     quiet: true
 
+- name: Refuse replay enablement pending owner governance
+  ansible.builtin.assert:
+    that:
+      - not (audit_subscriber_replay_enabled | default(false) | bool)
+    fail_msg: "Replay capture and ordinary body reads are gated in every environment."
+
+- name: audit-subscriber | metadata-writer cutover gate
+  ansible.builtin.include_tasks: cutover-gate.yml
+
+- name: Prepare public storage trust directory
+  ansible.builtin.file:
+    path: "{{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') | dirname }}"
+    state: directory
+    mode: "0755"
+  when: minio_tls_enabled | default(false) | bool
+
+- name: Install organization storage trust on this consumer
+  ansible.builtin.copy:
+    src: "{{ minio_tls_ca_src }}"
+    dest: "{{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') }}"
+    mode: "0644"
+  when: minio_tls_enabled | default(false) | bool
+
+- name: Validate metadata writer TLS and observation identity
+  ansible.builtin.assert:
+    that:
+      - audit_subscriber_receiving_site | length > 0
+      - audit_subscriber_s3_endpoint | length == 0 or audit_subscriber_s3_endpoint is match('^https://')
+      - audit_subscriber_s3_endpoint | length == 0 or minio_tls_enabled | default(false) | bool
+    fail_msg: "The metadata writer requires verified storage HTTPS and an explicit receiving site."
+  when: audit_subscriber_v2_enabled | bool
+
+# minio_tls_enabled and minio_s3_endpoint are minio ROLE defaults; a host that
+# applies only this role may see neither, so the endpoint can default to "" or
+# carry an empty host (https://:9000). Either would deploy the V2 writer
+# observe-only, or pointed at nothing, behind a green play. So whatever
+# minio_tls_enabled says, a V2 writer without an endpoint needs the explicit
+# opt-in; with storage TLS the endpoint must also name a host.
+- name: audit-subscriber | a V2 writer names its storage endpoint, or opts into observe-only
+  vars:
+    _tls: "{{ minio_tls_enabled | default(false) | bool }}"
+    _observe: "{{ audit_subscriber_observe_only | bool }}"
+  ansible.builtin.assert:
+    that:
+      - (_observe | bool) or (audit_subscriber_s3_endpoint | length > 0)
+      - not (_observe | bool) or (audit_subscriber_s3_endpoint | length == 0)
+      - not (_tls | bool) or (_observe | bool) or (audit_subscriber_s3_endpoint is match('^https://[^:/]'))
+    fail_msg: >-
+      {{ (('audit_subscriber_observe_only is true but audit_subscriber_s3_endpoint is '
+           ~ audit_subscriber_s3_endpoint ~ '; set one or the other.')
+          if (_observe | bool) else
+          ('The V2 writer has no storage endpoint with a host name: audit_subscriber_s3_endpoint is "'
+           ~ audit_subscriber_s3_endpoint ~ '". With storage TLS it defaults to minio_s3_endpoint; on this host '
+           ~ 'minio_tls_enabled is ' ~ (minio_tls_enabled | default('undefined')) ~ ' and minio_s3_endpoint is '
+           ~ (minio_s3_endpoint | default('undefined')) ~ '. Set minio_tls_enabled and minio_s3_endpoint '
+           ~ '(or minio_service_host) in group_vars for this host, or set audit_subscriber_observe_only: true '
+           ~ 'to run without durable storage on purpose (docs/operations/audit-replay-cutover.md).'))
+         ~ ' The running subscriber is untouched.' }}
+    quiet: true
+  when: audit_subscriber_v2_enabled | bool
+
+- name: audit-subscriber | the writer uses the storage name the certificate is verified for
+  ansible.builtin.assert:
+    that:
+      - audit_subscriber_s3_endpoint | length == 0
+        or audit_subscriber_s3_endpoint | regex_replace('/+$', '') == minio_s3_endpoint | default('') | regex_replace('/+$', '')
+    fail_msg: >-
+      audit_subscriber_s3_endpoint is {{ audit_subscriber_s3_endpoint }}, but storage
+      TLS is verified for minio_s3_endpoint ({{ minio_s3_endpoint | default('unset') }}).
+      With any other name every upload fails host-name verification while the
+      writer keeps running and stores nothing. Leave audit_subscriber_s3_endpoint
+      unset (it defaults to minio_s3_endpoint) or set it to that value
+      (docs/operations/audit-replay-cutover.md). The running subscriber is untouched.
+    quiet: true
+  when:
+    - audit_subscriber_v2_enabled | bool
+    - minio_tls_enabled | default(false) | bool
+
+
+- name: audit-subscriber | validate V2 cutover configuration
+  ansible.builtin.assert:
+    that:
+      - not (audit_subscriber_replay_enabled | bool) or (audit_subscriber_v2_enabled | bool)
+      - not (audit_subscriber_replay_enabled | bool) or (audit_subscriber_s3_endpoint | length > 0)
+      - not (audit_subscriber_replay_enabled | bool) or audit_subscriber_replay_bucket != audit_subscriber_s3_bucket
+      - audit_subscriber_id is match('^[A-Za-z0-9_-]+$')
+    fail_msg: "Replay requires V2, an S3 endpoint, a distinct bucket and a valid subscriber ID."
+
+- name: audit-subscriber | create durable state directory
+  ansible.builtin.file:
+    path: "{{ audit_subscriber_state_dir }}"
+    state: directory
+    owner: "65532"
+    group: "65532"
+    mode: "0700"
+  when: audit_subscriber_v2_enabled | bool
+
+- name: audit-subscriber | inspect pre-seeded batch watermark
+  ansible.builtin.stat:
+    path: "{{ audit_subscriber_state_dir }}/watermark.json"
+  register: audit_subscriber_watermark
+  when: audit_subscriber_v2_enabled | bool
+
+- name: audit-subscriber | refuse unprepared V2 cutover
+  ansible.builtin.assert:
+    that:
+      - audit_subscriber_watermark.stat.exists
+      - audit_subscriber_watermark.stat.isreg
+    fail_msg: "Drain the old writer and initialize the V2 watermark above its last stored batch before deployment."
+  when: audit_subscriber_v2_enabled | bool
+
+- name: audit-subscriber | V2 bind-mount sources exist as files
+  ansible.builtin.include_tasks: v2-mounts.yml
+  when: audit_subscriber_v2_enabled | bool
+
+- name: audit-subscriber | resolve replay credential
+  ansible.builtin.set_fact:
+    audit_subscriber_replay_secret_value: "{{ lookup('env', audit_subscriber_replay_secret_key_envvar) }}"
+  when: audit_subscriber_replay_enabled | bool
+  no_log: true
+
+- name: audit-subscriber | refuse missing replay credential
+  ansible.builtin.assert:
+    that:
+      - audit_subscriber_replay_secret_value | length > 0
+    fail_msg: "Replay is enabled but its separate write credential is missing."
+  when: audit_subscriber_replay_enabled | bool
+  no_log: true
+
 - name: audit-subscriber | pre-flight leaf cert exists (when tls/ endpoint)
   ansible.builtin.stat:
     path: "{{ audit_subscriber_cert_dir }}/audit-subscriber-cert.pem"
@@ -200,6 +329,11 @@
   register: audit_subscriber_up
   changed_when:
     - "'Started' in audit_subscriber_up.stderr or 'Created' in audit_subscriber_up.stderr or 'Recreated' in audit_subscriber_up.stderr"
+
+- name: audit-subscriber | the subscriber is running and not restarting
+  ansible.builtin.include_tasks: verify-running.yml
+  # `up` does not run under --check, so there is nothing to verify.
+  when: not ansible_check_mode
 
 - name: audit-subscriber | print running container summary
   ansible.builtin.command:

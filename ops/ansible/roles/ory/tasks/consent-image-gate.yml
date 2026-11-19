@@ -1,0 +1,61 @@
+---
+# GHSA-9v3v consent-image gate: refuse to start a selfservice-ui whose
+# consent handler still forwards self-editable identity.traits.groups / .aff
+# into the JWT. Every other reader is metadata_public-only; the login token is
+# minted by this image, so a pre-fix image keeps the self-grant live however
+# the rest of the site is patched.
+#
+# Runs after `docker compose pull` (the image is local) and before `up -d`.
+# ops/ory-consent/tests/verify-image.sh copies consent.js out of the image
+# (docker create + docker cp, never started, never pulled) and runs
+# verify-patched.sh on it. Fail closed: rc 1 (rejected) and rc 2 (could not
+# check) both refuse the deploy.
+- name: consent-image-gate | Stage the image check on the host
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: .consent-gate
+  register: ory_consent_gate_dir
+  check_mode: false
+
+- name: consent-image-gate | Copy verify-image.sh and verify-patched.sh
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../ory-consent/tests/{{ item }}"
+    dest: "{{ ory_consent_gate_dir.path }}/{{ item }}"
+    mode: "0755"
+  loop:
+    - verify-image.sh
+    - verify-patched.sh
+  check_mode: false
+
+- name: consent-image-gate | Verify {{ kratos_selfservice_ui_image }} carries the metadata_public-only readers
+  ansible.builtin.command:
+    argv:
+      - sh
+      - "{{ ory_consent_gate_dir.path }}/verify-image.sh"
+      - "{{ kratos_selfservice_ui_image }}"
+      - "{{ ory_consent_gate_dir.path }}/verify-patched.sh"
+  register: ory_consent_gate
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: consent-image-gate | Remove the staged check
+  ansible.builtin.file:
+    path: "{{ ory_consent_gate_dir.path }}"
+    state: absent
+  check_mode: false
+
+- name: consent-image-gate | Refuse a consent image that is not the GHSA-9v3v build
+  ansible.builtin.fail:
+    msg: |
+      Refusing to deploy selfservice-ui on {{ site_id | default(inventory_hostname) }}:
+      kratos_selfservice_ui_image = {{ kratos_selfservice_ui_image }}
+      {{ 'is NOT the GHSA-9v3v consent build: it still forwards self-editable traits into the JWT groups/aff claims.'
+         if ory_consent_gate.rc == 1 else
+         'could not be checked (the gate fails closed).' }}
+      {{ ory_consent_gate.stdout | default('') }}{{ ory_consent_gate.stderr | default('') }}
+      Use the GHSA-9v3v advance image: kratos-selfservice-ui-node-patched built
+      from ops/ory-consent/Dockerfile (context ops/ory-consent) at this commit.
+      Set kratos_selfservice_ui_image (ops/pins/fleet-pins.yaml and
+      group_vars/all.yml) to its digest, after the authz backfill has run.
+  when: ory_consent_gate.rc != 0
