@@ -3,6 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-06-01
 **Repo scope:** goat core
+**Amended by:** [ADR 1251](1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md) — a pod's session may write the slots its carriage rules cover
 **Related:** [0844](0844-zenoh-deployment-topology-and-acl-v1.md), [0216](0216-goat-net-federation-and-site-planes.md), [0821](0821-mission-partner-sharing-pattern.md), [0811](0811-audit-log-integrity.md); design doc [`zenoh-federated-peering-trust.md`](../design/zenoh-federated-peering-trust.md)
 
 ## TL;DR (for a layperson)

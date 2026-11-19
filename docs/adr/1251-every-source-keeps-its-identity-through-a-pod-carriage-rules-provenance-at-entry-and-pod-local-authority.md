@@ -2,14 +2,14 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted (2026-11-19, operator) |
 | Date | 2026-11-18 |
 | Deciders | operator |
 | Repo scope | goat core: portal registry, router ACL rendering, goat CLI, moon-pod |
-| Amends | [ADR 1105](1105-pubsub-org-admin-co-publish-write-grants.md) (a single-owner root may also be written by a pod its carriage rules allow) |
+| Amends | [ADR 1105](1105-pubsub-org-admin-co-publish-write-grants.md) (a single-owner root may also be written by a pod its carriage rules allow); [ADR 1020](1020-zenoh-federated-peering-trust-model.md) (a router that authorizes the directly connected session may still let a pod's session write the slots that pod's carriage rules cover) |
 | Supersedes | — |
 | Superseded by | — |
-| Related | [ADR 1020](1020-zenoh-federated-peering-trust-model.md) (the receiver sees the forwarder), [ADR 1096](1096-delegated-machine-enrollment.md) (machines are their own principals), [ADR 1165](1165-island-mode-multi-writer-every-site-admits.md) (island mode), [ADR 1109](1109-fleet-management-dimension-and-pull-convergence.md) (pulled convergence), [ADR 1129](1129-warrant-scoped-expiring-network-authorizations.md) (generated ACLs), [ADR 1157](1157-cross-sovereign-federation-edge-terminated.md) (cross-sovereign), design [`pod-carriage-and-provenance.md`](../design/pod-carriage-and-provenance.md), design [`fieldkit-and-bleating-edge.md`](../design/fieldkit-and-bleating-edge.md), design [`pod-targeted-client-bundles.md`](../design/pod-targeted-client-bundles.md) |
+| Related | [ADR 1096](1096-delegated-machine-enrollment.md) (machines are their own principals), [ADR 1165](1165-island-mode-multi-writer-every-site-admits.md) (island mode), [ADR 1109](1109-fleet-management-dimension-and-pull-convergence.md) (pulled convergence), [ADR 1129](1129-warrant-scoped-expiring-network-authorizations.md) (generated ACLs), [ADR 1157](1157-cross-sovereign-federation-edge-terminated.md) (cross-sovereign), design [`pod-carriage-and-provenance.md`](../design/pod-carriage-and-provenance.md), design [`fieldkit-and-bleating-edge.md`](../design/fieldkit-and-bleating-edge.md), design [`pod-targeted-client-bundles.md`](../design/pod-targeted-client-bundles.md) |
 
 ## TL;DR (for a layperson)
 
@@ -42,7 +42,9 @@ any certificate from the goatnet CA write the pod's slot.
 3. **Rules are rendered, never hand-edited.** A generator renders the rules into each pod's ACL and the core router's ACL. A pod
    admits each covered device's own certificate under its own slot; only the pod's certificate writes the pod's slot; the core
    lets a pod's connection write exactly the slots its rules cover. Pods pull a signed rule generation. A drift check compares
-   rendered ACLs with the rules.
+   rendered ACLs with the rules. Reading follows the same rules: a pod admits a covered source's subscriptions and queries on
+   the keys the core would admit for that source, forwards upstream only the interest its connected sources declare, and
+   never rewrites a key. This replaces the pod's single `INBOUND_NAMESPACE` prefix.
 4. **Direct links need no rule.** Where the receiving router or peer sees the source's own certificate, the source's own access
    applies. Bundles list preferred routers as hints, never a binding.
 5. **Provenance at entry.** Every sample carries a signature in its per-sample attachment, added where it first enters goat and
@@ -77,5 +79,11 @@ any certificate from the goatnet CA write the pod's slot.
 - New surfaces: rule storage and rendering in the portal, the pod's local API and ledger, an ingress adapter, `goat pod`,
   Gatepost and the Bleating Edge design system.
 - The core router's ACL template change lands after the security fixes now changing that template are disclosed.
+- Keys are never translated inside an environment. A device behind a pod subscribes with the key it would use at the core.
+  Data from another environment arrives as `from/<sender>/<set>/…` (ADR 1208) and is read through a pod like any other key.
+- Devices already behind pods move without a new certificate or quota cost: a device that holds its own slot gets a
+  route-only update (a router hint); a device without one is enrolled as a machine or a keyless source. Data under the
+  interim key `<pod-slot>/routed/<source-slot>/…` keeps flowing until its source is carried, and the pod's operator then
+  retires that prefix.
 - Measured before the core change ships: whether one publication can reach a subscriber twice over two live paths, whether an
   ACL change applies without a router restart, and signature overhead per sample.

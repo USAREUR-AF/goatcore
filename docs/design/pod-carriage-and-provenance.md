@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Designed, not built ([ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md), Proposed) |
+| Status | Designed, not built ([ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md), Accepted); build tracked in goatcore#1025 |
 | Scope | How a source keeps its identity on any path; carriage rules; provenance at entry; a cut-off pod's local authority |
 | Related | [`pod-targeted-client-bundles.md`](pod-targeted-client-bundles.md) (bundles, superseded on route binding: routers are hints), [`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md) (operator tooling), [`federated-trust-model.md`](federated-trust-model.md) |
 
@@ -37,6 +37,30 @@ On a direct link the receiver sees the source's own certificate, so no rule is i
   a signed generation. A drift check compares rendered ACLs with the rules.
 - A pod's read access is rendered from the read grants of the sources it may carry, never `**`
   ([ADR 1123](../adr/1123-client-demand-must-not-amplify.md)).
+
+### Reading through a pod
+
+Keys mean the same thing everywhere in one environment, so a device behind a pod subscribes with exactly the key it would use
+at the core. No key translator exists or is needed.
+
+| Step | What happens |
+|---|---|
+| Device subscribes at the pod | The pod's ACL admits the subscription if the device is a source the pod carries and the core would admit that source's read on the key. A bare `**` subscription stays the named grant `zenoh_fabric_wide_read` |
+| Pod forwards interest | The pod declares upstream only the subscriptions its connected sources declared. It never subscribes to the whole keyspace on their behalf ([ADR 1123](../adr/1123-client-demand-must-not-amplify.md)) |
+| Core delivers | The core sees the pod's certificate on the read, as on any read. Confidential data stays encrypted to its grant holders ([ADR 1208](../adr/1208-sovereign-environments-release-namespaces-and-grant-encryption.md)), so a sample forwarded to a device that holds no grant cannot be opened |
+| Data from another environment | It arrives at the core as `from/<sender>/<set>/…`, written by the receiving side's republisher, and is read through a pod like any other key |
+
+Today's pod template (`zagros-moon-pod/host/zenoh-router.json5.tmpl`) admits reads only on the pod's own slot and one inbound
+prefix, `INBOUND_NAMESPACE`. Phase 2 replaces that prefix with the rendered read rules; until then a device behind a pod reads
+only those two prefixes.
+
+### Moving devices that are already behind pods
+
+| Device today | Move |
+|---|---|
+| Holds its own slot and certificate, connects through the pod's slot | Route-only update: the bundle gains the pod as a router hint. No new certificate, no quota cost |
+| Holds no identity (a legacy stream into the pod) | Enrolled as a machine, or as a keyless source behind an ingress adapter (§3) |
+| Publishes under the interim key `<pod-slot>/routed/<source-slot>/…` | Keeps flowing. Once the source is carried under its own slot, subscribers move to the source's key and the pod's operator retires the interim prefix |
 
 ## 3. Provenance at entry
 
@@ -91,7 +115,8 @@ not developers ([`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md)
 |---|---|---|
 | 0 | Guidance: no hand-edited pod ACL entries; interim key convention `<pod-slot>/routed/<source-slot>/…`, documented as unverified | Can do now |
 | 1 | Measure: duplicate delivery, ACL reload, signature overhead | First |
-| 2 | Carriage rules and pod ACL rendering; bundle router hints; rules in the bulk enrollment file | Designed |
+| 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Designed |
 | 3 | Provenance: attachment signature, grades, keyless sources, ASTERIX ingress adapter, verification in the CLI | Designed |
 | 4 | Core ACL rendering, carriage health, drift check | Designed; after the current security fixes to the core template are disclosed |
 | 5 | Local authority: pod API and ledger, `goat pod`, ratification, then Gatepost | Designed |
+| 6 | Move existing devices: route-only updates, enrollment of identity-less sources, retirement of interim `routed/` prefixes | Designed; per pod, after phase 2 |
