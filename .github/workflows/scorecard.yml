@@ -1,0 +1,64 @@
+name: scorecard
+
+# OpenSSF Scorecard: scores this repository's security practices (branch
+# rules, pinned dependencies, token permissions, code review and others) and
+# publishes the result to scorecard.dev, which serves the README badge.
+#
+# Publishing puts limits on this file, checked by the Scorecard service on
+# every upload: no workflow-level env or defaults, no workflow-level write
+# permission, and in the analysis job no `run` step, no env, no container,
+# and only the actions used below. A run that breaks a limit is refused and
+# the badge stops updating.
+# https://github.com/ossf/scorecard-action#workflow-restrictions
+
+on:
+  push:
+    branches: [main]
+    # The files whose change most often moves the score. The weekly run
+    # covers everything else.
+    paths:
+      - '.github/workflows/**'
+      - '.github/dependabot.yml'
+      - 'SECURITY.md'
+  schedule:
+    # Weekly, so the published score and the badge stay current.
+    - cron: '41 4 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    # Scorecard publishes results for the default branch only.
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # The OIDC token that proves to scorecard.dev which repository and
+      # workflow produced the result.
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # The full result of this run, for a maintainer reading why a check
+      # scored as it did. Not sent to code scanning.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5
