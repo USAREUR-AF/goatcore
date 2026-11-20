@@ -12,4 +12,4 @@ watcher now honours a pause file, `/run/mgmt-host-compose-watch.paused`: while
 it exists it revives nothing, logs that it is paused, and reports
 `compose_watch_paused` 1. The refusal says to pause it first with the reason
 `postgres-reinit`, and the re-run clears that pause, and only that one, once the
-cluster has the founder's encoding.
+cluster has the founder's encoding (#1128).
