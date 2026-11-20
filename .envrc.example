@@ -2851,7 +2851,7 @@ export TTL_HOURS=""
 # ops/vm-image/build.sh
 export UBUNTU_BASE=""
 
-# .github/workflows/apt-failover-selftest.yml, docs/design/ci-apt-failover.md …
+# .github/workflows/apt-failover-selftest.yml, ops/ci/docker-build-mirror-fallback.sh
 export UBUNTU_MIRROR=""
 
 # ops/federation-e2e/lib/unit.sh

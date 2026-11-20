@@ -28,13 +28,15 @@ DOCKERFILE = "FROM ubuntu:24.04\nRUN apt-get update\n"
 
 # Records each call's arguments and stdin; fails when the call carries a non-empty
 # UBUNTU_MIRROR and FAIL_WITH_MIRROR=1, or an empty one and FAIL_WITHOUT_MIRROR=1.
+# The test always sets both, so the stand-in reads them bare: a defaulted read
+# would list these test-only names in .envrc.example.
 STANDIN = r'''#!/usr/bin/env bash
 n=$(( $(cat "$LOG/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$LOG/n"
 printf '%s\n' "$*" > "$LOG/args.$n"
 cat > "$LOG/stdin.$n"
 case " $* " in
-  *" UBUNTU_MIRROR= "*) [ "${FAIL_WITHOUT_MIRROR:-0}" = 1 ] && exit 1 ;;
-  *" UBUNTU_MIRROR="*) [ "${FAIL_WITH_MIRROR:-0}" = 1 ] && exit 1 ;;
+  *" UBUNTU_MIRROR= "*) [ "$FAIL_WITHOUT_MIRROR" = 1 ] && exit 1 ;;
+  *" UBUNTU_MIRROR="*) [ "$FAIL_WITH_MIRROR" = 1 ] && exit 1 ;;
 esac
 exit 0
 '''
