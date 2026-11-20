@@ -38,6 +38,18 @@ def check():
     assert all(text in QUESTIONS["Q01"]["answer"] for text in
                ("Any available GOAT onboarding or support team member", "privately connect",
                 "before GOAT access", "only the responsible authority"))
+    intro=BANK["federation_intro"]
+    assert intro["question"] == ("Our team wants to connect its GOAT environment to a partner’s. "
+                                 "Where do we start with federation, which certificates do we need, and who can help?")
+    assert all(text in intro["guidance"] for text in
+               ("Any available GOAT team member", "privately connect", "without GOAT access",
+                "CODEOWNER confirmation and verification"))
+    q49=QUESTIONS["Q49"]
+    assert all(text in q49["answer"] for text in
+               ("operates its own CA", "platform operators coordinate", "authorized to approve"))
+    html=(ROOT/"GOAT_Onboarding_72.html").read_text(encoding="utf-8")
+    assert html.index(intro["question"]) < html.index("<small>Q49</small>")
+    assert intro["guidance"] in html
     with tempfile.TemporaryDirectory() as tmp:
         base=Path(tmp); cache=base/"cache-home"/"goat-onboarding-pilot"
         for q in QUESTIONS.values():

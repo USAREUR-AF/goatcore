@@ -16,6 +16,7 @@ details{background:white;border:1px solid #d0dcd4;border-radius:6px;margin:7px 0
 small{color:#406457;margin-right:.7em}article{padding:0 18px 14px 27px;line-height:1.55}.flag{font-size:13px;font-weight:bold;color:#23634c}
 a{color:#195a77;overflow-wrap:anywhere}.links{font-size:14px}.count{font-size:14px;color:#425850}footer{margin-top:32px;font-size:13px}
 .notice{background:#fff4d6;border-left:4px solid #b57a00;padding:10px 12px;line-height:1.45}
+.section-intro{background:white;border:1px solid #a9b8af;border-radius:6px;padding:2px 16px;margin:12px 0 14px;line-height:1.55}
 .help-link{display:inline-block;background:#1e6859;color:white;border-radius:5px;padding:10px 14px;font-weight:700;text-decoration:none}
 .help-panel{background:white;border:1px solid #a9b8af;border-radius:6px;margin:20px 0;padding:4px 18px 16px;line-height:1.55}
 @media(max-width:600px){.controls{grid-template-columns:1fr}main{padding:18px 14px}}
@@ -51,6 +52,10 @@ def render():
             last=q["step"];out.append('<section><h2>'+e(last)+'</h2>')
             if int(q["id"][1:]) >= 49:
                 out.append('<p class="notice">'+e(BANK["federation_notice"])+"</p>")
+            if q["id"] == "Q49":
+                intro=BANK["federation_intro"]
+                out.append('<aside class="section-intro"><p><strong>Example newcomer question:</strong> '+e(intro["question"])+
+                           '</p><p>'+e(intro["guidance"])+"</p></aside>")
         out.append('<details data-kind="'+q["kind"]+'"><summary><small>'+q["id"]+'</small>'+e(q["question"])+'</summary><article><span class="flag">'+LABEL[q["kind"]]+'</span><p>'+e(q["answer"])+'</p>')
         for r in q["refs"]:
             s=BANK["sources"][r["key"]]

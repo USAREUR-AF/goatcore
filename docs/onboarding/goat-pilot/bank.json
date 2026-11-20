@@ -1,6 +1,10 @@
 {
   "date": "2026-11-20",
   "federation_notice": "Development snapshot: the federation procedure has not yet run between two real goatnets or with a real counterparty. Confirm the installed release and its released runbook before operational use.",
+  "federation_intro": {
+    "question": "Our team wants to connect its GOAT environment to a partner’s. Where do we start with federation, which certificates do we need, and who can help?",
+    "guidance": "Any available GOAT team member can help you get started and privately connect you with the appropriate person. The monitored support route for someone without GOAT access still needs CODEOWNER confirmation and verification."
+  },
   "help": {
     "label": "Ask for help",
     "team": "GOAT onboarding or support team",
