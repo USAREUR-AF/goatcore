@@ -66,7 +66,10 @@ def argv_of(task) -> list[str] | None:
     return None
 
 
-def secret_args(argv: list[str]) -> list[str]:
+def flagged_names(argv: list[str]) -> list[str]:
+    """The env or variable NAME of each credential-looking argument of a docker exec
+    command line. Only names leave this function, never an argument's text or value,
+    so nothing the check prints can carry one."""
     if "docker" not in [Path(a).name for a in argv[:1]] and "docker" not in argv[:2]:
         return []
     if "exec" not in argv:
@@ -75,16 +78,25 @@ def secret_args(argv: list[str]) -> list[str]:
     for i, a in enumerate(argv):
         name, eq, value = a.partition("=")
         if eq and "{{" in value and SECRET_NAME.search(name.lstrip("-")):
-            found.append(a)
+            found.append(name.lstrip("-"))
             continue
         for var in TEMPLATED_VAR.findall(a):
             if SECRET_NAME.search(var):
-                found.append(a)
+                found.append(var)
                 break
         else:
             if i and argv[i - 1] in ("-e", "--env") and SECRET_NAME.search(name):
-                found.append(a)
+                found.append(name)
     return found
+
+
+def line_of(text: str, task_name) -> int:
+    """The line of `- name: <task_name>` in a task file (0 when not found)."""
+    if task_name:
+        for n, line in enumerate(text.splitlines(), 1):
+            if re.match(r"\s*(-\s+)?name:\s*[\"']?" + re.escape(str(task_name)), line):
+                return n
+    return 0
 
 
 def loader():
@@ -108,15 +120,17 @@ def check(repo: Path, roles: list[str]) -> tuple[list[str], int]:
             raise OSError(f"no role {role} under ops/ansible/roles")
         for sub in ("tasks", "handlers"):
             for f in sorted((base / sub).glob("*.y*ml")) if (base / sub).is_dir() else []:
-                doc = yaml.load(f.read_text(encoding="utf-8"), Loader=ld)
+                text = f.read_text(encoding="utf-8")
+                doc = yaml.load(text, Loader=ld)
                 for t in tasks_of(doc):
                     argv = argv_of(t)
                     if argv is None:
                         continue
                     seen += 1
-                    for a in secret_args(argv):
-                        problems.append(f"{f.relative_to(repo)}: task {t.get('name', '(unnamed)')!r} puts a secret on the "
-                                        f"docker exec command line: {a.split('=', 1)[0]}=...")
+                    task = t.get("name", "(unnamed)")
+                    for name in flagged_names(argv):
+                        problems.append(f"{f.relative_to(repo)}:{line_of(text, task)}: task {task!r} puts {name} "
+                                        "on the docker exec command line")
     return problems, seen
 
 
@@ -142,9 +156,14 @@ def self_test() -> int:
             ("not docker exec", "- name: a\n  ansible.builtin.command:\n    argv: [curl, \"-H\", \"X={{ api_token }}\"]\n", 0),
         ]
         for what, yml, want in cases:
-            got = len(run(yml))
-            if got != want:
-                failures.append(f"{what}: {got} finding(s), want {want}")
+            msgs = run(yml)
+            if len(msgs) != want:
+                failures.append(f"{what}: {len(msgs)} finding(s), want {want}")
+            if any("{{" in m or "=" in m for m in msgs):
+                failures.append(f"{what}: a finding prints argument text, not only a name")
+        msgs = run(cases[0][1])
+        if msgs != ["ops/ansible/roles/r/tasks/main.yml:1: task 'a' puts PGPASSWORD on the docker exec command line"]:
+            failures.append(f"the finding names file:line, task and env name only: got {msgs}")
     for f in failures:
         print(f"  FAIL {f}")
     if failures:
