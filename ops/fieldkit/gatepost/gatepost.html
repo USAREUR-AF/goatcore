@@ -608,6 +608,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   var durationMax = undefined;
   var lastWords = {};    // the arguments each strip shows now; the confirm sheet shows the same
 
+  // An authority is {identity, cert_cn} on the pod API.
+  function authorityName(a) { return !a ? "unknown" : typeof a === "string" ? a : (a.identity || a.cert_cn || "unknown"); }
   function srcName(slot, name) { return name ? name + " (" + slot + ")" : slot; }
   function strip(name, words) {
     lastWords[name] = words || [];
@@ -634,7 +636,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
       var who = s.you && s.you.identity ? "Signed in as " + s.you.identity + ". " : "Not signed in. ";
       who += mayChange() ? "You may change rules on this pod." :
         "You may look only. These people may change rules: " + ((s.local_authority || []).map(function (a) {
-          return typeof a === "string" ? a : (a.identity || a.cert_cn);
+          return authorityName(a);
         }).join(", ") || "nobody named") + ".";
       $("who").textContent = who;
       document.querySelectorAll("[data-change]").forEach(function (b) { b.disabled = !mayChange(); });
@@ -716,7 +718,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
       (d.pending || []).forEach(function (p) {
         var lapsed = p.ratification === "lapsed";
         el.append(BE.row({ key: p.id, title: (words[p.action] || p.action) + ": " + p.source_slot,
-          meta: "By " + p.authority + ", " + BE.when(p.at) + ". " + (p.until ? "Until " + BE.when(p.until) + ". " : "") +
+          meta: "By " + authorityName(p.authority) + ", " + BE.when(p.at) + ". " + (p.until ? "Until " + BE.when(p.until) + ". " : "") +
             "Reason: " + p.reason + ". " + (p.uploaded ? "Sent to goat." : "Not sent to goat yet."),
           badge: lapsed ? { text: "Not kept", tone: "bad" } : { text: "Waiting", tone: "warn" } }));
       });

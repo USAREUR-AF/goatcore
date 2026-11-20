@@ -34,6 +34,7 @@ LIDAR = "e5d4c3b2a1f04e9d8c7b6a5f4e3d2c1b"
 AUTHORITY = "zagros-op-alpha"
 AUTHORITY_CN = "7c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f.g1"
 VIEWER_CN = "0f1e2d3c4b5a69788796a5b4c3d2e1f0.g1"
+AUTHORITY_OBJ = {"identity": AUTHORITY, "cert_cn": AUTHORITY_CN}
 
 
 def now() -> datetime:
@@ -119,7 +120,7 @@ class Pod:
             "generation": 41,
             "generation_age_seconds": age,
             "max_rule_hours": self.max_hours,
-            "local_authority": [{"identity": AUTHORITY, "cert_cn": AUTHORITY_CN}],
+            "local_authority": [AUTHORITY_OBJ],
             "you": {"identity": AUTHORITY if self.may_change else "zagros-viewer-bravo",
                     "cert_cn": AUTHORITY_CN if self.may_change else VIEWER_CN, "may_change": self.may_change},
             # The pod does not measure per-source connection yet: connected is null.
@@ -170,7 +171,7 @@ class Pod:
 
     def record(self, action: str, slot: str, rule_id: str | None, until: str | None, reason: str) -> dict:
         e = {"id": f"l-{len(self.ledger) + 1}", "seq": len(self.ledger) + 1, "action": action, "source_slot": slot,
-             "rule_id": rule_id, "until": until, "reason": reason, "authority": AUTHORITY, "at": iso(now()),
+             "rule_id": rule_id, "until": until, "reason": reason, "authority": AUTHORITY_OBJ, "at": iso(now()),
              "uploaded": False, "portal_state": None, "ratification": "pending"}
         self.ledger.append(e)
         return e
@@ -196,7 +197,7 @@ class Pod:
         until, reason = self.need_until(body), self.need_reason(body)
         r = self.fill({"id": f"l-r{self.next_id}", "source_slot": slot, "source_name": self.names.get(slot), "kind": "local",
                        "origin": "local", "state": "active", "until": until, "reason": reason, "ratification": "pending",
-                       "authority": AUTHORITY, "local_until": until})
+                       "authority": AUTHORITY_OBJ, "local_until": until})
         self.next_id += 1
         self.rules.append(r)
         self.carried.add(slot)
