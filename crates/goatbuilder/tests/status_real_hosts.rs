@@ -406,6 +406,12 @@ fn the_real_host_documents_are_unchanged_by_the_converger_trait() {
         // Paths and times differ per run; the document's shape and words do not.
         let text = doc.to_string().replace(repo.to_str().unwrap(), "<repo>");
         let text = stamp.replace_all(&text, "<stamp>").into_owned();
+        // The deploy log goes to $TMPDIR when it is set (push.rs), which macOS sets
+        // to a per-user directory; the document records it as /tmp.
+        let text = match std::env::var("TMPDIR") {
+            Ok(t) if !t.is_empty() => text.replace(&format!("{t}/goat-deploy-"), "/tmp/goat-deploy-"),
+            _ => text,
+        };
         got.insert(name.into(), serde_json::json!({"exit": code, "document": serde_json::from_str::<serde_json::Value>(&text).unwrap()}));
     }
     let got = serde_json::to_string_pretty(&serde_json::Value::Object(got)).unwrap() + "\n";
