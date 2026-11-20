@@ -94,7 +94,7 @@ class Forwarders(unittest.TestCase):
         tasks = yaml.safe_load(TASKS.read_text())
         checks = [t for t in tasks if "mesh_coredns_forwarders" in str(t.get("ansible.builtin.assert", ""))]
         self.assertEqual(len(checks), 1, "one assert on mesh_coredns_forwarders")
-        env = jinja2.Environment()
+        env = jinja2.Environment(autoescape=jinja2.select_autoescape(default_for_string=False))
         for cond in checks[0]["ansible.builtin.assert"]["that"]:
             expr = env.compile_expression(cond)
             for good in ([], ["1.1.1.1"], ["192.0.2.53", "tls://198.51.100.53"]):
