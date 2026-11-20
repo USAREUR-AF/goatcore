@@ -28,5 +28,10 @@ else echo "  SKIP exposure guard load check (no nft or no user namespaces)"; fi
 run no-docker -e '{"logship_source_identity_enroll": false, "logship_source_app_http": false, "logship_source_app_auth": false, "logship_http_bandwidth_metrics": false}'
 run bind-all -e '{"logship_bind_all": true}'
 run no-counter -e '{"_logship_guard_counter": false}'
+run no-ct -e '{"_logship_guard_ct": false}'
+if command -v nft >/dev/null && unshare -rn true 2>/dev/null; then
+  if unshare -rn nft -f "$work/no-ct/logship-expose-guard.nft" 2>&1; then echo "  ok   exposure guard ruleset without conntrack loads (nft, private netns)"
+  else echo "  FAIL exposure guard ruleset without conntrack does not load"; fails=$((fails + 1)); fi
+fi
 [ "$fails" -eq 0 ] || { echo "goat-logship: render FAILED ($fails)"; exit 1; }
 echo "goat-logship: render OK"
