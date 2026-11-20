@@ -715,6 +715,13 @@ re-seed wrote 32552 bytes of WAL on B, and B's slot for A still read
 refusals of steps 1, 2, 3, 5 and 6 are not measured on containers; the verb's
 handling of a refusal is tested with the stand-in.
 
+Run again on 2026-11-20 with the image built from main at the time and the
+same `run.sh`: the founder's slot for B read `unreserved` after 59 s and `lost`
+after 87 s (1 GiB cap, 17 MiB/s), the six steps each exited 0, step 3 read
+65536 bytes to copy against an allowance of 268435456 (a quarter of the cap),
+the re-seed wrote 32608 bytes of WAL on B, B's slot for A still read
+`reserved`, and both sites held the same 161 rows with the same digest.
+
 Not built: a re-seed from a second site that also lost its slot for the node.
 The verb reads the founder only; a node that replicates with other sites as
 well has each of them read by hand (step 1 above).
