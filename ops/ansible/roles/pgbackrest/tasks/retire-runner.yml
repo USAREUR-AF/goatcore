@@ -1,0 +1,32 @@
+---
+# ops/ansible/roles/pgbackrest/tasks/retire-runner.yml
+#
+# Remove the retired pgbackrest-runner sidecar from a host that still has
+# it: the container (running or stopped), the overlay earlier releases
+# copied into the compose dir, and its block in .env. Nothing ran pgbackrest
+# in that container; every pgbackrest command runs in the database container.
+# The repository, log and spool are host bind mounts and are not touched.
+# tests/retire-runner-test.sh runs these steps against a fixture.
+
+- name: Remove the retired docker-compose.pgbackrest.yml overlay
+  ansible.builtin.file:
+    path: "{{ compose_dir }}/docker-compose.pgbackrest.yml"
+    state: absent
+
+- name: Remove the retired pgbackrest-runner container, running or stopped
+  ansible.builtin.command:
+    argv: [docker, rm, --force, "{{ pgbackrest_retired_runner_container }}"]
+  register: _pgbr_runner_rm
+  # Docker 23+ exits 0 for a missing container and prints only on stderr;
+  # older releases exit 1 with "No such container". Either way: not removed.
+  changed_when: _pgbr_runner_rm.rc == 0 and (_pgbr_runner_rm.stdout | trim) == pgbackrest_retired_runner_container
+  failed_when:
+    - _pgbr_runner_rm.rc != 0
+    - "'No such container' not in _pgbr_runner_rm.stderr"
+
+- name: Remove the retired pgbackrest env block from .env
+  ansible.builtin.blockinfile:
+    path: "{{ compose_dir }}/.env"
+    marker: "# {mark} ANSIBLE MANAGED: pgbackrest"
+    state: absent
+    create: false
