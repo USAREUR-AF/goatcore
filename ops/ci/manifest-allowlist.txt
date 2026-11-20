@@ -40,6 +40,9 @@ ops/grant-crypto/keyd/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: grant k
 ops/grant-crypto/sdk/Cargo.toml | @USAREUR-AF/goat-owners | Rust workspace root for the grant-crypto SDK (ADR 1106)
 ops/grant-crypto/sdk/capi/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: grant-crypto C ABI for the language bindings
 ops/grant-crypto/sdk/core/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: grant-crypto core
+ops/provenance/Cargo.toml | @USAREUR-AF/goat-owners | Rust workspace root for the provenance library and ingress adapter of ADR 1251, standalone until the crates/ workspace can take them
+ops/provenance/goat-ingress/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: the provenance library and ingress adapter of ADR 1251, standalone until the crates/ workspace can take them
+ops/provenance/goat-provenance/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: the provenance library and ingress adapter of ADR 1251, standalone until the crates/ workspace can take them
 ops/relay-auth-probe/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: live probe of deployed goat-relay instances
 ops/zenoh-ingress-gateway/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: receiver for router-to-router Zenoh peering
 ops/zenoh/pqc-image/bench/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: post-quantum TLS benchmark for the Zenoh image (ADR 1079)

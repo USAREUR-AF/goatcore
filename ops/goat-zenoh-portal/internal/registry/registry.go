@@ -130,6 +130,7 @@ func migrationCtx() (context.Context, context.CancelFunc) {
 var Migrations = []pgstore.Migration{
 	{Version: 1, SQL: schemaSQL},
 	{Version: 2, SQL: slotLeavesSQL},
+	{Version: 3, SQL: carriageSQL},
 }
 
 // Tables are the registry's tables in version 1, in foreign-key order: a table

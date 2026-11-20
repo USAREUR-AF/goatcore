@@ -1,0 +1,35 @@
+# Advisories that do not apply to the lock file in this directory.
+# Read by osv-scanner and by the OpenSSF Scorecard Vulnerabilities check.
+# One entry per advisory: the ID and the reason it does not apply.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "Unmaintained-crate notice for paste: the advisory reports no vulnerability and names no fixed version."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0449"
+reason = "Unmaintained-crate notice for unsafe-libyaml: the advisory reports no vulnerability and names no fixed version."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0134"
+reason = "Unmaintained-crate notice for rustls-pemfile: the advisory reports no vulnerability and names no fixed version."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0141"
+reason = "Unmaintained-crate notice for bincode: the advisory reports no vulnerability and names no fixed version."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0002"
+reason = "lru is used only by ratatui's layout cache, which never calls LruCache::iter_mut."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0173"
+reason = "Unmaintained-crate notice for proc-macro-error2: the advisory reports no vulnerability and names no fixed version."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0253"
+reason = "lru is used only by ratatui's layout cache, which never calls LruCache::pop."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0374"
+reason = "Unmaintained-crate notice for basic-toml: the advisory reports no vulnerability and names no fixed version."
