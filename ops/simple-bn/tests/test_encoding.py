@@ -60,8 +60,10 @@ class Guard(unittest.TestCase):
     def test_plain_needs_notional(self):
         self.assertIsNone(s.guard("notional", "none"))
         self.assertIsNone(s.guard("notional", "wireguard"))
-        self.assertIn("not built", s.guard("fabric", "wireguard"))
+        self.assertIsNone(s.guard("fabric", "wireguard"))
         self.assertIsNotNone(s.guard("fabric", "none"))
+        self.assertIsNone(s.guard("fabric", "none", mesh_hop=True))      # to the relay over the mesh
+        self.assertIsNotNone(s.guard("notional", "none", mesh_hop=True))
         self.assertIsNotNone(s.guard("notional", "rot13"))
 
     def test_cli_refuses(self):

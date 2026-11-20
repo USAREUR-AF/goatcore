@@ -2,8 +2,8 @@
 
 **Status: WIP.** The sender and the monitor are built and run on one goatnet with synthetic data only. The TCP transport, the
 synthetic-only guard, fixed per-feed source ports, the ansible role (`ops/ansible/simple-bn.yml`) and the egress relay
-(`--input relay`) are built. The fabric subscription, the WireGuard peer step and the pseudo boundary node are designed,
-not built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
+(`--input relay`) and the fabric input (`--input fabric`) are built. The WireGuard peer step and the pseudo boundary node
+are designed, not built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
 seven days without a gap. Decision record: [ADR 1253](../adr/1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md).
 
 ## 1. Three kinds of boundary
@@ -30,7 +30,7 @@ status file that the boundary monitor (§6) shows.
 
 ```
 release/<set>/** on the fabric ──► simple-bn ──► encoder (ASTERIX CAT034/048) ──► UDP or TCP ──► receiver
-   (designed, not built)            (built)            (built)                        (UDP built)
+   (built: --input fabric)          (built)            (built)                        (UDP built)
                                        │
                                        └──► /run/simple-bn/status.json ──► bn-monitor (mesh address only)
 ```
@@ -63,11 +63,18 @@ release/<set>/** on the fabric ──► simple-bn ──► encoder (ASTERIX CA
   (`/etc/simple-bn/receiver.env`) and is never logged, never written to the status file and never committed. The private
   overlay holds a 1Password reference to it.
 
-**The fabric input (designed, not built).** The sender subscribes to the declared `release/<set>/<feed>/**` keys and
-encodes each sample. Only released keys leave, for the same reason the canonical boundary node republishes only
-`release/` ([ADR 1208](../adr/1208-sovereign-environments-release-namespaces-and-grant-encryption.md)): what crosses a
-boundary is a deliberate act of the data's owner, not a property of where the boundary host sits. Until it is built, the
-notional feeds are the only input, and the notional feeds are synthetic.
+**The fabric input (built).** The sender inside the goatnet (`--input fabric`) subscribes to each feed's declared key,
+which must be under `release/` (profile `key`), and sends each sample's payload unchanged. Only released keys leave, for
+the same reason the canonical boundary node republishes only `release/`
+([ADR 1208](../adr/1208-sovereign-environments-release-namespaces-and-grant-encryption.md)): what crosses a boundary is
+a deliberate act of the data's owner, not a property of where the boundary host sits. The payload is raw ASTERIX, as the
+ingress adapter publishes a keyless radar's frames ([ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md),
+`<slot>/stream/asterix/<cat>/raw/v1`) and a producer with a release grant carries them into the lane. Each payload is
+checked like the relay checks it (§3) and sent, one datagram per sample, to the egress relay's mesh address at the
+feed's `src_port` (`--relay-dest`). That hop is on the goatnet mesh, which encrypts it; the relay enforces encryption to
+the receiver. The session is a zenoh client with the machine's own goat context (`profile.toml`, `mtls.cert.pem`,
+`mtls.key.pem`, `ca-roots.pem`), so the router's grants decide what it can read. The role installs the pinned
+`eclipse-zenoh` in its own virtual environment and hands the context to the service as systemd credentials.
 
 **TCP (built).** `--transport tcp` sends the same encoder output over one long-lived connection per feed. ASTERIX blocks
 carry their own length, so the stream needs no extra framing. A lost connection is retried with backoff from 1 s up to
@@ -105,7 +112,7 @@ names `sac` or `sic`, from that radar (I010 of the block's first record). Everyt
 
 | Relay state | Meaning | Health |
 |---|---|---|
-| `waiting-for-input` | nothing from a declared sender for 30 s | 503 |
+| `waiting-for-input` | nothing from a declared sender (relay) or the released key (fabric sender) for 30 s | 503 |
 | `holding` | no receiver declared (`--dest none`): input is checked and counted as `held`, nothing leaves | 200 |
 | `sending` | forwarding to the receiver | 200 |
 
@@ -285,7 +292,11 @@ simple_bn:
   sac: <0-255>
   input: notional                                     # notional | relay; stage 0 (encryption none) refuses real data
   relay: {from_env: <ENV VAR>}                        # relay: the inside senders' mesh addresses, comma-separated, from the store
+  fabric: {context: <goat context dir on the host>, relay_dest_env: <ENV VAR>}   # fabric: the relay's mesh address
 ```
+
+The fabric sender's profiles name each feed's `key` (under `release/`), `src_port` (the relay's intake port for that
+feed) and, when known, `sac`, `sic` and `cats`.
 
 A relay's profiles name each feed's `src_port` and, when the radar is known, its `sac`, `sic` and `cats`. A relay with no
 receiver yet leaves `receiver.dest_env` out and holds.

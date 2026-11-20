@@ -21,6 +21,13 @@ same src_port to the receiver. With --dest none it holds (counts and drops) what
 so the inside path can be proven while nothing leaves.
 
   simple_bn_sender.py --input relay --relay-intake MESH_IP --relay-from A,B --dest HOST:PORT|none ...
+
+With --input fabric it is the sender inside the goatnet: it subscribes to each feed's released
+key (profile `key`, always under release/) and sends each sample's payload, raw ASTERIX as the
+ingress adapter publishes it, to the relay's mesh address at the feed's src_port
+(--relay-dest). Needs the eclipse-zenoh Python package and a goat context directory.
+
+  simple_bn_sender.py --input fabric --goat-context DIR --relay-dest RELAY_MESH_IP ...
 """
 import argparse
 import json
@@ -502,6 +509,95 @@ class RelayFeed(Feed):
         return doc
 
 
+# ---------------------------------------------------------------- fabric input (--input fabric)
+# The sender inside the goatnet. Only released keys leave (ADR 1208): every feed's key is under
+# release/, where a producer with a release grant has deliberately put it. Each sample's payload
+# is raw ASTERIX (the ingress adapter's `<slot>/stream/asterix/<cat>/raw/v1` frames, carried into
+# the release lane unchanged). It is checked like the relay checks it and sent on, one datagram
+# per sample, to the relay's mesh address at the feed's src_port.
+
+def zenoh_config(context=None, config_file=None):
+    """A zenoh.Config: an explicit JSON5 file (tests, labs), or a goat context directory (mTLS client)."""
+    import zenoh
+    if config_file:
+        return zenoh.Config.from_file(config_file)
+    import tomllib
+    with open(os.path.join(context, "profile.toml"), "rb") as fh:
+        prof = tomllib.load(fh)
+    endpoint = prof.get("router_endpoint") or prof.get("router") or ""
+    if not endpoint:
+        raise SystemExit("simple-bn: refusing to start: the goat context has no router_endpoint")
+    conf = zenoh.Config()
+    conf.insert_json5("mode", '"client"')
+    conf.insert_json5("connect/endpoints", json.dumps([endpoint]))
+    conf.insert_json5("transport/link/tls", json.dumps({
+        "root_ca_certificate": os.path.join(context, "ca-roots.pem"),
+        "connect_certificate": os.path.join(context, "mtls.cert.pem"),
+        "connect_private_key": os.path.join(context, "mtls.key.pem"),
+        "enable_mtls": True,
+        "verify_name_on_connect": True,
+    }))
+    return conf
+
+
+class FabricFeed(Feed):
+    """One feed read from a released key and sent on, payload unchanged."""
+
+    def __init__(self, name, dest, profiles, transport="udp"):
+        p = dict(profiles[name])
+        key = p.get("key", "")
+        if not key.startswith("release/"):
+            raise ValueError(f"fabric feed {name!r}: key {key!r} is not under release/ (only released data leaves)")
+        p.setdefault("period", 1.0)
+        p.setdefault("title", name)
+        self.name, self.p, self.key, self.dest, self.transport = name, p, key, dest, transport
+        self.sac, self.sic = p.get("sac"), p.get("sic")
+        self.cats = set(p.get("cats", [34, 48]))
+        self.fixed_src_port = p.get("src_port")
+        self.sock, self.backoff, self.next_retry = None, 1.0, 0.0
+        if transport == "udp":
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.connect(dest)
+        self.src_port = self.sock.getsockname()[1] if self.sock else None
+        self.lock = threading.Lock()
+        self.total = {"received": 0, "rejected_format": 0, "datagrams": 0, "bytes": 0,
+                      "send_errors": 0, "refused": 0, "dropped": 0}
+        self.by_kind, self.minutes = {}, {}
+        self.state, self.last_error, self.last_send, self.last_refused, self.last_in = "waiting-for-input", None, None, None, None
+
+    def on_payload(self, data):
+        with self.lock:
+            self._count("received")
+            self.last_in = time.time()
+        why = asterix_check(data, self.cats, self.sac, self.sic)
+        if why:
+            with self.lock:
+                self._count("rejected_format")
+                self.last_error = f"rejected from the fabric: {why}"
+            return
+        self.send(data)
+
+    def on_sample(self, sample):
+        try:
+            self.on_payload(bytes(sample.payload.to_bytes() if hasattr(sample.payload, "to_bytes") else sample.payload))
+        except Exception as e:   # a subscriber callback must never raise into zenoh
+            with self.lock:
+                self._count("dropped")
+                self.last_error = f"sample: {e}"
+
+    def run(self):
+        while True:
+            time.sleep(3600)
+
+    def status(self, now):
+        doc = super().status(now)
+        if self.last_in is None or now - self.last_in > 30:
+            doc["state"] = "waiting-for-input"
+        doc["update_period_s"] = None
+        doc["fabric"] = {"key": self.key, "categories": sorted(self.cats), "last_input": self.last_in}
+        return doc
+
+
 def wg_route_check(dest_ip, interface):
     """None if the kernel routes dest_ip through the WireGuard interface, else a reason."""
     try:
@@ -602,19 +698,21 @@ ENCRYPTION = ("none", "wireguard", "receiver-transport")
 INPUTS = ("notional", "fabric", "relay")
 
 
-def guard(input_kind, encryption, holding=False):
+def guard(input_kind, encryption, holding=False, mesh_hop=False):
     """Stage 0 (plain, encryption none) carries synthetic data only (ADR 1253). Returns an error string or None.
 
-    holding: a relay with no receiver (--dest none), which sends nothing, so needs no encryption."""
+    holding: a relay with no receiver (--dest none), which sends nothing, so needs no encryption.
+    mesh_hop: a fabric sender sending to the egress relay over the goatnet mesh (--relay-dest); the
+    mesh encrypts that hop, and the relay enforces the receiver-side encryption itself."""
     if input_kind not in INPUTS:
         return f"unknown input {input_kind!r}"
     if encryption not in ENCRYPTION:
         return f"unknown encryption {encryption!r}"
-    if input_kind == "fabric":
-        return "the fabric input is designed, not built"
     if holding and input_kind != "relay":
         return "--dest none is for a relay that holds; a sender needs a receiver"
-    if encryption == "none" and input_kind != "notional" and not holding:
+    if mesh_hop and input_kind != "fabric":
+        return "--relay-dest is for the fabric sender inside the goatnet"
+    if encryption == "none" and input_kind != "notional" and not (holding or mesh_hop):
         return "plain sending (encryption none) carries notional data only"
     return None
 
@@ -630,7 +728,7 @@ def write_status(path, doc):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dest", required=True, help="HOST:PORT (never logged), or none for a relay that holds")
+    ap.add_argument("--dest", default="", help="HOST:PORT (never logged), or none for a relay that holds")
     ap.add_argument("--label", required=True, help="receiver name shown in logs and the monitor")
     ap.add_argument("--node", default=socket.gethostname(), help="boundary node name")
     ap.add_argument("--feeds", default="hemispheric-cuas,counterfire,surveillance-3d")
@@ -640,7 +738,10 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--duration", type=float, default=0, help="seconds to run, 0 = forever")
     ap.add_argument("--transport", choices=["udp", "tcp"], default="udp")
-    ap.add_argument("--input", default="notional", help="notional | relay (built) or fabric (designed)")
+    ap.add_argument("--input", default="notional", help="notional | relay | fabric")
+    ap.add_argument("--relay-dest", default="none", help="fabric: the egress relay's mesh address; each feed goes to it at its src_port")
+    ap.add_argument("--goat-context", default="none", help="fabric: goat context directory (profile.toml, mtls.cert.pem, mtls.key.pem, ca-roots.pem)")
+    ap.add_argument("--zenoh-config", default="none", help="fabric: a zenoh JSON5 config file instead of a goat context (labs, tests)")
     ap.add_argument("--relay-intake", default="none", help="relay: this host's mesh address, where the inside sender sends")
     ap.add_argument("--relay-from", default="none", help="relay: the inside senders' addresses, comma-separated")
     ap.add_argument("--wg-interface", default="none", help="encryption wireguard: the tunnel the receiver must be routed through")
@@ -650,11 +751,18 @@ def main():
     a = ap.parse_args()
 
     holding = a.dest == "none"
-    err = guard(a.input, a.encryption, holding)
+    mesh_hop = a.relay_dest != "none"
+    err = guard(a.input, a.encryption, holding, mesh_hop)
+    if not err and not a.dest and not mesh_hop:
+        err = "--dest is required (or --relay-dest for the fabric sender)"
+    if not err and a.input == "fabric" and a.goat_context == "none" and a.zenoh_config == "none":
+        err = "the fabric input needs --goat-context (or --zenoh-config)"
     if err:
         sys.exit(f"simple-bn: refusing to start: {err}")
     dest = None
-    if not holding:
+    if mesh_hop:
+        a.dest = ""
+    elif not holding:
         host, port = a.dest.rsplit(":", 1)
         dest = (socket.gethostbyname(host), int(port))
     if dest and a.encryption == "wireguard":
@@ -670,6 +778,14 @@ def main():
         if a.relay_intake == "none" or (dest and not senders):
             sys.exit("simple-bn: refusing to start: a relay needs --relay-intake, and one that forwards needs at least one --relay-from address")
         feeds = [RelayFeed(n, dest, profiles, a.relay_intake, senders, transport=a.transport) for n in names]
+    elif a.input == "fabric":
+        relay_ip = socket.gethostbyname(a.relay_dest) if mesh_hop else None
+        feeds = [FabricFeed(n, (relay_ip, int(profiles[n]["src_port"])) if mesh_hop else dest, profiles,
+                            transport=a.transport) for n in names]
+        import zenoh
+        session = zenoh.open(zenoh_config(None if a.goat_context == "none" else a.goat_context,
+                                          None if a.zenoh_config == "none" else a.zenoh_config))
+        subscribers = [session.declare_subscriber(f.key, f.on_sample) for f in feeds]   # noqa: F841 (kept alive)
     else:
         feeds = [Feed(n, a.sac, dest, random.Random(rnd.random()), profiles, transport=a.transport) for n in names]
     started = time.time()
@@ -693,7 +809,8 @@ def main():
         now = time.time()
         doc = {"schema": "goat.boundary-status/v1", "kind": "simple-bn", "node": a.node,
                "service": "simple-bn-sender", "input": a.input,
-               "receiver": {"label": a.label, "transport": a.transport, "declared": dest is not None,
+               "receiver": {"label": a.label, "transport": a.transport, "declared": dest is not None or mesh_hop,
+                            "via_relay": mesh_hop,
                                                          "format": "ASTERIX CAT034/CAT048",
                                                          "encryption": a.encryption},
                "started": started, "now": now, "uptime_s": round(now - started),
