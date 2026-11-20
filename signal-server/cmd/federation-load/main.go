@@ -49,6 +49,17 @@ import (
 	signalpb "github.com/usareur-af/goatcore/signal-server/gen/signalexchange"
 )
 
+// config is one run's settings, from the command line.
+type config struct {
+	servers               []string
+	rate                  float64
+	duration              time.Duration
+	peersPerServer        int
+	offlinePeersPerServer int
+	sendTimeout           time.Duration
+	seed                  int64
+}
+
 func main() {
 	peersFlag := flag.String("peers", "", "comma-separated host:port list of signal-server instances (3+ recommended)")
 	rate := flag.Float64("rate", 100, "target Send RPCs per second")
@@ -60,21 +71,39 @@ func main() {
 	seed := flag.Int64("seed", 0, "RNG seed; 0 = time-based")
 	flag.Parse()
 
-	servers := splitCSV(*peersFlag)
-	if len(servers) < 2 {
-		log.Fatal("--peers requires at least 2 host:port entries (3+ recommended for §3.4)")
+	cfg := config{
+		servers:               splitCSV(*peersFlag),
+		rate:                  *rate,
+		duration:              *duration,
+		peersPerServer:        *peersPerServer,
+		offlinePeersPerServer: *offlinePeersPerServer,
+		sendTimeout:           *sendTimeout,
+		seed:                  *seed,
 	}
-	if *peersPerServer < 1 {
-		log.Fatal("--peers-per-server must be >= 1")
-	}
-	if *rate <= 0 {
-		log.Fatal("--rate must be > 0")
-	}
-
-	rnd := rand.New(rand.NewSource(nonZeroSeed(*seed)))
-
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	summary, err := run(rootCtx, cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	writeSummary(summary, *out)
+}
+
+// run drives the load against cfg.servers until cfg.duration ends or ctx is
+// cancelled, and returns the summary.
+func run(rootCtx context.Context, cfg config) (finalSummary, error) {
+	servers := cfg.servers
+	if len(servers) < 2 {
+		return finalSummary{}, errors.New("--peers requires at least 2 host:port entries (3+ recommended for §3.4)")
+	}
+	if cfg.peersPerServer < 1 {
+		return finalSummary{}, errors.New("--peers-per-server must be >= 1")
+	}
+	if cfg.rate <= 0 {
+		return finalSummary{}, errors.New("--rate must be > 0")
+	}
+
+	rnd := rand.New(rand.NewSource(nonZeroSeed(cfg.seed)))
 
 	// Dial every server once for Send. Separate from the stream connections
 	// so that closing a registration stream doesn't disturb the sender path.
@@ -83,7 +112,7 @@ func main() {
 	for i, addr := range servers {
 		c, err := grpc.NewClient(dialTarget(addr), grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
-			log.Fatalf("dial %s (sender): %v", addr, err)
+			return finalSummary{}, fmt.Errorf("dial %s (sender): %w", addr, err)
 		}
 		sendConns[i] = c
 		sendClients[i] = signalpb.NewSignalExchangeClient(c)
@@ -101,24 +130,24 @@ func main() {
 		key      string
 		serverIx int
 	}
-	allKeys := make([]registeredPeer, 0, len(servers)*(*peersPerServer))
+	allKeys := make([]registeredPeer, 0, len(servers)*(cfg.peersPerServer))
 	var regMu sync.Mutex
 
 	regCtx, regCancel := context.WithTimeout(rootCtx, 30*time.Second)
 	defer regCancel()
 
 	var regWG sync.WaitGroup
-	errCh := make(chan error, len(servers)*(*peersPerServer))
+	errCh := make(chan error, len(servers)*(cfg.peersPerServer))
 	streamConns := make([]*grpc.ClientConn, len(servers))
 	for si, addr := range servers {
 		c, err := grpc.NewClient(dialTarget(addr), grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
-			log.Fatalf("dial %s (stream): %v", addr, err)
+			return finalSummary{}, fmt.Errorf("dial %s (stream): %w", addr, err)
 		}
 		streamConns[si] = c
 		sc := signalpb.NewSignalExchangeClient(c)
 
-		for pi := 0; pi < *peersPerServer; pi++ {
+		for pi := 0; pi < cfg.peersPerServer; pi++ {
 			key := fmt.Sprintf("lf-%d-on-%d", pi, si)
 			regWG.Add(1)
 			go func(serverIx int, key string) {
@@ -179,7 +208,7 @@ func main() {
 	keyCount := len(allKeys)
 	regMu.Unlock()
 	if keyCount == 0 {
-		log.Fatal("no peers registered; aborting")
+		return finalSummary{}, errors.New("no peers registered; aborting")
 	}
 	fmt.Fprintf(os.Stderr, "registered %d peers across %d servers\n", keyCount, len(servers))
 
@@ -200,11 +229,11 @@ func main() {
 		online   bool
 		serverIx int // owning server for online targets; -1 for offline
 	}
-	targets := make([]target, 0, keyCount+len(servers)*(*offlinePeersPerServer))
+	targets := make([]target, 0, keyCount+len(servers)*(cfg.offlinePeersPerServer))
 	for _, p := range allKeys {
 		targets = append(targets, target{key: p.key, online: true, serverIx: p.serverIx})
 	}
-	for i := 0; i < len(servers)*(*offlinePeersPerServer); i++ {
+	for i := 0; i < len(servers)*(cfg.offlinePeersPerServer); i++ {
 		targets = append(targets, target{key: fmt.Sprintf("off-%d-unreg", i), online: false, serverIx: -1})
 	}
 	targetCount := len(targets)
@@ -212,7 +241,7 @@ func main() {
 
 	// Load loop. A single ticker at the target rate keeps timing precise; we
 	// fire each Send in its own goroutine so slow RPCs don't starve the tick.
-	interval := time.Duration(float64(time.Second) / *rate)
+	interval := time.Duration(float64(time.Second) / cfg.rate)
 	if interval <= 0 {
 		interval = time.Microsecond
 	}
@@ -220,9 +249,9 @@ func main() {
 	defer ticker.Stop()
 
 	runCtx := rootCtx
-	if *duration > 0 {
+	if cfg.duration > 0 {
 		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(rootCtx, *duration)
+		runCtx, cancel = context.WithTimeout(rootCtx, cfg.duration)
 		defer cancel()
 	}
 
@@ -314,7 +343,7 @@ func main() {
 			inFlight.Add(1)
 			go func() {
 				defer inFlight.Add(-1)
-				ctx, cancel := context.WithTimeout(runCtx, *sendTimeout)
+				ctx, cancel := context.WithTimeout(runCtx, cfg.sendTimeout)
 				defer cancel()
 				start := time.Now()
 				_, err := sendClients[senderIx].Send(ctx, &signalpb.EncryptedMessage{
@@ -368,7 +397,7 @@ func main() {
 summarize:
 	// Allow ~2×sendTimeout for in-flight Sends to settle before writing the
 	// summary; otherwise the counts understate what actually shipped.
-	drainDeadline := time.Now().Add(2 * *sendTimeout)
+	drainDeadline := time.Now().Add(2 * cfg.sendTimeout)
 	for inFlight.Load() > 0 && time.Now().Before(drainDeadline) {
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -394,8 +423,8 @@ summarize:
 	summary := finalSummary{
 		StartedAt:            time.Now().UTC().Format(time.RFC3339Nano),
 		Servers:              servers,
-		TargetRate:           *rate,
-		PeersPerServer:       *peersPerServer,
+		TargetRate:           cfg.rate,
+		PeersPerServer:       cfg.peersPerServer,
 		RegisteredPeers:      keyCount,
 		TotalSent:            totalSent,
 		SentOnline:           sentOnline.Load(),
@@ -411,7 +440,7 @@ summarize:
 		OverallP99MS:         overallP99,
 		PerSecondSamples:     perSec,
 	}
-	writeSummary(summary, *out)
+	return summary, nil
 }
 
 type secondSample struct {
