@@ -4279,6 +4279,24 @@ entries:
     read: docs/design/goatbuilder.md
     exit: 2
 
+  # Printed by ops/scripts/ansible-preflight.sh (goat_unresolved_reference_guard), which every
+  # play goatbuilder runs passes through.
+  - code: GB-368
+    tool: goatbuilder
+    title: an environment value is still an unresolved secret reference
+    what: "ops/scripts/ansible-preflight.sh found a variable whose value still begins with op://, bao:// or bw:// after the secrets injector ran. A play renders the environment as it finds it, so the reference would become a container's literal password or cookie secret. The message names each variable, never its value. Nothing was run on any host."
+    causes:
+      - "the command was not run through ops/scripts/with-secrets, so nothing resolved the references"
+      - "an inherited GOAT_SECRETS_RESOLVED told the injector the environment was already resolved"
+      - "GOAT_SECRET_REF_PREFIX names one store's scheme while a reference of another scheme is in the environment"
+    fixes:
+      - "ops/scripts/with-secrets <this same command>"
+      - "env -u <NAME> <this same command>   (a variable this play does not need)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "unresolved secret references in the environment"
+    exit: 2
+
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
   - code: GB-370
