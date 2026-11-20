@@ -267,17 +267,7 @@
         {
           "name": "probe-ran",
           "ok": true,
-          "detail": "python3 <repo>/ops/secrets/posture.py available"
-        },
-        {
-          "name": "probe-ran",
-          "ok": true,
           "detail": "netbird status"
-        },
-        {
-          "name": "probe-ran",
-          "ok": true,
-          "detail": "python3 <repo>/ops/secrets/posture.py store"
         },
         {
           "name": "input",
@@ -409,17 +399,7 @@
         {
           "name": "probe-ran",
           "ok": true,
-          "detail": "python3 <repo>/ops/secrets/posture.py available"
-        },
-        {
-          "name": "probe-ran",
-          "ok": true,
           "detail": "netbird status"
-        },
-        {
-          "name": "probe-ran",
-          "ok": true,
-          "detail": "python3 <repo>/ops/secrets/posture.py store"
         },
         {
           "name": "input",

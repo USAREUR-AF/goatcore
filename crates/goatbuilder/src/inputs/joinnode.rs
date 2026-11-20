@@ -330,12 +330,6 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
     });
 
     // What the phases read from their environment.
-    let store = crate::secrets::available(repo);
-    let store_name = if store.is_empty() {
-        String::new()
-    } else {
-        crate::secrets::store(repo)
-    };
     // A phone node's phase 2 prepares the VM over the Android debug bridge;
     // it reads no first-login password.
     let mut reads: Vec<(String, bool, &str)> = vec![
@@ -361,7 +355,15 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             "phase 13 (a joiner's core node): the founder's management API token, which registers the site's mesh DNS nameserver group",
         ));
     }
-    for (name, secret, when) in reads.into_iter().skip(usize::from(phone)) {
+    let reads: Vec<(String, bool, &str)> = reads.into_iter().skip(usize::from(phone)).collect();
+    // Asked for these names only: the probe's answer is kept in the run record.
+    let store = crate::secrets::available(repo, &reads.iter().map(|(n, _, _)| n.clone()).collect::<Vec<_>>());
+    let store_name = if store.is_empty() {
+        String::new()
+    } else {
+        crate::secrets::store(repo)
+    };
+    for (name, secret, when) in reads {
         let from_store = store.contains(&name).then(|| {
             Source::derived(
                 format!("the declared secrets store ({store_name})"),
