@@ -51,6 +51,14 @@ Status: **built** on the fixture for `join-node`, **not measured** on a joined s
 - **The distribution.** A new group goes to the NetBird groups `netbird_nameserver_distribution_groups` names, by default `All`. Every peer then asks every site's group for the zone. The NetBird client merges groups for the same domain and queries them in parallel, so a site cut off from its founder answers from its own replica. A name NetBird does not hold is refused before the group is created.
 - **The writer.** A joining site's group is registered through the founder's management API (`netbird_api`, `netbird_api_token_envvar`), the one writer. `join-node` phase 13 runs it for a joiner's core node.
 
+## Outside forwarders
+
+Status: **built**. A name outside the mesh zone goes to the forwarders in `mesh_coredns_forwarders` (`roles/mesh-coredns/defaults/main.yml`), rendered in order on one `forward .` line. The default is the pair every goatnet ran before the variable existed, `1.1.1.1` and `8.8.8.8`, so a goatnet that sets nothing renders the same Corefile byte for byte.
+
+- **An empty list** renders no `forward` directive and no `fallthrough` from the zone file. The resolver answers its own zone, a name outside it gets SERVFAIL (CoreDNS's `hosts` plugin has no SOA to say NXDOMAIN), and no query leaves the resolver. This is the setting for a goatnet that reaches no outside DNS service.
+- **Handset DNS depends on forwarding.** `<site_id>-handset-dns` (`handset_dns_enabled: true`) is a primary group: every query from a phone comes here. With an empty list those phones resolve mesh names only. The desktop group `<site_id>-mesh-dns` is match-domain, so desktops never send an outside name here and are not affected. This is why the default is not empty.
+- **Checked** by `tests/test_mesh_coredns_forwarders.py`: the default, a supplied list, the empty list, the role's refusal of an item that is not one destination, and the pinned CoreDNS image answering the zone and refusing an outside name on an empty list. The shape for a goatnet is `ops/ansible/group_vars/_examples/mesh-dns-forwarders.example.yml`.
+
 ## Non-goals / boundaries
 
 - **Not** anycast or a DNS load-balancer — netbird's resolver-side failover across the group is the mechanism; no new component.

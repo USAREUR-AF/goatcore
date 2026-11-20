@@ -33,6 +33,13 @@ This role replaces the previous NETHOST-only inline play (`ops/ansible/nethost-d
 | `mesh_coredns_port` | `5353` | UDP port the resolver listens on |
 | `mesh_coredns_zone_dir` | `{{ playbook_dir }}/../dns` | Source location for mesh-hosts file |
 | `mesh_coredns_smoke_test_name` | `mgmt.{{ site_id }}.{{ site_dns_zone }}` | Known mesh record for post-deploy verification (per-instance; derives from site identity) |
+| `mesh_coredns_forwarders` | `["1.1.1.1", "8.8.8.8"]` | Where a name outside the mesh zone is forwarded: CoreDNS `forward` destinations, in order. `[]` forwards nothing: the zone is answered and every other name gets SERVFAIL. See [Outside forwarders](#outside-forwarders) |
+
+## Outside forwarders
+
+`mesh_coredns_forwarders` names where CoreDNS sends a name that is not in the mesh zone. The default keeps the forwarders every goatnet ran before the variable existed. A goatnet that reaches no outside DNS service sets `mesh_coredns_forwarders: []`: no `forward` directive is rendered, the zone file is the last answer, and a name outside it gets SERVFAIL. A goatnet that runs its own resolver lists it. The shape is in `ops/ansible/group_vars/_examples/mesh-dns-forwarders.example.yml`; the design is in [mesh-dns-redundancy.md](../../../../docs/design/mesh-dns-redundancy.md#outside-forwarders).
+
+With handset DNS on (below), phones send every query here, so an empty list leaves them with mesh names only.
 
 ## Pre-requisites
 
