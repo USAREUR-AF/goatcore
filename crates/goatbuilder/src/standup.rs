@@ -2421,6 +2421,28 @@ mod tests {
     /// A joiner's pass 2 runs the generic site-seed-from-peer.yml when the site
     /// keeps no <site>-seed-from-peer.yml of its own, and the site's own play
     /// when it does.
+    /// A site's own copy of the seed play is checked against the generic play
+    /// it was derived from, right before phase 6 runs it (GB-362,
+    /// ops/scripts/check-site-play-current.py). A site that keeps no copy gets
+    /// no such step, so its plan is unchanged.
+    #[test]
+    fn a_site_copy_of_the_seed_play_is_checked_before_it_runs() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let none = phase_lines(&test_site(true), &o);
+        assert!(!none.iter().any(|l| l.2.contains("check-site-play-current.py")), "no copy, no check");
+        let t = crate::testdir::path("gb-site-play-gate-");
+        std::fs::create_dir_all(t.join("ops/ansible")).unwrap();
+        std::fs::write(t.join("ops/ansible/zagros-seed-from-peer.yml"), "---\n").unwrap();
+        let phases: Vec<Phase> = plan(&t, &test_site(true), &o, "RESUME").into_iter().filter_map(|e| match e { Event::Phase(p) => Some(p), _ => None }).collect();
+        let _ = std::fs::remove_dir_all(&t);
+        let gate = phases.iter().position(|p| p.cmd.contains("check-site-play-current.py")).expect("a check of the site's copy");
+        let seed = phases.iter().position(|p| p.label.starts_with("[joiner] seed-from-peer")).unwrap();
+        assert_eq!(gate + 1, seed, "the check runs right before the seed");
+        assert_eq!((phases[gate].n, phases[gate].kind), (6, "GATE"));
+        assert!(phases[gate].cmd.ends_with("check-site-play-current.py' --repo '/r' zagros seed-from-peer.yml"), "{}", phases[gate].cmd);
+        assert!(phases[seed].cmd.contains(" zagros-seed-from-peer.yml "), "{}", phases[seed].cmd);
+    }
+
     #[test]
     fn joiner_seed_falls_back_to_the_generic_play() {
         let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
