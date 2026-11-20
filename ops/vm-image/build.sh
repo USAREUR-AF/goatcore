@@ -159,6 +159,23 @@ ssh "${SSH_OPTS[@]}" -i "$WORK/build_key" goatbuild@127.0.0.1 'sudo sh -euc "
   install -m 0644 /tmp/apt-preferences-no-snapd /etc/apt/preferences.d/goatlite-no-snapd
   rm -f /tmp/apt-preferences-no-snapd
 "'
+# The cloud image's other vendor checks, each measured asking a vendor name on its own:
+# the MOTD news (motd.ubuntu.com), the firmware metadata refresh (cdn.fwupd.org), the
+# new-release check (changelogs.ubuntu.com), the package-data downloader, and the Pro
+# client's ESM cache (esm.ubuntu.com, on every apt update of an unattached host) and apt
+# news. Left as Ubuntu ships them: apt-daily, apt-daily-upgrade and unattended-upgrades,
+# which fetch and apply security updates from the apt sources the deployment configures
+# (whether a host takes them is its operator's policy: mgmt_host_baseline_apt_upgrade),
+# and ua-timer, which asked nothing on an unattached host and which an attached host needs.
+step "the other vendor checks off"
+ssh "${SSH_OPTS[@]}" -i "$WORK/build_key" goatbuild@127.0.0.1 'sudo sh -euc "
+  sed -i s/^ENABLED=.*/ENABLED=0/ /etc/default/motd-news
+  systemctl disable --now motd-news.timer fwupd-refresh.timer update-notifier-motd.timer update-notifier-download.timer
+  systemctl mask esm-cache.service
+  sed -i s/^Prompt=.*/Prompt=never/ /etc/update-manager/release-upgrades
+  pro config set apt_news=false
+  rm -f /var/lib/ubuntu-advantage/messages/motd-esm-announce /var/lib/update-notifier/release-upgrade-available
+"'
 
 # ---- 4. measure 2: every pinned image of the lite preset ----------------------------
 step "pull every image any goatlite runs"
@@ -230,6 +247,11 @@ check="$(ssh "${SSH_OPTS[@]}" -i "$WORK/learner_key" learner@127.0.0.1 '
   echo "goatbuild=$(id goatbuild >/dev/null 2>&1 && echo present || echo gone)"
   echo "machine_id=$(cat /etc/machine-id)"
   echo "timesyncd=$(systemctl is-enabled systemd-timesyncd 2>/dev/null || true)"
+  for u in motd-news.timer fwupd-refresh.timer update-notifier-motd.timer update-notifier-download.timer esm-cache.service; do
+    echo "$u=$(systemctl is-enabled "$u" 2>/dev/null || true)"
+  done
+  echo "motd_news=$(sed -n "s/^ENABLED=//p" /etc/default/motd-news)"
+  echo "apt_news=$(sudo pro config show apt_news 2>/dev/null | awk "{print \$2}")"
   echo "snapd=$(dpkg-query -W -f="\${db:Status-Status}" snapd 2>/dev/null | grep -qx installed && echo present || echo absent)"
   sudo bash /tmp/standup-image-pull.sh --concurrency 4 $(cat /tmp/images.txt)
   test -s /etc/goat/prepared-image.json && echo manifest=present
@@ -241,6 +263,10 @@ echo "$check" | grep -q "^goatbuild=gone$" || die "first boot: the build user is
 echo "$check" | grep -q "^manifest=present$" || die "first boot: /etc/goat/prepared-image.json is missing"
 echo "$check" | grep -q "^timesyncd=disabled$" || die "first boot: systemd-timesyncd is not disabled (it asks the vendor's NTP pool)"
 echo "$check" | grep -q "^snapd=absent$" || die "first boot: snapd is on the image (it asks the snap store)"
+for want in motd-news.timer=disabled fwupd-refresh.timer=disabled update-notifier-motd.timer=disabled \
+            update-notifier-download.timer=disabled esm-cache.service=masked motd_news=0 apt_news=False; do
+  echo "$check" | grep -qx "$want" || die "first boot: want $want (a vendor check is back on)"
+done
 echo "$check" | grep -q "$n of $n image(s) present .*($n already on the host by digest, not pulled)" \
   || die "first boot: the standup's pull step would still pull an image (see above)"
 ssh "${SSH_OPTS[@]}" -i "$WORK/learner_key" learner@127.0.0.1 'sudo systemctl poweroff' >/dev/null 2>&1 || true
