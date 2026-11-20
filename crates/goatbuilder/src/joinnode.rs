@@ -1807,6 +1807,37 @@ mod tests {
         assert!(stage.cmd.ends_with(r#"-e '{"leaf_only": ["fabric-health", "mesh-health"]}'"#), "{}", stage.cmd);
     }
 
+    /// Row 9: the seed carries the founder's data, and the subscriptions
+    /// from the founder carry only later writes (synchronize_data false). A
+    /// founder write after the seed and before the subscriptions exist is never
+    /// sent, so a joiner's core node checks its seed tables against the
+    /// founder's twice: before pass 3 wires Spock, and after the joiner's Spock
+    /// wiring, once the new subscriptions have caught up. Each check is a
+    /// phase-13 GATE, limited to the node. A founder site seeds nothing, so its
+    /// plan has neither.
+    #[test]
+    fn a_joiners_seed_is_checked_current_before_and_after_spock_is_wired() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let at = |needle: &str| ph.iter().position(|p| p.cmd.contains(needle)).unwrap_or_else(|| panic!("no phase runs {needle}"));
+        let (seed, before, pass3, again, after) = (
+            at("site-seed-from-peer.yml"),
+            at("spock-seed-current-check.yml -e site_id=zagros-b -e seed_check_phase=before"),
+            ph.iter().position(|p| p.label.contains("pass 3")).expect("pass 3"),
+            ph.iter().position(|p| p.label.contains("Spock wiring again")).expect("the wiring again"),
+            at("spock-seed-current-check.yml -e site_id=zagros-b -e seed_check_phase=after"),
+        );
+        assert!(seed < before && before + 1 == pass3 && again + 1 == after, "{seed} {before} {pass3} {again} {after}");
+        for i in [before, after] {
+            assert_eq!((ph[i].n, ph[i].kind), (13, "GATE"), "{}", ph[i].label);
+            assert!(ph[i].cmd.contains(" -l node-x "), "{}", ph[i].cmd);
+            assert!(ph[i].label.contains("GB-367"), "{}", ph[i].label);
+        }
+        // A founder seeds nothing.
+        std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
+        assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-seed-current-check.yml")));
+    }
+
     /// STAGED_SERVICES is stage-service-leaves.yml's service_leaf_map.
     #[test]
     fn the_staged_services_are_the_staging_plays() {

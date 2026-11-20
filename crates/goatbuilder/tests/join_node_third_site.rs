@@ -132,6 +132,7 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
             "#!/bin/sh\nprintf 'play %s\\n' \"$*\" >> '{l}'\n\
              case \"$*\" in\n\
              *ory-deploy.yml*) touch '{st}/ory-up' ;;\n\
+             *spock-seed-current-check.yml*) [ -f '{st}/seed-stale' ] && {{ echo 'GB-367: the founder changed identities after the seed (identities: founder 2 rows, joiner 1); re-seed before wiring Spock'; exit 2; }} ;;\n\
              *mesh-enroll-host.yml*)\n\
                out=''; for a; do case \"$a\" in mesh_ips_out=*) out=\"${{a#mesh_ips_out=}}\" ;; esac; done\n\
                [ -n \"$out\" ] || {{ echo 'mesh-enroll-host.yml: no mesh_ips_out'; exit 2; }}\n\
@@ -464,6 +465,25 @@ fn after_phase_12_the_node_is_reached_at_its_mesh_address() {
         "nothing after phase 12 names the LAN address:\n{}",
         after.join("\n")
     );
+}
+
+/// Row 9: when the founder changed a seed table after the seed, phase 13
+/// stops at its check before pass 3, with GB-367, and wires no Spock
+/// subscription: the run never leaves a joiner subscribed over a seed that
+/// lacks the founder's later writes.
+#[test]
+fn a_seed_the_founder_changed_since_stops_phase_13_before_spock_is_wired() {
+    let s = site();
+    std::fs::write(s.root.join("state/seed-stale"), "").unwrap();
+    let (out, v) = join_node(&s, None);
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(!out.status.success(), "{}\nargv:\n{log}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&13), "{}", says(&out));
+    assert!(says(&out).contains("GB-367"), "{}", says(&out));
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    let check = plays.iter().position(|l| l.contains("spock-seed-current-check.yml")).expect("the check ran");
+    assert!(plays[..check].iter().any(|l| l.contains("seed-from-peer.yml")), "the seed ran first: {plays:#?}");
+    assert_eq!(check + 1, plays.len(), "nothing ran after the check: {plays:#?}");
 }
 
 /// Phase 15 runs the acceptance rows against the site's derived end state,
