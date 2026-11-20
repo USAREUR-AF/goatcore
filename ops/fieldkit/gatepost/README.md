@@ -8,13 +8,13 @@ Who may use this pod, managed on site with no backhaul. One page, `gatepost.html
 | Button | Does | Same as | Pod route |
 |---|---|---|---|
 | Status | Connected or cut off, rule age, sources sending now, rules in force | `goat pod status` | `GET /v1/status` (+ `GET /v1/rules`, `goat pod rules ls`) |
-| Let in | Let a source send through this pod for 4, 24 or 72 hours, with a reason | `goat pod rules allow <source> --until <time> --reason <text>` | `POST /v1/rules` |
+| Let in | Let a source send through this pod for 4, 24 or 72 hours, with a reason. The source is named by its certificate (`<slot>.g<N>`); a bare slot works only for a source the pod has carried before | `goat pod rules allow <source> --until <time> --reason <text>` | `POST /v1/rules` |
 | Shut out | Stop a source sending through this pod at once | `goat pod rules revoke <source> --reason <text>` | `POST /v1/sources/{slot}/revoke` |
 | Extend | Give a rule a later end time | `goat pod rules extend <rule> --until <time> --reason <text>` | `POST /v1/rules/{id}/extend` |
-| Bring back | Turn an ended rule on again | `goat pod rules reactivate <rule> --until <time> --reason <text>` | `POST /v1/rules/{id}/reactivate` |
+| Bring back | Turn an expired or archived rule on again | `goat pod rules reactivate <rule> --until <time> --reason <text>` | `POST /v1/rules/{id}/reactivate` |
 | Waiting | Changes made here, waiting for an org lead | `goat pod pending` | `GET /v1/pending` |
 
-Every change shows its result and its command first, asks once, and then shows the pod's answer. The pod enforces the
+Every change shows its result and its command first, asks once, and then shows the pod's answer, including the pod's warning when the change is recorded but its router went back to the last good rules (HTTP 202). The pod enforces the
 limits (local authority only, a reason, an end time within the longest rule length); the page holds no rule of its own,
 and its 4, 24 and 72 hour choices above the pod's limit are greyed out. A person who is not named as local authority sees
 the same page with the change buttons off.
@@ -27,7 +27,7 @@ python3 ops/fieldkit/gatepost/mock_pod_api.py --look-only  # signed in as someon
 python3 ops/fieldkit/gatepost/mock_pod_api.py --connected  # the pod reports connected
 ```
 
-The mock answers the same routes and JSON shapes as the pod, from synthetic data, and refuses what the pod refuses.
+The mock answers the same routes, JSON shapes and error codes as `ops/goat-pod-api`, from synthetic data, and refuses what the pod refuses.
 
 ## Edit it
 

@@ -286,8 +286,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   <section id="p-allow" class="gp-panel" aria-labelledby="h-allow" hidden>
     <h2 id="h-allow">Let in</h2>
     <p>Let a source send through this pod for a short time.</p>
-    <label for="allow-source">Source (slot)</label>
-    <input type="text" id="allow-source" autocomplete="off" spellcheck="false" placeholder="for example 3f2a9c1e0b7d4e5f8a6b9c0d1e2f3a4b">
+    <label for="allow-source">Source (certificate name)</label>
+    <input type="text" id="allow-source" autocomplete="off" spellcheck="false" placeholder="for example 3f2a9c1e0b7d4e5f8a6b9c0d1e2f3a4b.g1">
+    <p class="be-hint">The name on the device's certificate: its slot, a dot, and its generation. A bare slot works only for a source this pod has carried before.</p>
     <p class="be-hint">Or pick a source the pod is refusing now:</p>
     <ul id="allow-refused" class="be-list"></ul>
     <div id="allow-duration"></div>
@@ -623,10 +624,18 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
     return BE.call("status").then(function (s) {
       status = s;
       BE.banner($("banner"), s);
+      if (s.state === "no portal") {
+        $("banner").firstChild.textContent = "Not set up to reach goat. This pod works on its own.";
+      }
+      if (s.ledger_unsent) {
+        $("banner").append(BE.h("small", { text: s.ledger_unsent + " change(s) made here are not sent to goat yet." }));
+      }
       $("pod-name").textContent = s.pod_slot ? "Pod " + s.pod_slot + "." : "";
       var who = s.you && s.you.identity ? "Signed in as " + s.you.identity + ". " : "Not signed in. ";
       who += mayChange() ? "You may change rules on this pod." :
-        "You may look only. These people may change rules: " + ((s.local_authority || []).join(", ") || "nobody named") + ".";
+        "You may look only. These people may change rules: " + ((s.local_authority || []).map(function (a) {
+          return typeof a === "string" ? a : (a.identity || a.cert_cn);
+        }).join(", ") || "nobody named") + ".";
       $("who").textContent = who;
       document.querySelectorAll("[data-change]").forEach(function (b) { b.disabled = !mayChange(); });
       if (durationMax !== s.max_rule_hours) {
@@ -641,10 +650,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
       (s.sources || []).forEach(function (x) {
         var tone = x.carriage === "ok" ? "ok" : x.carriage === "expiring" ? "warn" : "bad";
         var word = x.carriage === "ok" ? "Allowed" : x.carriage === "expiring" ? "Ends soon" : "Refused";
-        list.append(BE.row({ key: x.slot, title: srcName(x.slot, x.name), meta: x.connected ? "Connected now" : "Not connected", badge: { text: word, tone: tone } }));
+        list.append(BE.row({ key: x.slot, title: srcName(x.slot, x.name), meta: x.connected === true ? "Connected now" : x.connected === false ? "Not connected" : "Connection not known", badge: { text: word, tone: tone } }));
         if (x.carriage === "refused") {
           refused.append(BE.row({ key: x.slot, title: srcName(x.slot, x.name), meta: "Refused now",
-            button: { label: "Pick", onClick: function () { $("allow-source").value = x.slot; previews(); } } }));
+            button: { label: "Pick", onClick: function () { $("allow-source").value = x.cert_cn || x.slot; previews(); } } }));
         }
       });
       if (!list.children.length) list.append(BE.row({ title: "No source is sending to this pod now." }));
@@ -655,7 +664,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
   function ruleMeta(r) {
     var from = r.origin === "local" ? "Made on this pod" : "From goat";
-    var end = !r.until ? "No end date" : r.state === "active" ? "Ends " + BE.when(r.until) : "Ended " + BE.when(r.until);
+    var ended = r.ended_at || r.until;
+    var end = r.state === "active" ? (r.until ? "Ends " + BE.when(r.until) : "No end date")
+      : r.state === "revoked" ? "Shut out " + BE.when(ended)
+      : ended ? "Ended " + BE.when(ended) : "Ended";
     var check = r.ratification === "pending" ? ". Waiting for an org lead" : r.ratification === "lapsed" ? ". Not kept by the org lead" : "";
     return from + ". " + end + check + ". Reason: " + (r.reason || "none given");
   }
@@ -691,7 +703,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
       });
       pickList("revoke-list", "revoke", function (r) { return r.state === "active"; });
       pickList("extend-list", "extend", function (r) { return r.state === "active" && r.until; });
-      pickList("reactivate-list", "reactivate", function (r) { return r.state === "archived"; });
+      pickList("reactivate-list", "reactivate", function (r) { return r.state === "expired" || r.state === "archived"; });
       previews();
     });
   }
@@ -702,9 +714,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
       el.replaceChildren();
       var words = { allow: "Let in", extend: "Extend", revoke: "Shut out", reactivate: "Bring back" };
       (d.pending || []).forEach(function (p) {
+        var lapsed = p.ratification === "lapsed";
         el.append(BE.row({ key: p.id, title: (words[p.action] || p.action) + ": " + p.source_slot,
-          meta: "By " + p.authority + ", " + BE.when(p.at) + ". " + (p.until ? "Until " + BE.when(p.until) + ". " : "") + "Reason: " + p.reason,
-          badge: { text: "Waiting", tone: "warn" } }));
+          meta: "By " + p.authority + ", " + BE.when(p.at) + ". " + (p.until ? "Until " + BE.when(p.until) + ". " : "") +
+            "Reason: " + p.reason + ". " + (p.uploaded ? "Sent to goat." : "Not sent to goat yet."),
+          badge: lapsed ? { text: "Not kept", tone: "bad" } : { text: "Waiting", tone: "warn" } }));
       });
       if (!el.children.length) el.append(BE.row({ title: "Nothing is waiting." }));
       strip("pending");
@@ -746,13 +760,17 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
     return BE.confirm({ title: title, preview: preview, verb: A[name].cli, words: lastWords[name], yes: yes })
       .then(function (yesPressed) {
         if (!yesPressed) return;
-        return BE.call(name, params, body).then(function () { ok(done); return refresh().then(function () { ok(done); }); }, fail);
+        return BE.call(name, params, body).then(function (d) {
+          // 202 + warning: the pod recorded the change but its router went back to the last good rules.
+          var said = d && d.warning ? done + " Warning: " + d.warning : done;
+          return refresh().then(function () { ok(said); });
+        }, fail);
       });
   }
   $("allow-go").addEventListener("click", function () {
     var src = $("allow-source").value.trim(), until = hoursUntil("allow");
     run("allow", "Let in " + src + "?", "Yes, let in", null,
-      { source_slot: src, until: until, reason: reasonOf("allow-reason") },
+      { source: src, until: until, reason: reasonOf("allow-reason") },
       $("allow-preview").textContent, src + " may now send through this pod until " + BE.when(until) + ".");
   });
   $("revoke-go").addEventListener("click", function () {

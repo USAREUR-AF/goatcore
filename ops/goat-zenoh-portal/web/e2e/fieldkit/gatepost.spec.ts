@@ -38,6 +38,7 @@ test("status shows the cut-off banner, the sources, the rules and the command", 
   await expect(page.locator("#banner")).toContainText("Cut off from goat");
   await expect(page.locator("#who")).toContainText("You may change rules on this pod.");
   await expect(page.locator("#sources")).toContainText("radar-east");
+  await expect(page.locator("#sources .be-row", { hasText: "radar-east" })).toContainText("Connection not known");
   await expect(page.locator("#sources .be-row", { hasText: "lidar-north" })).toContainText("Refused");
   await expect(page.locator("#rules")).toContainText("camera-gate");
   await expect(strip(page, "status")).toHaveText("goat pod status");
@@ -130,7 +131,7 @@ test("extend and bring back carry the rule id, the end time and the reason", asy
 
 test("a person who is not local authority may look only", async ({ page }) => {
   await open(page, { may_change: false });
-  await expect(page.locator("#who")).toContainText("You may look only.");
+  await expect(page.locator("#who")).toContainText("You may look only. These people may change rules: zagros-op-alpha.");
   for (const label of ["Let in", "Shut out", "Extend", "Bring back"]) await expect(action(page, label)).toBeDisabled();
   for (const label of ["Status", "Waiting"]) await expect(action(page, label)).toBeEnabled();
 });
@@ -179,4 +180,27 @@ test("every control is at least 44 px tall", async ({ page }) => {
       .filter((x) => x.h < 44));
     expect(small, `controls under 44 px on ${panel}`).toEqual([]);
   }
+});
+
+test("a change the router rolled back is saved with its warning shown", async ({ page }) => {
+  await open(page, { rollback: true });
+  await action(page, "Let in").click();
+  await page.locator("#allow-source").fill(`${LIDAR}.g2`);
+  await page.locator("#allow-reason").fill("survey");
+  await expect(strip(page, "allow")).toContainText(`goat pod rules allow ${LIDAR}.g2 --until`);
+  await page.locator("#allow-go").click();
+  await page.locator("dialog.be-sheet").getByRole("button", { name: "Yes, let in" }).click();
+  await expect(page.locator("#done")).toContainText("Warning: the change is recorded, but the router did not start with it");
+  await expect(page.locator("#banner")).toContainText("not sent to goat yet");
+});
+
+test("a bare slot the pod has never carried is refused with what to do", async ({ page }) => {
+  await open(page);
+  await action(page, "Let in").click();
+  await page.locator("#allow-source").fill("00112233445566778899aabbccddeeff");
+  await page.locator("#allow-reason").fill("new device");
+  await page.locator("#allow-go").click();
+  await page.locator("dialog.be-sheet").getByRole("button", { name: "Yes, let in" }).click();
+  await expect(page.locator("#error")).toContainText("That source is not a certificate name.");
+  await expect(page.locator("#error")).toContainText("Copy the name from the device's certificate");
 });
