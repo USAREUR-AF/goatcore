@@ -65,9 +65,8 @@ spock_subscription_lag:
   # spock.lag_tracker is the time since the last change arrived: on a database
   # nobody writes to it grows without end (measured: past 370 s seven minutes
   # after the last write, with the subscription replicating), so an alert on
-  # it would fire on every quiet database. SpockSubscriptionLag reads
-  # spock_subscription_lag_seconds, which nothing produces until a lag signal
-  # that stays near zero on an idle database is chosen (rules/spock.yml).
+  # it would fire on every quiet database. The replication backlog is
+  # pg_stat_replication (below), at the provider: SpockSlotWALSenderLag.
   query: |
     SELECT
       current_database() AS datname,

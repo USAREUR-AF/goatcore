@@ -1,0 +1,11 @@
+site_id: alpha
+site_dns_zone: z.test
+has_obs_host: false
+app_enabled: true
+sandbox_enabled: true
+isitup_services:
+  - id: core
+    fqdn: "core.{{ site_id }}.{{ site_dns_zone }}"
+    container: core
+    port: 80
+    health_path: /healthz

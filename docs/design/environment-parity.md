@@ -160,7 +160,7 @@ lists its own goatnets and carries the generated `pins.yml` files.
 
 | Guard | What it asserts | How it covers a new environment |
 |---|---|---|
-| `ops/ci/check-site-config-bleed.sh` | No site's literals (zones, mesh addresses) appear in shared templates | The literal set is derived from every environment's own `group_vars` (`--list` prints it) |
+| `ops/ci/check-site-config-bleed.sh` | No site's literals (zones, mesh addresses) appear in shared templates | The literal set is derived from every environment's own `group_vars` (`--list` prints it). An environment repository runs it from its own CI through the reusable workflow `.github/workflows/_site-config-bleed.yml`, giving the goatcore commit it deploys and its group_vars path; `tests/check-site-config-bleed.bats` is the check's own suite here |
 | `ops/ci/check-env-coverage.sh` | Every `provider "aws"` block in every terraform tree sets `allowed_account_ids`; every guard claiming full-tree coverage declares an `# env-discovery:` glob that expands to every `group_vars/<env>/` dir, and is wired into a workflow | Trees and env dirs are discovered, never listed |
 | `ops/ci/check-service-config-parity.py` | For every role deployed on two or more goatnets, a key one declares is declared by the others **where omitting it lands on a fail-open default** (`""`, `false`, `off`, or another environment's name) | Goatnets and roles are discovered from the tree |
 | `ops/ci/check-group-vars-parity.sh` | Pairs of keys duplicated because two roles deploy one mechanism hold the same value | Reads every env dir |
@@ -398,7 +398,7 @@ day.
 | Mechanism | Where | Status |
 |---|---|---|
 | Fleet pin table, generator, `--check` | `ops/pins/fleet-pins.yaml`, `ops/pins/generate-pins.py` | Built |
-| Self-extending guards | `ops/ci/check-env-coverage.sh`, `ops/ci/check-site-config-bleed.sh` | Built |
+| Self-extending guards | `ops/ci/check-env-coverage.sh`, `ops/ci/check-site-config-bleed.sh` | Built. The bleed check's reusable workflow for an environment repository's CI (`.github/workflows/_site-config-bleed.yml`) is built; an environment repository calling it is not built |
 | Service-config parity gate | `ops/ci/check-service-config-parity.py` + waivers ratchet | Built |
 | Stage 1 intent report | `ops/pins/report.py`, `ops/scripts/parity-report.sh`, `ops/pins/parity-capabilities.yaml` | Built |
 | Typed intent artifact | `ops/consistency/intent/<goatnet>/intent.json` (per overlay) | Built |

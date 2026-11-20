@@ -97,13 +97,36 @@ fn ask_with(repo: &Path, args: &[&str], probe: bool) -> Option<(i32, String)> {
     Some((out.status.code().unwrap_or(2), String::from_utf8_lossy(&out.stdout).to_string()))
 }
 
-/// Every variable name with a value or a reference under the declared posture.
-/// Falls back to the plain environment when the posture module cannot run.
-pub fn available(repo: &Path) -> HashSet<String> {
-    match ask(repo, &["available"]) {
-        Some((0, text)) => text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
-        _ => std::env::vars().filter(|(_, v)| !v.is_empty()).map(|(k, _)| k).collect(),
+/// Which of `names` have a value or a reference under the declared posture. An
+/// alternative `A|B` is answered for each of its names. Falls back to the plain
+/// environment when the posture module cannot run.
+///
+/// Only the caller's names are asked for: a run keeps each probe's output in its
+/// record (logs/NNN-probe.log), and a probe that listed every variable put the
+/// name of each one on the machine there. No names asks nothing.
+pub fn available(repo: &Path, names: &[String]) -> HashSet<String> {
+    if names.is_empty() {
+        return HashSet::new();
     }
+    let mut args = vec!["available"];
+    args.extend(names.iter().map(String::as_str));
+    match ask(repo, &args) {
+        Some((0, text)) => text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
+        _ => available_in(names, std::env::vars()),
+    }
+}
+
+/// The presence probe [`available`] starts for `names`: what a dry run prints.
+pub fn available_cmd(repo: &Path, names: &[String]) -> Cmd {
+    let mut args = vec!["available"];
+    args.extend(names.iter().map(String::as_str));
+    posture_cmd(repo, &args)
+}
+
+/// Of `names` (alternatives `A|B` split), those `vars` holds with a value.
+fn available_in(names: &[String], vars: impl Iterator<Item = (String, String)>) -> HashSet<String> {
+    let asked: HashSet<&str> = names.iter().flat_map(|n| n.split('|')).filter(|n| !n.is_empty()).collect();
+    vars.filter(|(k, v)| !v.is_empty() && asked.contains(k.as_str())).map(|(k, _)| k).collect()
 }
 
 /// The store in force: `1password`, `openbao`, `sops`, `env-file`, `env`, or
@@ -229,6 +252,22 @@ mod tests {
         let lite: Vec<_> = c.get_envs().filter(|(k, _)| *k == "GOAT_LITE_CONFIG").map(|(_, v)| v.map(|v| v.to_string_lossy().to_string())).collect();
         assert_eq!(lite, vec![Some("/nonexistent/goatlite.yaml".to_string())]);
         assert_ne!(std::env::var("GOAT_LITE_CONFIG").ok().as_deref(), Some("/nonexistent/goatlite.yaml"));
+    }
+
+    /// A run keeps each probe's output in its record (logs/NNN-probe.log), so the
+    /// presence probe asks for the names its caller reads and nothing else: the
+    /// command names them, and the answer holds only those of them that are set.
+    #[test]
+    fn the_presence_probe_asks_only_for_the_names_its_caller_reads() {
+        let names = vec!["ALPHA_PG_PASS".to_string(), "GH_TOKEN|GHCR_READ_TOKEN".to_string()];
+        let line = available_cmd(&repo(), &names).line();
+        assert!(line.ends_with("available ALPHA_PG_PASS 'GH_TOKEN|GHCR_READ_TOKEN'"), "{line}");
+        let vars = [("ALPHA_PG_PASS", "x"), ("GHCR_READ_TOKEN", "y"), ("ZZ_UNASKED", "z"), ("GH_TOKEN", "")];
+        let got = available_in(&names, vars.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+        let mut got: Vec<_> = got.into_iter().collect();
+        got.sort();
+        assert_eq!(got, vec!["ALPHA_PG_PASS", "GHCR_READ_TOKEN"], "the fallback answers for the asked names only, and an empty value is not one");
+        assert!(available_cmd(&repo(), &[]).line().ends_with("available"), "no names: the operator's own listing");
     }
 
     /// goat's declared store, not a learner's: a goatlite.yaml at the checkout root
