@@ -78,3 +78,12 @@ def test_publish_step_passes_the_output_on():
     assert publish[0]["with"]["prerelease"] == "${{ steps.kind.outputs.prerelease }}"
     steps = _release_steps()
     assert steps.index(_kind_step()) < steps.index(publish[0]), "kind runs before the publish step"
+
+
+if __name__ == "__main__":
+    # Run as a script by coupled-fact-guards.yml; pytest collects the same tests.
+    tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith("test_") and callable(fn)]
+    for name, fn in tests:
+        fn()
+        print(f"  ok    {name}")
+    print(f"  {len(tests)} passed, 0 failed")
