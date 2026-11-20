@@ -31,7 +31,7 @@
 #     extension in each replicated DB. Role creation + Spock subscriptions
 #     are driven by Ansible at runtime, not baked into the image.
 
-FROM ghcr.io/pgedge/pgedge-postgres:16-spock5-minimal@sha256:676baa1c1b2234eced313d3bb9a4cb768bf217d90885b03eaf3d27fc283abac6
+FROM ghcr.io/pgedge/pgedge-postgres:16-spock5-minimal@sha256:21f5d0fcf1a310924d413a0f1af5fd3810659b0abc8500a522298fab5e807515
 
 # Baked config lives at /etc/postgresql/. The upstream entrypoint doesn't use
 # this path by default — docker-compose passes `-c config_file=...` so this
