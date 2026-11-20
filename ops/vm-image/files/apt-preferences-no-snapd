@@ -1,0 +1,8 @@
+# Installed by ops/vm-image/build.sh as /etc/apt/preferences.d/goatlite-no-snapd.
+# The goatlite image carries no snapd: nothing a goatlite runs is a snap, and snapd
+# asks the snap store on its own from the first boot. A negative priority stops any
+# later apt run (phase 2 upgrades every standup) from installing it again.
+# Remove this file to install snapd on purpose.
+Package: snapd
+Pin: release a=*
+Pin-Priority: -1
