@@ -25,23 +25,13 @@ groups:
     interval: 30s
     rules:
 
-      # Replication lag — any subscription lagging > 60s. NOT FED:
-      # nothing produces spock_subscription_lag_seconds. Spock 5's lag
-      # (spock.lag_tracker) is the time since the last change arrived and
-      # grows without end on an idle database, so it is not exported as this
-      # series; see spock_subscription_lag in
-      # monitoring/postgres-exporter-queries.yml. Provider-side backlog is
-      # SpockSlotWALSenderLag.
-      - alert: SpockSubscriptionLag
-        expr: spock_subscription_lag_seconds > 60
-        for: 2m
-        labels:
-          severity: warning
-          component: spock
-        annotations:
-          summary: "Spock subscription {{ $labels.subscription_name }} ({{ $labels.datname }}) at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} lagging >60s for 2m"
-          description: "Replication replay lag exceeds 60s. Check network path to provider, provider WAL senders, and subscriber apply worker. Sustained lag past a few minutes can cascade into slot-retention issues."
-          runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+      # No subscriber-side lag alert. Spock 5's sub_show_status() has no lag
+      # column, and spock.lag_tracker's lag is the time since the last change
+      # arrived: it grows without end on a database nobody writes to (measured
+      # past 370 s seven minutes after the last write, subscriptions
+      # replicating), so an alert on it would fire on every quiet database.
+      # The replication backlog is measured at the provider instead:
+      # SpockSlotWALSenderLag (pg_stat_replication_pending_bytes), below.
 
 
       # Slot invalidated — urgent, rebuild required. Metric comes
@@ -89,8 +79,8 @@ groups:
       # Block 52A.1 — subscription stuck in non-replicating state.
       # spock.sub_show_status() exposes status as one of:
       #   replicating | initializing | down | unknown
-      # Lag-based alerts go quiet when status != 'replicating' (lag
-      # column is 0 / NULL), so a silent halt won't fire SpockSubscriptionLag.
+      # A halted subscription sends no backlog, so the provider-side
+      # SpockSlotWALSenderLag stays quiet when status != 'replicating'.
       # This alert closes that gap. spock_subscription_lag_replicating is
       # the 0/1 gauge from the spock_subscription_lag custom query, one
       # series per subscription in each replicated database (datname).

@@ -45,7 +45,7 @@ Every summary names its site. The mgmt host's Prometheus sets `site` as an exter
 
 | Alert | Severity | Fires when | Status |
 |---|---|---|---|
-| `SpockSubscriptionLag` | warning | `spock_subscription_lag_seconds > 60` for 2m | built, not fed: nothing produces `spock_subscription_lag_seconds`. Spock 5's `sub_show_status()` has no lag column, and `spock.lag_tracker`'s lag is the time since the last change arrived, which grows without end on an idle database (measured past 370 s seven minutes after the last write, subscription replicating). It is not exported until a lag signal that stays near zero when idle is chosen; provider-side backlog is `SpockSlotWALSenderLag` |
+| `SpockSubscriptionLag` | — | removed | removed: it read `spock_subscription_lag_seconds`, which no query produced, so it never fired. Spock 5's `sub_show_status()` has no lag column, and `spock.lag_tracker`'s lag is the time since the last change arrived: it grows without end on an idle database (measured past 370 s seven minutes after the last write, subscriptions replicating). The replication backlog is `SpockSlotWALSenderLag`, at the provider: on an idle two-site mesh its `pending_bytes` read 0 and the WAL senders' `replay_lag` 0 or NULL (measured over four minutes) |
 | `SpockSlotInvalidated` | critical | `pg_replication_slot_wal_status_lost == 1` for 1m | shipped |
 | `SpockSlotWALNearLimit` | critical | `pg_replication_slot_retained_wal_bytes` > 80% of its own Postgres's `spock_config_max_slot_wal_keep_size_bytes` (the live cap, matched on `instance`) for 5m (was divided by `spock_max_slot_wal_keep_size_bytes`, a series the exporter never emitted, so it never fired) | shipped, fixed; measured by its promtool unit test (`monitoring/tests/spock-slot-wal-near-limit.test.yml`) |
 | `SpockConflictLogged` | warning | `increase(spock_resolutions_total[5m]) > 0`, one series per replicated database (`datname`) (was `spock_conflict_log_total`, a metric that never existed: F-574) | built: the mgmt host's postgres-exporter counts `spock.resolutions` in every database Spock replicates (the observability role's `pg_monitoring_spock_databases`: the Spock mesh's databases, and Ory's when Ory replicates). Until 2026-11-14 it read only the `postgres` database, which has no spock schema, so the metric was never exported there. Proven by `ops/postgres/spock/tests/exporter-every-database/run.sh` (a real conflict in kratos counted, CI `postgres-spock.yml`) and `ops/compose/goat-obs/prometheus/tests/spock-every-database.test.yml` (promtool) |
@@ -89,10 +89,9 @@ Two gaps closed by the tactical pack:
 
 ### 3.5 Inhibition
 
-Add two inhibition rules in [`alertmanager.yml.j2`](../../ops/ansible/roles/observability/templates/alertmanager.yml.j2):
+The inhibition rule in [`alertmanager.yml.j2`](../../ops/ansible/roles/observability/templates/alertmanager.yml.j2):
 
 - `SpockSlotInvalidated` suppresses `SpockSlotInactive` (same `slot_name`) — invalidated slots are necessarily inactive; one alert is enough.
-- `SpockSubscriptionNotReplicating` suppresses `SpockSubscriptionLag` (same `subscription_name`) — lag is meaningless when the subscription isn't replicating.
 
 ## 4. Metric inventory
 
@@ -117,7 +116,7 @@ A site that was partitioned for >5 min enters **rejoin-incident** state. Operato
 
 The loop is intentionally explicit and cumulative — declare convergence *only* after every check passes:
 
-1. **L1 caught up** — `spock_subscription_lag_seconds` < 5s on every subscription, both directions, for 2 consecutive minutes (the `SpockSubscriptionLag` alert clearing isn't sufficient — it has a 2m `for:` clause, can flap).
+1. **L1 caught up** — every subscription reads `replicating`, and at each provider every Spock WAL sender has `pg_stat_replication_pending_bytes` 0 and `pg_stat_replication_replay_lag_seconds` < 5, both directions, for 2 consecutive minutes. Not `spock.lag_tracker`'s lag: it is the time since the last change arrived and grows on an idle database.
 2. **No invalidated slots** — `pg_replication_slot_wal_status_lost` == 0 across all sites. If non-zero, the runbook routes into `pg_basebackup` rebuild before re-attempting convergence.
 3. **Conflicts triaged** — every row added to `spock.resolutions` and `spock.exception_log` during the partition window is human-reviewed; LWW winner confirmed correct or compensating write applied; `goat_revocation_sweep()` returns 0 on every site (ADR 1193).
 4. **L2a clean** — manual ACE drift-watch run (`spock-ace-drift-watch.sh --once --verbose`) shows zero diff rows on the canonical Ory + netbird tables.

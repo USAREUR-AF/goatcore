@@ -43,13 +43,6 @@ inhibit_rules:
       - component = "spock"
     equal: ["site"]
 
-  # Slot invalidated suppresses lag alerts for the same subscription.
-  - source_matchers:
-      - alertname = "SpockSlotInvalidated"
-    target_matchers:
-      - alertname = "SpockSubscriptionLag"
-    equal: ["site", "subscription_name"]
-
   # SignalServerDown suppresses downstream signal-server alerts on
   # the same instance.
   - source_matchers:
