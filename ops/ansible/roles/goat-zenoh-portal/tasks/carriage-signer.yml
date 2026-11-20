@@ -26,7 +26,8 @@
       and PORTAL_CARRIAGE_SIGNER_CERT_PEM
       ({{ 'set' if _portal_carriage_cert_set | bool else 'MISSING' }}{{ '' if (_portal_carriage_cert_ok | bool) or not (_portal_carriage_cert_set | bool) else ', not a PEM certificate' }})
       must both be set{{ ' (portal_carriage_enabled is true)' if portal_carriage_enabled | bool else '' }}.
-      Resolve them from the goatnet's references with ops/scripts/with-secrets.
+      The goatnet overlay sets portal_carriage_signer_key_pem / _cert_pem from its own
+      prefixed environment names; resolve them from its references with ops/scripts/with-secrets.
     quiet: true
 
 - name: Carriage | say so when the signer is not configured

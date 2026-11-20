@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1000 variables, 145 of them secret-bearing by name.
+# 998 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 145 variables.
+# 144 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -338,9 +338,6 @@ export PAGERDUTY_INTEGRATION_KEY_EU=""  # SECRET
 # ops/ansible/group_vars/all.yml, ops/scripts/node-seed.py
 export PLATFORM_ADMIN_SSH_PUBKEYS=""  # SECRET
 
-# ops/ansible/roles/goat-zenoh-portal/defaults/main.yml
-export PORTAL_CARRIAGE_SIGNER_KEY_PEM=""  # SECRET
-
 # ops/scripts/create-decode-health-identity.sh, ops/scripts/create-provenance-guard-identity.sh
 export PORTAL_KEYS_DIR=""  # SECRET
 
@@ -469,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 855 variables.
+# 854 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2292,9 +2289,6 @@ export PLUGIN_DIR=""
 
 # ops/ci/check-topic-decode-health.py
 export PORTAL_BASE_URL=""
-
-# ops/ansible/roles/goat-zenoh-portal/defaults/main.yml
-export PORTAL_CARRIAGE_SIGNER_CERT_PEM=""
 
 # ops/goat-zenoh-portal/cmd/store-migrate/main.go
 export PORTAL_DB=""
