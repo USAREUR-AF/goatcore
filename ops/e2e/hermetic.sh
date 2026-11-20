@@ -50,6 +50,9 @@ esac
 # Before anything is created or invoked: a run with hosts changes this machine.
 # shellcheck source=ops/e2e/system.sh
 . "$HERE/system.sh"
+# A build handed the runner's mirror retries once without it if the mirror dies mid-install.
+# shellcheck source=ops/ci/docker-build-mirror-fallback.sh
+. "$REPO/ops/ci/docker-build-mirror-fallback.sh"
 sys_guard "$HOSTS" "$THROWAWAY" || exit 2
 if [ "$HOSTS" = 1 ]; then sys_sudo_ready || exit 2; fi
 [ -n "$WORK" ] || WORK="$(mktemp -d "${TMPDIR:-/tmp}/goat-e2e.XXXXXX")"
@@ -161,7 +164,7 @@ if [ "$HOSTS" = 1 ]; then
   HOT_DIGEST="$(build_push sha-$HOT1 hotfix)"
   HOT2_DIGEST="$(build_push sha-$HOT2 hotfix2)"
   say "hosts: three containers that look like management hosts"
-  docker build -q --build-arg UBUNTU_MIRROR="${UBUNTU_MIRROR:-}" -f "$HERE/host/$HOST_DOCKERFILE" -t e2e-host "$HERE/host" >/dev/null
+  build_with_mirror_fallback -q -f "$HERE/host/$HOST_DOCKERFILE" -t e2e-host "$HERE/host" >/dev/null
   for h in dev preprod prod; do
     docker run -d --name "e2e-$h-01" --hostname "e2e-$h-01" --network e2e-net --add-host ghcr.io:host-gateway \
       -v /var/run/docker.sock:/var/run/docker.sock -v "$SSH_KEY.pub:/pubkey:ro" e2e-host >/dev/null

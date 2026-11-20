@@ -23,7 +23,6 @@
 #   - The base file (this) covers the mgmt-plane minimum.
 #   - Optional overlays (compose with -f base -f <overlay>):
 #       docker-compose.obs.yml         — Phase 4 observability (Prom + Alertmanager)
-#       docker-compose.pgbackrest.yml  — Phase 5 paired-stanza backups
 #       docker-compose.admit-audit.yml — Phase 6 admit-audit sidecar
 #       docker-compose.ory.yml         — Block 21C Kratos + Hydra
 #       docker-compose.phase2.yml      — Phase 2 multi-master one-host validation

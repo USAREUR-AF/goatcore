@@ -38,6 +38,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# A build handed the runner's mirror retries once without it if the mirror dies mid-install.
+# shellcheck source=ops/ci/docker-build-mirror-fallback.sh
+. "$ROOT/ops/ci/docker-build-mirror-fallback.sh"
 KEEP=0
 [ "${1:-}" = "--keep" ] && KEEP=1
 P="hfw-role-$$"
@@ -64,7 +67,7 @@ cleanup() {
 trap cleanup EXIT
 
 log "image"
-docker build --progress=plain --build-arg UBUNTU_MIRROR="${UBUNTU_MIRROR:-}" -t "$IMG" - <<'DOCKERFILE' || fail "building the test image"
+build_with_mirror_fallback --progress=plain -t "$IMG" - <<'DOCKERFILE' || fail "building the test image"
 FROM ubuntu:24.04
 ARG UBUNTU_MIRROR=
 # CI passes the runner's Ubuntu mirror (.github/actions/apt-failover); unset, the image's sources stay.
