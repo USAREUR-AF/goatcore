@@ -40,7 +40,7 @@ PORT="${LAB_SSH_PORT:-2321}"; NAME="${LAB_NAME:-zsaas}"; STEP_TIMEOUT="${LAB_STE
 GB_FLAGS="${LAB_GOATBUILDER_FLAGS---offline}"
 UBUNTU_BASE="${UBUNTU_BASE:-https://cloud-images.ubuntu.com/releases/24.04/release}"
 UBUNTU_IMG=ubuntu-24.04-server-cloudimg-amd64.img
-LAPTOP_MAC_UP=52:54:00:00:01:01; LAPTOP_MAC_LAN=52:54:00:00:01:02; BOX_MAC_LAN=52:54:00:00:02:02
+LAPTOP_MAC_UP=52:54:00:00:01:01; LAPTOP_MAC_LAN=52:54:00:00:01:02; BOX_MAC_LAN=52:54:00:00:02:02  # opsec-allow: synthetic QEMU NIC address the lab assigns to its own VM
 LAB_NETS="10.88.0.0/24,fd88::/64,10.0.2.0/24,fec0::/64"
 die() { echo "lab: $*" >&2; exit 2; }
 say() { printf '\n=== [%s] %s ===\n' "$(date -u +%H:%M:%SZ)" "$*"; }

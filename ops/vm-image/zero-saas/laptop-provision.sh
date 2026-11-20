@@ -79,11 +79,11 @@ network:
   version: 2
   ethernets:
     up:
-      match: {macaddress: "52:54:00:00:01:01"}
+      match: {macaddress: "52:54:00:00:01:01"}  # opsec-allow: synthetic QEMU NIC address the lab assigns to its own VM
       addresses: [10.0.2.15/24, "fec0::15/64"]
       routes: [{to: default, via: 10.0.2.2}, {to: "::/0", via: "fec0::2"}]
     lan:
-      match: {macaddress: "52:54:00:00:01:02"}
+      match: {macaddress: "52:54:00:00:01:02"}  # opsec-allow: synthetic QEMU NIC address the lab assigns to its own VM
       addresses: [10.88.0.1/24, "fd88::1/64"]
       nameservers: {addresses: [10.88.0.2]}
 EOF
