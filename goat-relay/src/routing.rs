@@ -238,9 +238,27 @@ impl SubscriptionIndex {
     }
 }
 
+/// Registered connection entry in `RoutingState::connections`.
+///
+/// Pairs the writer MPSC handle with a monotonically increasing session
+/// generation assigned under `connections.write()`. Teardown paths
+/// (`remove_self` and dead-writer eviction) record the generation they
+/// removed and refuse to wipe `peer_stats` or `subscribers` if a newer
+/// generation has already been inserted on another shard in the window
+/// after `connections.write()` drops.
+#[derive(Clone)]
+struct PeerEntry {
+    handle: ConnHandle,
+    generation: u64,
+}
+
 struct RoutingState {
-    connections: RwLock<HashMap<PeerId, ConnHandle>>,
+    connections: RwLock<HashMap<PeerId, PeerEntry>>,
     subscribers: RwLock<SubscriptionIndex>,
+    /// Monotonic session generation counter; incremented under
+    /// `connections.write()` on every `insert` so generation order matches
+    /// connection registration order across shards.
+    next_generation: AtomicU64,
     /// Subjects refused because the subscriber was already watching
     /// [`MAX_SUBSCRIPTIONS_PER_PEER`] peers. Lifetime, relaxed.
     subscriptions_refused: AtomicU64,
@@ -275,6 +293,7 @@ impl Default for RoutingState {
         Self {
             connections: RwLock::default(),
             subscribers: RwLock::default(),
+            next_generation: AtomicU64::new(1),
             subscriptions_refused: AtomicU64::new(0),
             drops: DropCounters::default(),
             // Counting ON by default preserves the merged behavior + the unit
@@ -352,6 +371,9 @@ struct PeerCounters {
     /// question that was un-answerable from socket tables / auth-count
     /// history is now a first-class, per-peer, empirically-read field.
     transport: AtomicU8,
+    /// Highest session generation that has registered this counter row, so a
+    /// stale cross-shard teardown cannot delete a newer session's row.
+    generation: AtomicU64,
 }
 
 /// Which transport a peer's relay connection rides. The relay knows this at
@@ -450,23 +472,32 @@ impl RoutingTable {
     /// previous handle is returned. Caller MUST drop it — the prior
     /// writer task will see its receiver close and exit naturally.
     pub fn insert(&self, peer_id: PeerId, handle: ConnHandle) -> Option<ConnHandle> {
-        let prior = self
-            .inner
-            .connections
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(peer_id, handle);
+        let (prior, generation) = {
+            let mut conns = self
+                .inner
+                .connections
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            let generation = self.inner.next_generation.fetch_add(1, Ordering::Relaxed);
+            let prior = conns
+                .insert(peer_id, PeerEntry { handle, generation })
+                .map(|entry| entry.handle);
+            (prior, generation)
+        };
         // Ensure a per-peer counter entry exists so the dispatch hot path
         // is read-lock-only (ADR 1055 §2b). `or_default` keeps counts across
         // a fast reconnect (insert before the prior connection's remove), so
         // a flapping producer's cumulative push stays visible; a full
         // disconnect (`remove`/`remove_self`) drops the entry.
-        self.inner
-            .peer_stats
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .entry(peer_id)
-            .or_default();
+        {
+            let mut stats = self
+                .inner
+                .peer_stats
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            let counters = stats.entry(peer_id).or_default();
+            counters.generation.fetch_max(generation, Ordering::Relaxed);
+        }
         // Snapshot the subscriber set under the read lock, drop, then
         // fan out — forward() takes its own locks.
         let subs = self
@@ -514,13 +545,15 @@ impl RoutingTable {
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .remove(peer_id);
-        self.deregister_peer_subscriptions(peer_id);
+        self.deregister_peer_subscriptions(peer_id, None);
     }
 
     /// Identity-aware deregister — the correct teardown for a
     /// connection handler's exit path. Removes `peer_id`'s entry and runs
     /// the offline fan-out + subscription teardown ONLY if the currently-
-    /// registered handle is still `mine` (this connection's writer).
+    /// registered handle is still `mine` (this connection's writer), and
+    /// guards subsequent `peer_stats` and `subscribers` cleanup against a
+    /// cross-shard reconnect arriving after `connections.write()` releases.
     ///
     /// If the peer has already reconnected, a newer handle owns the entry,
     /// so this stale teardown is a complete no-op: it does not evict the
@@ -532,49 +565,86 @@ impl RoutingTable {
     /// (~45s) before exiting — poisons the new session, which is why
     /// `netbird down/up` sometimes fails to restore connectivity.
     pub fn remove_self(&self, peer_id: &PeerId, mine: &ConnHandle) {
-        {
+        let removed_gen = {
             let mut conns = self
                 .inner
                 .connections
                 .write()
                 .unwrap_or_else(|e| e.into_inner());
             match conns.get(peer_id) {
-                Some(current) if current.same_channel(mine) => {
+                Some(current) if current.handle.same_channel(mine) => {
+                    let generation = current.generation;
                     conns.remove(peer_id);
+                    generation
                 }
                 // Superseded by a reconnect, or already gone: leave the
                 // live entry, its subscribers, and the Online notification
                 // intact.
                 _ => return,
             }
+        };
+        self.finish_session_teardown(peer_id, removed_gen);
+    }
+
+    /// Guarded cleanup of `peer_stats` and `subscribers` for a session whose
+    /// `connections` entry had `removed_gen`. Lock order matches `subscribe`:
+    /// outer `{peer_stats | subscribers}.write()` → inner `connections.read()`.
+    fn finish_session_teardown(&self, peer_id: &PeerId, removed_gen: u64) {
+        {
+            let mut stats = self
+                .inner
+                .peer_stats
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            let conn_map = self
+                .inner
+                .connections
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
+            let superseded_in_conns = conn_map
+                .get(peer_id)
+                .is_some_and(|cur| cur.generation > removed_gen);
+            if !superseded_in_conns
+                && stats
+                    .get(peer_id)
+                    .is_some_and(|c| c.generation.load(Ordering::Relaxed) <= removed_gen)
+            {
+                stats.remove(peer_id);
+            }
         }
-        // Identity matched → this connection genuinely owned the entry, so
-        // drop its per-peer counters too. The superseded branch above
-        // returned early, leaving the fresh session's counters intact
-        //.
-        self.inner
-            .peer_stats
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(peer_id);
-        self.deregister_peer_subscriptions(peer_id);
+        self.deregister_peer_subscriptions(peer_id, Some(removed_gen));
     }
 
     /// Strip a leaving peer from the subscription registry and notify its
-    /// subscribers it went offline. Shared by [`RoutingTable::remove`] and
-    /// [`RoutingTable::remove_self`]; the connection-entry removal is the
-    /// caller's responsibility (so `remove_self` can guard it on identity).
-    fn deregister_peer_subscriptions(&self, peer_id: &PeerId) {
+    /// subscribers it went offline. When `removed_gen` is `Some(g)`, skips
+    /// cleanup if a newer connection generation (`> g`) has registered in
+    /// `connections` before `subscribers.write()` was acquired.
+    fn deregister_peer_subscriptions(&self, peer_id: &PeerId, removed_gen: Option<u64>) {
         // Drop this peer from the subject sets it watched, and take the set
         // of peers watching IT for the offline fan-out (see
         // SubscriptionIndex::remove_peer). Cost is proportional to this
         // peer's own subscriptions, not to the size of the registry.
-        let subs = self
-            .inner
-            .subscribers
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove_peer(peer_id);
+        let subs = {
+            let mut subs_map = self
+                .inner
+                .subscribers
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(generation) = removed_gen {
+                let conn_map = self
+                    .inner
+                    .connections
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner());
+                if conn_map
+                    .get(peer_id)
+                    .is_some_and(|cur| cur.generation > generation)
+                {
+                    return;
+                }
+            }
+            subs_map.remove_peer(peer_id)
+        };
         let Some(subs) = subs else { return };
         let frame = match marshal_peer_list(PeerListKind::Offline, &[*peer_id]) {
             Ok(v) => Bytes::from(v),
@@ -707,18 +777,18 @@ impl RoutingTable {
     /// deregister contention; bounded write-lock acquisitions only on
     /// auto-deregister of a closed-receiver entry.
     pub fn forward(&self, dest: &PeerId, frame: Frame) -> Result<(), ForwardError> {
-        let handle = self
+        let entry = self
             .inner
             .connections
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .get(dest)
             .cloned();
-        let Some(handle) = handle else {
+        let Some(entry) = entry else {
             self.inner.drops.peer_not_found.fetch_add(1, Ordering::Relaxed);
             return Err(ForwardError::PeerNotFound);
         };
-        match handle.try_send(frame) {
+        match entry.handle.try_send(frame) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.inner.drops.writer_full.fetch_add(1, Ordering::Relaxed);
@@ -734,31 +804,27 @@ impl RoutingTable {
                 // fresh handle; removing it here on the strength of the
                 // OLD handle being closed is the same identity-blind race
                 // as F-218 (would evict a live reconnected session).
-                let removed = {
+                let removed_gen = {
                     let mut conns = self
                         .inner
                         .connections
                         .write()
                         .unwrap_or_else(|e| e.into_inner());
-                    if conns.get(dest).is_some_and(|cur| cur.same_channel(&handle)) {
-                        conns.remove(dest);
-                        true
-                    } else {
-                        false
+                    match conns.get(dest) {
+                        Some(cur) if cur.handle.same_channel(&entry.handle) => {
+                            let generation = cur.generation;
+                            conns.remove(dest);
+                            Some(generation)
+                        }
+                        _ => None,
                     }
                 };
                 // A dead-writer eviction is a real departure: run the same
-                // teardown `remove_self` would — drop the counters row,
-                // strip the subscription graph, and fan out
-                // `PeersWentOffline` to subscribers. Without this the
-                // eviction was SILENT: subscribers kept an "online" view of
-                // a peer registered nowhere, and every rendezvous toward it
-                // burned its full 30 s timeout (track netbird-wedge-rca).
-                // The fan-out recurses through `forward()` if a subscriber's
-                // own writer is also dead; termination is guaranteed because
-                // each level removes a distinct peer from `connections`
-                // before recursing, and no lock is held across the fan-out.
-                if removed {
+                // generation-guarded teardown `remove_self` does — drop the
+                // counters row, strip the subscription graph, and fan out
+                // `PeersWentOffline` to subscribers unless a newer reconnect
+                // generation has already registered on another shard.
+                if let Some(removed_gen) = removed_gen {
                     // Loud on purpose (and bounded — at most once per dead
                     // connection): a dead-writer eviction is the exact
                     // event whose silence cost a months-long wedge hunt
@@ -766,12 +832,7 @@ impl RoutingTable {
                     eprintln!(
                         "routing: evicted {dest:?} — writer dead; deregistering + notifying subscribers offline"
                     );
-                    self.inner
-                        .peer_stats
-                        .write()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(dest);
-                    self.deregister_peer_subscriptions(dest);
+                    self.finish_session_teardown(dest, removed_gen);
                 }
                 Err(ForwardError::WriterClosed)
             }
@@ -1678,5 +1739,206 @@ mod tests {
         // Re-subscribe — second immediate-Online per current impl
         table.subscribe(subscriber, &[subject]);
         expect_peer_list_frame(&mut sub_rx, PeerListKind::Online, &[subject]);
+    }
+
+    #[test]
+    fn cross_shard_reconnect_during_remove_self_preserves_new_session() {
+        use goat_relay_protocol::messages::peer_state::parse_peer_list;
+
+        // Reproduce the multi-shard race where shard A removes an expiring
+        // connection via `remove_self` while shard B concurrently accepts a
+        // reconnect for the same `PeerId`, tags its transport, and subscribes,
+        // under realistic `forward_data` read-lock load on `peer_stats`.
+        let table = RoutingTable::new();
+        let bg_src = peer(0x90);
+        let bg_dst = peer(0x91);
+        let (bg_src_tx, _bg_src_rx) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+        let (bg_dst_tx, mut bg_dst_rx) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+        table.insert(bg_src, bg_src_tx);
+        table.insert(bg_dst, bg_dst_tx);
+
+        let done = AtomicBool::new(false);
+        let rounds = 1_000usize;
+
+        std::thread::scope(|s| {
+            // Background shard forwarding data frames (takes `peer_stats.read()`),
+            // widening the gap between `connections.write()` and `peer_stats.write()`
+            // in `remove_self` just as live relay traffic does.
+            let bg_table = table.clone();
+            let done_ref = &done;
+            s.spawn(move || {
+                let payload = Bytes::from_static(b"data");
+                while !done_ref.load(Ordering::Relaxed) {
+                    let _ = bg_table.forward_data(&bg_src, &bg_dst, payload.clone());
+                    let _ = bg_dst_rx.try_recv();
+                }
+            });
+
+            for round in 0..rounds {
+                let flapper = peer(0x42);
+                let observer = peer(0x43);
+                let watched_target = peer(0x44);
+
+                let (obs_tx, mut obs_rx) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+                table.insert(observer, obs_tx);
+                table.subscribe(observer, &[flapper]);
+
+                let (tx_a, _rx_a) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+                let tx_a_dereg = tx_a.clone();
+                table.insert(flapper, tx_a);
+                let _ = obs_rx.try_recv(); // initial Online
+
+                let (tx_b, mut rx_b) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+                let shard_a = table.clone();
+                let shard_b = table.clone();
+                let go = AtomicBool::new(false);
+                let go_ref = &go;
+
+                std::thread::scope(|inner| {
+                    inner.spawn(move || {
+                        while !go_ref.load(Ordering::Acquire) {
+                            std::hint::spin_loop();
+                        }
+                        shard_a.remove_self(&flapper, &tx_a_dereg);
+                    });
+                    inner.spawn(move || {
+                        go_ref.store(true, Ordering::Release);
+                        let _ = shard_b.insert(flapper, tx_b);
+                        shard_b.set_transport(&flapper, Transport::Quic);
+                        shard_b.subscribe(flapper, &[watched_target]);
+                    });
+                });
+
+                let st = stats_of(&table, &flapper).unwrap_or_else(|| {
+                    done.store(true, Ordering::Relaxed);
+                    panic!("round {round}: peer_stats row wiped by stale remove_self")
+                });
+                if st.transport != Transport::Quic {
+                    done.store(true, Ordering::Relaxed);
+                    panic!("round {round}: transport tag wiped by stale remove_self");
+                }
+
+                let (target_tx, _target_rx) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+                table.insert(watched_target, target_tx);
+                if rx_b.try_recv().is_err() {
+                    done.store(true, Ordering::Relaxed);
+                    panic!(
+                        "round {round}: flapper's new subscription was stripped by stale remove_self"
+                    );
+                }
+
+                let mut events = Vec::new();
+                while let Ok(frame) = obs_rx.try_recv() {
+                    let (kind, _) = parse_peer_list(&frame).expect("peer list");
+                    events.push(kind);
+                }
+                if events == vec![PeerListKind::Online, PeerListKind::Offline] {
+                    done.store(true, Ordering::Relaxed);
+                    panic!(
+                        "round {round}: observer received Online(tx_b) followed by spurious Offline(tx_a)"
+                    );
+                }
+
+                table.remove(&flapper);
+                table.remove(&observer);
+                table.remove(&watched_target);
+            }
+            done.store(true, Ordering::Relaxed);
+        });
+    }
+
+    #[test]
+    fn cross_shard_reconnect_during_writer_closed_eviction_preserves_new_session() {
+        use goat_relay_protocol::messages::peer_state::parse_peer_list;
+
+        let table = RoutingTable::new();
+        let bg_src = peer(0x92);
+        let bg_dst = peer(0x93);
+        let (bg_src_tx, _bg_src_rx) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+        let (bg_dst_tx, mut bg_dst_rx) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+        table.insert(bg_src, bg_src_tx);
+        table.insert(bg_dst, bg_dst_tx);
+
+        let done = AtomicBool::new(false);
+        std::thread::scope(|s| {
+            let bg_table = table.clone();
+            let done_ref = &done;
+            s.spawn(move || {
+                let payload = Bytes::from_static(b"data");
+                while !done_ref.load(Ordering::Relaxed) {
+                    let _ = bg_table.forward_data(&bg_src, &bg_dst, payload.clone());
+                    let _ = bg_dst_rx.try_recv();
+                }
+            });
+
+            for round in 0..500usize {
+                let flapper = peer(0x52);
+                let observer = peer(0x53);
+                let watched_target = peer(0x54);
+
+                let (obs_tx, mut obs_rx) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+                table.insert(observer, obs_tx);
+                table.subscribe(observer, &[flapper]);
+
+                let (tx_a, rx_a) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+                table.insert(flapper, tx_a);
+                let _ = obs_rx.try_recv();
+                drop(rx_a); // tx_a is now closed; a forward will trigger WriterClosed eviction.
+
+                let (tx_b, mut rx_b) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+                let shard_a = table.clone();
+                let shard_b = table.clone();
+                let go = AtomicBool::new(false);
+                let go_ref = &go;
+
+                std::thread::scope(|inner| {
+                    inner.spawn(move || {
+                        while !go_ref.load(Ordering::Acquire) {
+                            std::hint::spin_loop();
+                        }
+                        let _ = shard_a.forward(&flapper, Bytes::from_static(b"probe"));
+                    });
+                    inner.spawn(move || {
+                        go_ref.store(true, Ordering::Release);
+                        let _ = shard_b.insert(flapper, tx_b);
+                        shard_b.set_transport(&flapper, Transport::Ws);
+                        shard_b.subscribe(flapper, &[watched_target]);
+                    });
+                });
+
+                let st = stats_of(&table, &flapper).unwrap_or_else(|| {
+                    done.store(true, Ordering::Relaxed);
+                    panic!("round {round}: peer_stats row wiped by WriterClosed eviction")
+                });
+                if st.transport != Transport::Ws {
+                    done.store(true, Ordering::Relaxed);
+                    panic!("round {round}: transport tag wiped by WriterClosed eviction");
+                }
+
+                let (target_tx, _target_rx) = mpsc::channel::<Frame>(WRITER_QUEUE_CAPACITY);
+                table.insert(watched_target, target_tx);
+                if rx_b.try_recv().is_err() {
+                    done.store(true, Ordering::Relaxed);
+                    panic!("round {round}: subscription stripped by WriterClosed eviction");
+                }
+
+                let mut events = Vec::new();
+                while let Ok(frame) = obs_rx.try_recv() {
+                    let (kind, _) = parse_peer_list(&frame).expect("peer list");
+                    events.push(kind);
+                }
+                if events == vec![PeerListKind::Online, PeerListKind::Offline] {
+                    done.store(true, Ordering::Relaxed);
+                    panic!(
+                        "round {round}: observer received Online(tx_b) followed by spurious Offline(tx_a)"
+                    );
+                }
+
+                table.remove(&flapper);
+                table.remove(&observer);
+                table.remove(&watched_target);
+            }
+            done.store(true, Ordering::Relaxed);
+        });
     }
 }
