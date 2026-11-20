@@ -898,7 +898,9 @@ http:
 {# External-service routers (ADR 1178). One router per enabled declaration.
    mesh-only-allowlist is the edge's whole gate: identity is the SERVICE's
    business (its own fence verifies the goatnet's tokens — `door` in the
-   declaration says what that fence decides), never this router's. #}
+   declaration says what that fence decides), never this router's — except
+   `door: admit` (ADR 1254), where goat's own sign-in door and admission check
+   are the fence and the backend service above points at them. #}
 {% for _ext_var in (lookup('varnames', '^external_service_', wantlist=True) | sort) %}
 {%   set _ext = lookup('vars', _ext_var) %}
 {#   `tls: partner` renders NO router: those names resolve straight to the
@@ -1136,7 +1138,13 @@ http:
     {{ _ext.traefik_name | default('ext-' ~ _ext.name) }}:
       loadBalancer:
         servers:
+{#     door: admit (ADR 1254) — the router goes to the service's sign-in door, which
+       passes the admitted request on through door-admit-<name> to backend_url. #}
+{%     if (_ext.door | default('')) == 'admit' %}
+          - url: "http://oauth2-proxy-ext-{{ _ext.name }}:4180"
+{%     else %}
           - url: "{{ _ext.backend_url }}"
+{%     endif %}
 {%   endif %}
 {% endfor %}
 

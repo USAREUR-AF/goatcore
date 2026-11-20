@@ -314,7 +314,7 @@ external_service_bn_monitor:
 
 `state=absent` takes both down and deletes the client.
 
-**Status.** The play, the two roles and the check are built and tested. The router switch to the door is a separate change to the mgmt-host Traefik template. Until it lands, the play refuses `door: admit` (`external_service_admit_route_ready`).
+**Status.** The play, the two roles, the check and the router switch are built. For `door: admit`, the mgmt-host Traefik template (`ops/ansible/templates/traefik-acme/mgmt-dynamic.yml.j2`) points the service's router at `oauth2-proxy-ext-<name>:4180`, which passes admitted requests through `door-admit-<name>` to `backend_url`.
 
 **Who gets in depends on the identity data.** The check reads `aff.id` from the ID token. A person whose identity
 records no organization is admitted only by group or e-mail. Recording organizations is done in the console.

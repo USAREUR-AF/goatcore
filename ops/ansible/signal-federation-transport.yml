@@ -133,6 +133,12 @@
         regexp: "^SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS="
         line: "SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS={{ signal_federation_forward_timeout_ms | default(1000) }}"
 
+    - name: Shorten the breaker window for the dual path
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^SIGNAL_FEDERATION_CIRCUIT_OPEN="
+        line: "SIGNAL_FEDERATION_CIRCUIT_OPEN={{ signal_federation_circuit_open | default('3s') }}"
+
     - name: Set the negative-cache TTL (ADR 1081 L2) when declared
       ansible.builtin.lineinfile:
         path: "{{ compose_dir }}/.env"
