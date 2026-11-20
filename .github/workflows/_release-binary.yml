@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: The pusher holds the admin role
@@ -162,7 +162,7 @@ jobs:
         shell: bash
         working-directory: crates
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: ${{ matrix.rust_target }}
@@ -178,7 +178,7 @@ jobs:
       - name: Python for zig (Linux)
         if: matrix.glibc != ''
         id: python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: zig and cargo-zigbuild (Linux), to link against the glibc floor and not the runner's
@@ -284,7 +284,7 @@ jobs:
           echo "$sum  $OUT" > "$OUT.sha256"
           echo "- \`$OUT\` sha256 \`$sum\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.bin }}-${{ matrix.os_label }}-${{ matrix.arch }}
           path: dist/*
@@ -301,7 +301,7 @@ jobs:
       packages: read
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/apt-failover
       - name: docs_asset is named
         env:
@@ -363,7 +363,7 @@ jobs:
             echo "- size $(du -h "dist/$DOCS_ASSET" | cut -f1), sha256 \`$(awk '{print $1}' "dist/$DOCS_ASSET.sha256")\`"
             echo "- index.html present: $(tar tzf "dist/$DOCS_ASSET" | grep -cx './index.html' || true)"
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.bin }}-docs
           path: dist/*
@@ -381,7 +381,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -420,7 +420,7 @@ jobs:
           issuer=(--certificate-oidc-issuer https://token.actions.githubusercontent.com)
           cosign verify-blob --bundle SHA256SUMS.cosign-bundle "${identity[@]}" "${issuer[@]}" SHA256SUMS
           cosign verify-blob --new-bundle-format --bundle SHA256SUMS.sigstore.json "${identity[@]}" "${issuer[@]}" SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.bin }}-checksums
           path: |
@@ -443,17 +443,17 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - run: python3 -m pip install --quiet pyyaml
       # Earlier releases verify the release signature with cosign.
       - uses: sigstore/cosign-installer@v3
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.bin }}-linux-amd64
           path: candidate
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.bin }}-checksums
           path: candidate
@@ -506,8 +506,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true
@@ -531,7 +531,7 @@ jobs:
           esac
           echo "version $version: prerelease=$prerelease"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           prerelease: ${{ steps.kind.outputs.prerelease }}

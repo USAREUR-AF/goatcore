@@ -50,13 +50,13 @@ jobs:
       contents: read
     steps:
       - name: Check out the environment repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: environment
           persist-credentials: false
 
       - name: Check out goatcore at the deployed commit
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.goatcore_repository }}
           ref: ${{ inputs.goatcore_ref }}
