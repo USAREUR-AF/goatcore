@@ -1383,8 +1383,7 @@ fn parse_endpoints(toml_body: &str) -> ProfileEndpoints {
     ProfileEndpoints {
         portal_endpoint: crate::profile::extract_toml_field(toml_body, "portal_endpoint")
             .filter(|value| !value.trim().is_empty()),
-        router_endpoint: crate::profile::extract_toml_field(toml_body, "router_endpoint")
-            .filter(|value| !value.trim().is_empty()),
+        router_endpoint: crate::profile::resolve_router_endpoint(toml_body),
     }
 }
 

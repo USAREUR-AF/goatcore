@@ -9,6 +9,42 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_CONTEXT: &str = "default";
 
+/// A router endpoint given on the command line (`--router`) or in
+/// `$GOAT_ROUTER_ENDPOINT`, set once by `main` before any command runs.
+///
+/// It replaces the context's `router_endpoint` for this one invocation and
+/// changes nothing else: the certificate, key and CA roots still come from
+/// the context. Its use is reaching a goatnet's router through a local port
+/// forward (`env-door.sh <goatnet> --forward <ip:port>`) from a laptop that
+/// is not a peer of that goatnet. Nothing is written to the profile.
+static ROUTER_OVERRIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Record the `--router` / `$GOAT_ROUTER_ENDPOINT` value. Empty is ignored.
+pub fn set_router_override(endpoint: &str) {
+    let endpoint = endpoint.trim();
+    if !endpoint.is_empty() {
+        let _ = ROUTER_OVERRIDE.set(endpoint.to_string());
+    }
+}
+
+/// The `--router` override, when one was given.
+pub fn router_override() -> Option<&'static str> {
+    ROUTER_OVERRIDE.get().map(String::as_str)
+}
+
+/// The router endpoint a command connects to: the `--router` override when
+/// given, else `router_endpoint` read from `toml_body`. Every reader of the
+/// router endpoint goes through this, so the override reaches all of them.
+pub fn resolve_router_endpoint(toml_body: &str) -> Option<String> {
+    pick_router_endpoint(router_override(), toml_body)
+}
+
+fn pick_router_endpoint(over: Option<&str>, toml_body: &str) -> Option<String> {
+    over.map(str::to_string).or_else(|| {
+        extract_toml_field(toml_body, "router_endpoint").filter(|v| !v.trim().is_empty())
+    })
+}
+
 /// Resolve the user's home directory the ONE correct way: `$HOME` on Unix,
 /// falling back to `%USERPROFILE%` on Windows (where `$HOME` is usually
 /// unset). Before this, three call sites each re-implemented this lookup and
@@ -570,7 +606,9 @@ impl Profile {
         };
         let g = |k: &str| extract_toml_field(&toml, k).filter(|v| !v.trim().is_empty());
         GoatnetEndpoints {
-            router_endpoint: g("router_endpoint"),
+            router_endpoint: router_override()
+                .map(str::to_string)
+                .or_else(|| g("router_endpoint")),
             netbird_mgmt_url: g("netbird_mgmt_url"),
             netbird_token_env: g("netbird_token_env"),
             netbird_site_prefix: g("netbird_site_prefix"),
@@ -616,6 +654,29 @@ pub(crate) fn extract_toml_field(toml: &str, key: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn router_override_replaces_the_profile_endpoint_only_when_given() {
+        let body = "router_endpoint = \"tls/100.64.0.9:7447\"\n";
+        assert_eq!(
+            super::pick_router_endpoint(None, body).as_deref(),
+            Some("tls/100.64.0.9:7447")
+        );
+        assert_eq!(
+            super::pick_router_endpoint(Some("tls/127.0.0.1:17447"), body).as_deref(),
+            Some("tls/127.0.0.1:17447")
+        );
+        // An override reaches a profile that names no router at all.
+        assert_eq!(
+            super::pick_router_endpoint(Some("tls/127.0.0.1:17447"), "goatnet = \"x\"\n")
+                .as_deref(),
+            Some("tls/127.0.0.1:17447")
+        );
+        assert_eq!(
+            super::pick_router_endpoint(None, "router_endpoint = \"  \"\n"),
+            None
+        );
+    }
+
     use super::*;
 
     fn write_config(dir: &std::path::Path, body: &str) {
