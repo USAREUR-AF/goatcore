@@ -5,18 +5,50 @@ role-test-parity discipline.
 
 ## Coverage levels
 
-### Parse-only smoke (today) — `syntax-check.sh`
+### CI wrapper — `syntax-check.sh`
 
-`ansible-playbook --syntax-check` over `playbook.yml` (a fixture
-that includes the role with `ory_spock_enabled: false` so the role
-short-circuits without trying to talk to Postgres). Catches:
+The wrapper runs both the parse-only fixture and the focused readiness
+fixture. CI invokes every role's `tests/syntax-check.sh`, so both layers are
+gated by [`.github/workflows/ansible-syntax-check.yml`](../../../../../.github/workflows/ansible-syntax-check.yml).
+
+The parse-only layer runs `ansible-playbook --syntax-check` over
+`playbook.yml` (a fixture that includes the role with
+`ory_spock_enabled: false` so the role short-circuits without trying to talk
+to Postgres). It catches:
 
 - YAML syntax errors in `tasks/main.yml`, `tasks/per_db.yml`,
   `tasks/per_subscription.yml`, `defaults/main.yml`.
 - Jinja2 template syntax errors.
 - Missing required role files.
 
-CI-gated via [`.github/workflows/ansible-syntax-check.yml`](../../../../../.github/workflows/ansible-syntax-check.yml).
+### Container readiness — `test-container-health.py`
+
+This layer includes the production role with an empty database list, so the
+real `wait for kratos + hydra containers healthy` task runs but no SQL does.
+The `fixtures/docker` stand-in accepts only the exact original or corrected
+Docker inspection template, returns deterministic inspection states, and
+records every call and format. The harness independently asserts the recorded
+container sequence and format. The suite requires both configured containers
+to be inspected on every attempt and covers:
+
+- both containers running and healthy;
+- unhealthy, starting, stopped-with-stale-health, no-healthcheck, paused, and
+  restarting states. The paused and restarting fixtures deliberately combine
+  those states with a synthetic `healthy` field to isolate the state check;
+  they do not claim Docker retains healthy status in those states;
+- realistic missing-container and daemon-unavailable inspection errors,
+  including Docker's exit status and stderr;
+- a fixture explicitly labelled synthetic that uses arbitrary exit status 125
+  to prove a nonstandard status is preserved;
+- either container failing, and both failing with both diagnostics retained;
+- unhealthy-to-healthy retry and persistent-failure exhaustion.
+
+These are production-task measurements against a stand-in Docker CLI, not
+measurements against a Docker daemon. The harness refuses to count an
+unreachable host or a run that never reached
+the named production task as a behavioral pass. Expected Ansible task
+failures are successful negative cases; command, dependency, or fixture
+failures are not. Its summary reports scenario and assertion counts separately.
 
 ### Full integration test (queued) — `run-test.sh`
 
