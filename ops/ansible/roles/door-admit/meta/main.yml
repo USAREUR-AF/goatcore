@@ -1,0 +1,28 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+galaxy_info:
+  role_name: door_admit
+  author: goat-maintainer
+  license: Apache-2.0
+  min_ansible_version: "2.14"
+  description: >-
+    The admission check behind an external service's door (ADR 1254): one
+    container per service that admits a signed-in person by organization,
+    nation, group or e-mail.
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+# Universal deploy-rollback ledger (ADR 1060). The rollback ref is the image
+# this role pins (door_admit_image). The role runs `meta: flush_handlers` before
+# its health check, so it is rollback_promote_mode: explicit: the pending row is
+# promoted at the end of tasks/main.yml, only once the check has answered.
+dependencies:
+  - role: rollback-ledger
+    vars:
+      rollback_component: door-admit
+      rollback_artifact_type: image
+      rollback_promote_mode: explicit  # mid-role flush_handlers; promote after the health check
+      rollback_ref: "{{ door_admit_image }}"

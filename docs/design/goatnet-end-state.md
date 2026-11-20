@@ -75,7 +75,7 @@ A service the site turns off carries a `reason`: the declarations that say so, w
 |---|---|---|
 | presence | the declarations agree it runs here | the model |
 | deployed | the host ledger's newest row is `action: deploy` and names the declared digest; for a serving surface (goat-get, goat-docs) the row's `served` payloads are also the ones main declares, judged by `ops/scripts/served-payloads.py` | `/var/lib/goat/<ledger>/deploy-history.jsonl` |
-| active | every catalog container is running; a one-shot (a migration) exited 0 | `docker inspect` |
+| active | every catalog container is running; a one-shot (a migration) exited 0. A service with no container of its own (pgBackRest, inside the database container) is active when its acceptance rows pass, FAIL when one fails, UNKNOWN otherwise: an empty container list is never read as running | `docker inspect`; for a service with no container, the assay rows |
 | healthy | the docker healthcheck is `healthy`, and isitup's probe of the declared health path matches the row's `expect_codes` (default `2\|3`) | the container's own address, as isitup probes it |
 | functional | every acceptance row whose `requires` names one of the service's tokens passes, less a site-wide row its catalog entry excludes (`assay_exclude`) | `goatbuilder assay` rows (ADR 1115) |
 

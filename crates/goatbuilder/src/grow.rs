@@ -226,7 +226,7 @@ pub fn grow_with(
     } else {
         write(
             &target,
-            &format!("{HEADER}{}", serde_yaml::to_string(&grown)?),
+            &format!("{HEADER}{}", serde_yaml::to_string(&grown).map_err(|e| goat_errors::coded("GB-322", format!("could not write the grown config as YAML: {e}")))?),
         )?;
         checks.push(row("wrote", format!("wrote {TARGET}")));
     }

@@ -55,6 +55,10 @@ FROM ${BASE_RUNTIME_CC}
 # same fact under a neutral key, so the role can read either.
 LABEL org.usareur-af.goat-zenoh-portal.store="postgres"
 LABEL io.goat.zenoh-portal.store="postgres"
+# The audit reader opens storage over verified HTTPS only. The goat-zenoh-portal
+# role reads this label and refuses the image while the audit reader is
+# provisioned without minio_tls_enabled (docs/operations/audit-replay-cutover.md).
+LABEL io.goat.zenoh-portal.storage-tls="required"
 # Static binary, but the runtime-cc base gives ca-certificates +
 # /etc/passwd for a non-root run. Use its nonroot user.
 USER 65532:65532

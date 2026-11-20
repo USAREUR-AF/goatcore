@@ -1,7 +1,7 @@
 # One fixture node: Postgres as the mgmt-host compose file defines it (image,
 # config file, POSTGRES_INITDB_ARGS from .env, PGDATA volume), a writer that
-# holds a session open, and a container that mounts PGDATA read-only the way
-# pgbackrest-runner does.
+# holds a session open, and a container that mounts PGDATA read-only (the
+# role must find every container that holds the volume).
 services:
   postgres-a:
     image: ${POSTGRES_SPOCK_IMAGE:?}

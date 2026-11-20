@@ -23,7 +23,7 @@ use crate::runner::Cmd;
 use std::path::Path;
 use std::process::Stdio;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::pins::read_yaml;
 use crate::{pins, promote, push};
@@ -62,7 +62,7 @@ pub fn not_a_pin_revert(comp: &serde_json::Value) -> Option<String> {
 }
 
 fn sh(cmd: &str, args: &[&str]) -> Result<String> {
-    let out = Cmd::new(cmd).args(args).output().with_context(|| cmd.to_string())?;
+    let out = Cmd::new(cmd).args(args).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start {cmd}: {e}")))?;
     if !out.status.success() {
         return Err(anyhow::Error::from(goat_errors::coded("GB-258", String::from_utf8_lossy(&out.stderr).trim().to_string())));
     }
@@ -337,7 +337,7 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     let br = format!("chore/fastlane-{}-{tag}", o.component);
     let _ = sh("git", &["-C", &repo_s, "checkout", "-q", "-B", &br]);
     let body = std::env::temp_dir().join(format!("goatbuilder-fastlane-body-{}", std::process::id()));
-    std::fs::write(&body, format!("chore(pins): fastlane {} to {tag} (ADR 1127)\n\nFASTLANE, ack {}. {}\nRollback: pin revert to {current_fleet}. Backfill owed until this ref graduates normally.\n", o.component, o.ack, o.reason))?;
+    std::fs::write(&body, format!("chore(pins): fastlane {} to {tag} (ADR 1127)\n\nFASTLANE, ack {}. {}\nRollback: pin revert to {current_fleet}. Backfill owed until this ref graduates normally.\n", o.component, o.ack, o.reason)).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&body)).display())))?;
     let landed = Cmd::new(repo.join("ops/scripts/pr-land.sh"))
         .args(["--worktree", &repo_s, "--branch", &br, "--title", &format!("chore(pins): fastlane {} to {tag} (ADR 1127)", o.component), "--body-file", body.to_str().unwrap_or(""), "--paths", "ops/pins/fleet-pins.yaml", "ops/ansible/group_vars", "ops/consistency/intent", "ops/release/records"])
         .stdout(Stdio::null())

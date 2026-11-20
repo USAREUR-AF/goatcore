@@ -62,6 +62,32 @@ command's `-o json` parses and carries a versioned `goatbuilder.*/vN` schema.
   runs them. "All N checks passed" is only true when N is every check there was.
   In `-o json` it carries `"skipped": true`, with `ok` still true because it did
   not fail, so a program reads the state rather than the words.
+- A machine's state is data, not only a word. Every `status` and `verify`
+  document in `-o json` carries `machines`, a list with one entry per graded
+  row, and an empty list when nothing was graded. No other verb's document
+  carries it. Each entry is `{environment, host, component, state, reason,
+  check}`: `check` is the name of the `checks` row it grades; `state` is C7's
+  word (`converged`; `pending`, read and not there; `unknown`, not read), and
+  only `converged` is done; `reason` is one of a closed set:
+
+  | state | reason | the row |
+  |---|---|---|
+  | converged | `declared` | the newest record names the declared ref, deploy finished |
+  | pending | `unfinished` | names the declared ref, but the play left it at `action: pending`, or it is a rollback row |
+  | pending | `other-ref` | names another ref |
+  | pending | `no-record` | no record yet |
+  | pending | `other-image` | a shared ledger whose newest row is another image's |
+  | pending | `served-off` | the image is the declared one; what it serves is not, or is unread |
+  | unknown | `unreachable` | the host did not answer the read at all (UNREACHABLE), or no host of its group answered |
+  | unknown | `no-answer` | the inventory names the host, and no row came back |
+  | unknown | `unreadable` | the host answered, and its read FAILED (both verbs), or a fixture's record cannot be read |
+
+  A row the grade names no machine for (a group never provisioned, a component
+  with no ledger coverage) has no entry. The list is gate D's item, and A4 keeps
+  it from the 1.0 baseline on. **Built**, and tested on the fixtures A4's kept
+  documents are recorded on and on the real-host stand-in
+  (`crates/goatbuilder/tests/status_machines.rs`, `status_real_hosts.rs`); not
+  measured on real hosts.
 - A mark means something happened. `✓` is a thing done, `✗` a thing that
   failed, `!` a thing not set. A row that says what a *real* run would do has
   not happened, so it takes a bullet and no colour. A plan owes nothing, so a

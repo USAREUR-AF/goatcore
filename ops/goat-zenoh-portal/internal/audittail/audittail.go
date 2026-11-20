@@ -44,7 +44,8 @@ import (
 
 // Config holds the MinIO/S3 endpoint + credentials.
 type Config struct {
-	Endpoint     string // e.g. "http://minio.goat.example:9000"
+	CABundle     string
+	Endpoint     string // e.g. "https://storage.goat.example:9000"
 	Bucket       string // e.g. "audit-integrity"
 	Region       string // e.g. "us-east-1"
 	AccessKey    string
@@ -56,9 +57,10 @@ type Config struct {
 
 // Tailer pulls NDJSON from MinIO and feeds events into the registry.
 type Tailer struct {
-	cfg Config
-	reg *registry.Registry
-	cli *http.Client
+	initErr error
+	cfg     Config
+	reg     *registry.Registry
+	cli     *http.Client
 }
 
 // New builds a Tailer. Caller should call Enabled() before scheduling
@@ -73,10 +75,12 @@ func New(cfg Config, reg *registry.Registry) *Tailer {
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 30 * time.Second
 	}
+	cli, initErr := StorageClient(cfg)
 	return &Tailer{
-		cfg: cfg,
-		reg: reg,
-		cli: &http.Client{Timeout: 60 * time.Second},
+		initErr: initErr,
+		cfg:     cfg,
+		reg:     reg,
+		cli:     cli,
 	}
 }
 
@@ -89,6 +93,10 @@ func (t *Tailer) Enabled() bool {
 // Errors log at Warn — degradation is graceful (L3/L4 columns show "—"
 // for everyone until MinIO is reachable again).
 func (t *Tailer) Run(ctx context.Context) {
+	if t.Enabled() && t.initErr != nil {
+		slog.Error("audit storage configuration rejected", "error", t.initErr)
+		return
+	}
 	if !t.Enabled() {
 		slog.Info("audit tailer disabled (no S3 endpoint or credentials); L3/L4 columns will show '—'")
 		return
@@ -118,6 +126,10 @@ func (t *Tailer) Run(ctx context.Context) {
 }
 
 func (t *Tailer) tick(ctx context.Context) {
+	if t.initErr != nil {
+		slog.Error("audit storage configuration rejected", "error", t.initErr)
+		return
+	}
 	tickCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	n, lastKey, err := t.PullOnce(tickCtx)
@@ -265,6 +277,9 @@ type listV2Resp struct {
 // failure leaves the registry (cursor included) untouched and the next
 // tick retries the object from scratch.
 func (t *Tailer) processObject(ctx context.Context, key string, vSet map[string]bool) (int, error) {
+	if t.initErr != nil {
+		return 0, t.initErr
+	}
 	reqURL := fmt.Sprintf("%s/%s/%s", strings.TrimRight(t.cfg.Endpoint, "/"), t.cfg.Bucket, key)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -295,9 +310,29 @@ func (t *Tailer) processObject(ctx context.Context, key string, vSet map[string]
 		}
 		var ev auditEvent
 		if err := json.Unmarshal(line, &ev); err != nil {
-			// One malformed line shouldn't poison the whole object.
+			if strings.Contains(key, "-v2-") {
+				return 0, fmt.Errorf("malformed V2 audit metadata")
+			}
+			// Preserve legacy malformed-line handling.
 			slog.Debug("skip malformed audit line", "key", key, "err", err)
 			continue
+		}
+		if strings.Contains(key, "-v2-") && ev.SchemaVersion != 2 {
+			return 0, fmt.Errorf("audit object and record schema differ")
+		}
+		if ev.SchemaVersion == 2 {
+			if _, version, err := ObjectSource(key, t.cfg.SubscriberID); err != nil || version != 2 {
+				return 0, fmt.Errorf("invalid V2 audit object key")
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(line, &fields); err != nil {
+				return 0, fmt.Errorf("invalid V2 audit metadata")
+			}
+			if _, hasBody := fields["payload_bytes_b64"]; hasBody || (ev.OnboardingClassification != "onboarding_hello" && ev.OnboardingClassification != "other") {
+				return 0, fmt.Errorf("invalid V2 audit metadata")
+			}
+		} else if ev.SchemaVersion != 0 && ev.SchemaVersion != 1 {
+			return 0, fmt.Errorf("unsupported audit schema version")
 		}
 		agg.add(&ev, vSet)
 		n++
@@ -314,12 +349,15 @@ func (t *Tailer) processObject(ctx context.Context, key string, vSet map[string]
 
 // auditEvent matches the audit-subscriber NDJSON shape.
 type auditEvent struct {
-	Vendor          string `json:"vendor"`
-	KeyExpr         string `json:"key_expr"`
-	TS              string `json:"ts"`
-	PayloadHash     string `json:"payload_hash"`
-	PayloadLen      int    `json:"payload_len"`
-	PayloadBytesB64 string `json:"payload_bytes_b64"`
+	SampleKind               string `json:"sample_kind"`
+	SchemaVersion            int    `json:"schema_version"`
+	OnboardingClassification string `json:"onboarding_classification"`
+	Vendor                   string `json:"vendor"`
+	KeyExpr                  string `json:"key_expr"`
+	TS                       string `json:"ts"`
+	PayloadHash              string `json:"payload_hash"`
+	PayloadLen               int    `json:"payload_len"`
+	PayloadBytesB64          string `json:"payload_bytes_b64"`
 }
 
 // objectAgg accumulates one NDJSON object's events in memory so the
@@ -349,6 +387,9 @@ func newObjectAgg() *objectAgg {
 // events whose vendor isn't in vSet (unknown prefixes, retired vendors,
 // or synthetic vendors filtered upstream).
 func (a *objectAgg) add(ev *auditEvent, vSet map[string]bool) {
+	if ev.SchemaVersion != 2 || ev.SampleKind != "put" {
+		return
+	}
 	prefix := vendorOfKey(ev.KeyExpr)
 	if prefix == "" || !vSet[prefix] {
 		return
@@ -408,6 +449,9 @@ var helloRE = regexp.MustCompile(`^hello from [a-z0-9-]+ at \d+\.\d+$`)
 // match — a misaligned key with a "hello from …" payload counts as L4
 // (it's not what we shipped).
 func isHelloWorld(ev *auditEvent, prefix string) bool {
+	if ev.SchemaVersion == 2 {
+		return ev.OnboardingClassification == "onboarding_hello"
+	}
 	if ev.KeyExpr != prefix+"/hello/v1" {
 		return false
 	}

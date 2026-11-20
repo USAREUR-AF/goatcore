@@ -3,7 +3,6 @@
 byte for byte, so the runner's tests that use it test the rule the command uses."""
 import base64
 import importlib.util
-import json
 from pathlib import Path
 import unittest
 

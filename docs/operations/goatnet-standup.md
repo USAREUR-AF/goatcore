@@ -433,7 +433,14 @@ What the driver does differently, inside the same phases:
 - **Pass 2** (phase 6, joiner-only) runs `site-seed-from-peer.yml`, the
   guarded data-only copy of identity + mesh state from the founder (the first
   host of the founder's `<join_founder_site>_hosts` group). A site that keeps
-  its own `<site>-seed-from-peer.yml` gets that one instead.
+  its own `<site>-seed-from-peer.yml` gets that one instead. Such a copy says
+  which version of the generic play it was made from, in a first line
+  `# derived-from: site-seed-from-peer.yml sha256:<digest of that file>`.
+  Right before running it, phase 6 checks that digest against the current
+  generic play (`ops/scripts/check-site-play-current.py`). It refuses a copy
+  with no such line, or one made from an older generic play, with GB-362: the
+  copy would miss every fix the generic play gained since. A wrapper that
+  imports `site-seed-from-peer.yml` instead of copying it needs no line.
 - **Pass 3** (phase 6) re-runs `site-bootstrap` with Spock enabled, creating the
   `netbird_mgmt` subscriptions, and the joiner's `ory_narrow` node and repset
   without subscribing yet (`-e ory_spock_wire_subscriptions=false`).

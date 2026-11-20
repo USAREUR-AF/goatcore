@@ -16,9 +16,9 @@
 //	first-publisher.py       — runnable publisher pre-wired with mTLS
 //	first-subscriber.py      — companion subscriber for self-validation
 //
-// The tarball is dropped into VendorBundleDir and a one-time download URL
+// The tarball is dropped into VendorBundleDir and a time-limited download URL
 // is returned to the operator at vendor registration. Bundle path +
-// token live in the registry; download is consumed once.
+// token live in the registry; the link works for PORTAL_BUNDLE_TTL after mint.
 package certmint
 
 import (
@@ -26,7 +26,9 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -126,15 +128,52 @@ type MintOptions struct {
 
 // Result is what callers get back from Mint.
 type Result struct {
+	// Serial, NotBefore and NotAfter describe the leaf just minted: the slot
+	// registry records them (slot_leaves) so a freed slot is not reissued while
+	// any leaf issued for it is still valid (GHSA-rr3p). Serial is lowercase
+	// hex. In fake mode they are synthesized from the configured validity.
+	Serial    string
+	NotBefore time.Time
+	NotAfter  time.Time
+
 	CertPath    string
 	KeyPath     string
 	TarballPath string
-	BundleToken string // hex-encoded one-time download token
+	BundleToken string // hex-encoded download token (valid for PORTAL_BUNDLE_TTL)
 	URISAN      string // the exact URI-SAN minted into the cert
 }
 
+// stampLayout is the UTC stamp in stage directory and tarball names.
+const stampLayout = "20060102T150405Z"
+
+// stageDirPrefix starts the name of a mint's stage directory in
+// VendorBundleDir: .stage-<prefix>-<stamp>. It holds the leaf private key,
+// the goat-cli profile and the plaintext api key while the tarball is built.
+const stageDirPrefix = ".stage-"
+
+func stageDirName(prefix, stamp string) string {
+	return stageDirPrefix + prefix + "-" + stamp
+}
+
+// IsStageDirName reports whether name is exactly the shape Mint gives its
+// stage directory: ".stage-", a non-empty prefix, "-", and a stamp in
+// stampLayout. A mint killed before its deferred removal leaves one behind;
+// the portal's bundle sweep removes it once it is older than the TTL.
+func IsStageDirName(name string) bool {
+	rest, ok := strings.CutPrefix(name, stageDirPrefix)
+	if !ok || len(rest) < len(stampLayout)+2 {
+		return false
+	}
+	prefix, stamp := rest[:len(rest)-len(stampLayout)-1], rest[len(rest)-len(stampLayout):]
+	if prefix == "" || rest[len(prefix)] != '-' || strings.ContainsAny(prefix, "/\\") {
+		return false
+	}
+	_, err := time.Parse(stampLayout, stamp)
+	return err == nil
+}
+
 // Mint produces the leaf cert + key for vendor <prefix> and assembles the
-// onboarding tarball. Returns the paths + the one-time bundle token. The
+// onboarding tarball. Returns the paths + the bundle download token. The
 // caller stores those in the registry; the consumer is the org/vendor
 // bundle download endpoint (/api/org-bundle, legacy /api/vendor-bundle).
 //
@@ -170,6 +209,12 @@ func (m *Minter) Mint(ctx context.Context, prefix, apiKey string, opts MintOptio
 	if opts.CommonName != "" {
 		commonName = opts.CommonName
 	}
+	// "<anchor>.unassigned" is the CN the router's slot fragment gives a free
+	// slot's subject (GHSA-rr3p): it matches a leaf that carries it, and is
+	// inert only because no such leaf exists. Never mint one.
+	if strings.HasSuffix(commonName, ".unassigned") {
+		return nil, fmt.Errorf("refusing to mint CN %q: the .unassigned suffix is reserved for free slots in the router ACL", commonName)
+	}
 	if m.Validity == 0 {
 		m.Validity = 365 * 24 * time.Hour
 	}
@@ -180,8 +225,8 @@ func (m *Minter) Mint(ctx context.Context, prefix, apiKey string, opts MintOptio
 		return nil, fmt.Errorf("create vendor bundle dir: %w", err)
 	}
 
-	stamp := time.Now().UTC().Format("20060102T150405Z")
-	stage := filepath.Join(m.VendorBundleDir, fmt.Sprintf(".stage-%s-%s", prefix, stamp))
+	stamp := time.Now().UTC().Format(stampLayout)
+	stage := filepath.Join(m.VendorBundleDir, stageDirName(prefix, stamp))
 	if err := os.MkdirAll(stage, 0o750); err != nil {
 		return nil, fmt.Errorf("create stage dir: %w", err)
 	}
@@ -287,13 +332,47 @@ func (m *Minter) Mint(ctx context.Context, prefix, apiKey string, opts MintOptio
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return nil, fmt.Errorf("generate bundle token: %w", err)
 	}
+	serial, notBefore, notAfter, err := m.leafValidity(certPath)
+	if err != nil {
+		return nil, err
+	}
 	return &Result{
+		Serial:      serial,
+		NotBefore:   notBefore,
+		NotAfter:    notAfter,
 		CertPath:    certPath,
 		KeyPath:     keyPath,
 		TarballPath: tarballPath,
 		BundleToken: hex.EncodeToString(tokenBytes),
 		URISAN:      uriSAN,
 	}, nil
+}
+
+// leafValidity reads the serial and validity window of the minted leaf. A real
+// mint parses the PEM cert-sign wrote; a fake mint has no X.509 to read, so it
+// gets a random serial and the configured validity from now.
+func (m *Minter) leafValidity(certPath string) (string, time.Time, time.Time, error) {
+	if m.Fake {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			return "", time.Time{}, time.Time{}, fmt.Errorf("fake leaf serial: %w", err)
+		}
+		now := time.Now().UTC().Truncate(time.Second)
+		return hex.EncodeToString(b), now, now.Add(m.Validity), nil
+	}
+	raw, err := os.ReadFile(certPath)
+	if err != nil {
+		return "", time.Time{}, time.Time{}, fmt.Errorf("read minted leaf: %w", err)
+	}
+	blk, _ := pem.Decode(raw)
+	if blk == nil || blk.Type != "CERTIFICATE" {
+		return "", time.Time{}, time.Time{}, errors.New("minted leaf is not a PEM certificate")
+	}
+	c, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		return "", time.Time{}, time.Time{}, fmt.Errorf("parse minted leaf: %w", err)
+	}
+	return hex.EncodeToString(c.SerialNumber.Bytes()), c.NotBefore, c.NotAfter, nil
 }
 
 // persistRecipientCert copies the minted PUBLIC leaf cert into

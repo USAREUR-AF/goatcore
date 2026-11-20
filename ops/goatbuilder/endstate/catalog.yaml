@@ -36,7 +36,10 @@
 #                                        # turning it on closes the gap; a pin, which only
 #                                        # names a version, does not
 #       containers: [<name or glob>]     # every one must be running; {site} and
-#                                        # {zenoh_stack} expand from group_vars
+#                                        # {zenoh_stack} expand from group_vars.
+#                                        # Empty (and no oneshot): the service has no
+#                                        # container of its own, and its assay rows
+#                                        # grade it active; with no row it is UNKNOWN
 #       oneshot: [<glob>]                # run-to-completion containers; exited 0 is right
 #       ledger: <component> | null       # /var/lib/goat/<ledger>/deploy-history.jsonl
 #       surfaces: [<isitup_services id>] # the served names it owns: each must resolve
@@ -142,11 +145,14 @@ services:
   # when has_durable_independent_state (default true); a site that sets it false
   # carries durability another way (Spock, or an intra-site A->B standby), and
   # its phase-13 backup row (requires: [pgbackrest]) is then N/A, not a FAIL.
+  # pgBackRest has no container of its own: the binary runs inside postgres-*,
+  # so its acceptance rows (stanza info and check), not a container, grade it
+  # active. A running database is no evidence that backups work.
   pgbackrest:
     class: mgmt
     play: site-bootstrap.yml
     present: {var: has_durable_independent_state, default: true}
-    containers: [pgbackrest-runner]
+    containers: []
     ledger: null
     assay: [pgbackrest]
     guard: [ops/ansible/site-bootstrap.yml]

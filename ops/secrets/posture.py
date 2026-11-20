@@ -757,7 +757,10 @@ def init(goatnet: str, path: str, force: bool, repo: str = REPO, if_env_file: bo
           f"{len(generated)} generated, {len(kept)} kept, {len(external)} need an outside value")
     for env in external:
         print(f"  EXTERNAL  {env}  (issued by an outside service; see docs/design/pluggable-dependencies.md §Quickstart)")
-    print(f"declare the posture: secrets: {{store: env-file}} in ops/goatbuilder/goatbuilder.yaml, or export GOAT_SECRET_STORE=env-file")
+    if not if_env_file:
+        # A goatlite's phase 1 runs this only when env-file is already the store
+        # in force, so it has nothing to declare (and no goatbuilder.yaml).
+        print(f"declare the posture: secrets: {{store: env-file}} in ops/goatbuilder/goatbuilder.yaml, or export GOAT_SECRET_STORE=env-file")
     return 0
 
 

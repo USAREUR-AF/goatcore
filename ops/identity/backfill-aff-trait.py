@@ -13,13 +13,15 @@ closes the gap for the identities minted before it.
 
 WHERE IT IS WRITTEN. `aff` is an authorization field, so it lives in
 admin-managed `metadata_public`, never in self-editable traits (F-572 / ADR
-1188). Reads follow every other reader: once `metadata_public.groups` is
-present the identity is migrated and only `metadata_public` counts; before
-that a key in `metadata_public` wins and traits is the fallback. The write
-adds the whole `metadata_public` object with its other keys kept, so it works
-on an identity that has none yet, and it never seeds `groups`: that is the
-authz backfill's marker, and seeding it here would stop readers taking an
-unmigrated identity's login groups from traits.
+1188). Reads follow every other reader (GHSA-9v3v): only `metadata_public`
+counts, migrated or not. A traits.org or traits.aff is a value the holder could
+have written through the settings flow, so it never selects the org whose aff
+is written here. Run the authz backfill (backfill-authz-traits-to-metadata.py,
+with its --trusted record) first; an identity it has not moved has no
+org.short_tag here and is skipped and listed (or named with --assign). The
+write adds the whole `metadata_public` object with its other keys kept, so it
+works on an identity that has none yet, and it never seeds `groups`: that is
+the authz backfill's marker.
 
 WHERE THE VALUE COMES FROM. `org.short_tag`: both mint paths and the
 org backfill set it from the manifest's `affiliation.id`, the shared unit
@@ -183,16 +185,11 @@ def aff_for(row):
 
 
 def authz_val(identity, key):
-    """An authorization field (groups, org, aff) as every reader resolves it.
-
-    The id-admin-console's Identity.authzVal and consent patches 0001/0004 apply
-    the same rule: metadata_public.groups marks a migrated
-    identity, which is read from metadata_public alone; otherwise a key present
-    in metadata_public wins over traits."""
-    meta = identity.get("metadata_public") or {}
-    if "groups" in meta or key in meta:
-        return meta.get(key)
-    return (identity.get("traits") or {}).get(key)
+    """An authorization field (groups, org, aff) as every reader resolves it:
+    from admin-managed metadata_public only. Traits are self-editable and are
+    never read, migrated or not (GHSA-9v3v), the same rule as the
+    id-admin-console's Identity.authzVal and consent patches 0001/0004."""
+    return (identity.get("metadata_public") or {}).get(key)
 
 
 def current_aff_id(identity):

@@ -16,6 +16,7 @@ federate refused
     what: The six federation verbs (init, lint, compose, diff, verify, apply) read only the files they are named and the party's context, and run for real. --mock, -C/--repo (except for init --over-ssh) and -o/--output choose things they do not read; --over-ssh and its host flags belong to init alone. A run with one where it does not apply is refused rather than the flag ignored. A flag that belongs to the verb but needs another with it (a host flag on init without --over-ssh) is GB-325.
     why:  --mock, -C/--repo or -o/--output given to a federation verb
           --over-ssh or its host flags given to a verb other than init, to a plan or to a peering run
+          --context-dir, --cert, --ca-roots, --context or --profile-dir, which belong to the six verbs, given to a plan or to a peering run
     fix:  drop the flag; the verbs take --json for a JSON report
           goatbuilder -C <repo> federate init --over-ssh <peering>   (the one verb that reads a checkout)
           FED_MEASURE=ssh goatbuilder federate <partner>   (a peering run measures phase 3 over SSH)

@@ -1,11 +1,11 @@
 [
-  {"id": "id-nbadmin", "state": "active", "traits": {"email": "writer@example.test", "groups": ["NETBIRD-ADMIN", "PLATFORM-ADMIN"]}},
-  {"id": "id-platform", "state": "active", "traits": {"email": "platform@example.test", "groups": ["PLATFORM-ADMIN"]}},
-  {"id": "id-oldadmin", "state": "active", "traits": {"email": "old-admin@example.test", "groups": ["PLATFORM-ADMIN"]}},
-  {"id": "id-iam", "state": "active", "traits": {"email": "iam@example.test", "groups": ["IAM-ADMIN"]}},
-  {"id": "id-owner", "state": "active", "traits": {"email": "owner@example.test", "groups": ["NETBIRD-ADMIN"]}},
-  {"id": "id-auditor-up", "state": "active", "traits": {"email": "promote-me@example.test", "groups": ["NETBIRD-ADMIN"]}},
-  {"id": "id-plain", "state": "active", "traits": {"email": "plain@example.test", "groups": ["OBS-READONLY"]}},
-  {"id": "id-gone", "state": "inactive", "traits": {"email": "gone@example.test", "groups": ["NETBIRD-ADMIN"]}},
-  {"id": "id-pending", "state": "active", "traits": {"email": "pending@example.test", "groups": ["PLATFORM-ADMIN"]}}
+  {"id": "id-nbadmin", "state": "active", "traits": {"email": "writer@example.test"}, "metadata_public": {"groups": ["NETBIRD-ADMIN", "PLATFORM-ADMIN"]}},
+  {"id": "id-platform", "state": "active", "traits": {"email": "platform@example.test"}, "metadata_public": {"groups": ["PLATFORM-ADMIN"]}},
+  {"id": "id-oldadmin", "state": "active", "traits": {"email": "old-admin@example.test"}, "metadata_public": {"groups": ["PLATFORM-ADMIN"]}},
+  {"id": "id-iam", "state": "active", "traits": {"email": "iam@example.test"}, "metadata_public": {"groups": ["IAM-ADMIN"]}},
+  {"id": "id-owner", "state": "active", "traits": {"email": "owner@example.test"}, "metadata_public": {"groups": ["NETBIRD-ADMIN"]}},
+  {"id": "id-auditor-up", "state": "active", "traits": {"email": "promote-me@example.test"}, "metadata_public": {"groups": ["NETBIRD-ADMIN"]}},
+  {"id": "id-plain", "state": "active", "traits": {"email": "plain@example.test"}, "metadata_public": {"groups": ["OBS-READONLY"]}},
+  {"id": "id-gone", "state": "inactive", "traits": {"email": "gone@example.test"}, "metadata_public": {"groups": ["NETBIRD-ADMIN"]}},
+  {"id": "id-pending", "state": "active", "traits": {"email": "pending@example.test"}, "metadata_public": {"groups": ["PLATFORM-ADMIN"]}}
 ]

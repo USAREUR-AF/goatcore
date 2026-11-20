@@ -1,0 +1,71 @@
+---
+# Storage-TLS cutover gate. Runs before anything is rendered, stopped or
+# restarted: from this role's tasks/main.yml, and from phase 0 of
+# portal-postgres-cutover.yml and portal-postgres-rollback.yml, which include
+# this file directly (no role, so no rollback-ledger row) before they stop the
+# portal. Reads only, apart from pulling an image that is absent.
+#
+# A portal image whose audit reader requires verified storage HTTPS carries the
+# label io.goat.zenoh-portal.storage-tls. When the audit reader is provisioned
+# (its secret is set), that server exits at startup unless the endpoint is
+# https:// and the storage CA is mounted, which the role renders only when
+# minio_tls_enabled is true. An image without the label predates that reader
+# and still deploys under the defaults.
+#
+# portal_tls_gate_image names the image to check when it is not portal_image
+# (the rollback checks the image it is about to restore).
+
+- name: portal | storage-TLS gate — is the image present on the host?
+  ansible.builtin.command:
+    argv: ["docker", "image", "inspect", "--format", !unsafe '{{json .Config.Labels}}', "{{ portal_tls_gate_image | default(portal_image) }}"]
+  register: portal_tls_gate_labels
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Pulling is what the compose pull would do later anyway; doing it first lets
+# the gate read the label before the image can start.
+- name: portal | storage-TLS gate — pull the image to read its label
+  ansible.builtin.command:
+    argv: ["docker", "pull", "{{ portal_tls_gate_image | default(portal_image) }}"]
+  when: portal_tls_gate_labels.rc != 0
+  changed_when: true
+  check_mode: false
+
+- name: portal | storage-TLS gate — read the pulled image's labels
+  ansible.builtin.command:
+    argv: ["docker", "image", "inspect", "--format", !unsafe '{{json .Config.Labels}}', "{{ portal_tls_gate_image | default(portal_image) }}"]
+  register: portal_tls_gate_labels_pulled
+  when: portal_tls_gate_labels.rc != 0
+  changed_when: false
+  check_mode: false
+
+- name: portal | storage-TLS gate — an HTTPS-only audit reader needs the storage TLS variables
+  vars:
+    _image: "{{ portal_tls_gate_image | default(portal_image) }}"
+    _labels: >-
+      {{ ((portal_tls_gate_labels_pulled.stdout if portal_tls_gate_labels.rc != 0
+           else portal_tls_gate_labels.stdout)
+          | default('null', true) | from_json | default({}, true)) }}
+    _requirement: "{{ _labels['io.goat.zenoh-portal.storage-tls'] | default('', true) }}"
+    # The role's own default, repeated for the playbooks that include this file
+    # without the role.
+    _secret_envvar: >-
+      {{ portal_audit_s3_secret_key_envvar
+         | default(site_id | upper | replace('-', '_') ~ '_PORTAL_AUDIT_S3_SECRET_KEY') }}
+    _reader_provisioned: "{{ lookup('env', _secret_envvar) | length > 0 }}"
+  ansible.builtin.assert:
+    that:
+      - >-
+        _requirement | length == 0 or not (_reader_provisioned | bool)
+        or ((minio_tls_enabled | default(false) | bool)
+            and (minio_s3_endpoint | default('') is match('^https://')))
+    fail_msg: >-
+      {{ _image }} reads audit storage over verified HTTPS only
+      (io.goat.zenoh-portal.storage-tls={{ _requirement }}), and this goatnet
+      provisions the audit reader ({{ _secret_envvar }} is set).
+      It does not start without minio_tls_enabled true and an https://
+      minio_s3_endpoint. Follow docs/operations/audit-replay-cutover.md, or keep
+      the previous image pin until the cutover. The running portal is
+      untouched.
+    quiet: true

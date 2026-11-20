@@ -34,10 +34,10 @@ index 0000000..0000001 100644
        session.id_token.name = identity.traits.name
      }
 +
-+    // F-572 / ADR 1188: groups live in admin-managed metadata_public. Once it has
-+    // a groups key (even [] or null) the identity is migrated and traits are never read.
++    // F-572 / ADR 1188, GHSA-9v3v: groups come ONLY from admin-managed metadata_public.
++    // Self-editable traits never grant a role, even for a not-yet-backfilled identity.
 +    // goat-maintainer/ops/ory-consent patch: forward the groups claim into id_token.
-+    var __gm = identity.metadata_public || {}, __groups = Object.prototype.hasOwnProperty.call(__gm, "groups") ? __gm.groups : identity.traits.groups
++    var __gm = identity.metadata_public || {}, __groups = __gm.groups
 +    if (Array.isArray(__groups) && __groups.length > 0) session.id_token.groups = __groups
    }
 

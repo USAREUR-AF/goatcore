@@ -57,6 +57,8 @@ sources:
   # captures every container).
   admit_audit:
     type: docker_logs
+    # Through the read-only Docker API proxy; Vector holds no Docker socket.
+    docker_host: "unix:///run/goat-logship-docker-proxy/api.sock"
     include_containers:
       - {{ logship_admit_audit_container }}
 {% endif %}
@@ -67,6 +69,8 @@ sources:
   # fabric, this plane HAS a central tap.
   traefik:
     type: docker_logs
+    # Through the read-only Docker API proxy; Vector holds no Docker socket.
+    docker_host: "unix:///run/goat-logship-docker-proxy/api.sock"
     include_containers:
       - {{ logship_traefik_container }}
 {% endif %}
@@ -77,6 +81,8 @@ sources:
   # (there is one oauth2-proxy per surface).
   oauth2_proxy:
     type: docker_logs
+    # Through the read-only Docker API proxy; Vector holds no Docker socket.
+    docker_host: "unix:///run/goat-logship-docker-proxy/api.sock"
     include_containers:
       - {{ logship_oauth2_proxy_prefix }}
 {% endif %}
@@ -659,4 +665,7 @@ sinks:
 {% if logship_http_bandwidth_metrics %}
       - http_bytes_metrics
 {% endif %}
+    # Every interface of the CONTAINER's network namespace, which Docker's
+    # port publish needs. Host exposure is set by the compose `ports:` list
+    # (loopback, mesh, bridge gateway), not here.
     address: "0.0.0.0:{{ logship_metrics_port }}"
