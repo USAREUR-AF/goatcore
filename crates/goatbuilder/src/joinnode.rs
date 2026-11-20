@@ -592,6 +592,12 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
                     ev.push(p(13, "SKIP", &why, format!("echo {}", sh_quote(&format!(">> {why}")))));
                 }
                 Ok(pubs) => {
+                    // Every publisher reads the router's stack name (GB-361).
+                    let site_id =
+                        crate::federate::preflight::group_var(repo, &site_group, "site_id")
+                            .unwrap_or_else(|| site.to_string());
+                    let roles: Vec<&str> = pubs.iter().map(|(name, _)| *name).collect();
+                    crate::zenoh_stack::check(repo, &site_group, &site_id, &roles)?;
                     for (name, play) in pubs {
                         ev.push(p(13, "A", &format!("[health publishers] {name} ({play}), limited to the node: the end-state model marks it present at {site}"), format!("cd '{r}/ops/ansible' && {pre} {inv} {play} -e target={site_group} -l {node}")));
                     }

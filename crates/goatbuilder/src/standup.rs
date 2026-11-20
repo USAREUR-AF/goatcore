@@ -994,12 +994,12 @@ fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks
             let log = format!("{}/standup-{}-12-{}.log", s.state_dir, s.site, q[*i].id);
             let f = std::fs::File::create(&log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&log)).display())))?;
             crate::runner::phase("12", &q[*i].label, "");
-            let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
+            let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone().map_err(|e| goat_errors::coded("GB-254", format!("{log}: {e}")))?)).stderr(Stdio::from(f)).logged_at(&log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
             kids.push((*i, child, std::time::Instant::now(), log));
         }
         let mut failed = Vec::new();
         for (i, mut child, t0, log) in kids {
-            let status = child.wait()?;
+            let status = child.wait().map_err(|e| goat_errors::coded("GB-322", format!("could not wait for bash: {e}")))?;
             let secs = t0.elapsed().as_secs();
             let rc = status.code().unwrap_or(1);
             checks.push(row("time", format!("phase 12 {} took {secs}s (exit {rc})", q[i].id)));
@@ -1291,7 +1291,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let f = std::fs::File::create(log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(log)).display())))?;
                 crate::runner::phase(&format!("observability-leg-{leg}"), label, "");
-                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone().map_err(|e| goat_errors::coded("GB-254", format!("{log}: {e}")))?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 legs.insert(leg, (child, log.clone()));
             }
             Event::PullStart { label, cmd, log } => {
@@ -1306,7 +1306,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let f = std::fs::File::create(log).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(log)).display())))?;
                 crate::runner::phase("image-pull", label, "");
-                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
+                let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone().map_err(|e| goat_errors::coded("GB-254", format!("{log}: {e}")))?)).stderr(Stdio::from(f)).logged_at(log).spawn().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
                 pulling = Some((child, log.clone()));
             }
             Event::PullJoin { at } => {
@@ -1316,7 +1316,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let Some((mut child, log)) = pulling.take() else { continue };
                 checks.push(row("phase", format!("=== join the image pull before phase {at} (waiting) ===")));
-                let status = child.wait()?;
+                let status = child.wait().map_err(|e| goat_errors::coded("GB-322", format!("could not wait for bash: {e}")))?;
                 let tail: Vec<String> = std::fs::read_to_string(&log).unwrap_or_default().lines().rev().take(25).map(String::from).collect::<Vec<_>>().into_iter().rev().collect();
                 for l in tail {
                     checks.push(row("log", format!("| {l}")));
@@ -1337,7 +1337,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                 }
                 let Some((mut child, log)) = legs.remove(leg) else { continue };
                 checks.push(row("leg", format!("=== join observability leg \"{leg}\" before phase {at} (waiting) ===")));
-                let status = child.wait()?;
+                let status = child.wait().map_err(|e| goat_errors::coded("GB-322", format!("could not wait for bash: {e}")))?;
                 let tail: Vec<String> = std::fs::read_to_string(&log).unwrap_or_default().lines().rev().take(25).map(String::from).collect::<Vec<_>>().into_iter().rev().collect();
                 for l in tail {
                     checks.push(row("log", format!("| {l}")));

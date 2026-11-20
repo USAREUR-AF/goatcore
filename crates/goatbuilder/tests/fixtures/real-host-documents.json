@@ -1,0 +1,517 @@
+{
+  "status": {
+    "exit": 3,
+    "document": {
+      "schema": "goatbuilder.output/v1",
+      "verb": "status",
+      "ok": false,
+      "exit": 3,
+      "checks": [
+        {
+          "name": "zagros/core-c/portal",
+          "ok": false,
+          "detail": "unknown: core-c: host unreachable"
+        },
+        {
+          "name": "zagros/core-a/portal",
+          "ok": true,
+          "detail": "converged on portal:v1.3.2@sha256:9f8e00000000 (row deploy 2026-11-01T00:00:00Z)"
+        },
+        {
+          "name": "zagros/core-b/portal",
+          "ok": false,
+          "detail": "pending: record names portal:v1.3.1@sha256:1d2c00000000, declared portal:v1.3.2@sha256:9f8e00000000"
+        },
+        {
+          "name": "zagros/core-f/portal",
+          "ok": false,
+          "detail": "unknown: core-f: no answer from this host (the inventory names it)"
+        },
+        {
+          "name": "zagros/core-c/herd",
+          "ok": false,
+          "detail": "unknown: core-c: host unreachable"
+        },
+        {
+          "name": "zagros/core-a/herd",
+          "ok": true,
+          "detail": "converged on herd:v0.2.1@sha256:4b5a00000000 (row deploy 2026-11-01T00:00:00Z)"
+        },
+        {
+          "name": "zagros/core-b/herd",
+          "ok": true,
+          "detail": "converged on herd:v0.2.1@sha256:4b5a00000000 (row deploy 2026-11-01T00:00:00Z)"
+        },
+        {
+          "name": "zagros/core-f/herd",
+          "ok": false,
+          "detail": "unknown: core-f: no answer from this host (the inventory names it)"
+        }
+      ],
+      "machines": [
+        {
+          "environment": "zagros",
+          "host": "core-c",
+          "component": "portal",
+          "state": "unknown",
+          "reason": "unreachable",
+          "check": "zagros/core-c/portal"
+        },
+        {
+          "environment": "zagros",
+          "host": "core-a",
+          "component": "portal",
+          "state": "converged",
+          "reason": "declared",
+          "check": "zagros/core-a/portal"
+        },
+        {
+          "environment": "zagros",
+          "host": "core-b",
+          "component": "portal",
+          "state": "pending",
+          "reason": "other-ref",
+          "check": "zagros/core-b/portal"
+        },
+        {
+          "environment": "zagros",
+          "host": "core-f",
+          "component": "portal",
+          "state": "unknown",
+          "reason": "no-answer",
+          "check": "zagros/core-f/portal"
+        },
+        {
+          "environment": "zagros",
+          "host": "core-c",
+          "component": "herd",
+          "state": "unknown",
+          "reason": "unreachable",
+          "check": "zagros/core-c/herd"
+        },
+        {
+          "environment": "zagros",
+          "host": "core-a",
+          "component": "herd",
+          "state": "converged",
+          "reason": "declared",
+          "check": "zagros/core-a/herd"
+        },
+        {
+          "environment": "zagros",
+          "host": "core-b",
+          "component": "herd",
+          "state": "converged",
+          "reason": "declared",
+          "check": "zagros/core-b/herd"
+        },
+        {
+          "environment": "zagros",
+          "host": "core-f",
+          "component": "herd",
+          "state": "unknown",
+          "reason": "no-answer",
+          "check": "zagros/core-f/herd"
+        }
+      ]
+    }
+  },
+  "verify-portal": {
+    "exit": 3,
+    "document": {
+      "schema": "goatbuilder.output/v1",
+      "verb": "verify",
+      "ok": false,
+      "exit": 3,
+      "checks": [
+        {
+          "name": "zagros/preflight/state",
+          "ok": true,
+          "detail": "State: stateful (undeclared — fail closed)"
+        },
+        {
+          "name": "zagros/preflight/rollback",
+          "ok": true,
+          "detail": "Rollback: none (undeclared — fail closed)"
+        },
+        {
+          "name": "zagros/preflight/scope",
+          "ok": true,
+          "detail": "Scope: single"
+        },
+        {
+          "name": "zagros/preflight",
+          "ok": true,
+          "detail": "prep: stateful · rollback: none (undeclared — fail closed) · single"
+        },
+        {
+          "name": "zagros/transport",
+          "ok": true,
+          "detail": "groups [zagros_hosts] via direct (mgmt-hosts.ini)"
+        },
+        {
+          "name": "zagros/playbook",
+          "ok": true,
+          "detail": "portal-deploy.yml -e target=<group>; ledger component portal"
+        },
+        {
+          "name": "zagros/core-a",
+          "ok": true,
+          "detail": "converged on sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01 — ledger row ts 2026-11-01T00:00:00Z"
+        },
+        {
+          "name": "zagros/core-b",
+          "ok": false,
+          "detail": "NOT converged — ledger tail: core-b | CHANGED | rc=0 | (stdout) {\"ref\":\"ghcr.io/zagros/portal:v1.3.1@sha256:1d2c00000000000000000000000000000000000000000000000000000000b"
+        },
+        {
+          "name": "zagros/core-c",
+          "ok": false,
+          "detail": "unknown — host unreachable; its ledger was not read"
+        },
+        {
+          "name": "zagros/zagros_hosts/ledger",
+          "ok": false,
+          "detail": "ledger read FAILED (exit 4)"
+        },
+        {
+          "name": "zagros/core-f",
+          "ok": false,
+          "detail": "NOT converged — no ledger row came back from this host"
+        },
+        {
+          "name": "zagros/portal",
+          "ok": false,
+          "detail": "portal on zagros: NOT converged everywhere (see above)"
+        }
+      ],
+      "machines": [
+        {
+          "environment": "zagros",
+          "host": "core-a",
+          "component": "portal",
+          "state": "converged",
+          "reason": "declared",
+          "check": "zagros/core-a"
+        },
+        {
+          "environment": "zagros",
+          "host": "core-b",
+          "component": "portal",
+          "state": "pending",
+          "reason": "other-ref",
+          "check": "zagros/core-b"
+        },
+        {
+          "environment": "zagros",
+          "host": "core-c",
+          "component": "portal",
+          "state": "unknown",
+          "reason": "unreachable",
+          "check": "zagros/core-c"
+        },
+        {
+          "environment": "zagros",
+          "host": "core-f",
+          "component": "portal",
+          "state": "unknown",
+          "reason": "no-answer",
+          "check": "zagros/core-f"
+        }
+      ]
+    }
+  },
+  "verify-portal-dry-run": {
+    "exit": 0,
+    "document": {
+      "schema": "goatbuilder.output/v1",
+      "verb": "verify",
+      "ok": true,
+      "exit": 0,
+      "checks": [
+        {
+          "name": "zagros/preflight/state",
+          "ok": true,
+          "detail": "State: stateful (undeclared — fail closed)"
+        },
+        {
+          "name": "zagros/preflight/rollback",
+          "ok": true,
+          "detail": "Rollback: none (undeclared — fail closed)"
+        },
+        {
+          "name": "zagros/preflight/scope",
+          "ok": true,
+          "detail": "Scope: single"
+        },
+        {
+          "name": "zagros/preflight",
+          "ok": true,
+          "detail": "prep: stateful · rollback: none (undeclared — fail closed) · single"
+        },
+        {
+          "name": "probe",
+          "ok": true,
+          "detail": "<repo>/ops/scripts/fresh-source.sh --repo <repo>"
+        },
+        {
+          "name": "zagros/transport",
+          "ok": true,
+          "detail": "groups [zagros_hosts] via direct (mgmt-hosts.ini)"
+        },
+        {
+          "name": "zagros/playbook",
+          "ok": true,
+          "detail": "portal-deploy.yml -e target=<group>; ledger component portal"
+        },
+        {
+          "name": "probe-ran",
+          "ok": true,
+          "detail": "python3 <repo>/ops/secrets/posture.py available"
+        },
+        {
+          "name": "probe-ran",
+          "ok": true,
+          "detail": "netbird status"
+        },
+        {
+          "name": "probe-ran",
+          "ok": true,
+          "detail": "python3 <repo>/ops/secrets/posture.py store"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "component=portal  argument --component"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "goatnet=zagros  argument --env"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "repo=<repo>  argument -C, else the current directory"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "name=zagros  derived from goatnet (above) by the goatnet with _ as -"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "var=portal_image  ops/pins/fleet-pins.yaml:6 components.portal.var"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "ledger=portal  default: the component's own name, when it declares no ledger_component"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "group zagros_hosts=zagros_hosts  ops/pins/fleet-pins.yaml:3 goatnets.zagros.members"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "play=portal-deploy.yml  derived from the component 'portal' and its ledger 'portal' by <ledger>-deploy.yml, else <component>-deploy.yml, the first in ops/ansible"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "target_flag=-e target=  derived from ops/ansible/portal-deploy.yml:2 hosts by a templated hosts: is targeted by -e <var>=<group>, a literal one by -l <group>"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "inventory inventory/mgmt-hosts.ini=inventory/mgmt-hosts.ini  derived from the transport: direct (mgmt-hosts.ini) by the base inventory, and the mesh or door override"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "portal_image (zagros_hosts)=ghcr.io/zagros/portal:v1.3.2@sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01  ops/ansible/group_vars/zagros_hosts/pins.yml:1 portal_image"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "aws_profile=default  default: default, the profile the AWS tools themselves fall back to"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES  default: set on every play, so Ansible's forked workers run on macOS; it changes nothing elsewhere"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "ledger_read=tail -n 1 /var/lib/goat/portal/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER  derived from ledger (above) by the newest row of /var/lib/goat/<ledger>/deploy-history.jsonl on each host"
+        },
+        {
+          "name": "zagros/zagros_hosts/verify",
+          "ok": true,
+          "detail": "DRY: would read /var/lib/goat/portal/deploy-history.jsonl on zagros_hosts and require ref digest sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01"
+        },
+        {
+          "name": "zagros/portal",
+          "ok": true,
+          "detail": "portal on zagros: DRY: nothing was read; a real run reads every host's ledger"
+        }
+      ],
+      "machines": []
+    }
+  },
+  "deploy-portal-dry-run": {
+    "exit": 0,
+    "document": {
+      "schema": "goatbuilder.output/v1",
+      "verb": "deploy",
+      "ok": true,
+      "exit": 0,
+      "checks": [
+        {
+          "name": "zagros/preflight/state",
+          "ok": true,
+          "detail": "State: stateful (undeclared — fail closed)"
+        },
+        {
+          "name": "zagros/preflight/rollback",
+          "ok": true,
+          "detail": "Rollback: none (undeclared — fail closed)"
+        },
+        {
+          "name": "zagros/preflight/scope",
+          "ok": true,
+          "detail": "Scope: single"
+        },
+        {
+          "name": "zagros/preflight",
+          "ok": true,
+          "detail": "prep: stateful · rollback: none (undeclared — fail closed) · single"
+        },
+        {
+          "name": "probe",
+          "ok": true,
+          "detail": "<repo>/ops/scripts/fresh-source.sh --repo <repo>"
+        },
+        {
+          "name": "zagros/transport",
+          "ok": true,
+          "detail": "groups [zagros_hosts] via direct (mgmt-hosts.ini)"
+        },
+        {
+          "name": "zagros/playbook",
+          "ok": true,
+          "detail": "portal-deploy.yml -e target=<group>; ledger component portal"
+        },
+        {
+          "name": "probe-ran",
+          "ok": true,
+          "detail": "python3 <repo>/ops/secrets/posture.py available"
+        },
+        {
+          "name": "probe-ran",
+          "ok": true,
+          "detail": "netbird status"
+        },
+        {
+          "name": "probe-ran",
+          "ok": true,
+          "detail": "python3 <repo>/ops/secrets/posture.py store"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "component=portal  argument --component"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "goatnet=zagros  argument --env"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "repo=<repo>  argument -C, else the current directory"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "name=zagros  derived from goatnet (above) by the goatnet with _ as -"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "var=portal_image  ops/pins/fleet-pins.yaml:6 components.portal.var"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "ledger=portal  default: the component's own name, when it declares no ledger_component"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "group zagros_hosts=zagros_hosts  ops/pins/fleet-pins.yaml:3 goatnets.zagros.members"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "play=portal-deploy.yml  derived from the component 'portal' and its ledger 'portal' by <ledger>-deploy.yml, else <component>-deploy.yml, the first in ops/ansible"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "target_flag=-e target=  derived from ops/ansible/portal-deploy.yml:2 hosts by a templated hosts: is targeted by -e <var>=<group>, a literal one by -l <group>"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "inventory inventory/mgmt-hosts.ini=inventory/mgmt-hosts.ini  derived from the transport: direct (mgmt-hosts.ini) by the base inventory, and the mesh or door override"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "portal_image (zagros_hosts)=ghcr.io/zagros/portal:v1.3.2@sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01  ops/ansible/group_vars/zagros_hosts/pins.yml:1 portal_image"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "aws_profile=default  default: default, the profile the AWS tools themselves fall back to"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES  default: set on every play, so Ansible's forked workers run on macOS; it changes nothing elsewhere"
+        },
+        {
+          "name": "input",
+          "ok": true,
+          "detail": "ledger_read=tail -n 1 /var/lib/goat/portal/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER  derived from ledger (above) by the newest row of /var/lib/goat/<ledger>/deploy-history.jsonl on each host"
+        },
+        {
+          "name": "probe",
+          "ok": true,
+          "detail": "(cd ops/ansible && ../scripts/with-aws default -- ansible -i inventory/mgmt-hosts.ini zagros_hosts -m shell -a 'tail -n 1 /var/lib/goat/portal/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER' -o)"
+        },
+        {
+          "name": "zagros/zagros_hosts/deploy",
+          "ok": true,
+          "detail": "DRY: deploying ghcr.io/zagros/portal:v1.3.2@sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01: (cd ops/ansible && ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini portal-deploy.yml -e target=zagros_hosts) > /tmp/goat-deploy-portal-zagros_hosts-<stamp>.log"
+        },
+        {
+          "name": "zagros/zagros_hosts/verify",
+          "ok": true,
+          "detail": "DRY: would read /var/lib/goat/portal/deploy-history.jsonl on zagros_hosts and require ref digest sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01"
+        },
+        {
+          "name": "zagros/portal",
+          "ok": true,
+          "detail": "portal on zagros: DRY: nothing was read; a real run reads every host's ledger"
+        }
+      ]
+    }
+  }
+}

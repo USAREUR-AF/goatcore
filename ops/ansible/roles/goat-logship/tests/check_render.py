@@ -100,7 +100,7 @@ else:
 # 5. The exporter address inside the container and the guard.
 check(vector["sinks"]["metrics"]["address"] == "0.0.0.0:9598",
       "exporter listens in its own netns; host exposure is the ports list")
-if case not in ("bind-all", "no-counter"):
+if case not in ("bind-all", "no-counter", "no-ct"):
     with open(f"{d}/logship-expose-guard.nft") as guard_file:
         nft = guard_file.read()
     check("ip daddr 100.64.0.7 tcp dport 9598 counter drop" in nft
@@ -116,5 +116,20 @@ if case == "no-counter":
     check("counter" not in nft.split("table inet goat_logship_expose {", 1)[1]
           and "ip daddr 100.64.0.7 tcp dport 9598 drop" in nft,
           "a kernel without nft counters gets the same drops, uncounted")
+
+if case == "no-ct":
+    with open(f"{d}/logship-expose-guard.nft") as guard_file:
+        nft = guard_file.read()
+    body = nft.split("table inet goat_logship_expose {", 1)[1]
+    check("ct " not in body,
+          "a kernel without nft conntrack gets no ct expression")
+    check("hook prerouting priority dstnat - 10" in body
+          and 'chain prerouting {' in body
+          and body.split("chain prerouting {",1)[1].split("}",1)[0].count('iifname != "lo" iifname != "wt0" ip daddr 100.64.0.7 tcp dport 9598 counter drop') == 1,
+          "without conntrack the DNAT path is dropped in prerouting, before the rewrite")
+    check(body.split("chain prerouting {",1)[1].split("}",1)[0].count('iifname != "lo" iifname != "br-0123456789ab" ip daddr 172.17.0.1 tcp dport 9598 counter drop') == 1,
+          "without conntrack the gateway binding is still admitted only from the scraper's bridge (and the host itself)")
+    check('iifname != "lo" iifname != "wt0" ip daddr 100.64.0.7 tcp dport 9598 counter drop' in body,
+          "the input path is unchanged without conntrack")
 
 sys.exit(1 if fails else 0)

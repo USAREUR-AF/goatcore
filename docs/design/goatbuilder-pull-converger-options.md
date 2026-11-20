@@ -41,7 +41,9 @@ with no transport opened (`crates/goatbuilder/src/verbs.rs`, test `c6_least_priv
 hosts calls the push converger directly (`crates/goatbuilder/src/main.rs`, the `Cmd::Deploy` arm,
 `push::deploy`), and so does `release` for its deploy rungs (`crates/goatbuilder/src/release.rs`,
 `push::deploy`). The push converger reads the pins and the inventory, not `goatbuilder.yaml`'s
-`converger:` (`crates/goatbuilder/src/push.rs`); it is not behind the trait. `doctor` does read the
+`converger:` (`crates/goatbuilder/src/push.rs`). (Since built: the push converger is behind the
+trait, `converger::Push`, chosen by `converger::select`; see goatbuilder.md, "The converger
+interface".) `doctor` does read the
 field: for a `pull-agent` environment it skips the reachability check and reports "no transport:
 the agent reaches out" (`crates/goatbuilder/src/doctor.rs`). So a `pull-agent` environment
 passed `doctor` without a reach check and was then deployed by push. **Built since:** `doctor`,
@@ -102,7 +104,10 @@ class to pull by changing `converger:` on that class, with no change to the verb
   later become "it works" without breaking anything a 1.0 file did.
 - `deploy`, `release`, `rollback` and `status` on real hosts must reach machines only through the
   converger interface, so that the later converger is an implementation and not a change to the
-  verbs. Today the push converger is called directly and is not behind the trait.
+  verbs. **Built** for `deploy`, `release`'s deploy rungs, `fastlane`'s deploy, `apply` of a deploy,
+  `status` and `verify` (gate group D; goatbuilder.md, "The converger interface"). `rollback` runs
+  the role's own deploy-history play, not a convergence of a declared ref, and stays outside the
+  trait.
 - The JSON documents of these verbs must already carry the states pull produces, *pending* and
   *unknown* per machine, as fields that 1.0 defines. Within one document version, a field is
   added and never retyped, so a field pull would need cannot first appear after 1.0 with a

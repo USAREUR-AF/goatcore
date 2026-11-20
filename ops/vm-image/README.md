@@ -22,7 +22,20 @@ Two things Ubuntu's cloud image starts would ask a vendor service on their own, 
 | `systemd-timesyncd` | stopped and disabled | it asks the vendor's NTP pool, its compiled-in fallback server. The standup sets the site's time sources itself: the `ntp-hygiene` role installs chrony with them, and chrony's package replaces `systemd-timesyncd`. Until then the clock is the hypervisor's |
 | `snapd` | purged, and kept out by `/etc/apt/preferences.d/goatlite-no-snapd` (from `files/apt-preferences-no-snapd`) | it asks the snap store. Nothing a goatlite runs is a snap, and the cloud image installs none. The pin stops phase 2's apt upgrade, which runs on every standup, from installing it again. Remove the pin file to install snapd on purpose |
 
-The first-boot check fails the build when either is back, and `tests/test_vm_image_no_vendor_reach.py` checks the builder for both.
+The image's other vendor checks are turned off too. Each one was measured asking a vendor name on its own:
+
+| Unit | What the build does | It asked |
+|---|---|---|
+| `motd-news.timer` | disabled, and `ENABLED=0` in `/etc/default/motd-news` | `motd.ubuntu.com` |
+| `fwupd-refresh.timer` | disabled | `cdn.fwupd.org` |
+| `update-notifier-motd.timer` | disabled, and `Prompt=never` in `/etc/update-manager/release-upgrades` | `changelogs.ubuntu.com` (the new-release check) |
+| `update-notifier-download.timer` | disabled | the download URLs of packages that fetch data after install |
+| `esm-cache.service` (Ubuntu Pro client) | masked | `esm.ubuntu.com`, on every `apt update` of a host not attached to Ubuntu Pro |
+| the Pro client's apt news | `pro config set apt_news=false` | `motd.ubuntu.com` |
+
+Left as Ubuntu ships them: `apt-daily`, `apt-daily-upgrade` and `unattended-upgrades` fetch and apply security updates from the apt sources the deployment configures. Whether a host takes updates is its operator's policy, not the image's. `ua-timer` asked nothing on an unattached host, and a host attached to Ubuntu Pro needs it.
+
+The first-boot check fails the build when any of these is back, and `tests/test_vm_image_no_vendor_reach.py` checks the builder for all of them.
 
 Nothing in it belongs to one machine: cloud-init state, machine-id, SSH host keys and the build user are removed, so the first boot is a new machine to cloud-init, and Docker makes a new engine id.
 

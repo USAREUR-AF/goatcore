@@ -372,3 +372,57 @@ fn a_read_that_failed_is_unreadable_on_status_and_verify_alike() {
         );
     }
 }
+
+/// The real-host documents, held byte for byte across the move of the push
+/// converger behind the converger trait (gate D): `status`, `verify` (a read and
+/// a dry run) and `deploy --dry-run` on the stand-in world must print exactly
+/// what they printed before it. `GOATBUILDER_GOLDEN=overwrite` records them.
+#[test]
+fn the_real_host_documents_are_unchanged_by_the_converger_trait() {
+    let w = world();
+    let repo = w.path();
+    let mut got = serde_json::Map::new();
+    let stamp = regex::Regex::new(r"\d{8}T\d{6}Z").unwrap();
+    for (name, args) in [
+        ("status", vec!["status", "--env", "zagros"]),
+        ("verify-portal", vec!["verify", "portal", "--env", "zagros"]),
+        (
+            "verify-portal-dry-run",
+            vec!["verify", "portal", "--env", "zagros", "--dry-run"],
+        ),
+        (
+            "deploy-portal-dry-run",
+            vec![
+                "deploy",
+                "--env",
+                "zagros",
+                "--component",
+                "portal",
+                "--dry-run",
+            ],
+        ),
+    ] {
+        let (code, doc, _) = run(repo, &args);
+        // Paths and times differ per run; the document's shape and words do not.
+        let text = doc.to_string().replace(repo.to_str().unwrap(), "<repo>");
+        let text = stamp.replace_all(&text, "<stamp>").into_owned();
+        // The deploy log goes to $TMPDIR when it is set (push.rs), which macOS sets
+        // to a per-user directory; the document records it as /tmp.
+        let text = match std::env::var("TMPDIR") {
+            Ok(t) if !t.is_empty() => text.replace(&format!("{t}/goat-deploy-"), "/tmp/goat-deploy-"),
+            _ => text,
+        };
+        got.insert(name.into(), serde_json::json!({"exit": code, "document": serde_json::from_str::<serde_json::Value>(&text).unwrap()}));
+    }
+    let got = serde_json::to_string_pretty(&serde_json::Value::Object(got)).unwrap() + "\n";
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/real-host-documents.json");
+    if std::env::var("GOATBUILDER_GOLDEN").as_deref() == Ok("overwrite") {
+        std::fs::write(&path, &got).unwrap();
+    }
+    let want = std::fs::read_to_string(&path).unwrap_or_default();
+    assert_eq!(
+        got, want,
+        "the real-host documents changed; if on purpose, GOATBUILDER_GOLDEN=overwrite"
+    );
+}

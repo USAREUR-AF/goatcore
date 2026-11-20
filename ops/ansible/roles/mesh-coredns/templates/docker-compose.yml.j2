@@ -13,6 +13,9 @@ services:
     volumes:
       - ./Corefile:/etc/coredns/Corefile:ro
       - ./mesh-hosts:/etc/mesh-hosts:ro
+{% if mesh_coredns_forwarders | length == 0 %}
+      - ./mesh-root.zone:/etc/mesh-root.zone:ro
+{% endif %}
     command: ["-conf", "/etc/coredns/Corefile"]
     logging:
       driver: json-file

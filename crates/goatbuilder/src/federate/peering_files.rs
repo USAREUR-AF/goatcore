@@ -503,12 +503,19 @@ fn shadowed(repo: &Path, r: &Rendered, hosts: &[String]) -> Option<(PathBuf, Vec
     let mut others: Vec<PathBuf> = Vec::new();
     // The group itself, the parent groups the rendered inventory puts it under,
     // and the inventory names in it: each would set the same variable.
-    let mut places: Vec<String> = vec![
-        format!("group_vars/{group}"),
-        "group_vars/peering_edges".into(),
-        "group_vars/peering_cores".into(),
-        "group_vars/peering_forwarders".into(),
-    ];
+    // A forwarder group is a child of peering_forwarders only (forwarder.rs,
+    // inventory), so the edges' and cores' parent groups never reach its hosts.
+    let parents: &[&str] = if r.path.ends_with("/peering-forwarder.yml") {
+        &["group_vars/peering_forwarders"]
+    } else {
+        &[
+            "group_vars/peering_edges",
+            "group_vars/peering_cores",
+            "group_vars/peering_forwarders",
+        ]
+    };
+    let mut places: Vec<String> = vec![format!("group_vars/{group}")];
+    places.extend(parents.iter().map(|s| s.to_string()));
     places.extend(hosts.iter().map(|h| format!("host_vars/{h}")));
     for place in places {
         let dir = repo.join("ops/ansible").join(&place);
@@ -1751,6 +1758,33 @@ mod tests {
         assert!(
             e.to_string().contains("peering_wg_listen_port")
                 && e.to_string().contains("deployment.yml"),
+            "{e}"
+        );
+    }
+
+    /// The forwarder machine's values have one owner too, and only the
+    /// forwarder's own groups can set them: an edge parent group's file that
+    /// sets the same name (an edge's ansible_user) is not the forwarder's, and
+    /// is left alone; a file of the forwarder group that sets one the
+    /// declaration renders is refused.
+    #[test]
+    fn a_forwarders_machine_value_is_owned_by_its_declaration_only_on_its_groups() {
+        let mut x = p("xab", true);
+        x["forwarder"] = json!({"endpoint": "203.0.113.7", "ansible_user": "goat"});
+        let d = repo_with(json!([x]));
+        let edges = d.path().join("ops/ansible/group_vars/peering_edges");
+        std::fs::create_dir_all(&edges).unwrap();
+        std::fs::write(edges.join("vars.yml"), "ansible_user: ops\n").unwrap();
+        run(d.path(), &opts(false)).unwrap();
+        let f = d.path().join("ops/ansible/group_vars/peering_forwarders/forwarder-host.yml");
+        std::fs::write(&f, "ansible_user: goat\n").unwrap();
+        let e = run(d.path(), &opts(false)).unwrap_err();
+        assert_eq!(
+            e.downcast_ref::<goat_errors::Coded>().unwrap().code,
+            "GB-125"
+        );
+        assert!(
+            e.to_string().contains("ansible_user") && e.to_string().contains("forwarder-host.yml"),
             "{e}"
         );
     }

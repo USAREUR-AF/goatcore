@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 997 variables, 144 of them secret-bearing by name.
+# 999 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -466,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 853 variables.
+# 855 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1254,6 +1254,12 @@ export GALAXY_ATTEMPTS=""
 
 # ops/ci/ansible-galaxy-install.sh
 export GALAXY_ATTEMPT_SECONDS=""
+
+# ops/federation-e2e/env
+export GB_UNDER_TEST=""
+
+# ops/federation-e2e/env, ops/federation-e2e/lib/gbrelease.sh
+export GB_VERSION=""
 
 # ops/ansible/group_vars/all.yml, ops/bootstrap/build-image-ec2.sh …
 export GHCR_ORG=""

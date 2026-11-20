@@ -87,7 +87,9 @@ checkpoint 2 on hardware proves.
 ## Before the real run
 
 1. **The joiner's declaration.** Its `group_vars/<joiner-site>_hosts/vars.yml`
-   with `goatnet_founder: false` and `join_founder_site: <founder-site>`.
+   with `goatnet_founder: false`, `join_founder_site: <founder-site>` and
+   `zenoh_stack: <joiner-site_id>-zenoh`, the name its data router and every
+   health publisher read. Without it, `join-node` refuses the plan with GB-361.
 2. **The founder names the joiner.** The founder's configuration must list the
    joiner as a replication peer before the mirror runs. The driver cannot
    supply this; the configuration must. Both sites' groups are children of
