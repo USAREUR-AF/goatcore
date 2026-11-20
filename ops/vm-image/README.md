@@ -13,11 +13,35 @@ An Ubuntu 24.04 image with phase 2 of a goatlite standup already applied and eve
 | every image a goatlite runs, by digest | `ops/scripts/standup-images.py --preset lite`, pulled by `ops/scripts/standup-image-pull.sh` (the standup's own pull step) |
 | what it was built from | `/etc/goat/prepared-image.json` on the image, and `goatlite-ubuntu-24.04-amd64.json` beside it: source commit, Ubuntu checksum and serial, sha256 of the baseline playbook and of `fleet-pins.yaml`, the image list |
 
+## What is not in it
+
+Two things Ubuntu's cloud image starts would ask a vendor service on their own, from the first boot, before the standup has set anything:
+
+| Part | What the build does | Why |
+|---|---|---|
+| `systemd-timesyncd` | stopped and disabled | it asks the vendor's NTP pool, its compiled-in fallback server. The standup sets the site's time sources itself: the `ntp-hygiene` role installs chrony with them, and chrony's package replaces `systemd-timesyncd`. Until then the clock is the hypervisor's |
+| `snapd` | purged, and kept out by `/etc/apt/preferences.d/goatlite-no-snapd` (from `files/apt-preferences-no-snapd`) | it asks the snap store. Nothing a goatlite runs is a snap, and the cloud image installs none. The pin stops phase 2's apt upgrade, which runs on every standup, from installing it again. Remove the pin file to install snapd on purpose |
+
+The image's other vendor checks are turned off too. Each one was measured asking a vendor name on its own:
+
+| Unit | What the build does | It asked |
+|---|---|---|
+| `motd-news.timer` | disabled, and `ENABLED=0` in `/etc/default/motd-news` | `motd.ubuntu.com` |
+| `fwupd-refresh.timer` | disabled | `cdn.fwupd.org` |
+| `update-notifier-motd.timer` | disabled, and `Prompt=never` in `/etc/update-manager/release-upgrades` | `changelogs.ubuntu.com` (the new-release check) |
+| `update-notifier-download.timer` | disabled | the download URLs of packages that fetch data after install |
+| `esm-cache.service` (Ubuntu Pro client) | masked | `esm.ubuntu.com`, on every `apt update` of a host not attached to Ubuntu Pro |
+| the Pro client's apt news | `pro config set apt_news=false` | `motd.ubuntu.com` |
+
+Left as Ubuntu ships them: `apt-daily`, `apt-daily-upgrade` and `unattended-upgrades` fetch and apply security updates from the apt sources the deployment configures. Whether a host takes updates is its operator's policy, not the image's. `ua-timer` asked nothing on an unattached host, and a host attached to Ubuntu Pro needs it.
+
+The first-boot check fails the build when any of these is back, and `tests/test_vm_image_no_vendor_reach.py` checks the builder for all of them.
+
 Nothing in it belongs to one machine: cloud-init state, machine-id, SSH host keys and the build user are removed, so the first boot is a new machine to cloud-init, and Docker makes a new engine id.
 
 ## How it is built
 
-`.github/workflows/goatlite-vm-image.yml` runs `ops/vm-image/build.sh` on a GitHub-hosted Ubuntu runner under QEMU (KVM when the runner has it). It runs on every push to main that changes the baseline playbook, the roles it runs, `group_vars/all.yml`, the pin table, the image list or the builder, and on demand (`gh workflow run goatlite-vm-image.yml`). After the build, the workflow boots the written image as a learner would, with a new cloud-init user, and fails unless that user can SSH in, Docker runs on `/var/lib/docker`, the build user is gone, and the standup's pull step reports every image already on the host by digest.
+`.github/workflows/goatlite-vm-image.yml` runs `ops/vm-image/build.sh` on a GitHub-hosted Ubuntu runner under QEMU (KVM when the runner has it). It runs on every push to main that changes the baseline playbook, the roles it runs, `group_vars/all.yml`, the pin table, the image list or the builder, and on demand (`gh workflow run goatlite-vm-image.yml`). After the build, the workflow boots the written image as a learner would, with a new cloud-init user, and fails unless that user can SSH in, Docker runs on `/var/lib/docker`, the build user is gone, `systemd-timesyncd` is disabled, snapd is not installed, and the standup's pull step reports every image already on the host by digest.
 
 The image is the run's artifact `goatlite-ubuntu-24.04-amd64` (kept 14 days): the qcow2, its JSON record, `SHA256SUMS`, `build.log` and the VM's `console.log`.
 

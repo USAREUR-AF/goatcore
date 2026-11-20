@@ -484,6 +484,16 @@ fn split_expected(inv: &serde_json::Value, group: &str, write_role: &str) -> (Ve
 /// `deploy` on real hosts. Exit 0 when every host's ledger names the declared
 /// digest with `action: deploy`; 3 otherwise; 1 when refused before any host.
 pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
+    let (mut report, graded) = deploy_graded(repo, o)?;
+    if o.verify_only {
+        report.machines = Some(graded);
+    }
+    Ok(report)
+}
+
+/// [`deploy`], with every host row it graded as a machines entry: what the push
+/// converger's `observe_on` reads its outcomes from (gate D).
+pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<crate::Machine>)> {
     // This converger is push. An environment declared to pull is refused before
     // any step: the pull converger is not built, and pushing would change what
     // the declaration means once it is.
@@ -529,7 +539,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                             format!("rollback: {kind} — this rollout is not cleanly reversible (undo is not a pin flip)"),
                             "re-run with --ack \"<your name>\": the readout and the accepted risk are written into the deploy ledger row",
                         ));
-                        return Ok(Report::new("deploy", checks, EXIT_REFUSED));
+                        return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
                     }
                     accept = Some(crate::preflight::accepted_risk_json(f, o.ack));
                 }
@@ -550,7 +560,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         trunk = f.trunk.clone();
         checks.push(f.check);
         if refused {
-            return Ok(Report::new("deploy", checks, EXIT_REFUSED));
+            return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
         }
     }
     // A dry run names the fresh-source probe a real run starts before its
@@ -581,7 +591,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
             checks.push(ok(&format!("{}/{}/secrets", p.name, p.component), format!("{detail}; not needed for --verify-only (no play runs)")));
         } else {
             checks.push(refused(&format!("{}/{}/secrets", p.name, p.component), detail, fix));
-            return Ok(Report::new("deploy", checks, EXIT_REFUSED));
+            return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
         }
     }
     checks.push(ok(&format!("{}/transport", p.name), format!("groups [{}] via {}", r.members.join(" "), p.transport.detail)));
@@ -772,11 +782,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
     } else {
         checks.push(ok(&format!("{}/{}", p.name, p.component), verdict));
     }
-    let mut report = Report::new("deploy", checks, EXIT_NOT_CONVERGED);
-    if o.verify_only {
-        report.machines = Some(graded);
-    }
-    Ok(report)
+    Ok((Report::new("deploy", checks, EXIT_NOT_CONVERGED), graded))
 }
 
 /// The payloads a serving surface (goat-get, goat-docs) should serve to one member group,

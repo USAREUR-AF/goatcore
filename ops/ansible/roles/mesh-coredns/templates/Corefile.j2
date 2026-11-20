@@ -42,8 +42,20 @@
         fallthrough
     }
 
+{# mesh_coredns_forwarders (defaults/main.yml): where a name outside the mesh
+   zone goes. The default list renders the line every goatnet ran before. #}
+{% if mesh_coredns_forwarders | length > 0 %}
     # Forward non-mesh queries to public DNS.
-    forward . 1.1.1.1 8.8.8.8
+    forward . {{ mesh_coredns_forwarders | join(' ') }}
+{% else %}
+    # mesh_coredns_forwarders is empty: no forward directive, and no query
+    # leaves this resolver. It is the only source of answers, so a name the
+    # hosts file does not hold falls through to a zone file for the root that
+    # holds only an SOA (mesh-root.zone): NXDOMAIN, cached for
+    # mesh_coredns_negative_ttl seconds. Without it the hosts plugin would
+    # answer SERVFAIL, which a resolver retries or takes to another server.
+    file /etc/mesh-root.zone .
+{% endif %}
 
     cache 1000
 

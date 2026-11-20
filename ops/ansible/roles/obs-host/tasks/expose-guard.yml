@@ -44,6 +44,30 @@
              if (obs_expose_guard_counter | string == 'auto')
              else (obs_expose_guard_counter | bool) }}
 
+    # Some kernels are built without nft conntrack (the Jetson Tegra kernel:
+    # CONFIG_NFT_CT is not set), and a rule that uses a ct expression fails to
+    # load with "No such file or directory". nft -c only checks.
+    - name: obs-host | the kernel has nft conntrack (check only)
+      ansible.builtin.command:
+        argv: [/usr/sbin/nft, -c, -f, "-"]
+        stdin: |
+          table inet goat_obs_ct_check {
+          	chain c {
+          		ct direction original accept
+          	}
+          }
+      register: _obs_ct_check
+      changed_when: false
+      failed_when: false
+      when: obs_expose_guard_ct | string == 'auto'
+
+    - name: obs-host | exposure guard matches the DNAT path where the kernel can
+      ansible.builtin.set_fact:
+        _obs_guard_ct: >-
+          {{ (_obs_ct_check.rc | default(1) == 0)
+             if (obs_expose_guard_ct | string == 'auto')
+             else (obs_expose_guard_ct | bool) }}
+
     - name: obs-host | exposure guard ruleset
       ansible.builtin.template:
         src: obs-expose-guard.nft.j2

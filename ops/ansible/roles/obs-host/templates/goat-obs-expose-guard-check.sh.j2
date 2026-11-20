@@ -11,7 +11,11 @@ set -u
 NFT=/usr/sbin/nft
 listing=$("$NFT" list table inet goat_obs_expose 2>/dev/null) || listing=""
 case "$listing" in
+{% if _obs_guard_ct | default(true) | bool %}
   *'ct direction original iifname != "{{ obs_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _obs_bind | trim }} ct original proto-dst { {{ obs_expose_guard_ports | join(', ') }} } '*'drop'*)
+{% else %}
+  *'hook prerouting priority dstnat - 10'*)
+{% endif %}
     case "$listing" in
       *'iifname != "lo" iifname != "{{ obs_mesh_iface }}" ip daddr {{ _obs_bind | trim }} tcp dport { {{ obs_expose_guard_ports | join(', ') }} } '*'drop'*)
         exit 0 ;;

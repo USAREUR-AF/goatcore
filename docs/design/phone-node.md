@@ -76,8 +76,8 @@ goatnet's control-plane databases, and every replicating site keeps a
 replication slot for it. Operator decision, 2026-11-15 (gate group D, D2): a
 phone stays a full `core` joiner for goatbuilder 1.0. How long it may be off
 before a slot is invalidated, what it sees when it returns, and how it is
-seeded again are measured on lab containers, and the re-seed path in
-`goatbuilder` is designed there, not built
+seeded again are measured on lab containers, and the re-seed is built as
+`goatbuilder join-node ... --reseed`, its helper measured on the same containers
 ([goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md),
 "How long a phone may be off"). A goatnet's own WAL rate, which sets the
 budget, is measured during gate row H8's week, in the same section. A lighter profile, a mesh peer with its own
