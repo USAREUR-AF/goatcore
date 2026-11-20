@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -45,7 +47,10 @@ func (d delivering) ConnectStream(stream signalpb.SignalExchange_ConnectStreamSe
 	}
 	for {
 		if _, err := stream.Recv(); err != nil {
-			return nil
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
 		}
 	}
 }
@@ -64,14 +69,17 @@ func (standIn) Send(context.Context, *signalpb.EncryptedMessage) (*signalpb.Encr
 func (standIn) ConnectStream(stream signalpb.SignalExchange_ConnectStreamServer) error {
 	for {
 		if _, err := stream.Recv(); err != nil {
-			return nil
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
 		}
 	}
 }
 
 func startStandIn(t *testing.T, srv signalpb.SignalExchangeServer) string {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	lis, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

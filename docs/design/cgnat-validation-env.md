@@ -161,6 +161,14 @@ the scenario scripts are not in this repository.
   prevent single-peer stall from saturating the caller.
 - No sustained blocking during either fault.
 - Clean recovery — err_rate + p99 return to baseline after restart.
+- The load generator's own verdict is PASS. It counts a send to an online
+  peer as delivered only when that peer's stream, which the generator
+  holds, receives it: a Send answers OK when a federation forward failed and
+  delivery is unknown, so an OK alone is not delivery. An OK that never
+  arrives is a miss in `pathological_miss_rate`; the verdict is FAIL, and the
+  generator exits 1, when that rate is above `--max-miss-rate` (0 by
+  default). **Built** (`signal-server/cmd/federation-load/main_test.go`, on
+  stand-in servers); not measured in this environment.
 
 ### 3.3 Scenario 3 — hole-punching vs relay fallback instrumentation (hour 21–23)
 

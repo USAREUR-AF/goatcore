@@ -18,6 +18,15 @@
 // two separately; pathological_miss_rate is the headline pass/fail metric
 // (must be ≈ 0 when federation forwarding is healthy).
 //
+// A Send that answers OK is not proof of delivery: the server answers OK when a
+// federation forward failed and delivery is unknown (relay outcome
+// forward_failed). So each Send carries a body of its own, and it counts as
+// delivered only when the target's own stream, which this tool holds, receives
+// it. An OK to an online peer that never arrives within --confirm-timeout is a
+// miss (unconfirmed) in pathological_miss_rate. The summary's verdict is PASS
+// when that rate is at most --max-miss-rate (0 by default); otherwise FAIL, and
+// the tool exits 1 after writing the summary.
+//
 // Kept deliberately simple — no metrics registry, no goroutine pools beyond
 // one per open stream. Matches the style of cmd/federation-probe.
 package main
@@ -28,7 +37,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"math/rand"
 	"os"
@@ -57,6 +65,8 @@ type config struct {
 	peersPerServer        int
 	offlinePeersPerServer int
 	sendTimeout           time.Duration
+	confirmTimeout        time.Duration
+	maxMissRate           float64
 	seed                  int64
 }
 
@@ -67,6 +77,8 @@ func main() {
 	peersPerServer := flag.Int("peers-per-server", 50, "number of fake ConnectStream peer keys to register per server")
 	offlinePeersPerServer := flag.Int("offline-peers-per-server", 50, "number of UNREGISTERED (offline) target keys per server. Sends to these SHOULD return NotFound — they model powered-off peers and separate normal misses from pathological cross-shard misses. 0 disables the offline cohort.")
 	sendTimeout := flag.Duration("send-timeout", 5*time.Second, "per-Send RPC deadline")
+	confirmTimeout := flag.Duration("confirm-timeout", 2*time.Second, "after the run, how long a send that answered OK may still take to reach its target's stream before it counts as a miss")
+	maxMissRate := flag.Float64("max-miss-rate", 0, "the verdict is FAIL when pathological_miss_rate exceeds this (0: any miss to an online peer fails the run)")
 	out := flag.String("out", "", "path to write final summary JSON (default stderr)")
 	seed := flag.Int64("seed", 0, "RNG seed; 0 = time-based")
 	flag.Parse()
@@ -78,6 +90,8 @@ func main() {
 		peersPerServer:        *peersPerServer,
 		offlinePeersPerServer: *offlinePeersPerServer,
 		sendTimeout:           *sendTimeout,
+		confirmTimeout:        *confirmTimeout,
+		maxMissRate:           *maxMissRate,
 		seed:                  *seed,
 	}
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -87,10 +101,13 @@ func main() {
 		log.Fatal(err)
 	}
 	writeSummary(summary, *out)
+	if summary.Verdict != "PASS" {
+		os.Exit(1)
+	}
 }
 
 // run drives the load against cfg.servers until cfg.duration ends or ctx is
-// cancelled, and returns the summary.
+// canceled, and returns the summary.
 func run(rootCtx context.Context, cfg config) (finalSummary, error) {
 	servers := cfg.servers
 	if len(servers) < 2 {
@@ -131,10 +148,12 @@ func run(rootCtx context.Context, cfg config) (finalSummary, error) {
 		serverIx int
 	}
 	allKeys := make([]registeredPeer, 0, len(servers)*(cfg.peersPerServer))
+	// Every Send carries a body of its own; a target's stream that receives
+	// it confirms the delivery. A Send that answers OK is otherwise not proof:
+	// the server answers OK when a federation forward failed and delivery is
+	// unknown (relay outcome forward_failed).
+	sends := newSendBook()
 	var regMu sync.Mutex
-
-	regCtx, regCancel := context.WithTimeout(rootCtx, 30*time.Second)
-	defer regCancel()
 
 	var regWG sync.WaitGroup
 	errCh := make(chan error, len(servers)*(cfg.peersPerServer))
@@ -175,18 +194,17 @@ func run(rootCtx context.Context, cfg config) (finalSummary, error) {
 				// Registered — signal it NOW, before the never-returning drain
 				// loop below, so regWG.Wait() can complete.
 				regWG.Done()
-				// Drain inbound forever; we don't validate bodies here because
-				// the load test is measuring server-side behavior, not delivery
-				// correctness (federation-probe covers the delivery check).
+				// Drain inbound until the stream ends, confirming each body
+				// that arrives (see sends).
 				for {
-					if _, err := stream.Recv(); err != nil {
-						if errors.Is(err, io.EOF) || errors.Is(regCtx.Err(), context.Canceled) {
-							return
-						}
-						// Don't fail the test — a dropped stream after the
-						// scenario kills a server is expected behavior.
-						return
+					m, err := stream.Recv()
+					if err == nil {
+						sends.received(string(m.GetBody()))
+						continue
 					}
+					// The stream ended: EOF, the run's end, or a server the
+					// scenario killed, which is expected and not a failure.
+					return
 				}
 			}(si, key)
 		}
@@ -346,11 +364,13 @@ func run(rootCtx context.Context, cfg config) (finalSummary, error) {
 				ctx, cancel := context.WithTimeout(runCtx, cfg.sendTimeout)
 				defer cancel()
 				start := time.Now()
+				body := sends.open(dst.online)
 				_, err := sendClients[senderIx].Send(ctx, &signalpb.EncryptedMessage{
 					Key:       fmt.Sprintf("loadgen-%d", senderIx),
 					RemoteKey: dst.key,
-					Body:      []byte("x"),
+					Body:      []byte(body),
 				})
+				sends.answered(body, err == nil)
 				elapsed := time.Since(start)
 				totalLatNS.Add(elapsed.Nanoseconds())
 				if dst.online {
@@ -368,7 +388,8 @@ func run(rootCtx context.Context, cfg config) (finalSummary, error) {
 				samplesMu.Unlock()
 				switch {
 				case err == nil:
-					delivered.Add(1)
+					// Answered OK: delivered only once the target's stream has
+					// received it, which the summary counts (sends).
 				case status.Code(err) == codes.NotFound:
 					notFound.Add(1)
 					if dst.online {
@@ -401,6 +422,13 @@ summarize:
 	for inFlight.Load() > 0 && time.Now().Before(drainDeadline) {
 		time.Sleep(50 * time.Millisecond)
 	}
+	// A send that answered OK may reach its target's stream a little later.
+	confirmDeadline := time.Now().Add(cfg.confirmTimeout)
+	for sends.waiting() > 0 && time.Now().Before(confirmDeadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	confirmed, unconfirmed, unknownOffline := sends.tally()
+	delivered.Store(confirmed)
 
 	// We didn't keep raw per-request latencies for the whole run (windowLat
 	// was cleared each second), so derive overall p50/p99 from per-second
@@ -418,7 +446,11 @@ summarize:
 	so := sentOnline.Load()
 	var pathRate float64
 	if so > 0 {
-		pathRate = float64(notFoundPathological.Load()) / float64(so)
+		pathRate = float64(notFoundPathological.Load()+unconfirmed) / float64(so)
+	}
+	verdict := "PASS"
+	if so == 0 || pathRate > cfg.maxMissRate {
+		verdict = "FAIL"
 	}
 	summary := finalSummary{
 		StartedAt:            time.Now().UTC().Format(time.RFC3339Nano),
@@ -433,7 +465,11 @@ summarize:
 		TotalNotFound:        notFound.Load(),
 		NotFoundOffline:      notFoundOffline.Load(),
 		NotFoundPathological: notFoundPathological.Load(),
+		Unconfirmed:          unconfirmed,
+		UnknownOffline:       unknownOffline,
 		PathologicalMissRate: pathRate,
+		MaxMissRate:          cfg.maxMissRate,
+		Verdict:              verdict,
 		TotalError:           errored.Load(),
 		AvgLatencyMS:         avgMS,
 		OverallP50MS:         overallP50,
@@ -463,11 +499,15 @@ type finalSummary struct {
 	TotalSent            int64          `json:"total_sent"`
 	SentOnline           int64          `json:"sent_online"`
 	SentOffline          int64          `json:"sent_offline"`
-	TotalDelivered       int64          `json:"total_delivered"`
+	TotalDelivered       int64          `json:"total_delivered"` // OK and received by the target's stream
 	TotalNotFound        int64          `json:"total_not_found"`
 	NotFoundOffline      int64          `json:"not_found_offline"`      // F-265: expected (target offline)
 	NotFoundPathological int64          `json:"not_found_pathological"` // F-265: BUG (online peer, cross-shard forward failed)
-	PathologicalMissRate float64        `json:"pathological_miss_rate"` // not_found_pathological / sent_online — HEADLINE pass/fail (≈0 = healthy)
+	Unconfirmed          int64          `json:"unconfirmed"`            // OK to an online peer whose stream never received it: delivery unknown, a miss
+	UnknownOffline       int64          `json:"unknown_offline"`        // OK to an offline key (never received): federation incomplete, not counted as a miss
+	PathologicalMissRate float64        `json:"pathological_miss_rate"` // (not_found_pathological + unconfirmed) / sent_online — HEADLINE pass/fail
+	MaxMissRate          float64        `json:"max_miss_rate"`
+	Verdict              string         `json:"verdict"` // PASS when pathological_miss_rate <= max_miss_rate and some send went to an online peer
 	TotalError           int64          `json:"total_error"`
 	AvgLatencyMS         float64        `json:"avg_latency_ms"`
 	OverallP50MS         float64        `json:"overall_p50_ms"`
@@ -556,4 +596,79 @@ func nonZeroSeed(s int64) int64 {
 		return s
 	}
 	return time.Now().UnixNano()
+}
+
+// sendBook confirms deliveries: each Send carries a body of its own, and a
+// send counts as delivered only when it answered OK and the target's stream
+// received that body.
+type sendBook struct {
+	mu   sync.Mutex
+	seq  int64
+	byID map[string]*sendState
+}
+
+type sendState struct {
+	online, answered, ok, received bool
+}
+
+func newSendBook() *sendBook { return &sendBook{byID: map[string]*sendState{}} }
+
+// open records a send before it goes out and returns its body.
+func (b *sendBook) open(online bool) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.seq++
+	id := fmt.Sprintf("lf-%d", b.seq)
+	b.byID[id] = &sendState{online: online}
+	return id
+}
+
+func (b *sendBook) answered(id string, ok bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if st := b.byID[id]; st != nil {
+		st.answered, st.ok = true, ok
+	}
+}
+
+func (b *sendBook) received(id string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if st := b.byID[id]; st != nil {
+		st.received = true
+	}
+}
+
+// waiting is the number of sends to online peers that answered OK and have
+// not been received yet.
+func (b *sendBook) waiting() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := 0
+	for _, st := range b.byID {
+		if st.ok && st.online && !st.received {
+			n++
+		}
+	}
+	return n
+}
+
+// tally: sends that answered OK and were received (delivered); OK to an online
+// peer and never received (unconfirmed, a miss); OK to an offline key and
+// never received (unknown, not a miss: the key is registered nowhere).
+func (b *sendBook) tally() (delivered, unconfirmed, unknownOffline int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, st := range b.byID {
+		switch {
+		case !st.ok:
+		case st.received:
+			delivered++
+		case st.online:
+			unconfirmed++
+		default:
+			unknownOffline++
+		}
+	}
+	return
 }
