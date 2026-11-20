@@ -4371,6 +4371,24 @@ entries:
       - "ROUTE MISSING: the directory's operator moves it to a release that serves the route; check which release runs with goatbuilder federate directory ls"
     read: docs/design/peering-directory-service.md
     exit: 1
+  - code: GB-373
+    tool: goatbuilder
+    title: the ref is not on the rung below yet
+    what: "A deploy to a goatnet above the lowest rung of the release ladder (ops/release/ladder.yaml: dev, then preprod, then prod) was refused before any host was touched. The digest it would deploy is not what the rung below pins, or the rung below has not converged on it, so the change has not run anywhere first (ADR 1120). deploy-component.sh checks the pin and reads the lower rung's deploy ledgers; ansible-preflight.sh checks the pin for a direct play, including an -e override of the image variable (ops/release/ladder_gate.py)."
+    causes:
+      - the pin moved on this goatnet before it moved on the rung below
+      - an -e override deployed a ref the rung below does not run
+      - the rung below pins the ref, but its hosts never converged on it (their ledgers name another ref)
+      - no rung below runs the component at all
+    fixes:
+      - "move the pin on the rung below and run ops/scripts/deploy-component.sh <component> --goatnet <lower goatnet>, then deploy here"
+      - "an urgent fix that must reach every rung at once: open a hotfix record (graduate.py hotfix, or ops/scripts/fastlane.sh), which the gate accepts"
+      - "a deliberate exception: --skip-rung --reason \"<why>\" --ack \"<operator>\" (a direct play: GOAT_LADDER_SKIP_REASON and GOAT_LADDER_SKIP_ACK); the reason is written into the deploy ledger row"
+    read: docs/design/release-graduation.md
+    matches:
+      - "GB-373 ladder:"
+      - "is not on rung .* the rung below"
+    exit: 1
   - code: GB-345
     tool: goatbuilder
     title: there is nothing to seed again

@@ -1207,6 +1207,12 @@ gb-372-what = goatbuilder federate directory check (or show) found an item that 
 gb-372-cause-1 = NOT HOSTED: the party has not run phase 5 of the peering, which uploads its entry, CA, SPIFFE bundle and its package for the counterparty
 gb-372-cause-2 = NOT HOSTED: the party used another id, or uploaded to the single package slot instead of the one for this counterparty
 gb-372-cause-3 = ROUTE MISSING: the directory runs a release older than the one that added the route (per-counterparty packages need saltlick v0.5.0)
+gb-373-title = the ref is not on the rung below yet
+gb-373-what = A deploy to a goatnet above the lowest rung of the release ladder (ops/release/ladder.yaml: dev, then preprod, then prod) was refused before any host was touched. The digest it would deploy is not what the rung below pins, or the rung below has not converged on it, so the change has not run anywhere first (ADR 1120). deploy-component.sh checks the pin and reads the lower rung's deploy ledgers; ansible-preflight.sh checks the pin for a direct play, including an -e override of the image variable (ops/release/ladder_gate.py).
+gb-373-cause-1 = the pin moved on this goatnet before it moved on the rung below
+gb-373-cause-2 = an -e override deployed a ref the rung below does not run
+gb-373-cause-3 = the rung below pins the ref, but its hosts never converged on it (their ledgers name another ref)
+gb-373-cause-4 = no rung below runs the component at all
 gb-345-title = there is nothing to seed again
 gb-345-what = `goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed.
 gb-345-cause-1 = the node came back before the founder's slot for it passed `max_slot_wal_keep_size`

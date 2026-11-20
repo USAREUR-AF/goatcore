@@ -15,6 +15,7 @@ setup() {
   BIN="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$FIXTURE/ops/scripts" "$FIXTURE/ops/pins" \
     "$FIXTURE/ops/ansible/group_vars/test_hosts" "$STUBS" "$BIN"
+  mkdir -p "$FIXTURE/ops/release" && cp "$REPO_ROOT/ops/release/ladder_gate.py" "$FIXTURE/ops/release/"  # the release-ladder gate (GB-373); no ladder declared here, so it passes
   cp "$REPO_ROOT/ops/scripts/deploy-component.sh" "$REPO_ROOT/ops/scripts/served-payloads.py" \
     "$REPO_ROOT/ops/scripts/fresh-source.sh" "$FIXTURE/ops/scripts/"
   cat > "$FIXTURE/ops/pins/fleet-pins.yaml" <<'YAML'
