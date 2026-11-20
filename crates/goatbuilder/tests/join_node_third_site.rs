@@ -786,6 +786,50 @@ fn a_dry_runs_footer_does_not_call_phase_1_a_manual_step() {
     );
 }
 
+/// The roles a joiner's core node runs, as the repository ships them: the data
+/// router's (goat-zenoh) and every health publisher's defaults, which say how
+/// each reads `zenoh_stack`.
+fn with_role_defaults(s: &Site) {
+    for role in [
+        "goat-zenoh",
+        "fabric-health",
+        "mesh-health",
+        "presence-health",
+        "time-health",
+        "consistency-health",
+        "fabric-crawler",
+    ] {
+        let rel = format!("ops/ansible/roles/{role}/defaults");
+        copy_tree(&repo_root().join(&rel), &s.checkout.join(&rel));
+    }
+}
+
+/// The data router names its stack `<site_id>-zenoh` by its role default, and
+/// a health publisher whose role defaults `zenoh_stack` to `goat-zenoh` would
+/// look for a router and network of that name. A joiner whose group_vars do
+/// not set `zenoh_stack` is refused before any phase runs (GB-361), naming the
+/// publishers, both values and the line to add; set, every role reads it.
+#[test]
+fn a_joiner_whose_roles_disagree_on_zenoh_stack_is_refused_before_any_phase() {
+    let s = site();
+    with_role_defaults(&s);
+    let (out, v) = join_node_with(&s, None, &["--dry-run"]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert!(phases(&v).is_empty(), "no phase runs: {all}");
+    assert!(all.contains("GB-361"), "{all}");
+    assert!(all.contains("gamma-zenoh") && all.contains("goat-zenoh"), "both values: {all}");
+    assert!(all.contains("zenoh_stack: gamma-zenoh"), "the line to add: {all}");
+    assert!(all.contains("group_vars/gamma_hosts"), "where to add it: {all}");
+
+    let vars = s.checkout.join("ops/ansible/group_vars/gamma_hosts/vars.yml");
+    let mut text = std::fs::read_to_string(&vars).unwrap();
+    text.push_str("zenoh_stack: gamma-zenoh\n");
+    std::fs::write(&vars, text).unwrap();
+    let (out, _) = join_node_with(&s, None, &["--dry-run"]);
+    assert!(out.status.success(), "with zenoh_stack set, every role reads one value: {}", says(&out));
+}
+
 /// Like standup, a join-node run leaves a row per executed step in the state
 /// directory, and a timing line in its summary; a dry run leaves no file.
 #[test]
