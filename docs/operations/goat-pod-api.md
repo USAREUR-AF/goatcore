@@ -35,7 +35,7 @@ first-boot writes `<state>/pod-api/config.json` and the systemd unit. The config
 | `pull_interval_seconds`, `cutoff_after_seconds` | 60 and 300 by default; the pod reports itself cut off after the second without portal contact |
 | `max_rule_days`, `reactivation_days` | 90 and 183 by default; the longest local end date and the reactivation window |
 | `health_publish` | `{"enabled": true}` publishes carriage health on `ops/pod/health/<pod-slot>` with `goat pub` |
-| `gatepost_page` | the Gatepost page served at `/` (install `ops/fieldkit/gatepost/gatepost.html` there; default `/usr/local/share/goat-pod-api/gatepost.html`); a page naming the `goat pod` commands is served when it is absent |
+| `gatepost_page` | optional file that replaces the built-in Gatepost page served at `/`. The binary carries `ops/fieldkit/gatepost/gatepost.html` (CI checks the copy matches) |
 
 ## Commands
 

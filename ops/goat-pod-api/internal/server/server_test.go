@@ -410,8 +410,8 @@ func TestEndToEnd(t *testing.T) {
 	}
 	page, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if !strings.Contains(string(page), "goat pod rules allow") {
-		t.Fatal("placeholder page missing")
+	if !bytes.Equal(page, gatepostPage) || !strings.Contains(string(page), `data-cli="pod rules allow"`) {
+		t.Fatal("Gatepost page not served at /")
 	}
 
 	// A restart of the service keeps the generation and the ledger.

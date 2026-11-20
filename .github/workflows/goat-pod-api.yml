@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - 'ops/goat-pod-api/**'
+      - 'ops/fieldkit/gatepost/gatepost.html'
       - '.golangci.yml'
       - '.github/workflows/goat-pod-api.yml'
   workflow_dispatch:
@@ -36,6 +37,12 @@ jobs:
           # go.* not go.sum: the module has no dependencies and no go.sum.
           cache-dependency-path: ops/goat-pod-api/go.*
       - run: test -z "$(gofmt -l .)"
+      - name: Built-in Gatepost page matches ops/fieldkit/gatepost/gatepost.html
+        run: |
+          cmp internal/server/gatepost.html ../fieldkit/gatepost/gatepost.html || {
+            echo "refresh it: cp ops/fieldkit/gatepost/gatepost.html ops/goat-pod-api/internal/server/"
+            exit 1
+          }
       - run: go vet ./...
       - name: golangci-lint
         uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7

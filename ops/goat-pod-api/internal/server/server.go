@@ -6,6 +6,7 @@ package server
 import (
 	"crypto/tls"
 	"crypto/x509"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,7 +22,8 @@ import (
 
 // Server serves the API.
 type Server struct {
-	Agent        *agent.Agent
+	Agent *agent.Agent
+	// GatepostPage, when set and readable, replaces the built-in Gatepost page.
 	GatepostPage string
 }
 
@@ -205,17 +207,12 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request, who generation.A
 	s.done(w, http.StatusOK, res, err)
 }
 
-const placeholder = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gatepost</title></head>
-<body style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem">
-<h1>Gatepost</h1>
-<p>The Gatepost page is not installed on this pod. The same actions are available with the
-<code>goat pod</code> commands: <code>goat pod status</code>, <code>goat pod rules ls</code>,
-<code>goat pod rules allow</code>, <code>goat pod rules extend</code>, <code>goat pod rules revoke</code>,
-<code>goat pod rules reactivate</code>, <code>goat pod pending</code>.</p>
-</body></html>
-`
+// gatepostPage is ops/fieldkit/gatepost/gatepost.html, copied into this module so the binary
+// carries it (go:embed cannot reach outside the module). CI fails when the copy drifts:
+// refresh it with `cp ops/fieldkit/gatepost/gatepost.html ops/goat-pod-api/internal/server/`.
+//
+//go:embed gatepost.html
+var gatepostPage []byte
 
 func (s *Server) gatepost(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -229,7 +226,7 @@ func (s *Server) gatepost(w http.ResponseWriter, _ *http.Request) {
 			return
 		}
 	}
-	if _, err := w.Write([]byte(placeholder)); err != nil {
+	if _, err := w.Write(gatepostPage); err != nil {
 		return
 	}
 }
