@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Designed, not built ([ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md), Accepted); build tracked in goatcore#1025 |
+| Status | Partly built ([ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md), Accepted): the portal side of phases 2 and 5 is built (§8); build tracked in goatcore#1025 |
 | Scope | How a source keeps its identity on any path; carriage rules; provenance at entry; a cut-off pod's local authority |
 | Related | [`pod-targeted-client-bundles.md`](pod-targeted-client-bundles.md) (bundles, superseded on route binding: routers are hints), [`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md) (operator tooling), [`federated-trust-model.md`](federated-trust-model.md) |
 
@@ -28,7 +28,9 @@ On a direct link the receiver sees the source's own certificate, so no rule is i
 | Named | Pod Z may carry device D | Required |
 | Temporary | Exercise pods may carry org X devices | Required |
 
-- Consent once per rule: the source's custodian grants, the pod's custodian accepts; for the org rule both are the org.
+- Consent once per rule: the source's custodian grants, the pod's custodian accepts; for the org rule both are the org. A rule
+  granted by someone who is not also the pod's custodian is `proposed` until the pod's custodian accepts it
+  (`POST /api/carriage/rules/{id}/accept`); only `active` rules are rendered.
 - A device can opt out of the org rule.
 - Expired rules are archived and kept. The owner can reactivate one in a single step within the reactivation window (six
   months by default, a goatnet setting); after that it is approved like a new rule. A named or temporary rule runs at most 90
@@ -82,7 +84,7 @@ only those two prefixes.
 | Format, canonical JSON, sign and verify, certificate publication and fetch, chain check, cache | `ops/provenance/goat-provenance` | Built |
 | `goat pub --sign` (device-signed), `goat sub --provenance` (grade and verify each sample) | `crates/goat-cli` | CLI verification: built, held until crates/Cargo.lock can change |
 | ASTERIX ingress adapter | `ops/provenance/goat-ingress`, operator page [`ingress-adapter.md`](../operations/ingress-adapter.md) | Built |
-| Keyless-source enrollment (`keyless: true`, `adapters`, `receive`) | portal, §7.3 | Designed |
+| Keyless-source enrollment (`keyless: true`, `adapters`, `receive`) | portal, §7.3, §7.5 | Built |
 | CoT adapter | — | Not built |
 
 When it lands, `goat sub --provenance` prints each sample as `<key> [<grade>] <payload>`, where the grade is `device-signed by <cn>`,
@@ -211,6 +213,7 @@ The portal renders one generation per pod. The pod pulls it, verifies it, render
       "write": ["<slot>/**", "volatile/<slot>/**", "<slot>/**/@adv/**"]
     }
   ],
+  "local_decisions": [{"seq": 3, "local_rule_id": "lr_<id>", "state": "ratified | lapsed"}],
   "signer": "<portal certificate CN>",
   "signature": "<base64 ECDSA P-256 DER>"
 }
@@ -222,7 +225,12 @@ The portal renders one generation per pod. The pod pulls it, verifies it, render
 - The signature covers the document without `signature`, serialized as JSON with sorted keys and no insignificant
   whitespace, prefixed by the bytes `goat-carriage-v1\n`. The pod verifies it against the portal signer certificate in its
   bundle and refuses a generation lower than the one it holds.
-- Pull: `GET /api/carriage/pods/{pod_slot}/generation`, authenticated by the pod's own certificate.
+- Pull: `GET /api/carriage/pods/{pod_slot}/generation`, authenticated by the pod's own principal: its enrollment API key.
+- `local_decisions` lists every line of the pod's ledger the portal has decided, by `seq`, including lines lapsed on
+  arrival. A ratified grant also appears in `sources` as a central named rule with the end date the pod gave it; the pod
+  then drops its local copy of each decided line. It is `[]` when nothing is decided.
+- The portal issues a new generation (number plus one) whenever the document's content changes, which includes every new
+  decision in `local_decisions`.
 
 ### 7.2 Provenance attachment (`prov` v1)
 
@@ -271,6 +279,21 @@ keys and must keep `prov` unchanged. Pods and routers forward the attachment as 
 - Each change is appended to a ledger (one JSON object per line) signed by the pod's key, naming the authority's identity.
   On reconnection the pod posts the ledger to `POST /api/carriage/pods/{pod_slot}/ledger`; the portal lists the local
   rules for an org lead to ratify or let lapse.
+- Ledger line (v1): `{"v":1, "seq":<1, 2, …>, "ts":"<RFC 3339 UTC>", "pod_slot", "action":"allow|extend|revoke|reactivate",
+  "rule_id", "source_slot", "until":"<RFC 3339 UTC>", "reason", "authority":{"identity","cert_cn"}, "sig"}`. `until` is
+  empty for a `revoke`, which is not held to the longest rule length; every other action needs it. `sig` is
+  ECDSA P-256 with the pod's leaf key over the line without `sig`, serialized like the generation, prefixed by
+  `goat-ledger-v1\n`. The upload body is `{"pod_cert":"<PEM of the pod's leaf>", "entries":[<line>, …]}`; the portal checks
+  that `pod_cert` chains to the goatnet CA and carries the pod slot's current leaf CN, and that every line verifies.
+  Re-sending a line is a no-op; a different line at a used `seq` is refused with 409 `ledger_conflict`. The response is
+  `{"accepted", "duplicate", "pending", "lapsed", "last_seq", "entries":[{"seq","local_rule_id","state","duplicate","note"}]}`;
+  `last_seq`, the highest line the portal holds for the pod, is the acknowledgment.
+- On arrival a line is `lapsed`, with the reason, when its authority is not named in the pod's `local_authority`, its `until`
+  is later than `ts` plus the longest rule length, or goat revoked that source from that pod (the source's slot is revoked,
+  or the latest central event covering the source on that pod is a revoke). Otherwise it is `pending`. Revoking a central
+  rule also lapses the pending lines it covered. Ratifying a grant creates a central named rule for that source on that pod
+  with the same end date (an `extend` naming an active central named rule moves that rule's end date instead); ratifying a
+  `revoke` archives the named rules for that source on that pod and records an exclusion (§7.5).
 - `goat pod` calls this API; Fieldkit Gatepost is a page served by the same API.
 
 ### 7.5 Portal API and CLI
@@ -279,20 +302,44 @@ keys and must keep `prov` unchanged. Pods and routers forward the attachment as 
 |---|---|---|
 | `POST /api/carriage/pods` `{pod_slot, org}` | operator | `goat carriage pod add <pod-slot> --org <org>` |
 | `GET /api/carriage/pods` | signed in | `goat carriage pod ls` |
-| `POST /api/carriage/rules` `{source_slot or source_org, pod_slot or pod_org, kind, until, reason}` | the source's custodian; accepted by the pod's custodian | `goat carriage allow <source> --pod <pod> --until <time> --reason "…"` |
-| `GET /api/carriage/rules?pod=&source=&state=active\|archived` | signed in | `goat carriage ls` |
+| `POST /api/carriage/rules` `{source_slot or source_org, pod_slot or pod_org, kind, until, reason}` | the source's custodian; active at once when the caller is also the pod's custodian, otherwise `proposed` | `goat carriage allow <source> --pod <pod> --until <time> --reason "…"` |
+| `GET /api/carriage/rules?pod=&source=&state=proposed\|active\|archived` | signed in | `goat carriage ls` |
 | `POST /api/carriage/rules/{id}/extend` `{until}` | rule owner | `goat carriage extend <rule> --until <time>` |
 | `POST /api/carriage/rules/{id}/revoke` | rule owner, either custodian | `goat carriage revoke <rule>` |
 | `POST /api/carriage/rules/{id}/reactivate` | rule owner, inside the window | `goat carriage reactivate <rule>` |
 | `PUT /api/carriage/sources/{slot}/org-rule` `{opt_out}` | the source's custodian | `goat carriage opt-out <source>` |
-| `GET /api/carriage/pods/{pod_slot}/generation` | the pod's own certificate | — |
-| `POST /api/carriage/pods/{pod_slot}/ledger` | the pod's own certificate | — |
+| `POST /api/carriage/rules/{id}/accept` | the pod's custodian (a `proposed` rule becomes `active`) | `goat carriage accept <rule>` |
+| `GET /api/carriage/pods/{pod_slot}/generation` | the pod's own principal: its enrollment API key (operators refused) | — |
+| `POST /api/carriage/pods/{pod_slot}/ledger` | the pod's own principal: its enrollment API key (operators refused) | — |
 | `GET /api/carriage/local-rules?state=pending` | org lead | `goat carriage pending` |
 | `POST /api/carriage/local-rules/{id}/ratify` and `/lapse` | org lead of the pod's org | `goat carriage ratify <id>` / `lapse <id>` |
 
-The org rule is created when a pod is registered for an org (`POST /api/carriage/pods`) and covers every source whose
-custodian org is that org, except sources that opted out. Machine enrollment (single and bulk) accepts `keyless: true`,
-`adapters` and `receive` for keyless sources, and `pods` to request named rules at enrollment.
+"The pod's own key" is the portal API key issued to the pod's slot at its machine enrollment, sent as a Bearer token: the
+portal authenticates by key, not by client certificate. Operators are refused on these two routes.
+
+An **exclusion** (rule kind `exclusion`, `source_slot` and `pod_slot`, no end date) takes one source off one pod's org rule;
+named and temporary rules for that pair still apply. It is recorded when an org lead ratifies a pod's local `revoke`, is
+listed by `GET /api/carriage/rules` like any rule, cannot be extended or reactivated (`carriage_exclusion_no_end`), and is
+lifted by `POST /api/carriage/rules/{id}/revoke` by the source's custodian only.
+
+`POST /api/carriage/pods` also takes `local_authority: [{identity, cert_cn | slot}]`; a `slot` is rendered as that slot's
+current leaf CN. The goatnet settings are `PORTAL_CARRIAGE_MAX_RULE_DAYS` (90), `PORTAL_CARRIAGE_REACTIVATION_DAYS` (183),
+`PORTAL_CARRIAGE_READ` (`*/**`), and `PORTAL_CARRIAGE_SIGNER_KEY` / `PORTAL_CARRIAGE_SIGNER_CERT` (PEM files; the
+generation route answers 503 without them). The ledger route needs the CA root the portal already bundles
+(`PORTAL_CA_ROOT_CERT`).
+
+The org rule is created when the first pod is registered for an org (`POST /api/carriage/pods`) and covers every source whose
+custodian org is that org, except sources that opted out. A source's orgs are the data roster's orgs of its own slot and of
+its custodian (the definition governance uses); without a roster the org rule covers nothing. When a source is covered by
+several rules, the generation lists it once, under the org rule if one covers it, otherwise under the rule that ends last.
+A source with no certificate that could write for it (no current leaf; a keyless source with no live adapter) is left out.
+
+Machine enrollment (single and bulk) accepts `keyless: true` with `adapters: [<adapter slot>]` (enrolled machines) and
+`receive: {interface, port, sender}` (`sender` an IP address or `IP:port`) for keyless sources: a slot and the custody edge
+are recorded, the source counts against its custodian's quota, and no leaf, API key or mesh key is minted. `pods: [<pod
+slot>]` requests a named rule per pod at enrollment, running the longest rule length, under the same consent rule as
+`POST /api/carriage/rules`; the response lists each request's rule and state, and a refused request does not undo the
+enrollment.
 
 ## 8. Build order
 
@@ -300,8 +347,8 @@ custodian org is that org, except sources that opted out. Machine enrollment (si
 |---|---|---|
 | 0 | Guidance: no hand-edited pod ACL entries; interim key convention `<pod-slot>/routed/<source-slot>/…`, documented as unverified | Can do now |
 | 1 | Measure: duplicate delivery over two live paths, signature overhead per sample (ACL reload is settled: restart, F-156) | Measured 2026-11-19 (§6) |
-| 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Designed |
-| 3 | Provenance: attachment signature, grades, keyless sources, ASTERIX ingress adapter, verification in the CLI | Built: signature, grades, ASTERIX adapter (§3 "What is built"). CLI verification: built, held until crates/Cargo.lock can change. Keyless-source enrollment designed |
+| 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Portal built: rule storage (registry migration 3), consent, expiry, reactivation, opt-out, the signed generation, keyless sources and `keyless`/`adapters`/`receive`/`pods` in single and bulk machine enrollment. Pod rendering, CLI and bundle router hints not built |
+| 3 | Provenance: attachment signature, grades, keyless sources, ASTERIX ingress adapter, verification in the CLI | Built: signature, grades, ASTERIX adapter (§3 "What is built"). CLI verification: built, held until crates/Cargo.lock can change. Keyless-source enrollment built in the portal (phase 2) |
 | 4 | Core ACL rendering, carriage health, drift check | Designed; after the current security fixes to the core template are disclosed |
-| 5 | Local authority: pod API and ledger, `goat pod`, ratification, then Gatepost | Designed |
+| 5 | Local authority: pod API and ledger, `goat pod`, ratification, then Gatepost | Portal built: ledger ingest, pending list, ratify and lapse, revocations win. Pod API, `goat pod`, Gatepost not built |
 | 6 | Move existing devices: route-only updates, enrollment of identity-less sources, retirement of interim `routed/` prefixes | Designed; per pod, after phase 2 |
