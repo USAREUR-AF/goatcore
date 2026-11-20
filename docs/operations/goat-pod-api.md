@@ -13,8 +13,15 @@ the portal receives on reconnection.
 
 ## Install
 
-The pod repository's `host/first-boot.sh` installs it when `goat-pod-api` is on the host's `PATH` and the profile sets
-`POD_API_SIGNER_CERT`. Build the binary from this repository:
+Releases: a `goat-pod-api/v<semver>` tag (repository admins only) runs `.github/workflows/goat-pod-api-release.yml`, which
+publishes `goat-pod-api-linux-amd64`, `goat-pod-api-linux-arm64` and `gatepost.html` with `SHA256SUMS` and a keyless cosign
+signature over it (the shape of every goatcore binary release, `.github/release-notes/goat-pod-api.md`). No release has been
+cut yet.
+
+When the profile sets `POD_API_SIGNER_CERT`, the pod repository's `host/first-boot.sh` installs the release its
+`host/goat-pod-api.pin` names (`host/install-goat-pod-api.sh`): it checks the cosign signature against this workflow's
+identity, then the pinned digest of `SHA256SUMS`, then each asset's digest, and refuses on any mismatch. To run a build of
+your own instead, put it on the host's `PATH` and set `POD_API_INSTALL=0` in the profile:
 
 ```sh
 cd ops/goat-pod-api && CGO_ENABLED=0 go build -o goat-pod-api .
