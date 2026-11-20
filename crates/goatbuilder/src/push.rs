@@ -345,7 +345,7 @@ pub fn plan(repo: &Path, o: &Options) -> Result<Plan> {
     let secrets = secrets_needed(repo, &resolved.members, o.component, &resolved.ledger, &resolved.hosts_play);
     // Presence is the declared posture's (ADR 1204): under a value store the
     // values are in its file, not yet in this shell.
-    let have = crate::secrets::available(repo);
+    let have = crate::secrets::available(repo, &secret_names(&secrets));
     let secrets_missing: Vec<String> = secrets.values().filter(|e| !crate::doctor::satisfied(&have, e)).cloned().collect();
     let transport = transport(repo, &name, &resolved.members, o.dry_run)?;
     let mut wants = BTreeMap::new();
@@ -355,6 +355,12 @@ pub fn plan(repo: &Path, o: &Options) -> Result<Plan> {
         }
     }
     Ok(Plan { component: o.component.into(), goatnet: o.goatnet.into(), name, resolved, secrets, secrets_missing, available: have, transport, wants })
+}
+
+/// The variables a plan's play templates from the environment, each once, in
+/// order: the names the presence probe asks for, and no others.
+fn secret_names(secrets: &BTreeMap<String, String>) -> Vec<String> {
+    secrets.values().cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect()
 }
 
 fn ok(name: &str, detail: String) -> Check {
@@ -603,7 +609,10 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     // (secrets::available) and the mesh status (transport); their answers are
     // in the rows above.
     if o.dry_run {
-        checks.push(ok("probe-ran", crate::secrets::posture_cmd(repo, &["available"]).line()));
+        let names = secret_names(&p.secrets);
+        if !names.is_empty() {
+            checks.push(ok("probe-ran", crate::secrets::available_cmd(repo, &names).line()));
+        }
         checks.push(ok("probe-ran", netbird_status_cmd().line()));
         checks.extend(listing_probes.iter().map(|l| ok("probe-ran", l.clone())));
         checks.extend(crate::inputs::rows(&listed));

@@ -435,7 +435,7 @@ Before this design, phases 8 and 10 were manual. A person minted a setup key, an
 5. **Phase 9 sends no secret.** With the key minted at phase 10, phase 9 runs `preflight-enrollment.sh` with a new `--key-at-enrolment` argument (`bash -s -- --key-at-enrolment` on the node). Phase 8, which was the manual mint, is now a gate on this machine: the site declares `mesh_enrollment_url`. The setup-key check then reports SKIP with the reason, and the other checks run as before: the clock, a stale `wt0`, and the enrolment address. Nothing secret is piped to the node.
 
 6. **Every secret reference join-node passes to a node is resolved, or the run is refused.** After steps 1 to 5, a secret reaches a node only in two places:
-   - **Every play.** These already run through `ansible-preflight.sh`, which execs `with-secrets` and refuses an unresolved reference (`goat_unresolved_reference_guard`).
+   - **Every play.** These already run through `ansible-preflight.sh`, which execs `with-secrets` and refuses an unresolved reference with GB-368 (`goat_unresolved_reference_guard`).
    - **Phase 2's first-login password.** `seed-ssh-key.sh` reads it from the variable `--pass-var` names. Phase 2 runs the seed under `ops/scripts/with-secrets`, so a reference resolves.
 
    `seed-ssh-key.sh` refuses with GB-269 when the password still has a reference store's prefix after resolution: `op://`, `bao://`, `bw://`, or `GOAT_SECRET_REF_PREFIX`. Nothing has been sent to the node at that point. The refusal names the variable and the scheme, never the reference.
