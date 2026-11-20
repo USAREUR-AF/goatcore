@@ -6,7 +6,7 @@
 # (the arch we're producing). We run Go on the native builder and
 # cross-compile — much faster than emulating the whole build under QEMU.
 
-FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends protobuf-compiler \
