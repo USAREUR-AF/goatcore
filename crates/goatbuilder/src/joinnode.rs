@@ -1700,6 +1700,36 @@ mod tests {
         assert!(e.to_string().contains("fabric-crawler"), "{e}");
     }
 
+    /// A health publisher join-node deploys runs with its own leaf, which
+    /// phase 13 mints from the site's leaf manifest and stages onto the node.
+    /// A publisher the model marks present whose leaf the manifest does not
+    /// carry is refused when the plan is made (GB-364), naming the publisher
+    /// and the manifest, not at staging or at deploy. A publisher marked absent
+    /// needs no leaf.
+    #[test]
+    fn a_publisher_it_deploys_with_no_leaf_in_the_manifest_is_refused_at_plan_time() {
+        let t = joiner_checkout();
+        for play in ["fabric-health-deploy.yml", "mesh-health-deploy.yml"] {
+            std::fs::write(t.path().join("ops/ansible").join(play), "---\n").unwrap();
+        }
+        // mesh-health present, and the manifest carries only fabric-health's leaf.
+        fake_model(t.path(), r#"{"fabric-health": {"present": true}, "mesh-health": {"present": true}}"#);
+        let e = plan(t.path(), &opts("zagros-b", "core", "zagros")).err().expect("refused");
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-364"), "{e}");
+        let text = e.to_string();
+        assert!(text.contains("mesh-health") && !text.contains("fabric-health,"), "names the publisher with no leaf: {text}");
+        assert!(text.contains("ops/enrollment/manifests/zagros-b-certs.yaml"), "names the manifest: {text}");
+        // Marked absent: no leaf needed.
+        fake_model(t.path(), r#"{"fabric-health": {"present": true}, "mesh-health": {"present": false}}"#);
+        assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).is_ok());
+        // The manifest gains the leaf: the plan is made, and stages it.
+        fake_model(t.path(), r#"{"fabric-health": {"present": true}, "mesh-health": {"present": true}}"#);
+        std::fs::write(t.path().join("ops/enrollment/manifests/zagros-b-certs.yaml"), "site_id: zagros-b\nout_dir: /s/zagros-b-leaves\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n  - name: mesh-health\n    cn: mesh-health\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let stage = ph.iter().find(|p| p.cmd.contains("stage-service-leaves.yml")).expect("a staging step");
+        assert!(stage.cmd.ends_with(r#"-e '{"leaf_only": ["fabric-health", "mesh-health"]}'"#), "{}", stage.cmd);
+    }
+
     /// STAGED_SERVICES is stage-service-leaves.yml's service_leaf_map.
     #[test]
     fn the_staged_services_are_the_staging_plays() {
