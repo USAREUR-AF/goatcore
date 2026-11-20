@@ -1498,6 +1498,16 @@ pub struct MachineEnrollSpec {
     /// attribute. Omitted = site scope.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exercise: Option<String>,
+    /// ADR 1251: the same keyless-source and carriage fields as a bulk entry
+    /// ([`MachineBulkSpec`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyless: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adapters: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receive: Option<MachineReceiveSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pods: Option<Vec<String>>,
 }
 
 /// The machine's minted bundle as the portal returns it (`POST /api/machines/enroll`
@@ -5855,6 +5865,10 @@ mod tests {
             display_name: None,
             workloads: None,
             exercise: None,
+            keyless: None,
+            adapters: None,
+            receive: None,
+            pods: None,
         };
         let j = serde_json::to_string(&spec).unwrap();
         assert!(!j.contains("custodian"), "custodian must be omitted when None: {j}");
@@ -5881,6 +5895,10 @@ mod tests {
             display_name: None,
             workloads: None,
             exercise: None,
+            keyless: None,
+            adapters: None,
+            receive: None,
+            pods: None,
         };
         assert!(matches!(c.enroll_machine(&spec).await, Err(PortalError::Disabled)));
         assert!(matches!(c.list_machines(None).await, Err(PortalError::Disabled)));

@@ -283,8 +283,9 @@ until the pod's custodian runs `goat carriage accept <rule>` (`POST /api/carriag
 revoke, no end date) with the other rules; `goat carriage ratify` shows the central rule ratification produced. List verbs print `{"pods"|"rules"|
 "local_rules": […]}` with `--json`. The bulk enrollment file (`goat machine enroll --bulk`) carries `keyless`, `adapters`
 (slots), `receive` (`interface`, `port`, `sender`) and `pods` (slots) to the portal; the CLI refuses a keyless entry
-without adapters and adapters or receive on an entry that is not keyless. Single enrollment does not take these fields
-yet.
+without adapters and adapters or receive on an entry that is not keyless. Single enrollment (`goat machine enroll`) sends the same fields from
+`--keyless`, `--adapter <slot>` (repeatable), `--receive-iface` / `--receive-port` / `--sender` (all three or none) and
+`--pod <slot>` (repeatable), checked by the same rules.
 
 ## 8. Build order
 
