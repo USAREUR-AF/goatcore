@@ -39,12 +39,69 @@ class Refusal(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "ran"), r.stderr)
         self.assertNotIn("s3cret-value", r.stdout + r.stderr)
 
+    def test_a_name_a_play_reads_from_the_environment_is_checked_too(self):
+        # A standup line passes a secret through the environment, not the command
+        # line: the play reads it with lookup("env", ...). An empty one refuses
+        # the same way, and a set one runs without the value on any command line.
+        cmd = """printenv GALAXY_PG_PASS >/dev/null && echo ran -e 'postgres_superuser_password={{ lookup("env", "GALAXY_PG_PASS") }}' -e 'k={{ lookup("env", "GALAXY_NB_ENCKEY") }}'"""
+        r = run(cmd, "env", {"GALAXY_NB_ENCKEY": "k"})
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("reads GALAXY_PG_PASS,", r.stderr)
+        self.assertNotIn("ran", r.stdout)
+        r = run(cmd, "env", {"GALAXY_PG_PASS": "s3cret-value", "GALAXY_NB_ENCKEY": "k"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("s3cret-value", r.stdout + r.stderr)
+
     def test_check_only_never_runs_the_command(self):
         r = run("echo ran", "env", check=True)
         self.assertEqual((r.returncode, r.stdout), (0, ""))
 
     def test_the_phase_status_is_kept(self):
         self.assertEqual(run("exit 7", "env").returncode, 7)
+
+
+class UnsetVariable(unittest.TestCase):
+    """A phase line that expands $NAME or ${NAME} with NAME unset would stop on
+    bash -u's own 'NAME: unbound variable' before its program starts. It refuses
+    first, after the store is loaded, with GB-369 and the name (a standup line
+    with no administrator declared carries "$OWNER_EMAIL")."""
+
+    OWNER = 'echo -e bootstrap_owner_email="$OWNER_EMAIL" && echo ran'
+
+    def test_an_unset_name_refuses_with_gb_369_and_is_named(self):
+        r = run(self.OWNER, "env")
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("GB-369", r.stderr)
+        self.assertIn("OWNER_EMAIL", r.stderr)
+        self.assertNotIn("ran", r.stdout, "the phase never ran")
+        self.assertNotIn("unbound variable", r.stderr, "refused before bash met it")
+
+    def test_check_only_refuses_it_too(self):
+        r = run(self.OWNER, "env", check=True)
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("OWNER_EMAIL", r.stderr)
+
+    def test_a_set_name_runs_and_an_empty_one_is_bash_s_business(self):
+        r = run(self.OWNER, "env", {"OWNER_EMAIL": "ops@example.org"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("ran", r.stdout)
+        r = run(self.OWNER, "env", {"OWNER_EMAIL": ""})
+        self.assertEqual(r.returncode, 0, "bash -u stops only on an unset name: " + r.stderr)
+
+    def test_the_store_supplies_it_before_the_check(self):
+        d = Path(tempfile.mkdtemp())
+        f = d / "secrets.env"
+        f.write_text("OWNER_EMAIL=ops@example.org\n")
+        f.chmod(0o600)
+        r = run(self.OWNER, "env-file", {"GOAT_SECRET_ENV_FILE": str(f)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("ran", r.stdout)
+
+    def test_quoted_defaulted_and_assigned_names_are_not_read(self):
+        cmd = """bash -c 'echo "$LATER"' && echo ${WITH_DEFAULT:-x} \\$NOT_A_REF && VF=$(mktemp) && echo "$VF" && for h in a; do echo "$h"; done && echo ran"""
+        r = run(cmd, "env")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("ran", r.stdout)
 
 
 class ValueStore(unittest.TestCase):

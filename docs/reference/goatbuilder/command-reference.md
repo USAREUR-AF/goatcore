@@ -254,6 +254,7 @@ One more machine of a class at a live site, declared → converged → verified:
 | `--from <FROM>` | Resume from this phase | `1` |
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |
+| `--reseed` | Seed the node again from its founder after the founder lost the node's slot (a phone away past its offline budget): six steps, journaled, resumed where one refused. `--from`/`--to` count those steps. Takes the node's mesh address from the mesh inventory |  |
 
 ## `goatbuilder grow`
 
@@ -332,6 +333,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 - [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
 - [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
 - [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
+- [`goatbuilder federate directory`](#goatbuilder-federate-directory) — Read the peering directory (saltlick): `ls`, `show <party>`, `check <party> [--for <counterparty>]`. Reads only. `check` says, for each file a peering reads, whether it is there, not uploaded by the party, or a route the directory's release does not serve. URL from --url or $FED_DIRECTORY_URL
 - [`goatbuilder federate rotate`](#goatbuilder-federate-rotate) — Replace one key of a running peering and run the command again from the first phase it changes: `rotate <partner> leaves` (phases 8 to 14), `rotate <partner> carrier` (phases 2 to 14), or on an ipsec-fips peering `rotate <partner> ipsec-leaf\|ipsec-ca` (phases 11 to 14). The other keys are refused, each saying why (docs/design/federation-key-rotation.md)
 - [`goatbuilder federate import`](#goatbuilder-federate-import) — A two-driver peering's import of an edge result, as a hand-off object names it: checked against the edge driver's confirm code, placed under the working directory and journaled. Built for phases 1 and 3; another phase's import refuses with GB-267 (docs/design/federation-two-drivers.md)
 
@@ -519,6 +521,52 @@ Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federa
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |
 | `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<partner>) |  |
 | `--dry-run` | Survey the peering's hosts read-only and print every resource the back-out would remove, per host; change nothing |  |
+
+## `goatbuilder federate directory`
+
+Read the peering directory (saltlick): `ls`, `show <party>`, `check <party> [--for <counterparty>]`. Reads only. `check` says, for each file a peering reads, whether it is there, not uploaded by the party, or a route the directory's release does not serve. URL from --url or $FED_DIRECTORY_URL
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--url <URL>` | The directory's base URL, e.g. https://directory.example. Default $FED_DIRECTORY_URL |  |
+
+**Subcommands**
+
+- [`goatbuilder federate directory ls`](#goatbuilder-federate-directory-ls) — Every party listed, with its expiry and the files it hosts, and the directory's release
+- [`goatbuilder federate directory show`](#goatbuilder-federate-directory-show) — One party's entry, and each file it hosts with its size and sha256
+- [`goatbuilder federate directory check`](#goatbuilder-federate-directory-check) — Whether a peering can be exchanged through the directory: the party's entry, its CA and SPIFFE bundle, and its package for one counterparty. Each missing item says whether the directory lacks the route (move the directory's pin) or the party has not uploaded the file (ask them to run phase 5). Exit 0 when everything is there, 1 (GB-372) otherwise
+
+## `goatbuilder federate directory ls`
+
+Every party listed, with its expiry and the files it hosts, and the directory's release
+
+## `goatbuilder federate directory show`
+
+One party's entry, and each file it hosts with its size and sha256
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<PARTY>` | The party's sovereign id, as listed by `ls` |
+
+## `goatbuilder federate directory check`
+
+Whether a peering can be exchanged through the directory: the party's entry, its CA and SPIFFE bundle, and its package for one counterparty. Each missing item says whether the directory lacks the route (move the directory's pin) or the party has not uploaded the file (ask them to run phase 5). Exit 0 when everything is there, 1 (GB-372) otherwise
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<PARTY>` | The party whose files are checked |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--for <COUNTERPARTY>` | The counterparty: check the package the party signed for it |  |
 
 ## `goatbuilder federate rotate`
 

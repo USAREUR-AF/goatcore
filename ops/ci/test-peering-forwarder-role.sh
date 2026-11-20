@@ -22,6 +22,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# A build handed the runner's mirror retries once without it if the mirror dies mid-install.
+# shellcheck source=ops/ci/docker-build-mirror-fallback.sh
+. "$ROOT/ops/ci/docker-build-mirror-fallback.sh"
 KEEP=0
 [ "${1:-}" = "--keep" ] && KEEP=1
 C="pf-role-$$"
@@ -45,8 +48,12 @@ cleanup() {
 trap cleanup EXIT
 
 log "image"
-docker build --progress=plain -t "$IMG" - <<'EOF' || fail "building the test image"
+build_with_mirror_fallback --progress=plain -t "$IMG" - <<'EOF' || fail "building the test image"
 FROM ubuntu:24.04
+ARG UBUNTU_MIRROR=
+# CI passes the runner's Ubuntu mirror (.github/actions/apt-failover); unset, the image's sources stay.
+RUN if [ -n "$UBUNTU_MIRROR" ] && [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \
+      sed -i -E "s#https?://(archive|security)\.ubuntu\.com/ubuntu/?#$UBUNTU_MIRROR/#" /etc/apt/sources.list.d/ubuntu.sources; fi
 # Retry transient mirror failures, but never build from a partial index refresh.
 RUN printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "20";' 'Acquire::https::Timeout "20";' > /etc/apt/apt.conf.d/80-ci-network
 RUN apt-get update -o APT::Update::Error-Mode=any && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

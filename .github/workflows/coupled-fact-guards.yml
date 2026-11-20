@@ -57,6 +57,7 @@ name: coupled-fact-guards
 # self-test step runs first, every time.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'ops/ansible/group_vars/**'
@@ -82,6 +83,10 @@ on:
       - 'ops/ansible/roles/*/tasks/**'
       - 'ops/ansible/roles/*/templates/**'
       - 'ops/ansible/roles/rollback-ledger/**'
+      - 'ops/ansible/roles/*/meta/**'
+      - 'ops/ansible/roles/*/handlers/**'
+      - 'ops/ci/check-rollback-coverage.sh'
+      - 'ops/ci/rollback-coverage-allowlist.txt'
       - 'ops/ansible/roles/goat-get/meta/**'
       - 'ops/ansible/roles/goat-docs/meta/**'
       - 'ops/scripts/served-payloads.py'
@@ -99,6 +104,8 @@ on:
       - 'crates/goatbuilder/src/doctor.rs'
       - 'ops/ansible/filter_plugins/goat_leaf.py'
       - 'tests/ansible_filter_plugins/test_goat_leaf.py'
+      - 'ops/ansible/filter_plugins/dotenv_merge.py'
+      - 'tests/ansible_filter_plugins/test_dotenv_merge.py'
       - 'ops/scripts/mint-site-certs.sh'
       - 'ops/enrollment/manifests/**'
       - 'ops/scripts/create-assay-probe-identity.sh'
@@ -115,7 +122,9 @@ on:
       - 'ops/scripts/ansible-preflight.sh'
       - 'ops/scripts/newsite-secrets.sh'
       - 'ops/scripts/newsite-secret-store.py'
+      - 'ops/scripts/join-site-secrets.py'
       - 'tests/test_newsite_secrets.py'
+      - 'tests/test_join_site_secrets.py'
       - 'tests/test_scaffold_reference_address.py'
       - 'tests/test_traefik_acme_dns_resolvers.py'
       - 'tests/newsite-secrets.bats'
@@ -128,6 +137,8 @@ on:
       - 'ops/ci/check-rust-toolchain-pinned.sh'
       # Reusable-workflow permission guard: a called workflow asks no more than its caller grants.
       - 'ops/ci/check-reusable-workflow-permissions.py'
+      # A release-candidate tag publishes a GitHub pre-release, never Latest.
+      - 'ops/ci/test_release_prerelease_from_tag.py'
       - 'ops/ci/check-expected-workflows-ran.py'
       - 'ops/ci/check-no-floating-image-pins.sh'
       - 'ops/ci/check-image-refs-pinned.py'
@@ -189,6 +200,7 @@ jobs:
       - name: Verify newsite credential persistence
         run: |
           python3 tests/test_newsite_secrets.py
+          python3 tests/test_join_site_secrets.py
           python3 tests/test_scaffold_reference_address.py
           python3 tests/test_traefik_acme_dns_resolvers.py
       - name: "self-test: every guard proves RED on a broken fixture first (P6)"
@@ -240,6 +252,8 @@ jobs:
         run: python3 ops/ci/check-no-operator-context-on-hosts.py
       - name: goat_leaf finds a leaf from a brand-new worktree (#2165)
         run: python3 tests/ansible_filter_plugins/test_goat_leaf.py
+      - name: mgmt-host.yml merges its keys into .env and keeps every other role's (6x9h deploy path)
+        run: python3 tests/ansible_filter_plugins/test_dotenv_merge.py
       - name: the dead-man watcher judges each sender separately
         run: bash ops/deadman-watch/test-deadman.sh
       # The universal-read coverage assert itself can only run on a target host
@@ -293,6 +307,13 @@ jobs:
       - name: deploy ledger promotes pending only on success
         run: python3 ops/ci/test-ledger-promote-pending.py
 
+      # Every deploying role (one whose tasks or handlers deploy a container)
+      # records its deploys in that ledger: it depends on rollback-ledger, or
+      # sits on the shrink-only allowlist (ADR 1060). A new deploying role
+      # without it fails here, on its own pull request.
+      - name: every deploying role carries the rollback ledger
+        run: bash ops/ci/check-rollback-coverage.sh
+
       # A serving surface (goat-get, goat-docs) is versioned by role vars, not by
       # its image: the ledger row records what the host serves, and both avenues
       # judge it against main through one module (served payloads).
@@ -313,6 +334,11 @@ jobs:
       # callers, so the gap shows only when a tag is pushed.
       - name: check-reusable-workflow-permissions
         run: python3 ops/ci/check-reusable-workflow-permissions.py
+
+      # The release job reads its tag: a semver pre-release part (-rc.1) publishes
+      # a GitHub pre-release, which is never marked Latest.
+      - name: a release-candidate tag publishes a pre-release
+        run: python3 ops/ci/test_release_prerelease_from_tag.py
 
       - name: check-expected-workflows-ran --self-test
         run: python3 ops/ci/check-expected-workflows-ran.py --self-test

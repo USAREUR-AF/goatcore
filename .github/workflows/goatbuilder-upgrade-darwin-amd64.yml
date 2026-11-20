@@ -69,7 +69,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/goatbuilder-upgrade
-          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
+          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256', 'crates/goatbuilder/tests/upgrade/signatures.sha256') }}
       - name: Fetch the released binaries, checked against their pins
         run: goatbuilder/tests/upgrade/fetch.sh ~/.cache/goatbuilder-upgrade
       - name: Mark the time before the tests, for the state-directory guard

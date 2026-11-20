@@ -88,7 +88,7 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
     ));
     v.push(Input::new(
         "first_mgmt_host",
-        format!("mgmt-{site}-01*"),
+        crate::standup::founder_limit(site),
         site_rule("mgmt-<site>-01*, the site's first management host"),
     ));
     for i in s.inv.split_whitespace().filter(|w| *w != "-i") {
@@ -434,13 +434,7 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
     // What the phases read from their environment: the site's credentials
     // (by their source only) and the pub/sub mirror's token.
     let u = &s.upper;
-    let store = crate::secrets::available(repo);
-    let store_name = if store.is_empty() {
-        String::new()
-    } else {
-        crate::secrets::store(repo)
-    };
-    for (name, secret, when) in [
+    let reads = [
         (format!("{u}_PG_PASS"), true, "phases 5, 6, 9, 10 and 12"),
         (format!("{u}_NB_ENCKEY"), true, "phases 5 and 10"),
         (format!("{u}_BKP_KEY"), true, "phase 5"),
@@ -460,7 +454,15 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
             true,
             "phase 12 (the pub/sub state mirror)",
         ),
-    ] {
+    ];
+    // Asked for these names only: the probe's answer is kept in the run record.
+    let store = crate::secrets::available(repo, &reads.iter().map(|(n, _, _)| n.clone()).collect::<Vec<_>>());
+    let store_name = if store.is_empty() {
+        String::new()
+    } else {
+        crate::secrets::store(repo)
+    };
+    for (name, secret, when) in reads {
         let from_store = store.contains(&name).then(|| {
             Source::derived(
                 format!("the declared secrets store ({store_name})"),
@@ -504,7 +506,6 @@ pub(super) fn fixed(site: &str) -> Vec<Input> {
         fixed("confirm_cutover", "YES", "the ACL cutover is confirmed by running the phase (standup phase 12)"),
         fixed("relay_target", "goat_relay_hosts", "the relay ingress group a joiner is wired into"),
         fixed("target_site", site, "the site itself"),
-        Input::new("VF", "$(mktemp -t goat-relay-vars.XXXXXX)", Source::derived("mktemp, when standup phase 7 runs", "a private file for the relay secrets, removed after the play")),
         fixed("acl_inventory", "localhost,", "the ACL plays run on this machine against the NetBird API"),
     ]
 }

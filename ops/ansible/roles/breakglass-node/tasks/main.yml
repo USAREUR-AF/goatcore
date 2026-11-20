@@ -268,6 +268,11 @@
           FallbackDNS=
       notify: breakglass restart resolved
 
+# ---- 4. the out-of-band interface's route metric (ADR 1114 §5) --------------
+- name: breakglass-node | out-of-band route metric
+  ansible.builtin.include_tasks: oob-route-metric.yml
+  when: breakglass_oob_interface | default('') | length > 0
+
 # CVE-2026-98432 (IPv4 TCP request-socket use-after-free, CVSS 9.8). The
 # published exploit needs an MPTCP listener, and Go 1.24+ listeners request
 # MPTCP by default. Ubuntu 24.04 and 22.04 had no fixed kernel on 2026-11-02

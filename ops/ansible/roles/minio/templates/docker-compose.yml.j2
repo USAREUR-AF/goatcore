@@ -1,4 +1,5 @@
 # Rendered by ops/ansible/roles/minio on {{ ansible_date_time.iso8601 }}
+{% set minio_effective_users = minio_effective_users | default(minio_extra_users) %}
 # Source: ops/ansible/roles/minio/templates/docker-compose.yml.j2
 # Anchors: ADR 0811 (Object Lock audit-integrity bucket) + ADR 0822
 # (telemetry-otlp bucket on the same instance) + ADR 0826 (Orin-C
@@ -31,6 +32,10 @@ services:
         reservations: { memory: 512M }
     command:
       - server
+{% if minio_tls_enabled | default(false) | bool %}
+      - --certs-dir
+      - /certs
+{% endif %}
       - /data
       - --address
       - ":{{ minio_api_port }}"
@@ -45,6 +50,9 @@ services:
       # cluster without bearer-token auth — fine on the mesh-internal
       # interface; Phase 2 hardens this when Traefik fronts the API.
       MINIO_PROMETHEUS_AUTH_TYPE: "public"
+{% if minio_tls_enabled | default(false) | bool %}
+      MC_HOST_local: "${MINIO_MC_URL}"
+{% endif %}
 {% if (minio_operator_idp_enabled | default(operator_idp_enabled | default(false))) | bool %}
       # ============================================================
       # Block 21H.3c — operator-IdP OIDC. ADR 0842.
@@ -78,17 +86,31 @@ services:
 {% endif %}
     volumes:
       - {{ minio_data_root }}:/data
+{% if minio_tls_enabled | default(false) | bool %}
+      - {{ minio_tls_dir }}:/certs:ro
+      - {{ minio_client_ca_path }}:/etc/ssl/certs/goat-storage-root.pem:ro
+{% endif %}
     ports:
       - "{{ minio_api_port }}:{{ minio_api_port }}"
       - "{{ minio_console_port }}:{{ minio_console_port }}"
     healthcheck:
-      # wget, not curl: the Chainguard image carries busybox wget only.
+{% if minio_tls_enabled | default(false) | bool %}
+      # The pinned image provides wget; use the storage hostname for SAN
+      # verification. Its minio-net alias resolves inside this container.
+      test: ["CMD", "wget", "--no-hsts", "--ca-certificate=/certs/ca.crt", "-q", "--spider", "{{ minio_s3_endpoint }}/minio/health/live"]
+{% else %}
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:{{ minio_api_port }}/minio/health/live"]
+{% endif %}
       interval: 30s
       timeout: 5s
       retries: 5
     networks:
+{% if minio_tls_enabled | default(false) | bool %}
+      minio-net:
+        aliases: ["{{ minio_service_host }}"]
+{% else %}
       - minio-net
+{% endif %}
     extra_hosts:
       - "host.docker.internal:host-gateway"
 {% if minio_oidc_host_entry | default('') | length > 0 %}
@@ -112,17 +134,20 @@ services:
       minio:
         condition: service_healthy
     environment:
-      MC_HOST_local: "http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:{{ minio_api_port }}"
-{% if minio_extra_users %}
+      MC_HOST_local: "${MINIO_MC_URL}"
+{% if minio_effective_users %}
     env_file:
-      # Per-extra-user secrets — one KEY=VALUE per entry in minio_extra_users.
+      # Per-extra-user secrets — one KEY=VALUE per entry in minio_effective_users.
       # Rendered by the role (mode 0600); referenced by mc-init.sh for the
       # `mc admin user add` step so secrets never land in the script.
       - {{ minio_compose_dir }}/mc-extra-users.env
 {% endif %}
     volumes:
       - {{ minio_compose_dir }}/mc-init.sh:/mc-init.sh:ro
-{% if minio_extra_users %}
+{% if minio_tls_enabled | default(false) | bool %}
+      - {{ minio_client_ca_path }}:/etc/ssl/certs/goat-storage-root.pem:ro
+{% endif %}
+{% if minio_effective_users %}
       - {{ minio_compose_dir }}/policies:/policies:ro
 {% endif %}
     entrypoint: ["/bin/sh", "/mc-init.sh"]

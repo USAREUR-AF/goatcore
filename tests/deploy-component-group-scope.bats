@@ -16,6 +16,7 @@ setup() {
     "$FIXTURE/ops/ansible/group_vars/valid_hosts" \
     "$FIXTURE/ops/ansible/group_vars/absent_hosts" \
     "$FIXTURE/ops/ansible/group_vars/outside_hosts" "$BIN"
+  mkdir -p "$FIXTURE/ops/release" && cp "$REPO_ROOT/ops/release/ladder_gate.py" "$FIXTURE/ops/release/"  # the release-ladder gate (GB-373); no ladder declared here, so it passes
   cp "$SUBJECT" "$FIXTURE/ops/scripts/deploy-component.sh"
   chmod +x "$FIXTURE/ops/scripts/deploy-component.sh"
 

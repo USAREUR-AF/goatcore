@@ -516,7 +516,7 @@ gb-075-cause-2 = ketas on täis
 
 # machine-translated additions (2026-10-30) — review per i18n-provenance.toml
 gb-074-title = allalaaditud goatbuilderit ei taga selle väljalase
-gb-074-what = Enne mis tahes muudatusi kontrollib update, et pinna pakutav <asset>.sha256 klapib väljalaske SHA256SUMS-iga, et SHA256SUMS-i allkiri kehtib väljalasketöövoo identiteedi vastu (kui cosign on PATH-is) ning et allalaaditud binaari räsi võrdub selle kontrollsummaga. Üks kontrollidest ebaõnnestus, seega paigaldamisest keelduti; paigaldatud binaar on muutmata.
+gb-074-what = Enne mis tahes muudatusi kontrollib update, et pinna pakutav <asset>.sha256 klapib väljalaske SHA256SUMS-iga ning et allalaaditud binaari räsi võrdub selle kontrollsummaga. Üks kontrollidest ebaõnnestus, seega paigaldamisest keelduti; paigaldatud binaar on muutmata. SHA256SUMS-i allkirja kontrollib binaar ise; allkiri, mis ei kehti, on GB-261, ja vanem goatbuilder teatab sellest kui GB-074.
 gb-074-cause-1 = pind on keset juurutust ning binaar, selle kontrollsumma ja SHA256SUMS pärinevad eri väljalasetest
 gb-074-cause-2 = allalaadimist on teel muudetud või see on katkenud
 gb-074-cause-3 = SHA256SUMS-i allkiri ei ole pärit selle repositooriumi väljalasketöövoost, mille goatbuilder.yaml nimetab

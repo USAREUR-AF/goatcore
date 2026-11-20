@@ -25,7 +25,9 @@ package api
 // renders exactly what the custodian will see next.
 
 import (
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/registry"
@@ -82,6 +84,37 @@ func (s *Server) grantMachineQuota(w http.ResponseWriter, r *http.Request) {
 		grantedBy = "operator"
 	}
 
+	// audit appends the change to audit_events. The grant row's granted_by is
+	// overwritten by the next change, so without this row there is no record
+	// of who set a quota or granted or withdrew the network-admin entitlement
+	// once anyone touches the grant again. Written for every outcome that
+	// changed state, including a failure after the grant itself landed.
+	audit := func(quota *registry.MachineQuota, errCode string) string {
+		d := map[string]any{"requested_quota": req.Quota, "network_admin": req.NetworkAdmin}
+		if req.Affiliation != "" {
+			d["affiliation"] = req.Affiliation
+			d["site"] = req.Site
+		}
+		if quota == nil {
+			// A failure after the grant write: read back what did land so the
+			// row says whether the quota or affiliation changed.
+			quota, _ = s.reg.MachineQuotaFor(r.Context(), req.Custodian) //nolint:errcheck // best-effort context for the audit row
+		}
+		if quota != nil {
+			d["quota"] = quota.Quota
+		}
+		if errCode != "" {
+			d["error"] = errCode
+		}
+		b, _ := json.Marshal(d)
+		if err := s.reg.LogAuditEvent(r.Context(), actorOf(r), "machine.grant", req.Custodian, string(b)); err != nil {
+			slog.Error("machine.grant audit record NOT written; the grant change is unrecorded",
+				"custodian", req.Custodian, "actor", actorOf(r), "details", string(b), "err", err)
+			return "failed"
+		}
+		return "recorded"
+	}
+
 	// Affiliation present → full grant (seed/replace). Absent → quota-only,
 	// preserving whatever affiliation the grant already carries. Guard the
 	// quota-only path against a first-time grant that would land with no
@@ -115,6 +148,7 @@ func (s *Server) grantMachineQuota(w http.ResponseWriter, r *http.Request) {
 	// rely on the grant (and its site) existing.
 	if req.NetworkAdmin != nil {
 		if err := s.reg.SetNetworkAdmin(r.Context(), req.Custodian, *req.NetworkAdmin, grantedBy); err != nil {
+			_ = audit(nil, "set_network_admin")
 			writeError(w, http.StatusBadRequest, "set_network_admin", err.Error())
 			return
 		}
@@ -132,6 +166,7 @@ func (s *Server) grantMachineQuota(w http.ResponseWriter, r *http.Request) {
 		if *req.NetworkAdmin && req.Quota == 0 {
 			if g, err := s.reg.MachineGrantFor(r.Context(), req.Custodian); err == nil && g.Quota == 0 {
 				if err := s.reg.SetMachineQuota(r.Context(), req.Custodian, defaultAdminMachineQuota, grantedBy); err != nil {
+					_ = audit(nil, "seed_quota")
 					writeError(w, http.StatusInternalServerError, "seed_quota", err.Error())
 					return
 				}
@@ -141,8 +176,12 @@ func (s *Server) grantMachineQuota(w http.ResponseWriter, r *http.Request) {
 
 	q, err := s.reg.MachineQuotaFor(r.Context(), req.Custodian)
 	if err != nil {
+		_ = audit(nil, "")
 		writeError(w, http.StatusInternalServerError, "quota_lookup", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"quota": q})
+	// The grant happened, so the answer stays 200; "audit" says whether the
+	// required machine.grant record was written, so a caller is never told
+	// an unqualified success for an unrecorded change.
+	writeJSON(w, http.StatusOK, map[string]any{"quota": q, "audit": audit(q, "")})
 }

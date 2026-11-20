@@ -1,0 +1,45 @@
+# promtool unit test for ComposeWatchPaused (rules/compose-orphans.yml).
+#
+# Locally:
+#   promtool test rules ops/compose/mgmt-host/monitoring/tests/compose-watch-paused.test.yml
+#
+# A deploy (or a re-initialisation) pauses mgmt-host-compose-watch and clears
+# the pause when it is done. A pause left behind, by a deploy that failed
+# before clearing it, leaves the stack with no revival: it fires after 30m.
+rule_files:
+  - ../rules/compose-orphans.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Paused for 40 minutes: fires.
+  - interval: 1m
+    input_series:
+      - series: 'compose_watch_paused{site="zagros-a"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: ComposeWatchPaused
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: compose
+              site: zagros-a
+            exp_annotations:
+              summary: "mgmt-host-compose-watch on zagros-a has been paused for over 30m: it revives nothing"
+              description: |
+                /run/mgmt-host-compose-watch.paused exists on zagros-a, so the watcher revives no exited
+                service of /opt/mgmt-host. A deploy writes it (reason mgmt-host-deploy) and removes it when
+                the stack is up; a failed deploy leaves it, on purpose. Read its reason with
+                `cat /run/mgmt-host-compose-watch.paused`, finish or re-run what paused it, or clear it with
+                `sudo rm /run/mgmt-host-compose-watch.paused`. A reboot also clears it.
+
+  # Paused for the length of a deploy, then cleared: does not fire.
+  - interval: 1m
+    input_series:
+      - series: 'compose_watch_paused{site="zagros-a"}'
+        values: '1x10 0x30'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: ComposeWatchPaused
+        exp_alerts: []

@@ -1,0 +1,231 @@
+# promtool unit tests for AuditProducerOverRate and
+# AuditSubscriberQueueDropping (GHSA-hq6c) in audit-subscriber.yml.
+#
+#   promtool test rules ops/compose/goat-obs/prometheus/tests/audit-producer-quota.test.yml
+#
+# The exporter creates each producer's quota series at 0 the first time it
+# sees the producer, so the real exposition is 0 then N. The rule must also
+# fire when a series is first scraped already non-zero (a restart between
+# scrapes, or an exporter that predates the 0 series), which increase()
+# alone cannot see: that is the "born non-zero" case below.
+rule_files:
+  - ../rules/audit-subscriber.yml
+
+evaluation_interval: 1m
+
+tests:
+
+  - name: a pre-created series that starts dropping fires, by producer, and clears
+    interval: 1m
+    input_series:
+      - series: 'goat_audit_producer_over_rate_total{instance="goatnet-a:9303",job="audit-subscriber",vendor="ops/names/claim",limit="records"}'
+        values: '0x2 0+500x8 4000x30'
+      - series: 'goat_audit_producer_over_rate_total{instance="goatnet-a:9303",job="audit-subscriber",vendor="vendor-b",limit="records"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AuditProducerOverRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: audit-subscriber
+              instance: goatnet-a:9303
+              vendor: ops/names/claim
+            exp_annotations:
+              summary: "audit producer ops/names/claim over its audit rate budget on goatnet-a:9303"
+              description: |
+                Producer bucket ops/names/claim sent samples beyond its
+                per-producer audit budget (goat_audit_quota_limit) in the last 10
+                minutes. Observe-only (the default) kept them; with enforcement
+                on, goat_audit_quota_dropped_total counts those NOT persisted.
+                The bucket is a key prefix, not a credential. `docker logs
+                audit-subscriber | grep "audit producer"` gives per-window
+                totals. A sanctioned high-rate feed belongs in volatile/**
+                (ADR 1032) or needs audit_subscriber_producer_quota_* raised.
+      - eval_time: 30m
+        alertname: AuditProducerOverRate
+        exp_alerts: []
+
+  - name: a series first scraped already non-zero still fires (review F2)
+    interval: 1m
+    input_series:
+      - series: 'goat_audit_producer_over_rate_total{instance="goatnet-a:9303",job="audit-subscriber",vendor="ops/names/claim",limit="records"}'
+        values: '_x5 25000x30'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: AuditProducerOverRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: audit-subscriber
+              instance: goatnet-a:9303
+              vendor: ops/names/claim
+            exp_annotations:
+              summary: "audit producer ops/names/claim over its audit rate budget on goatnet-a:9303"
+              description: |
+                Producer bucket ops/names/claim sent samples beyond its
+                per-producer audit budget (goat_audit_quota_limit) in the last 10
+                minutes. Observe-only (the default) kept them; with enforcement
+                on, goat_audit_quota_dropped_total counts those NOT persisted.
+                The bucket is a key prefix, not a credential. `docker logs
+                audit-subscriber | grep "audit producer"` gives per-window
+                totals. A sanctioned high-rate feed belongs in volatile/**
+                (ADR 1032) or needs audit_subscriber_producer_quota_* raised.
+      - eval_time: 10m
+        alertname: AuditProducerOverRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: audit-subscriber
+              instance: goatnet-a:9303
+              vendor: ops/names/claim
+            exp_annotations:
+              summary: "audit producer ops/names/claim over its audit rate budget on goatnet-a:9303"
+              description: |
+                Producer bucket ops/names/claim sent samples beyond its
+                per-producer audit budget (goat_audit_quota_limit) in the last 10
+                minutes. Observe-only (the default) kept them; with enforcement
+                on, goat_audit_quota_dropped_total counts those NOT persisted.
+                The bucket is a key prefix, not a credential. `docker logs
+                audit-subscriber | grep "audit producer"` gives per-window
+                totals. A sanctioned high-rate feed belongs in volatile/**
+                (ADR 1032) or needs audit_subscriber_producer_quota_* raised.
+      - eval_time: 20m
+        alertname: AuditProducerOverRate
+        exp_alerts: []
+
+  - name: no drops, no alert
+    interval: 1m
+    input_series:
+      - series: 'goat_audit_producer_over_rate_total{instance="goatnet-a:9303",job="audit-subscriber",vendor="vendor-b",limit="records"}'
+        values: '0x30'
+      - series: 'goat_audit_drop_total{instance="goatnet-a:9303",job="audit-subscriber"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: AuditProducerOverRate
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: AuditSubscriberQueueDropping
+        exp_alerts: []
+
+  - name: any writer-queue drop fires (review F4)
+    interval: 1m
+    input_series:
+      - series: 'goat_audit_drop_total{instance="goatnet-a:9303",job="audit-subscriber"}'
+        values: '0x3 7x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AuditSubscriberQueueDropping
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: audit-subscriber
+              instance: goatnet-a:9303
+            exp_annotations:
+              summary: "audit-subscriber dropping audit records on goatnet-a:9303"
+              description: |
+                The audit-subscriber dropped audit records in the last 10
+                minutes; they have no audit record. A sample dropped at the
+                writer queue is also counted by producer in
+                goat_audit_queue_dropped_total{vendor}. A whole batch dropped at
+                the upload queue (a writer that batches before upload) counts
+                only here: the batch mixes producers. Common causes: a slow or
+                failing S3 upload (see AuditSubscriberPutsFailing), or a burst
+                larger than audit_subscriber_channel_depth.
+      - eval_time: 20m
+        alertname: AuditSubscriberQueueDropping
+        exp_alerts: []
+
+  - name: a whole batch dropped at the upload queue fires the same rule
+    interval: 1m
+    input_series:
+      # The batching writer adds the batch size at once (10,000 at the
+      # default batch_events), not one per sample.
+      - series: 'goat_audit_drop_total{instance="goatnet-a:9303",job="audit-subscriber"}'
+        values: '0x3 10000x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AuditSubscriberQueueDropping
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: audit-subscriber
+              instance: goatnet-a:9303
+            exp_annotations:
+              summary: "audit-subscriber dropping audit records on goatnet-a:9303"
+              description: |
+                The audit-subscriber dropped audit records in the last 10
+                minutes; they have no audit record. A sample dropped at the
+                writer queue is also counted by producer in
+                goat_audit_queue_dropped_total{vendor}. A whole batch dropped at
+                the upload queue (a writer that batches before upload) counts
+                only here: the batch mixes producers. Common causes: a slow or
+                failing S3 upload (see AuditSubscriberPutsFailing), or a burst
+                larger than audit_subscriber_channel_depth.
+      - eval_time: 20m
+        alertname: AuditSubscriberQueueDropping
+        exp_alerts: []
+
+  - name: an exporter without the drop counter never fires
+    interval: 1m
+    input_series:
+      - series: 'goat_audit_samples_total{instance="goatnet-a:9303",job="audit-subscriber",vendor="vendor-b",key_pattern="vendor-b/x/*"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AuditSubscriberQueueDropping
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: AuditProducerOverRate
+        exp_alerts: []
+
+  - name: production metering left off fires after 2h; loadtest and metered subscribers never
+    interval: 1m
+    input_series:
+      - series: 'goat_audit_quota_limit{instance="goatnet-a:9303",job="audit-subscriber",audit_subscriber_id="goatnet-a",limit="records"}'
+        values: '0x200'
+      - series: 'goat_audit_quota_limit{instance="goatnet-a:9303",job="audit-subscriber",audit_subscriber_id="goatnet-a",limit="bytes"}'
+        values: '0x200'
+      - series: 'goat_audit_quota_limit{instance="goatnet-a:9313",job="audit-subscriber",audit_subscriber_id="goatnet-a-loadtest",limit="records"}'
+        values: '0x200'
+      - series: 'goat_audit_quota_limit{instance="goatnet-a:9313",job="audit-subscriber",audit_subscriber_id="goatnet-a-loadtest",limit="bytes"}'
+        values: '0x200'
+      # Only one limit off: still metered, no alert.
+      - series: 'goat_audit_quota_limit{instance="nova:9303",job="audit-subscriber",audit_subscriber_id="nova",limit="records"}'
+        values: '0x200'
+      - series: 'goat_audit_quota_limit{instance="nova:9303",job="audit-subscriber",audit_subscriber_id="nova",limit="bytes"}'
+        values: '134217728x200'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: AuditProducerMeteringOff
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: AuditProducerMeteringOff
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: audit-subscriber
+              instance: goatnet-a:9303
+              audit_subscriber_id: goatnet-a
+            exp_annotations:
+              summary: "audit producer metering is off on goatnet-a:9303 (goatnet-a)"
+              description: |
+                audit_subscriber_producer_quota_records and _bytes are both 0 on
+                this production audit-subscriber, so no producer's audit rate
+                is metered. If a load test zeroed them, restore the defaults
+                (30000 and 134217728) and re-apply the audit-subscriber role.
+
+  - name: defaults restored, no alert; an exporter without the gauge never fires
+    interval: 1m
+    input_series:
+      - series: 'goat_audit_quota_limit{instance="goatnet-a:9303",job="audit-subscriber",audit_subscriber_id="goatnet-a",limit="records"}'
+        values: '30000x200'
+      - series: 'goat_audit_quota_limit{instance="goatnet-a:9303",job="audit-subscriber",audit_subscriber_id="goatnet-a",limit="bytes"}'
+        values: '134217728x200'
+      - series: 'goat_audit_drop_total{instance="old:9303",job="audit-subscriber"}'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: AuditProducerMeteringOff
+        exp_alerts: []

@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+# Keeps the site LAN off the obs stack's mesh-bound ports. See
+# {{ obs_expose_guard_nft_path }} for why binding alone is not enough.
+[Unit]
+Description=goat obs-host exposure guard (Grafana/Prometheus/Alertmanager mesh-only)
+# In place before any container publishes a port.
+Before=docker.service
+# nftables.service loads /etc/nftables.conf, which usually begins with
+# `flush ruleset`: load after it, and again whenever it is restarted.
+After=nftables.service
+PartOf=nftables.service
+ConditionPathExists={{ obs_expose_guard_nft_path }}
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ obs_expose_guard_nft_path }}
+# The file replaces the table atomically, so a reload never opens a gap.
+ExecReload=/usr/sbin/nft -f {{ obs_expose_guard_nft_path }}
+ExecStop=-/usr/sbin/nft delete table inet goat_obs_expose
+
+[Install]
+WantedBy=multi-user.target
+WantedBy=nftables.service

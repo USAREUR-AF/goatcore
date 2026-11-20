@@ -46,7 +46,7 @@ spock-subscriptions  beta-core-1         converged  v1.2.0   v1.2.0
 zenoh-router         alpha-core-1        converged  v1.9.0   v1.9.0
 zenoh-router         alpha-core-2        converged  v1.9.0   v1.9.0
 zenoh-router         beta-core-1         converged  v1.9.0   v1.9.0
-assay plan: env=zagros  44 applicable rows, 38 N/A
+assay plan: env=zagros  47 applicable rows, 38 N/A
 
   data (1)
     prove  pgbackrest-stanza-and-first-backup           cmd-assert
@@ -101,16 +101,21 @@ assay plan: env=zagros  44 applicable rows, 38 N/A
     prove  goat-health-mesh                             goat-cli
     prove  goat-acl-declaration-holds                   goat-cli
 
-  mgmt-stack (4)
+  mgmt-stack (6)
     prove  signal-tls-not-cleartext                     tls-alpn
     prove  enrollment-entrypoint-cert-identity          tls-identity
+    prove  mgmt-websecure-listens-on-ipv4               cmd-assert
     refuse mgmt-api-refuses-an-unauthenticated-caller   http-ok
     refuse enrollment-entrypoint-refuses-the-default-cert tls-identity
+    refuse mgmt-websecure-has-no-ipv6-listener          cmd-assert
 
   onboarding (3)
     prove  onboard-runner-knows-this-goatnet            onboard-runner-profile
     prove  onboard-runner-reaches-mgmt-api              cmd-assert
     prove  onboard-runner-audit-reaches-the-fabric      cmd-assert
+
+  relays (1)
+    prove  relay-refuses-mesh-only-hosts                relay-mesh-isolation
 
   services (1)
     prove  declared-service-actually-deployed           cmd-assert

@@ -165,10 +165,10 @@ only — soak and ack weight belongs at the prod boundary.
 
 | Command | Does |
 |---|---|
-| `status` | cross-rung matrix per component, graded: `aligned` / `candidate` / `hotfix-backfill-owed` / `env-local` / `legacy-declared` / `UNDECLARED-SKEW`; every adjacent hop (dev→preprod, preprod→prod) is graded and the component carries its worst hop, so a deviation on the middle rung alone is seen; lists open records |
+| `status` | cross-rung matrix per component, graded: `aligned` / `candidate` / `hotfix-backfill-owed` / `env-local` / `legacy-declared` / `UNDECLARED-SKEW`; every adjacent hop (dev→preprod, preprod→prod) is graded and the component carries its worst hop, so a deviation on the middle rung alone is seen; lists open records, and every member deviation off its rung's value (ADR 1256) |
 | `open <c> --ref --reason` | writes the candidate record; **prints** the exact preprod deviation edit |
 | `graduate <c> --ack` | verifies every hop gate, marks the record graduated, **prints** the fold-to-fleet edit; with no ladder candidate open it closes the component's open hotfix record instead — a fastlane's backfill. `--override-runtime-health REASON` writes the override (§3) and graduates past a failing runtime-health gate |
-| `hotfix <c> --ref --reason --ack` | writes the hotfix record; prints the prod deviation edit |
+| `hotfix <c> --ref --reason --ack` | writes the hotfix record; prints the prod deviation edit, and names every prod member whose own deviation would keep it off the hotfix, with its two ways out: delete the deviation, or keep it with `over:` set to the hotfix ref (ADR 1256; `generate-pins.py --check` refuses until each is decided) |
 | `check` | CI invariants C1–C10 (§6); C9 fails an open hotfix record older than three days with no validation evidence |
 
 `ops/release/rung-health.py <component> --goatnet <goatnet> [--write-record
@@ -190,6 +190,38 @@ destroy, and the edit belongs in the PR diff where a reviewer sees it next to
 the record. The pair `printed edit + check` is self-closing: a record without
 its pin edit (or vice versa) fails C3–C6. First run against the real tree:
 11 components, all `aligned`, zero grandfathering needed.
+
+### 5a. The ladder gate on every deploy (GB-373)
+
+A deploy cannot put a ref on a rung before the rung below runs it. The check runs
+in the deploy paths, before any host is touched, so it holds whether or not a
+record was opened:
+
+| Path | What it refuses |
+|---|---|
+| `ops/scripts/deploy-component.sh <c> --goatnet <g>` | for each member group, the digest it would deploy unless the next rung down that pins the component pins the same digest, **and** that rung's hosts converged on it (read live with `deploy-component.sh <c> --goatnet <lower> --verify-only`) |
+| `ops/scripts/ansible-preflight.sh <play> …` (every direct play, both avenues) | the same pin check for each fleet component the play deploys to a member group named in its arguments; an `-e <image var>=<ref>` override is the digest judged |
+
+`ops/release/ladder_gate.py` holds the decision for both. A rung that does not
+pin the component is passed over and the next one down decides; when no lower
+rung pins it at all, the deploy is refused (it has not run anywhere first). The
+lowest rung, and a goatnet that is not a live rung of `ladder.yaml`, are not
+gated. A verify-only run and a listing or check-only play deploy nothing and are
+not gated.
+
+There are two ways past it, both recorded:
+
+- **an open hotfix record** for that component and digest (`graduate.py hotfix`,
+  or `ops/scripts/fastlane.sh`, ADR 1127): every rung moves at once on purpose
+  and the backfill is owed (C9);
+- **`--skip-rung --reason "<why>" --ack "<operator>"`** on deploy-component.sh,
+  or `GOAT_LADDER_SKIP_REASON` and `GOAT_LADDER_SKIP_ACK` for a direct play.
+  Both values are required, and the deploy ledger row carries them as
+  `ladder_skip`, so the ledger shows every deploy that skipped a rung and why.
+
+`GOAT_SKIP_ANSIBLE_PREFLIGHT` does not skip the gate: that bypass is for a stale
+tree, not for the ladder. An `--offline` run cannot read the lower rung's
+ledgers, so it needs `--skip-rung`.
 
 ## 6. CI invariants (fleet-pins job, unfiltered)
 
@@ -313,7 +345,9 @@ soaked longer than it ran; and a record whose `opened` is unusable renders
 
 An emergency prod change that cannot wait for any record is the deployment
 doctrine's territory, not this doc's — but the morning after, the change is
-retroactively recorded as a hotfix (backfill owed) or rolled back; `check`
+retroactively recorded as a hotfix (backfill owed) or rolled back; the deploy
+itself goes past the ladder gate (§5a) only with a hotfix record or a
+`--skip-rung` reason and ack in its ledger row; `check`
 turning red on undeclared prod skew is the reminder mechanism, not a
 punishment. Rollback itself is ADR 1060's job and needs no record: reverting
 to the prior `fleet:` value is returning *to* the value of record.

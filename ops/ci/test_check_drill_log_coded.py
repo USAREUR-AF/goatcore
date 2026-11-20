@@ -79,6 +79,29 @@ class TextLogs(unittest.TestCase):
         self.assertEqual([n for _, n, _ in got], [1])
         self.assertEqual(findings(row + "  ✗ interpreted  GB-251: a required acceptance check was blocked\n"), [])
 
+    def test_federate_s_phase_14_row_as_a_lab_run_printed_it(self):
+        # The shape a lab run of tutorial 3 printed: the failed row wraps, and the
+        # interpretation under it carries X-ACCEPT-001, a code of acceptance.sh,
+        # which is not a GB code. Uncoded until the row prints GB-183 itself.
+        head = ("Phase 14 \u00b7 GATE \u00b7 acceptance \u2014 carries, refuses, and round-trips\n"
+                "  '/opt/goat/ops/federation/standup/acceptance.sh' '/var/lib/goat-federation/zagros/agreement.json' --as 'pasture'\n")
+        tail = ("      through phase 14. `goat federate` exit codes are specific: 20 composition\n"
+                "      refused, 21 lint refused, 22 diff refused, 23 a value could not be\n"
+                "      derived.\n"
+                "      Fix: fix the cause, then resume \u2014 every phase is idempotent: goatbuilder\n"
+                "           federate zagros --from 14\n"
+                "  \u2717 interpreted  X-ACCEPT-001: acceptance could not run a required check, so the\n"
+                "      peering is not accepted.\n"
+                "\n"
+                "federate: refused\n")
+        uncoded = head + ("  \u2717 failed  !! Phase 14 (\"acceptance: carries, refuses, and round-trips\")\n"
+                          "      FAILED: exit 3. No later phase has run; the peering is left partway\n") + tail
+        got = findings(uncoded)
+        self.assertEqual([n for _, n, _ in got], [3], got)
+        coded = head + ("  \u2717 failed  !! Phase 14 (\"acceptance: carries, refuses, and round-trips\")\n"
+                        "      FAILED: exit 3 (GB-183). No later phase has run; the peering is left partway\n") + tail
+        self.assertEqual(findings(coded), [])
+
     def test_a_wave_that_failed_with_its_code_passes(self):
         log = ("!! Phase 12 FAILED: portal. Steps in that wave that passed stay done\n"
                "interpreted: GB-221: the play could not reach the host\n")

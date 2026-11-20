@@ -21,7 +21,7 @@ the counts line and the verdict, and exits with the run's status:
 
     0  PASS        every required check passed
     1  FAIL        a check failed (an observed violation)
-    3  INCOMPLETE  nothing failed, but a required check was BLOCKED or SKIPPED, or no
+    3  INCOMPLETE  nothing failed, but a required check was BLOCKED, SKIPPED or PENDING, or no
                    required check ran at all: the peering is not proven
     2  the bundle could not be written, or a record was malformed
 
@@ -30,10 +30,13 @@ Outcome words (the acceptance contract):
     FAIL            a violation was observed
     BLOCKED         a prerequisite or the evidence was unavailable
     SKIP            not exercised
+    PENDING         exercised, and decided by a later run from evidence another
+                    machine returns (phase 14's edge trace across two drivers).
+                    Always required, so a run that leaves one is INCOMPLETE.
     NOT APPLICABLE  excluded by the agreed scope (never required; needs a reason)
 
 A required check can only become PASS by passing. Nothing here, and no flag, turns
-FAIL, BLOCKED or SKIP into PASS.
+FAIL, BLOCKED, SKIP or PENDING into PASS.
 """
 import argparse
 import base64
@@ -47,7 +50,8 @@ import tempfile
 
 SCHEMA = "goat-federation-acceptance/v1"
 PASS, FAIL, BLOCKED, SKIP, NA = "PASS", "FAIL", "BLOCKED", "SKIP", "NOT APPLICABLE"
-VERDICTS = (PASS, FAIL, BLOCKED, SKIP, NA)
+PENDING = "PENDING"
+VERDICTS = (PASS, FAIL, BLOCKED, SKIP, NA, PENDING)
 DIRECTIONS = ("outbound", "inbound", "both", "local")
 TIERS = ("positive", "persistence", "negative", "round-trip", "spire", "existing", "precondition")
 EXIT = {"PASS": 0, "FAIL": 1, "INCOMPLETE": 3}
@@ -77,6 +81,9 @@ def make_check(name, direction, verdict, reason, started, ended=None, title=None
         raise Malformed("%s: a %s needs a reason" % (name, verdict))
     if verdict == NA and required:
         raise Malformed("%s: a required check cannot be NOT APPLICABLE" % name)
+    if verdict == PENDING and not required:
+        # An optional row would drop out of the verdict, and the run could pass on it.
+        raise Malformed("%s: a PENDING check is always required" % name)
     return {
         "name": name,
         "title": title or name,
@@ -106,9 +113,15 @@ def overall(checks):
     required = [c for c in checks if c["required"]]
     if not required:
         return "INCOMPLETE", EXIT["INCOMPLETE"], "no required check ran, so nothing was proven"
-    open_ = [c["name"] for c in required if c["verdict"] != PASS]
+    open_ = [c["name"] for c in required if c["verdict"] not in (PASS, PENDING)]
+    pending = [c["name"] for c in required if c["verdict"] == PENDING]
+    why = []
     if open_:
-        return "INCOMPLETE", EXIT["INCOMPLETE"], "%d required check(s) did not run: %s" % (len(open_), ", ".join(open_))
+        why.append("%d required check(s) did not run: %s" % (len(open_), ", ".join(open_)))
+    if pending:
+        why.append("%d check(s) pending a later run: %s" % (len(pending), ", ".join(pending)))
+    if why:
+        return "INCOMPLETE", EXIT["INCOMPLETE"], "; ".join(why)
     return "PASS", EXIT["PASS"], "every required check passed"
 
 
@@ -191,12 +204,12 @@ def session_block(manifest_path, us):
 def bundle(checks, agreement, us, them, run_id, started, inputs, ended=None, session=None, software=None,
            configuration=None):
     verdict, code, why = overall(checks)
-    ag = {}
     try:
         with open(agreement) as f:
             ag = json.load(f)
     except (OSError, ValueError):
-        pass
+        # Keep optional metadata absent; the checks determine the verdict.
+        ag = {}
     return {
         "schema": SCHEMA,
         "run": {"id": run_id, "started_at": started, "ended_at": ended or now(), "us": us, "them": them,
@@ -253,12 +266,17 @@ def write_bundle(b, out):
 
 def console(b):
     """The lines a person and the end-to-end test read. The counts line keeps its
-    first four fields as they were; `skip` counts SKIP only."""
+    first four fields as they were; `skip` counts SKIP only. `pending` is last, and
+    0 in a bundle written before PENDING existed."""
     c = b["counts"]
-    out = ["", "acceptance-counts: pass=%d fail=%d skip=%d as=%s blocked=%d not_applicable=%d"
-           % (c[PASS], c[FAIL], c[SKIP], b["run"]["us"], c[BLOCKED], c[NA])]
+    out = ["", "acceptance-counts: pass=%d fail=%d skip=%d as=%s blocked=%d not_applicable=%d pending=%d"
+           % (c[PASS], c[FAIL], c[SKIP], b["run"]["us"], c[BLOCKED], c[NA], c.get(PENDING, 0))]
     if b["verdict"] == "FAIL":
         out.append("  ACCEPTANCE FAILED — %d check(s). The peering is not ready to carry anything." % c[FAIL])
+    elif b["verdict"] == "INCOMPLETE" and c.get(PENDING, 0):
+        # The same opening words as below, so X-ACCEPT-001 still names it: the peering is not accepted yet.
+        out.append("  ACCEPTANCE FAILED — %d passed, %d SKIPPED, %d BLOCKED, %d PENDING. A pending check is not a pass;"
+                   " the run that reads its evidence (FED_EDGE_TRACE_FILE) decides it." % (c[PASS], c[SKIP], c[BLOCKED], c[PENDING]))
     elif b["verdict"] == "INCOMPLETE":
         out.append("  ACCEPTANCE FAILED — %d passed, %d SKIPPED, %d BLOCKED. A check that did not run is not a pass;"
                    " see the lines above for why." % (c[PASS], c[SKIP], c[BLOCKED]))
@@ -484,8 +502,10 @@ def main(argv=None):
     if a.cmd == "persistence-scope":
         # Prints one JSON line (outcome, reason, details); the exit status is the outcome.
         try:
-            router = rest_rows(open(a.router).read())
-            subs = rest_rows(open(a.subscribers).read())
+            with open(a.router) as f:
+                router = rest_rows(f.read())
+            with open(a.subscribers) as f:
+                subs = rest_rows(f.read())
         except (OSError, Unreadable) as e:
             print(json.dumps({"outcome": "unreadable", "reason": "the receiving core's admin space: %s" % e}))
             return 4

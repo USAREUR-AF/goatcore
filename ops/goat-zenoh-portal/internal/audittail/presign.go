@@ -27,8 +27,9 @@ import (
 // Presigner signs presigned GET URLs against the audit bucket. It shares
 // Config with the Tailer but needs no registry.
 type Presigner struct {
-	cfg Config
-	cli *http.Client
+	initErr error
+	cfg     Config
+	cli     *http.Client
 }
 
 // NewPresigner builds a Presigner. Call Enabled() before using it.
@@ -39,7 +40,8 @@ func NewPresigner(cfg Config) *Presigner {
 	if cfg.SubscriberID == "" {
 		cfg.SubscriberID = "site-A"
 	}
-	return &Presigner{cfg: cfg, cli: &http.Client{Timeout: 30 * time.Second}}
+	cli, err := StorageClient(cfg)
+	return &Presigner{cfg: cfg, cli: cli, initErr: err}
 }
 
 // Enabled is true when the bucket credentials are present.
@@ -51,12 +53,32 @@ func (p *Presigner) Enabled() bool {
 // ListSince returns audit object keys at or after `since`, capped at maxKeys.
 // A zero `since` lists from the bucket start.
 func (p *Presigner) ListSince(ctx context.Context, since time.Time, maxKeys int) ([]string, error) {
+	if p.initErr != nil {
+		return nil, p.initErr
+	}
 	prefix := p.cfg.SubscriberID + "/"
 	startAfter := sinceStartAfter(prefix, since)
 	if maxKeys <= 0 {
 		maxKeys = 500
 	}
 	return listObjectKeys(ctx, p.cli, p.cfg, prefix, startAfter, maxKeys)
+}
+
+// ListAfter paginates a metadata window without widening its lower bound.
+func (p *Presigner) ListAfter(ctx context.Context, since time.Time, maxKeys int, after string) ([]string, error) {
+	if p.initErr != nil {
+		return nil, p.initErr
+	}
+	floor := sinceStartAfter(p.cfg.SubscriberID+"/", since)
+	if after != "" {
+		if _, _, err := ObjectSource(after, p.cfg.SubscriberID); err != nil {
+			return nil, err
+		}
+		if after > floor {
+			floor = after
+		}
+	}
+	return listObjectKeys(ctx, p.cli, p.cfg, p.cfg.SubscriberID+"/", floor, maxKeys)
 }
 
 // sinceStartAfter builds the S3 ListObjectsV2 `start-after` bound for a `since`
@@ -83,6 +105,13 @@ func sinceStartAfter(prefix string, since time.Time) string {
 // PresignGet returns a presigned (query-string SigV4) GET URL for one object
 // key, valid for ttl. Path-style addressing, UNSIGNED-PAYLOAD.
 func (p *Presigner) PresignGet(key string, ttl time.Duration) (string, error) {
+	if p.initErr != nil {
+		return "", p.initErr
+	}
+	source, _, err := ObjectSource(key, p.cfg.SubscriberID)
+	if err != nil || source == "legacy" {
+		return "", fmt.Errorf("raw legacy audit access is gated; use metadata projection")
+	}
 	endpoint := strings.TrimRight(p.cfg.Endpoint, "/")
 	u, err := url.Parse(endpoint)
 	if err != nil {

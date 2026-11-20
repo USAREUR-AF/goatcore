@@ -1,0 +1,83 @@
+name: postgres-encoding-migrate
+
+# The functional test of the SQL_ASCII to UTF8 migration,
+# ops/ansible/roles/postgres-encoding-migrate/tests/run-test.sh: a founder and
+# a joiner wired with the real spock-mesh-peering role, a stopped peer, and a
+# physical standby of the founder that postgres-streaming-replication rebuilds
+# with pg_basebackup. It migrates, resumes, re-runs, rolls back and migrates
+# again with a repair. The parse-only checks (tests/syntax-check.sh) run in
+# ansible-syntax-check.yml; this workflow runs the containers.
+#
+# A GitHub-hosted runner, because the standby host becomes root: the streaming
+# role wipes and chowns the standby volume's directory on the Docker host. The
+# image is the postgres-spock fleet pin (ops/pins/fleet-pins.yaml), which the
+# test reads itself, so the run covers the image a goatnet deploys.
+#
+# Triggers: a change to the migration role and playbook, to the two roles it
+# drives (postgres-streaming-replication for the standby, spock-mesh-peering
+# for the re-wire), to the wiring playbook the fixture uses, or to this file.
+
+on:
+  pull_request:
+    paths:
+      - 'ops/ansible/roles/postgres-encoding-migrate/**'
+      - 'ops/ansible/roles/postgres-streaming-replication/**'
+      - 'ops/ansible/roles/spock-mesh-peering/**'
+      - 'ops/ansible/postgres-encoding-migrate.yml'
+      - 'ops/ansible/spock-mesh-wire.yml'
+      - '.github/workflows/postgres-encoding-migrate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'ops/ansible/roles/postgres-encoding-migrate/**'
+      - 'ops/ansible/roles/postgres-streaming-replication/**'
+      - 'ops/ansible/roles/spock-mesh-peering/**'
+      - 'ops/ansible/postgres-encoding-migrate.yml'
+      - 'ops/ansible/spock-mesh-wire.yml'
+      - '.github/workflows/postgres-encoding-migrate.yml'
+  workflow_dispatch:
+
+# A newer push to the same pull request cancels the older run; a run on main
+# is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  container-test:
+    name: migrate, resume, rebuild the standby, roll back and repair on Docker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: ansible-core and the collections the roles use
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'ansible-core==2.20.3' 'requests==2.32.3'
+          ansible-galaxy collection install \
+            'ansible.posix:>=1.5,<3.0' \
+            'community.general:>=8.0,<11.0' \
+            'community.docker:>=3.4,<5.0'
+          ansible-playbook --version
+          docker compose version
+      - name: run-test.sh
+        env:
+          WORK: ${{ runner.temp }}/pem-test
+        run: |
+          set -euo pipefail
+          mkdir -p "$WORK"
+          bash ops/ansible/roles/postgres-encoding-migrate/tests/run-test.sh
+      - name: the run's logs, on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: postgres-encoding-migrate-logs
+          path: ${{ runner.temp }}/pem-test/*.log
+          retention-days: 7
+          if-no-files-found: ignore

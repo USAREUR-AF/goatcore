@@ -1,0 +1,129 @@
+---
+# One comparison of spock-seed-current-check.yml (GB-367): on the founder and on
+# the joiner, each seed table's row count and a checksum of its rows. After
+# Spock is wired it first waits, bounded, for each subscription from the founder
+# to confirm the founder's current WAL position. Read-only. The query results
+# are not logged (they are checksums of identity and credential rows); only
+# table names and counts are ever printed.
+
+- name: "seed-check {{ seed_check_attempt }} | the founder's Spock node, per database"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ peer_postgres_container }}", psql, -U, postgres, -d, "{{ item.db }}", -tAc,
+           "SELECT n.node_name FROM spock.node n JOIN spock.local_node l ON l.node_id = n.node_id"]
+  delegate_to: "{{ peer_host }}"
+  loop: "{{ seed_databases }}"
+  loop_control:
+    label: "{{ item.db }}"
+  register: seed_check_nodes
+  changed_when: false
+  when: seed_check_phase == 'after'
+
+- name: "seed-check {{ seed_check_attempt }} | the joiner's subscriptions from the founder, per database"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ postgres_container }}", psql, -U, postgres, -d, "{{ item.item.db }}", -tAc,
+           "SELECT slot_name FROM spock.sub_show_status() WHERE provider_node = '{{ item.stdout | trim }}'"]
+  loop: "{{ seed_check_nodes.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.db }}"
+  register: seed_check_slots
+  changed_when: false
+  when: seed_check_phase == 'after'
+
+# spock.wait_slot_confirm_lsn returns once the slot has confirmed the given
+# position. A statement timeout bounds it: a subscription that never catches
+# up is refused, never waited on forever.
+- name: "seed-check {{ seed_check_attempt }} | wait for each subscription to confirm the founder's position"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ peer_postgres_container }}", psql, -U, postgres, -d, "{{ item.0.item.item.db }}", -v, ON_ERROR_STOP=1, -tAc,
+           "SET statement_timeout = '{{ seed_check_catch_up_seconds | int }}s'; SELECT spock.wait_slot_confirm_lsn('{{ item.1 }}', pg_current_wal_lsn())"]
+  delegate_to: "{{ peer_host }}"
+  loop: "{{ (seed_check_slots.results | default([])) | subelements('stdout_lines', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.0.item.item.db }} {{ item.1 }}"
+  register: seed_check_waits
+  changed_when: false
+  failed_when: false
+  when: seed_check_phase == 'after'
+
+- name: "seed-check {{ seed_check_attempt }} | refuse a subscription that did not catch up"
+  ansible.builtin.fail:
+    msg: >-
+      GB-367: a subscription from the founder {{ peer_host }} did not catch up
+      within {{ seed_check_catch_up_seconds }} s
+      ({{ (seed_check_waits.results | default([]) | rejectattr('skipped', 'defined') | selectattr('rc', 'ne', 0)
+           | map(attribute='item') | map('last') | join(', ')) }}), so the seed tables cannot be compared
+      yet. Read spock.sub_show_status() on this joiner; once each subscription is
+      replicating and caught up, resume with --from 13.
+  when:
+    - seed_check_phase == 'after'
+    - (seed_check_waits.results | default([]) | rejectattr('skipped', 'defined') | selectattr('rc', 'ne', 0) | list | length) > 0
+
+- name: "seed-check {{ seed_check_attempt }} | the founder's seed tables"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ peer_postgres_container }}", psql, -U, postgres, -d, "{{ item.db }}", -v, ON_ERROR_STOP=1, -tAc, "{{ _seed_sums_sql }}"]
+  vars:
+    _seed_sums_sql: >-
+      /* seed-check-sums */ {% for t in item.tables %}SELECT '{{ t }}' AS t, count(*),
+      md5(coalesce(string_agg(md5(x::text), '' ORDER BY md5(x::text)), '')) FROM "{{ t }}" x{{ ' UNION ALL ' if not loop.last }}{% endfor %}
+  delegate_to: "{{ peer_host }}"
+  loop: "{{ seed_databases }}"
+  loop_control:
+    label: "{{ item.db }}"
+  register: seed_check_founder
+  changed_when: false
+  no_log: true
+
+- name: "seed-check {{ seed_check_attempt }} | the joiner's seed tables"
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ postgres_container }}", psql, -U, postgres, -d, "{{ item.db }}", -v, ON_ERROR_STOP=1, -tAc, "{{ _seed_sums_sql }}"]
+  vars:
+    _seed_sums_sql: >-
+      /* seed-check-sums */ {% for t in item.tables %}SELECT '{{ t }}' AS t, count(*),
+      md5(coalesce(string_agg(md5(x::text), '' ORDER BY md5(x::text)), '')) FROM "{{ t }}" x{{ ' UNION ALL ' if not loop.last }}{% endfor %}
+  loop: "{{ seed_databases }}"
+  loop_control:
+    label: "{{ item.db }}"
+  register: seed_check_joiner
+  changed_when: false
+  no_log: true
+
+# Each line is `table|count|checksum`. Only the table names and counts of the
+# lines that differ leave this task.
+- name: "seed-check {{ seed_check_attempt }} | which seed tables differ"
+  ansible.builtin.set_fact:
+    seed_check_differs: >-
+      {%- set out = [] -%}
+      {%- for f in seed_check_founder.results -%}
+      {%- set j = seed_check_joiner.results[loop.index0] -%}
+      {%- set fl = {} -%}{%- for l in f.stdout_lines -%}{%- set p = l.split('|') -%}{%- set _ = fl.update({p[0]: p}) -%}{%- endfor -%}
+      {%- set jl = {} -%}{%- for l in j.stdout_lines -%}{%- set p = l.split('|') -%}{%- set _ = jl.update({p[0]: p}) -%}{%- endfor -%}
+      {%- for t in f.item.tables -%}
+      {%- set a = fl.get(t, [t, '?', '']) -%}{%- set b = jl.get(t, [t, '?', '']) -%}
+      {%- if a[1] != b[1] or a[2] != b[2] or a[2] == '' -%}
+      {%- set _ = out.append(f.item.db ~ '.' ~ t ~ ': founder ' ~ a[1] ~ ' rows, joiner ' ~ b[1]) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    seed_check_equal: false
+  no_log: true
+
+- name: "seed-check {{ seed_check_attempt }} | equal"
+  ansible.builtin.set_fact:
+    seed_check_equal: "{{ seed_check_differs | length == 0 }}"
+
+- name: "seed-check {{ seed_check_attempt }} | differs, so wait before the next comparison"
+  ansible.builtin.debug:
+    msg: "seed-check: {{ seed_check_differs | join('; ') }} (attempt {{ seed_check_attempt }}); a write may still be in flight"
+  when:
+    - not (seed_check_equal | bool)
+    - seed_check_phase == 'after'
+
+- name: "seed-check {{ seed_check_attempt }} | pause"
+  ansible.builtin.pause:
+    seconds: "{{ seed_check_retry_delay | int }}"
+  when:
+    - not (seed_check_equal | bool)
+    - seed_check_phase == 'after'
+    - (seed_check_retry_delay | int) > 0
+    - (seed_check_attempt | int) < (seed_check_attempts | int)

@@ -176,8 +176,10 @@ def self_test():
     for text, want in ((called_bad, 1), (called_ok, 0)):
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, ".github", "workflows"))
-            open(os.path.join(d, ".github/workflows/caller.yml"), "w").write(caller)
-            open(os.path.join(d, ".github/workflows/_called.yml"), "w").write(text)
+            with open(os.path.join(d, ".github/workflows/caller.yml"), "w") as f:
+                f.write(caller)
+            with open(os.path.join(d, ".github/workflows/_called.yml"), "w") as f:
+                f.write(text)
             got = check(d)
             if (len(got) > 0) != bool(want):
                 print("SELF-TEST FAILED:", "passed a called workflow asking packages: read" if want else f"refused a covered call: {got}")

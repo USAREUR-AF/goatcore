@@ -49,7 +49,7 @@ sudo /usr/local/bin/operator-idp-enroll.sh \
   --groups grafana-admin,minio-readonly,prometheus-readonly,alertmanager-admin
 ```
 
-Script output ends with a one-time recovery link. Share it OOB (Matrix DM / phone call / in-person). **Do not email it** — link is valid for 1 hour and grants the holder full FIDO2-enrollment authority for that operator.
+Script output ends with a one-time recovery link and code. Share both OOB (Matrix DM / phone call / in-person). **Do not email them** — they are valid for 1 hour and grant the holder full FIDO2-enrollment authority for that operator.
 
 ## Group reference
 
@@ -77,9 +77,9 @@ Adding without updating all three = silent rejection at one of the layers.
 
 ## New-operator workflow (what the recipient does)
 
-1. Receive the recovery link from the trunk-owner.
+1. Receive the recovery link and code from the trunk-owner.
 2. Open it in a browser on a wg-cp0-onboarded laptop. Operator IdP serves only on the wg-cp0 mesh — links don't work over the public internet.
-3. Kratos lands the operator in the settings flow. Click "Set up Passkey."
+3. Enter the code. Kratos lands the operator in the settings flow. Click "Set up Passkey."
 4. Plug in FIDO2 token (e.g., YubiKey). Follow the WebAuthn prompts.
 5. Done. The operator can now log into any operator-IdP-fronted consumer (Grafana, MinIO, OpenObserve, Forgejo) using their token.
 
@@ -133,12 +133,12 @@ Identity record removed; FIDO2 credential entries cascade-deleted; future logins
 
 ```
 # Trigger a fresh recovery link for the existing identity
-curl -fsS -X POST "http://127.0.0.1:4436/admin/recovery/link/code/admin" \
+curl -fsS -X POST "http://127.0.0.1:4436/admin/recovery/code" \
   -H 'Content-Type: application/json' \
-  -d "{\"identity_id\":\"<id>\"}" | jq -r '.recovery_link'
+  -d "{\"identity_id\":\"<id>\"}" | jq -r '.recovery_link, .recovery_code'
 ```
 
-Share OOB. Operator follows the link, removes the lost token's credential record from their account settings, and registers their backup token.
+Share both OOB. Operator follows the link, enters the code, removes the lost token's credential record from their account settings, and registers their backup token.
 
 ## Total-token-loss event
 

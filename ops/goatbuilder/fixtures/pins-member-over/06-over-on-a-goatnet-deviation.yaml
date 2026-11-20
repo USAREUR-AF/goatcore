@@ -1,0 +1,17 @@
+# over: on a goatnet-scope deviation means nothing and is refused.
+# expect: 2 GB-358
+goatnets:
+  zagros:
+    description: the synthetic example goatnet
+    members: [zagros_a_hosts, zagros_b_hosts]
+components:
+  signal-server:
+    owns_state: false
+    rollback: pin-revert
+    var: signal_server_image
+    fleet: ghcr.io/example/signal-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    deviations:
+      zagros:
+        value: ghcr.io/example/signal-server@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        over: ghcr.io/example/signal-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        reason: "HOTFIX (2026-11-19, ack synthetic): example fix — record example.yaml"

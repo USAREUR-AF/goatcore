@@ -157,3 +157,11 @@ spock_mesh_revocation_guard_sql:
 spock_mesh_hub_authority: true
 spock_mesh_hub_authority_sql:
   netbird: "{{ role_path }}/../../../postgres/spock/hub-authority/netbird.sql"
+
+# Where the expected-subscriptions metric goes (tasks/expected-metrics.yml):
+# node-exporter's textfile directory, root's on a host. The write takes its own
+# become (spock_mesh_metrics_become), so it works whatever the calling play sets; a
+# fixture that runs without root points the directory into its own run
+# directory and sets the become false.
+spock_mesh_metrics_dir: "{{ node_exporter_textfile_host_dir | default('/var/lib/node_exporter/textfile') }}"
+spock_mesh_metrics_become: true

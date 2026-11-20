@@ -322,6 +322,14 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
     for i in fixed(site) {
         push(&mut v, i);
     }
+    // Phase 13's seed check at a joiner (GB-367): once before Spock is wired,
+    // once after.
+    for (value, why) in [
+        ("before", "phase 13 compares the joiner's seed tables with the founder's before pass 3 wires Spock"),
+        ("after", "phase 13 compares them again once the subscriptions from the founder have caught up"),
+    ] {
+        push(&mut v, Input::new(format!("seed_check_phase {value}"), value, Source::default(why.to_string())));
+    }
     // Phase 3's clock budget (join-node-clock-check.py reads it).
     let budget = "JOIN_NODE_CLOCK_BUDGET_MS";
     v.push(match set(env, budget) {
@@ -330,12 +338,6 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
     });
 
     // What the phases read from their environment.
-    let store = crate::secrets::available(repo);
-    let store_name = if store.is_empty() {
-        String::new()
-    } else {
-        crate::secrets::store(repo)
-    };
     // A phone node's phase 2 prepares the VM over the Android debug bridge;
     // it reads no first-login password.
     let mut reads: Vec<(String, bool, &str)> = vec![
@@ -344,9 +346,9 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             true,
             "phase 2 (seed-ssh-key.sh), unless key auth already works",
         ),
-        (format!("{upper}_PG_PASS"), true, "phase 13 (core)"),
-        (format!("{upper}_NB_ENCKEY"), true, "phase 13 (core)"),
-        (format!("{upper}_BKP_KEY"), true, "phase 13 (core)"),
+        (format!("{upper}_PG_PASS"), true, if joiner { "phase 13 (core); minted in phase 3 when missing (join-site-secrets.py)" } else { "phase 13 (core)" }),
+        (format!("{upper}_NB_ENCKEY"), true, if joiner { "phase 13 (core); taken from the founder's in phase 3 (join-site-secrets.py)" } else { "phase 13 (core)" }),
+        (format!("{upper}_BKP_KEY"), true, if joiner { "phase 13 (core); minted in phase 3 when missing (join-site-secrets.py)" } else { "phase 13 (core)" }),
         (
             "OWNER_EMAIL".to_string(),
             false,
@@ -361,7 +363,15 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             "phase 13 (a joiner's core node): the founder's management API token, which registers the site's mesh DNS nameserver group",
         ));
     }
-    for (name, secret, when) in reads.into_iter().skip(usize::from(phone)) {
+    let reads: Vec<(String, bool, &str)> = reads.into_iter().skip(usize::from(phone)).collect();
+    // Asked for these names only: the probe's answer is kept in the run record.
+    let store = crate::secrets::available(repo, &reads.iter().map(|(n, _, _)| n.clone()).collect::<Vec<_>>());
+    let store_name = if store.is_empty() {
+        String::new()
+    } else {
+        crate::secrets::store(repo)
+    };
+    for (name, secret, when) in reads {
         let from_store = store.contains(&name).then(|| {
             Source::derived(
                 format!("the declared secrets store ({store_name})"),

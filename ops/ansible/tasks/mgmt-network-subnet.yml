@@ -1,0 +1,54 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# mgmt-network-subnet.yml — set mgmt_docker_network_subnet, the one Docker range
+# the mesh-only IP allowlists admit (GHSA-p22f).
+#
+# WHY THIS EXISTS. mesh-source-allowlist, lan-mesh-allowlist and the icam
+# passthrough allowlist used to admit all of 172.16.0.0/12 for "on-host
+# containers". That also admits any OFF-host client numbered inside it (a site
+# LAN, a VPN pool, an AWS default VPC at 172.31.0.0/16): Docker DNATs such a
+# client with its own address, and it passes. What the allowlists need is the
+# `mgmt` network alone: every container on it, every on-host connection that
+# docker-proxy carries (it reconnects from that network's gateway), and every
+# container on another bridge that reaches a published port (masqueraded to
+# the same gateway on its way into the mgmt bridge).
+#
+# WHY IT IS READ, NOT PINNED. Adding an ipam block to the compose network makes
+# Compose recreate it on the next `up`. With other projects attached (about 30
+# roles join `mgmt` as external) the removal fails with "active endpoints"
+# and the base containers are left stopped. Reading the live subnet changes
+# nothing on a running host. A site may still set mgmt_docker_network_subnet
+# itself (group_vars); this then only checks the value.
+#
+# WHEN TO INCLUDE IT. Before rendering any Traefik dynamic file that carries
+# those allowlists: traefik-acme.yml, lan-traefik-routes.yml, roles/icam-mtls-proxy.
+# The network must exist (mgmt-host.yml or site-bootstrap.yml brought the stack
+# up). If it does not, this fails rather than render an allowlist without the
+# on-host path, which would 403 the host's own NetBird client.
+- name: Read the mgmt Docker network's subnet
+  ansible.builtin.command:
+    argv: [docker, network, inspect, mgmt, --format, "{{ '{{' }}range .IPAM.Config{{ '}}' }}{{ '{{' }}.Subnet{{ '}}' }} {{ '{{' }}end{{ '}}' }}"]
+  become: true
+  register: _mgmt_network_inspect
+  changed_when: false
+  failed_when: false
+  when: not (mgmt_docker_network_subnet | default(''))
+
+- name: Take the network's IPv4 subnet
+  ansible.builtin.set_fact:
+    mgmt_docker_network_subnet: >-
+      {{ (_mgmt_network_inspect.stdout | default('')).split()
+         | select('match', '^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+/[0-9]+$') | first | default('') }}
+  when: not (mgmt_docker_network_subnet | default(''))
+
+- name: Refuse an unknown or over-wide mgmt subnet
+  ansible.builtin.assert:
+    that:
+      - mgmt_docker_network_subnet is match('^(172[.](1[6-9]|2[0-9]|3[01])|192[.]168)[.][0-9]{1,3}[.][0-9]{1,3}/(1[6-9]|2[0-9]|3[0-2])$')
+    fail_msg: >-
+      mgmt_docker_network_subnet is '{{ mgmt_docker_network_subnet }}'. It must be
+      the mgmt Docker network's own subnet, a /16 or narrower inside Docker's
+      pools (172.16.0.0/12, 192.168.0.0/16). If it is empty the `mgmt` network
+      does not exist on {{ inventory_hostname }} yet: bring the stack up
+      (mgmt-host.yml) first, or set mgmt_docker_network_subnet in group_vars.

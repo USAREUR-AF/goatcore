@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS vendors (
     acl_rendered_at     INTEGER,
     -- Audit fields.
     created_at          INTEGER NOT NULL,
-    -- One-time secret consumed by GET /api/vendor-bundle/<v>/<token>.tar.gz.
+    -- Download secret for GET /api/org-bundle/<v>/<token>.tar.gz, valid for PORTAL_BUNDLE_TTL after bundle_minted_at.
     -- NULLed after the tarball is fetched. Bundle file path is derived.
     bundle_token        TEXT,
     bundle_path         TEXT,
@@ -283,7 +283,7 @@ CREATE TABLE IF NOT EXISTS slots (
     assigned_to      TEXT,               -- system handle assigned; NULL = free
     assigned_at      INTEGER,
     cert_minted_at   INTEGER,            -- when the CN=slot_id cert was minted
-    bundle_token     TEXT,               -- one-time tarball download token
+    bundle_token     TEXT,               -- tarball download token, valid for PORTAL_BUNDLE_TTL after bundle_minted_at
     bundle_path      TEXT,
     bundle_minted_at INTEGER,
     revoked_at       INTEGER,            -- last offboard time (slot returns to free pool)

@@ -10,16 +10,17 @@
 # These are committed only via group_vars/<site>_hosts/vault.yml or
 # pulled from .envrc.local at Ansible-run time — never via plaintext
 # in repo. The rendered admins.yaml on the target host is mode 0640.
+#
+# Login groups go to admin-managed metadata_public, never self-editable traits
+# (F-572 / ADR 1188, GHSA-9v3v: every reader ignores traits.groups). The groups
+# key is always emitted, [] when none: it is the migration marker the readers
+# and the authz backfill's --verify look for.
 {% for admin in site_admins %}
 - traits:
     email: {{ admin.email | to_json }}
     name: {{ admin.name | to_json }}
-{% if admin.groups is defined and admin.groups | length > 0 %}
-    groups:
-{% for g in admin.groups %}
-      - {{ g | to_json }}
-{% endfor %}
-{% endif %}
+  metadata_public:
+    groups: {{ (admin.groups | default([]) | list) | to_json }}
   credentials:
     password:
       config:

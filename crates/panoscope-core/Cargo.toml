@@ -8,6 +8,9 @@ description = "Shared substrate for the panoscope/stethoscope/flashlight inspect
 repository = "https://github.com/usareur-af/goatcore"
 
 [dependencies]
+base64 = "0.22"
+sha2 = "0.10"
+hex = "0.4"
 # Zenoh SDK — needed by the `tls` module's apply_tls_to_zenoh_config
 # helper. Pinned to the host image build per
 # docs/design/zenoh-version-pinning.md.

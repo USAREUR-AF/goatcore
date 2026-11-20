@@ -124,6 +124,7 @@ async fn run_demo(ctx: &super::Ctx, name: &str, args: DemoArgs) -> anyhow::Resul
         keys_only: false,
         for_: None,
         since: None,
+        metadata: false,
         open: false,
         key_service_bundle: None,
         trust_domain: None,

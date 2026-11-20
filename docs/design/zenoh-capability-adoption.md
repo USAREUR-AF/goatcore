@@ -164,6 +164,23 @@ cert URI-SAN, not a structured ZID prefix (the [deliberate delta](https://github
     required by a goat component or a partner integration.
   - *Lowest-risk first trial:* the browser playground's isolated router, where the client would speak the
     native protocol over `ws` and the remote-api plugin would not be needed.
+- **Hiroz (a ROS 2 stack written in Rust on Zenoh)** —
+  [`ZettaScaleLabs/hiroz`](https://github.com/ZettaScaleLabs/hiroz) lets a robot program publish and subscribe
+  to ROS 2 topics with no ROS installation, and it interoperates with ROS 2 systems that use the Zenoh
+  middleware (`rmw_zenoh`). Watched, not adopted: no goat component speaks ROS 2 today, and its README marks
+  it as experimental.
+  - *What it offers (read from its README and workspace manifest at version `0.2.1`, 2026-11-16):* a pure-Rust
+    ROS 2 implementation built on the `zenoh` crate at `1.9.0`, the version the goat fleet pins; a middleware
+    crate (`rmw-zenoh-rs`) so existing C, C++ and Python ROS 2 programs keep working; Python and Go packages;
+    code generation for ROS 2 message types. It is tested with ROS 2 Humble, Jazzy, Kilted and Lyrical.
+  - *What a goat integration has to settle:* the workspace enables only the `transport_tcp` and
+    `transport_serial` features of `zenoh`, so a build that joins a goat fabric must add `transport_tls` to
+    present its client certificate (unmeasured); ROS 2 key expressions follow the `rmw_zenoh` layout, not the
+    owner-rooted layout goat routers authorize, so the mapping between the two is a design decision, not a
+    configuration value.
+  - *Revisit when any one of these is true:* a robot or vehicle that runs ROS 2 has to publish to or read from
+    a goatnet; a conversion between ROS 2 messages and another format is built and needs a ROS 2 endpoint to
+    prove it against; upstream declares a stable release.
 
 ## What stays behind the router-image boundary (no change)
 

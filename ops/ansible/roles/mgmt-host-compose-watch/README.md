@@ -35,6 +35,50 @@ mgmt-host service) exits unexpectedly, the watcher detects within
   logs WARN and retries on next poll.
 - SIGTERM-clean for systemd stop.
 
+## Pausing it for a planned stop
+
+A procedure that stops a service of this stack on purpose writes the pause
+file first, so the watcher does not start the service again, and removes it
+when done:
+
+```sh
+echo <reason> | sudo tee /run/mgmt-host-compose-watch.paused   # pause
+sudo rm /run/mgmt-host-compose-watch.paused                     # resume
+```
+
+While the file exists the watcher revives nothing and logs `paused: <file>
+exists (<reason>)` each cycle. It still writes its metrics, and
+`compose_watch_paused{site}` is 1. The file is under `/run`, so a reboot
+clears a pause someone forgot. `MGMT_HOST_COMPOSE_WATCH_PAUSE_FILE`
+names another path (the tests use one).
+
+The deploy of the stack pauses it too. `mgmt-host.yml` runs its stack tasks
+as one block. The block's first task writes the pause with the reason
+`mgmt-host-deploy`, unless a pause is already there. Its last task, after the
+new compose files are written and `up -d` has recreated what changed, removes
+that pause and only that one. The play then installs and starts this role from
+its `post_tasks`. It used to be in the play's `roles:`, which Ansible runs
+before the play's tasks, so the watcher started first. On a joiner's
+re-initialisation it then started the old `postgres-a` from the old compose
+file, on the emptied volume, and initdb ran without the founder's encoding.
+
+A deploy that fails between the two keeps the pause, on purpose: reviving
+into a half-changed stack is worse. The block's rescue prints, before the play
+fails, that the watcher is paused and the command to clear it:
+`ssh <host> sudo rm /run/mgmt-host-compose-watch.paused`. The alert
+`ComposeWatchPaused` (`ops/compose/mgmt-host/monitoring/rules/compose-orphans.yml`)
+fires when `compose_watch_paused` has been 1 for over 30m, which covers a pause
+anyone forgot. A reboot clears the file anyway, since `/run` is a tmpfs, and
+the watcher starts unpaused.
+
+One other procedure uses it today. A joiner whose existing Postgres cluster has
+another encoding than its founder's is refused by `site-bootstrap.yml`,
+which says to pause with the reason `postgres-reinit`, stop the stack,
+remove the `pgdata-a` volume, and re-run. Without the pause, the watcher
+started the old `postgres-a` again within its poll interval. Once the re-run's
+cluster has the founder's encoding, the play removes a `postgres-reinit`
+pause, and no other (`tests/test_site_bootstrap_reinit_pauses_compose_watch.py`).
+
 ## Service allowlist (production-relevant once Ory or other migration-style services land)
 
 `MGMT_HOST_COMPOSE_WATCH_SERVICES` env var is an optional space-separated

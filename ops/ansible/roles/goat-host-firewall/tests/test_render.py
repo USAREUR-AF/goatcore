@@ -6,6 +6,7 @@ usage: python3 -m pytest -q ops/ansible/roles/goat-host-firewall/tests/test_rend
 """
 import copy
 import importlib.util
+import io
 import json
 import pathlib
 import subprocess
@@ -188,6 +189,23 @@ def test_ss_output_is_read_when_no_listening_list_is_given():
     assert "tcp/443 (unknown process on 198.51.100.1)" in str(e)
     assert "udp/3478 (management on *)" in str(e)
     assert "8000" not in str(e) and "udp/53" not in str(e) and "7447" not in str(e)
+
+
+@pytest.mark.parametrize("addr", ["*", "not-an-ip"])
+def test_non_ip_listener_addresses_still_require_a_port_decision(addr):
+    doc = fixture("core")
+    baseline = render(doc)
+    doc["listening"] = [{"proto": "tcp", "port": 8000, "addr": addr, "process": "example"}]
+    assert refused(doc, "GB-215").exit_code == 5
+    doc["host"]["closed_listeners"] = ["tcp/8000"]
+    res = render(doc)
+    assert res["closing"] == ["tcp/8000"]
+    assert (res["ruleset"], res["sha256"]) == (baseline["ruleset"], baseline["sha256"])
+    doc["listening"][0]["port"] = 7447
+    doc["host"]["closed_listeners"] = []
+    res = render(doc)
+    assert res["closing"] == []
+    assert (res["ruleset"], res["sha256"]) == (baseline["ruleset"], baseline["sha256"])
 
 
 def test_closed_listeners_must_be_proto_and_port():
@@ -481,6 +499,70 @@ def test_session_from_a_management_source_passes():
 
 
 # --------------------------------------------------------------------------- CLI
+
+@pytest.mark.parametrize("args,raw,expected_rc", [
+    ([], None, 0),
+    (["--format", "json"], None, 0),
+    (["--list-rules"], None, 0),
+    (["--peering-only", "wg-fed0"], None, 0),
+    ([], "not JSON", 2),
+    ([], "{}", 2),
+], ids=["text", "json", "list-rules", "peering-only", "malformed-json", "invalid-schema"])
+def test_cli_closes_named_input_and_leaves_equivalent_stdin_open(tmp_path, monkeypatch, capsys,
+                                                               args, raw, expected_rc):
+    payload = (FIX / "edge-wireguard.json").read_text() if raw is None else raw
+    path = tmp_path / "input.json"
+    path.write_text(payload)
+    opened = []
+
+    def tracked_open(*args, **kwargs):
+        f = open(*args, **kwargs)
+        opened.append(f)
+        return f
+
+    monkeypatch.setattr(hfr, "open", tracked_open, raising=False)
+    try:
+        assert hfr.main(["--input", str(path), *args]) == expected_rc
+        named = capsys.readouterr()
+        with io.StringIO(payload) as stdin:
+            monkeypatch.setattr(sys, "stdin", stdin)
+            assert hfr.main(["--input", "-", *args]) == expected_rc
+            assert not stdin.closed
+        piped = capsys.readouterr()
+        assert (piped.out, piped.err) == (named.out, named.err)
+        if expected_rc == 0:
+            assert named.out and not named.err
+        else:
+            assert named.out == ""
+            assert named.err.startswith("goat-host-firewall: REFUSED (GB-210): ")
+        assert len(opened) == 1
+        assert opened[0].closed, "the CLI left its named input open"
+    finally:
+        for f in opened:
+            f.close()
+
+
+def test_cli_closes_named_input_after_a_read_error(monkeypatch, capsys):
+    class Unreadable(io.StringIO):
+        def read(self, *args, **kwargs):
+            raise OSError("synthetic input read failure")
+
+    with Unreadable() as stream:
+        monkeypatch.setattr(hfr, "open", lambda *args, **kwargs: stream, raising=False)
+        assert hfr.main(["--input", "unreadable.json"]) == 2
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert output.err.startswith("goat-host-firewall: REFUSED (GB-210): ")
+        assert "synthetic input read failure" in output.err
+        assert stream.closed, "the CLI left its failed input open"
+
+
+def test_cli_missing_input_is_refused(tmp_path, capsys):
+    assert hfr.main(["--input", str(tmp_path / "missing.json")]) == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err.startswith("goat-host-firewall: REFUSED (GB-210): ")
+
 
 def test_cli_exit_codes_and_messages(tmp_path):
     doc = fixture("core")

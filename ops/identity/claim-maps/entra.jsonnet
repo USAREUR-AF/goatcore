@@ -32,9 +32,11 @@ local aal = if has('x509') || has('hwk') || has('fido') then 'aal3'
       email: if std.objectHas(c, 'email') then c.email
              else if std.objectHas(c, 'preferred_username') then c.preferred_username else c.oid,
       name: if std.objectHas(c, 'name') then c.name else c.oid,
-      groups: mapped_groups,
     },
     metadata_public: {
+      // GHSA-9v3v: login groups live in admin-managed metadata_public (the
+      // migration marker); never in self-editable traits.
+      groups: mapped_groups,
       external_subjects: [{
         issuer: c.iss,
         client_id: client_id,
