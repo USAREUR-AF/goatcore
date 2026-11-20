@@ -60,6 +60,9 @@ import (
 // Server is the HTTP entrypoint. Wires together the per-IdP Kratos and
 // Hydra clients, the invite store, and the audit emitter.
 type Server struct {
+	// trustedProxies caches the resolved oauth2-proxy sidecar addresses (GHSA-6x9h).
+	trustedProxies trustedProxySet
+
 	Cfg         *config.Config
 	Kratos      map[string]*kratos.Client // keyed by IdP.Key
 	Hydra       map[string]*hydra.Client  // keyed by IdP.Key
@@ -170,7 +173,7 @@ func NewServer(
 	} else {
 		coalErr = "COALITION_FRAMEWORKS_PATH is unset"
 	}
-	return &Server{
+	s := &Server{
 		Cfg: cfg, Kratos: kratosClients, Hydra: hydraClients,
 		Invites: invites, Audit: auditEmitter, Permissions: perms,
 		Templates: tmpl, csrfNonce: nonce,
@@ -183,7 +186,13 @@ func NewServer(
 		SES:              sesapi.New(cfg.SESAPIRegion, cfg.SESAPIAccessKeyID, cfg.SESAPISecretAccessKey),
 		CollabDoor:       kanidmdoor.New(cfg.CollabDoorURL, cfg.CollabDoorAdminPW),
 		PublicDoor:       kanidmdoor.New(cfg.PublicDoorURL, cfg.PublicDoorAdminPW),
-	}, nil
+	}
+	if len(cfg.TrustedProxyHosts) > 0 && !cfg.TrustNoProxy && !cfg.DevBypassAuth {
+		// Read this container's networks now, at startup (GHSA-6x9h): a
+		// trusted-proxy name must resolve inside them.
+		s.trustedProxies.localNets()
+	}
+	return s, nil
 }
 
 // loadTemplates parses every templates/*.html as a single set so the
@@ -292,10 +301,15 @@ func skipAnnotation(k onboardstore.SSHKey) string {
 
 // Routes builds the HTTP routing tree.
 func (s *Server) Routes() http.Handler {
-	mux := http.NewServeMux()
+	// routeMux records each pattern and whether a target gate wraps it
+	// (target_gate.go); TestTargetGate_coversEveryTargetRoute reads it.
+	mux := s.newRouteMux()
 
 	// Unauthenticated.
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	// Configured per-person operator keys the machine-realm gate refuses
+	// (GHSA-mxf4-8rv7-774w).
+	mux.HandleFunc("GET /healthz/operator-keys", s.handleHealthzOperatorKeys)
 	// What this console's onboarding API can do, for a caller that must
 	// choose a path before it acts (the intake smoke checks sponsor_withdraw
 	// before it vouches, ADR 1207). Unauthenticated: it names capabilities,
@@ -340,7 +354,8 @@ func (s *Server) Routes() http.Handler {
 	// (claim/result/list/get) + the `goat admin invite` CLI carry their own keys.
 	// JSON in/out identical to the portal's shapes so the runner is a drop-in
 	// re-point.
-	m := s.onboardAPIGate
+	// Every machine-realm route passes the target-identity gate (target_gate.go).
+	m := func(h http.HandlerFunc) http.HandlerFunc { return s.onboardAPIGate(s.machineTargetGate(h)) }
 	mux.HandleFunc("GET /api/onboard/proposals", m(s.apiListProposals))
 	// The queue-badge poll target. Deliberately NOT on the machine gate: it is
 	// read by the browser session already on /onboarding, so it takes the same
@@ -348,11 +363,13 @@ func (s *Server) Routes() http.Handler {
 	// `counts` segment outranks the `{id}` wildcard above it.
 	mux.HandleFunc("GET /api/onboard/proposals/counts", s.onboardGate(s.handleOnboardCounts))
 	mux.HandleFunc("GET /api/onboard/proposals/{id}", m(s.apiGetProposal))
-	mux.HandleFunc("POST /api/onboard/proposals/{id}/sponsor-approve", m(s.apiSponsorApproveProposal))
+	// Every write into the runner's mint queue passes one check (GHSA-7788).
+	s.installRunnerQueueCheck7788()
+	mux.HandleFunc("POST /api/onboard/proposals/{id}/sponsor-approve", m(s.proposalApprovalFence7788(s.apiSponsorApproveProposal)))
 	mux.HandleFunc("POST /api/onboard/proposals/{id}/sponsor-reject", m(s.apiSponsorRejectProposal))
-	mux.HandleFunc("POST /api/onboard/proposals/{id}/approve", m(s.apiApproveProposal))
+	mux.HandleFunc("POST /api/onboard/proposals/{id}/approve", m(s.proposalApprovalFence7788(s.apiApproveProposal)))
 	mux.HandleFunc("POST /api/onboard/proposals/{id}/reject", m(s.apiRejectProposal))
-	mux.HandleFunc("POST /api/onboard/proposals/{id}/onboarded", m(s.apiMarkOnboarded))
+	mux.HandleFunc("POST /api/onboard/proposals/{id}/onboarded", m(s.runnerActionFence7788(onboardstore.ActionResult7788, "onboard_mark_onboarded", s.apiMarkOnboarded)))
 	// SSH keys — self-service submit, admin-gated install (operator-only realm).
 	// SSH keys, browser realm (sshkeys_page.go).
 	//
@@ -428,14 +445,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/onboard/proposals/{id}/archive", m(s.apiArchiveProposal))
 	mux.HandleFunc("POST /api/onboard/proposals/{id}/restore", m(s.apiRestoreProposal))
 	mux.HandleFunc("POST /api/onboard/proposals/{id}/claim", m(s.apiClaimProposal))
-	mux.HandleFunc("POST /api/onboard/proposals/{id}/result", m(s.apiProposalResult))
+	mux.HandleFunc("POST /api/onboard/proposals/{id}/result", m(s.runnerResultFence7788(s.apiProposalResult)))
 	// The follow-up action queue (onboard_actions): the runner lists queued
 	// actions, claims one exactly once, and writes the outcome back. Same
 	// machine gate as the proposals queue.
 	mux.HandleFunc("GET /api/onboard/actions", m(s.apiListActions))
-	mux.HandleFunc("POST /api/onboard/actions/{id}/claim", m(s.apiClaimAction))
-	mux.HandleFunc("POST /api/onboard/actions/{id}/result", m(s.apiActionResult))
-	mux.HandleFunc("POST /api/onboard/proposals/{id}/offboard", m(s.apiOffboardProposal))
+	mux.HandleFunc("POST /api/onboard/actions/{id}/claim", m(s.runnerFollowUpFence7788(onboardstore.ActionClaim7788, "onboard_action_claim", s.apiClaimAction)))
+	mux.HandleFunc("POST /api/onboard/actions/{id}/result", m(s.runnerFollowUpFence7788(onboardstore.ActionResult7788, "onboard_action_result", s.apiActionResult)))
+	mux.HandleFunc("POST /api/onboard/proposals/{id}/offboard", m(s.runnerActionFence7788(onboardstore.ActionOffboard7788, "onboard_offboard", s.apiOffboardProposal)))
 	mux.HandleFunc("POST /api/onboard/proposals/{id}/offboard-claim", m(s.apiOffboardClaim))
 	// Per-onboardee repo-access "audibles" (docs/design/onboarding-github-repo-grants.md
 	// §2/§4): GET the effective set (policy ⊕ overrides), POST the full desired
@@ -464,7 +481,7 @@ func (s *Server) Routes() http.Handler {
 	// This is what makes a `goat admin` role change behave exactly like a console
 	// one. See docs/design/onboarding-notifications.md §"CLI/web parity".
 	mux.HandleFunc("POST /api/users/groups", m(s.apiPatchUserGroups))
-	mux.HandleFunc("POST /api/users/state", m(s.apiPatchUserState))
+	mux.HandleFunc("POST /api/users/state", m(s.machineAdminTargetFence7788(s.apiPatchUserState)))
 	mux.HandleFunc("POST /api/users/reinstatement-check", m(s.apiCheckReinstatement))
 	// Org-registry (ADR 1112): reads for any machine-realm principal,
 	// mutations operator-only (enforced in the handlers).
@@ -486,7 +503,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/onboard/schema", m(s.apiOnboardSchema))
 
 	// Everything else is admin-gated.
-	admin := s.adminGate
+	// Every admin route passes the target-identity gate (target_gate.go).
+	admin := func(h http.HandlerFunc) http.HandlerFunc { return s.adminGate(s.targetGate(h)) }
 
 	// Step-up (#174). Both legs are admin-gated like everything else — a
 	// challenge is only meaningful for someone already through the front door.
@@ -512,13 +530,13 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /users/new", admin(s.handleUserCreate))
 	mux.HandleFunc("GET /users/{id}", admin(s.handleUserDetail))
 	mux.HandleFunc("POST /users/{id}/groups", admin(s.handleUserPatchGroups))
-	mux.HandleFunc("POST /users/{id}/revoke-sessions", admin(s.handleUserRevokeSessions))
-	mux.HandleFunc("POST /users/{id}/reset-2fa", admin(s.handleUserReset2FA))
+	mux.HandleFunc("POST /users/{id}/revoke-sessions", admin(s.adminTargetGate("revoke_sessions", false, s.handleUserRevokeSessions)))
+	mux.HandleFunc("POST /users/{id}/reset-2fa", admin(s.adminTargetGate("reset_2fa", true, s.handleUserReset2FA)))
 	mux.HandleFunc("POST /users/{id}/rotate-credential", admin(s.handleUserRotateCredential))
-	mux.HandleFunc("POST /users/{id}/delete", admin(s.handleUserDelete))
-	mux.HandleFunc("POST /users/{id}/recovery-link", admin(s.handleUserMintRecovery))
+	mux.HandleFunc("POST /users/{id}/delete", admin(s.adminTargetGate("delete_identity", false, s.handleUserDelete)))
+	mux.HandleFunc("POST /users/{id}/recovery-link", admin(s.adminTargetGate("mint_recovery_link", true, s.handleUserMintRecovery)))
 	mux.HandleFunc("POST /users/{id}/email-reference", admin(s.handleUserEmailReference))
-	mux.HandleFunc("POST /users/{id}/state", admin(s.handleUserPatchState))
+	mux.HandleFunc("POST /users/{id}/state", admin(s.adminTargetGate("patch_state", false, s.handleUserPatchState)))
 
 	mux.HandleFunc("GET /invites", admin(s.handleInvitesList))
 	mux.HandleFunc("POST /invites", admin(s.handleInviteCreate))
@@ -550,7 +568,7 @@ func (s *Server) Routes() http.Handler {
 	// so a slow NetBird does not block the candidate list or detail card (#2384).
 	mux.HandleFunc("GET /onboarding/{id}/devices", s.adminGate(s.handleOnboardingDevices))
 	mux.HandleFunc("GET /onboarding/invite", s.onboardGate(s.handleOnboardInviteForm))
-	mux.HandleFunc("POST /onboarding/invite", s.onboardGate(s.handleOnboardInviteCreate))
+	mux.HandleFunc("POST /onboarding/invite", s.onboardGate(s.platformInviteStepUp7788(s.handleOnboardInviteCreate)))
 	// Email-delivery controls on the invite-created page (the one-time link
 	// lives only in that page's form state — never stored server-side).
 	mux.HandleFunc("POST /onboarding/invite/email/verify", s.onboardGate(s.handleOnboardInviteEmailVerify))
@@ -572,10 +590,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /onboarding/{id}/org-attach", s.onboardGate(s.handleOrgAttach))
 	mux.HandleFunc("POST /onboarding/{id}/fields", s.onboardGate(s.handleFieldEdits))
 	mux.HandleFunc("POST /onboarding/{id}/org-new", s.onboardGate(s.handleOrgNew))
-	mux.HandleFunc("POST /onboarding/{id}/{action}", s.onboardGate(s.handleOnboardingDecide))
+	mux.HandleFunc("POST /onboarding/{id}/{action}", s.onboardGate(s.proposalApprovalFence7788(s.handleOnboardingDecide)))
 	// The Archived card's way back (#1037): admin-only inside the handler,
 	// same store write + audit event as the operator API's .../restore.
-	mux.HandleFunc("POST /onboarding/{id}/restore", s.onboardGate(s.handleOnboardingRestore))
+	mux.HandleFunc("POST /onboarding/{id}/restore", s.onboardGate(s.proposalApprovalFence7788(s.handleOnboardingRestore)))
 	// GitHub username on the Onboarded / Enrolled card (admin-only inside the
 	// handler), and the browser read of the repo-access set the card draws.
 	mux.HandleFunc("POST /onboarding/{id}/github", s.onboardGate(s.handleOnboardingGitHub))
@@ -585,18 +603,18 @@ func (s *Server) Routes() http.Handler {
 	// The generated welcome package — a complete, tier-correct
 	// hand-over artifact for an onboarded enrollee, downloadable when email is
 	// unavailable.
-	mux.HandleFunc("GET /onboarding/{id}/welcome", s.onboardGate(s.handleWelcomeDownload))
+	mux.HandleFunc("GET /onboarding/{id}/welcome", s.onboardGate(s.welcomeGate(true, s.handleWelcomeDownload)))
 	// Re-send that package, banner-marked as a repeat. The recovery path when the
 	// first one went out incomplete (no setup key) — four segments, so it stays
 	// distinct from the three-segment {action} decide route above.
-	mux.HandleFunc("POST /onboarding/{id}/welcome/resend", s.onboardGate(s.handleWelcomeResend))
+	mux.HandleFunc("POST /onboarding/{id}/welcome/resend", s.onboardGate(s.welcomeGate(false, s.handleWelcomeResend)))
 	// Queue a follow-up for an onboarded person (ADR 1175: reissue the handset
 	// key for a lost phone). Four segments for the same reason as the resend
 	// route above. The runner claims it from /api/onboard/actions below.
-	mux.HandleFunc("POST /onboarding/{id}/handset-key/reissue", s.onboardGate(s.handleHandsetKeyReissue))
+	mux.HandleFunc("POST /onboarding/{id}/handset-key/reissue", s.onboardGate(s.reissueGate(s.handleHandsetKeyReissue)))
 	// Same queue: a fresh device setup key with a chosen reuse count, for a
 	// person whose key expired or was used up.
-	mux.HandleFunc("POST /onboarding/{id}/device-key/reissue", s.onboardGate(s.handleDeviceKeyReissue))
+	mux.HandleFunc("POST /onboarding/{id}/device-key/reissue", s.onboardGate(s.reissueGate(s.handleDeviceKeyReissue)))
 
 	return s.requestLogger(mux)
 }
@@ -625,6 +643,17 @@ func (s *Server) selfServiceAuth(next http.HandlerFunc) http.HandlerFunc {
 			s.renderError(w, r, http.StatusUnauthorized, "no signed-in identity on this request")
 			return
 		}
+		// Identify against the identity as it is now, not the session
+		// cookie: an offboarded person's open tab must not mint a setup
+		// code, collect a fabric credential or re-run a repo grant.
+		if !s.Cfg.DevBypassAuth {
+			live, status, err := s.liveActor(r.Context(), actor)
+			if err != nil {
+				s.renderError(w, r, status, err.Error())
+				return
+			}
+			actor = live
+		}
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxKeyActor, actor)))
 	}
 }
@@ -638,6 +667,12 @@ func (s *Server) adminGate(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := s.actorFromHeaders(r)
 		if !s.Cfg.DevBypassAuth {
+			live, status, err := s.liveActor(r.Context(), actor)
+			if err != nil {
+				http.Error(w, err.Error(), status)
+				return
+			}
+			actor = live
 			if !s.Permissions.AnyGroupGrants(actor.Groups, "id-admin-console", "admin") {
 				http.Error(w, "forbidden: no group with admin access to id-admin-console", http.StatusForbidden)
 				return
@@ -723,6 +758,14 @@ func (s *Server) actorFromHeaders(r *http.Request) Actor {
 	// let a non-admin forge X-Auth-Request-Groups: ADMINS and pass adminGate.
 	// Every field below (esp. Groups, used by adminGate, and Email, used by
 	// onboardGate sponsorship) must trust only the unforgeable X-Forwarded-*.
+	// The X-Forwarded-* identity is trusted only on a request that came from
+	// the oauth2-proxy sidecar itself (GHSA-6x9h). Any other caller of the
+	// plain listener (another container on the shared network, a process on
+	// the host through the loopback publish, an mTLS client) gets no identity
+	// from these headers.
+	if !s.fromTrustedProxy(r) {
+		return Actor{SourceIP: r.RemoteAddr}
+	}
 	a := Actor{
 		Email:    r.Header.Get("X-Forwarded-Email"),
 		Username: r.Header.Get("X-Forwarded-User"),
@@ -1130,6 +1173,15 @@ type proposalView struct {
 	// the offboard panels must name this field, not that one.
 	OffboardRequestedBy string
 	OffboardRequestedAt string
+	// OperatorAuditFailed/Reason carry the runner's report that the cut's
+	// admin.offboard operator-action record was not written (GHSA-3m4r), so
+	// the card never shows an unqualified success for an unrecorded cut.
+	OperatorAuditFailed bool
+	OperatorAuditReason string
+	// OperatorAuditUnreported marks a runner cut that landed with no
+	// operator-action outcome at all (a runner that predates the report, or a
+	// writeback that omitted it), so the card does not read as recorded.
+	OperatorAuditUnreported bool
 	// OffboardRequestedAtUnix is the clock the row's "runner?" badge keys on
 	// for a queued cut, as DecidedAtUnix is for an approved mint.
 	OffboardRequestedAtUnix int64
@@ -1939,6 +1991,10 @@ func (s *Server) handleUserPatchGroups(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, r, status, err.Error())
 		return
 	}
+	if kerr := s.afterGroupChange(r, actor, idp.Key, id); kerr != nil {
+		s.renderError(w, r, 500, "the groups changed, but the identity's operator keys could not all be revoked: "+kerr.Error())
+		return
+	}
 
 	http.Redirect(w, r, fmt.Sprintf("/users/%s?idp=%s", id, idp.Key), http.StatusSeeOther)
 }
@@ -1964,7 +2020,7 @@ func (s *Server) handleUserRevokeSessions(w http.ResponseWriter, r *http.Request
 	actor := actorFromCtx(r.Context())
 
 	stepUpAction := ""
-	if target != nil && (target.HasGroup(platformAdminGroup) || target.HasGroup(legacyAdminGroup)) {
+	if target != nil && s.targetAdminBearing7788(target) {
 		stepUpAction = "revoke_sessions_of_admin"
 	}
 	stepUpVerified := false
@@ -2031,6 +2087,10 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitAudit(r, actor, "delete_identity", target, idp.Key, map[string]interface{}{"groups": target.Groups()}, nil, stepUpVerified, "ok", "")
+	if kerr := s.afterIdentityDeleted(r, actor, target); kerr != nil {
+		s.renderError(w, r, 500, "the identity is deleted, but its operator keys could not all be revoked: "+kerr.Error())
+		return
+	}
 	http.Redirect(w, r, "/?idp="+idp.Key, http.StatusSeeOther)
 }
 
@@ -2080,6 +2140,24 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromCtx(r.Context())
+	// Admin tier ceiling (GHSA-vr6w): nobody creates an identity above their
+	// own tier. The response hands the creator the new identity's recovery
+	// link, so creating takes the same step-up as minting one.
+	if groupsOutrankActor(actor, groups) {
+		s.emitAudit(r, actor, "create_identity", nil, idp.Key, nil, map[string]interface{}{"email": email, "groups": groups}, false, "refused", tierGrantRefusal)
+		s.renderError(w, r, 403, tierGrantRefusal)
+		return
+	}
+	mintVerified := false
+	if s.stepUpRequired("mint_recovery_link") {
+		out := s.requireStepUp(w, r, actor, "create_identity")
+		if out.Handled {
+			s.emitAudit(r, actor, "create_identity", nil, idp.Key, nil, map[string]interface{}{"email": email, "groups": groups}, false, "refused", stepUpChallengeAudit)
+			return
+		}
+		mintVerified = out.Verified
+		actor.AAL = aalLabel(mintVerified)
+	}
 	// Vocabulary fence (tenant realm): refuse mesh-role names + unknown groups
 	// before they land in Kratos, where the schema would silently accept them.
 	if idp.Key == tenantIdPKey {
@@ -2088,6 +2166,14 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 			s.renderError(w, r, 400, err.Error())
 			return
 		}
+	}
+	// No direct creation of an admin-bearing identity: this response shows
+	// the creator the new login's recovery link, so one admin would hold a
+	// second admin login. There is no two-person path that carries groups.
+	if s.isAdminBearingGroupList(groups) {
+		s.emitAudit(r, actor, "create_identity", nil, idp.Key, nil, map[string]interface{}{"email": email, "groups": groups}, false, "refused", adminCreateRefusal)
+		s.renderError(w, r, 403, adminCreateRefusal)
+		return
 	}
 	stepUpVerified := false
 	if isAdminGroupList(groups) && s.stepUpRequired("grant_ADMINS") {
@@ -2125,7 +2211,7 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitAudit(r, actor, "create_identity", identity, idp.Key, nil, map[string]interface{}{"email": email, "groups": groups}, stepUpVerified, "ok", "")
-	s.emitAudit(r, actor, "mint_recovery_link", identity, idp.Key, nil, nil, false, "ok", "")
+	s.emitAudit(r, actor, "mint_recovery_link", identity, idp.Key, nil, nil, mintVerified || stepUpVerified, "ok", "")
 
 	s.render(w, r, "recovery_link", &pageVars{
 		Title:        "Recovery link minted",
@@ -2149,6 +2235,21 @@ func (s *Server) handleUserMintRecovery(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		s.renderError(w, r, 502, fmt.Sprintf("Kratos get failed: %v", err))
 		return
+	}
+	// A recovery link signs its holder in as the target, so it is refused on
+	// an account above the actor's tier and takes step-up (GHSA-vr6w).
+	actor := actorFromCtx(r.Context())
+	if targetOutranksActor(actor, target) {
+		s.emitAudit(r, actor, "mint_recovery_link", target, idp.Key, nil, nil, false, "refused", tierCeilingRefusal)
+		s.renderError(w, r, 403, tierCeilingRefusal)
+		return
+	}
+	if s.stepUpRequired("mint_recovery_link") {
+		out := s.requireStepUp(w, r, actor, "mint_recovery_link")
+		if out.Handled {
+			s.emitAudit(r, actor, "mint_recovery_link", target, idp.Key, nil, nil, false, "refused", stepUpChallengeAudit)
+			return
+		}
 	}
 	rl, err := cli.MintRecoveryLink(r.Context(), id)
 	if err != nil {
@@ -2239,7 +2340,7 @@ func (s *Server) handleUserPatchState(w http.ResponseWriter, r *http.Request) {
 	// Disabling an ADMINS-bearing identity is sensitive — same risk class
 	// as delete (locks them out). Step-up + last-ADMIN guard.
 	stepUpVerified := false
-	if newState == "inactive" && (target.HasGroup(platformAdminGroup) || target.HasGroup(legacyAdminGroup)) {
+	if newState == "inactive" && s.targetAdminBearing7788(target) {
 		if s.Permissions.IsStepUpAction("delete_identity") {
 			out := s.requireStepUp(w, r, actor, "patch_state")
 			if out.Handled {
@@ -2251,12 +2352,37 @@ func (s *Server) handleUserPatchState(w http.ResponseWriter, r *http.Request) {
 			stepUpVerified = out.Verified
 			actor.AAL = aalLabel(stepUpVerified)
 		}
-		if err := s.guardLastAdmin(r.Context(), idp.Key, id, true, false); err != nil {
+		if err := s.guardLastAdmin(r.Context(), idp.Key, id, isAdminGroupList(target.Groups()), false); err != nil {
 			s.emitAudit(r, actor, "patch_state", target, idp.Key,
 				map[string]interface{}{"state": target.State},
 				map[string]interface{}{"state": newState}, stepUpVerified, "refused", err.Error())
 			s.renderError(w, r, 409, err.Error())
 			return
+		}
+	}
+
+	// Reactivating an identity restores whatever access it held, so nobody
+	// reactivates their own, and it takes step-up. Without this an admin
+	// offboarded with a console tab still open could switch themselves back on.
+	if newState == "active" && target.State != "active" {
+		if actorIsSelf(actor, id, target) {
+			msg := "refused: you cannot reactivate your own identity; another admin must"
+			s.emitAudit(r, actor, "patch_state", target, idp.Key,
+				map[string]interface{}{"state": target.State},
+				map[string]interface{}{"state": newState}, false, "refused", msg)
+			s.renderError(w, r, 403, msg)
+			return
+		}
+		if s.stepUpRequired("reactivate_identity") {
+			out := s.requireStepUp(w, r, actor, "patch_state")
+			if out.Handled {
+				s.emitAudit(r, actor, "patch_state", target, idp.Key,
+					map[string]interface{}{"state": target.State},
+					map[string]interface{}{"state": newState}, false, "refused", stepUpChallengeAudit)
+				return
+			}
+			stepUpVerified = out.Verified
+			actor.AAL = aalLabel(stepUpVerified)
 		}
 	}
 
@@ -2272,6 +2398,16 @@ func (s *Server) handleUserPatchState(w http.ResponseWriter, r *http.Request) {
 	s.emitAudit(r, actor, "patch_state", target, idp.Key,
 		map[string]interface{}{"state": target.State},
 		map[string]interface{}{"state": newState}, stepUpVerified, "ok", "")
+
+	forgetIdentity(id)
+	// Deactivation takes the person's operator keys with it: a key works
+	// on its own, and one that outlives the identity can switch it back on.
+	if newState == "inactive" {
+		if _, kerr := s.revokeOperatorKeysAtOffboard(r, actor, "patch_state", target, "", ""); kerr != nil {
+			s.renderError(w, r, 500, "the identity is now inactive, but its operator keys could not all be revoked: "+kerr.Error())
+			return
+		}
+	}
 
 	http.Redirect(w, r, fmt.Sprintf("/users/%s?idp=%s", id, idp.Key), http.StatusSeeOther)
 }
@@ -2354,6 +2490,13 @@ func (s *Server) handleInviteCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Admin tier ceiling (GHSA-vr6w): an invite redeems into an identity
+	// holding its preset, so nobody invites above their own tier.
+	if groupsOutrankActor(actorFromCtx(r.Context()), groups) {
+		s.emitAuditWithInviteToken(r, actorFromCtx(r.Context()), "mint_invite", "", idp.Key, nil, map[string]interface{}{"preset_groups": groups}, false, "refused", tierGrantRefusal)
+		s.renderError(w, r, 403, tierGrantRefusal)
+		return
+	}
 	ttlH, err := strconv.Atoi(r.FormValue("ttl_hours"))
 	if err != nil || ttlH <= 0 || ttlH > 168 {
 		s.renderError(w, r, 400, "ttl_hours must be 1-168")
@@ -2378,6 +2521,13 @@ func (s *Server) handleInviteCreate(w http.ResponseWriter, r *http.Request) {
 		details["email"] = email
 	}
 	actor := actorFromCtx(r.Context())
+	// An invite redeems into an identity holding its preset, and whoever
+	// holds the accept URL gets that login: no admin-bearing presets.
+	if s.isAdminBearingGroupList(groups) {
+		s.emitAuditWithInviteToken(r, actor, "mint_invite", "", idp.Key, nil, details, false, "refused", adminCreateRefusal)
+		s.renderError(w, r, 403, adminCreateRefusal)
+		return
+	}
 	// Step-up if the preset elevates to ADMINS.
 	stepUpVerified := false
 	if isAdminGroupList(groups) && s.stepUpRequired("grant_ADMINS") {
@@ -2560,6 +2710,162 @@ const legacyAdminGroup = "ADMINS"
 func isAdminGroupList(groups []string) bool {
 	return containsString(groups, platformAdminGroup) || containsString(groups, legacyAdminGroup)
 }
+
+// iamAdminGroup administers identities. It passes adminGate, so every change
+// that grants, removes or acts on it is admin-sensitive like platform-admin.
+const iamAdminGroup = "IAM-ADMIN"
+
+// adminBearingGroups are the groups known to open the admin console.
+// isAdminBearing also counts any group the permissions matrix grants admin
+// on this console (ADR 1073), so a future admin group added in the YAML is
+// admin-bearing without a code change.
+var adminBearingGroups = []string{platformAdminGroup, legacyAdminGroup, iamAdminGroup}
+
+// isAdminBearing reports whether group g opens the admin console: one of the
+// known admin groups, or a group the matrix grants id-admin-console admin.
+func (s *Server) isAdminBearing(g string) bool {
+	if containsString(adminBearingGroups, g) {
+		return true
+	}
+	return s.Permissions != nil && s.Permissions.AnyGroupGrants([]string{g}, "id-admin-console", "admin")
+}
+
+// isAdminBearingGroupList reports whether a group list holds any
+// admin-bearing group.
+func (s *Server) isAdminBearingGroupList(groups []string) bool {
+	for _, g := range groups {
+		if s.isAdminBearing(g) {
+			return true
+		}
+	}
+	return false
+}
+
+// adminBearingDelta reports whether after adds an admin-bearing group the
+// identity did not hold (granted) or drops one it held (removed).
+func (s *Server) adminBearingDelta(before, after []string) (granted, removed bool) {
+	for _, g := range after {
+		if !containsString(before, g) && s.isAdminBearing(g) {
+			granted = true
+		}
+	}
+	for _, g := range before {
+		if !containsString(after, g) && s.isAdminBearing(g) {
+			removed = true
+		}
+	}
+	return granted, removed
+}
+
+// actorIsTarget reports whether the signed-in actor may be the identity a
+// change is about. Self is the identity id the session carries (the OIDC
+// sub), compared case-insensitively with the id Kratos returned, never the
+// raw path id or an email: a UUID path id resolves in any case, and an email
+// is a mutable trait. A session with no identity id might be anyone, so it
+// counts as the target and is refused.
+func actorIsTarget(actor Actor, target *kratos.Identity) bool {
+	if actor.IdentityID == "" || target == nil {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(actor.IdentityID), strings.TrimSpace(target.ID))
+}
+
+// adminBearingRank orders admin tiers: platform-admin (either name) above
+// every other admin-bearing group (IAM-ADMIN, or a matrix admin group)
+// above everything else.
+func (s *Server) adminBearingRank(groups []string) int {
+	switch {
+	case isAdminGroupList(groups):
+		return 2
+	case s.isAdminBearingGroupList(groups):
+		return 1
+	}
+	return 0
+}
+
+// adminChangeAboveTier reports whether changing an identity's groups from
+// before to after reaches above the actor's own admin tier: the identity
+// already sits above it, or the change would put it there.
+func (s *Server) adminChangeAboveTier(actor Actor, before, after []string) bool { //nolint:unused // behavior kept as reviewed for disclosure; lint cleanup goatcore#1028
+	own := s.adminBearingRank(actor.Groups)
+	return s.adminBearingRank(before) > own || s.adminBearingRank(after) > own
+}
+
+// adminTargetGate fronts the browser handlers that reach into or take down
+// another identity's login: recovery link, second-factor reset, revoke
+// sessions, disable, delete. On an identity holding an admin-bearing group it
+// refuses an actor below that identity's tier, so an IAM-ADMIN cannot take
+// over, lock out or remove a platform admin. With stepUp it also asks for
+// step-up before handing over a way into the login (recovery link, 2FA
+// reset); the take-down handlers keep their own step-up and self checks.
+// Self is the session's identity id, as in actorIsTarget.
+func (s *Server) adminTargetGate(action string, stepUp bool, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := s.validateCSRF(r); err != nil {
+			s.renderError(w, r, 400, err.Error())
+			return
+		}
+		idp := idpFromCtx(r.Context())
+		cli := s.Kratos[idp.Key]
+		if cli == nil {
+			s.renderError(w, r, 503, "realm "+idp.Key+" is unavailable")
+			return
+		}
+		target, err := cli.GetIdentity(r.Context(), r.PathValue("id"))
+		if err != nil {
+			var httpErr *kratos.HTTPError
+			if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
+				s.renderError(w, r, 404, "identity not found")
+				return
+			}
+			s.renderError(w, r, 502, fmt.Sprintf("Kratos get failed: %v", err))
+			return
+		}
+		actor := actorFromCtx(r.Context())
+		if !s.targetAdminBearing7788(target) {
+			next(w, r)
+			return
+		}
+		self := actor.IdentityID != "" && actorIsTarget(actor, target)
+		if !self && s.targetAdminRank7788(target) > s.adminBearingRank(actor.Groups) {
+			s.emitAudit(r, actor, action, target, idp.Key, nil, nil, false, "refused", adminTierRefusal)
+			s.renderError(w, r, 403, adminTierRefusal)
+			return
+		}
+		// Returning a platform-tier login to service takes the same fresh
+		// step-up as handing over a way into it (GHSA-7788 review F2).
+		if action == "patch_state" && strings.TrimSpace(r.FormValue("state")) == "active" && s.targetAdminRank7788(target) >= 2 {
+			if actor.IdentityID == "" {
+				s.emitAudit(r, actor, action, target, idp.Key, nil, nil, false, "refused", reactivateNoIdentityRefusal7788)
+				s.renderError(w, r, 403, reactivateNoIdentityRefusal7788)
+				return
+			}
+			// Nobody returns their own platform-tier login to service, by
+			// identity id (any case) or by the session's address.
+			if self || strings.EqualFold(strings.TrimSpace(actor.Email), strings.TrimSpace(target.Email())) {
+				s.emitAudit(r, actor, action, target, idp.Key, nil, nil, false, "refused", selfReactivationRefusal7788)
+				s.renderError(w, r, 403, selfReactivationRefusal7788)
+				return
+			}
+			stepUp = true
+		}
+		// Unconditional, as for reset_2fa: no policy entry turns it off.
+		if !stepUp {
+			next(w, r)
+			return
+		}
+		if out := s.requireStepUp(w, r, actor, action); out.Handled {
+			s.emitAudit(r, actor, action, target, idp.Key, nil, nil, false, "refused", stepUpChallengeAudit)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// Refusal for creating or inviting an admin-bearing identity directly.
+const adminCreateRefusal = "refused: an identity cannot be created or invited with an admin group. Create it without admin groups, then have an admin grant the group on its user page (step-up, audited, never by its creator for themselves)"
+
+const adminTierRefusal = "refused: this change reaches above your own admin tier; an admin at that tier must make it"
 
 // guideRoleForGroups picks the Guide role key (welcome.RoleByKey) that best
 // matches a viewer's own Ory login groups, so the nav's Guide link can send

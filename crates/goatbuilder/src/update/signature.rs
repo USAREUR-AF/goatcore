@@ -29,10 +29,12 @@
 //!     1.3.6.1.4.1.57264.1.* extensions, docs/oid-info.md in sigstore/fulcio):
 //!     the GitHub Actions issuer, the source repository, the tag
 //!     goatbuilder/v<version> as the source ref, and goatbuilder-release.yml
-//!     at that tag as the Build Config URI. The certificate's SAN names the
-//!     reusable workflow both goat and goatbuilder releases run, so it cannot
-//!     tell them apart; the Build Config URI is the workflow that was
-//!     triggered;
+//!     at that tag as the Build Config URI, and the signer's
+//!     _release-binary.yml at that tag as the SAN. The SAN names the reusable
+//!     workflow both goat and goatbuilder releases run, so it cannot tell
+//!     them apart; the Build Config URI is the workflow that was triggered.
+//!     The SAN is checked too, so the binary trusts the same identity that a
+//!     cosign reinstall line pins with --certificate-identity;
 //!  7. the leaf carries an SCT from a Certificate Transparency log of the
 //!     trusted root, valid at the SCT's time, over its precertificate (RFC
 //!     6962 sections 3.2 and 3.3; cosign v2 verify-blob checks it by default,
@@ -62,6 +64,12 @@ const GITHUB_ISSUER: &str = "https://token.actions.githubusercontent.com";
 
 /// The workflow a goatbuilder release is triggered by, at the release's tag.
 pub const RELEASE_WORKFLOW: &str = "goatbuilder-release.yml";
+/// The release workflow's `name:`, which the certificate's legacy GitHub
+/// workflow name extension (1.3.6.1.4.1.57264.1.4) carries.
+pub const RELEASE_WORKFLOW_NAME: &str = "goatbuilder-release";
+/// The reusable workflow the release workflow calls, which signs: the
+/// certificate's SAN names it, at the release's tag.
+pub const SIGNING_WORKFLOW: &str = "_release-binary.yml";
 /// The tag prefix of a goatbuilder release.
 pub const TAG_PREFIX: &str = "goatbuilder/v";
 
@@ -72,8 +80,14 @@ pub struct Expect<'a> {
     pub signer: &'a str,
     /// The release's version, as version.json serves it (`0.5.1`).
     pub version: &'a str,
-    /// The workflow file that was triggered ([`RELEASE_WORKFLOW`]).
+    /// The workflow file that was triggered ([`RELEASE_WORKFLOW`]): the
+    /// Build Config URI.
     pub workflow: &'a str,
+    /// The reusable workflow file that signed ([`SIGNING_WORKFLOW`]): the SAN.
+    pub signing_workflow: &'a str,
+    /// The triggered workflow's `name:` ([`RELEASE_WORKFLOW_NAME`]): the
+    /// legacy GitHub workflow name extension, when the certificate has it.
+    pub workflow_name: &'a str,
 }
 
 /// What was verified, for the update's report.
@@ -831,6 +845,12 @@ struct Identity {
     source_ref: String,
     build_config: String,
     san: String,
+    /// Fulcio's legacy GitHub workflow extensions (1.3.6.1.4.1.57264.1.4,
+    /// .5 and .6), which cosign's --certificate-github-workflow-name,
+    /// -repository and -ref read. Deprecated by Fulcio, so optional here.
+    workflow_name: Option<String>,
+    workflow_repo: Option<String>,
+    workflow_ref: Option<String>,
 }
 
 /// A DER UTF8String's text (Fulcio's 1.3.6.1.4.1.57264.1.8 and later
@@ -898,6 +918,9 @@ fn identity_of(c: &X509Certificate) -> Result<Identity, Refusal> {
             "Build Config URI (1.3.6.1.4.1.57264.1.18)",
         )?,
         san: san.unwrap_or_default(),
+        workflow_name: ext("1.3.6.1.4.1.57264.1.4", false),
+        workflow_repo: ext("1.3.6.1.4.1.57264.1.5", false),
+        workflow_ref: ext("1.3.6.1.4.1.57264.1.6", false),
     })
 }
 
@@ -942,6 +965,33 @@ fn check_identity(i: &Identity, e: &Expect) -> Result<String, Refusal> {
             ),
         ));
     }
+    let signed_by = format!("/.github/workflows/{}@{tag}", e.signing_workflow);
+    let san_matches = i
+        .san
+        .strip_suffix(&signed_by)
+        .is_some_and(|head| head.eq_ignore_ascii_case(&repo));
+    if !san_matches {
+        return Err(refuse(
+            "identity",
+            format!("the certificate's SAN is {}, not {repo}{signed_by} (the reusable workflow that signs a release)", i.san),
+        ));
+    }
+    // The legacy workflow extensions a cosign reinstall line pins: matched
+    // when present, so the binary and that line trust one definition, and
+    // never required, so a Fulcio that stops writing them strands nothing.
+    let legacy = [
+        ("workflow repository (1.3.6.1.4.1.57264.1.5)", &i.workflow_repo, e.signer.to_string(), true),
+        ("workflow ref (1.3.6.1.4.1.57264.1.6)", &i.workflow_ref, tag.clone(), false),
+        ("workflow name (1.3.6.1.4.1.57264.1.4)", &i.workflow_name, e.workflow_name.to_string(), false),
+    ];
+    for (what, got, want, any_case) in legacy {
+        if let Some(got) = got {
+            let same = if any_case { got.eq_ignore_ascii_case(&want) } else { *got == want };
+            if !same {
+                return Err(refuse("identity", format!("the certificate's {what} is {got}, not {want}")));
+            }
+        }
+    }
     Ok(i.build_config.clone())
 }
 
@@ -969,6 +1019,8 @@ mod tests {
             signer: "USAREUR-AF/goatcore",
             version: "0.5.1",
             workflow: RELEASE_WORKFLOW,
+            signing_workflow: SIGNING_WORKFLOW,
+            workflow_name: RELEASE_WORKFLOW_NAME,
         }
     }
 
@@ -1028,6 +1080,7 @@ mod tests {
                 &include_bytes!("../../tests/fixtures/signature/v0.5.3/SHA256SUMS")[..],
                 include_str!("../../tests/fixtures/signature/v0.5.3/SHA256SUMS.cosign-bundle"),
             ),
+            ("0.7.3", SUMS_0_7_3, BUNDLE_0_7_3),
         ] {
             let e = Expect {
                 version: v,
@@ -1070,6 +1123,32 @@ mod tests {
         let r = verify(SUMS, BUNDLE, &e, &root()).unwrap_err();
         assert_eq!(r.check, "identity", "{r}");
         assert!(r.detail.contains("Build Config URI"), "{r}");
+    }
+
+    /// The SAN, the reusable workflow that signed, must be the signer's
+    /// `_release-binary.yml` at the served version's tag: the same identity
+    /// the reinstall line gives cosign as --certificate-identity.
+    #[test]
+    fn a_san_that_is_not_the_signers_reusable_workflow_at_the_tag_is_refused() {
+        let leaf = leaf_der();
+        let (_, cert) = X509Certificate::from_der(&leaf).unwrap();
+        let ids = identity_of(&cert).unwrap();
+        assert_eq!(ids.san, "https://github.com/USAREUR-AF/goatcore/.github/workflows/_release-binary.yml@refs/tags/goatbuilder/v0.5.1");
+        assert!(check_identity(&ids, &release()).is_ok());
+        for san in [
+            "https://github.com/example-org/goatcore/.github/workflows/_release-binary.yml@refs/tags/goatbuilder/v0.5.1",
+            "https://github.com/USAREUR-AF/goatcore/.github/workflows/other-signing.yml@refs/tags/goatbuilder/v0.5.1",
+            "https://github.com/USAREUR-AF/goatcore/.github/workflows/_release-binary.yml@refs/heads/main",
+            "",
+        ] {
+            let mut i = identity_of(&cert).unwrap();
+            i.san = san.into();
+            let r = check_identity(&i, &release()).unwrap_err();
+            assert!(r.detail.contains("SAN"), "{san}: {r}");
+        }
+        let e = Expect { signing_workflow: "other-signing.yml", ..release() };
+        let r = check_identity(&ids, &e).unwrap_err();
+        assert!(r.detail.contains("SAN"), "{r}");
     }
 
     /// The signature is for the served version's tag, so an older release's
@@ -1263,6 +1342,8 @@ mod tests {
             signer: "example-org/releases",
             version: "9.9.9",
             workflow: RELEASE_WORKFLOW,
+            signing_workflow: SIGNING_WORKFLOW,
+            workflow_name: RELEASE_WORKFLOW_NAME,
         };
         verify(SUMS, &bundle, &e, &root)
     }
@@ -1423,6 +1504,58 @@ mod tests {
         let mut v: serde_json::Value = serde_json::from_str(EMBEDDED_ROOT).unwrap();
         v["certificateAuthorities"][1]["validFor"]["end"] = 7.into();
         assert!(TrustRoot::parse(&v.to_string(), "operator").is_err());
+    }
+
+    const SUMS_0_7_3: &[u8] = include_bytes!("../../tests/fixtures/signature/v0.7.3/SHA256SUMS");
+    const BUNDLE_0_7_3: &str =
+        include_str!("../../tests/fixtures/signature/v0.7.3/SHA256SUMS.cosign-bundle");
+
+    /// The published 0.7.3's certificate, as its release serves it.
+    fn leaf_der_0_7_3() -> Vec<u8> {
+        let b = json(BUNDLE_0_7_3);
+        pem_to_der(&b64d(b["cert"].as_str().unwrap())).unwrap()
+    }
+
+    /// 0.7.3's real certificate carries the fields the reinstall line pins
+    /// with cosign: the SAN (--certificate-identity), the GitHub workflow
+    /// repository, ref and name. Each one is matched: changed, it is refused.
+    /// The legacy workflow extensions (1.3.6.1.4.1.57264.1.4 to 1.6) are
+    /// matched when the certificate carries them; Fulcio marks them
+    /// deprecated, and a certificate without them is judged on the rest.
+    #[test]
+    fn the_0_7_3_certificate_matches_the_fields_the_reinstall_line_pins() {
+        let leaf = leaf_der_0_7_3();
+        let (_, cert) = X509Certificate::from_der(&leaf).unwrap();
+        let ids = identity_of(&cert).unwrap();
+        let at = "refs/tags/goatbuilder/v0.7.3";
+        assert_eq!(ids.san, format!("https://github.com/USAREUR-AF/goatcore/.github/workflows/_release-binary.yml@{at}"));
+        assert_eq!(ids.build_config, format!("https://github.com/USAREUR-AF/goatcore/.github/workflows/goatbuilder-release.yml@{at}"));
+        assert_eq!(ids.source_repo, "https://github.com/USAREUR-AF/goatcore");
+        assert_eq!(ids.source_ref, at);
+        assert_eq!(ids.workflow_repo.as_deref(), Some("USAREUR-AF/goatcore"));
+        assert_eq!(ids.workflow_ref.as_deref(), Some(at));
+        assert_eq!(ids.workflow_name.as_deref(), Some("goatbuilder-release"));
+        let e = Expect { version: "0.7.3", ..release() };
+        assert!(check_identity(&ids, &e).is_ok());
+        assert!(verify(SUMS_0_7_3, BUNDLE_0_7_3, &e, &root()).is_ok());
+
+        type Change = (&'static str, fn(&mut Identity));
+        let changed: [Change; 3] = [
+            ("workflow repository", |i| i.workflow_repo = Some("example-org/goatcore".into())),
+            ("workflow ref", |i| i.workflow_ref = Some("refs/heads/main".into())),
+            ("workflow name", |i| i.workflow_name = Some("goat-release".into())),
+        ];
+        for (field, change) in changed {
+            let mut i = identity_of(&cert).unwrap();
+            change(&mut i);
+            let r = check_identity(&i, &e).unwrap_err();
+            assert!(r.detail.contains(field), "{field}: {r}");
+        }
+        let mut i = identity_of(&cert).unwrap();
+        (i.workflow_repo, i.workflow_ref, i.workflow_name) = (None, None, None);
+        assert!(check_identity(&i, &e).is_ok(), "without the deprecated extensions, the rest decide");
+        let r = check_identity(&ids, &Expect { workflow_name: "goat-release", ..e }).unwrap_err();
+        assert!(r.detail.contains("workflow name"), "{r}");
     }
 
     fn leaf_der() -> Vec<u8> {

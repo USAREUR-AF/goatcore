@@ -264,6 +264,35 @@ stop having this conversation twice.
 `goat machine revoke` needs goat-cli ≥ 0.4.40 **and** a portal carrying the
 endpoint; a portal that predates it answers 405 and the CLI says so.
 
+### Many machines with their topics, in one command
+
+A bulk file can declare each machine's topics. After the mint, each new
+machine registers its own topics with its own new key, in the same command,
+so the catalog exists before anyone sets up a context for the machine. A key
+still acts only for its own slot. Needs goat-cli ≥ 0.5.20.
+
+```yaml
+- machine_handle: moth-01
+  node_class: KID
+  autonomy: manual
+  topics:
+    - key: moth/cot            # relative to the machine's slot
+      format: xml:event
+      description: Cursor on Target events
+- machine_handle: moth-02
+  node_class: KID
+  autonomy: manual
+  topics:
+    - key: moth/cot
+      format: xml:event
+```
+
+`goat machine enroll --bulk machines.yaml` prints one line per topic:
+`created`, `exists` (already registered, left as is), `skipped` (its machine
+was not minted) or `failed`. With `--json` the outcomes are under `topics`.
+The command exits non-zero when any topic failed; the machines stay enrolled,
+and the rest are registered from each machine's own context.
+
 ---
 
 ## 4. Check your work

@@ -202,7 +202,7 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
     // asks for it (--browser-tests).
     checks.push(if lite_cfg.is_some() { live_rows_skipped() } else { live_rows_check(repo, browser_tests) });
     if lite_cfg.is_some() {
-        checks.push(image_token_row(std::env::var("GHCR_READ_TOKEN").ok().filter(|v| !v.is_empty()).is_some() || crate::secrets::available(repo).contains("GHCR_READ_TOKEN")));
+        checks.push(image_token_row(std::env::var("GHCR_READ_TOKEN").ok().filter(|v| !v.is_empty()).is_some() || crate::secrets::available(repo, &["GHCR_READ_TOKEN".to_string()]).contains("GHCR_READ_TOKEN")));
     }
 
     // 2d. The sessions and tools a release leans on and only discovers
@@ -291,9 +291,10 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
         //    named before any host is touched (the class the first external
         //    deployer hit: one assert on the host per run).
         // What this machine can supply does not change between components, and
-        // reading it means a posture call and a walk of .envrc.local.d: once.
-        let mut have = crate::secrets::available(repo);
-        have.extend(names_on_this_machine(repo));
+        // reading it means a posture call and a walk of .envrc.local.d: once,
+        // for the names some component needs and no others (a run keeps the
+        // probe's answer in its record).
+        let mut wanted = Vec::new();
         for env in cfg
             .environments
             .iter()
@@ -301,10 +302,16 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
             .filter(|e| e.converger != "pull-agent" && !e.groups.is_empty())
         {
             for (name, comp) in &cfg.components {
-                if let Some(c) = secrets_check(repo, env, name, comp, &have) {
-                    checks.push(c);
+                if let Some(needed) = component_secrets(repo, env, name, comp) {
+                    wanted.push((env, name, needed));
                 }
             }
+        }
+        let names: Vec<String> = wanted.iter().flat_map(|(_, _, n)| n.values().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+        let mut have = crate::secrets::available(repo, &names);
+        have.extend(names_on_this_machine(repo));
+        for (env, name, needed) in &wanted {
+            checks.push(secrets_row(repo, env, name, needed, &have));
         }
     }
 
@@ -517,16 +524,20 @@ fn distinct(mut v: Vec<&str>) -> Vec<&str> {
 /// the variables the component's play and role actually reference. `None` when
 /// the component has no playbook here or needs nothing; otherwise one check,
 /// refused with every unset name and the one command that resolves them.
-fn secrets_check(repo: &Path, env: &config::Environment, name: &str, comp: &Component, have: &std::collections::HashSet<String>) -> Option<Check> {
+/// What `name`'s deploy templates from the environment in `env`; None when it
+/// has no deploy play or templates nothing.
+fn component_secrets(repo: &Path, env: &config::Environment, name: &str, comp: &Component) -> Option<std::collections::BTreeMap<String, String>> {
     let ansible = repo.join("ops/ansible");
     let ledger = comp.ledger.as_deref().unwrap_or(name);
     let start = [ansible.join(format!("{ledger}-deploy.yml")), ansible.join(format!("{name}-deploy.yml"))]
         .into_iter()
         .find(|p| p.is_file())?;
     let needed = secrets_needed(repo, &env.groups, name, ledger, &start);
-    if needed.is_empty() {
-        return None;
-    }
+    (!needed.is_empty()).then_some(needed)
+}
+
+/// The row for one component's secrets in one environment.
+fn secrets_row(repo: &Path, env: &config::Environment, name: &str, needed: &std::collections::BTreeMap<String, String>, have: &std::collections::HashSet<String>) -> Check {
     // Secrets load for one command at a time, so "not in this environment" is the
     // normal state. The question here is whether this machine can supply them,
     // which the caller read once for the whole run.
@@ -537,13 +548,13 @@ fn secrets_check(repo: &Path, env: &config::Environment, name: &str, comp: &Comp
     let missing = distinct(needed.values().filter(|e| !satisfied(have, e)).map(|e| e.as_str()).collect());
     let check_name = format!("secrets:{}:{name}", env.name);
     if missing.is_empty() {
-        Some(ok(&check_name, format!("{} variable(s) on this machine under the secrets posture: {}", all.len(), all.join(", "))))
+        ok(&check_name, format!("{} variable(s) on this machine under the secrets posture: {}", all.len(), all.join(", ")))
     } else {
-        Some(refused(
+        refused(
             &check_name,
             format!("{} of {} not on this machine: {}", missing.len(), all.len(), missing.join(", ")),
             &crate::secrets::hint(repo, &missing.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
-        ))
+        )
     }
 }
 
@@ -1401,7 +1412,7 @@ fn which(tool: &str) -> bool {
 fn python_has(modules: &[&str]) -> Result<bool> {
     let code = format!("import {}", modules.join(", "));
     // Quiet: the python:deps row reports a missing module, not a traceback.
-    let status = Cmd::new("python3").args(["-c", &code]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;
+    let status = Cmd::new("python3").args(["-c", &code]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start python3: {e}")))?;
     Ok(status.success())
 }
 
@@ -1410,9 +1421,10 @@ fn git(repo: &Path, args: &[&str]) -> Result<String> {
         .arg("-C")
         .arg(repo)
         .args(args)
-        .output()?;
+        .output()
+        .map_err(|e| goat_errors::coded("GB-320", format!("could not start git: {e}")))?;
     if !out.status.success() {
-        anyhow::bail!("git {} failed", args.join(" "));
+        return Err(goat_errors::coded("GB-258", format!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim())).into());
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -1465,12 +1477,14 @@ fn release_row_skipped(name: &str, what: &str) -> Check {
     ok(name, format!("skipped: declared: a goatlite cuts no release, so this machine does not need {what}"))
 }
 
-/// Under the lite preset phase 3 of the standup writes the secrets file
-/// (`goatbuilder secrets init`), so before the first standup its absence is
-/// the expected state, named with the phase that produces it, not a refusal.
+/// Under the lite preset phase 1 of the standup creates the secrets file (its
+/// "create the local secrets store" step, `posture.py init --if-env-file`),
+/// and phase 3 adds the per-instance values to it, so before the first
+/// standup its absence is the expected state, named with the phase that
+/// creates it, not a refusal.
 fn lite_secrets_row(c: Check) -> Check {
     if c.name == "secrets:env-file" && !c.ok && c.detail.contains("does not exist") {
-        return ok(&c.name, format!("{}: produced by phase 3 of the standup", c.detail));
+        return ok(&c.name, format!("{}: created by phase 1 of the standup", c.detail));
     }
     c
 }
@@ -2521,10 +2535,12 @@ mod tests {
     }
 
     #[test]
-    fn under_lite_a_missing_secrets_file_is_phase_3s_and_other_rows_keep_their_grade() {
+    fn under_lite_a_missing_secrets_file_is_phase_1s_and_other_rows_keep_their_grade() {
         let missing = Check { name: "secrets:env-file".into(), ok: false, detail: ".envrc.local.d/secrets.env does not exist".into(), fix: Some("goatbuilder secrets init --env <goatnet>".into()) };
         let c = lite_secrets_row(missing);
-        assert!(c.ok && c.detail.ends_with("produced by phase 3 of the standup"), "{c:?}");
+        // Phase 1's "create the local secrets store" step writes it (standup.rs);
+        // phase 3 only adds the per-instance values to a file that exists.
+        assert!(c.ok && c.detail.ends_with("created by phase 1 of the standup"), "{c:?}");
         let unreadable = Check { name: "secrets:env-file".into(), ok: false, detail: ".envrc.local.d/secrets.env is mode 0644".into(), fix: Some("chmod 600".into()) };
         assert!(!lite_secrets_row(unreadable).ok);
         let other = Check { name: "secrets:posture".into(), ok: false, detail: "does not exist".into(), fix: None };

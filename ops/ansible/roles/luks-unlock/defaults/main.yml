@@ -105,7 +105,8 @@ luks_packages_tang_client:
 #     # tang_initramfs only:
 #     tang_servers:                  # {name,url,class} — same shape as luks_tang_servers
 #       - {name: karbon-a, url: "http://192.168.1.10:7500", class: lan}
-#     initramfs_ip: "192.168.1.20::192.168.1.1:255.255.255.0::eth0:off"  # kernel ip= string
+#     initramfs_ip: "dhcp"           # default when unset; a static kernel ip= string pins the node to one site
+#                                    # (e.g. "192.168.1.20::192.168.1.1:255.255.255.0::eth0:off")
 #     initramfs_kmods: [macb]        # NIC driver(s) to seed into the initrd
 luks_installer_partitions: []
 

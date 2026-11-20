@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 979 variables, 135 of them secret-bearing by name.
+# 1019 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 135 variables.
+# 144 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -46,6 +46,18 @@ export CANARY_REMOTE_KEY=""  # SECRET
 
 # ops/relay/health/canary-publish.sh
 export CANARY_TOKEN=""  # SECRET
+
+# docs/operations/cgnat-validation-runbook.md
+export CGNAT_NB_ENCKEY=""  # SECRET
+
+# docs/operations/cgnat-validation-runbook.md
+export CGNAT_PG_PASS=""  # SECRET
+
+# docs/operations/cgnat-validation-runbook.md, ops/ansible/cgnat-validation.yml
+export CGNAT_SITE_A_SETUP_KEY=""  # SECRET
+
+# docs/operations/cgnat-validation-runbook.md, ops/ansible/cgnat-validation.yml
+export CGNAT_SITE_B_SETUP_KEY=""  # SECRET
 
 # docs/operations/fresh-deploy-checklist.md, ops/ansible/inventory/generate-relays.sh …
 export CLOUDFLARE_API_TOKEN=""  # SECRET
@@ -122,6 +134,9 @@ export FED_CA_KEY_FROM_AGE=""  # SECRET
 # ops/federation/standup/mint-peering-leaves.sh
 export FED_CA_KEY_TMP=""  # SECRET
 
+# ops/federation/standup/mint-peering-leaves.sh
+export FED_LEAF_KEY_RECORD=""  # SECRET
+
 # ops/federation-e2e/live.sh
 export FED_LIVE_GHCR_TOKEN_ENV=""  # SECRET
 
@@ -178,6 +193,9 @@ export GOAT_RELAY_AUTH_SECRET=""  # SECRET
 
 # ops/scripts/secrets-session
 export GOAT_SECRETS_KEYSTORE=""  # SECRET
+
+# ops/scripts/with-secrets
+export GOAT_SECRETS_LOAD_REFS=""  # SECRET
 
 # ops/scripts/ansible-preflight.sh, ops/scripts/with-secrets
 export GOAT_SECRETS_RESOLVED=""  # SECRET
@@ -236,10 +254,10 @@ export JETSON_FLASH_USER_PASS=""  # SECRET
 # ops/zenoh/docker-compose.yml, ops/zenoh/loadgen/main.go
 export KEY_PREFIX=""  # SECRET
 
-# ops/compose/mgmt-host/docker-compose.ory.yml
+# ops/ansible/roles/operator-idp-kratos/templates/docker-compose.yml.j2, ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SECRETS_CIPHER=""  # SECRET
 
-# ops/compose/mgmt-host/docker-compose.ory.yml
+# ops/ansible/roles/operator-idp-kratos/templates/docker-compose.yml.j2, ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SECRETS_COOKIE=""  # SECRET
 
 # ops/ansible/zenoh-loadtest.yml
@@ -374,8 +392,17 @@ export SAFE_BROWSING_API_KEY=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.yml, signal-server/cmd/signal-server/main.go
 export SIGNAL_FEDERATION_TOKEN=""  # SECRET
 
+# ops/ansible/site-bootstrap.yml
+export SITE_BKP_KEY=""  # SECRET
+
 # ops/ansible/site-oidc-clients.yml
 export SITE_COMPLIANCE_OIDC_CLIENT_SECRET=""  # SECRET
+
+# ops/ansible/site-bootstrap.yml
+export SITE_NB_ENCKEY=""  # SECRET
+
+# ops/ansible/site-bootstrap.yml
+export SITE_PG_PASS=""  # SECRET
 
 # ops/ci/check-group-vars-parity.sh
 export SITE_SLOT_POOL_SALT=""  # SECRET
@@ -439,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 844 variables.
+# 875 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -508,7 +535,7 @@ export APPLY=""
 # ops/ansible/roles/isitup/files/check.sh
 export APP_SERVICES_FORMAT=""
 
-# .github/workflows/apt-failover-selftest.yml, .github/workflows/goat-cli-pr.yml
+# .github/workflows/apt-failover-selftest.yml, .github/workflows/goat-cli-pr.yml …
 export APT_FAILOVER=""
 
 # .github/workflows/apt-failover-selftest.yml
@@ -826,6 +853,9 @@ export EVID=""
 # ops/bootstrap/drill/run-rapid-bringup-drill.sh, ops/observability/wide-events/spike/run-spike.sh
 export EVIDENCE=""
 
+# docs/design/deception-layer.md
+export EXAMPLE_DECEPTION_SEED=""
+
 # ops/relay/health/zenoh-fabric-sampler.sh
 export FABRIC_JSON=""
 
@@ -1013,6 +1043,9 @@ export FED_ACCEPTANCE_RT_TIMEOUT=""
 export FED_ACCEPTANCE_SESSION=""
 
 # ops/federation/standup/acceptance.sh
+export FED_ACCEPTANCE_TRACE=""
+
+# ops/federation/standup/acceptance.sh
 export FED_ACCEPTANCE_WAIT=""
 
 # ops/federation/standup/mint-peering-leaves.sh
@@ -1044,6 +1077,9 @@ export FED_EDGE_GROUP=""
 
 # ops/federation/standup/acceptance.sh
 export FED_EDGE_LOG_OURS=""
+
+# ops/federation/standup/acceptance.sh
+export FED_EDGE_TRACE_FILE=""
 
 # ops/federation/standup/acceptance.sh
 export FED_EVIDENCE_DIR=""
@@ -1174,6 +1210,9 @@ export FED_VERBS=""
 # ops/federation-e2e/live-host.sh
 export FED_ZENOH_IMAGE=""
 
+# ops/federation-e2e/units/forwarder-gb-two.sh
+export FG2_FWD_UP=""
+
 # ops/rpi-base-image/05-enable-fips.sh
 export FIPS_PURGE_DROPBEAR=""
 
@@ -1218,6 +1257,15 @@ export GALAXY_ATTEMPTS=""
 
 # ops/ci/ansible-galaxy-install.sh
 export GALAXY_ATTEMPT_SECONDS=""
+
+# ops/vm-image/zero-saas/laptop-phase11.sh
+export GB_FLAGS=""
+
+# ops/federation-e2e/env
+export GB_UNDER_TEST=""
+
+# ops/federation-e2e/env, ops/federation-e2e/lib/gbrelease.sh
+export GB_VERSION=""
 
 # ops/ansible/group_vars/all.yml, ops/bootstrap/build-image-ec2.sh …
 export GHCR_ORG=""
@@ -1312,6 +1360,9 @@ export GOAT_CONTEXT_DIR=""
 # ops/backup.sh, ops/relay/deploy-relay.sh …
 export GOAT_DEPLOYMENT=""
 
+# ops/ansible/roles/rollback-ledger/tasks/main.yml
+export GOAT_DEPLOY_LADDER_SKIP=""
+
 # ops/scripts/deploy-component.sh
 export GOAT_DEPLOY_LOG_DIR=""
 
@@ -1320,6 +1371,12 @@ export GOAT_DEPLOY_OFFLINE=""
 
 # ops/ansible/roles/isitup/tasks/rows-build.yml, ops/ansible/roles/rollback-ledger/tasks/main.yml
 export GOAT_DEPLOY_SOURCE_TREE=""
+
+# ops/scripts/deploy-component.sh
+export GOAT_DEPLOY_TRANSPORT_RETRY=""
+
+# ops/scripts/deploy-component.sh
+export GOAT_DOOR_RETRY_PAUSE=""
 
 # ops/goat-id-console/internal/handlers/zz_render_dump_test.go
 export GOAT_DUMP_HTML=""
@@ -1344,6 +1401,15 @@ export GOAT_KEEP_AWAKE=""
 
 # ops/scripts/lib/keep-awake.sh
 export GOAT_KEEP_AWAKE_ANY_OS=""
+
+# ops/scripts/ansible-preflight.sh
+export GOAT_LADDER_CHECKED=""
+
+# ops/scripts/ansible-preflight.sh
+export GOAT_LADDER_SKIP_ACK=""
+
+# ops/scripts/ansible-preflight.sh
+export GOAT_LADDER_SKIP_REASON=""
 
 # ops/ansible/filter_plugins/goat_leaf.py
 export GOAT_LEAF_DIR=""
@@ -1389,6 +1455,9 @@ export GOAT_RC_ROLE_CHECK=""
 
 # ops/goatbuilder/endstate/endstate.py, ops/scripts/ansible-preflight.sh
 export GOAT_REFERENCES_ONLY=""
+
+# ops/scripts/with-secrets
+export GOAT_REFS_DIR=""
 
 # ops/scripts/goat-image-import.sh
 export GOAT_REGISTRY=""
@@ -1479,6 +1548,12 @@ export GOCACHE_DARWIN=""
 
 # ops/e2e/hermetic.sh
 export GOMODCACHE=""
+
+# ops/federation/standup/acceptance.sh
+export GOT_RC=""
+
+# ops/vm-image/zero-saas/laptop-provision.sh
+export GO_VERSION=""
 
 # ops/compose/goat-obs/docker-compose.yml
 export GRAFANA_ADMIN_USER=""
@@ -1684,6 +1759,9 @@ export JOIN_FOUNDER_GROUP=""
 # ops/scripts/goat-standup.sh
 export JOIN_FOUNDER_SITE=""
 
+# ops/scripts/join-node-reach.sh
+export JOIN_NODE_REACH_LIMIT=""
+
 # ops/federation-e2e/lib/unit.sh
 export KEEP=""
 
@@ -1734,6 +1812,24 @@ export KRATOS_PUBLIC_URL=""
 
 # ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SELFSERVICE_UI_IMAGE=""
+
+# ops/vm-image/zero-saas/lab.sh
+export LAB_BOX_MEMORY_MB=""
+
+# ops/vm-image/zero-saas/lab.sh
+export LAB_CPUS=""
+
+# ops/vm-image/zero-saas/lab.sh
+export LAB_LAPTOP_MEMORY_MB=""
+
+# ops/vm-image/zero-saas/lab.sh
+export LAB_NAME=""
+
+# ops/vm-image/zero-saas/lab.sh
+export LAB_SSH_PORT=""
+
+# ops/vm-image/zero-saas/lab.sh
+export LAB_STEP_TIMEOUT=""
 
 # ops/loadtest/rca-throughput-decomposition.sh
 export LADDER=""
@@ -1880,6 +1976,9 @@ export MGMT_HOST_COMPOSE_WATCH_INTERVAL=""
 export MGMT_HOST_COMPOSE_WATCH_METRICS_DIR=""
 
 # ops/ansible/roles/mgmt-host-compose-watch/files/mgmt-host-compose-watch.sh
+export MGMT_HOST_COMPOSE_WATCH_PAUSE_FILE=""
+
+# ops/ansible/roles/mgmt-host-compose-watch/files/mgmt-host-compose-watch.sh
 export MGMT_HOST_COMPOSE_WATCH_SERVICES=""
 
 # ops/ansible/roles/mgmt-host-compose-watch/files/mgmt-host-compose-watch.sh
@@ -1975,6 +2074,9 @@ export NETHOST_USER=""
 # ops/ansible/roles/icam-mtls-proxy/test_render.py, ops/identity/test_sovereign_pkis.py
 export NGINX_JS_MODULE=""
 
+# ops/federation-e2e/units/nohand.sh
+export NH_ADD_PEERING=""
+
 # ops/federation-e2e/units/nohand-loop.sh, ops/federation-e2e/units/nohand.sh
 export NH_ADMIT_TREE=""
 
@@ -1983,6 +2085,9 @@ export NH_CORE_CN=""
 
 # ops/federation-e2e/units/nohand.sh
 export NH_DECLARES=""
+
+# ops/federation-e2e/units/nohand.sh
+export NH_STEP=""
 
 # ops/rpi-base-image/03b-headless-dropbear-unlock.sh
 export NICDRV=""
@@ -2122,6 +2227,9 @@ export ONBOARD_INVITE_ARCHIVE_AFTER=""
 # ops/onboard-runner/main.go
 export ONBOARD_MTLS_SERVER_ID=""
 
+# ops/goat-id-console/internal/config/config.go, ops/goat-id-console/internal/handlers/admin_operator_key.go …
+export ONBOARD_SERVICE_OPERATOR_HANDLES=""
+
 # ops/ansible/roles/otel-collector/defaults/main.yml
 export OPENOBSERVE_ROOT_EMAIL=""
 
@@ -2205,9 +2313,6 @@ export PF_E2E_IMAGE=""
 
 # ops/federation-e2e/units/preflight.sh
 export PF_INNER_FOR=""
-
-# ops/compose/mgmt-host/docker-compose.pgbackrest.yml
-export PGBACKREST_IMAGE=""
 
 # ops/mgmt-host-bootstrap/main.go
 export PGDSN=""
@@ -2579,6 +2684,9 @@ export SIGNAL_A_MEMORY_RESERVATION=""
 export SIGNAL_FEDERATION_AUTHORITY=""
 
 # ops/compose/mgmt-host/docker-compose.yml
+export SIGNAL_FEDERATION_CIRCUIT_OPEN=""
+
+# ops/compose/mgmt-host/docker-compose.yml
 export SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS=""
 
 # ops/signal-federation-probe/docker-compose.yml
@@ -2622,6 +2730,12 @@ export SITE_OAUTH2=""
 
 # ops/scripts/fresh-peer-probe.sh
 export SITE_ZONE=""
+
+# ops/scripts/deploy-component.sh
+export SKIP_ACK=""
+
+# ops/scripts/deploy-component.sh
+export SKIP_REASON=""
 
 # ops/smoketest/cmd/smoketest/main.go
 export SMOKETEST_CONFIG=""
@@ -2794,8 +2908,11 @@ export TRUNK=""
 # ops/scripts/kanidm-reissue-code.sh
 export TTL_HOURS=""
 
-# ops/vm-image/build.sh
+# ops/vm-image/build.sh, ops/vm-image/zero-saas/lab.sh
 export UBUNTU_BASE=""
+
+# .github/workflows/apt-failover-selftest.yml, ops/ci/docker-build-mirror-fallback.sh
+export UBUNTU_MIRROR=""
 
 # ops/federation-e2e/lib/unit.sh
 export UNIT_RC=""
@@ -2901,6 +3018,9 @@ export WORK_TRACK=""
 
 # ops/rpi-base-image/01-flash.sh
 export WRITE_STARTED=""
+
+# ops/vm-image/zero-saas/laptop-provision.sh
+export YQ_VERSION=""
 
 # ops/loadtest/rca-throughput-decomposition.sh
 export ZBIN_DIR=""

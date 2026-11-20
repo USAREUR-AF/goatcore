@@ -65,6 +65,9 @@ func (s *Store) finishReissue(ctx context.Context, id, status, resultJSON, errMs
 	if status != ActionDone && status != ActionFailed {
 		return nil, fmt.Errorf("invalid action result status %q", status)
 	}
+	if err := s.admitFollowUp7788(ctx, id, ActionResult7788); err != nil {
+		return nil, err
+	}
 	if resultJSON == "" {
 		resultJSON = "{}"
 	}

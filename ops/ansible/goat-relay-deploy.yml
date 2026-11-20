@@ -285,6 +285,7 @@
         group: root
         mode: "0600"
       when: goat_relay_le_dns01 | default(false) | bool
+      no_log: true
 
     # Deploy-hook re-stages the renewed cert (deref'd to stable, non-symlink
     # files the role's two-file bind-mount can serve) + restarts the container.

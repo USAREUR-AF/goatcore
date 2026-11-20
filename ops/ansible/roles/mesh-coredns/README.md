@@ -33,6 +33,14 @@ This role replaces the previous NETHOST-only inline play (`ops/ansible/nethost-d
 | `mesh_coredns_port` | `5353` | UDP port the resolver listens on |
 | `mesh_coredns_zone_dir` | `{{ playbook_dir }}/../dns` | Source location for mesh-hosts file |
 | `mesh_coredns_smoke_test_name` | `mgmt.{{ site_id }}.{{ site_dns_zone }}` | Known mesh record for post-deploy verification (per-instance; derives from site identity) |
+| `mesh_coredns_forwarders` | `["1.1.1.1", "8.8.8.8"]` | Where a name outside the mesh zone is forwarded: CoreDNS `forward` destinations, in order. `[]` forwards nothing: the zone is answered and every other name gets NXDOMAIN. See [Outside forwarders](#outside-forwarders) |
+| `mesh_coredns_negative_ttl` | `30` | With `mesh_coredns_forwarders: []`, how long a resolver caches this resolver's NXDOMAIN (the root zone's SOA minimum). Unused while forwarders are set |
+
+## Outside forwarders
+
+`mesh_coredns_forwarders` names where CoreDNS sends a name that is not in the mesh zone. The default keeps the forwarders every goatnet ran before the variable existed. A goatnet that reaches no outside DNS service sets `mesh_coredns_forwarders: []`: no `forward` directive is rendered, and no query leaves the resolver. It is then the only source of answers, so the mesh-hosts file falls through to a zone file for the root, `mesh-root.zone` (rendered and mounted only then), that holds one SOA and one NS: a name the mesh-hosts file and the decoy stanzas do not hold gets NXDOMAIN, outside names and names under an extra name included. A resolver caches that NXDOMAIN for `mesh_coredns_negative_ttl` seconds (30 by default, the SOA's minimum), so a name added to mesh-hosts later is not taken for missing for long. Without the root zone, CoreDNS's hosts plugin would answer SERVFAIL, which a resolver retries or takes to another server. A goatnet that runs its own resolver lists it. The shape is in `ops/ansible/group_vars/_examples/mesh-dns-forwarders.example.yml`; the design is in [mesh-dns-redundancy.md](../../../../docs/design/mesh-dns-redundancy.md#outside-forwarders).
+
+With handset DNS on (below), phones send every query here, so an empty list leaves them with mesh names only.
 
 ## Pre-requisites
 

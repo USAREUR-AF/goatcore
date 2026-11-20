@@ -1129,6 +1129,24 @@ fn f5_a_failed_standup_phase_carries_its_known_error_s_code_and_fix() {
     let p = goat_errors::phases::explain_phase("standup", &phase.to_string())
         .unwrap_or_else(|| panic!("standup phase {phase} has no phase-catalog entry"));
     assert!(d.contains(&format!("By hand: {}", p.by_hand)), "{d}");
+    the_failed_row_prints(&out, "GB-331");
+}
+
+/// Gate row C5: the one `failed` row of a run that stopped on a failed step
+/// prints the verb's own code for that failure, so a drill log of it holds no
+/// uncoded error even when the interpretation under it carries none.
+fn the_failed_row_prints(out: &Output, code: &str) {
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(out)));
+    let failed: Vec<&str> = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"] == "failed")
+        .filter_map(|c| c["detail"].as_str())
+        .collect();
+    assert_eq!(failed.len(), 1, "one failed row: {}", text(out));
+    assert!(failed[0].contains(code), "the failed row prints {code}: {}", failed[0]);
 }
 
 /// The ssh refusal the F5 standup tests make a command print: ansible's line
@@ -1215,6 +1233,7 @@ fn f5_a_failed_image_pull_carries_its_known_error_s_code_and_fix() {
         .output()
         .unwrap();
     let log = the_step_s_ssh_refusal_is_interpreted(&out, "image-pull");
+    the_failed_row_prints(&out, "GB-333");
     assert!(log.ends_with("/standup-alpha-images.log"), "{log}");
 }
 
@@ -1297,6 +1316,7 @@ fn f5_a_failed_observability_leg_carries_its_known_error_s_code_and_fix() {
         .output()
         .unwrap();
     let log = the_step_s_ssh_refusal_is_interpreted(&out, "observability-leg-host");
+    the_failed_row_prints(&out, "GB-334");
     assert!(log.ends_with("/standup-alpha-obs-host.log"), "{log}");
 }
 
@@ -1329,9 +1349,13 @@ fn f5_a_failed_join_node_phase_carries_its_known_error_s_code_and_fix() {
         .env("GB_REC_SAY_WHEN", "mgmt-host-baseline.yml")
         .env("GB_REC_SAY", SSH_REFUSED)
         .env("GB_REC_SAY_EXIT", "4")
+        // A founder site's phase 13 reads it; without it the run refuses
+        // before phase 2 (GB-369) and this phase never fails.
+        .env("OWNER_EMAIL", "ops@example.org")
         .output()
         .unwrap();
     the_ssh_refusal_is_interpreted("join-node", &out, "5");
+    the_failed_row_prints(&out, "GB-332");
 }
 
 /// F5 for deploy: a group's play that fails with a known error carries its
@@ -1427,7 +1451,11 @@ fn c11_join_node() {
         "2",
     ];
     let real: Vec<&str> = args.iter().copied().chain(["--yes"]).collect();
-    let (out, procs) = run_recorded(h.command(&real), &h.root.path().join("rec/real"));
+    // A founder site's phase 13 reads the bootstrap administrator's address;
+    // an operator running it supplies it (else GB-369 before phase 2).
+    let mut real_cmd = h.command(&real);
+    real_cmd.env("OWNER_EMAIL", "ops@example.org");
+    let (out, procs) = run_recorded(real_cmd, &h.root.path().join("rec/real"));
     ran("join-node", &out, &procs, &[0]);
     let dry: Vec<&str> = args.iter().copied().chain(["--dry-run"]).collect();
     let page = at_a_terminal(&h.command(&dry)).unwrap_or_else(|e| panic!("{e}"));
@@ -1504,12 +1532,17 @@ fn deploy_steps_are_the_catalog_s_deploy_entries() {
 /// Verbs held to check (d) only (gate row F4): each runs numbered steps that
 /// the phase catalog describes, and checks (a) to (c), which record a run's
 /// processes against its run record, are not asked of them here. Each verb's
-/// own unit test holds these numbers to the step lines it prints
+/// own unit test holds these numbers to what it runs
 /// (`release::tests::the_phase_catalog_describes_releases_steps`,
-/// `fastlane::catalog_tests::the_phase_catalog_describes_fastlanes_steps`).
-const D_ONLY: [(&str, [&str; 8]); 2] = [
-    ("release", ["1", "2", "3", "4", "5", "6", "7", "8"]),
-    ("fastlane", ["1", "2", "3", "4", "5", "6", "7", "8"]),
+/// `fastlane::catalog_tests::the_phase_catalog_describes_fastlanes_steps`,
+/// `standup::tests::the_phase_catalog_describes_teardowns_steps`,
+/// `federate::backout::catalog_tests::the_phase_catalog_describes_backouts_steps`).
+/// Each row: the catalog verb, its steps, and the command that prints its help.
+const D_ONLY: [(&str, &[&str], &[&str]); 4] = [
+    ("release", &["1", "2", "3", "4", "5", "6", "7", "8"], &["release", "--help"]),
+    ("fastlane", &["1", "2", "3", "4", "5", "6", "7", "8"], &["fastlane", "--help"]),
+    ("teardown", &["2", "5", "6", "7", "8", "9", "10", "12", "14"], &["teardown", "--help"]),
+    ("federate-backout", &["1", "2", "3", "4", "5", "6", "7"], &["federate", "backout", "--help"]),
 ];
 
 /// The step numbers check (d) holds each (d)-only verb to are its catalog
@@ -1518,7 +1551,7 @@ const D_ONLY: [(&str, [&str; 8]); 2] = [
 fn d_only_steps_are_the_catalog_s_entries() {
     let text = std::fs::read_to_string(repo().join(PHASE_CATALOG)).unwrap();
     let doc: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
-    for (verb, steps) in D_ONLY {
+    for (verb, steps, _) in D_ONLY {
         let catalog: BTreeSet<String> = doc["phases"]
             .as_sequence()
             .into_iter()
@@ -1531,22 +1564,22 @@ fn d_only_steps_are_the_catalog_s_entries() {
     }
 }
 
-/// Check (d) for release and fastlane: every step has a complete catalog
+/// Check (d) for the (d)-only verbs: every step has a complete catalog
 /// entry whose `read` exists, and every document path the tool prints about
 /// them (`explain <verb>`, `explain <verb> <step>` for each, and `--help`)
 /// exists.
 #[test]
-fn c11_d_only_release_and_fastlane() {
+fn c11_d_only_verbs() {
     let h = hollow();
-    for (verb, steps) in D_ONLY {
+    for (verb, steps, help_args) in D_ONLY {
         let mut printed = String::new();
         let list = ok(&format!("explain {verb}"), h.command(&["explain", verb]).output().unwrap());
         printed.push_str(&text(&list));
         for s in steps {
-            let one = ok(&format!("explain {verb} {s}"), h.command(&["explain", verb, s]).output().unwrap());
+            let one = ok(&format!("explain {verb} {s}"), h.command(&["explain", verb, *s]).output().unwrap());
             printed.push_str(&text(&one));
         }
-        let help = ok(&format!("{verb} --help"), h.command(&[verb, "--help"]).output().unwrap());
+        let help = ok(&format!("{verb} --help"), h.command(help_args).output().unwrap());
         printed.push_str(&text(&help));
         let steps: BTreeSet<String> = steps.iter().map(|s| s.to_string()).collect();
         judge(verb, vec![('d', check_d(verb, &steps, &printed))]);
@@ -1663,11 +1696,13 @@ fn a_two_group_deploy_records_a_phase_per_group() {
     assert_eq!(unique.len(), ids.len(), "a phase id repeats: {ids:?}");
 }
 
-/// A deploy's dry run names its four probes under two headings: the two it
-/// ran itself (the secrets posture and the mesh status, whose answers shaped
-/// the plan) and the two only a real run starts (the fresh-source check and
-/// the ledger read). Each row is the line its builder makes, as `-o json`
-/// lists it.
+/// A deploy's dry run names its probes under two headings: those it ran
+/// itself (the mesh status, and the secrets posture when the play templates a
+/// variable, whose answers shaped the plan) and the two only a real run starts
+/// (the fresh-source check and the ledger read). Each row is the line its
+/// builder makes, as `-o json` lists it. The fixture's play templates no
+/// variable, so the posture is not asked: its probe would only name the
+/// variables a run reads, and there are none.
 #[test]
 fn a_deploy_dry_run_names_its_probes_under_two_headings() {
     let h = hollow();
@@ -1687,8 +1722,9 @@ fn a_deploy_dry_run_names_its_probes_under_two_headings() {
             .collect()
     };
     let (ran, real) = (rows("probe-ran"), rows("probe"));
-    assert_eq!(ran.len(), 2, "the dry run's own probes: {ran:?}");
-    assert!(ran[0].contains("available") && ran[1].contains("netbird status"), "{ran:?}");
+    assert_eq!(ran.len(), 1, "the dry run's own probes: {ran:?}");
+    assert!(ran[0].contains("netbird status"), "{ran:?}");
+    assert!(!ran.iter().any(|l| l.contains("posture.py")), "no variable to ask about, so no posture probe: {ran:?}");
     assert_eq!(real.len(), 2, "the real run's probes: {real:?}");
     assert!(real[0].contains("fresh-source.sh"), "{real:?}");
     assert!(real[1].starts_with("(cd ops/ansible && ") && real[1].contains("deploy-history.jsonl"), "the ledger read, runnable from the checkout: {real:?}");

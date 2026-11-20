@@ -29,7 +29,7 @@ Stores:
 
 usage:
   posture.py store                       print the store in force
-  posture.py available                   print every variable name that has a value or a reference
+  posture.py available [NAME...]         print the NAMEs that have a value or a reference (every such name with none)
   posture.py missing NAME...             print the names with neither; exit 1 if any
   posture.py hint NAME...                print how to supply those names under this posture
   posture.py op-account                  print the 1Password account to pin (OP_ACCOUNT, else
@@ -757,7 +757,10 @@ def init(goatnet: str, path: str, force: bool, repo: str = REPO, if_env_file: bo
           f"{len(generated)} generated, {len(kept)} kept, {len(external)} need an outside value")
     for env in external:
         print(f"  EXTERNAL  {env}  (issued by an outside service; see docs/design/pluggable-dependencies.md §Quickstart)")
-    print(f"declare the posture: secrets: {{store: env-file}} in ops/goatbuilder/goatbuilder.yaml, or export GOAT_SECRET_STORE=env-file")
+    if not if_env_file:
+        # A goatlite's phase 1 runs this only when env-file is already the store
+        # in force, so it has nothing to declare (and no goatbuilder.yaml).
+        print(f"declare the posture: secrets: {{store: env-file}} in ops/goatbuilder/goatbuilder.yaml, or export GOAT_SECRET_STORE=env-file")
     return 0
 
 
@@ -873,7 +876,15 @@ def main(argv: list) -> int:
             s = store()
             print("reference" if s in REFERENCE_STORES else "value")
         elif cmd == "available":
-            print("\n".join(sorted(available())))
+            # With names: only those of them that are available, so a run's record
+            # of this probe names nothing the run does not read. An alternative
+            # A|B is answered for each of its names. With none: every name, for
+            # the operator's own terminal (goatbuilder secrets available).
+            have = available()
+            if rest:
+                asked = {n for r in rest for n in r.split("|") if n}
+                have = have & asked
+            print("\n".join(sorted(have)))
         elif cmd == "missing":
             have = available()
             miss = [n for n in rest if n not in have]

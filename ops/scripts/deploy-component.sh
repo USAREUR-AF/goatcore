@@ -12,6 +12,14 @@
 # usage:
 #   deploy-component.sh <component> --goatnet <fleet-pins goatnet key> \
 #                       [--group <member group>] [--dry-run] [--verify-only] [--preflight] [--offline]
+#                       [--skip-rung --reason "<why>" --ack "<operator>"]
+#
+# Release ladder (ADR 1120, GB-373): on a rung above the lowest, the digest being
+# deployed must already be what the rung below pins, and that rung's hosts must
+# have converged on it (read live with this script's --verify-only on that rung).
+# ops/release/ladder_gate.py decides; an open hotfix record for the ref, or
+# --skip-rung with a reason and an operator ack (written into the ledger row as
+# ladder_skip), are the only ways past it. Checked before any host is touched.
 #
 # Before the first host is touched, ops/scripts/fresh-source.sh refuses a
 # checkout behind the trunk in ops/ansible or ops/pins (contract C3, GB-064) or
@@ -42,6 +50,7 @@ PINS="$REPO/ops/pins/fleet-pins.yaml"
 die() { echo "deploy-component: $*" >&2; exit 1; }
 note() { printf '    %s\n' "$*"; }
 COMP=""; GOATNET=""; ONLY_GROUP=""; DRY=0; VERIFY_ONLY=0; OFFLINE=0; PREFLIGHT_ONLY=0
+SKIP_RUNG=0; SKIP_REASON=""; SKIP_ACK=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --goatnet) GOATNET="$2"; shift 2 ;;
@@ -50,7 +59,10 @@ while [ $# -gt 0 ]; do
     --verify-only) VERIFY_ONLY=1; shift ;;
     --preflight) PREFLIGHT_ONLY=1; shift ;;
     --offline) OFFLINE=1; shift ;;
-    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    --skip-rung) SKIP_RUNG=1; shift ;;
+    --reason)  SKIP_REASON="$2"; shift 2 ;;
+    --ack)     SKIP_ACK="$2"; shift 2 ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     -*) die "unknown flag $1" ;;
     *) [ -z "$COMP" ] && COMP="$1" || die "unexpected argument $1"; shift ;;
   esac
@@ -167,6 +179,47 @@ if [ -n "$HOSTS_VAR" ]; then TARGET_FLAG="-e ${HOSTS_VAR}="; else TARGET_FLAG="-
 NAME="${GOATNET//_/-}"
 [ -n "$SKIPPED" ] && note "skipping (absent: true, topology not skew): $SKIPPED"
 
+# --- release ladder (ADR 1120, GB-373) ----------------------------------------------
+# Before any transport or host: the digest each member group is about to receive
+# must be what the rung below pins (ops/release/ladder_gate.py), and that rung must
+# have converged on it, read live with --verify-only. A verify-only run deploys
+# nothing and is not gated.
+if [ "$SKIP_RUNG" = 0 ] && { [ -n "$SKIP_REASON" ] || [ -n "$SKIP_ACK" ]; }; then
+  die "--reason/--ack are for --skip-rung; pass --skip-rung with both, or neither"
+fi
+if [ "$SKIP_RUNG" = 1 ]; then GATE_SKIP=(--skip-reason "${SKIP_REASON:- }" --skip-ack "${SKIP_ACK:- }"); else GATE_SKIP=(); fi
+LADDER_GATE="$REPO/ops/release/ladder_gate.py"
+LADDER_LOWER=""
+if [ "$VERIFY_ONLY" = 0 ]; then
+  [ -f "$LADDER_GATE" ] || die "$LADDER_GATE is missing: the release-ladder gate cannot run, refusing (fail-closed)"
+  for G in $MEMBERS; do
+    _want="$(grep -E "^${VAR}:" "$REPO/ops/ansible/group_vars/$G/pins.yml" 2>/dev/null | sed -E 's/^[^:]+:[[:space:]]*"?//; s/"?[[:space:]]*$//' || true)"
+    [ -n "$_want" ] || continue
+    _gate="$("$PY" "$LADDER_GATE" component --repo "$REPO" --component "$COMP" --goatnet "$GOATNET" --ref "$_want" ${GATE_SKIP[@]+"${GATE_SKIP[@]}"})" && _grc=0 || _grc=$?
+    _msg="$(printf '%s' "$_gate" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["message"])' 2>/dev/null || printf '%s' "$_gate")"
+    case "$_grc" in
+      0) note "$G: $_msg"
+         if printf '%s' "$_gate" | grep -q '"exception": "skip-rung"'; then
+           GOAT_DEPLOY_LADDER_SKIP="$("$PY" -c 'import json,sys; print(json.dumps({"reason": sys.argv[1], "ack": sys.argv[2]}))' "$SKIP_REASON" "$SKIP_ACK")"
+           export GOAT_DEPLOY_LADDER_SKIP
+         fi ;;
+      3) note "$G: $_msg"
+         _lg="$(printf '%s' "$_gate" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["lower_goatnet"])')"
+         case " $LADDER_LOWER " in *" $_lg "*) ;; *) LADDER_LOWER="$LADDER_LOWER $_lg" ;; esac ;;
+      *) die "$G: $_msg" ;;
+    esac
+  done
+  for _lg in $LADDER_LOWER; do
+    if [ "$DRY" = 1 ]; then note "DRY: would confirm $COMP converged on $_lg (deploy-component.sh $COMP --goatnet $_lg --verify-only)"; continue; fi
+    [ "$OFFLINE" = 0 ] || die "GB-373 ladder: an --offline run cannot read $_lg's ledgers to confirm $COMP converged there; pass --skip-rung --reason \"<why>\" --ack \"<operator>\""
+    note "ladder: confirming $COMP converged on $_lg before touching $GOATNET"
+    if ! GOAT_DEPLOY_LADDER_NESTED=1 "$0" "$COMP" --goatnet "$_lg" --verify-only; then
+      die "GB-373 ladder: $COMP has not converged on $_lg (the rung below $GOATNET): its hosts' ledgers do not name the pinned ref. Run ops/scripts/deploy-component.sh $COMP --goatnet $_lg first, or pass --skip-rung --reason \"<why>\" --ack \"<operator>\""
+    fi
+  done
+  export GOAT_LADDER_CHECKED=1
+fi
+
 # --- fresh source (contract C3) ------------------------------------------------
 # One check before the first host, pinned for every play of this run (each play
 # goes through ansible-preflight.sh, which judges against the same commit).
@@ -207,6 +260,22 @@ MGMT="$(netbird status 2>/dev/null | awk -F': ' '/^Management:/{print $2}' || tr
 # profile match stays as the fast path, so a deployer on the mesh with a
 # differently named profile does not fall through to the base inventory.
 MESH_HOST=""
+# open_door — open (or re-open) this goatnet's door; a door idles out after
+# about 20 minutes, so a long run re-opens it before each group and before
+# reading the ledgers. Two attempts, a short pause between them.
+open_door() {
+  local n
+  for n in 1 2; do
+    if "$HERE/door-open.sh" "$NAME" >/dev/null 2>&1; then return 0; fi
+    [ "$n" = 2 ] || sleep "${GOAT_DOOR_RETRY_PAUSE:-5}"
+  done
+  return 1
+}
+# transport_failed <log> — the play lost its connection (a host UNREACHABLE, a
+# door or SSM session that dropped), as opposed to a task that failed.
+transport_failed() {
+  grep -q -E 'UNREACHABLE!|unreachable=[1-9]|Connection (refused|reset|closed)|Session (terminated|closed)|TargetNotConnected' "$1"
+}
 for G in $MEMBERS; do
   MESH_HOST="$(awk -v g="[$G]" '$0==g{f=1;next} /^\[/{f=0} f && /ansible_host=/{sub(/.*ansible_host=/,""); sub(/[[:space:]].*/,""); print; exit}' "$REPO/ops/ansible/inventory/mgmt-hosts-mesh.ini" 2>/dev/null || true)"
   [ -n "$MESH_HOST" ] && break
@@ -218,7 +287,7 @@ elif [ "${GOAT_MESH_PROBE:-1}" != 0 ] && [ -n "$MESH_HOST" ] && nc -z -w 3 "$MES
   INV="-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini"; TRANSPORT="mesh (this laptop reaches $MESH_HOST:22; netbird profile reads '$PROFILE')"; TRANSPORT_KIND="mesh"
 elif "$HERE/env-door.sh" "$NAME" --print >/dev/null 2>&1; then
   INV="-i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini"; TRANSPORT="door ($HERE/door-open.sh $NAME)"; TRANSPORT_KIND="door"
-  if [ "$DRY" = 0 ]; then "$HERE/door-open.sh" "$NAME" >/dev/null 2>&1 || die "door to $NAME did not open"; fi
+  if [ "$DRY" = 0 ]; then open_door || die "door to $NAME did not open (tried twice)"; fi
 fi
 # direct and mesh reach this goatnet over plain SSH; no AWS account is needed to
 # list its inventory or tail its deploy ledger (GOAT_AWS_MODE=none, ADR 1204).
@@ -261,9 +330,22 @@ for G in $MEMBERS; do
     if [ "$DRY" = 1 ]; then
       note "DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $(basename "$PLAY") ${TARGET_FLAG}$G) > $LOG"
     else
-      ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
-          ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" ) > "$LOG" 2>&1 \
-        && DEPLOY_RC=0 || DEPLOY_RC=$?
+      [ "$TRANSPORT_KIND" != door ] || open_door || note "$G: door to $NAME did not re-open; trying the play anyway"
+      run_play() {
+        ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
+            ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" ) > "$1" 2>&1 \
+          && DEPLOY_RC=0 || DEPLOY_RC=$?
+      }
+      run_play "$LOG"
+      # A dropped connection, not a failed task: re-open the door (door transport)
+      # and run the play once more. The play is idempotent, so a second run after
+      # a partial one converges the same way (GOAT_DEPLOY_TRANSPORT_RETRY=0: off).
+      if [ "$DEPLOY_RC" != 0 ] && [ "${GOAT_DEPLOY_TRANSPORT_RETRY:-1}" != 0 ] && transport_failed "$LOG"; then
+        note "$G: the connection dropped (log $LOG); re-opening the transport and running the play once more"
+        [ "$TRANSPORT_KIND" != door ] || open_door || true
+        mv "$LOG" "$LOG.first"
+        run_play "$LOG"
+      fi
       RECAP="$(grep -A8 'PLAY RECAP' "$LOG" | grep -E 'ok=' || true)"
       printf '%s\n' "$RECAP" | sed 's/^/      /'
       # A declared member group with no host in the loaded inventories (a site
@@ -297,6 +379,7 @@ for G in $MEMBERS; do
   # design-absence, so a missing ledger there is the correct state, not drift.
   # The inventory read is also what says which hosts MUST answer: a failed read,
   # or a host that never returns a row, is not convergence (#1545).
+  [ "$TRANSPORT_KIND" != door ] || open_door || true
   if ! INVENTORY="$( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES GOAT_AWS_MODE="$READONLY_AWS_MODE" ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
       ansible-inventory $INV --list 2> "$LOG.inventory" )"; then
     note "$G: inventory read FAILED — log $LOG.inventory"; RC=1; continue

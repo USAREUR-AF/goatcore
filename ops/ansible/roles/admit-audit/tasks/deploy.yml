@@ -65,14 +65,15 @@
   # The admit-audit sidecar connects from inside the docker compose mgmt
   # network; pg_hba must have an entry. grep-then-append avoids duplicate
   # lines on re-run; pg_reload_conf picks up the change without restart.
+  # The reload connects over the container's local socket, as the spire and
+  # id console roles' reloads do, so it needs no password.
   ansible.builtin.shell:
     cmd: |
       set -e
       if ! docker exec postgres-a grep -q 'host all admit_audit' /etc/postgresql/pg_hba.conf; then
         docker exec -u 0 postgres-a sh -c \
           "echo 'host all admit_audit 0.0.0.0/0 scram-sha-256' >> /etc/postgresql/pg_hba.conf"
-        docker exec -e PGPASSWORD='{{ postgres_superuser_password }}' postgres-a \
-          psql -U postgres -c 'SELECT pg_reload_conf();'
+        docker exec postgres-a psql -U postgres -c 'SELECT pg_reload_conf();'
       fi
   changed_when: true
   no_log: true
@@ -156,6 +157,8 @@
       ADMIT_AUDIT_IMAGE={{ admit_audit_image }}
     mode: "0600"
     create: false
+  # The block carries the role's password.
+  no_log: true
 
 # ---------------------------------------------------------------------------
 # 5a. The image: pulled by its digest pin, or built from committed source.

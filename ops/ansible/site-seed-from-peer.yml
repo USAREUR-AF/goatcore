@@ -16,7 +16,11 @@
 # goat-standup.sh (phase 6) and `goatbuilder standup` / `goatbuilder join-node`
 # run it for a joiner. A site that needs a different seed keeps its own
 # <site>-seed-from-peer.yml; the drivers run that file in place of this one
-# when it exists.
+# when it exists. A copy of this file starts with
+#   # derived-from: site-seed-from-peer.yml sha256:<this file's sha256>
+# and the drivers refuse it (GB-362, ops/scripts/check-site-play-current.py)
+# once this file has changed since: re-derive the copy. A wrapper that imports
+# this play needs no such line.
 #
 # Inputs:
 #   site_id             (-e, required) the joiner's site id. The play targets

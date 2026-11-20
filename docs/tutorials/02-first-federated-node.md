@@ -87,7 +87,9 @@ checkpoint 2 on hardware proves.
 ## Before the real run
 
 1. **The joiner's declaration.** Its `group_vars/<joiner-site>_hosts/vars.yml`
-   with `goatnet_founder: false` and `join_founder_site: <founder-site>`.
+   with `goatnet_founder: false`, `join_founder_site: <founder-site>` and
+   `zenoh_stack: <joiner-site_id>-zenoh`, the name its data router and every
+   health publisher read. Without it, `join-node` refuses the plan with GB-361.
 2. **The founder names the joiner.** The founder's configuration must list the
    joiner as a replication peer before the mirror runs. The driver cannot
    supply this; the configuration must. Both sites' groups are children of
@@ -152,6 +154,13 @@ takes `inventory/mgmt-hosts.ini` with `inventory/doors-groupvars.ini`, never the
 mesh inventory as well, and the plan's first line opens the door
 (`ops/scripts/door-open.sh <env>`); a run opens it before phase 1.
 
+Phase 1 checks the box answers over SSH at `--address`, and the run goes on:
+one batch-mode connection that reaches the box's SSH server is enough, even when
+the box refuses the login, because before phase 2 seeds your key a box that
+takes only its first-login password refuses every batch login. A box that does
+not answer stops the run at phase 1 with GB-314: reach it on the site LAN
+(`ssh <user>@<address>`), pass its real address, and resume with `--from 1`.
+
 Phase 2 seeds the SSH key only when the box needs it: it first tries
 `ssh -o BatchMode=yes <user>@<address> sudo -n true`, and a box installed
 unattended with your key and passwordless sudo passes that and skips the seed.
@@ -211,6 +220,10 @@ is the by-hand sequence: every phase prints the command it runs and the gate
 that proves it, so the same steps can be run one at a time.
 
 ## Done means proven, not deployed
+
+join-node's phase 15 runs the acceptance rows against the site's end state
+(`endstate.py model <site>`, passed as `--endstate`): a row for a service the
+site declares absent reads N/A, not FAIL.
 
 **Checkpoint 2.** `goatbuilder assay <joiner-site>` is green for the joiner,
 with the fresh-peer rows run from the joiner's network and a goat context for

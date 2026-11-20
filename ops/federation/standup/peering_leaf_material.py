@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """Validate/reuse phase-8 leaves; replacement is an explicit local operation.
 
+An edge leaf of a two-driver peering (--request <leaf> <file>) is signed from
+the certificate request the edge made: its key never reaches this machine. The
+request is checked before either edge leaf is signed, and refused (GB-313)
+unless its subject is exactly one attribute, CN = the derived name, it carries
+no extension or attribute, its key is EC P-256, it is signed with SHA-256 or
+stronger and its self-signature verifies, and its key is new: not the other
+request's, not our CA's, not another leaf's in the output folder or a previous
+set there, and not one --key-record lists as signed before. The certificate's
+names come from the arguments, never from the request. Each signed key's
+fingerprint is appended to --key-record, which lives outside the output folder
+so that the check survives the folder being cleaned; one that resolves inside it,
+links followed, is refused before anything is signed.
+
 A rotation (--rotate) is resumable. The new pairs are minted and validated in a
 private staging directory beside a copy of the pairs they replace (mode 0600),
 with a journal naming the leaves; renaming that directory to
@@ -108,6 +121,154 @@ def validate(cert, key, ca, cn, expected_sans, min_seconds, trust_options):
 # which copy the files to a host with that host's own modes, and the lab's
 # docker exec), so no file here needs a group or other bit.
 LEAF_MODE = 0o600
+
+REFUSED = 'GB-313'
+
+
+class RequestRefused(ValueError):
+    def __init__(self, leaf, why):
+        super().__init__(leaf + ': the certificate request is refused (' + REFUSED + '): ' + why
+                         + '; nothing was signed for either edge leaf')
+
+
+def der_public_key(pem):
+    return openssl('pkey', '-pubin', '-outform', 'DER', data=pem)
+
+
+def key_fingerprint(der):
+    return 'sha256:' + hashlib.sha256(der).hexdigest()
+
+
+STRONG_SIGNATURES = {'ecdsa-with-SHA256', 'ecdsa-with-SHA384', 'ecdsa-with-SHA512'}
+
+
+def check_request(leaf, path, cn):
+    """The public key (DER) of the edge's request for `leaf`, after every rule
+    on the request itself; RequestRefused otherwise."""
+    text = path.read_text(errors='replace')
+    if 'PRIVATE KEY' in text:
+        raise RequestRefused(leaf, 'the file holds a PRIVATE KEY block; only the request may leave the edge')
+    if text.count('-----BEGIN CERTIFICATE REQUEST-----') != 1 or text.count('-----BEGIN ') != 1:
+        raise RequestRefused(leaf, 'the file is not exactly one CERTIFICATE REQUEST block')
+    # OpenSSL 3.0 exits 0 when the self-signature fails and says so only in its
+    # output; later versions exit non-zero. Success is the exit code AND the
+    # explicit "verify OK", wherever that version prints it.
+    verify = subprocess.run(['openssl', 'req', '-in', str(path), '-noout', '-verify'],
+                            capture_output=True, env={**os.environ, 'LC_ALL': 'C'})
+    said = (verify.stdout + verify.stderr).decode(errors='replace')
+    if verify.returncode or 'verify OK' not in said or 'verify failure' in said:
+        raise RequestRefused(leaf, 'its self-signature does not verify')
+    subject = openssl('req', '-in', path, '-noout', '-subject', '-nameopt', 'RFC2253').decode().strip()
+    want = 'CN=' + cn
+    got = subject.partition('=')[2].strip()
+    if got != want:
+        raise RequestRefused(leaf, 'its subject is ' + (got or '(empty)') + ', and it must be exactly '
+                             + want + ': one attribute, the name phase 8 derives')
+    dump = openssl('req', '-in', path, '-noout', '-text').decode()
+    lines = dump.splitlines()
+    try:
+        start = next(i for i, ln in enumerate(lines) if ln.strip() == 'Attributes:')
+    except StopIteration as exc:
+        raise RequestRefused(leaf, 'its attributes cannot be read') from exc
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith('    Signature Algorithm')), len(lines))
+    attributes = [ln.strip() for ln in lines[start + 1:end] if ln.strip()]
+    attributes = [a for a in attributes if a not in ('(none)', 'Requested Extensions:', 'a0:00')]
+    if attributes:
+        raise RequestRefused(leaf, 'it carries an extension or attribute (' + attributes[0]
+                             + '); a request carries none, and phase 8 adds the extensions itself')
+    pem = openssl('req', '-in', path, '-noout', '-pubkey')
+    key_text = openssl('pkey', '-pubin', '-noout', '-text', data=pem).decode()
+    if 'ASN1 OID: prime256v1' not in key_text and 'NIST CURVE: P-256' not in key_text:
+        raise RequestRefused(leaf, 'its key is not EC P-256 (prime256v1), the type every peering leaf has')
+    algorithm = next((ln.split(':', 1)[1].strip() for ln in lines
+                      if ln.startswith('    Signature Algorithm:')), '')
+    if algorithm not in STRONG_SIGNATURES:
+        raise RequestRefused(leaf, 'it is signed with ' + (algorithm or 'an unknown algorithm')
+                             + '; phase 8 accepts ECDSA with SHA-256 or stronger (ecdsa-with-SHA256, -SHA384, -SHA512)')
+    return der_public_key(pem)
+
+
+def read_key_record(path):
+    """{fingerprint: leaf} from --key-record: one JSON object per line."""
+    seen = {}
+    if path is None or not path.exists():
+        return seen
+    for line in path.read_text().splitlines():
+        if line.strip():
+            entry = json.loads(line)
+            seen[entry['public_key_sha256']] = entry.get('leaf', '?')
+    return seen
+
+
+def append_key_record(path, entries):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_APPEND | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'a') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        for entry in entries:
+            handle.write(json.dumps(entry, sort_keys=True) + '\n')
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def keys_held(out, skip):
+    """{fingerprint: where} of every key a leaf in `out` or a previous set there
+    holds, read from certificates and keys, leaving out the leaves in `skip`."""
+    held = {}
+    places = [out] + sorted(p for p in out.glob('.previous-*') if p.is_dir())
+    pending = out / ROTATION / 'previous'
+    if pending.is_dir():
+        places.append(pending)
+    for place in places:
+        for f in sorted(place.glob('*.pem')):
+            if f.name == OUR_CA or f.is_symlink():
+                continue
+            leaf = f.name[:-len('-key.pem')] if f.name.endswith('-key.pem') else f.name[:-len('.pem')]
+            if place == out and leaf in skip:
+                continue
+            try:
+                der = public_key(f, certificate=not f.name.endswith('-key.pem'))
+            except ValueError:
+                continue
+            held[key_fingerprint(der)] = str(f.relative_to(out))
+    return held
+
+
+def sign_request(folder, name, csr, san, ca, ca_key, days, cn):
+    cert, ext = folder / (name + '.pem'), folder / (name + '.ext')
+    ext.write_text('subjectAltName=' + san + '\nbasicConstraints=CA:FALSE\n'
+                   'keyUsage=digitalSignature,keyEncipherment\n'
+                   'extendedKeyUsage=serverAuth,clientAuth\n')
+    serial = hex(int.from_bytes(os.urandom(19), 'big') or 1)
+    # The subject is set here, never copied from the request, and none of the
+    # request's extensions is copied (no -copy_extensions).
+    openssl('x509', '-req', '-in', csr, '-CA', ca, '-CAkey', ca_key, '-passin', 'pass:',
+            '-set_serial', serial, '-subj', '/CN=' + cn, '-out', cert, '-days', days,
+            '-sha256', '-extfile', ext)
+    cert.chmod(LEAF_MODE)
+    return serial
+
+
+def validate_signed(cert, want_public, ca, cn, expected_sans, min_seconds, trust_options):
+    """validate() for a leaf whose key is on the edge: the certificate's key is
+    the request's, and every other rule is the same."""
+    if public_key(cert, certificate=True) != want_public:
+        raise ValueError('certificate does not carry the requested key')
+    subject = openssl('x509', '-in', cert, '-subject', '-noout', '-nameopt', 'RFC2253').decode().strip()
+    if subject.partition('=')[2].strip() != 'CN=' + cn:
+        raise ValueError('certificate subject differs from the requested identity')
+    text = openssl('x509', '-in', cert, '-text', '-noout').decode()
+    if sans(extension(text, 'Subject Alternative Name')) != sans(expected_sans):
+        raise ValueError('certificate SANs differ from the requested addresses')
+    if extension(text, 'Basic Constraints') != 'CA:FALSE':
+        raise ValueError('expected a non-CA leaf')
+    if set(extension(text, 'Extended Key Usage').split(', ')) != {'TLS Web Server Authentication', 'TLS Web Client Authentication'}:
+        raise ValueError('unexpected extended key usage')
+    if set(extension(text, 'Key Usage').split(', ')) != {'Digital Signature', 'Key Encipherment'}:
+        raise ValueError('unexpected key usage')
+    for purpose in ('sslserver', 'sslclient'):
+        openssl('verify', *trust_options, '-trusted', ca, '-purpose', purpose, cert)
+    openssl('x509', '-in', cert, '-noout', '-checkend', min_seconds)
 
 
 def mint(folder, name, cn, san, ca, ca_key, days):
@@ -267,6 +428,51 @@ def finish_rotation(out, ca, min_valid_seconds, trust_options):
     return [name for name, _, _ in leaves]
 
 
+def check_requests(out, ca, requests, args, trust_options):
+    """Every rule on the edge's requests, before anything is signed: the
+    requests that need a certificate, as (leaf, cn, san, request, public key),
+    and the leaves whose certificate already carries the requested key."""
+    if not requests:
+        return [], []
+    leaf_of = {name: (cn, san) for name, cn, san in args.leaf}
+    pubs = {name: check_request(name, f, leaf_of[name][0]) for name, f in requests.items()}
+    fps = {name: key_fingerprint(der) for name, der in pubs.items()}
+    for name in sorted(fps):
+        if list(fps.values()).count(fps[name]) > 1:
+            raise RequestRefused(name, 'it reuses the key of another request; each edge leaf has its own key')
+    ca_fp = key_fingerprint(public_key(ca, certificate=True))
+    record = read_key_record(args.key_record.absolute())
+    held = keys_held(out, set(requests))
+    to_sign, reused = [], []
+    for name, f in sorted(requests.items()):
+        cn, san = leaf_of[name]
+        if fps[name] == ca_fp:
+            raise RequestRefused(name, "it reuses our CA's key")
+        if fps[name] in held:
+            raise RequestRefused(name, 'it reuses the key of ' + held[fps[name]])
+        cert, key = out / (name + '.pem'), out / (name + '-key.pem')
+        if key.exists() or key.is_symlink():
+            raise ValueError(name + ': a key file is in the output folder for a leaf whose key the edge '
+                             'makes; remove ' + str(key) + ' first')
+        if cert.is_symlink() or (cert.exists() and not cert.is_file()):
+            raise ValueError(name + ': expected a regular file, refusing replacement')
+        if cert.exists() and public_key(cert, certificate=True) == pubs[name]:
+            try:
+                validate_signed(cert, pubs[name], ca, cn, san, args.min_valid_seconds, trust_options)
+            except ValueError as exc:
+                raise ValueError(name + ': ' + str(exc) + '; inspect it before signing again') from exc
+            reused.append(name)
+            continue
+        if fps[name] in record:
+            raise RequestRefused(name, 'it reuses a key signed before for ' + record[fps[name]]
+                                 + ' (' + str(args.key_record) + '); the edge makes a new key')
+        if cert.exists():
+            raise ValueError(name + ': a certificate for another key is in place; a new edge key is a '
+                             'rotation, which is not built for a leaf the edge makes its key for')
+        to_sign.append((name, cn, san, f, pubs[name]))
+    return to_sign, reused
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', required=True, type=Path)
@@ -277,6 +483,11 @@ def main():
     parser.add_argument('--min-valid-seconds', type=int, default=86400)
     parser.add_argument('--rotate', action='store_true')
     parser.add_argument('--leaf', action='append', nargs=3, required=True)
+    parser.add_argument('--request', action='append', nargs=2, default=[],
+                        metavar=('LEAF', 'FILE'),
+                        help="sign LEAF from the edge's certificate request FILE; its key stays on the edge")
+    parser.add_argument('--key-record', type=Path,
+                        help='the record of every edge key signed for this peering (outside --out)')
     args = parser.parse_args()
     if args.days <= 0 or args.min_valid_seconds < 0:
         parser.error('days must be positive and minimum validity non-negative')
@@ -287,6 +498,20 @@ def main():
         if not re.fullmatch(r'[a-z][a-z-]*', name) or not re.fullmatch(r'[A-Za-z0-9_.-]+', cn):
             parser.error('invalid leaf name or common name')
         sans(san)
+    requests = {name: Path(f).absolute() for name, f in args.request}
+    if len(requests) != len(args.request) or not set(requests) <= set(names):
+        parser.error('each --request names a distinct leaf given with --leaf')
+    if requests and args.key_record is None:
+        parser.error('--request needs --key-record')
+    if requests and args.rotate:
+        raise ValueError('rotating a leaf whose key the edge makes is not built: '
+                         + ', '.join(sorted(requests)))
+    # The key record outlives the output folder, so the reuse check does: one
+    # inside it (or in a previous set or the rotation staging there, which are
+    # inside it too) would go with the folder. Links are resolved first.
+    if args.key_record is not None and args.key_record.resolve().is_relative_to(args.out.resolve()):
+        raise ValueError('--key-record ' + str(args.key_record) + ' is inside --out ' + str(args.out)
+                         + ': the key record must live outside the output folder')
     out = args.out.absolute()
     ca = args.ca_cert.absolute()
     if ca.read_text().count('-----BEGIN CERTIFICATE-----') != 1:
@@ -321,9 +546,12 @@ def main():
             # This run's --rotate is the resumed command's: the rotation it asked
             # for is the one just finished, so nothing is minted again.
             args.rotate = False
+        to_sign, reused = check_requests(out, ca, requests, args, trust_options)
         pending = []
         existing = []
         for name, cn, san in args.leaf:
+            if name in requests:
+                continue
             cert, key = out / (name + '.pem'), out / (name + '-key.pem')
             for path in (cert, key):
                 if path.is_symlink() or (path.exists() and not path.is_file()):
@@ -339,9 +567,12 @@ def main():
                     raise ValueError(name + ': ' + str(exc) + '; inspect it before using --rotate') from exc
             else:
                 pending.append((name, cn, san))
-        if not pending:
+        if not pending and not to_sign:
             for name in names:
-                print('  [reused] ' + name + ': existing certificate and key validated')
+                if name in requests:
+                    print('  [reused] ' + name + ': existing certificate validated for the edge\'s key')
+                else:
+                    print('  [reused] ' + name + ': existing certificate and key validated')
             place_our_ca(out, ca)
             return
         if args.ca_key is None or not args.ca_key.is_file():
@@ -363,6 +594,13 @@ def main():
                 mint(new, name, cn, san, ca, ca_key, args.days)
                 validate(new / (name + '.pem'), new / (name + '-key.pem'),
                          ca, cn, san, args.min_valid_seconds, trust_options)
+            records = []
+            for name, cn, san, csr, pub in to_sign:
+                serial = sign_request(new, name, csr, san, ca, ca_key, str(args.days), cn)
+                validate_signed(new / (name + '.pem'), pub, ca, cn, san,
+                                args.min_valid_seconds, trust_options)
+                records.append({'leaf': name, 'cn': cn, 'public_key_sha256': key_fingerprint(pub),
+                                'serial': serial})
             if args.rotate and existing:
                 previous = stage / 'previous'
                 previous.mkdir(mode=0o700)
@@ -386,6 +624,10 @@ def main():
                 print('  previous pairs removed: the rotation is done')
                 place_our_ca(out, ca)
                 return
+            # The signed keys are recorded before their certificates are placed,
+            # so a key placed here is always one the record refuses again.
+            if records:
+                append_key_record(args.key_record.absolute(), records)
             installed = []
             try:
                 for name, _, _ in pending:
@@ -393,6 +635,10 @@ def main():
                         target = out / file
                         os.replace(new / file, target)
                         installed.append(target)
+                for name, _, _, _, _ in to_sign:
+                    target = out / (name + '.pem')
+                    os.replace(new / (name + '.pem'), target)
+                    installed.append(target)
             except OSError:
                 # A leaf that had no pair before: take back what was installed.
                 for path in reversed(installed):
@@ -400,6 +646,10 @@ def main():
                 raise
             for name, _, _ in pending:
                 print('  [issued] ' + name)
+            for name, _, _, _, _ in to_sign:
+                print('  [signed] ' + name + ': from the edge\'s request; its key stays on the edge')
+            for name in reused:
+                print('  [reused] ' + name + ': existing certificate validated for the edge\'s key')
             place_our_ca(out, ca)
         finally:
             if stage is not None and stage.exists():

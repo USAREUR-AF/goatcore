@@ -55,3 +55,9 @@ run_guard() {
   run_guard GOAT_SECRET_REF_PREFIX=bao://
   [ "$status" -eq 0 ]
 }
+
+@test "the refusal carries its own code, GB-368, on the line that names it" {
+  run_guard SITE_PROXY_COOKIE=op://vault-x/item-y/field-z
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ansible-preflight: GB-368 REFUSE — unresolved secret references in the environment:"* ]]
+}

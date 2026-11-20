@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -518,8 +518,8 @@ pub fn analyze(reads: &[GoatnetRead], ladder: &[LadderRow], rungs: &[(String, St
 // ---------------------------------------------------------------------------
 
 fn yaml(path: &Path) -> Result<serde_yaml::Value> {
-    let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
-    serde_yaml::from_str(&text).with_context(|| path.display().to_string())
+    let text = std::fs::read_to_string(path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
+    serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-326", format!("{} is not YAML: {e}", path.display())).into())
 }
 
 /// A top-level `key: value` line of a vars file, unquoted.
@@ -693,7 +693,7 @@ pub fn run_mock(f: &verbs::Fixture, o: &Options) -> Result<Report> {
                     Ok(None) => (String::new(), "no-ledger".to_string(), String::new(), String::new()),
                     Err(_) => (String::new(), "unreachable".to_string(), String::new(), String::new()),
                 };
-                r.rows.push(Drift { component: comp.clone(), group: env.clone(), host: m.clone(), declared: declared.clone(), running, state, row_ts: ts, action });
+                r.rows.push(Drift { component: comp.clone(), group: env.clone(), host: m.clone(), declared: declared.clone(), running, state, row_ts: ts, action, read_failed: false });
             }
         }
         reads.push(r);
@@ -741,11 +741,11 @@ fn finish(reads: Vec<GoatnetRead>, ladder_rows: Vec<LadderRow>, rungs: Vec<(Stri
     let order: Vec<String> = reads.iter().map(|r| name(&r.goatnet)).collect();
     let survey = Survey { schema: SCHEMA, generated_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(), budget_secs: BUDGET_SECS, elapsed_secs: elapsed, order, summary, findings, matrix, goatnets: reads };
     if let Some(p) = o.html {
-        std::fs::write(p, html(&survey)).with_context(|| p.display().to_string())?;
+        std::fs::write(p, html(&survey)).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?;
     }
     match o.output {
-        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&survey)?),
-        OutputFormat::Yaml => println!("{}", serde_yaml::to_string(&survey)?),
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&survey).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?),
+        OutputFormat::Yaml => println!("{}", serde_yaml::to_string(&survey).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?),
         // One trailing newline, so the next prompt is on its own line.
         OutputFormat::Table => println!("{}", table(&survey, o.intra, o.inter, o.html).trim_end()),
     }
@@ -1116,7 +1116,7 @@ mod tests {
     use super::*;
 
     fn d(c: &str, host: &str, declared: &str, running: &str, state: &str) -> Drift {
-        Drift { component: c.into(), group: "g_hosts".into(), host: host.into(), declared: declared.into(), running: running.into(), state: state.into(), row_ts: String::new(), action: "deploy".into() }
+        Drift { component: c.into(), group: "g_hosts".into(), host: host.into(), declared: declared.into(), running: running.into(), state: state.into(), row_ts: String::new(), action: "deploy".into(), read_failed: false }
     }
     const A: &str = "ghcr.io/o/portal:v2@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const B: &str = "ghcr.io/o/portal:v1@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

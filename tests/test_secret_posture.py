@@ -123,6 +123,36 @@ class EnvFile(Base):
             os.unlink(path)
 
 
+class AvailableNames(Base):
+    """`posture.py available NAME...` answers for those names only. A run keeps
+    every probe's output in its record (logs/NNN-probe.log), so a probe that
+    listed every variable on the machine put each name into the record."""
+
+    def run_cli(self, *args, **env):
+        out = []
+        with self.env(**env), mock.patch("builtins.print", lambda *a, **k: out.append(" ".join(map(str, a)))):
+            rc = self.p.main(["available", *args])
+        return rc, "\n".join(out).split()
+
+    def test_named_names_are_the_only_ones_printed(self):
+        f = self.write("s.env", "A_SECRET=one\nB_SECRET=two\n")
+        rc, names = self.run_cli("A_SECRET", "C_SECRET", "ZZ_CANARY", GOAT_SECRET_STORE="env-file",
+                                 GOAT_SECRET_ENV_FILE=f, ZZ_CANARY="set", ZZ_UNASKED="set")
+        self.assertEqual(rc, 0)
+        self.assertEqual(names, ["A_SECRET", "ZZ_CANARY"])
+        self.assertNotIn("ZZ_UNASKED", names)
+        self.assertNotIn("B_SECRET", names)
+
+    def test_an_alternative_is_answered_for_each_of_its_names(self):
+        rc, names = self.run_cli("A_TOKEN|B_TOKEN", GOAT_SECRET_STORE="env", B_TOKEN="x")
+        self.assertEqual(names, ["B_TOKEN"])
+
+    def test_no_names_still_lists_everything_for_the_operators_own_terminal(self):
+        rc, names = self.run_cli(GOAT_SECRET_STORE="env", ZZ_CANARY="set")
+        self.assertEqual(rc, 0)
+        self.assertIn("ZZ_CANARY", names)
+
+
 class GitCrypt(Base):
     def test_locked_file_is_refused_and_unlocked_reads(self):
         locked = os.path.join(self.tmp, "locked.env")
@@ -280,8 +310,59 @@ class Injector(Base):
         self.assertIn("ops/secrets/openbao/run", r.stderr)
 
     def test_a_reference_store_with_no_reference_runs_unchanged(self):
-        env = dict(CLEAN, GOAT_SECRET_STORE="1password", GOAT_BUILDER_CONFIG=self.cfg, PATH="/usr/bin:/bin")
+        empty = os.path.join(self.tmp, "no-refs")
+        os.makedirs(empty)
+        env = dict(CLEAN, GOAT_SECRET_STORE="1password", GOAT_BUILDER_CONFIG=self.cfg, PATH="/usr/bin:/bin",
+                   GOAT_REFS_DIR=empty)
         self.assertEqual(self.run_with(env, ["sh", "-c", "echo plain"]).stdout.strip(), "plain")
+
+    def _refs_and_op(self):
+        refs = os.path.join(self.tmp, "refs")
+        os.makedirs(refs)
+        with open(os.path.join(refs, "deploy.refs"), "w") as fh:
+            fh.write("# references only\n"
+                     "SITE_DB_PASS=op://vault/site-db/password\n"
+                     "export SITE_TOKEN='op://vault/site-token/credential'\n"
+                     "NOT_A_REF=plain-value\n")
+        bindir = os.path.join(self.tmp, "bin")
+        os.makedirs(bindir)
+        # A stand-in for `op run`: every op:// value becomes "resolved:<ref>".
+        with open(os.path.join(bindir, "op"), "w") as fh:
+            fh.write('#!/usr/bin/env python3\n'
+                     'import os, sys\n'
+                     'a = sys.argv[1:]\n'
+                     'assert a[0] == "run" and "--" in a, a\n'
+                     'cmd = a[a.index("--") + 1:]\n'
+                     'env = {k: ("resolved:" + v if v.startswith("op://") else v) for k, v in os.environ.items()}\n'
+                     'os.execvpe(cmd[0], cmd, env)\n')
+        os.chmod(os.path.join(bindir, "op"), 0o700)
+        return refs, bindir
+
+    def test_reference_files_resolve_with_no_shell_setup(self):
+        # A fresh assembled tree links the operator's .envrc.local.d; a deploy from it
+        # resolves those references with nothing exported in the shell.
+        refs, bindir = self._refs_and_op()
+        env = dict(CLEAN, GOAT_SECRET_STORE="1password", OP_ACCOUNT="x", GOAT_REFS_DIR=refs,
+                   PATH=bindir + os.pathsep + os.environ["PATH"], GOAT_BUILDER_CONFIG=self.cfg)
+        r = self.run_with(env, ["sh", "-c", 'echo "$SITE_DB_PASS|$SITE_TOKEN|${NOT_A_REF:-unset}"'])
+        self.assertEqual(r.stdout.strip(),
+                         "resolved:op://vault/site-db/password|resolved:op://vault/site-token/credential|unset", r.stderr)
+
+    def test_a_variable_already_set_wins_over_the_reference_file(self):
+        refs, bindir = self._refs_and_op()
+        env = dict(CLEAN, GOAT_SECRET_STORE="1password", OP_ACCOUNT="x", GOAT_REFS_DIR=refs,
+                   SITE_DB_PASS="op://vault/other/password",
+                   PATH=bindir + os.pathsep + os.environ["PATH"], GOAT_BUILDER_CONFIG=self.cfg)
+        r = self.run_with(env, ["sh", "-c", 'echo "$SITE_DB_PASS"'])
+        self.assertEqual(r.stdout.strip(), "resolved:op://vault/other/password", r.stderr)
+
+    def test_loading_reference_files_can_be_turned_off(self):
+        refs, bindir = self._refs_and_op()
+        env = dict(CLEAN, GOAT_SECRET_STORE="1password", OP_ACCOUNT="x", GOAT_REFS_DIR=refs,
+                   GOAT_SECRETS_LOAD_REFS="0",
+                   PATH=bindir + os.pathsep + os.environ["PATH"], GOAT_BUILDER_CONFIG=self.cfg)
+        r = self.run_with(env, ["sh", "-c", 'echo "${SITE_DB_PASS:-unset}"'])
+        self.assertEqual(r.stdout.strip(), "unset", r.stderr)
 
     def test_an_unknown_store_names_the_choices(self):
         env = dict(CLEAN, GOAT_SECRET_STORE="nosuch", GOAT_BUILDER_CONFIG=self.cfg)

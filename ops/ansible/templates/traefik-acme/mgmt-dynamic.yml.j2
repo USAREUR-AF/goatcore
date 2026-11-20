@@ -109,18 +109,21 @@
 #     is anything other than `netbird.<zone>` 404s at
 #     routing time regardless of source IP.
 #   - Every other (.<site>.*) router is pinned to the `websecure`
-#     entrypoint EXCLUSIVELY (:443 on all interfaces; mesh-reachable
+#     entrypoint EXCLUSIVELY (:443 on all IPv4 interfaces; mesh-reachable
 #     via the mgmt host's netbird IP and on-host-container-reachable via the
 #     docker bridge gateway). Each carries the `mesh-only-allowlist`
-#     middleware (IPAllowList on netbird CGNAT 100.64.0.0/10 plus
-#     RFC1918 Docker bridge 172.16.0.0/12 for the on-host-container path)
-#     as defense-in-depth.
+#     middleware (IPAllowList on netbird CGNAT 100.64.0.0/10 plus the
+#     mgmt Docker network's own subnet, mgmt_docker_network_subnet, for the
+#     on-host-container path) as defense-in-depth.
 #   - **Why two layers (entrypoint + middleware)?** The middleware alone is
 #     not enough: the rathole → 127.0.0.1:443 → Docker SNAT chain rewrites
 #     the source to the bridge gateway (172.x.0.1), which matches the
 #     on-host-container entry in the allowlist and defeats the gate. The
 #     entrypoint split fixes this structurally — public traffic via rathole
 #     never reaches the websecure entrypoint, so its source IP is irrelevant.
+#     That holds only while the rathole target is 127.0.0.1:8443, the default
+#     of rathole_client_netbird_mgmt_local_addr (templates/client.toml.j2); an
+#     override to :443 reopens the bypass. See mesh-source-allowlist below.
 #   - The same middleware is referenced as `mesh-only-allowlist@file`
 #     from panoscope + goat-zenoh-portal Traefik dynamic configs so
 #     additional surfaces inherit the gate without duplicating the rule.
@@ -327,7 +330,9 @@ http:
     # (oauth2-proxy-isitup, panoscope reaching portal.<site>.*, future
     # grafana-OIDC-proxy etc) need access to OIDC-discovery endpoints on
     # Traefik from inside the host's Docker bridge networks — those
-    # source IPs land in RFC1918 172.16.0.0/12.
+    # source IPs land in the mgmt network's subnet: a container on `mgmt`
+    # keeps its own address, and one on another bridge reaching a published
+    # port is masqueraded to the mgmt gateway on its way in.
     # Trust shape: a container running on the mgmt host IS the mgmt host; the mesh-only
     # invariant is about external traffic, not on-host loopback-through-
     # bridge.
@@ -339,11 +344,13 @@ http:
     # gateway IP (172.x.0.1), which matches the 172.16/12 entry above and
     # DEFEATS the gate. So rathole-client forwards to 127.0.0.1:8443, a
     # dedicated `enrollment` Traefik entrypoint that only signal + mgmt-public
-    # attach to. The middleware here stays as defense-in-depth — if a config
-    # error attaches a mesh-only router to the enrollment entrypoint, this
-    # allowlist 403s the public-via-rathole traffic since its source
-    # (172.x.0.1) isn't in 100.64.0.0/10 (mesh) — but the entrypoint split is
-    # what closes the bypass.
+    # attach to. The entrypoint split is the ONLY thing that closes the
+    # bypass: this middleware is no backstop for it. Every relay-borne
+    # request arrives as the mgmt gateway, which is inside the
+    # mgmt_docker_network_subnet entry and PASSES. So a mesh-only router must never attach to the enrollment
+    # entrypoint (nor omit entryPoints, which binds it to all of them), and
+    # nothing on the enrollment entrypoint may rely on an IP allowlist.
+    # tests/test_mesh_allowlist_ingress.py holds both.
     #
     # Referenced as `mesh-only-allowlist@file` from panoscope +
     # goat-zenoh-portal Traefik configs so those surfaces inherit
@@ -386,7 +393,30 @@ http:
       ipAllowList:
         sourceRange:
           - "100.64.0.0/10"  # netbird CGNAT — mesh peers
-          - "172.16.0.0/12"  # RFC1918 Docker bridge — on-host containers
+          # The mgmt Docker network's own subnet (never 172.16.0.0/12: that
+          # admitted any OFF-host client numbered inside it, DNATed with its
+          # own address, e.g. an AWS default VPC at 172.31.0.0/16). It holds
+          # on-host containers, and ALSO every connection made on the host
+          # itself to a published port (it goes through docker-proxy and
+          # arrives as the mgmt gateway). Read from the live network by
+          # tasks/mgmt-network-subnet.yml, which fails rather than render
+          # without it. So this entry trusts anything that reaches websecure
+          # from the host. It admits no off-host client only while BOTH hold:
+          #   1. websecure is published IPv4-only ("0.0.0.0:443:443"), so an
+          #      off-host client is DNATed and keeps its own address; a [::]
+          #      publish is served by docker-proxy and turns every IPv6 LAN
+          #      client into the gateway (GHSA-p22f);
+          #   2. no host-local forwarder relays off-host traffic to :443. The
+          #      rathole client must target the enrollment listener
+          #      127.0.0.1:8443 (rathole_client_netbird_mgmt_local_addr, its
+          #      default); a site override back to 127.0.0.1:443 puts the
+          #      public relay inside this range.
+          # An off-host client numbered inside this subnet gets no reply: the
+          # host routes the subnet to the bridge.
+          # tests/test_mesh_allowlist_ingress.py guards both.
+{% if mgmt_docker_network_subnet | default('') %}
+          - "{{ mgmt_docker_network_subnet }}"
+{% endif %}
 {% for cidr in mesh_only_allowlist_extra_cidrs | default([]) %}
           - "{{ cidr }}"  # extra source (mesh_only_allowlist_extra_cidrs)
 {% endfor %}
@@ -868,7 +898,9 @@ http:
 {# External-service routers (ADR 1178). One router per enabled declaration.
    mesh-only-allowlist is the edge's whole gate: identity is the SERVICE's
    business (its own fence verifies the goatnet's tokens — `door` in the
-   declaration says what that fence decides), never this router's. #}
+   declaration says what that fence decides), never this router's — except
+   `door: admit` (ADR 1254), where goat's own sign-in door and admission check
+   are the fence and the backend service above points at them. #}
 {% for _ext_var in (lookup('varnames', '^external_service_', wantlist=True) | sort) %}
 {%   set _ext = lookup('vars', _ext_var) %}
 {#   `tls: partner` renders NO router: those names resolve straight to the
@@ -1106,7 +1138,13 @@ http:
     {{ _ext.traefik_name | default('ext-' ~ _ext.name) }}:
       loadBalancer:
         servers:
+{#     door: admit (ADR 1254) — the router goes to the service's sign-in door, which
+       passes the admitted request on through door-admit-<name> to backend_url. #}
+{%     if (_ext.door | default('')) == 'admit' %}
+          - url: "http://oauth2-proxy-ext-{{ _ext.name }}:4180"
+{%     else %}
           - url: "{{ _ext.backend_url }}"
+{%     endif %}
 {%   endif %}
 {% endfor %}
 

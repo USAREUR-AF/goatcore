@@ -4,17 +4,18 @@
 # Orchestrator for the CGNAT-aware signal federation validation env
 # (attempt-2, Path C — 100 x t2.nano native netbird peers, 50 per site).
 #
-# Supersedes attempt-1's nested-container peer swarm — see
-# docs/reports/2026-04-24-cgnat-validation-attempt-1-findings.md §3
-# for the architectural decision. "One peer per EC2 with stock netbird
-# on systemd" matches production (Orin + Karbon) and removes a whole
+# Supersedes attempt-1's nested-container peer swarm; the decision is in
+# docs/design/cgnat-validation-env.md §2.1. "One peer per EC2 with stock
+# netbird on systemd" matches production (Orin + Karbon) and removes a whole
 # class of container-init release-churn flakes.
 #
 # Design: docs/design/cgnat-validation-env.md
 # Runbook: docs/operations/cgnat-validation-runbook.md
-# Terraform: terraform/cgnat-validation.tf
+# The Terraform root and the inventory belong to the deployment, in its
+# overlay repository; neither is in this repository.
 #
-# Required -e vars:
+# Required variables, each read from the operator's environment by the play
+# (-e 'name={{ lookup("env", "NAME") }}'), so no value is on the command line:
 #   postgres_superuser_password       Both sites' PG superuser pw
 #   netbird_encryption_key            base64 32 bytes (shared across cluster)
 #   cgnat_site_a_setup_key            UUID setup key site α — must match the
@@ -22,9 +23,9 @@
 #                                     have it baked into user_data already)
 #   cgnat_site_b_setup_key            UUID setup key site β — same constraint
 #
-# Inventory: ops/ansible/inventory/cgnat-validation.ini (regenerate
-# after terraform apply via inventory/gen-cgnat-validation.sh).
-# signal_uri + cgnat_mgmt_{a,b}_public_ip are set per-host in inventory.
+# Inventory: two groups, cgnat_mgmt_a_hosts and cgnat_mgmt_b_hosts, one mgmt
+# host each, with signal_uri and site_name set per host. Every phase targets
+# those two groups, the mgmt-plane import included (mgmt_host_target below).
 #
 # Speed-up posture: peer enrollment moved to cloud-init user_data (Path C
 # refactor). Ansible now only orchestrates the 2 mgmt hosts —
@@ -33,33 +34,28 @@
 # self-enroll on first boot. See docs/design/cgnat-validation-env.md.
 #
 # Run (from ops/ansible/):
-#   SETUP_A=$(uuidgen); SETUP_B=$(uuidgen)
-#   # 1) terraform apply with the same setup keys (so peer user_data has them)
-#   aws-vault exec legacy --no-session -- terraform apply \
-#     -var=cgnat_site_a_setup_key=$SETUP_A \
-#     -var=cgnat_site_b_setup_key=$SETUP_B \
-#     # ... -target= flags per cgnat-validation-runbook.md §1
-#   # 2) regenerate inventory + run mgmt-plane orchestration
-#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec legacy --no-session -- \
-#     ansible-playbook \
-#       -i inventory/cgnat-validation.ini \
-#       cgnat-validation.yml \
-#       -e postgres_superuser_password=... \
-#       -e netbird_encryption_key=... \
-#       -e cgnat_site_a_setup_key=$SETUP_A \
-#       -e cgnat_site_b_setup_key=$SETUP_B
+#   export CGNAT_SITE_A_SETUP_KEY=$(uuidgen) CGNAT_SITE_B_SETUP_KEY=$(uuidgen)
+#   # 1) apply the deployment's Terraform root with the same setup keys, so
+#   #    the peers' user_data carries them (the runbook, section 1)
+#   # 2) run the mgmt-plane orchestration against the deployment's inventory
+#   ansible-playbook -i <inventory> cgnat-validation.yml \
+#     -e 'postgres_superuser_password={{ lookup("env", "<SITE>_PG_PASS") }}' \
+#     -e 'netbird_encryption_key={{ lookup("env", "<SITE>_NB_ENCKEY") }}' \
+#     -e 'cgnat_site_a_setup_key={{ lookup("env", "CGNAT_SITE_A_SETUP_KEY") }}' \
+#     -e 'cgnat_site_b_setup_key={{ lookup("env", "CGNAT_SITE_B_SETUP_KEY") }}'
 
 # =============================================================================
 # Phase 1 — mgmt-plane stack on both sites
 # =============================================================================
-# mgmt-host.yml targets hosts: mgmt_hosts. Inventory puts both
-# cgnat-mgmt-a and cgnat-mgmt-b in that group and sets per-host
-# signal_uri + site_name via host_vars, so a single import deploys
-# both sites with distinct federation endpoints.
+# mgmt-host.yml's play targets mgmt_host_target, which has no default: this
+# import names both mgmt groups. Each host carries its own signal_uri and
+# site_name in the inventory, so a single import deploys both sites with
+# distinct federation endpoints.
 - name: "cgnat-validation: mgmt-plane (both sites)"
   import_playbook: mgmt-host.yml
   vars:
     phase2: false
+    mgmt_host_target: "cgnat_mgmt_a_hosts:cgnat_mgmt_b_hosts"
 
 # =============================================================================
 # Phase 2 — expose mgmt API externally via socat sidecar
@@ -149,14 +145,30 @@
     site_net_id: "cgnat-a-net"
     site_network_net: '{"IP":"100.64.0.0","Mask":"//8AAA=="}'
   tasks:
+    # The setup key reaches the hash on stdin, not a command line, and no task
+    # here prints it, its hash or the masked form NetBird stores.
+    - name: Hash the setup key (base64 of its sha256, as NetBird stores it)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "import base64, hashlib, sys; print(base64.b64encode(hashlib.sha256(sys.stdin.buffer.read()).digest()).decode())"
+        stdin: "{{ site_uuid_upper }}"
+        stdin_add_newline: false
+      delegate_to: localhost
+      become: false
+      register: site_key_hash_out
+      changed_when: false
+      no_log: true
     - name: Compute setup-key hash + mask
       ansible.builtin.set_fact:
-        site_key_hash: "{{ lookup('pipe', 'echo -n ' + site_uuid_upper + ' | sha256sum | xxd -r -p | base64') }}"
+        site_key_hash: "{{ site_key_hash_out.stdout | trim }}"
         site_key_mask: "{{ site_uuid_upper[:5] }}****"
+      no_log: true
     - name: Render seed SQL
       ansible.builtin.copy:
         dest: /tmp/cgnat-a-seed.sql
-        mode: "0644"
+        mode: "0600"
         content: |
           -- Account row — all NOT-NULL-expected columns populated; nullable *netip.Prefix kept NULL.
           INSERT INTO accounts (
@@ -222,12 +234,36 @@
           -- "can't scan NULL into *string". Clear them defensively.
           DELETE FROM users WHERE account_id = '{{ site_account_id }}'
             AND name = '' AND email = '';
-    - name: Apply seed SQL via psql
-      ansible.builtin.shell: |
-        docker cp /tmp/cgnat-a-seed.sql postgres-a:/tmp/seed.sql
-        docker exec -e PGPASSWORD='{{ postgres_superuser_password }}' postgres-a \
-          psql -U postgres -d netbird -f /tmp/seed.sql
-      changed_when: true
+      # The content carries the setup key's hash and masked form.
+      no_log: true
+    - name: Seed site α through psql, the password from a 0600 env file
+      block:
+        - name: Create the postgres env file (0600)
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pgenv
+          register: pg_env
+
+        - name: Write the superuser password to the postgres env file
+          ansible.builtin.copy:
+            dest: "{{ pg_env.path }}"
+            content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+            mode: "0600"
+          no_log: true
+
+        - name: Apply seed SQL via psql
+          # On stdin: psql runs as the image's postgres user, and a copy in the
+          # container would be root-owned at the seed's mode 0600.
+          ansible.builtin.shell: |
+            docker exec -i --env-file '{{ pg_env.path }}' postgres-a \
+              psql -U postgres -d netbird -f - < /tmp/cgnat-a-seed.sql
+          changed_when: true
+      always:
+        - name: Remove the postgres env file
+          ansible.builtin.file:
+            path: "{{ pg_env.path }}"
+            state: absent
+          when: pg_env.path is defined
 
 - name: "cgnat-validation: seed account + setup-key + All group (site β)"
   hosts: cgnat_mgmt_b_hosts
@@ -243,14 +279,30 @@
     # Different /16 to keep the two sites' WG IP ranges disjoint.
     site_network_net: '{"IP":"100.65.0.0","Mask":"//8AAA=="}'
   tasks:
+    # The setup key reaches the hash on stdin, not a command line, and no task
+    # here prints it, its hash or the masked form NetBird stores.
+    - name: Hash the setup key (base64 of its sha256, as NetBird stores it)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "import base64, hashlib, sys; print(base64.b64encode(hashlib.sha256(sys.stdin.buffer.read()).digest()).decode())"
+        stdin: "{{ site_uuid_upper }}"
+        stdin_add_newline: false
+      delegate_to: localhost
+      become: false
+      register: site_key_hash_out
+      changed_when: false
+      no_log: true
     - name: Compute setup-key hash + mask
       ansible.builtin.set_fact:
-        site_key_hash: "{{ lookup('pipe', 'echo -n ' + site_uuid_upper + ' | sha256sum | xxd -r -p | base64') }}"
+        site_key_hash: "{{ site_key_hash_out.stdout | trim }}"
         site_key_mask: "{{ site_uuid_upper[:5] }}****"
+      no_log: true
     - name: Render seed SQL
       ansible.builtin.copy:
         dest: /tmp/cgnat-b-seed.sql
-        mode: "0644"
+        mode: "0600"
         content: |
           INSERT INTO accounts (
             id, created_by, created_at,
@@ -310,14 +362,38 @@
 
           DELETE FROM users WHERE account_id = '{{ site_account_id }}'
             AND name = '' AND email = '';
-    - name: Apply seed SQL via psql
-      ansible.builtin.shell: |
-        docker cp /tmp/cgnat-b-seed.sql postgres-a:/tmp/seed.sql
-        docker exec -e PGPASSWORD='{{ postgres_superuser_password }}' postgres-a \
-          psql -U postgres -d netbird -f /tmp/seed.sql
-      changed_when: true
+      # The content carries the setup key's hash and masked form.
+      no_log: true
+    - name: Seed site β through psql, the password from a 0600 env file
+      block:
+        - name: Create the postgres env file (0600)
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pgenv
+          register: pg_env
 
-# =============================================================================
+        - name: Write the superuser password to the postgres env file
+          ansible.builtin.copy:
+            dest: "{{ pg_env.path }}"
+            content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+            mode: "0600"
+          no_log: true
+
+        - name: Apply seed SQL via psql
+          # On stdin: psql runs as the image's postgres user, and a copy in the
+          # container would be root-owned at the seed's mode 0600.
+          ansible.builtin.shell: |
+            docker exec -i --env-file '{{ pg_env.path }}' postgres-a \
+              psql -U postgres -d netbird -f - < /tmp/cgnat-b-seed.sql
+          changed_when: true
+
+    # =============================================================================
+      always:
+        - name: Remove the postgres env file
+          ansible.builtin.file:
+            path: "{{ pg_env.path }}"
+            state: absent
+          when: pg_env.path is defined
 # Phase 4 — DELETED. Peer enrollment now happens at first-boot via cloud-init
 # user_data — see terraform/cgnat-peer-cloud-init.yaml.tpl. Each peer self-
 # enrolls with retry loop, so Ansible no longer fans out across 100 hosts.
@@ -352,23 +428,44 @@
       ansible.builtin.debug:
         msg: "{{ (signal_a_metrics.content.split('\n') | select('match', '^signal_server_(connected_peers|forward_sent_total).*') | list) }}"
 
-    - name: Query enrolled peer count (site α)
-      ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - -e
-          - "PGPASSWORD={{ postgres_superuser_password }}"
-          - postgres-a
-          - psql
-          - -U
-          - postgres
-          - -d
-          - netbird
-          - -tAc
-          - "SELECT COUNT(*) FROM peers;"
-      register: peers_a
-      changed_when: false
+    - name: Count site α's peers, the password from a 0600 env file
+      block:
+        - name: Create the postgres env file (0600)
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pgenv
+          register: pg_env
+
+        - name: Write the superuser password to the postgres env file
+          ansible.builtin.copy:
+            dest: "{{ pg_env.path }}"
+            content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+            mode: "0600"
+          no_log: true
+
+        - name: Query enrolled peer count (site α)
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - --env-file
+              - "{{ pg_env.path }}"
+              - postgres-a
+              - psql
+              - -U
+              - postgres
+              - -d
+              - netbird
+              - -tAc
+              - "SELECT COUNT(*) FROM peers;"
+          register: peers_a
+          changed_when: false
+      always:
+        - name: Remove the postgres env file
+          ansible.builtin.file:
+            path: "{{ pg_env.path }}"
+            state: absent
+          when: pg_env.path is defined
 
     - name: Report site-α peer count
       ansible.builtin.debug:
@@ -389,23 +486,44 @@
       ansible.builtin.debug:
         msg: "{{ (signal_b_metrics.content.split('\n') | select('match', '^signal_server_(connected_peers|forward_sent_total).*') | list) }}"
 
-    - name: Query enrolled peer count (site β)
-      ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - -e
-          - "PGPASSWORD={{ postgres_superuser_password }}"
-          - postgres-a
-          - psql
-          - -U
-          - postgres
-          - -d
-          - netbird
-          - -tAc
-          - "SELECT COUNT(*) FROM peers;"
-      register: peers_b
-      changed_when: false
+    - name: Count site β's peers, the password from a 0600 env file
+      block:
+        - name: Create the postgres env file (0600)
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pgenv
+          register: pg_env
+
+        - name: Write the superuser password to the postgres env file
+          ansible.builtin.copy:
+            dest: "{{ pg_env.path }}"
+            content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+            mode: "0600"
+          no_log: true
+
+        - name: Query enrolled peer count (site β)
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - --env-file
+              - "{{ pg_env.path }}"
+              - postgres-a
+              - psql
+              - -U
+              - postgres
+              - -d
+              - netbird
+              - -tAc
+              - "SELECT COUNT(*) FROM peers;"
+          register: peers_b
+          changed_when: false
+      always:
+        - name: Remove the postgres env file
+          ansible.builtin.file:
+            path: "{{ pg_env.path }}"
+            state: absent
+          when: pg_env.path is defined
 
     - name: Report site-β peer count
       ansible.builtin.debug:

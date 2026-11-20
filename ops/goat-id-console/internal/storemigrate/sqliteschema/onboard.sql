@@ -107,6 +107,14 @@ CREATE TABLE IF NOT EXISTS onboard_proposals (
     -- first requester wins; the runner carries the handle into the revoke.
     offboard_requested_by TEXT NOT NULL DEFAULT '',
     offboard_requested_at INTEGER NOT NULL DEFAULT 0,
+    -- The requester's Kratos identity id, from the authenticated session
+    -- ('' when the session carried none); names the approver in the runner's
+    -- admin.offboard operator-action record (goat#1910).
+    offboard_requested_by_identity TEXT NOT NULL DEFAULT '',
+    -- The runner's operator-action outcome for the cut: 'recorded', or
+    -- 'failed: <why>' when the admin.offboard record did not reach the audit
+    -- fabric or names no approver. '' before a runner reports one.
+    offboard_operator_audit TEXT NOT NULL DEFAULT '',
     -- When a runner claimed this row (onboarding/offboarding); the requeue
     -- sweep's anchor for a claim a dead runner abandoned (goat#977). 0 when
     -- unclaimed or requeued.
@@ -242,6 +250,7 @@ CREATE TABLE IF NOT EXISTS operator_keys (
   reason        TEXT NOT NULL DEFAULT '',   -- what the person says they need it for
   status        TEXT NOT NULL DEFAULT 'requested',
   fingerprint   TEXT NOT NULL DEFAULT '',   -- sha256:… — identifies the key in logs without being one
+  holder_identity_id TEXT NOT NULL DEFAULT '',
   -- The live value, held ONLY between approval and its single delivery to the
   -- requester, then emptied. A console database that permanently held live
   -- bearer tokens would be a strictly worse thing to lose than one holding

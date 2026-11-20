@@ -31,6 +31,6 @@ docker run --rm --network "$NET" -v "$(cd ..;pwd)/cac-test-pki/out:/pki:ro" -v "
 echo "==> goat identity minted from the CAC?"
 IDS=$(curl -fsS http://localhost:4434/admin/identities)
 echo "$IDS" | jq -e '[.[]|select(.metadata_public.external_subjects[]?.subject=="1234567890")]|length>=1' >/dev/null && {
-  echo "$IDS" | jq '[.[]|select(.metadata_public.external_subjects[]?.subject=="1234567890")][0]|{id, email:.traits.email, groups:.traits.groups, external_subjects:.metadata_public.external_subjects}'
+  echo "$IDS" | jq '[.[]|select(.metadata_public.external_subjects[]?.subject=="1234567890")][0]|{id, email:.traits.email, groups:.metadata_public.groups, external_subjects:.metadata_public.external_subjects}'
   echo "  ==> FULL #2 CHAIN PROVEN: CAC cert -> nginx mTLS -> Dex -> Kratos -> native goat identity (anchor=Kratos UUID, EDIPI in metadata_public)"
 } || { echo "  FAIL: no goat identity carrying the EDIPI"; echo "$IDS" | jq -r ".[].traits.email"; exit 1; }

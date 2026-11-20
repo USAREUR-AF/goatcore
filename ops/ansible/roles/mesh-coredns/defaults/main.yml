@@ -33,6 +33,31 @@
 mesh_coredns_dir: "{{ goat_host_opt_dir | default('/opt/goat') }}/dns"
 mesh_coredns_image: coredns/coredns:1.15.0
 mesh_coredns_port: 5353
+# Where CoreDNS forwards a name that is not in the mesh zone: a list of
+# CoreDNS `forward` destinations (an address, address:port, or tls://address),
+# rendered in order on one `forward .` line. An empty list renders no forward
+# directive: the resolver answers only its own zone, a name outside it gets
+# NXDOMAIN from a root zone file that holds only an SOA (mesh_coredns_negative_ttl
+# below), and no query leaves the resolver. A goatnet that needs no outside DNS on the
+# mesh resolver, or forwards to a resolver it runs, sets the list in its
+# group_vars (ops/ansible/group_vars/_examples/).
+#
+# The default keeps the forwarders every goatnet ran before this variable
+# existed. Handset DNS depends on forwarding: `<site_id>-handset-dns`
+# (goat-coredns.yml, `handset_dns_enabled: true`) sends every query from a
+# phone here, so a goatnet with handset DNS on and an empty list leaves its
+# phones without outside names. Desktops use the match-domain group and are
+# not affected.
+mesh_coredns_forwarders:
+  - "1.1.1.1"
+  - "8.8.8.8"
+# With an empty mesh_coredns_forwarders, a name this resolver does not hold
+# answers NXDOMAIN from a root zone file that holds only an SOA
+# (templates/mesh-root.zone.j2). A resolver caches that answer for this many
+# seconds, so a name added to mesh-hosts later is not taken for missing for
+# long. Unused while forwarders are set.
+mesh_coredns_negative_ttl: 30
+mesh_coredns_root_zone_path: "{{ mesh_coredns_dir }}/mesh-root.zone"
 # Optional second bind for the wg-cp0 silent-control-plane interface.
 # Empty = no extra bind. Set to e.g. "198.18.0.1" to allow operator
 # laptops on wg-cp0 to resolve mesh-DNS records pre-netbird-enrollment.
@@ -70,3 +95,9 @@ mesh_coredns_smoke_test_name: "mgmt.{{ site_id }}.{{ site_dns_zone }}"
 # the established per-service extra_hosts idiom.
 mesh_coredns_host_zone_route_enabled: false
 mesh_coredns_host_zone_route_zone: "{{ site_dns_zone | mandatory }}"
+
+# Decoy names (ADR 1247). Both empty: no decoy stanza is rendered. Set by a
+# goatnet whose deception.yml enables the responder: the zone its services live
+# under, and the mesh address of the host whose Traefik fronts the responder.
+mesh_coredns_decoy_zone: ""
+mesh_coredns_decoy_answer_ip: ""

@@ -1,0 +1,104 @@
+---
+- name: door-admit | require the inputs
+  ansible.builtin.assert:
+    that:
+      - door_admit_name is match('^[a-z0-9][a-z0-9-]{0,62}$')
+      - door_admit_state in ['present', 'absent']
+      - door_admit_state == 'absent' or (door_admit_upstream is match('^http://'))
+      - door_admit_state == 'absent' or (door_admit_rules.admit is defined)
+    fail_msg: "door-admit needs a name, an http:// upstream and an expanded rule document (state={{ door_admit_state }})."
+
+- name: door-admit | compose directory
+  ansible.builtin.file:
+    path: "{{ door_admit_root }}/door-admit-{{ door_admit_name }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when: door_admit_state == 'present'
+
+- name: door-admit | the script (standard library only)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../door-admit/door_admit.py"   # one home: ops/door-admit/
+    dest: "{{ door_admit_root }}/door-admit-{{ door_admit_name }}/door_admit.py"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: "restart door-admit"
+  when: door_admit_state == 'present'
+
+# World-readable on purpose: the container runs as nobody. It holds organization ids,
+# group names and the allowlist's e-mail addresses, never a secret.
+- name: door-admit | the expanded admission rule
+  ansible.builtin.copy:
+    content: "{{ door_admit_rules | to_nice_json }}\n"
+    dest: "{{ door_admit_root }}/door-admit-{{ door_admit_name }}/rules.json"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: "restart door-admit"
+  when: door_admit_state == 'present'
+
+- name: door-admit | the compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ door_admit_root }}/door-admit-{{ door_admit_name }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: "restart door-admit"
+  when: door_admit_state == 'present'
+
+- name: door-admit | up
+  community.docker.docker_compose_v2:
+    project_src: "{{ door_admit_root }}/door-admit-{{ door_admit_name }}"
+    state: present
+    pull: missing
+  become: true
+  when: door_admit_state == 'present'
+
+- name: door-admit | flush handlers so the check sees the current rule
+  ansible.builtin.meta: flush_handlers
+
+- name: door-admit | the container is running and answers its health path
+  ansible.builtin.command:
+    cmd: >-
+      docker exec door-admit-{{ door_admit_name }} python3 -c
+      "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/door-admit/healthz',timeout=3).read().decode().strip())"
+  register: door_admit_health
+  retries: 10
+  delay: 3
+  until: door_admit_health.rc == 0 and door_admit_health.stdout == 'ok'
+  changed_when: false
+  become: true
+  when: door_admit_state == 'present'
+
+# rollback_promote_mode: explicit (meta/main.yml): the pending ledger row is
+# promoted here, once the container answers its health path, never before.
+- name: door-admit | record deploy convergence in the ledger after the health check
+  ansible.builtin.include_role:
+    name: rollback-ledger
+    tasks_from: promote
+  vars:
+    rollback_component: door-admit
+    rollback_ref: "{{ door_admit_image }}"
+  when: door_admit_state == 'present'
+
+- name: door-admit | down (absent)
+  community.docker.docker_compose_v2:
+    project_src: "{{ door_admit_root }}/door-admit-{{ door_admit_name }}"
+    state: absent
+  become: true
+  failed_when: false
+  when: door_admit_state == 'absent'
+
+- name: door-admit | remove the directory (absent)
+  ansible.builtin.file:
+    path: "{{ door_admit_root }}/door-admit-{{ door_admit_name }}"
+    state: absent
+  become: true
+  when: door_admit_state == 'absent'

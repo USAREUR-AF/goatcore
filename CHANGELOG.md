@@ -29,4 +29,4 @@ Every release page is at <https://github.com/USAREUR-AF/goatcore/releases>. The 
 
 ## How goatbuilder's changelog is written
 
-Each change adds one file under [`crates/goatbuilder/changelog.d/`](crates/goatbuilder/changelog.d/README.md). `ops/release/changelog.py write` renders them into the Unreleased section of `crates/goatbuilder/CHANGELOG.md`, and the version pull request runs `ops/release/changelog.py release <version> <date>`, which writes that version's section and removes the entry files.
+Each change adds one file under [`crates/goatbuilder/changelog.d/`](crates/goatbuilder/changelog.d/README.md). The pull request commits that file alone: the Unreleased section of `crates/goatbuilder/CHANGELOG.md` is one fixed line pointing there, and `ops/release/changelog.py show` prints the entries as the next release will. The version pull request runs `ops/release/changelog.py release <version> <date>`, which writes that version's section and removes the entry files.

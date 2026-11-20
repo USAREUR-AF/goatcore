@@ -2,14 +2,16 @@
 //! scripted implementation on a fixture directory (goatbuilder-conformance.md
 //! §"The fixture"). A verb never touches a host: it publishes a declaration,
 //! observes the machines, and reads each machine's record through these three
-//! calls. The push-Ansible and pull-agent convergers land behind the same trait,
-//! each behind the parity gate; the scripted one is what the conformance suite,
-//! the golden tests and `tutor` run on.
+//! calls. The push converger is behind the same trait (`Push`, gate D), and the
+//! pull converger lands as another implementation of it; the scripted one is
+//! what the conformance suite, the golden tests and `tutor` run on. A verb asks
+//! [`select`] for the converger and calls its steps (`deploy`, `status`,
+//! `verify`), whose defaults are written in the four calls alone.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// The code a real-host verb and `doctor` refuse `converger: pull-agent` with:
@@ -127,6 +129,42 @@ impl Publication {
     }
 }
 
+/// Where the declared refs come from: a fixture's `declared/pins.yaml`, or, for a
+/// converger that uses the default steps on real hosts, the checkout's pins.
+pub trait Declarations {
+    /// Refuses an environment the configuration does not declare.
+    fn environment(&self, env: &str) -> Result<()>;
+    /// The components declared on the environment, or only `only`.
+    fn components_on(&self, env: &str, only: Option<&str>) -> Vec<String>;
+    /// The declared ref of a component on the environment (C1).
+    fn declared_ref(&self, env: &str, component: &str) -> Result<String>;
+    /// The machines that carry a component, when the declaration scopes it (a
+    /// sited fixture's classes); `None` is every machine of the environment.
+    fn scope(&self, _component: &str) -> Option<Vec<String>> {
+        None
+    }
+    /// Before a deploy publishes anything: a fixture fast-forwards its
+    /// declaration from the source of record (C3), and says so in a row.
+    fn prepare(&mut self, _frozen: bool) -> Result<Option<crate::Check>> {
+        Ok(None)
+    }
+}
+
+/// What a converging verb asks a converger for.
+#[derive(Debug, Clone, Copy)]
+pub struct Converge<'a> {
+    pub env: &'a str,
+    pub component: Option<&'a str>,
+    pub group: Option<&'a str>,
+    /// Who declares it (C4).
+    pub actor: &'a str,
+    pub dry_run: bool,
+    /// Read every machine's record; deploy nothing.
+    pub verify_only: bool,
+    /// Refuse to fast-forward the declaration (C3).
+    pub frozen: bool,
+}
+
 pub trait Converger {
     /// The machines a declaration for this environment must reach.
     fn machines(&self, env: &str) -> Vec<String>;
@@ -143,6 +181,302 @@ pub trait Converger {
     /// The machine's last record for the component; `Ok(None)` when it has
     /// none, `Err` when it cannot be read (C7: unknown).
     fn read_record(&self, env: &str, machine: &str, component: &str) -> Result<Option<Record>>;
+
+    /// Checked before anything is published (C2: the scripted log is intact).
+    fn before_publish(&self) -> Result<()> {
+        Ok(())
+    }
+    /// The next serial a publication would take, when the converger knows it.
+    fn next_serial(&self) -> Option<u64> {
+        None
+    }
+    /// `deploy --dry-run`: what would be published, and to which machines.
+    fn plan(&self, d: &dyn Declarations, req: &Converge) -> Result<crate::Report> {
+        plan_with(self, d, req)
+    }
+    /// `deploy`: publish the declared ref, observe once, read every record back.
+    fn deploy(&mut self, d: &mut dyn Declarations, req: &Converge) -> Result<crate::Report> {
+        if req.dry_run {
+            return self.plan(&*d, req);
+        }
+        deploy_with(self, d, req)
+    }
+    /// `status`: declared against recorded, per machine, reading only (C8).
+    fn status(&self, d: &dyn Declarations, env: &str, only: Option<&str>) -> Result<crate::Report> {
+        status_with(self, d, env, only)
+    }
+    /// `verify`: `status` for one component.
+    fn verify(&self, d: &dyn Declarations, req: &Converge) -> Result<crate::Report> {
+        self.status(d, req.env, req.component).map(|mut r| {
+            r.verb = "verify";
+            r
+        })
+    }
+}
+
+fn nothing_declared(env: &str, only: Option<&str>) -> anyhow::Error {
+    anyhow::Error::from(goat_errors::coded("GB-255", format!("nothing declared for {env}{}", only.map(|o| format!(" and component {o}")).unwrap_or_default())))
+}
+
+fn mutable_tag(env: &str, component: &str, declared: &str) -> crate::Check {
+    crate::Check {
+        name: format!("{env}/{component}/declaration"),
+        ok: false,
+        detail: format!("{declared} is a mutable tag; a deploy declares a digest (C1)"),
+        fix: Some("pin the declaration to <image>@sha256:<digest> in declared/pins.yaml".into()),
+    }
+}
+
+fn row(name: &str, ok: bool, detail: String) -> crate::Check {
+    crate::Check { name: name.to_string(), ok, detail, fix: None }
+}
+
+/// The default `deploy`, in the four calls alone. Done is what each machine's
+/// RECORD says, never what the observation claimed (C7); a second run over a
+/// converged environment changes nothing (C5).
+pub fn deploy_with<C: Converger + ?Sized>(c: &mut C, d: &mut dyn Declarations, req: &Converge) -> Result<crate::Report> {
+    let (env, only, actor) = (req.env, req.component, req.actor);
+    d.environment(env)?;
+    crate::verbs::attributed(actor)?;
+    let mut checks: Vec<crate::Check> = d.prepare(req.frozen)?.into_iter().collect();
+    // C2 before anything is published: the log is intact and in order.
+    c.before_publish()?;
+    let components = d.components_on(env, only);
+    if components.is_empty() {
+        return Err(nothing_declared(env, only));
+    }
+    for component in components {
+        let declared = d.declared_ref(env, &component)?;
+        if !declared.contains("@sha256:") {
+            checks.push(mutable_tag(env, &component, &declared));
+            continue;
+        }
+        let serial = c.publish(env, &component, &declared, actor)?;
+        checks.push(row(&format!("{env}/{component}/publish"), true, format!("serial {serial}: {} by {actor}", crate::verbs::short(&declared))));
+        let observed = c.observe(env, &component, &declared)?;
+        for (machine, outcome) in observed {
+            let name = format!("{env}/{machine}/{component}");
+            match c.read_record(env, &machine, &component) {
+                Ok(Some(r)) if r.reference == declared => checks.push(row(&name, true, format!("converged on {}", crate::verbs::short(&declared)))),
+                Ok(_) => checks.push(row(&name, false, format!("pending ({})", match outcome { Outcome::Pending => "not yet converged", Outcome::Converged => "observation says converged but the record does not", Outcome::Unknown => "unknown" }))),
+                Err(e) => checks.push(row(&name, false, format!("unknown: {e}"))),
+            }
+        }
+    }
+    let exit = if checks.iter().any(|c| c.fix.is_some()) { crate::EXIT_REFUSED } else { crate::EXIT_NOT_CONVERGED };
+    Ok(crate::Report::new("deploy", checks, exit))
+}
+
+/// The default `deploy --dry-run`: what would be published, and to which
+/// machines, with nothing published and no record written.
+pub fn plan_with<C: Converger + ?Sized>(c: &C, d: &dyn Declarations, req: &Converge) -> Result<crate::Report> {
+    let (env, only) = (req.env, req.component);
+    d.environment(env)?;
+    let components = d.components_on(env, only);
+    if components.is_empty() {
+        return Err(nothing_declared(env, only));
+    }
+    let machines = c.machines(env);
+    let serial = match c.next_serial() {
+        Some(n) => format!("as serial {n}"),
+        None => "as the next serial".to_string(),
+    };
+    let mut checks = Vec::new();
+    for component in components {
+        let declared = d.declared_ref(env, &component)?;
+        if !declared.contains("@sha256:") {
+            checks.push(mutable_tag(env, &component, &declared));
+            continue;
+        }
+        checks.push(row(
+            &format!("{env}/{component}/plan"),
+            true,
+            format!("DRY: would publish {} {serial} and observe {} machine(s): {}", crate::verbs::short(&declared), machines.len(), machines.join(" ")),
+        ));
+    }
+    let exit = if checks.iter().any(|c| c.fix.is_some()) { crate::EXIT_REFUSED } else { crate::EXIT_OK };
+    let mut r = crate::Report::new("deploy", checks, exit);
+    r.exit = exit;
+    r.ok = exit == crate::EXIT_OK;
+    Ok(r)
+}
+
+/// The default `status`: each machine's record against the declared ref, and
+/// the machines list (gate D).
+pub fn status_with<C: Converger + ?Sized>(c: &C, d: &dyn Declarations, env: &str, only: Option<&str>) -> Result<crate::Report> {
+    d.environment(env)?;
+    let mut checks = Vec::new();
+    let mut graded = Vec::new();
+    for component in d.components_on(env, only) {
+        let declared = d.declared_ref(env, &component)?;
+        // A sited fixture scopes each component to the class that carries it.
+        let machines = d.scope(&component).unwrap_or_else(|| c.machines(env));
+        for machine in machines {
+            let name = format!("{env}/{machine}/{component}");
+            let short = crate::verbs::short;
+            let (check, state, reason) = match c.read_record(env, &machine, &component) {
+                Ok(Some(r)) if r.reference == declared => (row(&name, true, format!("converged on {}", short(&declared))), "converged", "declared"),
+                Ok(Some(r)) => (row(&name, false, format!("pending: record names {}, declared {}", short(&r.reference), short(&declared))), "pending", "other-ref"),
+                Ok(None) => (row(&name, false, format!("pending: no record yet; declared {}", short(&declared))), "pending", "no-record"),
+                Err(e) => (row(&name, false, format!("unknown: {e}")), "unknown", "unreadable"),
+            };
+            checks.push(check);
+            graded.push(crate::Machine::new(env, &machine, &component, state, reason, &name));
+        }
+    }
+    if checks.is_empty() {
+        return Err(nothing_declared(env, only));
+    }
+    let mut r = crate::Report::new("status", checks, crate::EXIT_NOT_CONVERGED);
+    r.machines = Some(graded);
+    Ok(r)
+}
+
+/// The push converger on a real checkout (gate D): the push code behind the
+/// trait. `publish` writes nothing (publishing is the merge: the deploy applies
+/// what the checkout's pins declare); `observe_on` runs the deploy play and
+/// reads every machine's outcome from that run; `read_record` reads one
+/// machine's newest ledger row. Its `deploy`, `status` and `verify` are the
+/// push code's own, called unchanged, so every report on real hosts is what it
+/// was before the trait.
+pub struct Push {
+    repo: PathBuf,
+    /// Who declared what `publish` accepted; the deploy records it (C4).
+    actor: String,
+}
+
+impl Push {
+    pub fn new(repo: &Path) -> Self {
+        Push { repo: repo.to_path_buf(), actor: String::new() }
+    }
+}
+
+/// The serial of the environment's signed intent (IntentV1,
+/// `ops/consistency/intent/<goatnet>/intent.json`, whose signature `pins`
+/// verifies). 0 when the environment has none: today's push deploy does not
+/// require the intent, and the push converger does not start to. A pull
+/// converger will require the signed index.
+fn intent_serial(repo: &Path, env: &str) -> u64 {
+    let p = repo.join("ops/consistency/intent").join(env).join("intent.json");
+    std::fs::read_to_string(p)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("serial").and_then(|s| s.as_u64()))
+        .unwrap_or(0)
+}
+
+impl Converger for Push {
+    fn machines(&self, env: &str) -> Vec<String> {
+        crate::inspect::machines(&self.repo, env).unwrap_or_default()
+    }
+
+    fn publish(&mut self, env: &str, component: &str, reference: &str, actor: &str) -> Result<u64> {
+        let d = crate::push::declared(&self.repo, component, env, None)?;
+        if !d.members.iter().any(|g| crate::push::want(&self.repo, g, &d.var).as_deref() == Some(reference)) {
+            return Err(goat_errors::coded(
+                "GB-046",
+                format!("{component} on {env}: {reference} is not what the checkout's pins declare; the push converger deploys the checkout's declaration, so it is published by merging it"),
+            )
+            .into());
+        }
+        self.actor = actor.to_string();
+        Ok(intent_serial(&self.repo, env))
+    }
+
+    fn observe_on(&mut self, env: &str, component: &str, _reference: &str, only: Option<&[String]>) -> Result<BTreeMap<String, Outcome>> {
+        let o = crate::push::Options { component, goatnet: env, only_group: None, dry_run: false, verify_only: false, ack: &self.actor };
+        let (_, graded) = crate::push::deploy_graded(&self.repo, &o)?;
+        Ok(graded
+            .into_iter()
+            .filter(|m| only.map(|o| o.contains(&m.host)).unwrap_or(true))
+            .map(|m| {
+                let outcome = match m.state {
+                    "converged" => Outcome::Converged,
+                    "pending" => Outcome::Pending,
+                    _ => Outcome::Unknown,
+                };
+                (m.host, outcome)
+            })
+            .collect())
+    }
+
+    fn read_record(&self, env: &str, machine: &str, component: &str) -> Result<Option<Record>> {
+        crate::inspect::record(&self.repo, env, machine, component)
+    }
+
+    fn deploy(&mut self, _d: &mut dyn Declarations, req: &Converge) -> Result<crate::Report> {
+        let component = req.component.ok_or_else(|| goat_errors::coded("GB-018", "deploy on real hosts takes one --component"))?;
+        let o = crate::push::Options { component, goatnet: req.env, only_group: req.group, dry_run: req.dry_run, verify_only: req.verify_only, ack: req.actor };
+        crate::push::deploy(&self.repo, &o)
+    }
+
+    fn status(&self, _d: &dyn Declarations, env: &str, only: Option<&str>) -> Result<crate::Report> {
+        crate::inspect::status(&self.repo, env, only)
+    }
+
+    fn verify(&self, _d: &dyn Declarations, req: &Converge) -> Result<crate::Report> {
+        let component = req.component.ok_or_else(|| goat_errors::coded("GB-018", "verify takes one component"))?;
+        crate::inspect::verify(&self.repo, component, req.env, req.group, req.dry_run)
+    }
+}
+
+/// The declarations a converger reads on real hosts when it uses the default
+/// steps. The push converger reads the checkout's pins itself and never asks;
+/// the pull converger brings the signed per-environment index.
+pub struct NoDeclarations;
+
+impl Declarations for NoDeclarations {
+    fn environment(&self, _env: &str) -> Result<()> {
+        Ok(())
+    }
+    fn components_on(&self, _env: &str, only: Option<&str>) -> Vec<String> {
+        only.map(|c| vec![c.to_string()]).unwrap_or_default()
+    }
+    fn declared_ref(&self, env: &str, component: &str) -> Result<String> {
+        Err(goat_errors::coded("GB-255", format!("nothing declared for {env} and component {component}: this converger reads no declarations on real hosts")).into())
+    }
+}
+
+/// What a verb converges through: a fixture (`--mock`), or a converger and the
+/// declarations it reads.
+pub enum Target {
+    Fixture(Box<crate::verbs::Fixture>),
+    Converger { conv: Box<dyn Converger>, decl: Box<dyn Declarations> },
+}
+
+/// The one place a verb gets its converger (gate D): the fixture's scripted
+/// converger under `--mock`, else the push converger. The pull converger, when
+/// it is built, is chosen here from `converger:`; until then the push code
+/// keeps refusing `converger: pull-agent` (GB-307) before it changes a host.
+pub fn select(repo: &Path, mock: Option<&Path>) -> Result<Target> {
+    Ok(match mock {
+        Some(dir) => Target::Fixture(Box::new(crate::verbs::Fixture::open(dir)?)),
+        None => Target::Converger { conv: Box::new(Push::new(repo)), decl: Box::new(NoDeclarations) },
+    })
+}
+
+impl Target {
+    pub fn deploy(&mut self, req: &Converge) -> Result<crate::Report> {
+        match self {
+            Target::Fixture(f) if req.dry_run => crate::verbs::deploy_plan(f, req.env, req.component),
+            Target::Fixture(f) => crate::verbs::deploy(f, req.env, req.component, req.actor, req.frozen),
+            Target::Converger { conv, decl } => conv.deploy(decl.as_mut(), req),
+        }
+    }
+
+    pub fn status(&self, env: &str, only: Option<&str>) -> Result<crate::Report> {
+        match self {
+            Target::Fixture(f) => crate::verbs::status(f, env, only),
+            Target::Converger { conv, decl } => conv.status(decl.as_ref(), env, only),
+        }
+    }
+
+    pub fn verify(&self, req: &Converge) -> Result<crate::Report> {
+        match self {
+            Target::Fixture(f) => crate::inspect::verify_mock(f, req.component.unwrap_or(""), req.env),
+            Target::Converger { conv, decl } => conv.verify(decl.as_ref(), req),
+        }
+    }
 }
 
 /// `converger.yaml`: one word (or `after: N`) per machine.
@@ -173,8 +507,8 @@ pub struct Scripted {
 impl Scripted {
     pub fn open(root: &Path) -> Result<Self> {
         let p = root.join("converger.yaml");
-        let text = std::fs::read_to_string(&p).with_context(|| format!("{}", p.display()))?;
-        let script: Script = serde_yaml::from_str(&text).with_context(|| format!("{}", p.display()))?;
+        let text = std::fs::read_to_string(&p).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?;
+        let script: Script = serde_yaml::from_str(&text).map_err(|e| goat_errors::coded("GB-024", format!("{}: {e}", p.display())))?;
         let ticks = match std::fs::read_to_string(root.join("state/ticks.json")) {
             Ok(t) => serde_json::from_str(&t).unwrap_or_default(),
             Err(_) => BTreeMap::new(),
@@ -195,12 +529,12 @@ impl Scripted {
         if kind == "pull-agent" {
             return Ok(());
         }
-        std::fs::create_dir_all(self.root.join("state"))?;
+        std::fs::create_dir_all(self.root.join("state")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(self.root.join("state"))).display())))?;
         let p = self.root.join("state/transports.jsonl");
         let mut text = std::fs::read_to_string(&p).unwrap_or_default();
-        text.push_str(&serde_json::to_string(&serde_json::json!({ "env": env, "transport": kind }))?);
+        text.push_str(&serde_json::to_string(&serde_json::json!({ "env": env, "transport": kind })).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?);
         text.push('\n');
-        std::fs::write(&p, text).with_context(|| format!("{}", p.display()))
+        std::fs::write(&p, text).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())).into())
     }
 
     /// Every publication, checked (C2): each row's seal matches its content and
@@ -210,7 +544,7 @@ impl Scripted {
         let text = match std::fs::read_to_string(&p) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(anyhow!("{}: {e}", p.display())),
+            Err(e) => return Err(goat_errors::coded("GB-254", format!("{}: {e}", p.display())).into()),
         };
         let mut out: Vec<Publication> = Vec::new();
         for (i, line) in text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
@@ -241,12 +575,12 @@ impl Scripted {
     fn append_record(&self, env: &str, machine: &str, rec: &Record) -> Result<()> {
         let p = self.record_path(env, machine);
         if let Some(d) = p.parent() {
-            std::fs::create_dir_all(d)?;
+            std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
         }
         let mut text = std::fs::read_to_string(&p).unwrap_or_default();
-        text.push_str(&serde_json::to_string(rec)?);
+        text.push_str(&serde_json::to_string(rec).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?);
         text.push('\n');
-        std::fs::write(&p, text).with_context(|| format!("{}", p.display()))
+        std::fs::write(&p, text).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())).into())
     }
 
     /// A teardown: append an `action: teardown` row with an empty ref. History
@@ -257,8 +591,8 @@ impl Scripted {
     }
 
     fn save_ticks(&self) -> Result<()> {
-        std::fs::create_dir_all(self.root.join("state"))?;
-        std::fs::write(self.root.join("state/ticks.json"), serde_json::to_string(&self.ticks)?)?;
+        std::fs::create_dir_all(self.root.join("state")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(self.root.join("state"))).display())))?;
+        std::fs::write(self.root.join("state/ticks.json"), serde_json::to_string(&self.ticks).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(self.root.join("state/ticks.json"))).display())))?;
         Ok(())
     }
 
@@ -309,6 +643,14 @@ fn iso_utc(secs: u64) -> String {
 }
 
 impl Converger for Scripted {
+    fn before_publish(&self) -> Result<()> {
+        self.publications().map(|_| ())
+    }
+
+    fn next_serial(&self) -> Option<u64> {
+        Some(self.last_serial() + 1)
+    }
+
     fn machines(&self, env: &str) -> Vec<String> {
         self.script
             .machines
@@ -324,7 +666,7 @@ impl Converger for Scripted {
         let serial = self.publications()?.iter().map(|p| p.serial).max().unwrap_or(0) + 1;
         let p = self.root.join("declared/publications.jsonl");
         if let Some(d) = p.parent() {
-            std::fs::create_dir_all(d)?;
+            std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
         }
         let pubn = Publication {
             serial,
@@ -337,9 +679,9 @@ impl Converger for Scripted {
         }
         .sealed();
         let mut text = std::fs::read_to_string(&p).unwrap_or_default();
-        text.push_str(&serde_json::to_string(&pubn)?);
+        text.push_str(&serde_json::to_string(&pubn).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?);
         text.push('\n');
-        std::fs::write(&p, text)?;
+        std::fs::write(&p, text).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&p)).display())))?;
         Ok(serial)
     }
 
@@ -476,6 +818,86 @@ mod tests {
 
     /// Mock records carry ISO 8601 UTC like every other record (the walkthrough
     /// saw `epoch+20758d43085s` beside `2026-10-20T10:00:00Z` in `history`).
+    /// Gate D's property: a converger that implements only the four calls
+    /// (`machines`, `publish`, `observe_on`, `read_record`) drives `deploy`,
+    /// `status`, `verify` and a dry run through the same arm of [`Target`] the
+    /// push converger takes on real hosts, so a second converger needs no verb change.
+    struct Recording {
+        calls: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+        records: BTreeMap<String, String>,
+        serial: u64,
+    }
+
+    impl Converger for Recording {
+        fn machines(&self, _env: &str) -> Vec<String> {
+            self.calls.borrow_mut().push("machines".into());
+            vec!["m1".into(), "m2".into()]
+        }
+        fn publish(&mut self, _env: &str, _component: &str, reference: &str, _actor: &str) -> Result<u64> {
+            self.calls.borrow_mut().push("publish".into());
+            self.serial += 1;
+            self.records.insert("m1".into(), reference.into());
+            Ok(self.serial)
+        }
+        fn observe_on(&mut self, _env: &str, _component: &str, reference: &str, _only: Option<&[String]>) -> Result<BTreeMap<String, Outcome>> {
+            self.calls.borrow_mut().push("observe_on".into());
+            Ok(["m1", "m2"].iter().map(|m| (m.to_string(), if self.records.get(*m).map(String::as_str) == Some(reference) { Outcome::Converged } else { Outcome::Pending })).collect())
+        }
+        fn read_record(&self, _env: &str, machine: &str, component: &str) -> Result<Option<Record>> {
+            self.calls.borrow_mut().push("read_record".into());
+            Ok(self.records.get(machine).map(|r| Record { ts: String::new(), component: component.into(), reference: r.clone(), action: "deploy".into(), serial: 0, actor: String::new() }))
+        }
+    }
+
+    struct OneComponent;
+
+    impl Declarations for OneComponent {
+        fn environment(&self, _env: &str) -> Result<()> {
+            Ok(())
+        }
+        fn components_on(&self, _env: &str, _only: Option<&str>) -> Vec<String> {
+            vec!["portal".into()]
+        }
+        fn declared_ref(&self, _env: &str, _component: &str) -> Result<String> {
+            Ok("ghcr.io/o/portal:v2@sha256:aaaa".into())
+        }
+    }
+
+    #[test]
+    fn a_converger_with_only_the_four_calls_drives_every_converging_verb() {
+        let calls = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let rec = Recording { calls: calls.clone(), records: BTreeMap::new(), serial: 0 };
+        let mut t = Target::Converger { conv: Box::new(rec), decl: Box::new(OneComponent) };
+        let req = Converge { env: "dev", component: Some("portal"), group: None, actor: "tester", dry_run: false, verify_only: false, frozen: false };
+
+        let plan = t.deploy(&Converge { dry_run: true, ..req }).unwrap();
+        assert!(plan.ok && plan.checks[0].detail.contains("would publish") && plan.checks[0].detail.contains("2 machine(s)"), "{:?}", plan.checks);
+
+        let d = t.deploy(&req).unwrap();
+        assert_eq!(d.verb, "deploy");
+        let rows: Vec<(&str, bool)> = d.checks.iter().map(|c| (c.name.as_str(), c.ok)).collect();
+        assert_eq!(rows, [("dev/portal/publish", true), ("dev/m1/portal", true), ("dev/m2/portal", false)]);
+        assert_eq!(d.exit, crate::EXIT_NOT_CONVERGED);
+
+        let s = t.status("dev", None).unwrap();
+        let m: Vec<(&str, &str, &str)> = s.machines.as_ref().unwrap().iter().map(|m| (m.host.as_str(), m.state, m.reason)).collect();
+        assert_eq!(m, [("m1", "converged", "declared"), ("m2", "pending", "no-record")]);
+        let v = t.verify(&req).unwrap();
+        assert_eq!(v.verb, "verify");
+        assert_eq!(v.machines, s.machines);
+
+        // Every step reached its answer through the four calls, and each was used.
+        let used: std::collections::BTreeSet<String> = calls.borrow().iter().cloned().collect();
+        assert_eq!(used, ["machines", "observe_on", "publish", "read_record"].iter().map(|s| s.to_string()).collect());
+    }
+
+    #[test]
+    fn select_gives_the_fixture_s_converger_under_mock_and_push_on_real_hosts() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/compat/documents/fixtures/basic");
+        assert!(matches!(select(std::path::Path::new("."), Some(&fixture)).unwrap(), Target::Fixture(_)));
+        assert!(matches!(select(std::path::Path::new("."), None).unwrap(), Target::Converger { .. }));
+    }
+
     #[test]
     fn mock_timestamps_are_iso_utc() {
         assert_eq!(iso_utc(0), "1970-01-01T00:00:00Z");

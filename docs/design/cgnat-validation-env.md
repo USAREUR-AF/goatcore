@@ -10,17 +10,16 @@ our validation path didn't stress that path.
 
 **Status (2026-04-24):** attempt-1 (nested-container peer swarm)
 retired — infrastructure validated, peer simulator identified as the
-blocker; findings at
-`../reports/2026-04-24-cgnat-validation-attempt-1-findings.md`.
-Attempt-2 pivots to **Path C: 100 x t2.nano native-netbird systemd
-peers** (see §2, updated). Run scheduled per
-`../project/roadmap.md` priority-risk §7.
+blocker (§2.1). Attempt-2 pivots to **Path C: 100 x t2.nano native-netbird
+systemd peers** (see §2, updated). Its findings and the run's schedule are
+kept with the deployment's records, not in this repository.
 
 ---
 
 ## 1. Why this env exists
 
-Per the 2026-04-24 hadev evidence (`../reports/2026-04-24-wave3-hadev-soak-evidence.md` §4):
+Per the 2026-04-24 soak evidence (kept with the deployment's records, not
+in this repository):
 
 - `signal_server_forward_sent_total{outcome="delivered"} = 1` over 5 days.
 - `signal_server_connected_peers = 0` at capture.
@@ -88,8 +87,8 @@ internet — exactly the production path.
 Attempt-1 used 5 peer-host EC2 per site with 10 `netbirdio/netbird:latest`
 containers each (50 peers per site). That approach was abandoned after
 container-init issues blocked stable 100-peer enrollment across netbird
-releases — see findings §3 of
-`../reports/2026-04-24-cgnat-validation-attempt-1-findings.md`.
+releases; the attempt-1 findings are kept with the deployment's records,
+not in this repository.
 
 Attempt-2 (Path C) uses 50 × t2.nano per site, one native netbird peer
 each:
@@ -143,8 +142,10 @@ background rate.
 
 ### 3.2 Scenario 2 — federation-load harness (hour 20–21)
 
-Apply the existing `ops/wave3/federation-load/` scenarios against this
-env:
+Apply three federation-load scenarios against this env. The load
+generator is
+[`../../signal-server/cmd/federation-load/main.go`](../../signal-server/cmd/federation-load/main.go);
+the scenario scripts are not in this repository.
 
 - Scenario 1: `docker kill signal-a` — measure impact on peers
   connected to signal-a and on cross-site Forward from signal-b.
@@ -160,6 +161,14 @@ env:
   prevent single-peer stall from saturating the caller.
 - No sustained blocking during either fault.
 - Clean recovery — err_rate + p99 return to baseline after restart.
+- The load generator's own verdict is PASS. It counts a send to an online
+  peer as delivered only when that peer's stream, which the generator
+  holds, receives it: a Send answers OK when a federation forward failed and
+  delivery is unknown, so an OK alone is not delivery. An OK that never
+  arrives is a miss in `pathological_miss_rate`; the verdict is FAIL, and the
+  generator exits 1, when that rate is above `--max-miss-rate` (0 by
+  default). **Built** (`signal-server/cmd/federation-load/main_test.go`, on
+  stand-in servers); not measured in this environment.
 
 ### 3.3 Scenario 3 — hole-punching vs relay fallback instrumentation (hour 21–23)
 
@@ -211,8 +220,7 @@ Estimated cost (Path C): **~$16 per run** — 100 × t2.nano (~$12.48) +
 is cheap (apply + orchestrator = ~15 min to steady state). Persistent
 infra is a cost leak and an attack-surface leak.
 
-See `../operations/cloud-env-lifecycle.md`
-for the full tracker row.
+The deployment's records track the env's lifecycle.
 
 ## 6. What passing this validates
 
@@ -274,10 +282,10 @@ The new default pattern:
 mgmt-plane deploy via cloud-init retry); smoke wait 3 min → 5 min.
 Net saving ~22 min per run.
 
-**Reference implementations in this repo:**
-- `../../terraform/cgnat-peer-cloud-init.yaml.tpl` — the cloud-init template.
-- `../../terraform/cgnat-validation.tf` — `templatefile()` invocation + `var.cgnat_site_{a,b}_setup_key`.
-- `../../ops/cgnat-validation/peer-node/install-netbird.sh` — retry-looped bootstrap script.
+**Reference implementations** are the deployment's, in its overlay
+repository, not this one: the peers' cloud-init template, the Terraform that
+renders it (`templatefile()` with `var.cgnat_site_{a,b}_setup_key`), and the
+retry-looped bootstrap script it runs.
 
 **When NOT to use this pattern:**
 - One-off ops fixes against a single host (just SSM-send-command).
@@ -287,13 +295,10 @@ Net saving ~22 min per run.
 
 ## 9. Related artifacts
 
-- Terraform: `../../terraform/cgnat-validation.tf`
 - Orchestrator: [`../../ops/ansible/cgnat-validation.yml`](../../ops/ansible/cgnat-validation.yml)
-- Peer install script (Path C): `../../ops/cgnat-validation/peer-node/install-netbird.sh`
-- Inventory stub + generator: `../../ops/ansible/inventory/cgnat-validation.ini`, `../../ops/ansible/inventory/gen-cgnat-validation.sh`
-- Peer-swarm container (attempt-1, historical only): `../../ops/cgnat-validation/peer-swarm/`
-- Attempt-1 findings: `../reports/2026-04-24-cgnat-validation-attempt-1-findings.md`
 - Operator runbook: [`../operations/cgnat-validation-runbook.md`](../operations/cgnat-validation-runbook.md)
-- Lifecycle tracker: `../operations/cloud-env-lifecycle.md`
-- Implementation plan block: `../project/implementation-plan.md` Block 18
-- Priority-risk: `../project/roadmap.md` §7
+- Load generator: [`../../signal-server/cmd/federation-load/main.go`](../../signal-server/cmd/federation-load/main.go)
+- The Terraform root, the peers' cloud-init user_data, the inventory and any
+  script that writes it belong to the deployment and live in its overlay
+  repository; none of them is in this repository.
+- The attempt-1 peer swarm is retired and not in this repository; why is §2.1.

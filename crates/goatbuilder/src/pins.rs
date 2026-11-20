@@ -31,7 +31,7 @@ use crate::runner::Cmd;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -49,20 +49,15 @@ const FALSY: [&str; 3] = ["false", "no", "off"];
 
 pub const SIGNER_HINT: &str = "re-sign with ops/enrollment/cmd/intent-sign (cd ops/enrollment && go run ./cmd/intent-sign --intent <path> --root-key <ca.key.age> --age-identity <keys.txt>) and commit intent.json and intent.json.sig together";
 
-/// An authoring surface is not usable as one (the package's SchemaError):
-/// the CLI turns it into `ERROR: …` + exit 2.
-#[derive(Debug)]
-pub struct SchemaError(pub String);
+/// The code of an authoring surface that is not usable as one (the package's
+/// SchemaError): fleet-pins.yaml, its sidecar, parity-capabilities.yaml, the
+/// unmigrated-pins list or an intent breaks the pins schema or its rules. It
+/// exits 2, as the uncoded error did.
+pub const SCHEMA_REFUSED: &str = "GB-365";
 
-impl std::fmt::Display for SchemaError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-impl std::error::Error for SchemaError {}
-
+/// Refuse a pins file that breaks the schema, with [`SCHEMA_REFUSED`].
 fn die<T>(msg: String) -> Result<T> {
-    Err(SchemaError(msg).into())
+    Err(anyhow::Error::from(goat_errors::coded(SCHEMA_REFUSED, msg)))
 }
 
 // --- where things are (paths.py) ------------------------------------------------
@@ -169,7 +164,8 @@ pub fn read_yaml(path: &Path) -> Result<Value> {
     if text.trim().is_empty() {
         return Ok(Value::Object(Map::new()));
     }
-    let v: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
+    // The file was read; what it holds does not parse (GB-329, not GB-254).
+    let v: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-329", format!("{}: {e}", path.display()))))?;
     let j = yaml_to_json(&v);
     Ok(if j.is_object() { j } else { Value::Object(Map::new()) })
 }
@@ -316,7 +312,9 @@ fn load_lite(path: &Path, goatnets: &mut Map<String, Value>, components: &mut Ma
             Some(Value::Object(d)) => d.clone(),
             Some(_) => return die(format!("{where_}: component '{cname}': `deviations:` must be a mapping")),
         };
-        let target = components.get_mut(cname).and_then(|c| c.as_object_mut()).ok_or_else(|| SchemaError(format!("{table}: component '{cname}' is not a mapping")))?;
+        let Some(target) = components.get_mut(cname).and_then(|c| c.as_object_mut()) else {
+            return die(format!("{table}: component '{cname}' is not a mapping"));
+        };
         if !matches!(target.get("deviations"), Some(Value::Object(_))) {
             target.insert("deviations".into(), Value::Object(Map::new()));
         }
@@ -458,7 +456,114 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
             }
         }
     }
+    check_member_over(t, &member_of)?;
     Ok(member_of)
+}
+
+// --- ADR 1256: a member deviation names the goatnet value it overrides ----------
+// `over:` must equal what the member's goatnet resolves the component to without
+// the member deviation: a ref, `absent`, or `none` (`fleet: null`, no goatnet
+// deviation). Mirrors goat_consistency.resolve.check_member_over word for word
+// (ops/goatbuilder/parity-pins-member-over.sh holds the two equal).
+
+const OVER_ABSENT: &str = "absent";
+const OVER_NONE: &str = "none";
+
+/// What `goatnet` resolves a component to with no member deviation, as the `over:` token.
+pub fn goatnet_resolution(spec: &Value, goatnet: &str) -> String {
+    if let Some(dev) = deviations(spec).get(goatnet) {
+        let dev = if dev.is_object() { dev.clone() } else { Value::Object(Map::new()) };
+        if truthy(get(&dev, "absent")) {
+            return OVER_ABSENT.into();
+        }
+        return py_str(get(&dev, "value").unwrap_or(&Value::Null));
+    }
+    match get(spec, "fleet") {
+        None | Some(Value::Null) => OVER_NONE.into(),
+        Some(f) => py_str(f),
+    }
+}
+
+/// The line an operator pastes under the member deviation.
+pub fn over_line(token: &str) -> String {
+    if token == OVER_ABSENT || token == OVER_NONE {
+        format!("over: {token}")
+    } else {
+        format!("over: \"{token}\"")
+    }
+}
+
+fn refuse<T>(code: &str, msg: String) -> Result<T> {
+    Err(anyhow::Error::from(goat_errors::coded(code, msg)))
+}
+
+/// GB-358: a member `value:` deviation must carry `over:`, and only it may.
+/// GB-357: `over:` must name what the member's goatnet resolves to now.
+pub fn check_member_over(t: &Table, member_of: &[(String, String)]) -> Result<()> {
+    for (cname, spec) in &t.components {
+        for (scope, dev) in &deviations(spec) {
+            let dev = if dev.is_object() { dev.clone() } else { Value::Object(Map::new()) };
+            let over = get(&dev, "over");
+            if t.goatnets.contains_key(scope) {
+                if over.is_some() {
+                    return refuse("GB-358", format!("GB-358 pins: component '{cname}': `over:` is on the goatnet deviation '{scope}'. Only a member deviation names what it overrides; a goatnet deviation overrides fleet. Delete the `over:` line."));
+                }
+                continue;
+            }
+            if truthy(get(&dev, "absent")) {
+                if over.is_some() {
+                    return refuse("GB-358", format!("GB-358 pins: component '{cname}': member deviation '{scope}' is `absent: true` and also carries `over:`. A member that does not run the component shadows nothing. Delete the `over:` line."));
+                }
+                continue;
+            }
+            let goatnet = match member_of.iter().find(|(m, _)| m == scope) {
+                Some((_, g)) => g.clone(),
+                None => continue,
+            };
+            let now = goatnet_resolution(spec, &goatnet);
+            let value = py_str(get(&dev, "value").unwrap_or(&Value::Null));
+            let line = over_line(&now);
+            match over {
+                None => {
+                    return refuse("GB-358", format!("GB-358 pins: component '{cname}': member deviation '{scope}' pins {value} but does not name what it overrides. Goatnet '{goatnet}' resolves '{cname}' to {now} without it. To keep {value} on {scope} deliberately, add under deviations.{scope}:  {line}  Or delete the deviation, and {scope} takes {now}."));
+                }
+                Some(o) if py_str(o) != now => {
+                    let was = py_str(o);
+                    return refuse("GB-357", format!("GB-357 pins: component '{cname}': member deviation '{scope}' was written over {was}, but goatnet '{goatnet}' now resolves '{cname}' to {now}, so {scope} would silently keep {value}. Delete the deviation, and {scope} takes {now}. Or, to keep {value} on {scope} deliberately, set under deviations.{scope}:  {line}"));
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Member value deviations that pin what their goatnet already resolves to: a
+/// warning, not a refusal.
+pub fn redundant_member_deviations(t: &Table, member_of: &[(String, String)]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut comps: Vec<(&String, &Value)> = t.components.iter().collect();
+    comps.sort_by(|a, b| a.0.cmp(b.0));
+    for (cname, spec) in comps {
+        let devs = deviations(spec);
+        let mut scopes: Vec<(&String, &Value)> = devs.iter().collect();
+        scopes.sort_by(|a, b| a.0.cmp(b.0));
+        for (scope, dev) in scopes {
+            let dev = if dev.is_object() { dev.clone() } else { Value::Object(Map::new()) };
+            if t.goatnets.contains_key(scope) || truthy(get(&dev, "absent")) {
+                continue;
+            }
+            let goatnet = match member_of.iter().find(|(m, _)| m == scope) {
+                Some((_, g)) => g.clone(),
+                None => continue,
+            };
+            let now = goatnet_resolution(spec, &goatnet);
+            if py_str(get(&dev, "value").unwrap_or(&Value::Null)) == now {
+                out.push(format!("WARN pins: component '{cname}': member deviation '{scope}' pins {now}, which goatnet '{goatnet}' already resolves to. It changes nothing today and would hold {scope} back from the goatnet's next value. Delete it."));
+            }
+        }
+    }
+    out
 }
 
 fn deviations(spec: &Value) -> Map<String, Value> {
@@ -703,7 +808,7 @@ pub fn load_allowlist(p: &Paths) -> Result<(BTreeSet<String>, usize, Option<usiz
     }
     let mut rows = BTreeSet::new();
     let mut baseline = None;
-    let text = std::fs::read_to_string(&path)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
     for raw in text.lines() {
         if let Some(b) = raw.trim().strip_prefix("# baseline:") {
             if let Some(n) = b.split_whitespace().next().and_then(|x| x.parse::<usize>().ok()) {
@@ -1200,8 +1305,10 @@ pub fn self_consistent(doc: &Map<String, Value>) -> (String, String) {
 
 pub fn validate_schema(p: &Paths, doc: &Map<String, Value>, where_: &str) -> Result<()> {
     let schema_path = p.intent_schema();
-    let schema: Value = serde_json::from_str(&std::fs::read_to_string(&schema_path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", schema_path.display()))))?)?;
-    let compiled = jsonschema::JSONSchema::options().with_draft(jsonschema::Draft::Draft7).compile(&schema).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", p.rel(&schema_path)))))?;
+    let text = std::fs::read_to_string(&schema_path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", schema_path.display()))))?;
+    // Read, but not JSON, or not a draft 7 schema: the checkout's file is damaged (GB-329).
+    let schema: Value = serde_json::from_str(&text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-329", format!("{} is not JSON: {e}", p.rel(&schema_path)))))?;
+    let compiled = jsonschema::JSONSchema::options().with_draft(jsonschema::Draft::Draft7).compile(&schema).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-329", format!("{} does not compile as a draft 7 schema: {e}", p.rel(&schema_path)))))?;
     let value = Value::Object(doc.clone());
     if let Err(errors) = compiled.validate(&value) {
         if let Some(e) = errors.into_iter().next() {
@@ -1315,6 +1422,9 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
 
     let t = load_table(&p.table())?;
     let member_of = validate(&p, &t)?;
+    for w in redundant_member_deviations(&t, &member_of) {
+        note(&mut rows, w);
+    }
     let mut sorted: Vec<&(String, String)> = member_of.iter().collect();
     sorted.sort();
     for (member, goatnet) in sorted {
@@ -1372,7 +1482,7 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
             }
         } else {
             if let Some(d) = path.parent() {
-                std::fs::create_dir_all(d)?;
+                std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(d)).display())))?;
             }
             let current = std::fs::read_to_string(&path).unwrap_or_default();
             std::fs::write(&path, &text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
@@ -1461,6 +1571,58 @@ pub fn render_all(repo: &Path) -> Result<Rendered> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn over_table(devs: Value, fleet: Value) -> (Table, Vec<(String, String)>) {
+        let goatnets = serde_json::json!({"zagros": {"members": ["zagros_a_hosts", "zagros_b_hosts"]}});
+        let comps = serde_json::json!({"app": {"var": "app_image", "fleet": fleet, "deviations": devs}});
+        let t = Table { goatnets: goatnets.as_object().unwrap().clone(), components: comps.as_object().unwrap().clone(), lite: BTreeSet::new() };
+        let m = vec![("zagros_a_hosts".to_string(), "zagros".to_string()), ("zagros_b_hosts".to_string(), "zagros".to_string())];
+        (t, m)
+    }
+
+    fn over_refusal(devs: Value, fleet: Value) -> Option<String> {
+        let (t, m) = over_table(devs, fleet);
+        check_member_over(&t, &m).err().map(|e| format!("{e:#}"))
+    }
+
+    const OLD: &str = "ghcr.io/example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const FIX: &str = "ghcr.io/example/app@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const PIN: &str = "ghcr.io/example/app@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+    #[test]
+    fn a_member_deviation_written_over_an_older_goatnet_value_is_refused_gb357() {
+        let msg = over_refusal(serde_json::json!({"zagros": {"value": FIX, "reason": "hotfix"}, "zagros_b_hosts": {"value": PIN, "over": OLD, "reason": "r"}}), Value::String(OLD.into())).unwrap();
+        assert!(msg.starts_with("GB-357") && msg.contains(&format!("over: \"{FIX}\"")), "{msg}");
+    }
+
+    #[test]
+    fn a_member_value_without_over_is_refused_gb358_with_the_line_to_paste() {
+        let msg = over_refusal(serde_json::json!({"zagros_b_hosts": {"value": PIN, "reason": "r"}}), Value::String(OLD.into())).unwrap();
+        assert!(msg.starts_with("GB-358") && msg.contains(&format!("over: \"{OLD}\"")), "{msg}");
+    }
+
+    #[test]
+    fn over_naming_the_current_value_absent_members_and_goatnet_deviations_pass() {
+        assert!(over_refusal(serde_json::json!({"zagros": {"value": FIX, "reason": "h"}, "zagros_b_hosts": {"value": PIN, "over": FIX, "reason": "r"}}), Value::String(OLD.into())).is_none());
+        assert!(over_refusal(serde_json::json!({"zagros": {"value": FIX, "reason": "h"}, "zagros_b_hosts": {"absent": true, "reason": "r"}}), Value::String(OLD.into())).is_none());
+        assert!(over_refusal(serde_json::json!({"zagros_a_hosts": {"value": PIN, "over": "none", "reason": "r"}, "zagros_b_hosts": {"value": PIN, "over": "none", "reason": "r"}}), Value::Null).is_none());
+    }
+
+    #[test]
+    fn over_where_it_means_nothing_is_refused_gb358() {
+        let on_goatnet = over_refusal(serde_json::json!({"zagros": {"value": FIX, "over": OLD, "reason": "h"}}), Value::String(OLD.into())).unwrap();
+        assert!(on_goatnet.starts_with("GB-358") && on_goatnet.contains("goatnet deviation"), "{on_goatnet}");
+        let on_absent = over_refusal(serde_json::json!({"zagros_b_hosts": {"absent": true, "over": OLD, "reason": "r"}}), Value::String(OLD.into())).unwrap();
+        assert!(on_absent.starts_with("GB-358") && on_absent.contains("absent"), "{on_absent}");
+    }
+
+    #[test]
+    fn a_redundant_member_deviation_is_one_warning() {
+        let (t, m) = over_table(serde_json::json!({"zagros_b_hosts": {"value": OLD, "over": OLD, "reason": "r"}}), Value::String(OLD.into()));
+        assert!(check_member_over(&t, &m).is_ok());
+        let w = redundant_member_deviations(&t, &m);
+        assert!(w.len() == 1 && w[0].starts_with("WARN pins") && w[0].contains("zagros_b_hosts"), "{w:?}");
+    }
 
     #[test]
     fn canonical_json_sorts_keys_indents_two_and_ends_with_one_newline() {
@@ -1595,12 +1757,12 @@ fn drop_value_deviation(block: &str, g: &str) -> String {
 
 /// rc.sh `set_deviation`: declare `reference` on goatnet `g` for `comp`, with the reason.
 pub fn edit_set_deviation(path: &Path, comp: &str, g: &str, reference: &str, reason: &str) -> Result<()> {
-    let s = std::fs::read_to_string(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    let s = std::fs::read_to_string(path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
     let table = load_table(path)?;
     if !table.components.contains_key(comp) {
         return Err(goat_errors::coded("GB-001", format!("AssertionError: {comp} is not a component of {}", path.display())).into());
     }
-    let (start, end) = component_block(&s, comp).ok_or_else(|| anyhow!("{comp}: no component block"))?;
+    let (start, end) = component_block(&s, comp).ok_or_else(|| goat_errors::coded("GB-257", format!("{comp}: no component block in {}", path.display())))?;
     // A goatnet that already declares this value keeps its deviation as it
     // stands, reason included: the reason carries the day it was declared, so
     // rewriting it on a re-run from a later day changed the table and landed a
@@ -1684,7 +1846,7 @@ pub fn fold_rungs(path: &Path, comp: &str, reference: &str, prod: &str, hotfix_r
 /// fastlane.sh's step 4: move the value of record; clear VALUE deviations; keep `absent: true`.
 /// Returns the lines the script prints.
 pub fn edit_move_fleet(path: &Path, comp: &str, new_ref: &str, old_ref: &str, reason: &str, ack: &str) -> Result<Vec<String>> {
-    let src = std::fs::read_to_string(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    let src = std::fs::read_to_string(path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
     let head = format!("  {comp}:\n");
     let m = if src.starts_with(&head) { Some(0) } else { src.find(&format!("\n{head}")).map(|i| i + 1) };
     let start = match m {
@@ -1762,7 +1924,7 @@ pub fn regenerate(repo: &Path) -> Result<Regen> {
     let mut changed_intents = Vec::new();
     for (g, path, text, _doc, changed) in &r.intents {
         if let Some(d) = path.parent() {
-            std::fs::create_dir_all(d)?;
+            std::fs::create_dir_all(d).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", d.display())))?;
         }
         std::fs::write(path, text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
         wrote.push(p.rel(path));
@@ -1808,7 +1970,7 @@ pub fn sign_intent(repo: &Path, intent: &Path, key: &str) -> Result<Vec<String>>
         .current_dir(repo.join("ops/enrollment"))
         .args(["run", "./cmd/intent-sign", "--intent", intent.to_str().unwrap_or(""), "--root-key", key, "--age-identity", &format!("{home}/.config/age/keys.txt"), "--audit-log", &audit])
         .output()
-        .map_err(|e| anyhow!("go run ./cmd/intent-sign: {e}"))?;
+        .map_err(|e| goat_errors::coded("GB-320", format!("could not start go run ./cmd/intent-sign: {e}")))?;
     if !out.status.success() {
         return Err(goat_errors::coded("GB-022", format!("intent-sign for {} failed: {}", intent.display(), String::from_utf8_lossy(&out.stderr).trim())).into());
     }
@@ -1856,6 +2018,50 @@ mod lite_tests {
         std::fs::write(d.join("ops/pins/lite-pins.yaml"), "goatnets: {}\ncomponents: {}\n").unwrap();
         let err = match load_table(&d.join("ops/pins/fleet-pins.yaml")) { Ok(_) => panic!("both empty was accepted"), Err(e) => e.to_string() };
         assert!(err.contains("no goatnet is declared"), "{err}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The code an error carries, if it was raised with `goat_errors::coded`.
+    fn code_of(e: &anyhow::Error) -> Option<String> {
+        e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone())
+    }
+
+    #[test]
+    fn a_table_that_breaks_the_pins_schema_is_refused_with_gb_365() {
+        let d = tree("schema-coded", Some("goatnets: []\ncomponents: {}\n"));
+        let e = match load_table(&d.join("ops/pins/fleet-pins.yaml")) {
+            Ok(_) => panic!("a sidecar whose goatnets: is a list was accepted"),
+            Err(e) => e,
+        };
+        assert!(e.to_string().contains("`goatnets:` must be a mapping"), "{e}");
+        assert_eq!(code_of(&e).as_deref(), Some("GB-365"), "{e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_unmigrated_pins_list_that_cannot_be_read_is_refused_with_gb_254_and_its_path() {
+        let d = tree("allowlist-unreadable", None);
+        // A directory where the list belongs: it exists, and reading it fails.
+        std::fs::create_dir_all(d.join("ops/pins/unmigrated-pins.txt")).unwrap();
+        let e = match load_allowlist(&Paths::new(d.as_path())) {
+            Ok(_) => panic!("an unreadable unmigrated-pins list was read"),
+            Err(e) => e,
+        };
+        assert_eq!(code_of(&e).as_deref(), Some("GB-254"), "{e}");
+        assert!(e.to_string().contains("unmigrated-pins.txt"), "the refusal names the file: {e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_malformed_unmigrated_pins_row_is_refused_with_gb_365() {
+        let d = tree("allowlist-malformed", None);
+        std::fs::write(d.join("ops/pins/unmigrated-pins.txt"), "# baseline: 1\nno-colon-here\n").unwrap();
+        let e = match load_allowlist(&Paths::new(d.as_path())) {
+            Ok(_) => panic!("a row with no colon was accepted"),
+            Err(e) => e,
+        };
+        assert!(e.to_string().contains("malformed row 'no-colon-here'"), "{e}");
+        assert_eq!(code_of(&e).as_deref(), Some("GB-365"), "{e}");
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -2025,5 +2231,62 @@ mod fold_rungs_tests {
         // Without a hotfix record behind it, a different prod pin is kept too.
         let (fold, _) = fold_rungs(&p, "portal", "img:rc.1@sha256:bbbb", "prod", &[], &rungs).unwrap();
         assert_eq!(fold, vec!["pre".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod malformed_checkout_file_tests {
+    //! A checkout file goatbuilder reads that is not well formed stops with GB-329
+    //! (exit 1), not GB-254 ("cannot be read or written"): the file was read.
+    use super::*;
+
+    fn code_of(e: &anyhow::Error) -> Option<String> {
+        e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone())
+    }
+
+    fn exit_of(code: &str) -> Option<i32> {
+        goat_errors::explain(code).and_then(|e| e.exit)
+    }
+
+    #[test]
+    fn a_pin_table_that_is_not_yaml_is_gb_329_and_names_the_file() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("fleet-pins.yaml");
+        std::fs::write(&p, "components:\n  portal: [unclosed\n").unwrap();
+        let e = read_yaml(&p).unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-329"), "{e:#}");
+        assert!(format!("{e:#}").contains("fleet-pins.yaml"), "{e:#}");
+        assert_eq!(exit_of("GB-329"), Some(1));
+    }
+
+    #[test]
+    fn a_missing_pin_table_is_still_gb_254() {
+        let d = tempfile::tempdir().unwrap();
+        let e = read_yaml(&d.path().join("fleet-pins.yaml")).unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-254"), "{e:#}");
+    }
+
+    fn checkout_with_schema(text: &str) -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        let p = Paths::new(d.path()).intent_schema();
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, text).unwrap();
+        d
+    }
+
+    #[test]
+    fn an_intent_schema_that_does_not_compile_is_gb_329() {
+        let d = checkout_with_schema("{\"type\": 7}\n");
+        let e = validate_schema(&Paths::new(d.path()), &Map::new(), "rendered intent for 'zagros'").unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-329"), "{e:#}");
+        assert!(format!("{e:#}").contains("intent-v1.schema.json"), "{e:#}");
+    }
+
+    #[test]
+    fn an_intent_schema_that_is_not_json_is_gb_329() {
+        let d = checkout_with_schema("{ not json\n");
+        let e = validate_schema(&Paths::new(d.path()), &Map::new(), "rendered intent for 'zagros'").unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-329"), "{e:#}");
+        assert!(format!("{e:#}").contains("intent-v1.schema.json"), "{e:#}");
     }
 }

@@ -31,6 +31,24 @@ alerting:
         - targets: ["alertmanager:9093"]
 
 scrape_configs:
+{% if minio_tls_enabled | default(false) | bool %}
+  - job_name: minio
+    scheme: https
+    metrics_path: /minio/v2/metrics/cluster
+    tls_config:
+      ca_file: /storage-ca/ca.crt
+      server_name: "{{ minio_service_host }}"
+    static_configs:
+      - targets: ["{{ minio_service_host }}:{{ minio_api_port }}"]
+  - job_name: minio-bucket
+    scheme: https
+    metrics_path: /minio/v2/metrics/bucket
+    tls_config:
+      ca_file: /storage-ca/ca.crt
+      server_name: "{{ minio_service_host }}"
+    static_configs:
+      - targets: ["{{ minio_service_host }}:{{ minio_api_port }}"]
+{% endif %}
 
   # ------------------------------------------------------------------
   # Prometheus itself (self-monitoring).

@@ -52,6 +52,17 @@ platforms:
       docker_data_lv: docker-data     # carved in the encrypted VG for F-093 Tier-3
       certified: true                 # cold-boot proven on delta-core-a + delta-obs-a 2026-09-11 (clevis-tpm2 + LV carve)
       design: docs/design/host-site-node-disk-encryption.md
+    # Network: six RJ45 ports, enp1s0..enp6s0, with sequential MACs. The MAC of
+    # one port therefore identifies the unit; record all six. Measured on two
+    # units: enp5s0 is the port labelled 1 on the case. Ubuntu leaves an
+    # unconfigured port down, so the installed netplan must match every `en*`
+    # port with DHCP (autoinstall user-data does this), or a cable in any other
+    # port gives no link and no address.
+    network:
+      wired_ports: [enp1s0, enp2s0, enp3s0, enp4s0, enp5s0, enp6s0]
+      macs: sequential
+      case_port_1: enp5s0
+      netplan: all-wired-dhcp
   karbon-802:
     model: OnLogic Karbon 802
     arch: amd64

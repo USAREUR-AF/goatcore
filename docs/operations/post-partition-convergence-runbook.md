@@ -24,16 +24,22 @@ If you are paged with `SpockSlotInvalidated`, **stop reading this and go directl
 ```bash
 # On any mgmt-host with psql access to local postgres-a
 psql -h 127.0.0.1 -p 5432 -U postgres -d netbird -c \
-  "SELECT subscription_name, status,
-          COALESCE(replication_lag::text, '—') AS lag
-   FROM spock.sub_show_status();"
+  "SELECT subscription_name, status FROM spock.sub_show_status();"
+# Repeat with -d kratos and -d hydra when Ory replicates. Then, on each
+# provider (each other site), what its WAL senders still have to send and replay:
+psql -h 127.0.0.1 -p 5432 -U postgres -c \
+  "SELECT application_name,
+          pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn) AS pending_bytes,
+          COALESCE(EXTRACT(EPOCH FROM replay_lag), 0) AS replay_lag_s
+   FROM pg_stat_replication;"
 ```
 
 **Pass criteria:**
 
 - Every subscription `status` is `replicating` (not `init`, not `down`, not `unknown`).
-- Every subscription's `replication_lag` is **< 5 s** sustained over **2 consecutive minutes**.
-- The 2-minute window is a hard prereq — the `SpockSubscriptionLag` alert has a 2 m `for:` clause and can flap. Watch the dashboard line, not just the absence of alerts.
+- At each provider, every Spock WAL sender has `pending_bytes` **0** and `replay_lag_s` **< 5 s**, sustained over **2 consecutive minutes**.
+- Not `spock.lag_tracker`'s `replication_lag`: it is the time since the last change arrived, so on a quiet database it grows while everything is caught up.
+- The 2-minute window is a hard prereq. Watch the dashboard's WAL sender backlog, not just the absence of alerts.
 
 **Common holds:**
 
@@ -41,8 +47,8 @@ psql -h 127.0.0.1 -p 5432 -U postgres -d netbird -c \
 |---|---|---|
 | `status = init` | Subscription is doing initial sync (full table copy) | Wait. Initial sync of the netbird DB at our scale takes single-digit minutes; if >30 min, escalate. |
 | `status = down` | Apply worker crashed | `psql ... -c "SELECT spock.sub_enable('<sub>');"`. Check Postgres logs for the underlying error before retry. |
-| `lag` keeps growing | Provider WAL sender is sending faster than network can drain | Check `SpockSlotWALSenderLag` panel — this is the alert that surfaces this case. |
-| `lag` is 0 but `status` says `replicating` | If `pg_replication_slots.active = false` for the same slot, the subscription thinks it's healthy but no bytes are flowing. See §2. |
+| `pending_bytes` keeps growing | Provider WAL sender is sending faster than network can drain | Check `SpockSlotWALSenderLag` panel — this is the alert that surfaces this case. |
+| `pending_bytes` is 0 and `status` says `replicating` | If `pg_replication_slots.active = false` for the same slot, the subscription thinks it's healthy but no bytes are flowing. See §2. |
 
 ---
 
@@ -202,9 +208,9 @@ Resolution: identify the missing migration via `\dx` extension list compare + `\
 
 **Only after §1–§5 pass:** start a 30-minute observation timer. During the window:
 
-- No new alerts from `SpockSubscriptionLag`, `SpockSubscriptionNotReplicating`, `SpockSlotInactive`, `SpockSlotInvalidated`, `SpockSlotWALNearLimit`, `SpockSlotWALSenderLag`, `SpockConflictLogged`, `SpockACEDriftDetected`.
+- No new alerts from `SpockSubscriptionNotReplicating`, `SpockMeshSubscriptionsMissing`, `SpockSlotInactive`, `SpockSlotInvalidated`, `SpockSlotWALNearLimit`, `SpockSlotWALSenderLag`, `SpockConflictLogged`, `SpockACEDriftDetected`.
 - Drift-watch cron emits a fresh successful-run timestamp at least once.
-- Replication lag remains < 5 s on both directions.
+- WAL sender `pending_bytes` stays 0 and `replay_lag_s` < 5 s on both directions.
 
 If any of the above fires during the 30-min window, **the clock resets to step 1.** Convergence is not declared while alerts are flapping.
 
@@ -214,7 +220,21 @@ After 30 clean minutes: declare convergence in the incident log + close the page
 
 ## A. Slot rebuild — the destructive path
 
-This appendix is invoked when `wal_status = lost`. The subscriber can no longer replay from the slot; it must be rebuilt from a `pg_basebackup`. **This is destructive on the subscriber side** — its data is wiped and replaced from the provider. Confirm with a second operator before proceeding if site impact is non-trivial.
+This appendix is invoked when `wal_status = lost`. The subscriber can no longer replay from the slot; it must be seeded again. **This is destructive on the subscriber side** — its data is wiped and replaced from the provider. Confirm with a second operator before proceeding if site impact is non-trivial.
+
+**First, which kind of subscriber lost its slot.** A Spock member (every site's `postgres-a`, and a phone node) is seeded again through Spock, below under "A Spock member". The `pg_basebackup` rebuild after it copies the provider's whole data directory, and with it the provider's Spock node identity, so it applies only to a streaming standby.
+
+### A Spock member
+
+Measured on lab containers ([goatbuilder-hardware-measurement.md](../design/goatbuilder-hardware-measurement.md), "Seeding a phone again", which gives each step's query). `goatbuilder join-node <env> --site <site> --node <node> --class <class> --reseed` runs these steps with a refusal at each and a journal, from the node's founder; `--dry-run` prints each step's command. By hand:
+
+1. Confirm the subscriber's slot reads `wal_status = lost` on the provider.
+2. Confirm the provider's subscription from the subscriber reads `replicating` and has caught up with the subscriber's own writes. Do not go on until it has: the next steps truncate the subscriber's tables.
+3. Confirm the replicated tables, in total, are well under the subscriber's own cap. The copy is written as WAL on the subscriber, and a copy near its cap invalidates the provider's slot on the subscriber.
+4. On the subscriber, in each replicated database: `spock.sub_drop` the subscription from the provider (this drops the lost slot), create it again as `spock-mesh-peering` does, without the initial copy, and `spock.sub_resync_table(<subscription>, <table>, true)` for each table of its replication sets. Creating the subscription with `synchronize_data := true` is not enough: the copy fails on the rows the subscriber still holds.
+5. Wait until every table reads `r` in `spock.local_sync_status`, then return to step 1 of this runbook.
+
+### A streaming standby
 
 The mechanics are documented in [`goat-ha-dev-validation.md` §1.6](goat-ha-dev-validation.md#16-wal-slot-invalidation--pg_basebackup-rebuild). Summary:
 
