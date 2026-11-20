@@ -49,20 +49,15 @@ const FALSY: [&str; 3] = ["false", "no", "off"];
 
 pub const SIGNER_HINT: &str = "re-sign with ops/enrollment/cmd/intent-sign (cd ops/enrollment && go run ./cmd/intent-sign --intent <path> --root-key <ca.key.age> --age-identity <keys.txt>) and commit intent.json and intent.json.sig together";
 
-/// An authoring surface is not usable as one (the package's SchemaError):
-/// the CLI turns it into `ERROR: …` + exit 2.
-#[derive(Debug)]
-pub struct SchemaError(pub String);
+/// The code of an authoring surface that is not usable as one (the package's
+/// SchemaError): fleet-pins.yaml, its sidecar, parity-capabilities.yaml, the
+/// unmigrated-pins list or an intent breaks the pins schema or its rules. It
+/// exits 2, as the uncoded error did.
+pub const SCHEMA_REFUSED: &str = "GB-365";
 
-impl std::fmt::Display for SchemaError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-impl std::error::Error for SchemaError {}
-
+/// Refuse a pins file that breaks the schema, with [`SCHEMA_REFUSED`].
 fn die<T>(msg: String) -> Result<T> {
-    Err(SchemaError(msg).into())
+    Err(anyhow::Error::from(goat_errors::coded(SCHEMA_REFUSED, msg)))
 }
 
 // --- where things are (paths.py) ------------------------------------------------
@@ -316,7 +311,9 @@ fn load_lite(path: &Path, goatnets: &mut Map<String, Value>, components: &mut Ma
             Some(Value::Object(d)) => d.clone(),
             Some(_) => return die(format!("{where_}: component '{cname}': `deviations:` must be a mapping")),
         };
-        let target = components.get_mut(cname).and_then(|c| c.as_object_mut()).ok_or_else(|| SchemaError(format!("{table}: component '{cname}' is not a mapping")))?;
+        let Some(target) = components.get_mut(cname).and_then(|c| c.as_object_mut()) else {
+            return die(format!("{table}: component '{cname}' is not a mapping"));
+        };
         if !matches!(target.get("deviations"), Some(Value::Object(_))) {
             target.insert("deviations".into(), Value::Object(Map::new()));
         }
@@ -810,7 +807,7 @@ pub fn load_allowlist(p: &Paths) -> Result<(BTreeSet<String>, usize, Option<usiz
     }
     let mut rows = BTreeSet::new();
     let mut baseline = None;
-    let text = std::fs::read_to_string(&path)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
     for raw in text.lines() {
         if let Some(b) = raw.trim().strip_prefix("# baseline:") {
             if let Some(n) = b.split_whitespace().next().and_then(|x| x.parse::<usize>().ok()) {

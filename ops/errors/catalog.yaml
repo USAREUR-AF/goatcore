@@ -4219,6 +4219,22 @@ entries:
       - "^GB-362 site play: "
     exit: 1
 
+  - code: GB-365
+    tool: goatbuilder
+    title: a pins file breaks the pins schema
+    what: "goatbuilder pins, and every verb that runs its check (release, preflight, the fast lane), reads ops/pins/fleet-pins.yaml, its sidecar ops/pins/lite-pins.yaml, ops/pins/parity-capabilities.yaml and the unmigrated-pins list ops/pins/unmigrated-pins.txt, and holds them, and each intent it renders, to the pins schema: the shape of each table, a multi-arch index digest on every image, one owner for each member and var, a reason on every deviation. One rule is broken, and the message names the file, the component or goatnet, and the rule. Nothing was rendered."
+    causes:
+      - "a table or component is not in the shape the schema gives it (a list where a mapping goes, a key the sidecar does not carry)"
+      - "an image is pinned by a mutable or bare tag, not an index digest"
+      - "a goatnet, member or var is declared twice, or names a host group that does not exist"
+      - "a deviation has no reason, or sets both absent: and value:"
+      - "a row of the unmigrated-pins list is not <member_group>:<var>"
+    fixes:
+      - "fix the line the message names, then run: goatbuilder pins --check"
+      - "git -C <checkout> diff ops/pins/   (what changed since the last commit)"
+    read: docs/design/goatbuilder.md
+    exit: 2
+
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
   - code: GB-370
