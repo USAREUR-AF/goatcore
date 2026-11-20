@@ -54,6 +54,7 @@ ops/admit-audit/go.mod | @USAREUR-AF/goat-owners | Go service: NetBird managemen
 ops/enrollment/go.mod | @USAREUR-AF/goat-owners | Go module: machine enrollment and intent signing (ADR 1096)
 ops/federation/reference/go.mod | @USAREUR-AF/goat-owners | Go module: federation package v1 reference implementation
 ops/goat-id-console/go.mod | @USAREUR-AF/goat-owners | Go service: identity admin console
+ops/goat-pod-api/go.mod | @USAREUR-AF/goat-owners | Go service: pod-side carriage runtime and local authority API (ADR 1251); standard library only
 ops/goat-zenoh-portal/go.mod | @USAREUR-AF/goat-owners | Go service: Zenoh portal
 ops/grant-crypto/go.mod | @USAREUR-AF/goat-owners | Go module: grant-crypto services
 ops/grant-crypto/sdk/bindings/go/go.mod | @USAREUR-AF/goat-owners | Go binding of the grant-crypto SDK (ADR 1106)
