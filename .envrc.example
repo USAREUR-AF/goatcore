@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1011 variables, 145 of them secret-bearing by name.
+# 1009 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,14 +26,11 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 145 variables.
+# 144 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
 export ADMIT_AUDIT_PASSWORD=""  # SECRET
-
-# crates/goatbuilder/src/envrefs.rs
-export ALPHA_PG_PASS=""  # SECRET
 
 # .github/workflows/docs-translation-gate.yml, ops/scripts/translate-ftl.py …
 export ANTHROPIC_API_KEY=""  # SECRET
@@ -469,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 866 variables.
+# 865 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2979,9 +2976,6 @@ export WG_PEER_ENDPOINT=""
 
 # ops/ansible/roles/goat-peering-wg/templates/goat-peering-wg-link.sh.j2
 export WG_PEER_KEEPALIVE=""
-
-# crates/goatbuilder/src/envrefs.rs
-export WITH_DEFAULT=""
 
 # ops/federation-e2e/lib/unit.sh
 export WORK=""
