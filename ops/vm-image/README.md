@@ -4,6 +4,10 @@ Status: WIP, not for production use — gate: one standup from the image, timed 
 
 An Ubuntu 24.04 image with phase 2 of a goatlite standup already applied and every image a goatlite runs already pulled ([goatlite.md](../../docs/design/goatlite.md) §11, measure 5). Started instead of a stock Ubuntu image, phase 2 finds Docker installed and configured, and the standup's image pull finds every image on the box and pulls none.
 
+## The zero-SaaS lab run
+
+[`zero-saas/`](zero-saas/README.md) stands a goatlite up from this image, driven by a laptop VM, on a private segment with no route out. Every packet of the run is recorded, and the run passes only when the standup verifies and no packet went to an outside address or asked for an outside name. It is lab only. CI runs it after the build, in the same workflow, when the workflow is started by hand.
+
 ## What is in it
 
 | Part | Source |

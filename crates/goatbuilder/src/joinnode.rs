@@ -143,6 +143,31 @@ struct Phase {
     writes: Vec<String>,
 }
 
+/// GB-369 for the first phase in `from..=to` whose command reads, as `$NAME`
+/// or `${NAME}`, a variable `get` does not hold: bash runs each phase with
+/// `-u`, so that phase would stop on `NAME: unbound variable` before its
+/// program starts, partway through the node. A manual phase runs nothing.
+fn unset_variable_refusal(phases: &[Phase], from: u32, to: u32, get: &dyn Fn(&str) -> Option<String>) -> Option<anyhow::Error> {
+    let (ph, names) = phases.iter().filter(|p| p.n >= from && p.n <= to && p.kind != "MANUAL").find_map(|p| {
+        let names = crate::envrefs::unset(&p.cmd, get);
+        (!names.is_empty()).then_some((p, names))
+    })?;
+    let (verb, them) = if names.len() == 1 { ("is", "it") } else { ("are", "each") };
+    Some(
+        goat_errors::coded(
+            "GB-369",
+            format!(
+                "phase {} (\"{}\") reads {}, which {verb} not set in this environment: bash would stop on {them} before the phase's command starts, so no phase has run. export {} (or keep {them} under your secrets posture and run goatbuilder through ops/scripts/with-secrets), then re-run",
+                ph.n,
+                ph.label,
+                names.join(", "),
+                names.iter().map(|n| format!("{n}=<value>")).collect::<Vec<_>>().join(" "),
+            ),
+        )
+        .into(),
+    )
+}
+
 fn row(name: &str, detail: String) -> Check {
     Check { name: name.into(), ok: true, detail, fix: None }
 }
@@ -551,6 +576,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             ev.push(p(13, "A", "[core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {p1} --skip-tags after-ory")));
             ev.push(p(13, "A", "[core, joiner] the service deploys the seed needs (kratos/hydra schemas): ory", format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {node} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}'")));
             ev.push(p(13, "A", &format!("[core, joiner] pass 2 — seed-from-peer: data-only copy from founder {founder_site} (fails loud if the account is populated)"), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {seed_play} -e site_id={site}")));
+            // Row 9: the seed carries the founder's data and the subscriptions
+            // only later writes (synchronize_data false), so a founder write
+            // between the two is never sent. Before Spock is wired, every seed
+            // table must still equal the founder's (GB-367).
+            ev.push(p(13, "GATE", "[core, joiner] the seed is still current: every seed table equals the founder's, before Spock is wired (row counts and checksums, read-only; GB-367 names each table that differs: re-seed)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} spock-seed-current-check.yml -e site_id={site} -e seed_check_phase=before")));
             // Ory (Phase 7D) subscribes each side only to a peer that already has
             // its ory_narrow node, and its history reconcile checks the reverse
             // subscription on the peer, so the three steps below are staged:
@@ -559,6 +589,9 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             ev.push(p(13, "A", "[core, joiner] pass 3 — bootstrap with Spock: netbird subscriptions on both sides, polled to replicating; Ory node + repset only", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {ev_secrets} -e ory_spock_wire_subscriptions=false")));
             ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (the same change, not a follow-up): netbird + Ory node, repset, subscription"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {} -e '{{\"inter_site_spock_peers\":[\"{site}\"],\"ory_spock_reconcile_history\":false}}'", sh_word(&founder_group))));
             ev.push(p(13, "A", "[core, joiner] the joiner's Spock wiring again, now that the founder's half exists: Ory subscription + history reconcile", format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {node}")));
+            // And once the joiner's subscriptions from the founder have caught
+            // up: a write made before they existed never arrives (GB-367).
+            ev.push(p(13, "GATE", "[core, joiner] the seed reached the wire: once the subscriptions from the founder have caught up, every seed table equals the founder's (GB-367 names each table that differs)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} spock-seed-current-check.yml -e site_id={site} -e seed_check_phase=after")));
             let federated = signal_federation(&mut ev, repo, &gv, site, &founder_site, &pre, inv);
             // The site's router and service leaves (gate row I3), before the
             // router, whose play reads the router leaf.
@@ -592,6 +625,20 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
                     ev.push(p(13, "SKIP", &why, format!("echo {}", sh_quote(&format!(">> {why}")))));
                 }
                 Ok(pubs) => {
+                    // Every publisher reads the router's stack name (GB-361).
+                    let site_id =
+                        crate::federate::preflight::group_var(repo, &site_group, "site_id")
+                            .unwrap_or_else(|| site.to_string());
+                    let roles: Vec<&str> = pubs.iter().map(|(name, _)| *name).collect();
+                    crate::zenoh_stack::check(repo, &site_group, &site_id, &roles)?;
+                    // Each publisher runs with its own leaf, minted from the
+                    // manifest and staged above: one the manifest does not
+                    // carry is refused now, not at staging or at deploy.
+                    let no_leaf: Vec<&str> = pubs.iter().map(|(name, _)| *name).filter(|name| !l.staged.iter().any(|s| s == name)).collect();
+                    if !no_leaf.is_empty() {
+                        let (them, add) = if no_leaf.len() == 1 { ("it", format!("a leaf named {}", no_leaf[0])) } else { ("them", "a leaf named for each of them".to_string()) };
+                        return Err(goat_errors::coded("GB-364", format!("the end-state model marks {} present at {site}, and ops/enrollment/manifests/{site}-certs.yaml carries no leaf for {them}: join-node deploys each health publisher the site declares with the leaf it mints from that manifest. Add {add} to the manifest, as ops/enrollment/manifests/TEMPLATE-certs.yaml shows, or declare the publisher absent at {site} in ops/pins/fleet-pins.yaml with its reason", no_leaf.join(", "))).into());
+                    }
                     for (name, play) in pubs {
                         ev.push(p(13, "A", &format!("[health publishers] {name} ({play}), limited to the node: the end-state model marks it present at {site}"), format!("cd '{r}/ops/ansible' && {pre} {inv} {play} -e target={site_group} -l {node}")));
                     }
@@ -959,6 +1006,13 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         return Err(goat_errors::coded("GB-251", "this checkout declares no SSH user for a new machine: set deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml; --dry-run plans without it").into());
     }
     let phases = plan(repo, o)?;
+    // Before any host: a phase whose command reads a variable that is not set
+    // would stop on bash's own `unbound variable`, partway through the node.
+    if !o.dry_run {
+        if let Some(e) = unset_variable_refusal(&phases, o.from, o.to, &|k: &str| std::env::var(k).ok()) {
+            return Err(e);
+        }
+    }
     // Every value the run uses, with its source (gate row F2): the run record
     // carries it, and a dry run prints it. A secret by its source only.
     // Listing reads the secrets posture; a dry run prints those probes too.
@@ -1098,6 +1152,41 @@ mod tests {
         assert!(text.contains("<deploy.ssh_user>@192.0.2.9"), "{text}");
     }
 
+    /// C5 drill log: phase 13 died on `bash: line 1: OWNER_EMAIL: unbound
+    /// variable`, with no catalogued error. A run now refuses before any phase,
+    /// with GB-369, naming the first phase in range that reads a variable that
+    /// is not set, and each such variable; a phase outside the range, or a
+    /// manual one, is not read.
+    #[test]
+    fn a_phase_that_reads_an_unset_variable_is_refused_before_any_phase_runs() {
+        let ph = |n: u32, kind: &'static str, cmd: &str| Phase { n, kind, label: format!("phase {n}"), cmd: cmd.into(), writes: vec![] };
+        let phases = vec![
+            ph(12, "AUTO", "echo ready"),
+            ph(13, "AUTO", r#"ansible-playbook site-bootstrap.yml -e bootstrap_owner_email="$OWNER_EMAIL" -e t=$OTHER_TOKEN"#),
+            ph(14, "MANUAL", r#"echo "$NOT_RUN_HERE""#),
+        ];
+        let none = |_: &str| None;
+        let e = unset_variable_refusal(&phases, 0, 99, &none).expect("refused");
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-369"), "{e}");
+        let text = e.to_string();
+        assert!(text.contains("phase 13") && text.contains("OWNER_EMAIL") && text.contains("OTHER_TOKEN"), "{text}");
+        assert!(!text.contains("NOT_RUN_HERE"), "a manual phase runs nothing: {text}");
+        assert!(text.contains("export OTHER_TOKEN=<value> OWNER_EMAIL=<value>") && text.contains("no phase has run"), "{text}");
+        assert!(unset_variable_refusal(&phases, 14, 99, &none).is_none(), "phase 13 is outside --from 14");
+        let set = |n: &str| (n == "OWNER_EMAIL" || n == "OTHER_TOKEN").then(|| "v".to_string());
+        assert!(unset_variable_refusal(&phases, 0, 99, &set).is_none());
+
+        // A joiner's real plan reads no variable as $NAME: its secrets reach
+        // the plays through lookup("env") and with-secrets, so the check never
+        // stops a joiner that a founder's OWNER_EMAIL would not stop.
+        let t = joiner_checkout();
+        for class in ["core", "obs"] {
+            let plan = plan(t.path(), &opts("zagros-b", class, "zagros")).unwrap();
+            let reads: Vec<String> = plan.iter().flat_map(|p| crate::envrefs::unset(&p.cmd, &none)).collect();
+            assert!(reads.is_empty(), "{class}: {reads:?}");
+        }
+    }
+
     fn opts<'a>(site: &'a str, class: &'a str, env: &'a str) -> Options<'a> {
         Options { env, site, node: "node-x", class, address: None, pass_var: None, via: "mesh", from: 0, to: 99, dry_run: true }
     }
@@ -1168,8 +1257,8 @@ mod tests {
         let phases: Vec<&str> = r.checks.iter().filter(|c| c.name == "phase").map(|c| c.detail.as_str()).collect();
         assert!(phases[0].starts_with("=== Phase 1 [GATE] the node answers over SSH"));
         let core: Vec<&&str> = phases.iter().filter(|p| p.contains("[core, joiner]")).collect();
-        assert_eq!(core.len(), 6, "{phases:?}");
-        assert!(core[0].contains("pass 1") && core[2].contains("pass 2") && core[3].contains("pass 3") && core[4].contains("founder-side mirror on zagros_hosts") && core[5].contains("Spock wiring again"));
+        assert_eq!(core.len(), 8, "{phases:?}");
+        assert!(core[0].contains("pass 1") && core[2].contains("pass 2") && core[3].contains("the seed is still current") && core[4].contains("pass 3") && core[5].contains("founder-side mirror on zagros_hosts") && core[6].contains("Spock wiring again") && core[7].contains("the seed reached the wire"));
         assert!(phases.last().unwrap().starts_with("=== Phase 15 [GATE] done means proven"));
         let cmds: Vec<&str> = r.checks.iter().filter(|c| c.name == "cmd").map(|c| c.detail.as_str()).collect();
         assert!(cmds.iter().any(|c| c.contains("-e participates_in_spock=false")));
@@ -1278,7 +1367,8 @@ mod tests {
             assert!(gate.contains("standup-config-preflight.py' zagros_b_hosts --class phone"), "phase {n}: {gate}");
         }
         // A core joiner's converge, in the site's core group.
-        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]")).count(), 6);
+        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).count(), 6);
+        assert_eq!(ph.iter().filter(|p| p.cmd.contains("spock-seed-current-check.yml")).count(), 2, "a phone joiner's seed is checked too");
         assert_eq!(group_of("zagros-b", "phone"), "zagros_b_hosts");
         let ssh = format!("ssh -F '{base}.ssh' <deploy.ssh_user>@node-x ");
         let usb_inv = format!("-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i '{base}.ini' ");
@@ -1603,7 +1693,8 @@ mod tests {
         let t = joiner_checkout();
         let o = opts("zagros-b", "core", "zagros");
         let ph = plan(t.path(), &o).unwrap();
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        // The bootstrap passes and Ory's staging; the seed checks between them are tested on their own.
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).collect();
         assert_eq!(core.len(), 6, "{:?}", core.iter().map(|p| &p.label).collect::<Vec<_>>());
         for i in [0, 3] {
             assert!(core[i].cmd.contains("-l node-x site-bootstrap-for.yml -e bootstrap_site=zagros-b "), "{}", core[i].cmd);
@@ -1649,7 +1740,7 @@ mod tests {
         let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
         assert!(core[0].label.contains("pass 1") && core[0].cmd.ends_with(" --skip-tags after-ory"), "{}", core[0].cmd);
         assert!(core[1].cmd.contains("ory-deploy.yml"), "Ory follows pass 1: {}", core[1].cmd);
-        assert!(core[3].label.contains("pass 3") && !core[3].cmd.contains("--skip-tags"), "{}", core[3].cmd);
+        assert!(core[4].label.contains("pass 3") && !core[4].cmd.contains("--skip-tags"), "{}", core[4].cmd);
     }
 
     /// A stand-in for the end-state model: prints `services` (JSON) as the
@@ -1676,6 +1767,8 @@ mod tests {
         assert!(skip.label.contains("not read"), "{}", skip.label);
         // The model marks fabric-crawler and fabric-health present, mesh-health absent, time-health undecided.
         fake_model(t.path(), r#"{"fabric-crawler": {"present": true}, "fabric-health": {"present": true}, "mesh-health": {"present": false}, "time-health": {"present": null}}"#);
+        // Each present publisher's leaf is in the manifest (GB-364 otherwise).
+        std::fs::write(t.path().join("ops/enrollment/manifests/zagros-b-certs.yaml"), "site_id: zagros-b\nout_dir: /s/zagros-b-leaves\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n  - name: fabric-crawler\n    cn: fabric-crawler\n").unwrap();
         for play in ["fabric-health-deploy.yml", "fabric-crawler-deploy.yml"] {
             std::fs::write(t.path().join("ops/ansible").join(play), "---\n").unwrap();
         }
@@ -1692,6 +1785,67 @@ mod tests {
         let e = plan(t.path(), &opts("zagros-b", "core", "zagros")).err().expect("refused");
         assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-288"), "{e}");
         assert!(e.to_string().contains("fabric-crawler"), "{e}");
+    }
+
+    /// A health publisher join-node deploys runs with its own leaf, which
+    /// phase 13 mints from the site's leaf manifest and stages onto the node.
+    /// A publisher the model marks present whose leaf the manifest does not
+    /// carry is refused when the plan is made (GB-364), naming the publisher
+    /// and the manifest, not at staging or at deploy. A publisher marked absent
+    /// needs no leaf.
+    #[test]
+    fn a_publisher_it_deploys_with_no_leaf_in_the_manifest_is_refused_at_plan_time() {
+        let t = joiner_checkout();
+        for play in ["fabric-health-deploy.yml", "mesh-health-deploy.yml"] {
+            std::fs::write(t.path().join("ops/ansible").join(play), "---\n").unwrap();
+        }
+        // mesh-health present, and the manifest carries only fabric-health's leaf.
+        fake_model(t.path(), r#"{"fabric-health": {"present": true}, "mesh-health": {"present": true}}"#);
+        let e = plan(t.path(), &opts("zagros-b", "core", "zagros")).err().expect("refused");
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-364"), "{e}");
+        let text = e.to_string();
+        assert!(text.contains("mesh-health") && !text.contains("fabric-health,"), "names the publisher with no leaf: {text}");
+        assert!(text.contains("ops/enrollment/manifests/zagros-b-certs.yaml"), "names the manifest: {text}");
+        // Marked absent: no leaf needed.
+        fake_model(t.path(), r#"{"fabric-health": {"present": true}, "mesh-health": {"present": false}}"#);
+        assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).is_ok());
+        // The manifest gains the leaf: the plan is made, and stages it.
+        fake_model(t.path(), r#"{"fabric-health": {"present": true}, "mesh-health": {"present": true}}"#);
+        std::fs::write(t.path().join("ops/enrollment/manifests/zagros-b-certs.yaml"), "site_id: zagros-b\nout_dir: /s/zagros-b-leaves\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n  - name: mesh-health\n    cn: mesh-health\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let stage = ph.iter().find(|p| p.cmd.contains("stage-service-leaves.yml")).expect("a staging step");
+        assert!(stage.cmd.ends_with(r#"-e '{"leaf_only": ["fabric-health", "mesh-health"]}'"#), "{}", stage.cmd);
+    }
+
+    /// Row 9: the seed carries the founder's data, and the subscriptions
+    /// from the founder carry only later writes (synchronize_data false). A
+    /// founder write after the seed and before the subscriptions exist is never
+    /// sent, so a joiner's core node checks its seed tables against the
+    /// founder's twice: before pass 3 wires Spock, and after the joiner's Spock
+    /// wiring, once the new subscriptions have caught up. Each check is a
+    /// phase-13 GATE, limited to the node. A founder site seeds nothing, so its
+    /// plan has neither.
+    #[test]
+    fn a_joiners_seed_is_checked_current_before_and_after_spock_is_wired() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let at = |needle: &str| ph.iter().position(|p| p.cmd.contains(needle)).unwrap_or_else(|| panic!("no phase runs {needle}"));
+        let (seed, before, pass3, again, after) = (
+            at("site-seed-from-peer.yml"),
+            at("spock-seed-current-check.yml -e site_id=zagros-b -e seed_check_phase=before"),
+            ph.iter().position(|p| p.label.contains("pass 3")).expect("pass 3"),
+            ph.iter().position(|p| p.label.contains("Spock wiring again")).expect("the wiring again"),
+            at("spock-seed-current-check.yml -e site_id=zagros-b -e seed_check_phase=after"),
+        );
+        assert!(seed < before && before + 1 == pass3 && again + 1 == after, "{seed} {before} {pass3} {again} {after}");
+        for i in [before, after] {
+            assert_eq!((ph[i].n, ph[i].kind), (13, "GATE"), "{}", ph[i].label);
+            assert!(ph[i].cmd.contains(" -l node-x "), "{}", ph[i].cmd);
+            assert!(ph[i].label.contains("GB-367"), "{}", ph[i].label);
+        }
+        // A founder seeds nothing.
+        std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
+        assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-seed-current-check.yml")));
     }
 
     /// STAGED_SERVICES is stage-service-leaves.yml's service_leaf_map.
@@ -1987,7 +2141,8 @@ mod tests {
         let fed: Vec<&Phase> = ph.iter().filter(|p| p.label.starts_with("[signal federation]")).collect();
         assert_eq!(fed.len(), 7, "{:?}", fed.iter().map(|p| &p.label).collect::<Vec<_>>());
         let first = ph.iter().position(|p| p.label.starts_with("[signal federation]")).unwrap();
-        assert_eq!(first, rewire + 1, "federation follows the Spock wiring directly");
+        assert!(ph[rewire + 1].cmd.contains("seed_check_phase=after"), "the seed check follows the Spock wiring: {}", ph[rewire + 1].label);
+        assert_eq!(first, rewire + 2, "federation follows the Spock wiring and its seed check directly");
         assert!(fed.iter().all(|p| p.n == 13));
         assert_eq!(fed[0].kind, "GATE");
         assert!(fed[0].cmd.ends_with("signal-federation-check.py' zagros-b --peer zagros --resolve --require-env"), "{}", fed[0].cmd);

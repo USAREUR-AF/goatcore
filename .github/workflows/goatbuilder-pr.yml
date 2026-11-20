@@ -35,6 +35,7 @@ on:
       - 'ops/pins/**'
       - 'ops/release/graduate.py'
       - 'ops/release/tests/**'
+      - 'ops/release/ladder_gate.py'
       - 'ops/release/ladder.yaml'
       - 'ops/consistency/python/**'
       - 'ops/scripts/rc.sh'
@@ -264,6 +265,18 @@ jobs:
           set -o pipefail
           cargo test -p goatbuilder --test flows -- --nocapture 2>&1 | tee /tmp/flows.log
           if grep -q '^skipped:' /tmp/flows.log; then echo "::error::a flow skipped for missing Python deps"; exit 1; fi
+      # Gate row E4: the goat-get deploy serves a goatbuilder release only once its
+      # signature verifies, with this build as the controller's verifier. The test
+      # runs the role's goatbuilder tasks with ansible-playbook against this runner.
+      - name: The goat-get deploy serves goatbuilder only once its signature verifies (gate row E4)
+        if: env.FULL == 'true'
+        # In a venv of its own, first on PATH: a bare `pip install` can land in one
+        # interpreter while the ansible-playbook found on PATH runs another, which
+        # then has no ansible module.
+        run: |
+          python3 -m venv "$RUNNER_TEMP/e4-ansible"
+          "$RUNNER_TEMP/e4-ansible/bin/python" -m pip install --quiet ansible-core==2.20.11
+          PATH="$RUNNER_TEMP/e4-ansible/bin:$PATH" GOAT_GET_RELEASE_TEST_REQUIRED=1 cargo test -p goatbuilder --test goat_get_verifies_release
       # Gate row E1: a deployment made with each released 0.x binary continues on
       # this build. The released binaries come from a cache keyed on their pinned
       # checksums; only a cache miss downloads, and fetch.sh refuses a download
@@ -378,6 +391,7 @@ jobs:
           python3 ops/release/tests/test_readiness.py
           python3 ops/release/tests/test_runtime_health.py
           python3 ops/release/tests/test_hotfix_shadow.py
+          python3 ops/release/tests/test_ladder_gate.py
       - name: Parity gate — both avenues refuse a member deviation that shadows its goatnet (ADR 1256)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}

@@ -600,7 +600,8 @@ impl<'a> Run<'a> {
     }
 
     fn deploy(&mut self, goatnet: &str, verify_only: bool) -> Result<()> {
-        let r = push::deploy(&self.root, &push::Options { component: self.o.component, goatnet, only_group: None, dry_run: self.o.dry_run, verify_only, ack: self.o.ack })?;
+        let req = crate::converger::Converge { env: goatnet, component: Some(self.o.component), group: None, actor: self.o.ack, dry_run: self.o.dry_run, verify_only, frozen: false };
+        let r = crate::converger::select(&self.root, None)?.deploy(&req)?;
         let ok = r.ok;
         self.checks.borrow_mut().extend(r.checks);
         if !ok && !self.o.dry_run {

@@ -348,7 +348,7 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
     }
     // A LAN site pauses for the first login (phase 11) only while the bootstrap
     // NetBird token is not available under the declared posture (ADR 1204).
-    let nb_token_available = profile == "lan" && crate::secrets::available(repo).contains(&format!("{upper}_NB_API_TOKEN"));
+    let nb_token_available = profile == "lan" && crate::secrets::available(repo, &[format!("{upper}_NB_API_TOKEN")]).contains(&format!("{upper}_NB_API_TOKEN"));
     let joiner = gv_matches(&gv, "goatnet_founder", "false");
     let join_founder_site = if joiner { gv_first(&gv, "join_founder_site") } else { String::new() };
     let join_founder_group = if join_founder_site.is_empty() { String::new() } else { format!("{}_hosts", join_founder_site.replace('-', "_")) };
@@ -1226,7 +1226,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     // fresh-source check, which only a real run starts.
     if o.dry_run {
         if s.profile == "lan" {
-            checks.push(row("probe-ran", crate::secrets::posture_cmd(repo, &["available"]).line()));
+            checks.push(row("probe-ran", crate::secrets::available_cmd(repo, &[format!("{}_NB_API_TOKEN", s.upper)]).line()));
         }
         checks.extend(listing_probes.iter().map(|l| row("probe-ran", l.clone())));
         checks.push(row("probe", crate::fresh::command(repo).line()));

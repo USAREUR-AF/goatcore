@@ -132,6 +132,7 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
             "#!/bin/sh\nprintf 'play %s\\n' \"$*\" >> '{l}'\n\
              case \"$*\" in\n\
              *ory-deploy.yml*) touch '{st}/ory-up' ;;\n\
+             *spock-seed-current-check.yml*) [ -f '{st}/seed-stale' ] && {{ echo 'GB-367: the founder changed identities after the seed (identities: founder 2 rows, joiner 1); re-seed before wiring Spock'; exit 2; }} ;;\n\
              *mesh-enroll-host.yml*)\n\
                out=''; for a; do case \"$a\" in mesh_ips_out=*) out=\"${{a#mesh_ips_out=}}\" ;; esac; done\n\
                [ -n \"$out\" ] || {{ echo 'mesh-enroll-host.yml: no mesh_ips_out'; exit 2; }}\n\
@@ -464,6 +465,25 @@ fn after_phase_12_the_node_is_reached_at_its_mesh_address() {
         "nothing after phase 12 names the LAN address:\n{}",
         after.join("\n")
     );
+}
+
+/// Row 9: when the founder changed a seed table after the seed, phase 13
+/// stops at its check before pass 3, with GB-367, and wires no Spock
+/// subscription: the run never leaves a joiner subscribed over a seed that
+/// lacks the founder's later writes.
+#[test]
+fn a_seed_the_founder_changed_since_stops_phase_13_before_spock_is_wired() {
+    let s = site();
+    std::fs::write(s.root.join("state/seed-stale"), "").unwrap();
+    let (out, v) = join_node(&s, None);
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(!out.status.success(), "{}\nargv:\n{log}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&13), "{}", says(&out));
+    assert!(says(&out).contains("GB-367"), "{}", says(&out));
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    let check = plays.iter().position(|l| l.contains("spock-seed-current-check.yml")).expect("the check ran");
+    assert!(plays[..check].iter().any(|l| l.contains("seed-from-peer.yml")), "the seed ran first: {plays:#?}");
+    assert_eq!(check + 1, plays.len(), "nothing ran after the check: {plays:#?}");
 }
 
 /// Phase 15 runs the acceptance rows against the site's derived end state,
@@ -821,6 +841,50 @@ fn a_dry_runs_footer_does_not_call_phase_1_a_manual_step() {
         footer.contains("GB-314") && footer.contains("--from 1"),
         "names the stop and how to resume: {footer}"
     );
+}
+
+/// The roles a joiner's core node runs, as the repository ships them: the data
+/// router's (goat-zenoh) and every health publisher's defaults, which say how
+/// each reads `zenoh_stack`.
+fn with_role_defaults(s: &Site) {
+    for role in [
+        "goat-zenoh",
+        "fabric-health",
+        "mesh-health",
+        "presence-health",
+        "time-health",
+        "consistency-health",
+        "fabric-crawler",
+    ] {
+        let rel = format!("ops/ansible/roles/{role}/defaults");
+        copy_tree(&repo_root().join(&rel), &s.checkout.join(&rel));
+    }
+}
+
+/// The data router names its stack `<site_id>-zenoh` by its role default, and
+/// a health publisher whose role defaults `zenoh_stack` to `goat-zenoh` would
+/// look for a router and network of that name. A joiner whose group_vars do
+/// not set `zenoh_stack` is refused before any phase runs (GB-361), naming the
+/// publishers, both values and the line to add; set, every role reads it.
+#[test]
+fn a_joiner_whose_roles_disagree_on_zenoh_stack_is_refused_before_any_phase() {
+    let s = site();
+    with_role_defaults(&s);
+    let (out, v) = join_node_with(&s, None, &["--dry-run"]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert!(phases(&v).is_empty(), "no phase runs: {all}");
+    assert!(all.contains("GB-361"), "{all}");
+    assert!(all.contains("gamma-zenoh") && all.contains("goat-zenoh"), "both values: {all}");
+    assert!(all.contains("zenoh_stack: gamma-zenoh"), "the line to add: {all}");
+    assert!(all.contains("group_vars/gamma_hosts"), "where to add it: {all}");
+
+    let vars = s.checkout.join("ops/ansible/group_vars/gamma_hosts/vars.yml");
+    let mut text = std::fs::read_to_string(&vars).unwrap();
+    text.push_str("zenoh_stack: gamma-zenoh\n");
+    std::fs::write(&vars, text).unwrap();
+    let (out, _) = join_node_with(&s, None, &["--dry-run"]);
+    assert!(out.status.success(), "with zenoh_stack set, every role reads one value: {}", says(&out));
 }
 
 /// Like standup, a join-node run leaves a row per executed step in the state

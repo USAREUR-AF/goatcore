@@ -22,7 +22,11 @@
 #
 # forward catches the DNAT path, matching the original destination from
 # conntrack and only in the original direction; input catches the
-# docker-proxy path.
+# docker-proxy path. On a kernel without nft conntrack (the Jetson Tegra
+# kernel: CONFIG_NFT_CT is not set) the DNAT path is dropped in prerouting
+# instead, before the rewrite, where the destination is still the original;
+# loopback is exempt there because the host's own connections to its address
+# pass prerouting on lo (with conntrack they never reach forward).
 #
 # Its own table: Docker never touches it, and a restart of dockerd leaves it in
 # place. goat-logship-expose-guard.service loads it at boot, before docker.
@@ -32,6 +36,7 @@
 table inet goat_logship_expose
 delete table inet goat_logship_expose
 table inet goat_logship_expose {
+{% if _logship_guard_ct | default(true) | bool %}
 	chain forward {
 		type filter hook forward priority filter - 10; policy accept;
 		ct direction original iifname != "{{ logship_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _logship_bind | trim }} ct original proto-dst {{ logship_metrics_port }} {{ _logship_guard_verdict }}
@@ -39,6 +44,15 @@ table inet goat_logship_expose {
 		ct direction original iifname != "{{ _logship_scraper_iface | trim }}" meta l4proto tcp ct original ip daddr {{ _logship_gw_bind | trim }} ct original proto-dst {{ logship_metrics_port }} {{ _logship_guard_verdict }}
 {% endif %}
 	}
+{% else %}
+	chain prerouting {
+		type filter hook prerouting priority dstnat - 10; policy accept;
+		iifname != "lo" iifname != "{{ logship_mesh_iface }}" ip daddr {{ _logship_bind | trim }} tcp dport {{ logship_metrics_port }} {{ _logship_guard_verdict }}
+{% if (_logship_gw_bind | default('', true) | trim) | length > 0 %}
+		iifname != "lo" iifname != "{{ _logship_scraper_iface | trim }}" ip daddr {{ _logship_gw_bind | trim }} tcp dport {{ logship_metrics_port }} {{ _logship_guard_verdict }}
+{% endif %}
+	}
+{% endif %}
 	chain input {
 		type filter hook input priority filter - 10; policy accept;
 		iifname != "lo" iifname != "{{ logship_mesh_iface }}" ip daddr {{ _logship_bind | trim }} tcp dport {{ logship_metrics_port }} {{ _logship_guard_verdict }}

@@ -1349,6 +1349,9 @@ fn f5_a_failed_join_node_phase_carries_its_known_error_s_code_and_fix() {
         .env("GB_REC_SAY_WHEN", "mgmt-host-baseline.yml")
         .env("GB_REC_SAY", SSH_REFUSED)
         .env("GB_REC_SAY_EXIT", "4")
+        // A founder site's phase 13 reads it; without it the run refuses
+        // before phase 2 (GB-369) and this phase never fails.
+        .env("OWNER_EMAIL", "ops@example.org")
         .output()
         .unwrap();
     the_ssh_refusal_is_interpreted("join-node", &out, "5");
@@ -1448,7 +1451,11 @@ fn c11_join_node() {
         "2",
     ];
     let real: Vec<&str> = args.iter().copied().chain(["--yes"]).collect();
-    let (out, procs) = run_recorded(h.command(&real), &h.root.path().join("rec/real"));
+    // A founder site's phase 13 reads the bootstrap administrator's address;
+    // an operator running it supplies it (else GB-369 before phase 2).
+    let mut real_cmd = h.command(&real);
+    real_cmd.env("OWNER_EMAIL", "ops@example.org");
+    let (out, procs) = run_recorded(real_cmd, &h.root.path().join("rec/real"));
     ran("join-node", &out, &procs, &[0]);
     let dry: Vec<&str> = args.iter().copied().chain(["--dry-run"]).collect();
     let page = at_a_terminal(&h.command(&dry)).unwrap_or_else(|e| panic!("{e}"));
@@ -1689,11 +1696,13 @@ fn a_two_group_deploy_records_a_phase_per_group() {
     assert_eq!(unique.len(), ids.len(), "a phase id repeats: {ids:?}");
 }
 
-/// A deploy's dry run names its four probes under two headings: the two it
-/// ran itself (the secrets posture and the mesh status, whose answers shaped
-/// the plan) and the two only a real run starts (the fresh-source check and
-/// the ledger read). Each row is the line its builder makes, as `-o json`
-/// lists it.
+/// A deploy's dry run names its probes under two headings: those it ran
+/// itself (the mesh status, and the secrets posture when the play templates a
+/// variable, whose answers shaped the plan) and the two only a real run starts
+/// (the fresh-source check and the ledger read). Each row is the line its
+/// builder makes, as `-o json` lists it. The fixture's play templates no
+/// variable, so the posture is not asked: its probe would only name the
+/// variables a run reads, and there are none.
 #[test]
 fn a_deploy_dry_run_names_its_probes_under_two_headings() {
     let h = hollow();
@@ -1713,8 +1722,9 @@ fn a_deploy_dry_run_names_its_probes_under_two_headings() {
             .collect()
     };
     let (ran, real) = (rows("probe-ran"), rows("probe"));
-    assert_eq!(ran.len(), 2, "the dry run's own probes: {ran:?}");
-    assert!(ran[0].contains("available") && ran[1].contains("netbird status"), "{ran:?}");
+    assert_eq!(ran.len(), 1, "the dry run's own probes: {ran:?}");
+    assert!(ran[0].contains("netbird status"), "{ran:?}");
+    assert!(!ran.iter().any(|l| l.contains("posture.py")), "no variable to ask about, so no posture probe: {ran:?}");
     assert_eq!(real.len(), 2, "the real run's probes: {real:?}");
     assert!(real[0].contains("fresh-source.sh"), "{real:?}");
     assert!(real[1].starts_with("(cd ops/ansible && ") && real[1].contains("deploy-history.jsonl"), "the ledger read, runnable from the checkout: {real:?}");

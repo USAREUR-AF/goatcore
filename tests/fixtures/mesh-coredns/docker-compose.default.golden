@@ -1,0 +1,21 @@
+## Mesh DNS — CoreDNS container, host networking, mounts Corefile + mesh-hosts.
+## Rendered by ops/ansible/roles/mesh-coredns from this template.
+## Block 13A supply chain hardening (vs jpillora/dnsmasq:latest).
+## Image: coredns/coredns (official CNCF, Docker Hub verified publisher).
+## An overlay may set a hardened catalogue image through the role variable (ADR 1220).
+
+services:
+  coredns:
+    container_name: mesh-dns
+    image: coredns/coredns:1.15.0
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./Corefile:/etc/coredns/Corefile:ro
+      - ./mesh-hosts:/etc/mesh-hosts:ro
+    command: ["-conf", "/etc/coredns/Corefile"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"

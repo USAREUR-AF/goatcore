@@ -1,0 +1,33 @@
+# goat — mesh DNS server (CoreDNS)
+# Rendered by ops/ansible/roles/mesh-coredns. Per-site bind IP is the host's
+# mesh IP (NOT LAN IP) — keeps DNS strictly on the WireGuard overlay.
+# Netbird nameserver group must point peers at 100.127.0.1:5353.
+#
+# Block 79 (2026-05-09): when mesh_coredns_wg_cp0_bind_ip is also set,
+# CoreDNS binds an additional listener on the wg-cp0 address. This lets
+# operator laptops on the silent control plane resolve mesh-internal
+# hostnames pre-netbird-enrollment (closes the chicken-and-egg that
+# would otherwise force IP-literal URLs and trip F-104).
+
+.:5353 {
+    # Listen only on loopback + mesh interface(s). Public-internet exposure
+    # of the mgmt-internal DNS resolver would violate the silent-control-plane
+    # invariant (ADR 0313/0314).
+    bind 127.0.0.1 100.127.0.1
+
+    # Serve all records from mesh-hosts (standard /etc/hosts format).
+    # reload 5s picks up peer additions without a container restart.
+    hosts /etc/mesh-hosts {
+        reload 5s
+        no_reverse
+        fallthrough
+    }
+
+    # Forward non-mesh queries to public DNS.
+    forward . 192.0.2.53 198.51.100.53:5300
+
+    cache 1000
+
+    log
+    errors
+}

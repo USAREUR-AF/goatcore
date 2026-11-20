@@ -41,8 +41,33 @@ never written to the host and no task prints it.
 The `goat-docs` role reads its releases the same way (`goat_docs_release_private`,
 `goat_docs_goatbuilder_release_private`).
 
+## goatbuilder: served only once it verifies
+
+The goatbuilder family (`tasks/goatbuilder.yml`) stages a release in
+`goat_get_goatbuilder_staging_dir`, outside the web root, and serves it only
+once it verifies:
+
+1. On the controller, `goat_get_goatbuilder_verifier update verify-release`
+   (goatbuilder 0.7.0 or later; default `goatbuilder` on PATH) checks the
+   keyless signature over `SHA256SUMS` (`SHA256SUMS.cosign-bundle`) with the
+   checks `goatbuilder update` makes before it installs a release, for
+   `goat_get_goatbuilder_release_repo`'s release workflow at the pinned tag.
+   `goat_get_goatbuilder_trusted_root` names a Sigstore `trusted_root.json`
+   trusted beside the embedded public one (empty: none).
+2. The host's copies of `SHA256SUMS` and its bundle must be the bytes the
+   controller verified.
+3. Every other staged file must agree with that `SHA256SUMS`: a binary hashes
+   to the digest it lists, and a `.sha256` names that digest and that file.
+
+Only then is each file renamed into `<www>/<goat_get_goatbuilder_www_subdir>`.
+A refusal removes the staging directory and leaves the served directory as it
+was.
+
 ## Tests
 
 `tests/github-release-access.yml` runs the shared tasks against a real release
 from localhost only; usage is in its header. `tests/syntax-check.sh` is what
-CI runs.
+CI runs. `crates/goatbuilder/tests/goat_get_verifies_release.rs` runs the
+goatbuilder family against a stand-in release and Sigstore on localhost, with no
+privilege: a release that verifies is served, and each kind of release that does
+not is refused with the served directory unchanged.

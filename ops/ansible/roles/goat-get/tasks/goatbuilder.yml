@@ -1,0 +1,300 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# The goatbuilder family of the goat-get deploy, included by deploy.yml when
+# goat_get_goatbuilder_enabled is true.
+
+# ---------------------------------------------------------------------------
+# goatbuilder assets — OPT-IN parallel payload at get.<site>/goatbuilder/
+# (docs/design/goatbuilder-distribution.md). Same shape as the kmod family:
+# release-access probe on the release tag, set-equality assert on assets,
+# host-side fetch, fail-closed throughout. This surface mirrors a signed
+# release; it never signs one, and it serves one only once it verifies: the
+# keyless signature over SHA256SUMS, with goatbuilder's own verifier on the
+# controller, then every staged file against those verified bytes (gate row
+# E4). An operator can verify the bundle again after downloading, from here
+# or from GitHub, identically.
+# ---------------------------------------------------------------------------
+- name: goat-get | goatbuilder | preconditions — a release tag is pinned
+  ansible.builtin.assert:
+    that:
+      - goat_get_goatbuilder_release_tag | length > 0
+    fail_msg: >-
+      goat_get_goatbuilder_enabled is true but goat_get_goatbuilder_release_tag is
+      empty: no goatbuilder release is pinned. Cut the release (a repository admin
+      tags main: goatbuilder/v<semver>), then set the tag in the role defaults.
+  run_once: true
+  when: goat_get_goatbuilder_enabled | bool
+
+- name: goat-get | goatbuilder | decide how to read the GitHub release (token or anonymous)
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/github-release-access.yml"
+  vars:
+    ghr_label: "goat-get | goatbuilder"
+    ghr_repo: "{{ goat_get_goatbuilder_release_repo }}"
+    ghr_tag: "{{ goat_get_goatbuilder_release_tag }}"
+    ghr_api: "{{ goat_get_github_api }}"
+    ghr_token: "{{ goat_get_github_token }}"
+    ghr_token_name: "goat_get_github_token (GOAT_CLI_RELEASE_TOKEN, else GH_TOKEN, else GHCR_READ_TOKEN)"
+    ghr_private: "{{ goat_get_goatbuilder_release_private }}"
+    ghr_private_var: goat_get_goatbuilder_release_private
+    ghr_hint: >-
+      goat_get_goatbuilder_enabled is true. If the tag is not cut, a repository admin tags main:
+      git tag {{ goat_get_goatbuilder_release_tag }} <sha> && git push origin {{ goat_get_goatbuilder_release_tag }}.
+  when: goat_get_goatbuilder_enabled | bool
+
+- name: goat-get | goatbuilder | GitHub request headers (Authorization only when the token is used)
+  ansible.builtin.set_fact:
+    goat_get_goatbuilder_gh_auth: "{{ ghr_auth_headers }}"
+  no_log: true
+  when: goat_get_goatbuilder_enabled | bool
+
+- name: goat-get | goatbuilder | create www/goatbuilder dir
+  ansible.builtin.file:
+    path: "{{ goat_get_www_dir }}/{{ goat_get_goatbuilder_www_subdir }}"
+    state: directory
+    mode: "0755"
+  become: true
+  when: goat_get_goatbuilder_enabled | bool
+
+- name: goat-get | goatbuilder | resolve goatbuilder release by tag (asset id + url map)
+  ansible.builtin.uri:
+    url: "{{ goat_get_github_api }}/repos/{{ goat_get_goatbuilder_release_repo }}/releases/tags/{{ goat_get_goatbuilder_release_tag }}"
+    method: GET
+    headers: "{{ {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'} | combine(goat_get_goatbuilder_gh_auth) }}"
+    return_content: true
+  register: goat_get_goatbuilder_release
+  become: true
+  no_log: true
+  when: goat_get_goatbuilder_enabled | bool
+
+- name: goat-get | goatbuilder | build name->api-url map for the goatbuilder assets we serve
+  ansible.builtin.set_fact:
+    goat_get_goatbuilder_asset_urls: >-
+      {{ goat_get_goatbuilder_release.json.assets
+         | selectattr('name', 'in', goat_get_goatbuilder_assets)
+         | items2dict(key_name='name', value_name='url') }}
+  when: goat_get_goatbuilder_enabled | bool
+
+- name: goat-get | goatbuilder | every requested goatbuilder asset is present in the release
+  ansible.builtin.assert:
+    that:
+      - goat_get_goatbuilder_asset_urls.keys() | list | sort == goat_get_goatbuilder_assets | sort
+    fail_msg: >-
+      Release {{ goat_get_goatbuilder_release_tag }} is missing expected goatbuilder assets.
+      Wanted {{ goat_get_goatbuilder_assets }}, found
+      {{ goat_get_goatbuilder_asset_urls.keys() | list }}. Re-run goatbuilder-release.yml
+      on the tag; a release that looks published and serves part of its set is not served.
+  when: goat_get_goatbuilder_enabled | bool
+
+# Staged outside the web root, so nothing unverified is ever reachable, and
+# renamed into the served directory only once everything below passes. A
+# refusal removes the staging directory and leaves the served one as it was.
+- name: goat-get | goatbuilder | a fresh staging directory outside the web root
+  ansible.builtin.file:
+    path: "{{ goat_get_goatbuilder_staging_dir }}"
+    state: absent
+  become: true
+
+- name: goat-get | goatbuilder | create the staging directory
+  ansible.builtin.file:
+    path: "{{ goat_get_goatbuilder_staging_dir }}"
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: goat-get | goatbuilder | verify the release, then serve it
+  block:
+    - name: goat-get | goatbuilder | download each goatbuilder asset to the staging directory
+      ansible.builtin.get_url:
+        url: "{{ goat_get_goatbuilder_asset_urls[item] }}"
+        headers: "{{ {'Accept': 'application/octet-stream'} | combine(goat_get_goatbuilder_gh_auth) }}"
+        dest: "{{ goat_get_goatbuilder_staging_dir }}/{{ item }}"
+        mode: "0644"
+        force: true
+        timeout: 300
+      loop: "{{ goat_get_goatbuilder_assets }}"
+      become: true
+      no_log: true
+      register: goat_get_goatbuilder_download
+      until: goat_get_goatbuilder_download is succeeded
+      retries: 3
+      delay: 5
+
+    # The signature, checked by the same code `goatbuilder update` runs before
+    # it installs a release: `goatbuilder update verify-release` (0.7.0 and
+    # later), on the controller, over SHA256SUMS and its bundle fetched there.
+    - name: goat-get | goatbuilder | a controller directory for SHA256SUMS and its bundle
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: -goatbuilder-verify
+      register: goat_get_goatbuilder_verify_dir
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: goat-get | goatbuilder | fetch SHA256SUMS and its bundle to the controller
+      ansible.builtin.get_url:
+        url: "{{ goat_get_goatbuilder_asset_urls[item] }}"
+        headers: "{{ {'Accept': 'application/octet-stream'} | combine(goat_get_goatbuilder_gh_auth) }}"
+        dest: "{{ goat_get_goatbuilder_verify_dir.path }}/{{ item }}"
+        mode: "0600"
+        force: true
+        timeout: 60
+      loop:
+        - SHA256SUMS
+        - SHA256SUMS.cosign-bundle
+      delegate_to: localhost
+      become: false
+      run_once: true
+      no_log: true
+
+    - name: goat-get | goatbuilder | verify the signature over SHA256SUMS with goatbuilder's own verifier
+      ansible.builtin.command:
+        argv: >-
+          {{ [goat_get_goatbuilder_verifier, 'update', 'verify-release', goat_get_goatbuilder_verify_dir.path,
+              '--signer', goat_get_goatbuilder_release_repo, '--version', goat_get_goatbuilder_version]
+             + (['--trusted-root', goat_get_goatbuilder_trusted_root]
+                if goat_get_goatbuilder_trusted_root | default('') | length > 0 else []) }}
+      register: goat_get_goatbuilder_verified
+      changed_when: false
+      failed_when: false
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: goat-get | goatbuilder | refuse a release whose signature does not verify
+      ansible.builtin.fail:
+        msg: >-
+          goat-get refuses to serve goatbuilder {{ goat_get_goatbuilder_release_tag }}
+          from {{ goat_get_goatbuilder_release_repo }}: its signature over SHA256SUMS did not
+          verify with {{ goat_get_goatbuilder_verifier }} update verify-release (exit
+          {{ goat_get_goatbuilder_verified.rc | default('none') }}):
+          {{ (goat_get_goatbuilder_verified.stderr | default('') ~ ' ' ~ goat_get_goatbuilder_verified.stdout | default('')
+              ~ ' ' ~ goat_get_goatbuilder_verified.msg | default('')) | trim }}.
+          A verifier that is missing, or older than 0.7.0, has no verify-release: set
+          goat_get_goatbuilder_verifier to a goatbuilder 0.7.0 or later. Nothing of this
+          release was served; the served directory is as it was.
+      when: goat_get_goatbuilder_verified.rc | default(1) != 0
+
+    # The host's copies of SHA256SUMS and its bundle are the bytes just verified.
+    - name: goat-get | goatbuilder | the verified SHA256SUMS and bundle, as fetched to the controller
+      ansible.builtin.stat:
+        path: "{{ goat_get_goatbuilder_verify_dir.path }}/{{ item }}"
+        checksum_algorithm: sha256
+      loop:
+        - SHA256SUMS
+        - SHA256SUMS.cosign-bundle
+      register: goat_get_goatbuilder_verified_sums
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: goat-get | goatbuilder | the staged SHA256SUMS and bundle, as downloaded to the host
+      ansible.builtin.stat:
+        path: "{{ goat_get_goatbuilder_staging_dir }}/{{ item }}"
+        checksum_algorithm: sha256
+      loop:
+        - SHA256SUMS
+        - SHA256SUMS.cosign-bundle
+      register: goat_get_goatbuilder_staged_sums
+      become: true
+
+    - name: goat-get | goatbuilder | the host staged the bytes the controller verified
+      ansible.builtin.assert:
+        that:
+          - (goat_get_goatbuilder_staged_sums.results | map(attribute='stat.checksum') | list)
+            == (goat_get_goatbuilder_verified_sums.results | map(attribute='stat.checksum') | list)
+        fail_msg: >-
+          goat-get refuses to serve goatbuilder {{ goat_get_goatbuilder_release_tag }}: the
+          SHA256SUMS or SHA256SUMS.cosign-bundle the host downloaded is not the one the
+          controller verified. Nothing of this release was served.
+        quiet: true
+
+    # Every other staged file against the verified SHA256SUMS, as verify-release
+    # checks a release's files: a binary hashes to the digest SHA256SUMS lists
+    # for it, and a .sha256 names that digest and that file.
+    - name: goat-get | goatbuilder | every staged file agrees with the verified SHA256SUMS
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          cd {{ goat_get_goatbuilder_staging_dir | quote }}
+          for f in *; do
+            case "$f" in
+              SHA256SUMS|SHA256SUMS.cosign-bundle) continue ;;
+              *.sha256)
+                base=${f%.sha256}
+                want=$(awk -v n="$base" '$2 == n { print $1 }' SHA256SUMS)
+                got=$(awk 'NR == 1 { print $1 " " $2 }' "$f")
+                if [ -z "$want" ] || [ "$got" != "$want $base" ]; then
+                  echo "refused: $f names ${got:-no digest}, and SHA256SUMS lists ${want:-nothing} for $base (GB-074)"
+                  exit 1
+                fi ;;
+              *)
+                want=$(awk -v n="$f" '$2 == n { print $1 }' SHA256SUMS)
+                got=$(sha256sum "$f" | cut -d' ' -f1)
+                if [ -z "$want" ] || [ "$got" != "$want" ]; then
+                  echo "refused: $f is sha256 $got, and SHA256SUMS lists ${want:-nothing} (GB-074)"
+                  exit 1
+                fi ;;
+            esac
+          done
+      register: goat_get_goatbuilder_files
+      changed_when: false
+      failed_when: false
+      become: true
+
+    - name: goat-get | goatbuilder | refuse a staged file the verified SHA256SUMS does not vouch for
+      ansible.builtin.fail:
+        msg: >-
+          goat-get refuses to serve goatbuilder {{ goat_get_goatbuilder_release_tag }}:
+          {{ goat_get_goatbuilder_files.stdout | trim }}. Nothing of this release was served;
+          the served directory is as it was.
+      when: goat_get_goatbuilder_files.rc != 0
+
+    - name: goat-get | goatbuilder | serve the verified release, each file renamed into the served directory
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          for f in {{ goat_get_goatbuilder_staging_dir | quote }}/*; do
+            mv -f -- "$f" {{ (goat_get_www_dir ~ '/' ~ goat_get_goatbuilder_www_subdir) | quote }}/
+          done
+          rmdir {{ goat_get_goatbuilder_staging_dir | quote }}
+      changed_when: true
+      become: true
+
+  rescue:
+    - name: goat-get | goatbuilder | remove the staging directory of a refused release
+      ansible.builtin.file:
+        path: "{{ goat_get_goatbuilder_staging_dir }}"
+        state: absent
+      become: true
+
+    - name: goat-get | goatbuilder | stop, naming why
+      ansible.builtin.fail:
+        msg: "{{ ansible_failed_result.msg | default('goat-get refused the goatbuilder release; nothing of it was served') }}"
+
+  always:
+    - name: goat-get | goatbuilder | remove the controller directory
+      ansible.builtin.file:
+        path: "{{ goat_get_goatbuilder_verify_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      run_once: true
+      when: goat_get_goatbuilder_verify_dir.path is defined
+
+- name: goat-get | goatbuilder | render goatbuilder landing index.html
+  ansible.builtin.template:
+    src: goatbuilder-index.html.j2
+    dest: "{{ goat_get_www_dir }}/{{ goat_get_goatbuilder_www_subdir }}/index.html"
+    mode: "0644"
+  become: true
+  when: goat_get_goatbuilder_enabled | bool
+
+- name: goat-get | goatbuilder | render goatbuilder version.json (staleness marker)
+  ansible.builtin.template:
+    src: goatbuilder-version.json.j2
+    dest: "{{ goat_get_www_dir }}/{{ goat_get_goatbuilder_www_subdir }}/version.json"
+    mode: "0644"
+  become: true
+  when: goat_get_goatbuilder_enabled | bool

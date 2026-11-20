@@ -60,19 +60,24 @@ export -f fgb_arrives
 # keyed for {B}'s operator. Called by nh_side_from_nothing before allocate.
 nh_operator_more() { # $1 us, $2 them
   [ "$1" = "$NATED" ] || return 0
-  local c="$WORK/$1/clone"
   fwd_up
-  python3 - "$c/ops/goatbuilder/goatbuilder.yaml" goat "$(ifname_of "$FWD_HOST" "$FWD_PUB")" "$(boundary_ip "$1")" <<'PY'
+  nh_forwarder_values "$1" "$2"
+}
+# The forwarder machine's own values on $1's peering entry with $2 (each peering a
+# forwarder relays names them on its own entry, docs/design/peering-forwarder.md §7).
+nh_forwarder_values() { # $1 us, $2 them
+  local c="$WORK/$1/clone"
+  python3 - "$c/ops/goatbuilder/goatbuilder.yaml" "$2" goat "$(ifname_of "$FWD_HOST" "$FWD_PUB")" "$(boundary_ip "$1")" <<'PY'
 import sys, yaml
-p, user, iface, source = sys.argv[1:5]
+p, them, user, iface, source = sys.argv[1:6]
 text = open(p).read()
 cfg = yaml.safe_load(text)
-fwd = cfg["peerings"][0]["forwarder"]
+fwd = next(e for e in cfg["peerings"] if e["with"] == them)["forwarder"]
 fwd.update({"ansible_user": user, "public_interface": iface, "ssh_sources": [source]})
 open(p, "w").write(text.split("\nschema:")[0] + "\n" + yaml.safe_dump(cfg, sort_keys=False))
 PY
   cp "$c/ops/goatbuilder/goatbuilder.yaml" "$RECORD/operator-input/$1/"
-  nh_push "$1: the forwarder machine it operates, on its peering's forwarder: entry"
+  nh_push "$1: the forwarder machine it operates, on its peering's forwarder: entry with $2"
 }
 
 fgb_main() {

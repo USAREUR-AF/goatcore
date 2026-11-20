@@ -922,6 +922,12 @@ step 6 A "ory (kratos/hydra/ui)" \
 if [ "$JOINER" = 1 ]; then
 SEED_PLAY=site-seed-from-peer.yml
 [ -f "$REPO/ops/ansible/${SITE}-seed-from-peer.yml" ] && SEED_PLAY="${SITE}-seed-from-peer.yml"
+# A site's own copy must have been derived from the generic play as it is now
+# (or import it); goatbuilder's standup plans the same check (GB-362).
+if [ "$SEED_PLAY" != site-seed-from-peer.yml ]; then
+step 6 GATE "ops/ansible/$SEED_PLAY was derived from the current site-seed-from-peer.yml (GB-362)" \
+  "python3 '$REPO/ops/scripts/check-site-play-current.py' --repo '$REPO' $SITE seed-from-peer.yml"
+fi
 step 6 A "[joiner] seed-from-peer (pass 2 — data-only copy from founder ${JOIN_FOUNDER_SITE:-?}; guarded)" \
   "cd '$REPO/ops/ansible' && { [ -n $JFS_Q ] || { echo 'joiner: group_vars/$GROUP/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} $SEED_PLAY -e site_id=$SITE"
 fi
@@ -1138,7 +1144,7 @@ step 10 A "[lan] dashboard" \
 #      hold <SITE>_NB_API_TOKEN (posture.py available), so a resumed or re-run
 #      standup walks straight into phase 12. On a LAN site the dashboard names
 #      live under the site's own zone, served by the host's LAN CoreDNS.
-if ! python3 "$REPO/ops/secrets/posture.py" available 2>/dev/null | grep -qx "${SITE_UPPER}_NB_API_TOKEN"; then
+if ! python3 "$REPO/ops/secrets/posture.py" available "${SITE_UPPER}_NB_API_TOKEN" 2>/dev/null | grep -qx "${SITE_UPPER}_NB_API_TOKEN"; then
 step 11 MANUAL "[lan] first login, admin-promote, the bootstrap NetBird token" \
   "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/$GROUP/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL_STANDUP.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-${SITE}-netbird-infra (Team > Service Users, role admin), create its token, and store it as ${SITE_UPPER}_NB_API_TOKEN under the declared secrets posture (posture.py hint ${SITE_UPPER}_NB_API_TOKEN says where). THEN resume: ops/scripts/goat-standup.sh $SITE --from 12"
 fi

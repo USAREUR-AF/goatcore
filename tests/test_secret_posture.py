@@ -123,6 +123,36 @@ class EnvFile(Base):
             os.unlink(path)
 
 
+class AvailableNames(Base):
+    """`posture.py available NAME...` answers for those names only. A run keeps
+    every probe's output in its record (logs/NNN-probe.log), so a probe that
+    listed every variable on the machine put each name into the record."""
+
+    def run_cli(self, *args, **env):
+        out = []
+        with self.env(**env), mock.patch("builtins.print", lambda *a, **k: out.append(" ".join(map(str, a)))):
+            rc = self.p.main(["available", *args])
+        return rc, "\n".join(out).split()
+
+    def test_named_names_are_the_only_ones_printed(self):
+        f = self.write("s.env", "A_SECRET=one\nB_SECRET=two\n")
+        rc, names = self.run_cli("A_SECRET", "C_SECRET", "ZZ_CANARY", GOAT_SECRET_STORE="env-file",
+                                 GOAT_SECRET_ENV_FILE=f, ZZ_CANARY="set", ZZ_UNASKED="set")
+        self.assertEqual(rc, 0)
+        self.assertEqual(names, ["A_SECRET", "ZZ_CANARY"])
+        self.assertNotIn("ZZ_UNASKED", names)
+        self.assertNotIn("B_SECRET", names)
+
+    def test_an_alternative_is_answered_for_each_of_its_names(self):
+        rc, names = self.run_cli("A_TOKEN|B_TOKEN", GOAT_SECRET_STORE="env", B_TOKEN="x")
+        self.assertEqual(names, ["B_TOKEN"])
+
+    def test_no_names_still_lists_everything_for_the_operators_own_terminal(self):
+        rc, names = self.run_cli(GOAT_SECRET_STORE="env", ZZ_CANARY="set")
+        self.assertEqual(rc, 0)
+        self.assertIn("ZZ_CANARY", names)
+
+
 class GitCrypt(Base):
     def test_locked_file_is_refused_and_unlocked_reads(self):
         locked = os.path.join(self.tmp, "locked.env")

@@ -26,14 +26,15 @@ teardown() {
   rm -rf "$T"
 }
 
-# A throwaway repository holding one shared template, so a refusal names a
-# file this test wrote.
+# A throwaway repository holding one shared template and one role default,
+# so a refusal names a file this test wrote. $1 is the template's text, $2
+# (optional) the default file's.
 make_tree() {
   local tree="$T/tree"
   mkdir -p "$tree/ops/ci" "$tree/ops/ansible/roles/demo/templates" "$tree/ops/ansible/roles/demo/defaults"
   cp "$REPO_ROOT/ops/ci/check-site-config-bleed.sh" "$tree/ops/ci/"
   printf '%s\n' "$1" > "$tree/ops/ansible/roles/demo/templates/demo.conf.j2"
-  printf 'demo_port: 8080\n' > "$tree/ops/ansible/roles/demo/defaults/main.yml"
+  printf '%s\n' "${2:-demo_port: 8080}" > "$tree/ops/ansible/roles/demo/defaults/main.yml"
   git -C "$tree" init -q
   git -C "$tree" add -A
   git -C "$tree" -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -q -m fixture
@@ -83,4 +84,65 @@ make_tree() {
   run bash -c "cd '$REPO_ROOT' && GV_ROOT='$GV' '$SH' ops/ci/check-site-config-bleed.sh"
   [ "$status" -eq 2 ]
   [[ "$output" == *"derived zero site literals from $GV"* ]]
+}
+
+# Comments after a value. A default that documents an example name in a
+# trailing comment configures nothing; the same name as the value does.
+
+check_tree() {
+  run bash -c "cd '$1' && GV_ROOT='$GV' '$SH' ops/ci/check-site-config-bleed.sh"
+}
+
+@test "a zone that appears only in a trailing YAML comment passes" {
+  tree="$(make_tree 'listen 80;' 'ntfy_fqdn: ""        # e.g. ntfy.zagros.example.org — needs an A record')"
+  check_tree "$tree"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"OK: no site-config bleed"* ]]
+}
+
+@test "the same zone as the value, with a trailing comment, is refused" {
+  tree="$(make_tree 'listen 80;' 'ntfy_fqdn: "ntfy.zagros.example.org"   # the alert box')"
+  check_tree "$tree"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"defaults/main.yml:1: ntfy_fqdn: \"ntfy.zagros.example.org\""* ]]
+}
+
+@test "a # inside a double-quoted value is not a comment" {
+  tree="$(make_tree 'listen 80;' 'demo_motd: "ask in #ops for oauth2.zagros.example.org"')"
+  check_tree "$tree"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"defaults/main.yml:1:"* ]]
+}
+
+@test "a # inside a single-quoted value is not a comment" {
+  tree="$(make_tree 'listen 80;' "demo_motd: 'ask in #ops for oauth2.zagros.example.org'")"
+  check_tree "$tree"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"defaults/main.yml:1:"* ]]
+}
+
+@test "a # with no space before it is part of the value" {
+  tree="$(make_tree 'listen 80;' 'demo_url: https://portal.zagros.example.org/#start')"
+  check_tree "$tree"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"defaults/main.yml:1:"* ]]
+}
+
+@test "a mesh address only in a trailing comment passes" {
+  tree="$(make_tree 'listen 80;' 'demo_peer: ""   # e.g. 192.0.2.10')"
+  check_tree "$tree"
+  [ "$status" -eq 0 ]
+}
+
+@test "a zone only in an inline Jinja comment passes" {
+  tree="$(make_tree 'server_name {{ site_fqdn }}; {# e.g. portal.zagros.example.org #}')"
+  check_tree "$tree"
+  [ "$status" -eq 0 ]
+}
+
+@test "a zone after an inline Jinja comment is refused" {
+  tree="$(make_tree '{# the portal #} server_name portal.zagros.example.org;')"
+  check_tree "$tree"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"demo.conf.j2:1:"* ]]
 }
