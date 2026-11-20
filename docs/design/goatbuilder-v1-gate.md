@@ -108,7 +108,7 @@ comes first after 1.0 ("Fast follow after 1.0").
 | Forge adapter | designed | Later | The release path works on one forge; the adapter adds a value and breaks nothing |
 | OpenBao injector | designed | Later | A store is a declared, pluggable dependency |
 | Semantic error matcher | designed | Later | It adds a matcher after the existing ones |
-| A `boundary` machine class | not built | Later | The boundary node is the router `goatbuilder federate` deploys; no tutorial needs the class |
+| A `boundary` machine class | not built | Proposed: In, as a build target (J9, J10; ADR 1257) | The operator (19 Nov) made every machine kind a build target type before 1.0. Until 19 Nov this row read "Later": the boundary node is the router `goatbuilder federate` deploys, and no tutorial needs the class |
 | A `phone` machine class and `--via usb` | built on the fixture; not measured on hardware | In (H3 to H5) | A phone is built by the command that builds a computer, or it is not a goatbuilder node |
 | What a phone node replicates | designed ([phone-node.md](phone-node.md)) | **Decided: a full `core` joiner for 1.0.** The lighter peer profile is a later value of the class | The operator decided (15 Nov). The full joiner is the path measured on hardware, and H7 and H8 are planned on it. A phone profile that is a mesh peer with its own router and local services, and not a replication member, is added later as a class value (for example `--class phone --profile peer`), which keeps the 1.x promise. It is the second item after 1.0 |
 | How long a phone may be off before a site invalidates its replication slot, and a `goatbuilder` path for the re-seed | not built | In, before H8 (from the phone decision) | Postgres invalidates a slot that holds more WAL than `max_slot_wal_keep_size` (`ops/postgres/spock/conf/postgresql.conf`), and the phone must then be seeded again ([post-partition-convergence-runbook.md](../operations/post-partition-convergence-runbook.md), "A. Slot rebuild"). The time is measured during H8's week ([goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md), "How long a phone may be off"), and the re-seed is the documented response, run by the tool |
@@ -173,6 +173,48 @@ A site added with `join-node` is a whole site: it runs every service it declares
 | I4 | Each write class is turned on at every site, and the rule that keeps admin surfaces at the founding site is lifted for it. No class is on at every site until only the goatnet's hub can make a platform admin ([ADR 1205](../adr/1205-the-highest-echelon-site-overrides-and-can-sever-every-other-site.md) D10): a platform-admin grant made at a site that is not the hub is refused at every other site and raises an alert. No write class is turned on at every site while any of its paths has no measured verdict in I6, or has a verdict other than safe at every site | not built; the platform-admin guard trigger is built and run in the partition harness; its alert is built (`SpockCeilingRefused` in `ops/compose/mgmt-host/monitoring/rules/spock.yml`, fed by `spock-drift-watch`'s count of `goat_ceiling_refused`, with a promtool test; #727), measured in the partition harness on `main` at 11b572c1: the guard refused a grant not made at the hub and the alert fired for both peers, evaluated by a local Prometheus over the harness's drift-watch metrics; not measured on a deployed monitoring stack, and Alertmanager's routing is not exercised; the grant-path refusals are designed, not built | The design's gate G3, per class; and a partition-harness scenario in which a platform-admin grant made at B while cut off is refused at A after the link returns; and I6 passed for every path of the class |
 | I5 | The partition drill passes on a standing two-site goatnet, and then on a second one: the sites are cut apart, a person is admitted and a machine enrolled on each side, and the sites agree after the link returns | not measured | The design's gate G4, with each drill kept as a measurement |
 
+### J. Every machine kind is a build target
+
+goatbuilder declares two things as data ([ADR 1257](../adr/1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md), Proposed; [goatbuilder-build-targets.md](goatbuilder-build-targets.md)):
+
+- **platform families**, which hold hardware and its preparation (the golden path lives there; a model joins a family);
+- **target types**, a machine's role with its plays and acceptance, read by `standup`, `join-node` and the image tooling.
+
+A sensor node runs the sensor kit's relays for the sensors declared on it. Each site's network gear (its switches and routers) is not built by goatbuilder: it is reached only through the network-gear jump box, and every machine depends on it.
+
+goatbuilder builds from a reachable Ubuntu host with an SSH key. `goatbuilder doctor --target <type>` checks the end state whichever path installed the machine. Each type passes the CI tier: a VM from a fresh cloud image, through the build, to its acceptance and `doctor --target`, extending [ADR 1200](../adr/1200-deployment-e2e-three-tiers.md). For the small-computer family, an arm64 VM proves the software, and the builder's physical steps are proven on the bench. The hardware tier, a recorded run on real equipment, is required only where there is equipment.
+
+**Order: one foundation, then four lanes in parallel.** Every lane waits for the foundation. Inside a lane there is one dependency: the small-computer types wait for the small-computer builder (J12). The exact 1.0 cut line of each row is not set row by row. This group was added at the operator's direction (19 Nov) and is under the operator's review.
+
+| # | Requirement | Status | Proven by |
+|---|---|---|---|
+| **Foundation** | | | |
+| J1 | The type and family file formats and their reader; `doctor --target`'s base check; the CI VM harness; core, obs, break-glass and network-gear jump box read from type files | not built: designed. `join-node`'s classes are compiled in (`joinnode.rs:90`), `standup` reads per-machine flags, and `hardware-classes.yaml` is a third list nobody reads | The golden plans (`full_plans_unchanged.rs`) and a per-type `join-node --dry-run` parity test unchanged byte for byte; the VM harness runs one type end to end |
+| **Beside the foundation** | | | |
+| J2 | phone, CI tier | not built as a type file: `join-node --class phone` converges it (group H) | As J3, for the phone type's Linux VM. Its hardware runs are H7 and H8 |
+| **Host-site lane** (waits for J1) | | | |
+| J3 | core, CI tier | not built: `standup` and `join-node --class core` converge it; there is no hermetic founder standup (`deployment-e2e.md:182`) | A CI run from a fresh cloud image VM to the core type's acceptance and `doctor --target` |
+| J4 | core, hardware tier | not measured: never run on hardware with goatbuilder | A recorded run on a site's core machine |
+| J5 | obs, CI tier | not built: `standup`'s obs leg and `join-node --class obs` converge it; one acceptance row (`prom-up`) | As J3, for obs |
+| J6 | obs, hardware tier | not measured | A recorded run on a site's obs machine |
+| J7 | standup phase 11 automated: no manual step | not built: designed (an `ops/mgmt-host-bootstrap` verb; no NetBird fork, ADR 1248). It mints an admin credential for the mesh control plane, so its build is reviewed as a trust change before it starts. Today phase 11 is manual (`standup.rs:611`, `standup.rs:617`) | J3's run with no MANUAL row; the service user and token checked through the API; the token in no log; a re-run mints nothing; each refusal case exercised |
+| **Boundary lane** (waits for J1; its small-computer variants also wait for J12) | | | |
+| J8 | federation boundary, CI tier | not built as a type: `federate` configures an existing host | As J3, for the federation boundary, then a peering's acceptance over it |
+| J9 | federation boundary, hardware tier | not measured | A recorded run on a site's federation boundary machine |
+| J10 | simple boundary, CI tier | not built: `ops/simple-bn/` is placed by hand (ADR 1253, Proposed) | As J3, for the simple boundary |
+| **Processing lane** (waits for J1) | | | |
+| J11 | goat-processors, CI tier | not built | As J3, on host-class. Its acceptance runs the `goat-processors` engines on recorded data against their conformance vectors |
+| **Small-computer lane** (waits for J1; J13 to J20 wait for J12) | | | |
+| J12 | the small-computer builder: `goatbuilder image` wraps the Pi base-image builder for the Pi model, with the other Pi preparations folded into it | not built: designed. The builder exists outside goatcore | On the bench: a Pi from blank media to a verified machine by the builder's numbered steps, each proving its result, ending in `doctor --target`'s small-computer checks |
+| J13 | break-glass, CI tier, on the small-computer family | not built as a type: `standup` phase 14 and `join-node --class breakglass` converge it; it has no acceptance row | As J3, on an arm64 VM, for break-glass. Its checks include ADR 1114 §5's dual-homing contract |
+| J14 | break-glass, hardware tier | not measured | A recorded run on a site's break-glass machine |
+| J15 | network-gear jump box, CI tier: for network gear only, not a general jump host | not built as a type: `join-node --class network-jump` converges it; it has no acceptance row | As J3, for the network-gear jump box |
+| J16 | network-gear jump box, hardware tier | not measured. A Thor serves as one today | A recorded run on a site's network-gear jump box |
+| J17 | sensor node, CI tier | not built in goatcore: designed; how the kit is installed is the operator's open question 1 | As J3, on an arm64 VM: the sensor node with one declared test sensor runs exactly that sensor's relays, and with none it runs none; then the kit's own verification |
+| J18 | octo-pod, push-deployed, CI tier | not built in goatcore: designed; its own repository installs it. The pull converger comes after 1.0 (D, decided 15 Nov) | As J3, for an octo-pod built and updated by push, its installer called at a pinned, signed release |
+| J19 | vendor gateway, CI tier | not built: designed (ADR 1255) | As J3, for the vendor gateway, the vendor bridges installed at a pinned release |
+| J20 | first-bite, CI tier | not built in goatcore: designed; its own repository installs it | As J3, for first-bite, installed at a pinned release |
+
 ## Order of work
 
 The requirements depend on one another in this order. No dates are set here.
@@ -184,6 +226,7 @@ The requirements depend on one another in this order. No dates are set here.
 5. **The tool shows its work.** F1 to F6, in 0.x releases, beside the steps above.
    **A node on a phone.** H1, H2 and H6 first, because they are faults on every new node; then H3 to H5.
    **A joined site runs cut off.** I3 beside H1 and H2, in `join-node`. I1, I2 and I6 before I4; I4 before I5.
+   **Every machine kind is a build target.** J as [goatbuilder-build-targets.md](goatbuilder-build-targets.md) §4 orders it: the foundation (J1), with the phone's type file beside it (J2); then four lanes in parallel. The host-site lane is core, obs and standup phase 11 (J3 to J7); the boundary lane, federation and simple boundary (J8 to J10); the processing lane, goat-processors (J11); the small-computer lane, the builder (J12) and then break-glass, network-gear jump box, sensor node, octo-pod, vendor gateway and first-bite (J13 to J20). The hardware rows (J4, J6, J9, J14, J16) go with C1 and C2.
 6. **The promise.** A1 to A5, and the items the pull decision in D leaves before 1.0 (push behind the converger trait; per-machine pending and unknown in the `-o json` documents). From this point the surfaces are frozen.
 7. **Upgrade tests.** E1 to E3, against the release that froze the surfaces.
 8. **The cold-read drill.** C4 and C5, on a release candidate `goatbuilder/v1.0.0-rc.N`.
@@ -201,7 +244,7 @@ Three releases after 0.5.2 reach 1.0, with the 0.7.x releases that carry group I
 | 0.7.x | A joined site runs cut off, one write class at a time, each behind its own switch, after every path of that class has a measured verdict | I1, I2, I6, I4 |
 | 1.0.0-rc.N, then 1.0.0 | Surfaces frozen; proof on hardware and by people who did not build it | C1, C2, C4, C5; D agreed; H7, H8; I5 |
 
-Rows that need a person or a machine outside the build: B9 (a real partner), C1 and C2 (hardware), H7 and H8 (a phone), I5 (two standing two-site goatnets), C4 (a person outside the team), A1 (a decision). Each is prepared so that the act itself is short.
+Rows that need a person or a machine outside the build: B9 (a real partner), C1 and C2 (hardware), J4, J6, J9, J12, J14 and J16 (hardware), H7 and H8 (a phone), I5 (two standing two-site goatnets), C4 (a person outside the team), A1 (a decision). Each is prepared so that the act itself is short.
 
 ## Fast follow after 1.0
 
