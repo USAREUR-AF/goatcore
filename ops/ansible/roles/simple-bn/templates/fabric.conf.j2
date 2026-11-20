@@ -1,0 +1,10 @@
+# Rendered by the simple-bn role: the fabric sender inside the goatnet (input: fabric).
+# The machine's goat context reaches the service as systemd credentials, so the key file stays
+# root-only on disk and the dynamic service user reads it from its credentials directory (%d).
+[Service]
+{% for f in ['profile.toml', 'mtls.cert.pem', 'mtls.key.pem', 'ca-roots.pem'] %}
+LoadCredential={{ f }}:{{ simple_bn.fabric.context }}/{{ f }}
+{% endfor %}
+ExecStart=
+ExecStart={{ simple_bn_root }}/venv/bin/python {{ simple_bn_root }}/simple_bn_sender.py --label ${SIMPLE_BN_LABEL} --node ${SIMPLE_BN_NODE} --feeds ${SIMPLE_BN_FEEDS} --profiles ${SIMPLE_BN_PROFILES} --transport ${SIMPLE_BN_TRANSPORT} --encryption ${SIMPLE_BN_ENCRYPTION} --input fabric --relay-dest ${SIMPLE_BN_RELAY_DEST} --goat-context %d --status /run/simple-bn/status.json
+MemoryMax=256M
