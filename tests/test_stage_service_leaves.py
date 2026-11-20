@@ -150,6 +150,11 @@ class StageServiceLeaves(unittest.TestCase):
         self.assertIn("fabric-crawler", " ".join(refusal))
         self.assertIn("mesh-health", " ".join(refusal))
         self.assertFalse((d / "certs" / "mesh-health").exists(), "a leaf was staged before the refusal")
+        # Staging the crawler alone still may not overwrite mesh-health's file.
+        r, d = self.run_play(gv, extra=("-e", '{"leaf_only": ["fabric-crawler"]}'))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue([l for l in r.stdout.splitlines() if "same file" in l], r.stdout[-3000:])
+        self.assertFalse((d / "certs" / "mesh-health").exists(), "the crawler's leaf was staged over mesh-health's")
 
     def test_under_defaults_the_crawler_shares_fabric_healths_leaf(self):
         gv = self.every_dir_in_the_test()
