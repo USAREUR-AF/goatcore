@@ -13,4 +13,4 @@ digest against the current generic play (`ops/scripts/check-site-play-current.py
 and refuses a copy with no such line, or made from an older version, with
 GB-362. The message prints the digest to set once the copy is brought up to
 date. A site with no copy, or whose file imports the generic play, is not
-affected. An existing copy needs the line before its next standup run.
+affected. An existing copy needs the line before its next standup run (#1129).
