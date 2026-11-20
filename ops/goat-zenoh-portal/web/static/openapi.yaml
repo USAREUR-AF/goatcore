@@ -289,9 +289,38 @@ components:
           items: {$ref: '#/components/schemas/CarriageAuthority'}
         generation: {type: integer}
         issued_at: {type: integer}
+        health: {$ref: '#/components/schemas/CarriagePodHealth'}
         created_by: {type: string}
         created_at: {type: integer}
         updated_at: {type: integer}
+    CarriagePodHealth:
+      type: object
+      description: What the portal last saw of the pod (ADR 1251 phase 4).
+      properties:
+        state: {type: string, enum: [never_pulled, current, behind], description: behind means the rules changed since the pod's last pull}
+        last_pulled_generation: {type: integer}
+        last_pulled_at: {type: integer, description: Unix seconds}
+        pull_age_seconds: {type: integer}
+        rules_changed_since_pull: {type: boolean}
+        last_ledger_at: {type: integer, description: Unix seconds}
+        ledger_age_seconds: {type: integer}
+        pending_local_rules: {type: integer}
+    CarriageDrift:
+      type: object
+      properties:
+        in_sync: {type: boolean}
+        compared:
+          type: array
+          items: {type: string, enum: [config, loaded]}
+        differences:
+          type: array
+          items:
+            type: object
+            properties:
+              where: {type: string, enum: [config, loaded]}
+              kind: {type: string, enum: [missing, extra, undeclared, inert, disabled]}
+              slot: {type: string}
+              cn: {type: string}
     CarriagePodRegistered:
       type: object
       properties:
@@ -3584,6 +3613,44 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '503':
           description: No CA root configured (config).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/drift:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+    get:
+      summary: Compare the core router's carriers with the carriage rules
+      operationId: getCarriageDrift
+      tags: [carriage]
+      description: |
+        Operator only. Compares the carry-<anchor> subjects in the live router
+        config (`config`) and in the fragment the router host's reload watcher
+        recorded as loaded (`loaded`, when present) with the carriers the rules
+        give now, and names every difference.
+      responses:
+        '200':
+          description: The comparison.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageDrift'
+        '403':
+          description: Not an operator.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: No router config path on this portal (config).
           content:
             application/problem+json:
               schema:

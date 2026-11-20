@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -103,30 +102,7 @@ func (s *Server) carriageRead() ([]string, error) {
 type carriageOrgs func(slotID string, enrolledBy *string) []string
 
 func (s *Server) carriageOrgResolver() (carriageOrgs, error) {
-	if s.cfg.RosterPath == "" {
-		return func(string, *string) []string { return nil }, nil
-	}
-	dr, err := s.rosters.Load(s.cfg.RosterPath)
-	if err != nil {
-		return nil, err
-	}
-	return func(slotID string, enrolledBy *string) []string {
-		set := map[string]bool{}
-		for _, o := range dr.OrgsOfProducer(slotID) {
-			set[o] = true
-		}
-		if enrolledBy != nil && *enrolledBy != "" {
-			for _, o := range dr.OrgsOfProducer(*enrolledBy) {
-				set[o] = true
-			}
-		}
-		out := make([]string, 0, len(set))
-		for o := range set {
-			out = append(out, o)
-		}
-		sort.Strings(out)
-		return out
-	}, nil
+	return carriageOrgResolverFor(s.cfg, &s.rosters)
 }
 
 // writeCarriageError maps registry carriage refusals to stable codes. The goat
@@ -245,6 +221,53 @@ func parseCarriageTime(v string) (int64, error) {
 type carriagePodView struct {
 	registry.CarriagePod
 	LocalAuthority []registry.PodAuthority `json:"local_authority"`
+	Health         *carriagePodHealth      `json:"health,omitempty"`
+}
+
+// carriagePodHealth is what the portal knows of a pod's carriage: the last
+// generation it served the pod and how long ago, whether the rules changed
+// since, and the pod's last ledger upload (ADR 1251 phase 4).
+type carriagePodHealth struct {
+	// State: never_pulled (no generation served yet), current (the pod holds
+	// what the rules say), behind (the rules changed since its last pull).
+	State                 string `json:"state"`
+	LastPulledGeneration  *int64 `json:"last_pulled_generation,omitempty"`
+	LastPulledAt          *int64 `json:"last_pulled_at,omitempty"`
+	PullAgeSeconds        *int64 `json:"pull_age_seconds,omitempty"`
+	RulesChangedSincePull bool   `json:"rules_changed_since_pull"`
+	LastLedgerAt          *int64 `json:"last_ledger_at,omitempty"`
+	LedgerAgeSeconds      *int64 `json:"ledger_age_seconds,omitempty"`
+	PendingLocalRules     int64  `json:"pending_local_rules"`
+}
+
+func (s *Server) carriagePodHealth(ctx context.Context, pod *registry.CarriagePod, pending, now int64) (*carriagePodHealth, error) {
+	h := &carriagePodHealth{
+		State: "never_pulled", LastPulledGeneration: pod.LastPulledGeneration, LastPulledAt: pod.LastPulledAt,
+		LastLedgerAt: pod.LastLedgerAt, PendingLocalRules: pending,
+	}
+	if pod.LastLedgerAt != nil {
+		age := now - *pod.LastLedgerAt
+		h.LedgerAgeSeconds = &age
+	}
+	if pod.LastPulledAt == nil {
+		return h, nil
+	}
+	age := now - *pod.LastPulledAt
+	h.PullAgeSeconds = &age
+	g, err := s.buildGeneration(ctx, pod)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := carriage.ContentHash(g)
+	if err != nil {
+		return nil, err
+	}
+	h.RulesChangedSincePull = hash != pod.ContentHash || pod.LastPulledGeneration == nil || *pod.LastPulledGeneration != pod.Generation
+	h.State = "current"
+	if h.RulesChangedSincePull {
+		h.State = "behind"
+	}
+	return h, nil
 }
 
 func podView(p *registry.CarriagePod) carriagePodView {
@@ -310,6 +333,7 @@ func (s *Server) handleRegisterCarriagePod(w http.ResponseWriter, r *http.Reques
 	if rule != nil {
 		ruleID = rule.ID
 	}
+	s.syncSlotFragment(r.Context()) // the core's carry-<anchor> subjects follow the rules (ADR 1251 phase 4)
 	_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "carriage.pod.register", req.PodSlot,
 		fmt.Sprintf(`{"org":%q,"org_rule":%q,"local_authority":%d}`, req.Org, ruleID, len(req.LocalAuthority)))
 	writeJSON(w, http.StatusCreated, map[string]any{"pod": podView(pod), "org_rule": rule})
@@ -322,9 +346,22 @@ func (s *Server) handleListCarriagePods(w http.ResponseWriter, r *http.Request) 
 		writeCarriageError(w, err)
 		return
 	}
+	pending, err := s.reg.PendingLocalRuleCounts(r.Context())
+	if err != nil {
+		writeCarriageError(w, err)
+		return
+	}
+	now := registry.CarriageClock().Unix()
 	out := make([]carriagePodView, 0, len(pods))
 	for i := range pods {
-		out = append(out, podView(&pods[i]))
+		v := podView(&pods[i])
+		h, err := s.carriagePodHealth(r.Context(), &pods[i], pending[pods[i].PodSlot], now)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db", err.Error())
+			return
+		}
+		v.Health = h
+		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"pods": out})
 }
@@ -413,6 +450,7 @@ func (s *Server) createCarriageRule(r *http.Request, req createRuleRequest) (*re
 		writeCarriageError(&rec, err)
 		return nil, rec.status, [2]string{rec.code, err.Error()}
 	}
+	s.syncSlotFragment(ctx) // the core's carry-<anchor> subjects follow the rules (ADR 1251 phase 4)
 	_ = s.reg.LogAuditEvent(ctx, actorOf(r), "carriage.rule.create", c.ID,
 		fmt.Sprintf(`{"kind":%q,"state":%q,"source_slot":%q,"source_org":%q,"pod_slot":%q,"pod_org":%q}`,
 			c.Kind, c.State, req.SourceSlot, req.SourceOrg, req.PodSlot, req.PodOrg))
@@ -469,6 +507,7 @@ func (s *Server) handleAcceptCarriageRule(w http.ResponseWriter, r *http.Request
 		writeCarriageError(w, err)
 		return
 	}
+	s.syncSlotFragment(r.Context()) // the core's carry-<anchor> subjects follow the rules (ADR 1251 phase 4)
 	_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "carriage.rule.accept", c.ID, "{}")
 	writeJSON(w, http.StatusOK, c)
 }
@@ -574,6 +613,7 @@ func (s *Server) handleRevokeCarriageRule(w http.ResponseWriter, r *http.Request
 		return
 	}
 	lapsed := s.lapseLocalRulesCoveredBy(r, c)
+	s.syncSlotFragment(r.Context()) // the core's carry-<anchor> subjects follow the rules (ADR 1251 phase 4)
 	_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "carriage.rule.revoke", c.ID, fmt.Sprintf(`{"local_rules_lapsed":%d}`, lapsed))
 	writeJSON(w, http.StatusOK, map[string]any{"rule": c, "local_rules_lapsed": lapsed})
 }
@@ -610,6 +650,7 @@ func (s *Server) handleReactivateCarriageRule(w http.ResponseWriter, r *http.Req
 		writeCarriageError(w, err)
 		return
 	}
+	s.syncSlotFragment(r.Context()) // the core's carry-<anchor> subjects follow the rules (ADR 1251 phase 4)
 	_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "carriage.rule.reactivate", n.ID, fmt.Sprintf(`{"reactivated_from":%q}`, c.ID))
 	writeJSON(w, http.StatusCreated, n)
 }
@@ -642,6 +683,7 @@ func (s *Server) handleCarriageOptOut(w http.ResponseWriter, r *http.Request) {
 		writeCarriageError(w, err)
 		return
 	}
+	s.syncSlotFragment(r.Context()) // the core's carry-<anchor> subjects follow the rules (ADR 1251 phase 4)
 	_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "carriage.source.opt-out", slot, fmt.Sprintf(`{"opt_out":%t}`, *req.OptOut))
 	writeJSON(w, http.StatusOK, map[string]any{"source_slot": slot, "opt_out": *req.OptOut})
 }
@@ -682,87 +724,16 @@ func (s *Server) buildGeneration(ctx context.Context, pod *registry.CarriagePod)
 	if err != nil {
 		return carriage.Generation{}, err
 	}
-	orgsOf, err := s.carriageOrgResolver()
+	sn, err := loadCarriageSnapshot(ctx, s.reg, s.cfg, &s.rosters)
 	if err != nil {
 		return carriage.Generation{}, err
-	}
-	rules, err := s.reg.ListCarriageRules(ctx, registry.CarriageRuleFilter{State: registry.CarriageActive, PodSlot: pod.PodSlot, PodOrg: pod.Org})
-	if err != nil {
-		return carriage.Generation{}, err
-	}
-	slots, err := s.reg.LiveCarriageSlots(ctx)
-	if err != nil {
-		return carriage.Generation{}, err
-	}
-	keyless, err := s.reg.KeylessSources(ctx)
-	if err != nil {
-		return carriage.Generation{}, err
-	}
-	optOuts, err := s.reg.CarriageOptOuts(ctx)
-	if err != nil {
-		return carriage.Generation{}, err
-	}
-	bySlot := make(map[string]registry.CarriageSlot, len(slots))
-	for _, sl := range slots {
-		bySlot[sl.SlotID] = sl
-	}
-	principals := func(slot string) []string {
-		if k, ok := keyless[slot]; ok {
-			var out []string
-			for _, a := range k.AdapterSlots() {
-				if as, ok := bySlot[a]; ok && as.HasLeaf {
-					out = append(out, registry.LeafCN(as.SlotID, as.Generation))
-				}
-			}
-			sort.Strings(out)
-			return out
-		}
-		if sl, ok := bySlot[slot]; ok && sl.HasLeaf {
-			return []string{registry.LeafCN(sl.SlotID, sl.Generation)}
-		}
-		return nil
-	}
-
-	// An exclusion takes a source off this pod's org rule (a ratified local
-	// revoke); named and temporary rules still apply.
-	excluded := map[string]bool{}
-	for _, c := range rules {
-		if c.Kind == registry.CarriageKindExclusion && deref(c.PodSlot) == pod.PodSlot {
-			excluded[deref(c.SourceSlot)] = true
-		}
-	}
-	chosen := map[string]*registry.CarriageRule{}
-	better := func(a, b *registry.CarriageRule) bool { // a better than b
-		switch {
-		case a.Until == nil && b.Until != nil:
-			return true
-		case a.Until != nil && b.Until == nil:
-			return false
-		case a.Until != nil && b.Until != nil && *a.Until != *b.Until:
-			return *a.Until > *b.Until
-		}
-		return a.ID < b.ID
-	}
-	for i := range rules {
-		c := &rules[i]
-		for _, sl := range slots {
-			if sl.SlotID == pod.PodSlot {
-				continue // the pod's own slot is the pod template's, not a carried source
-			}
-			if !ruleCovers(c, sl.SlotID, orgsOf(sl.SlotID, sl.EnrolledBy), pod, optOuts[sl.SlotID] || excluded[sl.SlotID]) {
-				continue
-			}
-			if cur, ok := chosen[sl.SlotID]; !ok || better(c, cur) {
-				chosen[sl.SlotID] = c
-			}
-		}
 	}
 	g := carriage.Generation{
 		Schema:         carriage.Schema,
 		PodSlot:        pod.PodSlot,
 		LocalAuthority: []carriage.Authority{},
 		Read:           read,
-		Sources:        []carriage.Source{},
+		Sources:        sn.podSources(pod),
 		LocalDecisions: []carriage.LocalDecision{},
 	}
 	decided, err := s.reg.ListLocalRules(ctx, "", pod.PodSlot)
@@ -777,33 +748,13 @@ func (s *Server) buildGeneration(ctx context.Context, pod *registry.CarriagePod)
 	for _, a := range pod.Authorities() {
 		cn := a.CertCN
 		if a.Slot != "" {
-			sl, ok := bySlot[a.Slot]
+			sl, ok := sn.bySlot[a.Slot]
 			if !ok {
 				continue // the authority's slot was revoked: they can no longer sign in with it
 			}
 			cn = registry.LeafCN(sl.SlotID, sl.Generation)
 		}
 		g.LocalAuthority = append(g.LocalAuthority, carriage.Authority{Identity: a.Identity, CertCN: cn})
-	}
-	srcSlots := make([]string, 0, len(chosen))
-	for slot := range chosen {
-		srcSlots = append(srcSlots, slot)
-	}
-	sort.Strings(srcSlots)
-	for _, slot := range srcSlots {
-		p := principals(slot)
-		if len(p) == 0 {
-			continue // no certificate can write for it: an uncovered source gets nothing
-		}
-		c := chosen[slot]
-		var until *string
-		if c.Until != nil {
-			u := carriage.FormatTime(time.Unix(*c.Until, 0))
-			until = &u
-		}
-		g.Sources = append(g.Sources, carriage.Source{
-			Slot: slot, RuleID: c.ID, Kind: c.Kind, Until: until, Principals: p, Write: carriage.DefaultWrite(slot),
-		})
 	}
 	return g, nil
 }
@@ -853,6 +804,10 @@ func (s *Server) handleCarriageGeneration(w http.ResponseWriter, r *http.Request
 	}
 	gen, issued, err := s.reg.IssueCarriageGeneration(r.Context(), pod.PodSlot, hash)
 	if err != nil {
+		writeCarriageError(w, err)
+		return
+	}
+	if err := s.reg.RecordCarriagePull(r.Context(), pod.PodSlot, gen); err != nil {
 		writeCarriageError(w, err)
 		return
 	}
@@ -1064,6 +1019,10 @@ func (s *Server) handleCarriageLedger(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Entries = append(resp.Entries, res)
 	}
+	if err := s.reg.RecordCarriageLedger(ctx, pod.PodSlot); err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
+	}
 	if resp.LastSeq, err = s.reg.LastLocalSeq(ctx, pod.PodSlot); err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
@@ -1266,6 +1225,7 @@ func (s *Server) handleRatifyLocalRule(w http.ResponseWriter, r *http.Request) {
 		writeCarriageError(w, err)
 		return
 	}
+	s.syncSlotFragment(ctx) // the core's carry-<anchor> subjects follow the rules (ADR 1251 phase 4)
 	_ = s.reg.LogAuditEvent(ctx, actorOf(r), "carriage.local.ratify", lr.ID, fmt.Sprintf(`{"pod":%q,"rule":%q}`, pod.PodSlot, ruleID))
 	writeJSON(w, http.StatusOK, out)
 }
@@ -1299,6 +1259,7 @@ func (s *Server) registerCarriageRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/carriage/rules/{id}/reactivate", s.AuthMiddleware(true, s.handleReactivateCarriageRule))
 	mux.HandleFunc("PUT /api/carriage/sources/{slot}/org-rule", s.AuthMiddleware(true, s.handleCarriageOptOut))
 	mux.HandleFunc("GET /api/carriage/local-rules", s.AuthMiddleware(true, s.handleListLocalRules))
+	mux.HandleFunc("GET /api/carriage/drift", noStore(s.requireOperator(s.handleCarriageDrift)))
 	mux.HandleFunc("POST /api/carriage/local-rules/{id}/ratify", s.AuthMiddleware(true, s.handleRatifyLocalRule))
 	mux.HandleFunc("POST /api/carriage/local-rules/{id}/lapse", s.AuthMiddleware(true, s.handleLapseLocalRule))
 }
