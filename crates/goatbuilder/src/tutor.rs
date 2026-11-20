@@ -644,9 +644,9 @@ fn available(lesson: &Lesson, repo: &Path) -> std::result::Result<(), String> {
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(to)).display())))?;
     for e in std::fs::read_dir(from).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", from.display())))? {
-        let e = e?;
+        let e = e.map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", from.display())))?;
         let dst = to.join(e.file_name());
-        if e.file_type()?.is_dir() {
+        if e.file_type().map_err(|err| goat_errors::coded("GB-254", format!("{}: {err}", e.path().display())))?.is_dir() {
             copy_dir(&e.path(), &dst)?;
         } else {
             std::fs::copy(e.path(), &dst).map_err(|err| goat_errors::coded("GB-254", format!("{}: {err}", e.path().display())))?;

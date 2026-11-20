@@ -362,13 +362,17 @@
   # restart handlers separately to pick up kratos.yaml / hydra.yaml
   # changes without a full recreate.
 
+# psql inside postgres-a reaches the server over its local socket as the postgres OS user,
+# which pg_hba.conf trusts (ops/postgres/spock/conf/pg_hba.conf: local all all trust): no
+# password is needed, so none is put on the docker exec command line, where it would sit in the
+# host's process list.
 - name: Create kratos + hydra logical databases (idempotent)
   ansible.builtin.command:
     argv:
       - docker
       - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
+      - -u
+      - postgres
       - postgres-a
       - psql
       - -U
@@ -388,8 +392,8 @@
     argv:
       - docker
       - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
+      - -u
+      - postgres
       - postgres-a
       - psql
       - -U
@@ -446,8 +450,8 @@
     argv:
       - docker
       - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
+      - -u
+      - postgres
       - postgres-a
       - psql
       - -U
@@ -520,160 +524,12 @@
 # path below). Existing sites that pre-date this pattern keep working.
 # ===========================================================================
 
-- name: bootstrap-admin | Ensure password-output dir exists (mode 0700, root)
-  ansible.builtin.file:
-    path: "{{ ory_compose_dir }}/.bootstrap-passwords"
-    state: directory
-    owner: root
-    group: root
-    mode: "0700"
-  when: site_admins | length > 0
-
-- name: bootstrap-admin | Check whether each admin identity already exists in Kratos
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ kratos_admin_host_port | default(4434) }}/admin/identities?credentials_identifier={{ item.email | urlencode }}"
-    status_code: 200
-    return_content: true
-  register: admin_lookups
-  loop: "{{ site_admins }}"
-  loop_control:
-    label: "{{ item.email }}"
-  when: site_admins | length > 0
-
-- name: bootstrap-admin | Build per-admin provisioning spec (autogen-vs-skip decided per-entry)
-  ansible.builtin.set_fact:
-    bootstrap_admin_specs: "{{ bootstrap_admin_specs | default([]) + [ admin_spec ] }}"
-  vars:
-    # `admin_lookups.results[idx].json` is a list of matching identities.
-    # Empty list = identity does not exist yet → needs auto-provisioning.
-    existing: "{{ (admin_lookups.results[idx].json | default([])) | length > 0 }}"
-    operator_provided: "{{ item.password_hash is defined and (item.password_hash | length) > 0 }}"
-    needs_autogen: "{{ not existing and not operator_provided }}"
-    # 16-char URL-safe random password — plaintext stored only on the target
-    # host at /opt/mgmt-host/.bootstrap-passwords/<email>.txt (mode 0600).
-    # `lookup('password', '/dev/null ...')` re-randomizes on every run, but
-    # gated by `existed_pre_deploy` below — re-runs skip the import step
-    # entirely for existing identities, so the regenerated value never
-    # touches Kratos / never overwrites the bootstrap file.
-    autogen_password: "{{ lookup('password', '/dev/null length=16 chars=ascii_letters,digits') }}"
-    # F-128 — pick the first-login surface from the user's `groups` against
-    # `bootstrap_first_login_url_by_group`. First matching group wins; if
-    # none match, fall through to `_default` (typically isitup). Per-user
-    # `first_login_url` override on the site_admins entry beats the map.
-    matched_group_prefix: >-
-      {{
-        item.first_login_url
-        | default(
-            (item.groups | default([]))
-              | map('extract', bootstrap_first_login_url_by_group)
-              | reject('undefined') | reject('none')
-              | first
-              | default(bootstrap_first_login_url_by_group._default | default('isitup'))
-          )
-      }}
-    admin_spec:
-      email: "{{ item.email }}"
-      name: "{{ item.name }}"
-      groups: "{{ item.groups | default([]) }}"
-      existed_pre_deploy: "{{ existing }}"
-      operator_provided_hash: "{{ operator_provided }}"
-      plaintext_for_kratos: "{{ autogen_password if needs_autogen else '' }}"
-      password_hash: "{{ item.password_hash | default('') }}"
-      first_login_url: "https://{{ matched_group_prefix }}.{{ site_id }}.{{ site_dns_zone }}/"
-  loop: "{{ site_admins }}"
-  loop_control:
-    label: "{{ item.email }}"
-    index_var: idx
-  when:
-    - site_admins | length > 0
-  no_log: true
-
-- name: bootstrap-admin | Create new identities via Kratos admin API (plaintext password — Kratos hashes internally)
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ kratos_admin_host_port | default(4434) }}/admin/identities"
-    method: POST
-    body_format: json
-    body:
-      schema_id: default
-      state: active
-      traits:
-        email: "{{ item.email }}"
-        name: "{{ item.name }}"
-      # Login groups go to admin-managed metadata_public, never self-editable
-      # traits: the settings flow cannot write it, so a
-      # bootstrap admin's grant cannot be self-edited, and the create stays
-      # valid once a site sets ory_authz_in_metadata. Always emitted (empty
-      # when none) so a metadata-first reader never falls back to traits.
-      metadata_public:
-        groups: "{{ item.groups | default([]) | list }}"
-      credentials:
-        password:
-          config:
-            password: "{{ item.plaintext_for_kratos if (item.plaintext_for_kratos | length > 0) else omit }}"
-            hashed_password: "{{ item.password_hash if (item.password_hash | length > 0) else omit }}"
-      verifiable_addresses:
-        - value: "{{ item.email }}"
-          verified: true
-          via: email
-          status: completed
-    status_code: [201]
-  loop: "{{ bootstrap_admin_specs | default([]) }}"
-  loop_control:
-    label: "{{ item.email }}"
-  when:
-    - bootstrap_admin_specs is defined
-    - not item.existed_pre_deploy
-  no_log: true
-  register: admin_create_results
-
-- name: bootstrap-admin | Persist plaintext password for each auto-generated admin
-  ansible.builtin.copy:
-    dest: "{{ ory_compose_dir }}/.bootstrap-passwords/{{ item.email }}.txt"
-    content: |
-      Email:    {{ item.email }}
-      Name:     {{ item.name }}
-      Password: {{ item.plaintext_for_kratos }}
-
-      Log in at: {{ item.first_login_url }}
-
-      First action: change password via the account-settings UI (top-right menu after login).
-      Then (operator step): sudo rm {{ ory_compose_dir }}/.bootstrap-passwords/{{ item.email }}.txt
-    owner: root
-    group: root
-    mode: "0600"
-  loop: "{{ bootstrap_admin_specs | default([]) }}"
-  loop_control:
-    label: "{{ item.email }}"
-  when:
-    - bootstrap_admin_specs is defined
-    - item.plaintext_for_kratos | length > 0
-    - not item.existed_pre_deploy
-  no_log: true
-
-- name: bootstrap-admin | Summarize what got provisioned + operator action items
-  ansible.builtin.debug:
-    msg: |
-      {% set fresh = bootstrap_admin_specs | default([]) | rejectattr('existed_pre_deploy') | selectattr('plaintext_for_kratos') | list %}
-      {% if fresh | length > 0 %}
-      ============================================================
-      FIRST-LOGIN PASSWORDS — read once + change via account-settings:
-      ============================================================
-      {% for a in fresh %}
-        - {{ a.email }} ({{ a.groups | join(',') | default('no-groups', true) }})
-          password file: sudo cat {{ ory_compose_dir }}/.bootstrap-passwords/{{ a.email }}.txt
-          first-login URL: {{ a.first_login_url }}
-      {% endfor %}
-
-      Per-user workflow:
-        1. SSH to {{ inventory_hostname }} and read the password file above.
-        2. Deliver {email, password, first-login URL} to the user out-of-band.
-        3. User opens the URL, logs in, changes password via account-settings.
-        4. sudo rm {{ ory_compose_dir }}/.bootstrap-passwords/<email>.txt
-      ============================================================
-      {% else %}
-      No new admins to provision (all site_admins identities already exist in Kratos).
-      {% endif %}
-  when: site_admins | length > 0
+# A founder site only: goatnet_founder read as site-bootstrap.yml reads it. A
+# joining site (goatnet_founder: false) gets these identities from its founder
+# by replication, and must not create a second one per administrator.
+- name: the first administrators' identities, at a founder site only (tasks/bootstrap-admin.yml)
+  ansible.builtin.include_tasks: bootstrap-admin.yml
+  when: goatnet_founder | default(true) | bool
 
 - name: Smoke-check — Kratos public OIDC discovery (proxied test)
   ansible.builtin.uri:

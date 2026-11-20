@@ -64,6 +64,8 @@ on:
       - 'ops/ansible/roles/obs-host/**'
       - 'ops/ansible/roles/observability/templates/alertmanager.yml.j2'
       - 'ops/ci/check-alertmanager-renders.py'
+      - 'ops/ci/check-alertmanager-inhibits-name-alerts.py'
+      - 'ops/compose/mgmt-host/monitoring/alertmanager.yml'
       - 'ops/ci/test_zenoh_admission_routing.py'
       - 'ops/ci/check-alert-severity-deliverable.py'
       - 'ops/ci/check-obs-rules-have-scrapers.sh'
@@ -198,6 +200,10 @@ jobs:
       # run on the assembled tree of the repository that holds them.
       - name: alertmanager templates render a clean pager severity — previously run by nothing
         run: python3 ops/ci/check-alertmanager-renders.py
+      - name: every alert an Alertmanager inhibit rule names is defined by a rule
+        run: |
+          python3 ops/ci/check-alertmanager-inhibits-name-alerts.py --self-test
+          python3 ops/ci/check-alertmanager-inhibits-name-alerts.py
       - name: admission pages preserve short failures and receiver fan-out
         run: python3 ops/ci/test_zenoh_admission_routing.py
       - name: every alert rule's severity is one the pager delivers — previously run by nothing

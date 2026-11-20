@@ -360,13 +360,16 @@
 # ALTER SYSTEM SET + pg_reload_conf(). archive_mode needs container restart
 # to take effect — handled at the end of the role.
 
+# psql inside {{ postgres_container_name }} reaches the server over its local socket as the
+# postgres OS user, which pg_hba.conf trusts (local all all trust): no password is needed, so
+# none is put on the docker exec command line, where it would sit in the host's process list.
 - name: Check current archive_mode
   ansible.builtin.command:
     argv:
       - docker
       - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
+      - -u
+      - postgres
       - "{{ postgres_container_name }}"
       - psql
       - -U
@@ -381,8 +384,8 @@
     argv:
       - docker
       - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
+      - -u
+      - postgres
       - "{{ postgres_container_name }}"
       - psql
       - -U
@@ -398,8 +401,8 @@
     argv:
       - docker
       - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
+      - -u
+      - postgres
       - "{{ postgres_container_name }}"
       - psql
       - -U
@@ -415,8 +418,8 @@
     argv:
       - docker
       - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
+      - -u
+      - postgres
       - "{{ postgres_container_name }}"
       - psql
       - -U
@@ -432,8 +435,8 @@
     argv:
       - docker
       - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
+      - -u
+      - postgres
       - "{{ postgres_container_name }}"
       - psql
       - -U

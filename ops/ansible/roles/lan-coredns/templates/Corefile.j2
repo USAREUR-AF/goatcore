@@ -1,32 +1,51 @@
-# nova-lan — closed-LAN authoritative DNS server (CoreDNS)
+# Closed-LAN authoritative DNS server (CoreDNS)
 # Rendered by ops/ansible/roles/lan-coredns. Per-site bind IP is the host's
 # LAN IP (NOT mesh IP, NOT wg-cp0). The closed-LAN posture INVERTS the
-# mesh-coredns invariant: here, the LAN itself is the trust boundary
-# (per docs/design/nova-lan-instance.md § Internal CA + DNS).
+# mesh-coredns invariant: here, the LAN itself is the trust boundary.
 #
-# NO `forward` directive — unknown queries return NXDOMAIN. The closed
-# network has nowhere to forward to. Structural defense against
-# accidental query leakage.
+# NO `forward` directive: no query leaves this server. A name it does not
+# hold answers NXDOMAIN, inside the zone or outside it. SERVFAIL would tell a
+# resolver this server is broken, and the resolver would retry and might try
+# another server; NXDOMAIN says the name does not exist.
+#
+# Two server blocks, because CoreDNS runs plugins in its own compiled order,
+# not this file's: `template` runs before `hosts`, so a catch-all template in
+# the zone's block would answer every name in the zone before the hosts file
+# was read.
 
-.:{{ lan_coredns_port }} {
-    # Listen only on loopback + LAN interface. No mesh, no wg-cp0 — those
+{{ lan_coredns_zone_name }}:{{ lan_coredns_port }} {
+    # Listen only on loopback + LAN interface. No mesh, no wg-cp0: those
     # are not in scope for a closed-LAN instance.
     bind 127.0.0.1 {{ lan_coredns_bind_ip }}
 
-    # Authoritative — only the configured zone resolves. Anything else
-    # returns NXDOMAIN. The `template` plugin's REFUSED-by-default
-    # behavior is intentionally NOT used because some legacy resolvers
-    # treat REFUSED as a retry-with-fallback signal; NXDOMAIN is the
-    # cleaner "no, and don't ask again" response.
+    # The zone's names. A name not in the hosts file falls through to the
+    # zone file, because the hosts plugin alone answers SERVFAIL for it
+    # (a hosts file has no SOA to say NXDOMAIN with).
     hosts /etc/zone/{{ lan_coredns_zone_name }}.hosts {{ lan_coredns_zone_name }} {
         reload 5s
         no_reverse
         ttl 60
+        fallthrough
     }
 
-    # NO forward directive. Unknown queries → NXDOMAIN. Closed network.
+    # SOA and NS only (zone.soa.j2): a missing name is NXDOMAIN with this
+    # SOA, which a resolver caches for the SOA minimum.
+    file /etc/zone/{{ lan_coredns_zone_name }}.soa {{ lan_coredns_zone_name }}
 
     cache 1000
+    log
+    errors
+}
+
+.:{{ lan_coredns_port }} {
+    bind 127.0.0.1 {{ lan_coredns_bind_ip }}
+
+    # Every name outside the zone, reverse names included: NXDOMAIN, and
+    # nothing is forwarded. Closed network.
+    template ANY ANY {
+        rcode NXDOMAIN
+    }
+
     log
     errors
 }

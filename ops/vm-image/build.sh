@@ -143,6 +143,40 @@ python3 -c 'import json,sys; print(json.dumps({"admin_authorized_keys": [open(sy
       -e docker_engine_data_root=/var/lib/docker -e docker_engine_containerd_root=/var/lib/containerd \
       -e require_docker_data_separate_mount=false -e "@$WORK/baseline-vars.json" )
 
+# ---- 3b. nothing on the image asks a vendor service on its own -----------------------
+# Ubuntu's cloud image starts systemd-timesyncd, which asks the vendor's NTP pool (its
+# compiled-in fallback; an empty FallbackNTP= alone does not clear it), and snapd, which
+# asks the snap store. The standup sets the site's time sources itself (ntp-hygiene
+# installs chrony, whose package replaces systemd-timesyncd), and nothing a goatlite
+# runs is a snap. So timesyncd is off until then, and snapd is gone, pinned out so that
+# phase 2's apt upgrade on every standup cannot bring it back.
+step "timesyncd off, snapd out"
+scp -P "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "$WORK/build_key" \
+  "$HERE/files/apt-preferences-no-snapd" goatbuild@127.0.0.1:/tmp/
+ssh "${SSH_OPTS[@]}" -i "$WORK/build_key" goatbuild@127.0.0.1 'sudo sh -euc "
+  systemctl disable --now systemd-timesyncd.service
+  DEBIAN_FRONTEND=noninteractive apt-get purge -y -q snapd
+  install -m 0644 /tmp/apt-preferences-no-snapd /etc/apt/preferences.d/goatlite-no-snapd
+  rm -f /tmp/apt-preferences-no-snapd
+"'
+# The cloud image's other vendor checks, each measured asking a vendor name on its own:
+# the MOTD news (motd.ubuntu.com), the firmware metadata refresh (cdn.fwupd.org), the
+# new-release check (changelogs.ubuntu.com), the package-data downloader, and the Pro
+# client's ESM cache (esm.ubuntu.com, on every apt update of an unattached host) and apt
+# news. Left as Ubuntu ships them: apt-daily, apt-daily-upgrade and unattended-upgrades,
+# which fetch and apply security updates from the apt sources the deployment configures
+# (whether a host takes them is its operator's policy: mgmt_host_baseline_apt_upgrade),
+# and ua-timer, which asked nothing on an unattached host and which an attached host needs.
+step "the other vendor checks off"
+ssh "${SSH_OPTS[@]}" -i "$WORK/build_key" goatbuild@127.0.0.1 'sudo sh -euc "
+  sed -i s/^ENABLED=.*/ENABLED=0/ /etc/default/motd-news
+  systemctl disable --now motd-news.timer fwupd-refresh.timer update-notifier-motd.timer update-notifier-download.timer
+  systemctl mask esm-cache.service
+  sed -i s/^Prompt=.*/Prompt=never/ /etc/update-manager/release-upgrades
+  pro config set apt_news=false
+  rm -f /var/lib/ubuntu-advantage/messages/motd-esm-announce /var/lib/update-notifier/release-upgrade-available
+"'
+
 # ---- 4. measure 2: every pinned image of the lite preset ----------------------------
 step "pull every image any goatlite runs"
 python3 "$REPO/ops/scripts/standup-images.py" --preset lite > "$WORK/images.txt"
@@ -212,6 +246,13 @@ check="$(ssh "${SSH_OPTS[@]}" -i "$WORK/learner_key" learner@127.0.0.1 '
   echo "root=$(sudo docker info --format "{{.DockerRootDir}}")"
   echo "goatbuild=$(id goatbuild >/dev/null 2>&1 && echo present || echo gone)"
   echo "machine_id=$(cat /etc/machine-id)"
+  echo "timesyncd=$(systemctl is-enabled systemd-timesyncd 2>/dev/null || true)"
+  for u in motd-news.timer fwupd-refresh.timer update-notifier-motd.timer update-notifier-download.timer esm-cache.service; do
+    echo "$u=$(systemctl is-enabled "$u" 2>/dev/null || true)"
+  done
+  echo "motd_news=$(sed -n "s/^ENABLED=//p" /etc/default/motd-news)"
+  echo "apt_news=$(sudo pro config show apt_news 2>/dev/null | awk "{print \$2}")"
+  echo "snapd=$(dpkg-query -W -f="\${db:Status-Status}" snapd 2>/dev/null | grep -qx installed && echo present || echo absent)"
   sudo bash /tmp/standup-image-pull.sh --concurrency 4 $(cat /tmp/images.txt)
   test -s /etc/goat/prepared-image.json && echo manifest=present
 ')"
@@ -220,6 +261,12 @@ n="$(wc -l < "$WORK/images.txt" | tr -d ' ')"
 echo "$check" | grep -q "^root=/var/lib/docker$" || die "first boot: Docker is not on /var/lib/docker"
 echo "$check" | grep -q "^goatbuild=gone$" || die "first boot: the build user is still on the image"
 echo "$check" | grep -q "^manifest=present$" || die "first boot: /etc/goat/prepared-image.json is missing"
+echo "$check" | grep -q "^timesyncd=disabled$" || die "first boot: systemd-timesyncd is not disabled (it asks the vendor's NTP pool)"
+echo "$check" | grep -q "^snapd=absent$" || die "first boot: snapd is on the image (it asks the snap store)"
+for want in motd-news.timer=disabled fwupd-refresh.timer=disabled update-notifier-motd.timer=disabled \
+            update-notifier-download.timer=disabled esm-cache.service=masked motd_news=0 apt_news=False; do
+  echo "$check" | grep -qx "$want" || die "first boot: want $want (a vendor check is back on)"
+done
 echo "$check" | grep -q "$n of $n image(s) present .*($n already on the host by digest, not pulled)" \
   || die "first boot: the standup's pull step would still pull an image (see above)"
 ssh "${SSH_OPTS[@]}" -i "$WORK/learner_key" learner@127.0.0.1 'sudo systemctl poweroff' >/dev/null 2>&1 || true
@@ -230,7 +277,8 @@ python3 - "$WORK/prepared-image.json" "$OUT/$NAME.json" "$n" "$(( $(date +%s) - 
 import json, sys
 m = json.load(open(sys.argv[1]))
 m["first_boot_check"] = {"result": "pass", "images_present_by_digest": int(sys.argv[3]),
-                         "pulled": 0, "docker_root": "/var/lib/docker", "build_user_removed": True}
+                         "pulled": 0, "docker_root": "/var/lib/docker", "build_user_removed": True,
+                         "timesyncd": "disabled", "snapd": "absent"}
 m["build_seconds"] = int(sys.argv[4]); m["accel"] = sys.argv[5]
 json.dump(m, open(sys.argv[2], "w"), indent=2)
 PY
