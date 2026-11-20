@@ -121,3 +121,4 @@ goatbuilder doctor --env <goatnet>              # secrets:env-file ok; every com
 | row 8 store-generic generator | built 2026-11-02 |
 | rows 13, 14, 16 recipes | built (rows above) |
 | forge adapter (rows 19, 20) | designed, not built |
+| the zero-SaaS standup, measured (a goatlite stood up with no route out, every packet recorded: `ops/vm-image/zero-saas/`) | the lab run is **built**; not measured. Its first run (2026-11-20, at d12b9b46) stopped in phase 2: `mgmt-host-baseline.yml` refreshes and full-upgrades apt on every standup, the prepared image too, and with no route it fails after 18 minutes. The record named the Ubuntu archive, security and ESM mirrors, `download.docker.com`, `ntp.ubuntu.com` and `api.snapcraft.io`, all asked for by the box; the laptop asked for none. The run passes `goatbuilder --offline`, because the default path fetches `origin` from the published repository first. The phases after 2 have not run with no route |
