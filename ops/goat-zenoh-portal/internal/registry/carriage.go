@@ -103,6 +103,14 @@ CREATE TABLE IF NOT EXISTS carriage_local_rules (
 CREATE INDEX IF NOT EXISTS carriage_local_rules_state_idx ON carriage_local_rules(state, pod_slot);
 `
 
+// carriageHealthSQL is registry migration 4: what the portal last saw of each
+// pod (ADR 1251 phase 4, carriage health).
+const carriageHealthSQL = `
+ALTER TABLE carriage_pods ADD COLUMN last_pulled_at BIGINT;
+ALTER TABLE carriage_pods ADD COLUMN last_pulled_generation BIGINT;
+ALTER TABLE carriage_pods ADD COLUMN last_ledger_at BIGINT;
+`
+
 // Rule kinds (§2).
 const (
 	CarriageKindOrg       = "org"
@@ -164,6 +172,11 @@ type CarriagePod struct {
 	CreatedBy      string `db:"created_by"      json:"created_by"`
 	CreatedAt      int64  `db:"created_at"      json:"created_at"`
 	UpdatedAt      int64  `db:"updated_at"      json:"updated_at"`
+	// What the portal last saw of the pod (migration 4): the generation it
+	// last served the pod and when, and when the pod last posted its ledger.
+	LastPulledAt         *int64 `db:"last_pulled_at"         json:"last_pulled_at,omitempty"`
+	LastPulledGeneration *int64 `db:"last_pulled_generation" json:"last_pulled_generation,omitempty"`
+	LastLedgerAt         *int64 `db:"last_ledger_at"         json:"last_ledger_at,omitempty"`
 }
 
 // PodAuthority is one local-authority entry as stored: an identity and either
@@ -783,6 +796,43 @@ func (r *Registry) IssueCarriageGeneration(ctx context.Context, podSlot, content
 		return 0, 0, fmt.Errorf("issue generation: commit: %w", err)
 	}
 	return gen, now, nil
+}
+
+// RecordCarriagePull notes that pod was served generation gen now.
+func (r *Registry) RecordCarriagePull(ctx context.Context, podSlot string, gen int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE carriage_pods SET last_pulled_at = $1, last_pulled_generation = $2 WHERE pod_slot = $3`,
+		CarriageClock().Unix(), gen, podSlot)
+	if err != nil {
+		return fmt.Errorf("record carriage pull: %w", err)
+	}
+	return nil
+}
+
+// RecordCarriageLedger notes that pod posted its ledger now.
+func (r *Registry) RecordCarriageLedger(ctx context.Context, podSlot string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE carriage_pods SET last_ledger_at = $1 WHERE pod_slot = $2`, CarriageClock().Unix(), podSlot)
+	if err != nil {
+		return fmt.Errorf("record carriage ledger: %w", err)
+	}
+	return nil
+}
+
+// PendingLocalRuleCounts is the number of pending local rules per pod.
+func (r *Registry) PendingLocalRuleCounts(ctx context.Context) (map[string]int64, error) {
+	var rows []struct {
+		Pod string `db:"pod_slot"`
+		N   int64  `db:"n"`
+	}
+	if err := r.reader().SelectContext(ctx, &rows,
+		`SELECT pod_slot, COUNT(*) AS n FROM carriage_local_rules WHERE state = 'pending' GROUP BY pod_slot`); err != nil {
+		return nil, fmt.Errorf("pending local rules: %w", err)
+	}
+	out := make(map[string]int64, len(rows))
+	for _, x := range rows {
+		out[x.Pod] = x.N
+	}
+	return out, nil
 }
 
 // NewLocalRule is one verified ledger entry to record.

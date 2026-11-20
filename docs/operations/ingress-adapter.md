@@ -22,7 +22,7 @@ the port, the sender address and a SHA-256 of the payload, signed with the adapt
 |---|---|
 | The adapter is a machine with its own slot and certificate | Enroll it like any machine; give it a goat context directory: `profile.toml` (with `router_endpoint`), `mtls.cert.pem`, `mtls.key.pem` (P-256), `ca-roots.pem` |
 | Each source is enrolled as keyless, naming this adapter | `keyless: true`, `adapters: [<adapter slot>]`, `receive` (interface, port, sender) at enrollment (§7.3) |
-| The router admits the adapter's writes to the source's slot | At a pod: the adapter's CN is in the source's `principals` in the pod's rule generation. At a core router: a carriage rule (phase 4) |
+| The router admits the adapter's writes to the source's slot | At a pod: the adapter's CN is in the source's `principals` in the pod's rule generation. At a core router: the adapter's CN is in the source's `carry-<anchor>` subject, rendered from the keyless record ([pod-carriage.md](pod-carriage.md)) |
 | Storage on `<adapter-slot>/_goat/prov/cert` | The adapter publishes its certificate there at start; subscribers fetch it to verify |
 
 Without the write admission the router drops the samples silently; `goat sub '<source-slot>/stream/asterix/**'` on the

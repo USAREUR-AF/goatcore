@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Partly built ([ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md), Accepted): the portal side of phases 2 and 5 is built (§8); build tracked in goatcore#1025 |
+| Status | Partly built ([ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md), Accepted): phases 3 and 4 and most of phases 2 and 5 are built; the CLI verbs, bundle router hints and phase 6 are not (§8); build tracked in goatcore#1025 |
 | Scope | How a source keeps its identity on any path; carriage rules; provenance at entry; a cut-off pod's local authority |
 | Related | [`pod-targeted-client-bundles.md`](pod-targeted-client-bundles.md) (bundles, superseded on route binding: routers are hints), [`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md) (operator tooling), [`federated-trust-model.md`](federated-trust-model.md) |
 
@@ -38,6 +38,25 @@ On a direct link the receiver sees the source's own certificate, so no rule is i
 - Rendering: a generator produces each pod's ACL (each covered source's own certificate under its own slot; only the pod's
   certificate on the pod's slot) and the core router's ACL (a pod's connection may write the slots its rules cover). Pods pull
   a signed generation. A drift check compares rendered ACLs with the rules.
+- Core rendering (built, phase 4): the portal's slot fragment gains one subject per pool slot, `carry-<anchor>`, naming the
+  leaf CNs of every registered pod whose generation lists that slot and, for a keyless source, of its ingress adapters; the
+  unassigned CN when nobody carries it. The router template binds `carry-<anchor>` to that slot's own write rule
+  `slot-w-<anchor>` and nothing else (`zenoh_carriage_core_enabled`, off by default; off, the render is byte-identical to the
+  template before it). So a carrier writes exactly the source's own write set, a topic-budget narrowing included, and gains
+  no read. The pod's generation and the core's carriers come from one snapshot of the registry, so they agree. Every rule
+  change (pod registration, grant, accept, revoke, reactivate, opt-out, ratification) re-renders the fragment, and the
+  portal re-renders it every minute for expiry; the router host's reload watcher loads it: a carrier removed is a
+  revocation (prompt), a carrier added is batched. A fragment rendered before carriage declares no `carry-` subject: the
+  template then binds each carriage policy to an inert `carry-<anchor>-none` until one role run after the portal upgrade;
+  after that, rule changes need no role run.
+- Drift check (built): `GET /api/carriage/drift` (operator) and `goat-zenoh-portal carriage-drift --db-dsn … --acl-config …`
+  (exit 1 on drift) compare the `carry-` subjects in the live router config and in the reload watcher's loaded record with
+  the carriers the rules give, and name every difference: a carrier missing, a carrier with no rule, a slot with no `carry-`
+  subject, a policy still bound to the inert `-none` subject, the template flag off while rules name carriers.
+- Carriage health (built): `GET /api/carriage/pods` carries per pod `health`: `state` (`never_pulled`, `current`,
+  `behind` when the rules changed since the pod's last pull), the last generation served and its age, the last ledger
+  upload and its age, and the number of pending local rules. Operator page:
+  [`pod-carriage.md`](../operations/pod-carriage.md).
 - A pod's read access is rendered from the read grants of the sources it may carry, never `**`
   ([ADR 1123](../adr/1123-client-demand-must-not-amplify.md)).
 
@@ -148,8 +167,8 @@ not developers ([`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md)
 | Many live paths at once | Any allowed path is valid. Measured: a client-mode session given two pods uses one at a time and every publication arrived once; a peer-mode session linked to two routers delivered every publication twice. Any remedy is session-side (options below) |
 | Pod behind a pod | Not supported; a pod forwards only sources it authenticated |
 | Across sovereigns | A rule never crosses a trust root ([ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md), [ADR 1020](../adr/1020-zenoh-federated-peering-trust-model.md)) |
-| Silent denial | A pod refuses an uncovered source at connect time and publishes per-source carriage health |
-| Scale | ACL size grows with covered slots per pod. zenohd 1.9 applies an ACL change only by restarting the router (F-156), so rendering follows the slot fragment's pattern (`ops/ansible/roles/goat-zenoh/files/slot-fragment-reload.py`): removals at once, additions batched |
+| Silent denial | A pod refuses an uncovered source at connect time and publishes per-source carriage health. At the core, the drift check names every carrier the router does not admit, and the pod's `health.state` says whether it holds the current rules |
+| Scale | ACL size grows with covered slots per pod. At the core: one `carry-<anchor>` subject and one policy per pool slot, and one CN per (carrier, carried slot) pair. zenohd 1.9 applies an ACL change only by restarting the router (F-156), so rendering follows the slot fragment's pattern (`ops/ansible/roles/goat-zenoh/files/slot-fragment-reload.py`): removals at once, additions batched |
 
 **Measured** 2026-11-19, zenohd 1.9.0 (`eclipse/zenoh:1.9.0` by digest), with
 `N=1000 RUNS=3 bash tests/duplicate-delivery-local.sh` in USAREUR-AF/zagros-moon-pod: a core router and two pod routers
@@ -396,6 +415,6 @@ enrollment.
 | 1 | Measure: duplicate delivery over two live paths, signature overhead per sample (ACL reload is settled: restart, F-156) | Measured 2026-11-19 (§6) |
 | 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Portal built: rule storage (registry migration 3), consent, expiry, reactivation, opt-out, the signed generation, keyless sources and `keyless`/`adapters`/`receive`/`pods` in single and bulk machine enrollment. Pod rendering built (`ops/goat-pod-api`: pull, verify, render, apply with rollback; tested against zenohd 1.9.0 in zagros-moon-pod `tests/pod-carriage-local.sh`). CLI and bundle router hints not built |
 | 3 | Provenance: attachment signature, grades, keyless sources, ASTERIX ingress adapter, verification in the CLI | Built: signature, grades, ASTERIX adapter (§3 "What is built"). CLI verification: built, held until crates/Cargo.lock can change. Keyless-source enrollment built in the portal (phase 2) |
-| 4 | Core ACL rendering, carriage health, drift check | Designed; after the current security fixes to the core template are disclosed |
+| 4 | Core ACL rendering, carriage health, drift check | Built: `carry-<anchor>` subjects in the slot fragment bound to `slot-w-<anchor>` (`zenoh_carriage_core_enabled`, off by default), drift check, pod carriage health in the portal. Proved by `tests/carriage-core-check.py` (the router's decision rules, no live zenohd); not yet proved against a live zenohd |
 | 5 | Local authority: pod API and ledger, `goat pod`, ratification, then Gatepost | Portal built: ledger ingest, pending list, ratify and lapse, revocations win. Fieldkit Gatepost (against a mock pod) and the portal ratification page built ([`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md)). Pod API and ledger built (`ops/goat-pod-api`; serves Gatepost at `/`). `goat pod` not built |
 | 6 | Move existing devices: route-only updates, enrollment of identity-less sources, retirement of interim `routed/` prefixes | Designed; per pod, after phase 2 |

@@ -18,6 +18,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -34,8 +36,28 @@ import (
 
 const carriageOpKey = "carriage-op-key"
 
+// routerConfig is the shape of the router template's carriage part: the slot
+// subject markers and one carriage policy per pool slot, bound to carry-<a>
+// (or, for a role render that predates the fragment's carry- subjects, to the
+// inert carry-<a>-none).
+func routerConfig(salt string, n int, none bool) string {
+	var b strings.Builder
+	b.WriteString("access_control: {\n  subjects: [\n      // BEGIN: slot subjects\n      // END: slot subjects\n  ],\n  policies: [\n")
+	for k := 0; k < n; k++ {
+		a := registry.SlotAnchor(salt, k)
+		suffix := ""
+		if none {
+			suffix = "-none"
+		}
+		b.WriteString("      {\n        rules: [\"slot-w-" + a + "\"],\n        subjects: [\"carry-" + a + suffix + "\"],\n      },\n")
+	}
+	b.WriteString("  ],\n}\n")
+	return b.String()
+}
+
 type carriageFixture struct {
 	t          *testing.T
+	configPath string
 	ts         *httptest.Server
 	reg        *registry.Registry
 	signerCert *x509.Certificate
@@ -104,7 +126,7 @@ func newCarriageFixture(t *testing.T) *carriageFixture {
 		SlotPoolSalt:        "carriage-test",
 		SlotPoolSize:        16,
 		ZenohRestFake:       true,
-		ACLConfigPath:       write("config.json5", []byte("{}")),
+		ACLConfigPath:       write("config.json5", []byte(routerConfig("carriage-test", 16, false))),
 		ACLReloadFake:       true,
 		CertSignFake:        true,
 		VendorBundleDir:     filepath.Join(dir, "bundles"),
@@ -139,7 +161,7 @@ func newCarriageFixture(t *testing.T) *carriageFixture {
 		}
 	}
 	return &carriageFixture{
-		t: t, ts: ts, reg: reg, signerCert: signerCert, caCert: caCert, caKey: caKey,
+		t: t, ts: ts, reg: reg, configPath: cfg.ACLConfigPath, signerCert: signerCert, caCert: caCert, caKey: caKey,
 		alice: seedPrincipal(t, reg, "alice", false, ""),
 		bob:   seedPrincipal(t, reg, "bob", false, ""),
 	}
@@ -653,5 +675,157 @@ func TestCarriage_LedgerRatifyLapseAndRevokeWins(t *testing.T) {
 	}
 	if got := f.mustCall(http.StatusOK, "GET", "/api/carriage/local-rules", f.alice, nil)["local_rules"].([]any); got[0].(map[string]any)["pod_org"] != "org-a" {
 		t.Fatalf("local rule list lacks pod_org: %v", got)
+	}
+}
+
+// carryOf reads the carry-<slot> CNs from the live router config.
+func (f *carriageFixture) carryOf(slot string) []string {
+	f.t.Helper()
+	b, err := os.ReadFile(f.configPath)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	m := regexp.MustCompile(`id: "carry-` + slot + `",\n\s*cert_common_names: \[([^\]]*)\]`).FindStringSubmatch(string(b))
+	if m == nil {
+		f.t.Fatalf("no carry-%s subject in the live config", slot)
+	}
+	var out []string
+	for _, c := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(m[1], -1) {
+		if !strings.HasSuffix(c[1], ".unassigned") {
+			out = append(out, c[1])
+		}
+	}
+	return out
+}
+
+func TestCarriage_CoreCarriersFollowRulesAndDriftNamesDifferences(t *testing.T) {
+	f := newCarriageFixture(t)
+	pod, podKey, _ := f.enroll("pod-1", "alice", nil)
+	dev1, _, _ := f.enroll("dev-1", "alice", nil)
+	bobDev, _, _ := f.enroll("bob-dev", "bob", nil)
+	adapter, _, _ := f.enroll("asterix-adapter", "alice", nil)
+	radar, _, _ := f.enroll("radar-1", "alice", map[string]any{
+		"keyless": true, "adapters": []string{adapter},
+		"receive": map[string]any{"interface": "udp", "port": 10009, "sender": "192.0.2.10:5000"},
+	})
+	// Before any pod: only the adapter carries the keyless source.
+	if got := f.carryOf(radar); len(got) != 1 || got[0] != f.cn(adapter) {
+		t.Fatalf("keyless source carriers before any pod = %v, want the adapter", got)
+	}
+	if got := f.carryOf(dev1); len(got) != 0 {
+		t.Fatalf("dev-1 carried before any rule: %v", got)
+	}
+	f.registerPod(pod, "org-a", []map[string]any{{"identity": "us-dod:1234567890", "cert_cn": "lead-a"}})
+	podCN := f.cn(pod)
+	if got := f.carryOf(dev1); len(got) != 1 || got[0] != podCN {
+		t.Fatalf("org rule: carry-dev1 = %v, want [%s]", got, podCN)
+	}
+	want := []string{f.cn(adapter), podCN}
+	sort.Strings(want)
+	if got := f.carryOf(radar); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("carry-radar = %v, want %v", got, want)
+	}
+	if got := f.carryOf(bobDev); len(got) != 0 {
+		t.Fatalf("an org-b device is carried by an org-a pod: %v", got)
+	}
+	if got := f.carryOf(pod); len(got) != 0 {
+		t.Fatalf("the pod carries itself: %v", got)
+	}
+
+	// Health: never pulled, then current, then behind after a rule change.
+	podHealth := func() map[string]any {
+		for _, p := range f.mustCall(http.StatusOK, "GET", "/api/carriage/pods", f.bob, nil)["pods"].([]any) {
+			pm := p.(map[string]any)
+			if pm["pod_slot"] == pod {
+				return pm["health"].(map[string]any)
+			}
+		}
+		t.Fatal("pod missing from the list")
+		return nil
+	}
+	if h := podHealth(); h["state"] != "never_pulled" {
+		t.Fatalf("health before any pull: %v", h)
+	}
+	f.generation(pod, podKey)
+	if h := podHealth(); h["state"] != "current" || h["last_pulled_generation"].(float64) != 1 || h["pull_age_seconds"] == nil {
+		t.Fatalf("health after a pull: %v", h)
+	}
+
+	// Opt-out reaches the core fragment at once.
+	f.mustCall(http.StatusOK, "PUT", "/api/carriage/sources/"+dev1+"/org-rule", f.alice, map[string]any{"opt_out": true})
+	if got := f.carryOf(dev1); len(got) != 0 {
+		t.Fatalf("an opted-out source is still carried at the core: %v", got)
+	}
+	if h := podHealth(); h["state"] != "behind" || h["rules_changed_since_pull"] != true {
+		t.Fatalf("health after a rule change: %v", h)
+	}
+
+	// A named rule for bob's device, accepted by the pod side.
+	m := f.mustCall(http.StatusCreated, "POST", "/api/carriage/rules", f.bob,
+		map[string]any{"source_slot": bobDev, "pod_slot": pod, "until": days(10), "reason": "liaison"})
+	if got := f.carryOf(bobDev); len(got) != 0 {
+		t.Fatal("a proposed rule reached the core")
+	}
+	f.mustCall(http.StatusOK, "POST", "/api/carriage/rules/"+m["id"].(string)+"/accept", f.alice, nil)
+	if got := f.carryOf(bobDev); len(got) != 1 || got[0] != podCN {
+		t.Fatalf("accepted named rule: carry-bobdev = %v", got)
+	}
+
+	// Drift: in sync now; a hand edit of the config is named.
+	drift := f.mustCall(http.StatusOK, "GET", "/api/carriage/drift", carriageOpKey, nil)
+	if drift["in_sync"] != true {
+		t.Fatalf("drift right after a render: %v", drift)
+	}
+	if code, _, _ := f.call("GET", "/api/carriage/drift", f.alice, nil); code != http.StatusForbidden {
+		t.Fatal("drift served to a non-operator")
+	}
+	b, _ := os.ReadFile(f.configPath)
+	edited := strings.Replace(string(b), `id: "carry-`+bobDev+`",
+        cert_common_names: ["`+podCN+`"],`, `id: "carry-`+bobDev+`",
+        cert_common_names: ["`+f.cn(dev1)+`"],`, 1)
+	if edited == string(b) {
+		t.Fatal("test setup: carry-bobdev not found in the config")
+	}
+	if err := os.WriteFile(f.configPath, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := CarriageDrift(t.Context(), f.reg, &config.Config{RosterPath: filepath.Join(filepath.Dir(f.configPath), "roster.json")}, f.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]bool{}
+	for _, d := range rep.Differences {
+		kinds[d.Kind+":"+d.CN] = d.Slot == bobDev
+	}
+	if rep.InSync || !kinds["missing:"+podCN] || !kinds["extra:"+f.cn(dev1)] || len(rep.Differences) != 2 {
+		t.Fatalf("drift after a hand edit = %+v", rep.Differences)
+	}
+
+	// A role render older than the fragment's carry- subjects: the policies
+	// bind -none, which the drift check names for every slot someone carries.
+	if err := os.WriteFile(f.configPath, []byte(routerConfig("carriage-test", 16, true)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.mustCall(http.StatusOK, "PUT", "/api/carriage/sources/"+dev1+"/org-rule", f.alice, map[string]any{"opt_out": false})
+	rep, err = CarriageDrift(t.Context(), f.reg, &config.Config{RosterPath: filepath.Join(filepath.Dir(f.configPath), "roster.json")}, f.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inert := map[string]bool{}
+	for _, d := range rep.Differences {
+		if d.Kind == DriftInert {
+			inert[d.Slot] = true
+		}
+	}
+	if !inert[dev1] || !inert[bobDev] || !inert[radar] || inert[pod] {
+		t.Fatalf("inert bindings named = %v (differences %+v)", inert, rep.Differences)
+	}
+
+	// The ledger upload time is recorded for health.
+	ps := f.podIdentity(pod)
+	f.mustCall(http.StatusOK, "POST", "/api/carriage/pods/"+pod+"/ledger", podKey,
+		ps.upload(t, carriage.LedgerEntry{Seq: 1, Action: "revoke", SourceSlot: dev1}))
+	if h := podHealth(); h["last_ledger_at"] == nil || h["pending_local_rules"].(float64) != 1 {
+		t.Fatalf("health after a ledger upload: %v", h)
 	}
 }
