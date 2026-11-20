@@ -35,6 +35,31 @@ mgmt-host service) exits unexpectedly, the watcher detects within
   logs WARN and retries on next poll.
 - SIGTERM-clean for systemd stop.
 
+## Pausing it for a planned stop
+
+A procedure that stops a service of this stack on purpose writes the pause
+file first, so the watcher does not start the service again, and removes it
+when done:
+
+```sh
+echo <reason> | sudo tee /run/mgmt-host-compose-watch.paused   # pause
+sudo rm /run/mgmt-host-compose-watch.paused                     # resume
+```
+
+While the file exists the watcher revives nothing and logs `paused: <file>
+exists (<reason>)` each cycle. It still writes its metrics, and
+`compose_watch_paused{site}` is 1. The file is under `/run`, so a reboot
+clears a pause someone forgot. `MGMT_HOST_COMPOSE_WATCH_PAUSE_FILE`
+names another path (the tests use one).
+
+One procedure uses it today. A joiner whose existing Postgres cluster has
+another encoding than its founder's is refused by `site-bootstrap.yml`,
+which says to pause with the reason `postgres-reinit`, stop the stack,
+remove the `pgdata-a` volume, and re-run. Without the pause, the watcher
+started the old `postgres-a` again within its poll interval. Once the re-run's
+cluster has the founder's encoding, the play removes a `postgres-reinit`
+pause, and no other (`tests/test_site_bootstrap_reinit_pauses_compose_watch.py`).
+
 ## Service allowlist (production-relevant once Ory or other migration-style services land)
 
 `MGMT_HOST_COMPOSE_WATCH_SERVICES` env var is an optional space-separated

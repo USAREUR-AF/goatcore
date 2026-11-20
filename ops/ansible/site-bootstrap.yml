@@ -405,8 +405,12 @@
               {{ _local_encoding.stdout | trim }}; the founder {{ _founder_host }}
               is {{ postgres_initdb_encoding }}. Spock cannot replicate between
               them, and initdb never re-runs on an existing PGDATA. On a joiner
-              that holds no data yet: stop the stack, remove the pgdata-a volume,
-              and re-run this play so Postgres initialises as {{ postgres_initdb_encoding }}.
+              that holds no data yet: first pause the stack's watcher, or it
+              starts the old Postgres again (echo postgres-reinit | sudo tee
+              /run/mgmt-host-compose-watch.paused); then stop the stack, remove
+              the pgdata-a volume, and re-run this play so Postgres initialises
+              as {{ postgres_initdb_encoding }}. The play clears the pause once
+              the cluster has that encoding.
             quiet: true
 
 # ============================================================================
@@ -661,13 +665,33 @@
           {{ inventory_hostname }}'s cluster is {{ _joiner_encoding.stdout | trim }};
           the founder's is {{ postgres_initdb_encoding }}. The PGDATA existed
           before this run, so initdb did not run with the founder's encoding.
-          On a joiner that holds no data yet: stop the stack, remove the
-          pgdata-a volume, and re-run.
+          On a joiner that holds no data yet: first pause the stack's watcher,
+          or it starts the old Postgres again (echo postgres-reinit | sudo tee
+          /run/mgmt-host-compose-watch.paused); then stop the stack, remove the
+          pgdata-a volume, and re-run. The play clears the pause once the
+          cluster has the founder's encoding.
         quiet: true
       when:
         - not (goatnet_founder | default(true) | bool)
         - postgres_initdb_encoding is defined
         # The Spock node; a B standby's cluster is a copy of A's.
+        - (router_role | default('A')) == 'A'
+
+    # The operator paused mgmt-host-compose-watch for the re-initialisation
+    # (the refusals above say how), so the old postgres-a stayed down. The
+    # cluster now has the founder's encoding: clear that pause, and only a
+    # pause whose reason is postgres-reinit, so another procedure's is kept.
+    - name: "encoding | clear the watcher's postgres-reinit pause"
+      ansible.builtin.shell: |
+        f=/run/mgmt-host-compose-watch.paused
+        if [ "$(tr -d '[:space:]' < "$f" 2>/dev/null)" = postgres-reinit ]; then
+          rm -f "$f" && echo "cleared $f"
+        fi
+      register: _reinit_pause
+      changed_when: "'cleared' in _reinit_pause.stdout"
+      when:
+        - not (goatnet_founder | default(true) | bool)
+        - postgres_initdb_encoding is defined
         - (router_role | default('A')) == 'A'
 
 # ============================================================================
