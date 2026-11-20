@@ -38,12 +38,12 @@
 // only by the receiver reporting back, which no part of this design does.
 
 use anyhow::Result;
+use std::future::Future;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use zenoh::bytes::{Encoding, ZBytes};
 use zenoh::sample::SampleKind;
 use zenoh::time::Timestamp;
-use zenoh::Wait;
 
 use crate::metrics::Metrics;
 
@@ -55,19 +55,20 @@ pub struct Outbound {
     pub staging_key: String,
     pub release_prefix: String,
     pub kind: SampleKind,
-    pub payload: Vec<u8>,
+    pub payload: ZBytes,
     pub encoding: Encoding,
     pub timestamp: Option<Timestamp>,
-    pub attachment: Option<Vec<u8>>,
+    pub attachment: Option<ZBytes>,
 }
 
 pub trait EdgeSink: Send + 'static {
-    /// Put (or delete) one sample on the peering edge.
-    fn publish(&self, out: &Outbound) -> Result<()>;
+    /// Put (or delete) one sample on the peering edge, consuming its payload
+    /// and attachment buffers without cloning.
+    fn publish(&self, out: &mut Outbound) -> impl Future<Output = Result<()>> + Send;
     /// Whether the edge session currently has a transport peer. Racy by
     /// nature; used to turn the common, long case (link down) from silent loss
     /// into a counted one.
-    fn linked(&self) -> bool;
+    fn linked(&self) -> impl Future<Output = bool> + Send;
 }
 
 pub struct ZenohEdge {
@@ -81,20 +82,21 @@ impl ZenohEdge {
 }
 
 impl EdgeSink for ZenohEdge {
-    fn publish(&self, out: &Outbound) -> Result<()> {
+    async fn publish(&self, out: &mut Outbound) -> Result<()> {
         match out.kind {
             SampleKind::Put => {
+                let payload = std::mem::take(&mut out.payload);
                 let mut b = self
                     .session
-                    .put(out.wire_key.as_str(), ZBytes::from(out.payload.clone()))
+                    .put(out.wire_key.as_str(), payload)
                     .encoding(out.encoding.clone());
                 if let Some(ts) = out.timestamp {
                     b = b.timestamp(ts);
                 }
-                if let Some(a) = &out.attachment {
-                    b = b.attachment(ZBytes::from(a.clone()));
+                if let Some(a) = out.attachment.take() {
+                    b = b.attachment(a);
                 }
-                b.wait()
+                b.await
                     .map_err(|e| anyhow::anyhow!("put({}) failed: {e}", out.wire_key))
             }
             SampleKind::Delete => {
@@ -102,13 +104,13 @@ impl EdgeSink for ZenohEdge {
                 if let Some(ts) = out.timestamp {
                     b = b.timestamp(ts);
                 }
-                b.wait()
+                b.await
                     .map_err(|e| anyhow::anyhow!("delete({}) failed: {e}", out.wire_key))
             }
         }
     }
 
-    fn linked(&self) -> bool {
+    async fn linked(&self) -> bool {
         // ROUTERS AS WELL AS PEERS. The edge session is opened in `mode: "client"`
         // against the far side's router, where a router appears in `routers_zid()`
         // and `peers_zid()` is structurally always empty. With `peers_zid()` alone
@@ -118,8 +120,7 @@ impl EdgeSink for ZenohEdge {
         // cannot catch this, so the one thing that can be wrong here is the one
         // thing such a test replaces.
         let info = self.session.info();
-        !info.peers_zid().wait().collect::<Vec<_>>().is_empty()
-            || !info.routers_zid().wait().collect::<Vec<_>>().is_empty()
+        info.peers_zid().await.next().is_some() || info.routers_zid().await.next().is_some()
     }
 }
 
@@ -149,20 +150,20 @@ pub async fn run_publisher<S: EdgeSink>(
     // The gauge answers "is the edge up", so it has to be answerable without
     // traffic. This is a read of local session state, not a probe, so ticking it
     // costs nothing on the wire.
-    metrics.edge_linked.set(i64::from(sink.linked()));
+    metrics.edge_linked.set(i64::from(sink.linked().await));
 
     loop {
-        let out = tokio::select! {
+        let mut out = tokio::select! {
             recv = rx.recv() => match recv {
                 Some(out) => out,
                 None => break,
             },
             _ = tokio::time::sleep(EDGE_LINK_POLL) => {
-                metrics.edge_linked.set(i64::from(sink.linked()));
+                metrics.edge_linked.set(i64::from(sink.linked().await));
                 continue;
             }
         };
-        let linked = sink.linked();
+        let linked = sink.linked().await;
         metrics.edge_linked.set(i64::from(linked));
         if was_linked != Some(linked) {
             if linked {
@@ -178,7 +179,7 @@ pub async fn run_publisher<S: EdgeSink>(
             metrics.dropped.with_label_values(&["edge_down"]).inc();
             continue;
         }
-        match sink.publish(&out) {
+        match sink.publish(&mut out).await {
             Ok(()) => {
                 metrics
                     .published
@@ -212,14 +213,16 @@ mod tests {
     }
 
     impl EdgeSink for FakeEdge {
-        fn publish(&self, out: &Outbound) -> Result<()> {
+        async fn publish(&self, out: &mut Outbound) -> Result<()> {
+            tokio::task::yield_now().await;
             if self.fail.load(Ordering::SeqCst) {
                 anyhow::bail!("edge refused");
             }
             self.sent.lock().unwrap().push(out.clone());
             Ok(())
         }
-        fn linked(&self) -> bool {
+        async fn linked(&self) -> bool {
+            tokio::task::yield_now().await;
             self.linked.load(Ordering::SeqCst)
         }
     }
@@ -230,7 +233,7 @@ mod tests {
             staging_key: "release/weather/forecast".into(),
             release_prefix: "release/weather/**".into(),
             kind: SampleKind::Put,
-            payload: b"clear-32C".to_vec(),
+            payload: ZBytes::from(b"clear-32C".as_slice()),
             encoding: Encoding::default(),
             timestamp: None,
             attachment: None,
@@ -331,5 +334,57 @@ mod tests {
             Err(mpsc::error::TrySendError::Full(_)) => {}
             other => panic!("expected Full, got {other:?}"),
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_edge_sink_cooperates_on_a_single_worker_thread_and_moves_payload() {
+        // Proves `run_publisher` awaits `linked()` and `publish()` rather than
+        // blocking the runtime thread: on a single-threaded runtime, `publish`
+        // waits on a `Notify` triggered by a sibling local task that can ONLY
+        // run if `run_publisher` yields at `.await`.
+        struct GatedEdge {
+            entered: Arc<tokio::sync::Notify>,
+            release: Arc<tokio::sync::Notify>,
+            received_payload: Arc<Mutex<Vec<u8>>>,
+        }
+        impl EdgeSink for GatedEdge {
+            async fn publish(&self, out: &mut Outbound) -> Result<()> {
+                let payload = std::mem::take(&mut out.payload);
+                self.entered.notify_one();
+                self.release.notified().await;
+                *self.received_payload.lock().unwrap() = payload.to_bytes().into_owned();
+                Ok(())
+            }
+            async fn linked(&self) -> bool {
+                true
+            }
+        }
+
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let received_payload = Arc::new(Mutex::new(Vec::new()));
+        let edge = GatedEdge {
+            entered: entered.clone(),
+            release: release.clone(),
+            received_payload: received_payload.clone(),
+        };
+        let m = metrics();
+        let (tx, rx) = mpsc::channel(4);
+        tx.send(sample("from/zagros/weather/forecast"))
+            .await
+            .unwrap();
+        drop(tx);
+
+        let unblocker = async {
+            entered.notified().await;
+            release.notify_one();
+        };
+        tokio::join!(run_publisher(rx, edge, m.clone()), unblocker);
+
+        assert_eq!(received_payload.lock().unwrap().as_slice(), b"clear-32C");
+        assert_eq!(
+            m.published.with_label_values(&["release/weather/**"]).get(),
+            1
+        );
     }
 }

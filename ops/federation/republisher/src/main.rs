@@ -138,7 +138,7 @@ async fn main() -> Result<()> {
         from = flow.from.as_str(),
         to = flow.to.as_str(),
         release = ?flow.release,
-        wire_prefix = map.wire_prefix().as_str(),
+        wire_prefix = map.wire_prefix(),
         hz = flow.envelope.hz,
         bytes_per_message = flow.envelope.bytes_per_message,
         distinct_keys = flow.envelope.distinct_keys,
@@ -278,8 +278,8 @@ async fn ingest_loop(
                 return;
             }
         };
-        let staging_key = sample.key_expr().to_string();
-        let payload = sample.payload().to_bytes().to_vec();
+        let staging_key = sample.key_expr().as_str();
+        let payload_len = sample.payload().len();
         metrics
             .received
             .with_label_values(&[release_prefix.as_str()])
@@ -288,7 +288,7 @@ async fn ingest_loop(
         let (decision, shed_warning) = {
             let mut p = policy.lock().unwrap();
             let now = now_ms();
-            let d = p.decide(&staging_key, payload.len(), now, Utc::now().date_naive());
+            let d = p.decide(staging_key, payload_len, now, Utc::now().date_naive());
             metrics
                 .distinct_wire_keys
                 .set(p.distinct_keys_seen() as i64);
@@ -313,20 +313,20 @@ async fn ingest_loop(
                     policy::Refusal::NotReleased
                     | policy::Refusal::Unmappable(_)
                     | policy::Refusal::AgreementExpired(_) => {
-                        warn!(staging_key = staging_key.as_str(), "refused: {r}");
+                        warn!(staging_key, "refused: {r}");
                     }
                     // A new key over the distinct-keys ceiling is data that will
                     // never cross: an operator must see it, so it warns (rate-limited
                     // in the policy; the held-back refusals are counted into the next).
                     policy::Refusal::CardinalityShed { limit } => policy::log_cardinality_shed(
                         release_prefix.as_str(),
-                        staging_key.as_str(),
+                        staging_key,
                         limit,
                         shed_warning,
                     ),
                     // The rate and size sheds repeat by nature. The counter is the
                     // repeatable observable; the log would be a firehose.
-                    _ => debug!(staging_key = staging_key.as_str(), "refused: {r}"),
+                    _ => debug!(staging_key, "refused: {r}"),
                 }
                 continue;
             }
@@ -339,15 +339,17 @@ async fn ingest_loop(
             metrics.source_info_dropped.inc();
         }
 
+        // Only admitted samples materialize owned strings; payload + attachment
+        // stay reference-counted `ZBytes` across the bounded channel into put().
         let out = Outbound {
             wire_key,
-            staging_key: staging_key.clone(),
+            staging_key: staging_key.to_owned(),
             release_prefix: release_prefix.clone(),
             kind: sample.kind(),
-            payload,
+            payload: sample.payload().clone(),
             encoding: sample.encoding().clone(),
             timestamp: provenance::rewire_timestamp(sample.timestamp(), our_ts_id),
-            attachment: sample.attachment().map(|a| a.to_bytes().to_vec()),
+            attachment: sample.attachment().cloned(),
         };
 
         // try_send, never send: see edge.rs on why blocking is forbidden.

@@ -58,6 +58,7 @@ impl std::fmt::Display for MapError {
 #[derive(Debug)]
 pub struct KeyMap {
     wire_root: String,
+    wire_bound: OwnedKeyExpr,
     release: Vec<OwnedKeyExpr>,
 }
 
@@ -112,8 +113,13 @@ impl KeyMap {
             }
         }
 
+        let wire_root = format!("from/{sovereign_id}");
+        let wire_bound = OwnedKeyExpr::new(format!("{wire_root}/**"))
+            .map_err(|e| anyhow::anyhow!("wire prefix for {sovereign_id:?} is invalid: {e}"))?;
+
         Ok(Self {
-            wire_root: format!("from/{sovereign_id}"),
+            wire_root,
+            wire_bound,
             release: parsed,
         })
     }
@@ -127,8 +133,8 @@ impl KeyMap {
     /// mapped key is checked against it before it is published, so a mapping
     /// bug becomes a local refusal rather than a write the partner refuses
     /// silently.
-    pub fn wire_prefix(&self) -> String {
-        format!("{}/**", self.wire_root)
+    pub fn wire_prefix(&self) -> &str {
+        self.wire_bound.as_str()
     }
 
     pub fn map(&self, staging_key: &str) -> Result<String, MapError> {
@@ -143,8 +149,7 @@ impl KeyMap {
         let wire = format!("{}/{}", self.wire_root, remainder);
         let wire_ke =
             keyexpr::new(wire.as_str()).map_err(|e| MapError::Malformed(e.to_string()))?;
-        let bound = OwnedKeyExpr::new(self.wire_prefix()).expect("wire prefix is well formed");
-        if !bound.includes(wire_ke) {
+        if !self.wire_bound.includes(wire_ke) {
             return Err(MapError::Malformed(format!(
                 "{wire} escapes {}",
                 self.wire_prefix()
