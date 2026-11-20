@@ -89,7 +89,7 @@ Two gaps closed by the tactical pack:
 
 ### 3.5 Inhibition
 
-The inhibition rule in [`alertmanager.yml.j2`](../../ops/ansible/roles/observability/templates/alertmanager.yml.j2):
+The inhibition rule in [`alertmanager.yml.j2`](../../ops/ansible/roles/observability/templates/alertmanager.yml.j2). Every alert an inhibit rule names must be one a rule defines (`ops/ci/check-alertmanager-inhibits-name-alerts.py`, in `goat-obs-checks`; built): three inhibit rules once named `SpockSubscriptionLag` after it could no longer fire.
 
 - `SpockSlotInvalidated` suppresses `SpockSlotInactive` (same `slot_name`) — invalidated slots are necessarily inactive; one alert is enough.
 
