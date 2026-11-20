@@ -4229,6 +4229,22 @@ entries:
     read: docs/design/goatbuilder.md
     exit: 2
 
+  - code: GB-360
+    tool: goatbuilder
+    title: a machine's record was not read
+    what: "The converger asked one machine for its newest record of a component, and the machine was not read: it did not answer, the inventory names it and it was silent, or its read FAILED. Contract C7: such a machine is unknown, never done, and nothing about its record is assumed."
+    causes:
+      - "the host is down, or not reachable from this machine over the transport the environment uses"
+      - "the inventory names a host that gave no answer"
+      - "the read ran on the host and FAILED (become refused, no python)"
+    fixes:
+      - "goatbuilder status --env <environment>   (each machine's state, and why it was not read)"
+      - "goatbuilder doctor --env <environment>   (the transport and each host's reach)"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-360: "
+
   # Printed by ops/scripts/check-site-play-current.py, the GATE before a site's own copy of a generic play.
   - code: GB-362
     tool: goatbuilder
@@ -4265,6 +4281,19 @@ entries:
 
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
+  - code: GB-361
+    tool: goatbuilder
+    title: a joining site's data router and health publishers would name its Zenoh stack differently
+    what: "join-node deploys a joining site's data router (the goat-zenoh role) and then each health publisher the site declares. `zenoh_stack` names the router's directories, its container (`<stack>-router`) and its network (`<stack>_default`). The router's role defaults it to `<site_id>-zenoh`; a publisher's role reads it with a default of its own (`goat-zenoh`) or requires it. Ansible gives each role only its own defaults, so with no `zenoh_stack` in the site's group_vars the publishers would look for a router and network the site's router does not have. The message names each publisher and the value it would read. The plan was refused before any phase ran."
+    causes:
+      - "the site's group_vars do not set zenoh_stack, and a publisher role's default differs from the router role's"
+    fixes:
+      - "add the line the message prints, `zenoh_stack: <site_id>-zenoh`, to group_vars/<site>_hosts/, so every role reads one value"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-361: "
+
   - code: GB-370
     tool: goatbuilder
     title: no usable peering directory URL or id was given

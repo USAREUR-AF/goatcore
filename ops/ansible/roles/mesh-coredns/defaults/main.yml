@@ -37,8 +37,8 @@ mesh_coredns_port: 5353
 # CoreDNS `forward` destinations (an address, address:port, or tls://address),
 # rendered in order on one `forward .` line. An empty list renders no forward
 # directive: the resolver answers only its own zone, a name outside it gets
-# SERVFAIL (CoreDNS's hosts plugin has no SOA to say NXDOMAIN), and no query
-# leaves the resolver. A goatnet that needs no outside DNS on the
+# NXDOMAIN from a root zone file that holds only an SOA (mesh_coredns_negative_ttl
+# below), and no query leaves the resolver. A goatnet that needs no outside DNS on the
 # mesh resolver, or forwards to a resolver it runs, sets the list in its
 # group_vars (ops/ansible/group_vars/_examples/).
 #
@@ -51,6 +51,13 @@ mesh_coredns_port: 5353
 mesh_coredns_forwarders:
   - "1.1.1.1"
   - "8.8.8.8"
+# With an empty mesh_coredns_forwarders, a name this resolver does not hold
+# answers NXDOMAIN from a root zone file that holds only an SOA
+# (templates/mesh-root.zone.j2). A resolver caches that answer for this many
+# seconds, so a name added to mesh-hosts later is not taken for missing for
+# long. Unused while forwarders are set.
+mesh_coredns_negative_ttl: 30
+mesh_coredns_root_zone_path: "{{ mesh_coredns_dir }}/mesh-root.zone"
 # Optional second bind for the wg-cp0 silent-control-plane interface.
 # Empty = no extra bind. Set to e.g. "198.18.0.1" to allow operator
 # laptops on wg-cp0 to resolve mesh-DNS records pre-netbird-enrollment.

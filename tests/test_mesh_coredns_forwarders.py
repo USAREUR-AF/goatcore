@@ -4,13 +4,13 @@
 1. The default list renders today's line, `forward . 1.1.1.1 8.8.8.8`, so a goatnet that
    sets nothing renders the Corefile it ran before.
 2. A supplied list renders in order, on one `forward .` line.
-3. An empty list renders no `forward` directive and no `fallthrough` out of the zone file:
-   the resolver answers only its own names and sends no query anywhere. CoreDNS's hosts
-   plugin answers a name it does not hold with SERVFAIL (it has no SOA to say NXDOMAIN).
+3. An empty list renders no `forward` directive: the resolver answers only its own names
+   and sends no query anywhere. The zone file falls through to a root zone file holding
+   only an SOA, so a name it does not hold is NXDOMAIN (tests/test_mesh_coredns_nxdomain.py).
 4. The role refuses an item that is not one non-empty word (a space would make two
    forwarders out of one value).
 5. With Docker (REQUIRE_DOCKER=1 makes it required): the role's pinned CoreDNS image, on an
-   empty list, answers a zone name and SERVFAILs an outside name, logging no missing plugin.
+   empty list, answers a zone name and answers an outside name NXDOMAIN, logging no missing plugin.
 
 Run: python3 -m pytest tests/test_mesh_coredns_forwarders.py -v
 """
@@ -80,15 +80,15 @@ class Forwarders(unittest.TestCase):
     def test_an_empty_list_forwards_nothing(self):
         lines = directives(render(mesh_coredns_forwarders=[]))
         self.assertFalse([ln for ln in lines if ln.startswith("forward")], lines)
-        # The zone file is the last answer: no fallthrough to a plugin that is not there.
-        self.assertNotIn("fallthrough", lines)
+        # The zone file falls through to the root zone file, the last answer.
         self.assertIn("hosts /etc/mesh-hosts {", lines)
+        self.assertIn("file /etc/mesh-root.zone .", lines)
 
     def test_an_empty_list_keeps_the_decoy_fallthrough(self):
         lines = directives(render(mesh_coredns_forwarders=[], mesh_coredns_decoy_zone="site.example.internal",
                                   mesh_coredns_decoy_answer_ip="100.127.0.1"))
-        # The decoy templates fall through to the zone file; the zone file itself does not.
-        self.assertEqual(lines.count("fallthrough"), 2, lines)
+        # The decoy templates fall through to the zone file, and it to the root zone file.
+        self.assertEqual(lines.count("fallthrough"), 3, lines)
 
     def test_the_role_refuses_an_item_that_is_not_one_word(self):
         tasks = yaml.safe_load(TASKS.read_text())
@@ -134,10 +134,13 @@ class PinnedCoreDNS(unittest.TestCase):
             corefile = corefile.replace("bind 127.0.0.1", "bind 0.0.0.0")
             Path(d, "Corefile").write_text(corefile)
             Path(d, "mesh-hosts").write_text("100.127.0.1 mgmt.zagros.example.org\n")
+            root = (ROLE / "templates/mesh-root.zone.j2").read_text().replace("{{ mesh_coredns_negative_ttl }}", "30")
+            Path(d, "mesh-root.zone").write_text(root)
             name = f"mesh-coredns-fwd-test-{os.getpid()}"
             run = subprocess.run(
                 ["docker", "run", "-d", "--rm", "--name", name, "-p", f"127.0.0.1:{port}:53/udp",
                  "-v", f"{d}/Corefile:/Corefile:ro", "-v", f"{d}/mesh-hosts:/etc/mesh-hosts:ro",
+                 "-v", f"{d}/mesh-root.zone:/etc/mesh-root.zone:ro",
                  image, "-conf", "/Corefile"], capture_output=True, text=True)
             self.assertEqual(run.returncode, 0, run.stderr)
             try:
@@ -149,7 +152,7 @@ class PinnedCoreDNS(unittest.TestCase):
                     except (socket.timeout, ConnectionRefusedError, OSError):
                         time.sleep(0.5)
                 self.assertEqual(got, (0, 1), "the zone name answers with one A record")
-                self.assertEqual(query(port, "example.com")[0], 2, "an outside name is SERVFAIL, from the zone file")
+                self.assertEqual(query(port, "example.com")[0], 3, "an outside name is NXDOMAIN, from the root zone file")
             finally:
                 logs = subprocess.run(["docker", "logs", name], capture_output=True, text=True)
                 subprocess.run(["docker", "rm", "-fv", name], capture_output=True)
