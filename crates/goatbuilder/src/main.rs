@@ -54,6 +54,7 @@ mod trace;
 mod tutor;
 mod update;
 mod verbs;
+mod zenoh_stack;
 
 use std::path::PathBuf;
 

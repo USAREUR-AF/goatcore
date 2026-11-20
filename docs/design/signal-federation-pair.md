@@ -39,6 +39,7 @@ peer address and name are the other side's own.
 | `signal_federation_ingress_fqdn` | this node's own name, e.g. `federation-a.<zone>` / `federation-b.<zone>` |
 | `signal_federation_token` | `"{{ lookup('env', '<GOATNET>_SIGNAL_FEDERATION_TOKEN') }}"`, the same variable on both sides |
 | `signal_negative_cache_ttl` | `20` (seconds; caches a recipient no server holds) |
+| `signal_federation_circuit_open` | default `3s` where the proxy is on: how long signal skips the peer after 5 failed forwards. The binary's 30 s would turn every leg switch into 30 s of failed forwards |
 | `mgmt_host_compose_watch_services` | includes `federation-proxy` |
 
 Outside group_vars, two more facts:

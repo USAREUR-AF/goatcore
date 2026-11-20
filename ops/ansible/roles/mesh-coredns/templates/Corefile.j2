@@ -39,9 +39,7 @@
     hosts /etc/mesh-hosts {
         reload 5s
         no_reverse
-{% if mesh_coredns_forwarders | length > 0 %}
         fallthrough
-{% endif %}
     }
 
 {# mesh_coredns_forwarders (defaults/main.yml): where a name outside the mesh
@@ -50,9 +48,13 @@
     # Forward non-mesh queries to public DNS.
     forward . {{ mesh_coredns_forwarders | join(' ') }}
 {% else %}
-    # mesh_coredns_forwarders is empty: no forward directive. The zone file
-    # is the last answer: a name outside it gets SERVFAIL from the hosts
-    # plugin, and no query leaves this resolver.
+    # mesh_coredns_forwarders is empty: no forward directive, and no query
+    # leaves this resolver. It is the only source of answers, so a name the
+    # hosts file does not hold falls through to a zone file for the root that
+    # holds only an SOA (mesh-root.zone): NXDOMAIN, cached for
+    # mesh_coredns_negative_ttl seconds. Without it the hosts plugin would
+    # answer SERVFAIL, which a resolver retries or takes to another server.
+    file /etc/mesh-root.zone .
 {% endif %}
 
     cache 1000

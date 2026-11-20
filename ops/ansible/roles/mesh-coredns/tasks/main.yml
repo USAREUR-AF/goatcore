@@ -80,6 +80,16 @@
     mode: "0644"
   notify: Restart coredns
 
+- name: Render the root zone file (no forwarders; a name not held is NXDOMAIN)
+  ansible.builtin.template:
+    src: mesh-root.zone.j2
+    dest: "{{ mesh_coredns_root_zone_path }}"
+    owner: "{{ mesh_coredns_owner }}"
+    group: "{{ mesh_coredns_group }}"
+    mode: "0644"
+  when: mesh_coredns_forwarders | length == 0
+  notify: Restart coredns
+
 - name: Render docker-compose.yml
   ansible.builtin.template:
     src: docker-compose.yml.j2
