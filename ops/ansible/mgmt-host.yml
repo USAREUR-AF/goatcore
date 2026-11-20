@@ -605,6 +605,7 @@
           COMPOSE_PROFILES=federation-proxy
           SIGNAL_FEDERATION_AUTHORITY={{ federation_peer_public_sni }}
           SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS={{ signal_federation_forward_timeout_ms | default(1000) }}
+          SIGNAL_FEDERATION_CIRCUIT_OPEN={{ signal_federation_circuit_open | default('3s') }}
           {% endif %}
           {# ADR 1081 L2 — recipient-offline negative cache (federation storm    #}
           {# shedding). A full miss (local + federation absent) is cached for    #}
