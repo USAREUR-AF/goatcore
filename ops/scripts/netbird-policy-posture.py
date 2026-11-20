@@ -81,7 +81,9 @@ def _tls_context(site: str):
     Verification is never turned off."""
     import ssl
     ca = REPO / "ops/enrollment/ca" / site / "root-cert.pem"
-    if ca.is_file():
+    # A goatnet holding its own CA can still serve its mgmt API under a public ACME
+    # certificate (internet profile): NETBIRD_MGMT_CA=public keeps the system store.
+    if ca.is_file() and os.environ.get("NETBIRD_MGMT_CA", "") != "public":
         return ssl.create_default_context(cafile=str(ca))
     return ssl.create_default_context()
 
