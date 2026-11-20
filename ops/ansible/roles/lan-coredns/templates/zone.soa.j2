@@ -1,0 +1,7 @@
+; SOA and NS for {{ lan_coredns_zone_name }}, read by the CoreDNS file plugin.
+; Rendered by ops/ansible/roles/lan-coredns. The names themselves are in the
+; hosts file; this zone holds no address. The SOA minimum (60) is how long a
+; resolver caches a NXDOMAIN, the same as the hosts file's TTL.
+$ORIGIN {{ lan_coredns_zone_name }}.
+@ 60 IN SOA ns.{{ lan_coredns_zone_name }}. hostmaster.{{ lan_coredns_zone_name }}. 1 7200 3600 1209600 60
+@ 60 IN NS ns.{{ lan_coredns_zone_name }}.
