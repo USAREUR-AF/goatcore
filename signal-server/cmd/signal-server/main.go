@@ -30,8 +30,12 @@ var (
 	nodeName        = flag.String("node", "unnamed", "signal-server node name; included in logs and metric labels")
 	federationPeers = flag.String("federation-peers", "", "comma-separated list of peer signal-server addresses (host:port) for cross-site federation. Empty = standalone, no federation.")
 
-	// Block 50B.1 — bounded concurrency on the gRPC accept loop.
-	maxInflight = flag.Int64("max-inflight", 1000, "maximum concurrent in-flight gRPC handlers (unary + stream); excess returns codes.ResourceExhausted")
+	// Block 50B.1 — bounded concurrency on the gRPC accept loop. Unary RPCs
+	// (Send, Forward, PresenceUpdate) and long-lived peer streams
+	// (ConnectStream) use independent budgets so N connected peers cannot
+	// starve unary signaling or liveness probes.
+	maxInflight = flag.Int64("max-inflight", 1000, "maximum concurrent unary gRPC handlers (Send, Forward, PresenceUpdate); excess returns codes.ResourceExhausted")
+	maxStreams  = flag.Int64("max-streams", server.DefaultMaxStreams, "maximum concurrent streaming gRPC handlers (ConnectStream); excess returns codes.ResourceExhausted")
 
 	// Block 50B.6 — per-peer circuit breaker. The per-Forward deadline is
 	// hardcoded at 200ms in federation.go per the 52A.4 RTT analysis (not
@@ -101,6 +105,7 @@ func main() {
 
 	srv, err := server.New(*nodeName, logger, reg, peers, &server.Config{
 		MaxInflight:                *maxInflight,
+		MaxStreams:                 *maxStreams,
 		CircuitConsecutiveFailures: uint32(*circuitConsecutiveFailures), //nolint:gosec // operator-supplied flag, well below uint32 cap
 		CircuitOpenDuration:        *circuitOpenDuration,
 		SenderRateLimitPerMin:      senderRateLimit,

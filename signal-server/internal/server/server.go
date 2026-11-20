@@ -39,14 +39,25 @@ type Server struct {
 	presence *presenceState
 }
 
+// DefaultMaxStreams is the default concurrent ConnectStream admission cap when
+// Config.MaxInflight > 0 and Config.MaxStreams is left at 0.
+const DefaultMaxStreams int64 = 8192
+
 // Config carries optional construction parameters for New. Defaults applied
 // in New() when fields are zero.
 type Config struct {
-	// MaxInflight caps concurrent gRPC handler invocations across unary +
-	// stream. <=0 means unlimited (intended for tests). Production default
-	// resolved by the caller (cmd/signal-server passes the --max-inflight
-	// flag, default 1000).
+	// MaxInflight caps concurrent unary gRPC handler invocations (Send,
+	// Forward, PresenceUpdate). <=0 means unlimited (intended for tests).
+	// Production default resolved by the caller (cmd/signal-server passes
+	// the --max-inflight flag, default 1000).
 	MaxInflight int64
+
+	// MaxStreams caps concurrent streaming gRPC handler invocations
+	// (ConnectStream). Zero falls back to DefaultMaxStreams when
+	// MaxInflight > 0, or unlimited when MaxInflight <= 0; <0 means
+	// unlimited even when MaxInflight > 0. Production default resolved by
+	// cmd/signal-server (--max-streams, default 8192).
+	MaxStreams int64
 
 	// CircuitConsecutiveFailures is the number of consecutive Forward
 	// failures to a single peer that trips its circuit open. Zero falls
@@ -130,7 +141,11 @@ func New(node string, logger *slog.Logger, reg prometheus.Registerer, federation
 	m := newMetrics(reg, node, r)
 	registerPanicCounter(reg, node)
 
-	limiter := newConcurrencyLimiter(reg, node, cfg.MaxInflight)
+	maxStreams := cfg.MaxStreams
+	if maxStreams == 0 && cfg.MaxInflight > 0 {
+		maxStreams = DefaultMaxStreams
+	}
+	limiter := newSplitConcurrencyLimiter(reg, node, cfg.MaxInflight, maxStreams)
 
 	fcCfg := federationClientConfig{
 		CircuitConsecutiveFailures: cfg.CircuitConsecutiveFailures,
@@ -161,7 +176,7 @@ func New(node string, logger *slog.Logger, reg prometheus.Registerer, federation
 	// ADR 1108 presence-sync. Always constructed (nil-safe methods); the pusher
 	// only runs when enabled AND federation peers exist.
 	srv.presence = newPresenceState(cfg.PresenceSyncEnabled, node, cfg.PresenceSyncInterval, fc, r, m, logger)
-	go srv.presence.run()
+	safeGo("presence-sync", srv.presence.run)
 	return srv, nil
 }
 

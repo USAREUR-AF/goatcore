@@ -178,7 +178,17 @@ const outboundSendTimeout = 10 * time.Second
 // leaking on the timeout path.
 func sendWithTimeout(stream signalpb.SignalExchange_ConnectStreamServer, msg *signalpb.EncryptedMessage) error {
 	done := make(chan error, 1)
-	go func() { done <- stream.Send(msg) }()
+	safeGo("connect-stream-send", func() {
+		sent := false
+		defer func() {
+			if !sent {
+				done <- status.Error(codes.Internal, "internal server error")
+			}
+		}()
+		err := stream.Send(msg)
+		sent = true
+		done <- err
+	})
 	select {
 	case err := <-done:
 		return err
