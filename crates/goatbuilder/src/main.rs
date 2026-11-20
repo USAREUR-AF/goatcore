@@ -38,6 +38,7 @@ mod preflight;
 mod promote;
 mod push;
 mod release;
+mod reseed;
 mod rollback;
 mod runner;
 mod runs;
@@ -436,6 +437,12 @@ pub enum Cmd {
         /// Print every phase and command; run nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Seed the node again from its founder after the founder lost the
+        /// node's slot (a phone away past its offline budget): six steps,
+        /// journaled, resumed where one refused. `--from`/`--to` count those
+        /// steps. Takes the node's mesh address from the mesh inventory.
+        #[arg(long)]
+        reseed: bool,
     },
     /// Hand a goatlite over to the full preset (gate row G1): goatlite.yaml grown
     /// into ops/goatbuilder/goatbuilder.yaml with the same values, the generated
@@ -1680,11 +1687,14 @@ fn main() {
             }
             None => standup::teardown(&repo, &standup::Options { env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false, check: false }, *services),
         },
-        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run } => {
+        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run, reseed } => {
+            let o = joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run };
             if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "join-node is a mutation: pass --yes without a terminal (C10)").into())
+            } else if *reseed {
+                joinnode::reseed(&repo, &o)
             } else {
-                joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
+                joinnode::join_node(&repo, &o)
             }
         }
         Cmd::Grow { dry_run } => {

@@ -39,11 +39,21 @@
     hosts /etc/mesh-hosts {
         reload 5s
         no_reverse
+{% if mesh_coredns_forwarders | length > 0 %}
         fallthrough
+{% endif %}
     }
 
+{# mesh_coredns_forwarders (defaults/main.yml): where a name outside the mesh
+   zone goes. The default list renders the line every goatnet ran before. #}
+{% if mesh_coredns_forwarders | length > 0 %}
     # Forward non-mesh queries to public DNS.
-    forward . 1.1.1.1 8.8.8.8
+    forward . {{ mesh_coredns_forwarders | join(' ') }}
+{% else %}
+    # mesh_coredns_forwarders is empty: no forward directive. The zone file
+    # is the last answer: a name outside it gets SERVFAIL from the hosts
+    # plugin, and no query leaves this resolver.
+{% endif %}
 
     cache 1000
 

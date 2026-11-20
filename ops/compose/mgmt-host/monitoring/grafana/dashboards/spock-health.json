@@ -73,27 +73,27 @@
     },
     {
       "type": "timeseries",
-      "title": "Subscription replay lag (seconds)",
+      "title": "WAL sender backlog at the provider (bytes)",
       "gridPos": { "h": 8, "w": 18, "x": 6, "y": 1 },
       "id": 2,
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "spock_subscription_lag_seconds",
-          "legendFormat": "{{site}}/{{subscription_name}}",
+          "expr": "pg_stat_replication_pending_bytes",
+          "legendFormat": "{{site}}/{{subscriber}}",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "bytes",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 5 },
-              { "color": "orange", "value": 30 },
-              { "color": "red", "value": 60 }
+              { "color": "yellow", "value": 10485760 },
+              { "color": "orange", "value": 52428800 },
+              { "color": "red", "value": 104857600 }
             ]
           },
           "custom": { "drawStyle": "line", "lineWidth": 2, "thresholdsStyle": { "mode": "line" } }
@@ -411,7 +411,7 @@
         "label": "Site",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "query": "label_values(spock_subscription_lag_seconds, site)",
+        "query": "label_values(spock_subscription_lag_replicating, site)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,

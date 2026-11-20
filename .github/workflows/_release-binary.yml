@@ -23,6 +23,9 @@
 #                        which cosign can verify offline against a pinned trust
 #                        root (goat update with GOAT_SIGSTORE_TRUSTED_ROOT)
 #
+# A tag with a semver pre-release part (`<tag_prefix>1.0.0-rc.1`) publishes a
+# GitHub pre-release, never marked Latest; any other tag publishes a release.
+#
 # The names are the ones `goat update` and `goatbuilder update` fetch
 # (crates/goat-selfupdate: <bin>-<os>-<arch>, with .exe on Windows).
 #
@@ -509,9 +512,29 @@ jobs:
           path: release-assets
           merge-multiple: true
       - run: ls -la release-assets/
+      - name: a pre-release tag publishes a pre-release
+        # A tag whose semver has a pre-release part (`goatbuilder/v1.0.0-rc.1`)
+        # publishes a GitHub pre-release, which GitHub never marks Latest, so
+        # a release candidate does not replace the newest release on the
+        # releases page or at /releases/latest. Build metadata (`+...`) is not a
+        # pre-release part.
+        id: kind
+        env:
+          PREFIX: ${{ inputs.tag_prefix }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#"$PREFIX"}"
+          core="${version%%+*}"
+          case "$core" in
+            *-*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+          echo "version $version: prerelease=$prerelease"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          prerelease: ${{ steps.kind.outputs.prerelease }}
           files: release-assets/*
           body_path: .github/release-notes/${{ inputs.notes }}
           generate_release_notes: true

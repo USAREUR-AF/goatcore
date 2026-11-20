@@ -473,6 +473,15 @@ goatbuilder assay pasture
 
 When the catalog does not know your error, `goatbuilder explain --report -` writes the text and its interpretation to a file to share, so the catalog grows.
 
+**No route to GitHub.** Before it touches the box, every real `goatbuilder` run fetches `origin main` to prove your checkout is current, and stops with GB-065 if the fetch fails. When your laptop has no route to GitHub on purpose, add `--offline` to each command that reaches the box:
+
+```text
+goatbuilder standup pasture --offline
+goatbuilder standup pasture --site pasture --from 12 --offline
+```
+
+`--offline` skips only that fetch: the run is judged against the `origin/main` your checkout last fetched, and recorded as offline. Nothing else changes: the box still pulls the goatnet's images from their registry, unless they are already on it.
+
 ## Undo
 
 Re-running is the repair: fix the cause and resume from the failed phase. `goatbuilder teardown pasture --site pasture --dry-run` prints the teardown order, which is the standup in reverse; `--services` stops the services and keeps every volume.

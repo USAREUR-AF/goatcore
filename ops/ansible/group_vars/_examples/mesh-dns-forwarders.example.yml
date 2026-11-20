@@ -1,0 +1,19 @@
+---
+# mesh-dns-forwarders.example.yml — where mesh CoreDNS forwards a name that is not in
+# the goatnet's mesh zone.
+#
+# COPY the one line you want into the goatnet's group_vars (for example
+# group_vars/<goatnet>_hosts/mesh-dns.yml). Unset, the role default applies: the
+# forwarders every goatnet ran before this variable existed. Design:
+# docs/design/mesh-dns-redundancy.md, "Outside forwarders". Role defaults:
+# ops/ansible/roles/mesh-coredns/defaults/main.yml.
+
+# No outside forwarding: the resolver answers its own zone only, and every other name
+# gets SERVFAIL. With handset_dns_enabled: true, phones then resolve mesh names only.
+mesh_coredns_forwarders: []
+
+# Or a resolver the goatnet runs, then a second one (documentation addresses; an
+# address, address:port or tls://address per item):
+# mesh_coredns_forwarders:
+#   - "192.0.2.53"
+#   - "198.51.100.53:5300"

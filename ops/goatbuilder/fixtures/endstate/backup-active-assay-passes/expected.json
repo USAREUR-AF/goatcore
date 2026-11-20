@@ -1,0 +1,10 @@
+{
+ "site": "alpha",
+ "expect": {
+  "shape": "single-host",
+  "exit": 0,
+  "absent": [],
+  "orphans": [],
+  "fail": []
+ }
+}

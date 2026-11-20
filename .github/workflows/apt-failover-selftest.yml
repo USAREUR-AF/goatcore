@@ -10,6 +10,9 @@ on:
     paths:
       - '.github/actions/apt-failover/**'
       - 'ops/ci/apt-install-fallback.sh'
+      - 'ops/ci/docker-build-mirror-fallback.sh'
+      - 'ops/ci/test_docker_build_mirror_fallback.py'
+      - 'ops/ci/test_docker_apt_builds_take_ubuntu_mirror.py'
       - '.github/workflows/apt-failover-selftest.yml'
   schedule:
     - cron: '23 5 * * 1'
@@ -161,6 +164,12 @@ jobs:
           [ -z "$(docker ps -aq --filter name='^ci-apt-cache$')" ] || fail "a ci-apt-cache container exists"
           if grep -qE '^0\.0\.0\.0 .*ubuntu\.com' /etc/hosts; then fail "/etc/hosts black-holes an Ubuntu host"; fi
           echo "ok: apt, docker, /etc/hosts and the environment are as the runner image left them"
+      # A mirror that answered the probe can still die mid-install, so the fixture builds go
+      # through build_with_mirror_fallback: it builds again with the image's own sources when
+      # the build with the mirror fails. Against a stand-in docker; needs no mirror.
+      - name: A fixture build retries once without the mirror when the mirror build fails
+        timeout-minutes: 5
+        run: python3 ops/ci/test_docker_build_mirror_fallback.py
       # The one thing the normal path adds: the mirror it proved, for docker builds of ubuntu
       # images, whose apt would otherwise go to archive.ubuntu.com.
       - name: The action exported the mirror it proved, and an ubuntu build takes it

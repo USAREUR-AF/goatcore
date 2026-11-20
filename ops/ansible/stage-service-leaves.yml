@@ -15,7 +15,9 @@
 #
 # It is deliberately dumb: it copies files the CA ceremony already produced. It
 # never mints, never touches the CA, and refuses rather than deploying a service
-# with no identity.
+# with no identity. Each leaf goes where the service's role reads it on this
+# host: the role's <service>_cert_dir from the site's group_vars, else the
+# role's default (service_leaf_map below).
 #
 # Usage (after ops/scripts/mint-site-certs.sh <site>):
 #   ansible-playbook -i inventory/mgmt-hosts.ini -e target=<group> stage-service-leaves.yml \
@@ -42,19 +44,36 @@
     # Where mint-site-certs.sh wrote the leaves, on the CONTROL node.
     leaf_src_dir: ""
 
-    # service -> where its role looks. Keep in step with each role's
-    # <service>_cert_dir default; the crawler deliberately shares fabric-health's
-    # directory (it reuses that mount).
+    # service -> where its role reads its leaf. `dir_var` is the role's
+    # <service>_cert_dir variable: the host's group_vars value when it sets one,
+    # else `dir`, the role's own default. `cert_var`/`key_var` name a role's
+    # file-name variables where it has them (else <service>-cert.pem and
+    # <service>-key.pem). tests/test_stage_service_leaves.py holds each default
+    # to the role's defaults/main.yml.
+    #
+    # The crawler's role reads fabric-health's leaf by default (its directory and
+    # file names); `shares_with` says so. When the crawler resolves to exactly
+    # fabric-health's files it is not staged over them, and the run says so.
+    # Any other two services that resolve to one file are refused.
     service_leaf_map:
-      fabric-health: /opt/fabric-health/certs
-      mesh-health: /opt/mesh-health/certs
-      presence-health: /opt/presence-health/certs
-      time-health: /opt/time-health/certs
-      peer-health: /opt/peer-health/certs
-      consistency-health: /opt/consistency-health/certs
-      fabric-crawler: /opt/fabric-health/certs
-      goat-topology: /opt/goat-topology/certs
-      audit-subscriber: /opt/audit-subscriber/certs
+      fabric-health: {dir_var: fabric_health_cert_dir, dir: /opt/fabric-health/certs}
+      mesh-health: {dir_var: mesh_health_cert_dir, dir: /opt/mesh-health/certs}
+      presence-health: {dir_var: presence_health_cert_dir, dir: /opt/presence-health/certs}
+      time-health: {dir_var: time_health_cert_dir, dir: /opt/time-health/certs}
+      peer-health: {dir_var: peer_health_cert_dir, dir: /opt/peer-health/certs}
+      consistency-health: {dir_var: consistency_health_cert_dir, dir: /opt/consistency-health/certs}
+      fabric-crawler:
+        dir_var: fabric_crawler_cert_dir
+        dir: /opt/fabric-health/certs
+        cert_var: fabric_crawler_cert_file
+        cert: fabric-health-cert.pem
+        key_var: fabric_crawler_key_file
+        key: fabric-health-key.pem
+        shares_with: fabric-health
+      goat-topology: {dir_var: goat_topology_cert_dir, dir: /opt/goat-topology/certs}
+      audit-subscriber: {dir_var: audit_subscriber_cert_dir, dir: /opt/audit-subscriber/certs}
+      node-net-health: {dir_var: node_net_health_cert_dir, dir: /opt/node-net-health/certs}
+      ntp-health-pub: {dir_var: ntp_health_pub_cert_dir, dir: /opt/ntp-health-pub/certs}
 
     # Stage only these services (e.g. -e '{"leaf_only": ["goat-topology"]}'); empty = all.
     leaf_only: []
@@ -79,13 +98,76 @@
           {{ service_leaf_map if (leaf_only | length == 0)
              else (service_leaf_map | dict2items | selectattr('key', 'in', leaf_only) | items2dict) }}
 
-    - name: refuse a leaf_only name the map does not know
+    # Where each role reads its leaf on this host: its group_vars value, else
+    # the role's default.
+    - name: resolve where each service's role reads its leaf
+      ansible.builtin.set_fact:
+        leaf_dest: >-
+          {{ leaf_dest | default({}) | combine({item.key: {
+               'dir': lookup('vars', item.value.dir_var, default=item.value.dir),
+               'cert': lookup('vars', item.value.cert_var, default=item.value.cert)
+                       if item.value.cert_var is defined else item.key ~ '-cert.pem',
+               'key': lookup('vars', item.value.key_var, default=item.value.key)
+                      if item.value.key_var is defined else item.key ~ '-key.pem',
+               'shares_with': item.value.shares_with | default('')}}) }}
+      loop: "{{ service_leaf_map | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    # A service that reads exactly the files of the service it shares with
+    # (the crawler with fabric-health, by default) has nothing of its own to
+    # stage there.
+    - name: start with no service set aside
+      ansible.builtin.set_fact:
+        leaf_shared: []
+
+    - name: list the services that share a leaf
+      ansible.builtin.set_fact:
+        leaf_shared: "{{ leaf_shared + [item.key] }}"
+      loop: "{{ leaf_dest | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when:
+        - item.key in leaf_map
+        - item.value.shares_with | length > 0
+        - item.value.shares_with in leaf_dest
+        - (item.value.dir ~ '/' ~ item.value.cert) == (leaf_dest[item.value.shares_with].dir ~ '/' ~ leaf_dest[item.value.shares_with].cert)
+        - (item.value.dir ~ '/' ~ item.value.key) == (leaf_dest[item.value.shares_with].dir ~ '/' ~ leaf_dest[item.value.shares_with].key)
+
+    - name: say which services read another's leaf
+      ansible.builtin.debug:
+        msg: >-
+          {{ item }} reads {{ leaf_dest[item].shares_with }}'s leaf
+          ({{ leaf_dest[item].dir }}/{{ leaf_dest[item].cert }}): it is not staged over it.
+          To give it its own, set {{ service_leaf_map[item].dir_var }} and its file
+          names in the site's group_vars.
+      loop: "{{ leaf_shared }}"
+
+    - name: the services to stage, each with the files its role reads
+      ansible.builtin.set_fact:
+        leaf_stage: >-
+          {{ leaf_dest | dict2items | selectattr('key', 'in', leaf_map.keys() | list)
+             | rejectattr('key', 'in', leaf_shared) | list }}
+
+    # Over every service in the map, not only those staged now: a leaf_only run
+    # must not overwrite a file another service's role reads.
+    - name: which services' roles read each file
+      ansible.builtin.set_fact:
+        leaf_readers: >-
+          {{ leaf_readers | default({})
+             | combine({(item.value.dir ~ '/' ~ item.value.cert): (leaf_readers | default({})).get(item.value.dir ~ '/' ~ item.value.cert, []) + [item.key]})
+             | combine({(item.value.dir ~ '/' ~ item.value.key): (leaf_readers | default({})).get(item.value.dir ~ '/' ~ item.value.key, []) + [item.key]}) }}
+      loop: "{{ leaf_dest | dict2items | rejectattr('key', 'in', leaf_shared) | list }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: refuse two services whose roles read one file
       ansible.builtin.assert:
         that:
-          - (leaf_only | difference(service_leaf_map.keys() | list)) | length == 0
+          - (leaf_readers | default({}) | dict2items | map(attribute='value') | map('length') | max | default(0)) <= 1
         fail_msg: >-
-          stage-service-leaves: leaf_only names {{ leaf_only | difference(service_leaf_map.keys() | list) | join(', ') }},
-          which service_leaf_map does not carry.
+          stage-service-leaves: {% for f, who in (leaf_readers | default({})).items() if who | length > 1 %}{{ who | join(' and ') }} read the same file ({{ f }}); {% endfor %}staging one would overwrite the other's
+          leaf. Give each its own <service>_cert_dir in the site's group_vars.
         quiet: true
 
     - name: refuse when a leaf is missing on the control node
@@ -94,7 +176,7 @@
       delegate_to: localhost
       become: false
       register: leaf_src_stat
-      loop: "{{ leaf_map | dict2items }}"
+      loop: "{{ leaf_stage }}"
       loop_control:
         label: "{{ item.key }}"
 
@@ -113,34 +195,34 @@
 
     - name: ensure each cert directory exists
       ansible.builtin.file:
-        path: "{{ item.value }}"
+        path: "{{ item.value.dir }}"
         state: directory
         owner: "{{ leaf_owner }}"
         group: "{{ leaf_owner }}"
         mode: "0750"
-      loop: "{{ leaf_map | dict2items }}"
+      loop: "{{ leaf_stage }}"
       loop_control:
-        label: "{{ item.value }}"
+        label: "{{ item.value.dir }}"
 
     - name: stage leaf certificates
       ansible.builtin.copy:
         src: "{{ leaf_src_resolved }}/{{ item.key }}-cert.pem"
-        dest: "{{ item.value }}/{{ item.key }}-cert.pem"
+        dest: "{{ item.value.dir }}/{{ item.value.cert }}"
         owner: "{{ leaf_owner }}"
         group: "{{ leaf_owner }}"
         mode: "0644"
-      loop: "{{ leaf_map | dict2items }}"
+      loop: "{{ leaf_stage }}"
       loop_control:
         label: "{{ item.key }}"
 
     - name: stage leaf private keys
       ansible.builtin.copy:
         src: "{{ leaf_src_resolved }}/{{ item.key }}-key.pem"
-        dest: "{{ item.value }}/{{ item.key }}-key.pem"
+        dest: "{{ item.value.dir }}/{{ item.value.key }}"
         owner: "{{ leaf_owner }}"
         group: "{{ leaf_owner }}"
         mode: "0400"
-      loop: "{{ leaf_map | dict2items }}"
+      loop: "{{ leaf_stage }}"
       loop_control:
         label: "{{ item.key }}"
       no_log: true

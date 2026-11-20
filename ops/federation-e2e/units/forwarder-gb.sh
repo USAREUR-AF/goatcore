@@ -5,10 +5,11 @@
 #
 # nothing-hand-written (units/nohand.sh), with {B} behind a NAT router that forwards nothing
 # inbound and listening through a peering forwarder it operates, the network of
-# units/forwarder.sh. {B}'s operator input is nothing-hand-written's, with two more parts:
-# `forwarder: {endpoint, ansible_host}` on its peering entry (NH_FORWARDER_<side>), and the
-# forwarder machine's own values (nh_operator_more below): the user it is reached as, its
-# public interface, and the address it admits SSH from. Nobody runs a play by hand:
+# units/forwarder.sh. {B}'s operator input is nothing-hand-written's, with one more part: the
+# peering entry's `forwarder:`, its `endpoint` and `ansible_host` (NH_FORWARDER_<side>) and the
+# forwarder machine's own values (nh_operator_more below), `ansible_user`, `public_interface`
+# and `ssh_sources`: the user it is reached as, its public interface, and the address it
+# admits SSH from. No group_vars file is written by hand. Nobody runs a play by hand:
 # `goatbuilder federate allocate` renders the forwarder's inventory group, its group_vars and
 # the offer of its public port, and phase 2 of `goatbuilder federate {A}` on {B} runs
 # peering-prepare.yml, peering-carrier-keys.yml, peering-forwarder.yml, the keys play again
@@ -50,21 +51,28 @@ fgb_arrives() { # $1 sender, $2 receiver, $3 seconds
 }
 export -f fgb_arrives
 
-# The forwarder machine's own values, the operator's input for a machine only they run: the
-# user the play reaches it as (the rendered inventory names only its address), the
-# interface its partners reach it on, and the one address it admits SSH from ({B}'s NAT,
-# which the edge's SSH leaves through). Then the forwarder host itself, keyed for {B}'s
-# operator. Called by nh_side_from_nothing before allocate.
+# The forwarder machine's own values, the operator's input for a machine only they run, on
+# the peering entry's `forwarder:` beside its endpoint: the user the play reaches it as (the
+# rendered inventory names only its address), the interface its partners reach it on, and
+# the one address it admits SSH from ({B}'s NAT, which the edge's SSH leaves through).
+# `goatbuilder federate allocate` renders them into the forwarder group's
+# peering-forwarder.yml (docs/design/peering-forwarder.md §7). Then the forwarder host itself,
+# keyed for {B}'s operator. Called by nh_side_from_nothing before allocate.
 nh_operator_more() { # $1 us, $2 them
   [ "$1" = "$NATED" ] || return 0
-  local c="$WORK/$1/clone" f
+  local c="$WORK/$1/clone"
   fwd_up
-  f="ops/ansible/group_vars/peering_forwarders/forwarder-host.yml"
-  mkdir -p "$c/$(dirname "$f")"
-  printf '# %s: the forwarder machine it operates (the operator input; units/forwarder-gb.sh).\nansible_user: goat\npeering_forwarder_public_interface: %s\npeering_forwarder_ssh_sources: ["%s"]\n' \
-    "$1" "$(ifname_of "$FWD_HOST" "$FWD_PUB")" "$(boundary_ip "$1")" > "$c/$f"
-  cp "$c/$f" "$RECORD/operator-input/$1/"
-  nh_push "$1: the forwarder machine it operates"
+  python3 - "$c/ops/goatbuilder/goatbuilder.yaml" goat "$(ifname_of "$FWD_HOST" "$FWD_PUB")" "$(boundary_ip "$1")" <<'PY'
+import sys, yaml
+p, user, iface, source = sys.argv[1:5]
+text = open(p).read()
+cfg = yaml.safe_load(text)
+fwd = cfg["peerings"][0]["forwarder"]
+fwd.update({"ansible_user": user, "public_interface": iface, "ssh_sources": [source]})
+open(p, "w").write(text.split("\nschema:")[0] + "\n" + yaml.safe_dump(cfg, sort_keys=False))
+PY
+  cp "$c/ops/goatbuilder/goatbuilder.yaml" "$RECORD/operator-input/$1/"
+  nh_push "$1: the forwarder machine it operates, on its peering's forwarder: entry"
 }
 
 fgb_main() {
@@ -81,8 +89,12 @@ fgb_main() {
   # peering's groups, the forwarder's among them, into peering-<partner>_edge.ini.
   rec "fgb-$NATED-inventory-names-the-forwarder" --expect-in "[peering_forwarders]" --expect-in "ansible_host=$FWD_PUB" -- bash -c \
     "f='$c/ops/ansible/inventory/peering-${PARTNER}_edge.ini'; cat \"\$f\"; head -1 \"\$f\" | grep -qF '$gen'"
-  rec "fgb-$NATED-forwarder-values-from-the-command" --expect-in "name: \"$PARTNER\"" --expect-in "peering_forwarder_enabled: true" -- bash -c \
+  rec "fgb-$NATED-forwarder-values-from-the-command" --expect-in "name: \"$PARTNER\"" --expect-in "peering_forwarder_enabled: true" \
+    --expect-in 'ansible_user: "goat"' --expect-in "peering_forwarder_public_interface: \"$(ifname_of "$FWD_HOST" "$FWD_PUB")\"" \
+    --expect-in "peering_forwarder_ssh_sources:" -- bash -c \
     "f='$c/ops/ansible/group_vars/peering_forwarders/peering-forwarder.yml'; cat \"\$f\"; head -1 \"\$f\" | grep -qF '$gen'"
+  rec "fgb-$NATED-no-hand-written-forwarder-file" -- bash -c \
+    "ls '$c/ops/ansible/group_vars/peering_forwarders/'; [ \"\$(ls '$c/ops/ansible/group_vars/peering_forwarders/')\" = peering-forwarder.yml ]"
   rec "fgb-$NATED-federation-toml-offers-the-forwarder" --expect-in "endpoint             = \"$FWD_PUB:" --expect-in "listener             = true" -- \
     cat "$c/ops/federation/$NATED/peerings/$PARTNER/federation.toml"
 
