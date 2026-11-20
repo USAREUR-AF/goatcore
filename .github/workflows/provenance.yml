@@ -1,0 +1,64 @@
+name: provenance
+
+# Tests ops/provenance — the per-sample provenance library (`prov` v1) and the
+# ASTERIX ingress adapter of ADR 1251 (docs/design/pod-carriage-and-provenance.md
+# §3, §7.2). The tests carry the properties that are invisible when they
+# break: every signed field is covered (a changed payload, key, time, source or
+# `via` field fails verification), a certificate from another CA or with
+# another CN is refused, and the adapter publishes only frames from the
+# declared sender.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/provenance/**'
+      - 'ops/grant-crypto/sdk/core/**'
+      - 'crates/panoscope-core/**'
+      - '.github/workflows/provenance.yml'
+  pull_request:
+    paths:
+      - 'ops/provenance/**'
+      - 'ops/grant-crypto/sdk/core/**'
+      - 'crates/panoscope-core/**'
+      - '.github/workflows/provenance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provenance-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/apt-failover
+
+      - name: Install protoc
+        timeout-minutes: 5
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: ops/provenance
+
+      - name: cargo fmt
+        working-directory: ops/provenance
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: ops/provenance
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: ops/provenance
+        run: cargo test --locked
