@@ -362,13 +362,17 @@
   # restart handlers separately to pick up kratos.yaml / hydra.yaml
   # changes without a full recreate.
 
+# psql inside postgres-a reaches the server over its local socket as the postgres OS user,
+# which pg_hba.conf trusts (ops/postgres/spock/conf/pg_hba.conf: local all all trust): no
+# password is needed, so none is put on the docker exec command line, where it would sit in the
+# host's process list.
 - name: Create kratos + hydra logical databases (idempotent)
   ansible.builtin.command:
     argv:
       - docker
       - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
+      - -u
+      - postgres
       - postgres-a
       - psql
       - -U
@@ -388,8 +392,8 @@
     argv:
       - docker
       - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
+      - -u
+      - postgres
       - postgres-a
       - psql
       - -U
@@ -446,8 +450,8 @@
     argv:
       - docker
       - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
+      - -u
+      - postgres
       - postgres-a
       - psql
       - -U
