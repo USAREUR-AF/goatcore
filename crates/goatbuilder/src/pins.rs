@@ -2021,6 +2021,50 @@ mod lite_tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// The code an error carries, if it was raised with `goat_errors::coded`.
+    fn code_of(e: &anyhow::Error) -> Option<String> {
+        e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone())
+    }
+
+    #[test]
+    fn a_table_that_breaks_the_pins_schema_is_refused_with_gb_365() {
+        let d = tree("schema-coded", Some("goatnets: []\ncomponents: {}\n"));
+        let e = match load_table(&d.join("ops/pins/fleet-pins.yaml")) {
+            Ok(_) => panic!("a sidecar whose goatnets: is a list was accepted"),
+            Err(e) => e,
+        };
+        assert!(e.to_string().contains("`goatnets:` must be a mapping"), "{e}");
+        assert_eq!(code_of(&e).as_deref(), Some("GB-365"), "{e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_unmigrated_pins_list_that_cannot_be_read_is_refused_with_gb_254_and_its_path() {
+        let d = tree("allowlist-unreadable", None);
+        // A directory where the list belongs: it exists, and reading it fails.
+        std::fs::create_dir_all(d.join("ops/pins/unmigrated-pins.txt")).unwrap();
+        let e = match load_allowlist(&Paths::new(d.as_path())) {
+            Ok(_) => panic!("an unreadable unmigrated-pins list was read"),
+            Err(e) => e,
+        };
+        assert_eq!(code_of(&e).as_deref(), Some("GB-254"), "{e}");
+        assert!(e.to_string().contains("unmigrated-pins.txt"), "the refusal names the file: {e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_malformed_unmigrated_pins_row_is_refused_with_gb_365() {
+        let d = tree("allowlist-malformed", None);
+        std::fs::write(d.join("ops/pins/unmigrated-pins.txt"), "# baseline: 1\nno-colon-here\n").unwrap();
+        let e = match load_allowlist(&Paths::new(d.as_path())) {
+            Ok(_) => panic!("a row with no colon was accepted"),
+            Err(e) => e,
+        };
+        assert!(e.to_string().contains("malformed row 'no-colon-here'"), "{e}");
+        assert_eq!(code_of(&e).as_deref(), Some("GB-365"), "{e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     fn refuses(name: &str, lite: &str, needle: &str) {
         let d = tree(name, Some(lite));
         let err = match load_table(&d.join("ops/pins/fleet-pins.yaml")) {

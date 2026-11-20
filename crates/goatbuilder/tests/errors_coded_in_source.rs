@@ -228,19 +228,37 @@ fn uncoded_in(file: &str, text: &str) -> Vec<Site> {
             let message = format!("<{}>", call.chars().take(60).collect::<String>());
             out.push(Site { file: file.to_string(), kind: "question", message });
         }
+        // A directory listing's entry is a `Result` of its own: `let e = e?;` in a
+        // loop over `read_dir(…)` passes the system's error up with no code.
+        if let Some(var) = read_dir_loop_var(line) {
+            if returns_anyhow(&lines, n) {
+                let bare = format!("let {var} = {var}?;");
+                if lines.iter().skip(n + 1).take(3).any(|l| l.split_whitespace().collect::<String>() == bare.replace(' ', "")) {
+                    out.push(Site { file: file.to_string(), kind: "question", message: format!("<read_dir entry {var}>") });
+                }
+            }
+        }
     }
     out
 }
 
+/// The loop variable of a `for <var> in …read_dir(…)` line, if it is one.
+fn read_dir_loop_var(line: &str) -> Option<&str> {
+    let t = line.trim_start().strip_prefix("for ")?;
+    let (var, rest) = t.split_once(" in ")?;
+    (rest.contains("read_dir(") && var.chars().all(|c| c.is_alphanumeric() || c == '_')).then_some(var)
+}
+
 /// A standard library or serde call whose error a bare `?` passes up: a file
-/// read or written, a program started, a JSON or YAML read or written.
+/// read, written, cloned or asked its type, a program started or waited for, a
+/// JSON or YAML read or written.
 fn bare_question() -> &'static regex::Regex {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| {
         regex::Regex::new(concat!(
             r"(?:\b(?:std::fs::\w+|fs::\w+|File::(?:open|create)|serde_json::\w+|serde_yaml::\w+)",
             r"\s*\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)",
-            r"|\.(?:output|status|spawn|read_line|write_all)\((?:[^()]|\([^()]*\))*\))\s*\?",
+            r"|\.(?:output|status|spawn|wait|try_clone|file_type|read_line|write_all)\((?:[^()]|\([^()]*\))*\))\s*\?",
         ))
         .unwrap()
     })
@@ -366,7 +384,9 @@ fn every_error_the_source_makes_is_coded_or_listed() {
 /// The scanner itself: an uncoded `anyhow!`, `ensure!` and `.context` are found, with
 /// their messages; a coded one, and one in a test module, are not; one the
 /// catalog would only match by its words is, and so is one whose message only
-/// names a code: the error is not `Coded`, so it takes the uncoded exit.
+/// names a code: the error is not `Coded`, so it takes the uncoded exit. A bare
+/// `?` on a log file's clone, a child's wait, a directory entry or its type is
+/// found; the same call coded is not.
 #[test]
 fn the_scanner_finds_uncoded_errors_and_only_those() {
     let src = r#"
@@ -409,6 +429,21 @@ fn h(p: &Path) -> std::io::Result<String> {
     std::fs::read_to_string(p)?
 }
 
+fn i(log: &str, dir: &Path) -> Result<()> {
+    let f = std::fs::File::create(log).map_err(|e| goat_errors::coded("GB-254", e.to_string()))?;
+    let mut child = cmd.stdout(Stdio::from(f.try_clone()?)).spawn().map_err(|e| goat_errors::coded("GB-320", e.to_string()))?;
+    let status = child.wait()?;
+    let done = other.wait().map_err(|e| goat_errors::coded("GB-322", e.to_string()))?;
+    for e in std::fs::read_dir(dir).map_err(|e| goat_errors::coded("GB-254", e.to_string()))? {
+        let e = e?;
+        if e.file_type()?.is_dir() {}
+    }
+    for e in std::fs::read_dir(dir).map_err(|e| goat_errors::coded("GB-254", e.to_string()))? {
+        let e = e.map_err(|e| goat_errors::coded("GB-254", e.to_string()))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     fn c() { let _ = anyhow!("a test's own error"); }
@@ -425,6 +460,10 @@ mod tests {
             "src/x.rs :: ensure :: phase 1 wrote no results to {}".to_string(),
             "src/x.rs :: context :: goatbuilder federate {} (GB-242)".to_string(),
             "src/x.rs :: question :: <std::fs::read_to_string(p)>".to_string(),
+            "src/x.rs :: question :: <.try_clone()>".to_string(),
+            "src/x.rs :: question :: <.wait()>".to_string(),
+            "src/x.rs :: question :: <read_dir entry e>".to_string(),
+            "src/x.rs :: question :: <.file_type()>".to_string(),
         ]
     );
 }
