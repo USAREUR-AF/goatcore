@@ -564,6 +564,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             // site-seed-from-peer.yml is the generic play; a site that keeps its
             // own <site>-seed-from-peer.yml gets that one instead.
             let seed_play = crate::standup::site_play(repo, site, "seed-from-peer.yml");
+            // A site's own copy of the seed play is checked against the generic
+            // play it was derived from before phase 13 changes anything (GB-362).
+            if let Some((label, cmd)) = crate::standup::site_play_gate(repo, &r, site, "seed-from-peer.yml") {
+                ev.push(p(13, "GATE", &label, cmd));
+            }
             // site_id reaches the joiner's passes as a PLAY variable, never as
             // `-e site_id`: an extra var sets every host's site_id to this site,
             // and the Spock roles' inventory walk then finds no peer.
