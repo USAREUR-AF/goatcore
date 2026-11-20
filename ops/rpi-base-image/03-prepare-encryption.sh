@@ -3,14 +3,13 @@ set -euo pipefail
 
 # =============================================================
 # 03-prepare-encryption.sh
-# YubiKey/FIDO2 variant of 03-prepare-encryption.sh.
+# Prepares passphrase-based LUKS encryption before optional YubiKey
+# HMAC challenge-response enrollment in 04-enroll-yubikey.sh.
 # Run ON THE PI before rebooting into initramfs.
 #
-# Differences from 03:
-#   - No USB keyfile drive (you'll use a passphrase, then enroll
-#     the YubiKey via 04-enroll-yubikey.sh after first boot)
-#   - No dropbear-initramfs (FIDO2 needs physical touch — local-only)
-#   - No IP= line in initramfs.conf (no remote unlock path)
+# This console path does not install dropbear-initramfs and removes any
+# existing IP= line from initramfs.conf. For headless remote unlock, run
+# 03b-headless-dropbear-unlock.sh after this script.
 #
 # Workflow:
 #   1. Run this script (configures fstab, cmdline.txt, initramfs)
@@ -18,7 +17,7 @@ set -euo pipefail
 #   3. Run encrypt-rootfs.sh — it'll prompt for a passphrase
 #   4. Pi auto-reboots → drops to (initramfs) again
 #   5. Manually open with passphrase, exit → Pi boots Ubuntu
-#   6. Run 04-enroll-yubikey.sh → enroll YubiKey, future boots use FIDO2
+#   6. Run 04-enroll-yubikey.sh → future boots use HMAC challenge-response
 #
 # Usage: sudo bash 03-prepare-encryption.sh
 # =============================================================

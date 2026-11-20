@@ -21,8 +21,8 @@ set -euo pipefail
 # secret never leaves the YubiKey. Original passphrase remains
 # in slot 0 as recovery.
 #
-# Run AFTER 03-prepare-encryption.sh + encrypt-rootfs.sh
-# + 04-post-encryption-setup.sh (or equivalent passphrase setup).
+# Run AFTER 03-prepare-encryption.sh + encrypt-rootfs.sh, once the
+# encrypted rootfs is unlocked with its recovery passphrase.
 #
 # Usage: sudo bash 04-enroll-yubikey.sh
 # =============================================================
