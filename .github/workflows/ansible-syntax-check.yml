@@ -11,9 +11,15 @@ name: ansible-syntax-check
 #      own minimal test playbook + asserts the role plays cleanly under
 #      ansible-playbook --syntax-check.
 #
-# Together: every role that ships a tests/syntax-check.sh has CI gating
-# its YAML + Jinja2 + variable-shape integrity. The static register-lint
-# catches the F-075 class on every role regardless of fixture coverage.
+#   3. onboard-runner disabled teardown — runs the production teardown task
+#      against a disposable Docker project and structured warning fixtures.
+#
+# Together: every role that ships a tests/syntax-check.sh has CI gating its YAML
+# + Jinja2 + variable-shape integrity. The static register-lint catches the
+# F-075 class on every role regardless of fixture coverage. The lifecycle job's
+# test invocation treats a missing Linux, Docker, Compose or compiler
+# prerequisite as a failure rather than a passing skip. This describes job
+# behavior, not a status check required by repository branch rules.
 
 on:
   # push: on main REMOVED — this workflow is a guard, not a publisher. It
@@ -38,12 +44,15 @@ concurrency:
   group: ansible-syntax-check-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   register-uniqueness:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Static lint — within-file register-name collisions
         run: bash ops/ansible/tests/check-register-uniqueness.sh
 
@@ -51,7 +60,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Static lint — group_vars dirs map to inventory groups
         run: bash ops/ci/check-ansible-inventory-groups.sh
 
@@ -59,7 +68,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install ansible-core
         run: |
@@ -81,7 +90,7 @@ jobs:
           ansible-galaxy collection install \
             'ansible.posix:>=1.5,<3.0' \
             'community.general:>=8.0,<11.0' \
-            'community.docker:>=3.4,<5.0'
+            'community.docker:>=4.8.9,<5.0'
           ansible-galaxy collection list | grep -E 'ansible\.posix|community\.general|community\.docker'
 
       - name: Run every roles/*/tests/syntax-check.sh
@@ -138,3 +147,21 @@ jobs:
         run: bash ops/ansible/roles/goat-peering-spire/tests/test-bundle-import.sh
       - name: Spock mesh expected-subscriptions textfiles from the declared peers (localhost only)
         run: bash ops/ansible/roles/spock-mesh-peering/tests/test-expected-metrics.sh
+
+  onboard-runner-disabled-teardown:
+    name: onboard-runner disabled teardown lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install the measured Ansible toolchain
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install 'ansible-core==2.20.11'
+          ops/ci/ansible-galaxy-install.sh 'community.docker:==4.8.9'
+          ansible-playbook --version
+          ansible-galaxy collection list community.docker
+      - name: Exercise disabled teardown and its structured warning results
+        run: >-
+          python3 ops/ansible/roles/onboard-runner/tests/test_disabled_teardown.py
+          --require-prerequisites

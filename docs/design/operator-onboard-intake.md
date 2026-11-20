@@ -190,6 +190,11 @@ Option C is built and proven end-to-end:
 - **The runner** — `ops/onboard-runner/` (#1376): poll approved → claim → dedup-by-email → materialize `manifest_json` → YAML → run native `goat admin onboard` → write result back. `--dry-run`/`--once` safe modes, `--only-env` per-goatnet filter, injected-mint tests.
 - **Local-Kratos** — goat 0.4.14 (#1384): `GOAT_ONBOARD_KRATOS_LOCAL=1` runs the Ory leg's curl locally against `127.0.0.1:4434` instead of SSHing to the Thor — so the on-Thor runner needs **no SSH key**.
 - **Deploy role** — `ops/ansible/roles/onboard-runner/` + `onboard-runner-deploy.yml`: renders a compose stack + a `0600` `.env`, a container-uid-owned schema/operators tree, a `goat >= 0.4.15` assert, and a **default-off go-live gate** (`onboard_runner_enabled`, since it's a mint-anything capability). Rollback-ledgered (ADR 1060, `image`-class). The role was first a host systemd unit (below) and is now a container with its own identity (§"Container reshape").
+- **Default-off teardown** — built and measured in a disposable Docker project.
+  The production task handles an absent stack, removes a running stack and
+  converges on repeat. Stand-in Compose output verifies that the task accepts
+  an exit-zero warning and propagates an unrelated error accompanied by the
+  same warning. Coverage is limited to the teardown task.
 
 **Live-fire** (laptop-driven runner against the live ZAGROS portal, a notional candidate through the real intake→approve flow): from one admin approval the runner claimed, minted **all three surfaces in 2.6 s** — Zenoh slot + URI-SAN + api_key + alias, a NetBird setup key, and an Ory/Kratos identity — wrote back `onboarded`, then the notional identity was torn down across all three. No grammar-cutover 400. Two findings, both fixed/recorded:
 
