@@ -16,7 +16,7 @@ that:
   - follows -e / --env and names a secret, or is --password=....
 A secret in `stdin:` is allowed: stdin is not on the command line.
 
-  check-no-secret-in-exec-argv.py [role ...]        default: ory
+  check-no-secret-in-exec-argv.py [role ...]        default: ory, pgbackrest
   check-no-secret-in-exec-argv.py --self-test
 Exit 0 clean, 1 a secret on a command line, 2 a file could not be read.
 """
@@ -29,7 +29,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-DEFAULT_ROLES = ["ory"]
+DEFAULT_ROLES = ["ory", "pgbackrest"]
 SECRET_NAME = re.compile(r"(?i)(passw(or)?d|secret|token|(^|_)key$|_key\b|apikey)")
 TEMPLATED_VAR = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)")
 MODULES = ("ansible.builtin.command", "command", "ansible.builtin.shell", "shell")
